@@ -5,6 +5,8 @@
         <!-- Don't include the current folder by default, includes should be explicit -->
         <EnableDefaultItems>false</EnableDefaultItems>
         <ImplicitUsings>disable</ImplicitUsings>
+        <IsAotCompatible>false</IsAotCompatible>
+        <PublishTrimmed>false</PublishTrimmed>
     </PropertyGroup>
 
     <ItemGroup>
@@ -13,12 +15,6 @@
         <None Include="$(RepositoryRoot)docs/**/*.*" Link="[Documentation]\docs\%(RecursiveDir)%(Filename)"/>
         <None Include="$(RepositoryRoot)build/**/*.*" Link="[Build]\%(RecursiveDir)%(Filename)"/>
         <None Remove="artifacts\**" />
-    </ItemGroup>
-
-    <ItemGroup>
-      <Content Include="..\design\pushpay-strategy\forming\pushpay-market-strategy.zip">
-        <Link>[Documentation]\design\pushpay-strategy\forming\pushpay-market-strategy.zip</Link>
-      </Content>
     </ItemGroup>
 
 </Project>
