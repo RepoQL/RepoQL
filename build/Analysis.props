@@ -1,0 +1,27 @@
+﻿<Project>
+
+    <!-- Code Analysis settings -->
+    <PropertyGroup>
+        <NoWarn>$(NoWarn);CS1591</NoWarn>
+        <!-- Warnings are treated as errors in release mode and fail the build -->
+        <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">false</TreatWarningsAsErrors>
+        <!-- turn on all warnings -->
+        <WarningLevel>9999</WarningLevel>
+        <!-- On by default for net 5+, needed for netstandard etc -->
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
+        <!-- violations of your coding style defined in .editorconfig are treated as build warnings -->
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+        <!-- 
+            All rules are enabled as build warnings. You can selectively opt out of individual rules to disable them.
+            https://learn.microsoft.com/en-us/dotnet/core/project-sdk/msbuild-props#analysismode 
+        -->
+        <AnalysisMode>All</AnalysisMode>
+        <!-- Be less pedantic about style -->
+        <AnalysisModeStyle>Minimum</AnalysisModeStyle>
+        <!-- The version of the code analysis ruleset to use - preview means all rules as soon as they are released for evaluation -->
+        <AnalysisLevel>preview</AnalysisLevel>
+        <IsAotCompatible>true</IsAotCompatible>
+        <PublishTrimmed>true</PublishTrimmed>
+    </PropertyGroup>
+
+</Project>

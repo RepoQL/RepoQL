@@ -1,0 +1,69 @@
+using System.Text.RegularExpressions;
+using RepoQL.Contracts;
+using RepoQL.FileSystem.Abstractions;
+
+namespace RepoQL.FileSystem;
+
+/// <summary>
+/// Git-ignore aware filter for file:// URIs. Excludes a set of relative paths such as the DB file.
+/// </summary>
+public sealed partial class RepoGitIgnoreFilter : IUriFilter
+{
+    private readonly Ignore.Ignore _ignore = new();
+
+    private readonly HashSet<string> _excludedRelPaths = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".git"
+    };
+
+    private static readonly Regex DefaultExcludes = DefaultExcludesRegex();
+
+    /// <summary>Create a filter using .gitignore at repo root and extra excluded relative paths.</summary>
+    public RepoGitIgnoreFilter(string rootPath, IEnumerable<string>? extraExcludedRelPaths = null)
+    {
+        var rootPath1 = Path.GetFullPath(rootPath);
+        var gi = Path.Combine(rootPath1, ".gitignore");
+        if (File.Exists(gi)) _ignore.Add(File.ReadAllLines(gi));
+        if (extraExcludedRelPaths == null)
+            return;
+        foreach (var r in extraExcludedRelPaths)
+            _excludedRelPaths.Add(r.Replace('\\', '/').TrimStart('/'));
+    }
+
+    /// <inheritdoc/>
+    public bool IncludeFile(RepoUri uri)
+    {
+        // Handle both repo:// and file:/// URIs
+        if (!string.Equals(uri.Scheme, "repo", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(uri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var rel = uri.AbsolutePath.TrimStart('/');
+
+        // For file:/// URIs on Windows, the path might be like /C:/path/to/file
+        // We need to extract just the relative path from the repo root
+        if (string.Equals(uri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
+        {
+            // Try to make it relative to the repo - this is a simplified approach
+            // The path should already be relative in most cases
+            rel = rel.Replace('\\', '/');
+
+            // Check if path contains .repoql or .git directories
+            if (rel.Contains("/.repoql/") || rel.Contains("/.git/") ||
+                rel.EndsWith("/.repoql") || rel.EndsWith("/.git"))
+            {
+                return false;
+            }
+        }
+
+        if (DefaultExcludes.IsMatch(rel))
+            return false;
+        if (_excludedRelPaths.Contains(rel)) return false;
+        return !_ignore.IsIgnored(rel);
+    }
+
+    [GeneratedRegex(@"(\.git|\.repoql)[\\/]", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex DefaultExcludesRegex();
+}

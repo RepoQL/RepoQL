@@ -1,0 +1,4 @@
+Type: {{ media_kind | default: media_base }}
+Size: {{ size_bytes | filesize }}{% if line_count %}, Lines: {{ line_count }}{% endif %}
+Sections: {{ headings_count | default: 0 }}, Code: {{ codeblocks_count | default: 0 }}, Links: {{ links_count | default: 0 }}{% if images_count or tables_count %}, Images: {{ images_count | default: 0 }}, Tables: {{ tables_count | default: 0 }}{% endif %}{% if frontmatter_keys %}
+Frontmatter: {{ frontmatter_keys }} keys{% endif %}

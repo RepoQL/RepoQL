@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.Build.NoTargets/3.7.56">
+
+    <PropertyGroup>
+        <TargetFramework>netstandard2.0</TargetFramework>
+        <!-- Don't include the current folder by default, includes should be explicit -->
+        <EnableDefaultItems>false</EnableDefaultItems>
+        <ImplicitUsings>disable</ImplicitUsings>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="$(RepositoryRoot).*;$(RepositoryRoot)qodana.yaml" Link="%(Filename)"/>
+        <None Include="$(RepositoryRoot)**/*.md" Exclude="$(RepositoryRoot)docs/**/*.*" Link="[Documentation]\%(RecursiveDir)%(Filename)"/>
+        <None Include="$(RepositoryRoot)docs/**/*.*" Link="[Documentation]\docs\%(RecursiveDir)%(Filename)"/>
+        <None Include="$(RepositoryRoot)build/**/*.*" Link="[Build]\%(RecursiveDir)%(Filename)"/>
+        <None Remove="artifacts\**" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <Content Include="..\design\pushpay-strategy\forming\pushpay-market-strategy.zip">
+        <Link>[Documentation]\design\pushpay-strategy\forming\pushpay-market-strategy.zip</Link>
+      </Content>
+    </ItemGroup>
+
+</Project>

@@ -1,0 +1,21 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+trim_trailing_whitespace = false
+insert_final_newline = false
+indent_style = space
+indent_size = 4
+
+[*.cs]
+# Warnings
+dotnet_diagnostic.CS1591.severity = none
+dotnet_diagnostic.IDE0055.severity = none
+
+# Style
+csharp_style_var_for_built_in_types = true
+csharp_style_var_when_type_is_apparent = true
+csharp_style_var_elsewhere = true
+csharp_style_namespace_declarations = file_scoped
+csharp_prefer_braces = when_multiline

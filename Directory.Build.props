@@ -1,0 +1,24 @@
+﻿<Project>
+
+    <!-- 
+        Anything in this file will be applied to all projects built in this repository
+        This file is injected at the top of your project files
+    -->
+
+    <!-- Constants for this repository -->
+    <PropertyGroup>
+        <RepositoryRoot>$(MSBuildThisFileDirectory)</RepositoryRoot>
+    </PropertyGroup>
+
+    <!-- Repository Areas -->
+    <PropertyGroup>
+        <!-- Msbuild extensions to apply everywhere -->
+        <BuildExtensionsDirectory>$(RepositoryRoot)build/</BuildExtensionsDirectory>
+        <!-- Outputs for build and publish steps -->
+        <ArtifactsDirectory>$(RepositoryRoot)artifacts</ArtifactsDirectory>
+    </PropertyGroup>
+
+    <!-- Include all the target files under /build -->
+    <Import Project="$(BuildExtensionsDirectory)*.props"/>
+
+</Project>

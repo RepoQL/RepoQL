@@ -1,0 +1,176 @@
+syntax = "proto3";
+
+package repoql.v1;
+
+option csharp_namespace = "RepoQL.Contracts";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// Generic RepoQL API: execute raw SQL and fetch document summaries from annotations.
+// - Not tied to file types: summaries are backed by generic annotation rows (kind, severity, message, data).
+// - Batch-friendly: endpoints accept multiple URIs.
+service RepoQL {
+  // Execute an arbitrary SQL query against the RepoQL database.
+  // Intended for trusted callers and diagnostics; callers should use parameters for values.
+  rpc ExecuteRawQuery(RawQueryRequest) returns (RawQueryResponse);
+
+  // Stream results for large queries. The first message may include column schema; all messages carry a single row.
+  rpc ExecuteRawQueryStream(RawQueryRequest) returns (stream RawQueryRow);
+
+  // Fetch document summaries for one or more repository URIs by reading precomputed annotations.
+  // The server filters by annotation kinds (default: ["outline"]) and minimum severity.
+  rpc GetDocumentSummaries(GetDocumentSummariesRequest) returns (GetDocumentSummariesResponse);
+
+  // Maintain a lightweight client lease. The client opens a client-streaming RPC and
+  // periodically sends beats while it is active. The server uses lease presence to
+  // determine when an implicitly-started host can shut down after an idle grace period.
+  rpc HoldClientLease(stream ClientLeaseBeat) returns (ClientLeaseSummary);
+}
+
+// ----- Raw query -----
+
+message RawQueryRequest {
+  // SQL text; may reference positional parameters using database conventions.
+  string sql = 1;
+  // Positional parameter values. The server binds in order.
+  repeated google.protobuf.Value parameters = 2;
+  // Optional row limit; 0 means no explicit limit.
+  int32 limit = 3;
+}
+
+message ColumnSchema {
+  // Column name as reported by the database.
+  string name = 1;
+  // Database-native type label (e.g., "VARCHAR", "INTEGER"). Best-effort.
+  string db_type = 2;
+}
+
+message RowData {
+  // Values in the same order as the "columns" array.
+  repeated google.protobuf.Value values = 1;
+}
+
+message RawQueryResponse {
+  // Column schema for the rows returned in this response.
+  repeated ColumnSchema columns = 1;
+  // Rows materialized into memory. For large results use ExecuteRawQueryStream.
+  repeated RowData rows = 2;
+  // Number of rows returned in this response.
+  int64 row_count = 3;
+  // True when the server applied a limit and results were truncated.
+  bool truncated = 4;
+}
+
+message RawQueryRow {
+  // On the first message, columns may be populated; subsequent messages may omit.
+  repeated ColumnSchema columns = 1;
+  RowData row = 2;
+}
+
+// ----- Document summaries via annotations -----
+
+message GetDocumentSummariesRequest {
+  // Absolute repository URIs (container URIs) of documents to summarize.
+  repeated string uris = 1;
+
+  // Annotation kinds to include (case-insensitive). Defaults to ["outline"].
+  repeated string kinds = 2;
+
+  // Minimum severity to include ("hint"|"info"|"warning"|"error"). Default: "hint".
+  string min_severity = 3;
+
+  // Whether to include annotation.data (structured payload).
+  bool include_data = 4;
+
+  // Whether to include annotation.message (human-readable text summary).
+  bool include_message = 5;
+
+  // Whether to include a resolved target URI (when available via views).
+  bool include_resolved_target_uri = 6;
+}
+
+message GetDocumentSummariesResponse {
+  repeated DocumentSummaryResult results = 1;
+}
+
+message DocumentSummaryResult {
+  // The input URI this result corresponds to.
+  string uri = 1;
+  // Lookup status for this URI.
+  SummaryStatus status = 2;
+  // Error message when status == ERROR; otherwise empty.
+  string error = 3;
+  // Annotations that constitute the document summary.
+  repeated SummaryAnnotation annotations = 4;
+}
+
+enum SummaryStatus {
+  SUMMARY_STATUS_UNSPECIFIED = 0;
+  OK = 1;
+  NOT_FOUND = 2;
+  ERROR = 3;
+}
+
+message SummaryAnnotation {
+  // Annotation id (UUID string).
+  string id = 1;
+  // Optional business key for idempotent upserts.
+  string semantic_key = 2;
+  // Annotation kind (e.g., "outline", "xray", "metric", "lint").
+  string kind = 3;
+  // Free text severity (e.g., hint|info|warning|error).
+  string severity = 4;
+  // Producer name (e.g., "markdown-parser").
+  string source = 5;
+  // Producer rule id (optional).
+  string rule_id = 6;
+
+  // Human-readable message; may contain multi-line summaries (e.g., outlines).
+  string message = 7;
+
+  // Structured payload; schema depends on kind. Included only when requested.
+  google.protobuf.Struct data = 8;
+
+  // Resolved target URI if available; typically computed via a view.
+  string resolved_target_uri = 9;
+
+  // Optional low-level targets (ids may be UUID strings); present for advanced clients.
+  string target_node_id = 10;
+  string target_edge_id = 11;
+  string target_span_id = 12;
+
+  // Timestamps in UTC.
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp expires_at = 14;
+}
+
+// ----- Client lease for idle shutdown control -----
+
+message ClientLeaseBeat {
+  // Stable id for this client session (UUID string).
+  string client_id = 1;
+  // Optional: process id of the client.
+  int32 pid = 2;
+  // Tool name (e.g., "repoql", "repoql-mcp").
+  string tool = 3;
+  // Tool version string.
+  string version = 4;
+  // Repository path this client is operating in (normalized absolute path).
+  string repo_path = 5;
+  // First beat time in RFC3339 format.
+  string started_at = 6;
+  // Last beat time in RFC3339 format.
+  string beat_at = 7;
+}
+
+message ClientLeaseSummary {
+  // Host start time in RFC3339 format.
+  string server_started_at = 1;
+  // True if this host was started implicitly by a client.
+  bool implicit_start = 2;
+  // Number of currently active client leases at time of response.
+  int32 active_clients = 3;
+  // Idle shutdown grace period in seconds (if implicit).
+  int32 shutdown_after_idle_seconds = 4;
+}

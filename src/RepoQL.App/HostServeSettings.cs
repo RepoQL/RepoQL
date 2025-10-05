@@ -1,0 +1,1 @@
+internal sealed class HostServeSettings : RepoOptionSettings { }

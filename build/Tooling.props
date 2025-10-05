@@ -1,0 +1,34 @@
+﻿<Project>
+    <!-- Configuration for the build tooling itself -->
+
+    <!-- 
+        Reduces variation due to the environment when running the build, leading to less build-environment specific build errors 
+        see https://github.com/dotnet/reproducible-builds?tab=readme-ov-file
+    -->
+    <Sdk Name="DotNet.ReproducibleBuilds.Isolated" Version="1.1.1"/>
+
+    <PropertyGroup Condition="'$(TF_BUILD)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">
+        <!-- 
+            enables settings that only apply to official builds as opposed to local builds on a developer machine. 
+            For example, stored file paths are normalized for official builds. But on a local development machine, 
+            the debugger isn't able to find local source files if file paths are normalized.
+            https://learn.microsoft.com/en-us/dotnet/core/project-sdk/msbuild-props#continuousintegrationbuild 
+         -->
+        <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <NoWarn>$(NoWarn);CA1305</NoWarn>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <!-- Creates a documentation xml file on build for intellisense, also mandates documentation comments -->
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <!-- Faster nuget restore - https://www.gresearch.com/blog/article/improve-nuget-restores-with-static-graph-evaluation/ -->
+        <RestoreUseStaticGraphEvaluation>true</RestoreUseStaticGraphEvaluation>
+        <!-- Build outputs in artifacts directory - https://learn.microsoft.com/en-us/dotnet/core/sdk/artifacts-output -->
+        <UseArtifactsOutput>true</UseArtifactsOutput>
+        <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$(RepositoryRoot)artifacts/</ArtifactsPath>
+        <VSTestResultsDirectory>$(ArtifactsPath)/testresults/$(Configuration.ToLowerInvariant())</VSTestResultsDirectory>
+        <StripSymbols Condition="'$(Configuration)' == 'Release'">true</StripSymbols>
+    </PropertyGroup>
+
+</Project>

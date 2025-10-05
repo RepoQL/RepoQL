@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net9.0</TargetFramework>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="TUnit" Version="0.*" />
+        <PackageReference Include="TUnit.Assertions" Version="0.*" />
+        <PackageReference Include="AwesomeAssertions" Version="9.*" />
+        <PackageReference Include="DuckDB.NET.Data.Full" Version="*" />
+        <PackageReference Include="Ignore" Version="*" />
+    </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
+    <ProjectReference Include="..\..\RepoQL.Core\RepoQL.Core.csproj" />
+    <ProjectReference Include="..\..\Formats\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Sample.md" />
+    <EmbeddedResource Include="Resources\JustText.txt" />
+    <EmbeddedResource Include="Resources\IndentedCode.md" />
+  </ItemGroup>
+
+</Project>

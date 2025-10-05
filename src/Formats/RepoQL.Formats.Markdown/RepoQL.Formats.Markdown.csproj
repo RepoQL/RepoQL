@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <InvariantCulture>true</InvariantCulture>
+    </PropertyGroup>
+
+  <ItemGroup>
+      <PackageReference Include="Markdig" Version="0.41.3" />
+      <PackageReference Include="YamlDotNet" Version="16.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\RepoQL.Templating\RepoQL.Templating.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Templates\**\*.liquid" />
+  </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    </ItemGroup>
+
+</Project>

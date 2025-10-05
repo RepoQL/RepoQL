@@ -1,0 +1,32 @@
+{% assign max = 25 %}
+{% if diagram_kind == "flowchart" or diagram_kind == "graph" %}
+Flowchart
+{% for n in flow_nodes %}
+{% if forloop.index0 < max %}- {{ n.id }}: {{ n.label }}{% if n.shape %} [{{ n.shape }}]{% endif %}
+{% endif %}
+{% endfor %}
+{% if flow_nodes.size > max %}[... {{ flow_nodes.size | minus: max }} more nodes]{% endif %}
+{% elsif diagram_kind == "sequenceDiagram" %}
+Sequence Diagram
+Participants:
+{% for p in participants %}
+{% if forloop.index0 < max %}- {{ p.name }}{% if p.alias %} ({{ p.alias }}){% endif %}
+{% endif %}
+{% endfor %}
+{% if participants.size > max %}[... {{ participants.size | minus: max }} more participants]{% endif %}
+Messages:
+{% for m in messages %}
+{% if forloop.index0 < max %}- {{ m.from }} {{ m.arrow }} {{ m.to }}{% if m.text %} : {{ m.text }}{% endif %}
+{% endif %}
+{% endfor %}
+{% if messages.size > max %}[... {{ messages.size | minus: max }} more messages]{% endif %}
+{% elsif diagram_kind == "pie" %}
+Pie Chart
+{% for s in slices %}
+{% if forloop.index0 < max %}- {{ s.label }}: {{ s.value }}
+{% endif %}
+{% endfor %}
+{% if slices.size > max %}[... {{ slices.size | minus: max }} more slices]{% endif %}
+{% else %}
+{{ diagram_kind }}
+{% endif %}

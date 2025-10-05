@@ -1,0 +1,11 @@
+﻿<Project>
+    <!-- What features to use by default -->
+    <PropertyGroup>
+        <!-- https://www.hanselman.com/blog/implicit-usings-in-net-6 -->
+        <ImplicitUsings>enable</ImplicitUsings>
+        <!-- https://learn.microsoft.com/en-us/dotnet/csharp/nullable-references#null-state-analysis -->
+        <Nullable>enable</Nullable>
+        <!-- Latest language version supported by the SDK -->
+        <LangVersion>latest</LangVersion>
+    </PropertyGroup>
+</Project>

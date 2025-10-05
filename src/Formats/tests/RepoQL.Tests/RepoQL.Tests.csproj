@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net9.0</TargetFramework>
+    </PropertyGroup>
+
+  <ItemGroup>
+        <PackageReference Include="JetBrains.Annotations" Version="2025.2.1" />
+        <PackageReference Include="TUnit" Version="0.*" />
+        <PackageReference Include="TUnit.Assertions" Version="0.*" />
+        <PackageReference Include="AwesomeAssertions" Version="9.*" />
+        <PackageReference Include="Grpc.AspNetCore" Version="2.62.0" />
+        <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="9.0.0" />
+      <ProjectReference Include="..\..\src\RepoQL.App\RepoQL.App.csproj" />
+</ItemGroup>
+
+  <ItemGroup>
+        <ProjectReference Include="..\..\src\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+        <ProjectReference Include="..\..\src\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
+        <ProjectReference Include="..\..\src\RepoQL.Formats.Mermaid\RepoQL.Formats.Mermaid.csproj" />
+        <ProjectReference Include="..\..\src\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />
+        <ProjectReference Include="..\..\src\RepoQL.Core\RepoQL.Core.csproj" />
+        <ProjectReference Include="..\..\src\RepoQL.Host\RepoQL.Host.csproj" />
+        <ProjectReference Include="..\..\src\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+        <ProjectReference Include="..\..\src\RepoQL.Documentation\RepoQL.Documentation.csproj" />
+      <ProjectReference Include="..\..\src\RepoQL.App\RepoQL.App.csproj" />
+</ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\Doc1.md" />
+    <EmbeddedResource Include="Resources\Doc2.md" />
+  </ItemGroup>
+
+</Project>

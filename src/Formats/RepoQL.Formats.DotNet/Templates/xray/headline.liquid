@@ -1,0 +1,1 @@
+{{ file_name }} | dotnet.csproj | {{ size_bytes | filesize }}{% if sdk and sdk != '' %} | sdk:{{ sdk }}{% endif %}{% if output_type and output_type != '' %} | output:{{ output_type }}{% if pack %}+pack{% endif %}{% endif %} | tfm:{{ tfm_text }} | packages:{{ package_count }} projrefs:{{ project_ref_count }}

@@ -1,0 +1,22 @@
+# Build outputs
+artifacts/
+
+# IDE files
+.vs/
+.idea/
+*.user
+*.suo
+
+# Logs
+*.log
+
+# Local-only files
+*.local.*
+.obsidian/
+**/.scratch
+**/bin/
+**/obj/
+.repoql/*
+
+# ML Models (too big)
+*.onnx

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <!-- 
+    This will exposed anything marked as internal to other projects named {ProjectName}{Suffix} 
+    e.g. Thing will expose all internal members to Thing.Tests, Thing.Unit.Tests and Thing.Tests 
+    
+    see:
+        https://www.meziantou.net/declaring-internalsvisibleto-in-the-csproj.htm 
+        https://docs.microsoft.com/en-us/dotnet/api/system.runtime.compilerservices.internalsvisibletoattribute?view=net-6.0
+    -->
+    <Target Name="AddInternalsVisibleTo" BeforeTargets="BeforeCompile">
+        <!-- Add default suffix if there is no InternalsVisibleTo or InternalsVisibleToSuffix defined -->
+        <ItemGroup Condition="@(InternalsVisibleToSuffix->Count()) == 0 AND @(InternalsVisibleTo->Count()) == 0">
+            <InternalsVisibleToSuffix Include=".Tests"/>
+            <InternalsVisibleToSuffix Include=".ApiTests"/>
+        </ItemGroup>
+
+        <ItemGroup>
+            <!-- This allows Moq to generate mocks for internal classes and methods -->
+            <InternalsVisibleTo Include="DynamicProxyGenAssembly2"/>
+        </ItemGroup>
+
+        <!-- Handle InternalsVisibleTo -->
+        <ItemGroup Condition="'@(InternalsVisibleTo->Count())' &gt; 0">
+            <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+                <_Parameter1>%(InternalsVisibleTo.Identity)</_Parameter1>
+            </AssemblyAttribute>
+        </ItemGroup>
+
+        <!-- Handle InternalsVisibleToSuffix -->
+        <ItemGroup Condition="@(InternalsVisibleToSuffix->Count()) &gt; 0">
+            <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+                <_Parameter1>$(AssemblyName)%(InternalsVisibleToSuffix.Identity)</_Parameter1>
+            </AssemblyAttribute>
+        </ItemGroup>
+    </Target>
+</Project>

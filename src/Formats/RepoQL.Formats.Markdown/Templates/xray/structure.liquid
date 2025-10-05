@@ -1,0 +1,6 @@
+{% assign max = 25 %}
+{% for h in headings %}
+{% if forloop.index0 < max %}{{ h.indent }}- {{ h.text }}
+{% endif %}
+{% endfor %}
+{% if headings.size > max %}[... {{ headings.size | minus: max }} more]{% endif %}

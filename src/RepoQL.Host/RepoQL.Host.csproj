@@ -1,0 +1,38 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>true</PublishAot>
+    <AssemblyName>repoql-host</AssemblyName>
+    <RuntimeIdentifiers>osx-arm64;win-x64;linux-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+    <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.Mermaid\RepoQL.Formats.Mermaid.csproj" />
+    <ProjectReference Include="..\RepoQL.Protocol\RepoQL.Protocol.csproj" />
+    <ProjectReference Include="..\RepoQL.Core\RepoQL.Core.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />
+    <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" Version="2.62.0" />
+    <PackageReference Include="Grpc.AspNetCore.Server" Version="2.62.0" />
+    <PackageReference Include="Grpc.HealthCheck" Version="2.62.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.12.0" />
+    <PackageReference Include="Spectre.Console" Version="0.50.0" />
+    <PackageReference Include="OpenTelemetry" Version="1.12.0" />
+    <PackageReference Include="OpenTelemetry.Api" Version="1.12.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.12.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.12.0" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "memory": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@buger/probe-mcp"
+      ]
+    },
+    "engineer": {
+      "type": "stdio",
+      "command": "codex",
+      "args": ["mcp", "-c 'sandbox_permissions=[\"workspace-write\"]'", "-c 'shell_environment_policy.inherit=all'"]
+    },
+    "query-repository": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": ["./artifacts/dist/fdd/repoql-mcp.dll"]
+    }
+  }
+}

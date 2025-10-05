@@ -1,0 +1,6 @@
+Type: {{ media_kind | default: media_base }}
+Size: {{ size_bytes | filesize }}{% if line_count %}, Lines: {{ line_count }}{% endif %}
+{% if diagram_kind %}Diagram: {{ diagram_kind }}{% endif %}
+{% if node_count or edge_count %}Flow: nodes {{ node_count | default: 0 }}, edges {{ edge_count | default: 0 }}{% endif %}
+{% if participant_count or message_count %}Sequence: participants {{ participant_count | default: 0 }}, messages {{ message_count | default: 0 }}{% endif %}
+{% if pie_count %}Pie: slices {{ pie_count | default: 0 }}{% endif %}
