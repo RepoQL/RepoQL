@@ -68,9 +68,10 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     public ObservableGauge<int> QueueDepth { get; set; }
 
     /// <summary>Enqueue an item if not already pending. Removes on failure to allow retries.</summary>
-    public async ValueTask EnqueueAsync(T item, CancellationToken ct)
+    public async ValueTask<bool> EnqueueAsync(T item, CancellationToken ct)
     {
-        if (!_waitSet.TryAdd(item, 0)) return;
+        if (!_waitSet.TryAdd(item, 0))
+            return false;
         try
         {
             var newDepth = Interlocked.Increment(ref _depth);
@@ -86,6 +87,7 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             Complete(item);
             throw;
         }
+        return true;
     }
 
     /// <summary>Mark the item as processed so it may be re-enqueued later.</summary>

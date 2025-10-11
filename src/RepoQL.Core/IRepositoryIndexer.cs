@@ -10,6 +10,13 @@ public interface IRepositoryIndexer : IHostedService, IObservable<IndexerEvent>,
     Task QueueForIndexingAsync(IEnumerable<RepoUri> uris, bool skipUnchanged = true);
     Task WaitForWriterIdle(CancellationToken cancellationToken = default);
     Task WaitForIdle(CancellationToken cancellationToken = default);
+    Task WaitForStagesIdleAsync(PipelineStage stages, CancellationToken cancellationToken = default);
+    Task WaitForAnyStageIdleAsync(PipelineStage stages, CancellationToken cancellationToken = default);
+
+    PipelineSnapshot GetPipelineSnapshot();
+
+    bool IsReindexing { get; }
+    IDisposable EnterReindexScope();
 
     int ClassificationQueueDepth { get; }
     int ParsingQueueDepth { get; }

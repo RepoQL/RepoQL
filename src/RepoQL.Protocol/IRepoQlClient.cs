@@ -1,5 +1,7 @@
 using Grpc.Net.Client;
 using RepoQL.Contracts;
+using PipelineSnapshot = RepoQL.Contracts.PipelineSnapshot;
+using PipelineStage = RepoQL.Contracts.PipelineStage;
 
 namespace RepoQL.Protocol;
 
@@ -59,5 +61,16 @@ public interface IRepoQlClient : IAsyncDisposable
         bool includeData = false,
         bool includeMessage = true,
         bool includeResolvedTargetUri = false,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Wait for one or more pipeline stages to become idle and return the resulting snapshot.
+    /// </summary>
+    /// <param name="stages">Stages to wait on. When <c>null</c> or empty, defaults to discovery, parsing, and analysis.</param>
+    /// <param name="waitAll">When true, waits for all specified stages; otherwise waits for any one to become idle.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<PipelineSnapshot> WaitForPipelineAsync(
+        IEnumerable<PipelineStage>? stages = null,
+        bool waitAll = true,
         CancellationToken cancellationToken = default);
 }

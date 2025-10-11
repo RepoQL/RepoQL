@@ -16,6 +16,7 @@ public sealed class IndexingMetrics : IDisposable
     public Counter<long> StageHash { get; }
     public Counter<long> StageParse { get; }
     public Counter<long> StageIndex { get; }
+    public Counter<long> StageEnrich { get; }
     public Counter<long> FileSystemEvents { get; }
     public Counter<long> DocumentsCreated { get; }
     public Counter<long> DocumentsUpdated { get; }
@@ -97,6 +98,11 @@ public sealed class IndexingMetrics : IDisposable
             "repoql.stage.index",
             unit: "files",
             description: "Files indexed (written to DB or skipped up-to-date)");
+
+        StageEnrich = _meter.CreateCounter<long>(
+            "repoql.stage.enrich",
+            unit: "files",
+            description: "Documents enriched");
 
         FileSystemEvents = _meter.CreateCounter<long>(
             "repoql.fs.events",
@@ -299,6 +305,7 @@ public sealed class IndexingMetrics : IDisposable
     public void IncrementHash() => StageHash.Add(1);
     public void IncrementParse() => StageParse.Add(1);
     public void IncrementIndex() => StageIndex.Add(1);
+    public void IncrementEnrich() => StageEnrich.Add(1);
     public void RecordFsEvent(string kind) => FileSystemEvents.Add(1, new TagList { { "kind", kind } });
 
     public void RecordTransaction(string status)

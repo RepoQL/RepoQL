@@ -45,6 +45,8 @@ public sealed class SingleThreadedDatabaseWriter(
         public TaskCompletionSource<CommitResult>? Completion { get; init; }
     }
 
+    public int QueueCapacity => MaxQueueDepth;
+
     public ValueTask EnqueueAsync(WriteOperation operation, CancellationToken ct = default)
     {
         var item = new QueueItem { Operation = operation };

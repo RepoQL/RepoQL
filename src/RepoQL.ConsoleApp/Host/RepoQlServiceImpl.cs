@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 using Google.Protobuf;
@@ -7,8 +8,14 @@ using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Core;
+using CorePipelineSnapshot = RepoQL.Core.PipelineSnapshot;
+using CorePipelineStage = RepoQL.Core.PipelineStage;
+using CorePipelineStageSnapshot = RepoQL.Core.PipelineStageSnapshot;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
+using ProtoPipelineSnapshot = RepoQL.Contracts.PipelineSnapshot;
+using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
+using ProtoPipelineStageStatus = RepoQL.Contracts.PipelineStageStatus;
 
 namespace RepoQL.ConsoleApp.Host;
 
@@ -314,35 +321,73 @@ public sealed class RepoQlServiceImpl(
 
     public override async Task ReindexAll(ReindexRequest request, IServerStreamWriter<ReindexProgress> responseStream, ServerCallContext context)
     {
-        // Phase: preparing
+        context.CancellationToken.ThrowIfCancellationRequested();
         await responseStream.WriteAsync(new ReindexProgress { Phase = "preparing", Total = 0, Completed = 0 }).ConfigureAwait(false);
 
-        // Phase: enumerating
-        var list = new List<RepoUri>(capacity: 4096);
+        var uris = new List<RepoUri>(capacity: 4096);
         await foreach (var entry in fileSystem.EnumerateAsync(context.CancellationToken).ConfigureAwait(false))
         {
-            if (!uriFilter.IncludeFile(entry.Uri)) continue;
-            list.Add(entry.Uri);
+            if (!uriFilter.IncludeFile(entry.Uri))
+                continue;
+            uris.Add(entry.Uri);
         }
 
-        var total = list.Count;
+        var total = uris.Count;
+        await responseStream.WriteAsync(new ReindexProgress { Phase = "enumerated", Total = total, Completed = 0 }).ConfigureAwait(false);
 
-        // Subscribe to indexer events to count completed items
-        var processed = 0;
-        using var sub = indexer.Subscribe(new Observer(() => { }, _ => { }, ev =>
+        using var reindexScope = indexer.EnterReindexScope();
+        var baseline = indexer.GetPipelineSnapshot();
+        await PublishStageProgressAsync(responseStream, baseline, baseline, total, context.CancellationToken).ConfigureAwait(false);
+
+        await indexer.QueueForIndexingAsync(uris, skipUnchanged: false).ConfigureAwait(false);
+        var waitTask = indexer.WaitForIdle(context.CancellationToken);
+
+        var throttle = TimeSpan.FromMilliseconds(250);
+        var lastSent = baseline;
+        var lastSentAt = Stopwatch.StartNew();
+
+        while (!waitTask.IsCompleted)
         {
-            responseStream.WriteAsync(new ReindexProgress { Phase = "Classified", Total = total, Completed = indexer.ClassificationQueueDepth });
-            responseStream.WriteAsync(new ReindexProgress { Phase = "Parsed", Total = total, Completed = indexer.ParsingQueueDepth });
-            responseStream.WriteAsync(new ReindexProgress { Phase = "Analyzed", Total = total, Completed = indexer.EnrichmentQueueDepth });
-        }));
-        
-        // Phase: enqueued
-        await indexer.QueueForIndexingAsync(list, false).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromMilliseconds(100), context.CancellationToken).ConfigureAwait(false);
 
-        // Finalize: wait for idle and flush
-        await indexer.WaitForIdle(context.CancellationToken).ConfigureAwait(false);
+            if (lastSentAt.Elapsed < throttle)
+                continue;
+
+            var snapshot = indexer.GetPipelineSnapshot();
+            if (HasProgressChanged(snapshot, lastSent))
+            {
+                await PublishStageProgressAsync(responseStream, snapshot, baseline, total, context.CancellationToken).ConfigureAwait(false);
+                lastSent = snapshot;
+            }
+
+            lastSentAt.Restart();
+        }
+
+        await waitTask.ConfigureAwait(false);
+
+        var finalSnapshot = indexer.GetPipelineSnapshot();
+        if (HasProgressChanged(finalSnapshot, lastSent))
+        {
+            await PublishStageProgressAsync(responseStream, finalSnapshot, baseline, total, context.CancellationToken).ConfigureAwait(false);
+        }
+
         await writer.FlushAsync(context.CancellationToken).ConfigureAwait(false);
-        await responseStream.WriteAsync(new ReindexProgress { Phase = "completed", Total = total, Completed = Math.Max(total, processed) }).ConfigureAwait(false);
+        await responseStream.WriteAsync(new ReindexProgress { Phase = "completed", Total = total, Completed = total }).ConfigureAwait(false);
+    }
+
+    public override async Task<WaitForPipelineResponse> WaitForPipeline(WaitForPipelineRequest request, ServerCallContext context)
+    {
+        var stages = ToCoreStageMask(request.Stages);
+        if (stages == CorePipelineStage.None)
+            stages = CorePipelineStage.All;
+
+        if (request.WaitAll)
+            await indexer.WaitForStagesIdleAsync(stages, context.CancellationToken).ConfigureAwait(false);
+        else
+            await indexer.WaitForAnyStageIdleAsync(stages, context.CancellationToken).ConfigureAwait(false);
+
+        var snapshot = indexer.GetPipelineSnapshot();
+        return new WaitForPipelineResponse { Snapshot = ToProtoSnapshot(snapshot) };
     }
 
     private sealed class Observer(System.Action completed, System.Action<System.Exception> error, System.Action<IndexerEvent> next) : IObserver<IndexerEvent>
@@ -351,4 +396,102 @@ public sealed class RepoQlServiceImpl(
         public void OnError(System.Exception err) => error(err);
         public void OnNext(IndexerEvent value) => next(value);
     }
+
+    private static bool HasProgressChanged(CorePipelineSnapshot current, CorePipelineSnapshot previous)
+        => current.Discovery.Completed != previous.Discovery.Completed
+           || current.Parsing.Completed != previous.Parsing.Completed
+           || current.Analysis.Completed != previous.Analysis.Completed;
+
+    private static async Task PublishStageProgressAsync(
+        IServerStreamWriter<ReindexProgress> responseStream,
+        CorePipelineSnapshot snapshot,
+        CorePipelineSnapshot baseline,
+        int total,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await responseStream.WriteAsync(new ReindexProgress
+        {
+            Phase = "Classified",
+            Total = total,
+            Completed = ClampCompleted(snapshot.Discovery, baseline.Discovery, total)
+        }).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        await responseStream.WriteAsync(new ReindexProgress
+        {
+            Phase = "Parsed",
+            Total = total,
+            Completed = ClampCompleted(snapshot.Parsing, baseline.Parsing, total)
+        }).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        await responseStream.WriteAsync(new ReindexProgress
+        {
+            Phase = "Analyzed",
+            Total = total,
+            Completed = ClampCompleted(snapshot.Analysis, baseline.Analysis, total)
+        }).ConfigureAwait(false);
+    }
+
+    private static long ClampCompleted(CorePipelineStageSnapshot current, CorePipelineStageSnapshot baseline, int total)
+    {
+        var delta = current.Completed - baseline.Completed;
+        if (delta < 0) delta = 0;
+        if (total >= 0)
+        {
+            var max = (long)total;
+            if (delta > max)
+                delta = max;
+        }
+        return delta;
+    }
+
+    private static CorePipelineStage ToCoreStageMask(IEnumerable<ProtoPipelineStage> stages)
+    {
+        var mask = CorePipelineStage.None;
+        foreach (var stage in stages)
+        {
+            mask |= stage switch
+            {
+                ProtoPipelineStage.Discovery => CorePipelineStage.Discovery,
+                ProtoPipelineStage.Parsing => CorePipelineStage.Parsing,
+                ProtoPipelineStage.Analysis => CorePipelineStage.Analysis,
+                ProtoPipelineStage.Writer => CorePipelineStage.Writer,
+                _ => CorePipelineStage.None
+            };
+        }
+        return mask;
+    }
+
+    private static ProtoPipelineSnapshot ToProtoSnapshot(CorePipelineSnapshot snapshot)
+    {
+        var proto = new ProtoPipelineSnapshot
+        {
+            CapturedAt = Timestamp.FromDateTimeOffset(snapshot.CapturedAt),
+            Reindexing = snapshot.IsReindexing,
+            WriterPending = snapshot.WriterPending
+        };
+        proto.Stages.Add(ToProtoStage(snapshot.Discovery));
+        proto.Stages.Add(ToProtoStage(snapshot.Parsing));
+        proto.Stages.Add(ToProtoStage(snapshot.Analysis));
+        if (snapshot.Writer is not null)
+            proto.Stages.Add(ToProtoStage(snapshot.Writer));
+        return proto;
+    }
+
+    private static ProtoPipelineStageStatus ToProtoStage(CorePipelineStageSnapshot stage)
+        => new()
+        {
+            Stage = stage.Stage switch
+            {
+                CorePipelineStage.Discovery => ProtoPipelineStage.Discovery,
+                CorePipelineStage.Parsing => ProtoPipelineStage.Parsing,
+                CorePipelineStage.Analysis => ProtoPipelineStage.Analysis,
+                CorePipelineStage.Writer => ProtoPipelineStage.Writer,
+                _ => ProtoPipelineStage.Unspecified
+            },
+            Depth = stage.Depth,
+            Capacity = stage.Capacity,
+            Scheduled = stage.Scheduled,
+            Completed = stage.Completed
+        };
 }

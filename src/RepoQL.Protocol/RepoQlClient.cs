@@ -4,6 +4,8 @@ using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
 using RepoQL.Contracts;
+using ProtoPipelineSnapshot = RepoQL.Contracts.PipelineSnapshot;
+using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 
 namespace RepoQL.Protocol;
 
@@ -397,5 +399,19 @@ public sealed class RepoQlClient : IRepoQlClient
         {
             yield return call.ResponseStream.Current;
         }
+    }
+
+    public async Task<ProtoPipelineSnapshot> WaitForPipelineAsync(
+        IEnumerable<ProtoPipelineStage>? stages = null,
+        bool waitAll = true,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new WaitForPipelineRequest { WaitAll = waitAll };
+        if (stages is not null)
+            request.Stages.AddRange(stages);
+
+        var deadline = _defaultTimeout.HasValue ? DateTime.UtcNow + _defaultTimeout.Value : (DateTime?)null;
+        var response = await _client.WaitForPipelineAsync(request, deadline: deadline, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
+        return response.Snapshot ?? new ProtoPipelineSnapshot();
     }
 }

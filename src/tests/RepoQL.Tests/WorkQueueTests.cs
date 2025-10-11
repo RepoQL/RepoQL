@@ -39,7 +39,7 @@ internal class WorkQueueTests
         q.WhenIdleAsync().IsCompleted.Should().BeTrue();
 
         // Enqueue one item
-        await q.EnqueueAsync(1, CancellationToken.None);
+        _ = await q.EnqueueAsync(1, CancellationToken.None);
 
         // Wait until handler starts to ensure the item is being processed
         await Task.WhenAny(started.Task, Task.Delay(DefaultTimeout));
@@ -74,8 +74,8 @@ internal class WorkQueueTests
         await using var q = new WorkQueue<int>("t", capacity: 10, readers: 1, processItem: Handle, CancellationToken.None, meter);
 
         // Enqueue same item twice rapidly; second should be ignored while first in-flight
-        await q.EnqueueAsync(42, CancellationToken.None);
-        await q.EnqueueAsync(42, CancellationToken.None);
+        _ = await q.EnqueueAsync(42, CancellationToken.None);
+        _ = await q.EnqueueAsync(42, CancellationToken.None);
 
         // Give a brief moment for a potential (incorrect) second schedule
         await Task.Delay(50);
@@ -95,7 +95,7 @@ internal class WorkQueueTests
 
         await using var q2 = new WorkQueue<int>("t", capacity: 10, readers: 1, processItem: Handle2, CancellationToken.None, meter);
 
-        await q2.EnqueueAsync(42, CancellationToken.None);
+        _ = await q2.EnqueueAsync(42, CancellationToken.None);
         await Task.Delay(50);
         calls.Should().Be(2);
         release2.TrySetResult(true);
@@ -116,9 +116,9 @@ internal class WorkQueueTests
         }
 
         await using var q = new WorkQueue<int>("t", capacity: 10, readers: 1, processItem: Handle, CancellationToken.None, meter);
-        await q.EnqueueAsync(1, CancellationToken.None);
-        await q.EnqueueAsync(2, CancellationToken.None);
-        await q.EnqueueAsync(3, CancellationToken.None);
+        _ = await q.EnqueueAsync(1, CancellationToken.None);
+        _ = await q.EnqueueAsync(2, CancellationToken.None);
+        _ = await q.EnqueueAsync(3, CancellationToken.None);
 
         var idle = q.WhenIdleAsync();
         await Task.WhenAny(idle, Task.Delay(DefaultTimeout));
@@ -148,8 +148,8 @@ internal class WorkQueueTests
         await Task.WhenAny(q.WorkersReadyAsync(), Task.Delay(DefaultTimeout));
         q.WorkersReadyAsync().IsCompleted.Should().BeTrue();
 
-        await q.EnqueueAsync(1, CancellationToken.None);
-        await q.EnqueueAsync(2, CancellationToken.None);
+        _ = await q.EnqueueAsync(1, CancellationToken.None);
+        _ = await q.EnqueueAsync(2, CancellationToken.None);
 
         // Wait until both handlers have started (or timeout to avoid hangs on slow CI)
         await Task.WhenAny(bothStarted.Task, Task.Delay(DefaultTimeout));
@@ -176,11 +176,11 @@ internal class WorkQueueTests
         await using var q = new WorkQueue<int>("t", capacity: 2, readers: 1, processItem: Handle, CancellationToken.None, meter);
 
         // First enqueue: reader takes it immediately and waits on semaphore
-        await q.EnqueueAsync(1, CancellationToken.None);
+        _ = await q.EnqueueAsync(1, CancellationToken.None);
 
         // Fill buffer to capacity
-        await q.EnqueueAsync(2, CancellationToken.None); // buffer: 1
-        await q.EnqueueAsync(3, CancellationToken.None); // buffer: 2 (full)
+        _ = await q.EnqueueAsync(2, CancellationToken.None); // buffer: 1
+        _ = await q.EnqueueAsync(3, CancellationToken.None); // buffer: 2 (full)
 
         // Next enqueue should block until a slot is freed
         var enqueueFourth = q.EnqueueAsync(4, CancellationToken.None).AsTask();
@@ -238,7 +238,7 @@ internal class WorkQueueTests
 
         for (var i = 0; i < items; i++)
         {
-            await q.EnqueueAsync(i, CancellationToken.None);
+            _ = await q.EnqueueAsync(i, CancellationToken.None);
         }
 
         var idle = q.WhenIdleAsync();
