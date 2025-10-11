@@ -3,7 +3,10 @@ using System.Text.Json.Nodes;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
 using RepoQL.Formats.Mermaid.Rules;
-using RepoQL.Grammar;
+using RepoQL.Grammar.Diagnostics;
+using RepoQL.Grammar.Language;
+using RepoQL.Grammar.Rules;
+using RepoQL.Grammar.Syntax;
 
 namespace RepoQL.Formats.Mermaid;
 

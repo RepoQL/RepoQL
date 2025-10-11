@@ -1,0 +1,16 @@
+{% comment -%}
+Unstructured output — table layout
+Model:
+  header: string
+  separator: string
+  rows: [string]
+  display_count: number
+  total_count: number
+{% endcomment -%}
+{{- header }}
+{{- separator }}
+{%- for line in rows -%}
+{{- line }}
+{% endfor -%}
+[{{- display_count | abbr }} / {{- total_count | abbr }} rows]
+

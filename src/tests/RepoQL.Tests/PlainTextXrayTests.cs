@@ -5,7 +5,7 @@ using RepoQL.FileSystem.InMemory;
 
 namespace RepoQL.Tests;
 
-public class PlainTextXrayTests
+internal class PlainTextXrayTests
 {
     [Test]
     public async Task PlainTextLoader_Populates_XRay_Headline_And_Terse_Summary()

@@ -8,10 +8,16 @@ public static class StandardFilters
 {
     public static void RegisterAll(TemplateOptions options)
     {
+        ArgumentNullException.ThrowIfNull(options);
         var filters = options.Filters;
         filters.AddFilter("filesize", FileSize);
         filters.AddFilter("time_ago", TimeAgo);
         filters.AddFilter("pluralize", Pluralize);
+        filters.AddFilter("abbr", Abbreviate);
+        filters.AddFilter("normalize_newlines", NormalizeNewlines);
+        filters.AddFilter("is_multiline", IsMultiline);
+        filters.AddFilter("non_empty_lines", NonEmptyLines);
+        filters.AddFilter("single_line", SingleLine);
     }
 
     // {{ bytes | filesize }} -> "1.23 MB"
@@ -27,7 +33,7 @@ public static class StandardFilters
     {
         // Try to coerce to DateTimeOffset: handle DateTimeOffset, DateTime, numeric unix seconds, or ISO string
         var obj = input.ToObjectValue();
-        DateTimeOffset dt = DateTimeOffset.UtcNow;
+        var dt = DateTimeOffset.UtcNow;
 
         switch (obj)
         {
@@ -71,7 +77,7 @@ public static class StandardFilters
     private static ValueTask<FluidValue> Pluralize(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
         var word = input.ToStringValue();
-        int count = 0;
+        var count = 0;
         var a0 = args.At(0);
         if (!a0.IsNil())
         {
@@ -94,4 +100,98 @@ public static class StandardFilters
         if (bytes >= KB) return ($"{bytes / (double)KB:0.##} KB");
         return ($"{bytes} B");
     }
+
+    // {{ 16000 | abbr }} -> "16k" ; optional decimals: {{ 1234000 | abbr: 1 }} -> "1.2M"
+    private static ValueTask<FluidValue> Abbreviate(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        // Fluid's ToNumberValue returns a decimal; normalize to double for formatting logic
+        var n = Convert.ToDouble(input.ToNumberValue(), CultureInfo.InvariantCulture);
+        var decimalsArg = args.At(0);
+        var decimals = 0;
+        if (!decimalsArg.IsNil())
+        {
+            try
+            {
+                var dv = Convert.ToDouble(decimalsArg.ToNumberValue(), CultureInfo.InvariantCulture);
+                decimals = (int)Math.Max(0, Math.Round(dv));
+            }
+            catch { decimals = 0; }
+        }
+        var s = Abbr(n, decimals);
+        return new ValueTask<FluidValue>(new StringValue(s));
+    }
+
+    private static string Abbr(double value, int decimals)
+    {
+        var abs = Math.Abs(value);
+        string suffix;
+        var scaled = value;
+        if (abs >= 1_000_000_000_000d)
+        {
+            suffix = "T";
+            scaled = value / 1_000_000_000_000d;
+        }
+        else if (abs >= 1_000_000_000d)
+        {
+            suffix = "B";
+        }
+        else if (abs >= 1_000_000d)
+        {
+            suffix = "M";
+            scaled = value / 1_000_000d;
+        }
+        else if (abs >= 1_000d)
+        {
+            suffix = "k";
+            scaled = value / 1_000d;
+        }
+        else
+        {
+            suffix = "";
+            scaled = value;
+        }
+
+        var fmt = decimals <= 0 ? "0" : $"0.{new string('#', decimals)}";
+        return scaled.ToString(fmt, System.Globalization.CultureInfo.InvariantCulture) + suffix;
+    }
+
+    // normalize_newlines: CRLF/CR -> LF (tabs preserved)
+    private static ValueTask<FluidValue> NormalizeNewlines(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = input.ToStringValue() ?? string.Empty;
+        s = s.Replace("\r\n", "\n").Replace('\r', '\n');
+        return new ValueTask<FluidValue>(new StringValue(s));
+    }
+
+    // is_multiline: true if contains a newline after normalization
+    private static ValueTask<FluidValue> IsMultiline(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = input.ToStringValue() ?? string.Empty;
+        var has = s.Contains('\n');
+        return new ValueTask<FluidValue>(has ? BooleanValue.True : BooleanValue.False);
+    }
+
+    // non_empty_lines: normalize newlines and split, dropping empty/whitespace-only lines
+    private static ValueTask<FluidValue> NonEmptyLines(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = input.ToStringValue() ?? string.Empty;
+        s = s.Replace("\r\n", "\n").Replace('\r', '\n');
+        var lines = s.Split('\n');
+        var list = new List<FluidValue>(lines.Length);
+        foreach (var ln in lines)
+        {
+            if (!string.IsNullOrWhiteSpace(ln)) list.Add(new StringValue(ln));
+        }
+        return new ValueTask<FluidValue>(new ArrayValue(list));
+    }
+
+    // single_line: normalize then replace newlines/tabs with spaces
+    private static ValueTask<FluidValue> SingleLine(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = input.ToStringValue() ?? string.Empty;
+        s = s.Replace("\r\n", "\n").Replace('\r', '\n');
+        s = s.Replace('\n', ' ').Replace('\t', ' ');
+        return new ValueTask<FluidValue>(new StringValue(s));
+    }
 }
+

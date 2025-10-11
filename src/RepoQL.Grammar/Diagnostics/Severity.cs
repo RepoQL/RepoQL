@@ -1,3 +1,3 @@
-namespace RepoQL.Grammar;
+namespace RepoQL.Grammar.Diagnostics;
 
 public enum Severity { Info, Warning, Error }

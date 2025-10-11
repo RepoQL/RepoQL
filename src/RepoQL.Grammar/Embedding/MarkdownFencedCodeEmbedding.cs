@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
+using RepoQL.Grammar.Core;
 
-namespace RepoQL.Grammar;
+namespace RepoQL.Grammar.Embedding;
 
 /// <summary>
 /// Finds triple-backtick fenced code blocks and resolves their language.

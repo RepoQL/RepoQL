@@ -1,4 +1,4 @@
-namespace RepoQL.Grammar;
+namespace RepoQL.Grammar.Utilities;
 
 internal sealed class LineMap
 {

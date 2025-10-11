@@ -15,7 +15,7 @@ using RepoQL.Tests.Scaffolding;
 
 namespace RepoQL.Tests;
 
-public class FrontmatterParsingTests
+internal class FrontmatterParsingTests
 {
     [Test]
     public async Task MarkdownFrontmatter_IsFlattenedIntoDocumentProps()
@@ -83,7 +83,7 @@ public class FrontmatterParsingTests
         // Add the file AFTER start to avoid enumeration/dedup race
         fs.AddOrUpdateText("docs/fm.md", content);
         // Explicitly queue and wait for the indexer to become idle
-        await indexer.QueueForIndexingAsync(uri);
+        await indexer.QueueForIndexingAsync([uri]);
         await indexer.WaitForIdle();
         var flush = await writer.FlushAsync();
         var status = writer.GetStatus();

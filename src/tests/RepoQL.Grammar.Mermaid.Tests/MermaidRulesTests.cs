@@ -3,6 +3,9 @@ using RepoQL.Formats.Mermaid;
 using RepoQL.Formats.Mermaid.Rules;
 using AwesomeAssertions;
 using System.Text;
+using RepoQL.Grammar.Core;
+using RepoQL.Grammar.Language;
+using RepoQL.Grammar.Rules;
 
 namespace RepoQL.Grammar.Mermaid.Tests;
 

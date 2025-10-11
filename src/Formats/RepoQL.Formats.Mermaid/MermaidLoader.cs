@@ -1,18 +1,22 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
 
 namespace RepoQL.Formats.Mermaid;
 
-public sealed class MermaidLoader(ITemplateRenderer? renderer) : IFormatLoader, IFormatMaterializer
+public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<MermaidLoader>? logger = null) : IFormatLoader, IFormatMaterializer
 {
+    private ILogger<MermaidLoader> Logger { get; } = logger ?? NullLogger<MermaidLoader>.Instance;
+
     private readonly ITemplateRenderer? _renderer = renderer ?? new LiquidTemplateRenderer(
         assembly: typeof(MermaidLoader).Assembly,
         resourceRoot: "RepoQL.Formats.Mermaid.Templates");
 
     public MermaidLoader() : this(null) { }
 
-    internal const string StateMetadataKey = "mermaid.state";
+    private const string StateMetadataKey = "mermaid.state";
 
     private static readonly string[] Extensions = [".mmd", ".mermaid"];
     private static readonly SemanticMediaType MermaidMediaType = SemanticMediaType
@@ -30,7 +34,7 @@ public sealed class MermaidLoader(ITemplateRenderer? renderer) : IFormatLoader, 
                && string.Equals(mediaType.Subtype, MermaidMediaType.Subtype, StringComparison.OrdinalIgnoreCase);
     }
 
-    public Task<bool> CanLoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default)
+    public async Task<bool> CanLoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(artifact);
 
@@ -38,7 +42,7 @@ public sealed class MermaidLoader(ITemplateRenderer? renderer) : IFormatLoader, 
         if (Extensions.Any(name.EndsWith))
         {
             artifact.MediaType = MermaidMediaType;
-            return Task.FromResult(true);
+            return true;
         }
 
         if (artifact.MediaType is not null &&
@@ -46,15 +50,15 @@ public sealed class MermaidLoader(ITemplateRenderer? renderer) : IFormatLoader, 
              string.Equals(artifact.MediaType.Kind, "mermaid.doc", StringComparison.OrdinalIgnoreCase)))
         {
             artifact.MediaType = artifact.MediaType.WithKind("mermaid.doc");
-            return Task.FromResult(true);
+            return true;
         }
 
         try
         {
-            using var stream = artifact.File.CreateReadStream();
+            await using var stream = artifact.File.CreateReadStream();
             using var reader = new StreamReader(stream);
             string? line;
-            while ((line = reader.ReadLine()) is not null)
+            while ((line = await reader.ReadLineAsync(cancellationToken)) is not null)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 var trimmed = line.TrimStart();
@@ -64,16 +68,19 @@ public sealed class MermaidLoader(ITemplateRenderer? renderer) : IFormatLoader, 
                     trimmed.StartsWith("pie", StringComparison.OrdinalIgnoreCase))
                 {
                     artifact.MediaType = MermaidMediaType;
-                    return Task.FromResult(true);
+                    return true;
                 }
                 break;
             }
         }
-        catch
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
         {
+            LogCouldNotLoadMermaidDiagram(Logger, ex);
         }
 
-        return Task.FromResult(false);
+        return false;
     }
 
     public async Task<DocumentModel> LoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default)
@@ -114,7 +121,7 @@ public sealed class MermaidLoader(ITemplateRenderer? renderer) : IFormatLoader, 
 
     public Records Materialize(DocumentModel document)
     {
-        var state = document.GetMetadata<MermaidDocumentState>(StateMetadataKey)
+        var state = document.GetMetadataOrDefault<MermaidDocumentState>(StateMetadataKey)
             ?? throw new InvalidOperationException("Mermaid document missing state metadata.");
 
         // X-ray via Liquid: headline, summary, structure (best effort)
@@ -357,19 +364,31 @@ public sealed class MermaidLoader(ITemplateRenderer? renderer) : IFormatLoader, 
             CreatedAt = now
         };
 
-    private static string GetFileName(RepoUri uri)
+    private string GetFileName(RepoUri uri)
     {
         try
         {
             if (uri.IsFile)
             {
                 var lp = uri.LocalPath;
-                if (!string.IsNullOrEmpty(lp)) return Path.GetFileName(lp);
+                if (!string.IsNullOrEmpty(lp)) 
+                    return Path.GetFileName(lp);
             }
         }
-        catch { }
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            LogCouldNotGetFileName(Logger, ex);
+        }
         var ap = Uri.UnescapeDataString(uri.AbsolutePath);
         var slash = ap.LastIndexOf('/') >= 0 ? ap[(ap.LastIndexOf('/') + 1)..] : ap;
         return string.IsNullOrEmpty(slash) ? uri.AbsoluteUri : slash;
     }
+
+    [LoggerMessage(LogLevel.Warning, "Could not load mermaid diagram.")]
+    static partial void LogCouldNotLoadMermaidDiagram(ILogger<MermaidLoader> logger, Exception ex);
+
+    [LoggerMessage(LogLevel.Warning, "Could not get file name")]
+    static partial void LogCouldNotGetFileName(ILogger<MermaidLoader> logger, Exception ex);
 }

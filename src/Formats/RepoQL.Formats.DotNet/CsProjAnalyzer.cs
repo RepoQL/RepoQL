@@ -19,7 +19,7 @@ public sealed class CsProjAnalyzer : IFormatAnalyzer
     public async IAsyncEnumerable<AnalysisResult> AnalyzeAsync(DocumentModel document, AnalyzerContext context, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (!Supports(document.MediaType)) yield break;
-        var state = document.GetMetadata<CsProjState>(CsProjLoader.StateKey);
+        var state = document.GetMetadataOrDefault<CsProjState>(CsProjLoader.StateKey);
         if (state is null) yield break;
 
         // Basic rule: PackageReference without Version or with floating (contains '*') → warning

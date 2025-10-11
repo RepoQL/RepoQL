@@ -1,4 +1,4 @@
-namespace RepoQL.Grammar;
+namespace RepoQL.Grammar.Core;
 
 /// <summary>
 /// Half-open span using 0-based offset and length.

@@ -13,7 +13,7 @@ using YamlDotNet.Serialization.NamingConventions;
 
 namespace RepoQL.Formats.Markdown;
 
-public sealed class MarkdownLoader(ITemplateRenderer? renderer) : IFormatLoader, IFormatMaterializer
+public sealed class MarkdownLoader(ITemplateRenderer? renderer = null) : IFormatLoader, IFormatMaterializer
 {
     internal const string StateMetadataKey = "markdown.state";
 
@@ -34,7 +34,7 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer) : IFormatLoader,
         .UseMediaLinks()
         .Build();
 
-    private readonly ITemplateRenderer? _renderer = renderer ?? new LiquidTemplateRenderer(
+    private readonly ITemplateRenderer _renderer = new LiquidTemplateRenderer(
         assembly: typeof(MarkdownLoader).Assembly,
         resourceRoot: "RepoQL.Formats.Markdown.Templates");
 
@@ -217,7 +217,7 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer) : IFormatLoader,
 
     public Records Materialize(DocumentModel document)
     {
-        if (document.GetMetadata<MarkdownDocumentState>(StateMetadataKey) is not { } state)
+        if (document.GetMetadataOrDefault<MarkdownDocumentState>(StateMetadataKey) is not { } state)
             throw new InvalidOperationException("Markdown document missing state metadata.");
 
         // Compute x-ray fields via Liquid templates (best effort)
@@ -230,8 +230,8 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer) : IFormatLoader,
             {
                 var fileName = GetFileName(document.Uri);
                 // Compute additional counts from SyntaxTree when available
-                int imagesCount = 0;
-                int tablesCount = 0;
+                var imagesCount = 0;
+                var tablesCount = 0;
                 try
                 {
                     if (document.SyntaxTree is MarkdownDocument mdDoc)
@@ -249,11 +249,11 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer) : IFormatLoader,
                     .OrderByDescending(g => g.Count())
                     .ToDictionary(g => g.Key, g => g.Count());
 
-                int frontmatterKeys = 0;
+                var frontmatterKeys = 0;
                 string? title = null;
-                List<string> topics = new();
+                var topics = new List<string>();
                 string? topLang = null;
-                List<string> tags = new();
+                var tags = new List<string>();
                 try
                 {
                     if (state.Surface.DocumentProperties["frontmatter"] is JsonObject fm)
@@ -286,6 +286,7 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer) : IFormatLoader,
                     .Where(s => !string.IsNullOrWhiteSpace(s))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Take(3)
+                    .OfType<string>()
                     .ToList();
 
                 // Top language: most frequent fenced code block language
@@ -544,6 +545,7 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer) : IFormatLoader,
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "YAML frontmatter deserialization uses reflection, not AOT-compatible by design")]
     private static JsonNode? YamlToJson(string yaml)
     {
         var deserializer = new DeserializerBuilder()

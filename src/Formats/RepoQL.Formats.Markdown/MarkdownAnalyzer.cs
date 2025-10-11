@@ -20,7 +20,7 @@ public sealed class MarkdownAnalyzer : IFormatAnalyzer
 
         if (!Supports(document.MediaType)) yield break;
 
-        var state = document.GetMetadata<MarkdownDocumentState>(MarkdownLoader.StateMetadataKey);
+        var state = document.GetMetadataOrDefault<MarkdownDocumentState>(MarkdownLoader.StateMetadataKey);
         if (state is null) yield break;
 
         var ruleSettings = context.Settings.GetRule(RuleId);
@@ -65,7 +65,7 @@ public sealed class MarkdownAnalyzer : IFormatAnalyzer
             if (string.IsNullOrEmpty(anchor))
                 continue;
 
-            var targetState = targetDoc.GetMetadata<MarkdownDocumentState>(MarkdownLoader.StateMetadataKey);
+            var targetState = targetDoc.GetMetadataOrDefault<MarkdownDocumentState>(MarkdownLoader.StateMetadataKey);
             if (targetState is null)
             {
                 yield return BuildResult(document, link, ruleSettings.Severity, $"Target document '{targetContainer.AbsolutePath}' missing markdown structure");
@@ -132,7 +132,7 @@ public sealed class MarkdownAnalyzer : IFormatAnalyzer
             {
                 NodeId = link.NodeId,
                 SpanId = link.SpanId,
-                TargetUri = document.Uri.AbsoluteUri
+                TargetUri = document.Uri
             }
         };
 
@@ -187,12 +187,12 @@ public sealed class MarkdownAnalyzer : IFormatAnalyzer
                     .Where(r => r is not null)
                     .Cast<AnalysisReplacement>()
                     .ToList()
-                    ?? new List<AnalysisReplacement>();
+                    ?? [];
 
                 mapped.Add(new AnalysisFix
                 {
                     Description = fix.Description,
-                    Uri = parent.Uri.AbsoluteUri,
+                    Uri = parent.Uri,
                     Replacements = replacements
                 });
             }
@@ -204,7 +204,7 @@ public sealed class MarkdownAnalyzer : IFormatAnalyzer
             NodeId = fragment.ParentNodeId ?? child.Target?.NodeId,
             EdgeId = child.Target?.EdgeId,
             SpanId = fragment.ParentSpanId ?? child.Target?.SpanId,
-            TargetUri = parent.Uri.AbsoluteUri
+            TargetUri = parent.Uri
         };
 
         return new AnalysisResult

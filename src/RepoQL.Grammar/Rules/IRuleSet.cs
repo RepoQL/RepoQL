@@ -1,3 +1,3 @@
-namespace RepoQL.Grammar;
+namespace RepoQL.Grammar.Rules;
 
 public interface IRuleSet { IReadOnlyList<IRule> Rules { get; } }

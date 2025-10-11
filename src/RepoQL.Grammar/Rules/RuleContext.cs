@@ -1,4 +1,7 @@
-namespace RepoQL.Grammar;
+using RepoQL.Grammar.Language;
+using RepoQL.Grammar.Syntax;
+
+namespace RepoQL.Grammar.Rules;
 
 public sealed class RuleContext
 {

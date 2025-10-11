@@ -116,6 +116,9 @@ public sealed class RepoUri : Uri
             ? result
             : throw new FormatException("Invalid URI");
 
+    [SuppressMessage("Design", "CA1054:URI-like parameters should not be strings")]
+    public static implicit operator RepoUri(string uri) => Parse(uri);
+    
     // -------- RENDER / PARSE FRAGMENT --------
 
     private static string RenderFragment(Location loc)
@@ -328,5 +331,10 @@ public sealed class RepoUri : Uri
         }
 
         public override int GetHashCode() => ToString().GetHashCode();
+    }
+
+    public RepoUri ToRepoUri()
+    {
+        throw new NotImplementedException();
     }
 }

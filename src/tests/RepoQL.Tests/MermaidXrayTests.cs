@@ -1,14 +1,17 @@
+using System.Diagnostics.CodeAnalysis;
 using AwesomeAssertions;
 using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Core;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
+using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.InMemory;
 
 namespace RepoQL.Tests;
 
-public class MermaidXrayTests
+[SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope")]
+internal class MermaidXrayTests
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 

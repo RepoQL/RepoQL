@@ -11,9 +11,5 @@
     <PackageReference Include="AwesomeAssertions" Version="9.*" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\..\RepoQL.Cli\RepoQL.Cli.csproj" />
-  </ItemGroup>
-
 </Project>
 

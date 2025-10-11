@@ -1,4 +1,4 @@
-namespace RepoQL.App.Host;
+namespace RepoQL.ConsoleApp.Host;
 
 public record RepositoryConfiguration
 {

@@ -1,4 +1,6 @@
-namespace RepoQL.Contracts;
+using RepoQL.Contracts;
+
+namespace RepoQL.Protocol;
 
 /// <summary>
 /// Options to configure a <see cref="RepoQlClient"/>.

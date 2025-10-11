@@ -3,7 +3,7 @@ using RepoQL.Core;
 
 namespace RepoQL.Tests;
 
-public sealed class TestObserver(Action<Exception> onError, Action<IndexerEvent> onNext) : IObserver<IndexerEvent>
+internal sealed class TestObserver(Action<Exception> onError, Action<IndexerEvent> onNext) : IObserver<IndexerEvent>
 {
     public void OnCompleted() { }
     public void OnError(Exception error) => onError(error);

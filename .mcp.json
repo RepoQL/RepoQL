@@ -16,7 +16,7 @@
     "query-repository": {
       "type": "stdio",
       "command": "dotnet",
-      "args": ["./artifacts/dist/fdd/repoql-mcp.dll"]
+      "args": ["./artifacts/bin/RepoQL.ConsoleApp/debug/repoql.dll", "mcp"]
     }
   }
 }

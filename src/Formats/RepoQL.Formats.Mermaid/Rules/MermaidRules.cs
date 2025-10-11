@@ -1,16 +1,17 @@
-
-using RepoQL.Grammar;
+using RepoQL.Grammar.Core;
+using RepoQL.Grammar.Diagnostics;
+using RepoQL.Grammar.Rules;
 
 namespace RepoQL.Formats.Mermaid.Rules;
 
 public sealed class FlowchartEscapeLabelsRule : IRule
 {
+    private static readonly System.Buffers.SearchValues<char> ProblemChars = System.Buffers.SearchValues.Create("|])}:<>\"");
+
     public DiagnosticId Id => new("mmd/flowchart/escape-labels");
     public string Title => "Quote/escape troublesome label characters";
     public string Description => "Flowchart labels with characters like ], ), }, |, :, or quotes should be quoted and inner quotes escaped.";
     public Severity DefaultSeverity => Severity.Warning;
-
-    private static readonly char[] ProblemChars = ['|', ']', ')', '}', ':', '<', '>', '"'];
 
     public IEnumerable<Diagnostic> Analyze(RuleContext ctx)
     {
@@ -29,12 +30,12 @@ public sealed class FlowchartEscapeLabelsRule : IRule
             if (fixes.Count > 0)
             {
                 yield return new Diagnostic(Id, Severity.Warning, "Quote/escape label or close shape.", n.Span,
-                    new[] { new CodeFix("Fix node", fixes) });
+                    [new CodeFix("Fix node", fixes)]);
             }
         }
     }
 
-    private static bool NeedsQuote(string s) => s.IndexOfAny(ProblemChars) >= 0;
+    private static bool NeedsQuote(string s) => s.AsSpan().IndexOfAny(ProblemChars) >= 0;
 }
 
 public sealed class PieSafetyRule : IRule
@@ -53,14 +54,14 @@ public sealed class PieSafetyRule : IRule
             {
                 var qlbl = "\"" + e.LabelRaw.Replace("\"", "&quot;") + "\"";
                 yield return new Diagnostic(Id, Severity.Error, "Pie label must be quoted.", e.LabelSpan,
-                    new[] { new CodeFix("Quote label", new[] { new TextChange(e.LabelSpan, qlbl) }) });
+                    [new CodeFix("Quote label", [new TextChange(e.LabelSpan, qlbl)])]);
             }
             if (!(e.Value > 0))
             {
                 var abs = Math.Abs(e.Value);
                 var repl = abs.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 yield return new Diagnostic(Id, Severity.Error, "Pie value must be positive.", e.ValueSpan,
-                    new[] { new CodeFix("Make value positive", new[] { new TextChange(e.ValueSpan, repl) }) });
+                    [new CodeFix("Make value positive", [new TextChange(e.ValueSpan, repl)])]);
             }
         }
     }
@@ -81,7 +82,7 @@ public sealed class SequenceAvoidBareEndRule : IRule
             if (string.Equals(m.Text.Trim(), "end", StringComparison.OrdinalIgnoreCase))
             {
                 yield return new Diagnostic(Id, Severity.Warning, "Wrap 'end' (e.g., (end)).", m.TextSpan,
-                    new[] { new CodeFix("Wrap as (end)", new[] { new TextChange(m.TextSpan, "(end)") }) });
+                    [new CodeFix("Wrap as (end)", [new TextChange(m.TextSpan, "(end)")])]);
             }
         }
     }
@@ -89,14 +90,14 @@ public sealed class SequenceAvoidBareEndRule : IRule
 
 public sealed class MermaidRuleSet : IRuleSet
 {
-    public IReadOnlyList<IRule> Rules { get; } = new IRule[]
-    {
+    public IReadOnlyList<IRule> Rules { get; } =
+    [
         new FlowchartEscapeLabelsRule(),
         new PieSafetyRule(),
         new SequenceAvoidBareEndRule(),
         new FlowSubgraphClosureRule(),
         new SequenceBlockClosureRule()
-    };
+    ];
 }
 
 public sealed class FlowSubgraphClosureRule : IRule
@@ -118,8 +119,9 @@ public sealed class FlowSubgraphClosureRule : IRule
         if (open > 0)
         {
             var endPos = ctx.Tree.SourceText.Length;
-            var fix = new CodeFix("Append end", new[] { new TextChange(TextSpan.FromBounds(endPos, endPos), "\nend\n") });
-            yield return new Diagnostic(Id, Severity.Error, "Unclosed subgraph detected.", TextSpan.FromBounds(endPos, endPos), new[] { fix });
+            var fix = new CodeFix("Append end", [new TextChange(TextSpan.FromBounds(endPos, endPos), "\nend\n")]);
+            yield return new Diagnostic(Id, Severity.Error, "Unclosed subgraph detected.", TextSpan.FromBounds(endPos, endPos),
+                [fix]);
         }
     }
 }
@@ -143,8 +145,9 @@ public sealed class SequenceBlockClosureRule : IRule
         if (open > 0)
         {
             var endPos = ctx.Tree.SourceText.Length;
-            var fix = new CodeFix("Append end", new[] { new TextChange(TextSpan.FromBounds(endPos, endPos), "\nend\n") });
-            yield return new Diagnostic(Id, Severity.Error, "Unclosed sequence block detected.", TextSpan.FromBounds(endPos, endPos), new[] { fix });
+            var fix = new CodeFix("Append end", [new TextChange(TextSpan.FromBounds(endPos, endPos), "\nend\n")]);
+            yield return new Diagnostic(Id, Severity.Error, "Unclosed sequence block detected.", TextSpan.FromBounds(endPos, endPos),
+                [fix]);
         }
     }
 }

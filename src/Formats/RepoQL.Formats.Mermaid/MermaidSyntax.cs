@@ -1,6 +1,7 @@
-namespace RepoQL.Formats.Mermaid;
+using RepoQL.Grammar.Core;
+using RepoQL.Grammar.Syntax;
 
-using RepoQL.Grammar;
+namespace RepoQL.Formats.Mermaid;
 
 public abstract class MNode(string kind, TextSpan span) : ISyntaxNode
 {

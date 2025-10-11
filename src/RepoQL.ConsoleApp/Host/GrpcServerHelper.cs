@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using RepoQL.Protocol.Transport;
 
-namespace RepoQL.App.Host;
+namespace RepoQL.ConsoleApp.Host;
 
 public static class GrpcServerHelper
 {

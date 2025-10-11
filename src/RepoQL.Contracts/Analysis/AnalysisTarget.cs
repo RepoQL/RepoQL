@@ -8,5 +8,5 @@ public sealed class AnalysisTarget
     public Guid? NodeId { get; init; }
     public Guid? EdgeId { get; init; }
     public Guid? SpanId { get; init; }
-    public string? TargetUri { get; init; }
+    public RepoUri? TargetUri { get; init; }
 }

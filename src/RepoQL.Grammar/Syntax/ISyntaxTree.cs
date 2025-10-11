@@ -1,4 +1,7 @@
-namespace RepoQL.Grammar;
+using RepoQL.Grammar.Core;
+using RepoQL.Grammar.Diagnostics;
+
+namespace RepoQL.Grammar.Syntax;
 
 public interface ISyntaxTree
 {

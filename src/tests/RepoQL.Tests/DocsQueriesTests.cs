@@ -14,7 +14,7 @@ using RepoQL.Tests.Scaffolding;
 
 namespace RepoQL.Tests;
 
-public class DocsQueriesTests
+internal class DocsQueriesTests
 {
     [Test]
     public async Task EmbeddedDocs_AreQueryable_ViaQuickstartPatterns()
@@ -61,14 +61,16 @@ public class DocsQueriesTests
 
         // 1) List embedded docs (no restrictive subpath filter)
         var list = store.RawQuery(
-            @"SELECT repository_uri_file_name(uri) AS file_name,
-                      uri,
-                      properties->>'documentationCategory' AS category,
-                      properties->>'description'           AS description
-               FROM node
-               WHERE kind='document' AND lower(uri) LIKE 'embed://%'
-               ORDER BY lower(file_name)");
-        if (!list.Any())
+            """
+            SELECT repository_uri_file_name(uri) AS file_name,
+                                  uri,
+                                  properties->>'documentationCategory' AS category,
+                                  properties->>'description'           AS description
+                           FROM node
+                           WHERE kind='document' AND lower(uri) LIKE 'embed://%'
+                           ORDER BY lower(file_name)
+            """).ToArray();
+        if (list.Length == 0)
         {
             var status = writer.GetStatus();
             Console.WriteLine($"Writer status: processed={status.TotalProcessed}, pending={status.PendingCount}");
@@ -96,38 +98,46 @@ public class DocsQueriesTests
 
         // 2) Media type filter: ensure at least one embedded document is markdown
         var markdownDocs = store.RawQuery(
-            @"SELECT n.uri
-              FROM node n
-              JOIN artifact a ON a.id = n.artifact_id
-              WHERE n.kind='document'
-                AND lower(n.uri) LIKE 'embed://%'
-                AND lower(a.media_type) LIKE '%text/markdown%'");
+            """
+            SELECT n.uri
+                          FROM node n
+                          JOIN artifact a ON a.id = n.artifact_id
+                          WHERE n.kind='document'
+                            AND lower(n.uri) LIKE 'embed://%'
+                            AND lower(a.media_type) LIKE '%text/markdown%'
+            """);
         markdownDocs.Should().NotBeEmpty("at least one embedded doc should be markdown");
 
         // 3) Read full content via JOIN artifact
         var full = store.RawQuery(
-            @"SELECT a.text_content
-              FROM node n JOIN artifact a ON a.id = n.artifact_id
-              WHERE n.uri = ?",
+            """
+            SELECT a.text_content
+                          FROM node n JOIN artifact a ON a.id = n.artifact_id
+                          WHERE n.uri = ?
+            """,
             schemaUri);
         full.Should().NotBeEmpty("content should be present for documents");
         (full.First()["text_content"]?.ToString() ?? string.Empty).Length.Should().BeGreaterThan(0);
 
         // 4) Focused snippet for the first lines
         var snippet = store.RawQuery(
-            @"SELECT line_number, text, is_focus
-              FROM snippet(? || '#line=1', 3)",
+            """
+            SELECT line_number, text, is_focus
+                          FROM snippet(? || '#line=1', 3)
+            """,
             schemaUri);
         snippet.Should().NotBeEmpty("snippet should return a small window");
 
         // 5) Structural navigation: headings exist for Schema.md
         var headings = store.RawQuery(
-            @"SELECT child.properties->>'text' AS heading
-              FROM node doc
-              JOIN edge e     ON e.source_node_id = doc.id AND e.is_composition = TRUE AND e.type = 'HAS_PART'
-              JOIN node child ON child.id = e.destination_node_id AND child.kind = 'md_heading'
-              WHERE doc.uri = ?
-              ORDER BY e.ordinal",
+            """
+            SELECT child.properties->>'text' AS heading
+                          FROM node doc
+                          JOIN edge e     ON e.source_node_id = doc.id AND e.is_composition = TRUE AND e.type = 'HAS_PART'
+                          JOIN node child ON child.id = e.destination_node_id AND child.kind = 'md_heading'
+                          WHERE doc.uri = ?
+                          ORDER BY e.ordinal
+            """,
             schemaUri);
         headings.Should().NotBeEmpty("schema doc should have headings");
 
@@ -137,7 +147,7 @@ public class DocsQueriesTests
         try { File.Delete(dbPath); } catch { }
     }
 
-    private sealed class TestClassifier : FileSystem.IFileClassifier
+    private sealed class TestClassifier : IFileClassifier
     {
         public SemanticMediaType GetMediaType(Microsoft.Extensions.FileProviders.IFileInfo fileInfo)
             => SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc");
@@ -155,9 +165,9 @@ public class DocsQueriesTests
         var descriptors = new[]
         {
             new FormatDescriptor(SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"), markdownLoader, markdownAnalyzer, markdownLoader,
-                new[] { "markdown" }),
+                ["markdown"]),
             new FormatDescriptor(SemanticMediaType.Create("text", "mermaid").WithKind("mermaid.doc"), mermaidLoader, mermaidAnalyzer, mermaidLoader,
-                new[] { "mermaid", "mmd" }),
+                ["mermaid", "mmd"]),
             new FormatDescriptor(SemanticMediaType.Create("text", "plain").WithKind("plain.document"), plainLoader, plainAnalyzer, plainLoader)
         };
 

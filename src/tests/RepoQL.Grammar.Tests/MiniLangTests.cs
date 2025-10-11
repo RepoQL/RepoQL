@@ -1,13 +1,18 @@
 using System.Collections.Immutable;
-using Pidgin;
-using static Pidgin.Parser;
 using AwesomeAssertions;
-using TUnit.Core;
+using Pidgin;
+using RepoQL.Grammar.Core;
+using RepoQL.Grammar.Diagnostics;
+using RepoQL.Grammar.Parsing.Pidgin;
+using RepoQL.Grammar.Rules;
+using RepoQL.Grammar.Runner;
+using RepoQL.Grammar.Syntax;
+using static Pidgin.Parser;
 
 namespace RepoQL.Grammar.Tests;
 
 // Minimal nodes for testing
-public sealed class Node(string kind, TextSpan span, IReadOnlyList<ISyntaxNode>? children = null, string? text = null)
+internal sealed class Node(string kind, TextSpan span, IReadOnlyList<ISyntaxNode>? children = null, string? text = null)
     : ISyntaxNode
 {
     public string Kind { get; } = kind;
@@ -19,7 +24,7 @@ public sealed class Node(string kind, TextSpan span, IReadOnlyList<ISyntaxNode>?
 }
 
 // Pidgin-based tiny language: let <id> = <int> ; (repeated)
-public sealed class MiniLang : PidginLanguageBase
+internal sealed class MiniLang : PidginLanguageBase
 {
     public override string Name => "MiniLang";
 
@@ -42,11 +47,10 @@ public sealed class MiniLang : PidginLanguageBase
         KwLet.Then(Ident, (_, id) => id)
              .Before(Eq)
              .Then(Int, (id, num) => (ISyntaxNode)new Node("LetDecl", new TextSpan(0, 0),
-                 new[]
-                 {
-                     new Node("Identifier", new TextSpan(0, 0), text: id),
+             [
+                 new Node("Identifier", new TextSpan(0, 0), text: id),
                      new Node("Literal",    new TextSpan(0, 0), text: num)
-                 }))
+             ]))
              .Before(Semi);
 
     private static Parser<char, ISyntaxNode> Program =>
@@ -56,7 +60,7 @@ public sealed class MiniLang : PidginLanguageBase
     protected override Parser<char, ISyntaxNode> Root => SkipWhitespaces.Then(Program).Before(SkipWhitespaces);
 }
 
-public sealed class DuplicateVarRule : IRule
+internal sealed class DuplicateVarRule : IRule
 {
     public DiagnosticId Id => new("mini/duplicate-var");
     public string Title => "Duplicate variable";
@@ -74,18 +78,18 @@ public sealed class DuplicateVarRule : IRule
             var name = (id as Node)?.Text ?? (id.Span.Length > 0 ? text.Substring(id.Span.Start, id.Span.Length) : string.Empty);
             if (!seen.Add(name))
             {
-                yield return new Diagnostic(Id, Severity.Error, $"Duplicate '{name}'", id.Span, Array.Empty<CodeFix>());
+                yield return new Diagnostic(Id, Severity.Error, $"Duplicate '{name}'", id.Span, []);
             }
         }
     }
 }
 
-public sealed class RuleSet(params IRule[] rules) : IRuleSet
+internal sealed class RuleSet(params IRule[] rules) : IRuleSet
 {
     public IReadOnlyList<IRule> Rules { get; } = rules;
 }
 
-public class MiniLangTests
+internal class MiniLangTests
 {
     [Test]
     public Task DuplicateVar_IsFlagged()

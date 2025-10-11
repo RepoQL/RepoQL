@@ -1,4 +1,4 @@
-namespace RepoQL.Grammar;
+namespace RepoQL.Grammar.Embedding;
 
 public interface IEmbedding
 {

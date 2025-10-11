@@ -6,16 +6,20 @@ namespace RepoQL.Core;
 
 public interface IRepositoryIndexer : IHostedService, IObservable<IndexerEvent>, IAsyncDisposable
 {
-    Task QueueForIndexingAsync(IFileInfo[] files);
-    Task QueueForIndexingAsync(RepoUri[] uris);
+    Task QueueForIndexingAsync(IEnumerable<IFileInfo> files, bool skipUnchanged = true);
+    Task QueueForIndexingAsync(IEnumerable<RepoUri> uris, bool skipUnchanged = true);
     Task WaitForWriterIdle(CancellationToken cancellationToken = default);
     Task WaitForIdle(CancellationToken cancellationToken = default);
 
-    record ItemDiscoveredEvent(IFileInfo FileInfo, RepoUri CurrentUri) : IndexerEvent(FileInfo, CurrentUri);
-    record ItemDeletedEvent(IFileInfo FileInfo, RepoUri CurrentUri) : IndexerEvent(FileInfo, CurrentUri);
-    record ItemMovedEvent(IFileInfo FileInfo, RepoUri CurrentUri, RepoUri PreviousUri) : IndexerEvent(FileInfo, CurrentUri);
-    record ItemUpdatedEvent(IFileInfo FileInfo, RepoUri CurrentUri) : IndexerEvent(FileInfo, CurrentUri);
-    record ItemClassifiedEvent(IFileInfo FileInfo, RepoUri CurrentUri, SemanticMediaType MediaType) : IndexerEvent(FileInfo, CurrentUri);
+    int ClassificationQueueDepth { get; }
+    int ParsingQueueDepth { get; }
+    int EnrichmentQueueDepth { get; }
+
+    internal record ItemDiscoveredEvent(IFileInfo FileInfo, RepoUri CurrentUri) : IndexerEvent(FileInfo, CurrentUri);
+    internal record ItemDeletedEvent(IFileInfo FileInfo, RepoUri CurrentUri) : IndexerEvent(FileInfo, CurrentUri);
+    internal record ItemMovedEvent(IFileInfo FileInfo, RepoUri CurrentUri, RepoUri PreviousUri) : IndexerEvent(FileInfo, CurrentUri);
+    internal record ItemUpdatedEvent(IFileInfo FileInfo, RepoUri CurrentUri) : IndexerEvent(FileInfo, CurrentUri);
+    internal record ItemClassifiedEvent(IFileInfo FileInfo, RepoUri CurrentUri, SemanticMediaType MediaType) : IndexerEvent(FileInfo, CurrentUri);
 
     record ItemIndexedEvent(IFileInfo FileInfo, RepoUri CurrentUri, SemanticMediaType MediaType) : IndexerEvent(FileInfo, CurrentUri);
 }

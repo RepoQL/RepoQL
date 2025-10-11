@@ -1,15 +1,18 @@
+using System.Diagnostics.CodeAnalysis;
 using AwesomeAssertions;
 using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Core;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
+using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.InMemory;
 using RepoQL.Formats.DotNet;
 
 namespace RepoQL.Tests;
 
-public class CsProjVariantsTests
+[SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope")]
+internal class CsProjVariantsTests
 {
     private sealed class StubClassifier : IFileClassifier
     {

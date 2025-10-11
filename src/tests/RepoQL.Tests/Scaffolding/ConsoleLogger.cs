@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging;
 
 namespace RepoQL.Tests.Scaffolding;
 
-public sealed class ConsoleLogger<T> : ILogger<T>
+internal sealed class ConsoleLogger<T> : ILogger<T>
 {
     public IDisposable BeginScope<TState>(TState state) where TState : notnull => new Noop();
     public bool IsEnabled(LogLevel logLevel) => true;

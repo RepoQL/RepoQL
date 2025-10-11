@@ -76,7 +76,7 @@ public sealed class AnalysisWorkspace(
             return list;
         }
 
-        return Array.Empty<EmbeddedFragment>();
+        return [];
     }
 
     private async Task<DocumentModel> LoadWithDescriptorAsync(FormatDescriptor descriptor, DiscoveredArtifact artifact, CancellationToken cancellationToken)

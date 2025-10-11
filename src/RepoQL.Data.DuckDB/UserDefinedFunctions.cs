@@ -788,8 +788,17 @@ public static class RepositoryUserDefinedFunctions
                             writer.WriteValue(0.0, i);
                             continue;
                         }
-                        double dot = 0, na = 0, nb = 0;
-                        for (int k = 0; k < av.Length; k++) { var x = av[k]; var y = bv[k]; dot += x * y; na += x * x; nb += y * y; }
+                        var dot = 0.0;
+                        var na = 0.0;
+                        var nb = 0.0;
+                        for (var k = 0; k < av.Length; k++)
+                        {
+                            var x = av[k];
+                            var y = bv[k];
+                            dot += x * y;
+                            na += x * x;
+                            nb += y * y;
+                        }
                         var denom = Math.Sqrt(na) * Math.Sqrt(nb);
                         var cos = denom > 0 ? dot / denom : 0.0;
                         writer.WriteValue(cos, i);
@@ -895,7 +904,10 @@ public static class RepositoryUserDefinedFunctions
         using (var w = new System.Text.Json.Utf8JsonWriter(ms))
         {
             w.WriteStartArray();
-            for (int i = 0; i < vec.Length; i++) w.WriteNumberValue(vec[i]);
+            for (var i = 0; i < vec.Length; i++)
+            {
+                w.WriteNumberValue(vec[i]);
+            }
             w.WriteEndArray();
             w.Flush();
         }

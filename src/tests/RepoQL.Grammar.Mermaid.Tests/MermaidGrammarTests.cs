@@ -1,6 +1,7 @@
 #pragma warning disable IDE0005
 using RepoQL.Formats.Mermaid;
 using AwesomeAssertions;
+using RepoQL.Grammar.Language;
 
 namespace RepoQL.Grammar.Mermaid.Tests;
 

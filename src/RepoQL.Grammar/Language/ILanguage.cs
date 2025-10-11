@@ -1,4 +1,6 @@
-namespace RepoQL.Grammar;
+using RepoQL.Grammar.Syntax;
+
+namespace RepoQL.Grammar.Language;
 
 public interface ILanguage
 {

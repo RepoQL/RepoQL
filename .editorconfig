@@ -10,8 +10,12 @@ indent_size = 4
 
 [*.cs]
 # Warnings
-dotnet_diagnostic.CS1591.severity = none
 dotnet_diagnostic.IDE0055.severity = none
+dotnet_diagnostic.CA2007.severity = none
+dotnet_diagnostic.CA1062.severity = none
+dotnet_diagnostic.CA1819.severity = none
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1031.severity = none
 
 # Style
 csharp_style_var_for_built_in_types = true

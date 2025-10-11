@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Core;
+using RepoQL.Protocol;
 
 namespace RepoQL.ConsoleApp.Helpers;
 
@@ -9,13 +10,13 @@ internal static class ProgramHelpers
     public static string ResolveRepo(string? repo)
         => RepoLocator.FindRepoRoot(string.IsNullOrWhiteSpace(repo) ? Directory.GetCurrentDirectory() : repo);
 
-    public static RepoQlClient CreateClient(string repo, TimeSpan? defaultTimeout = null)
-        => RepoQlClient.Create(new RepoQlClientOptions
+    public static async Task<RepoQlClient> CreateClientAsync(string repo, TimeSpan? defaultTimeout = null, CancellationToken cancellationToken = default)
+        => await RepoQlClient.CreateAsync(new RepoQlClientOptions
         {
             RepositoryPath = repo,
             SocketPath = ResolveSocketPath(repo),
             DefaultTimeout = defaultTimeout
-        });
+        }, cancellationToken);
 
     // Helper used by tests and local commands to build the indexing DI container
     public static ServiceProvider BuildCoreProvider(string repoRoot)

@@ -1,7 +1,11 @@
+using RepoQL.Grammar.Core;
+using RepoQL.Grammar.Diagnostics;
+using RepoQL.Grammar.Language;
+using RepoQL.Grammar.Syntax;
+
 namespace RepoQL.Formats.Mermaid;
 
 using System.Text.RegularExpressions;
-using RepoQL.Grammar;
 
 /// <summary>
 /// Tolerant Mermaid parser (flowchart/graph, sequenceDiagram, pie) using regex + line scanning.

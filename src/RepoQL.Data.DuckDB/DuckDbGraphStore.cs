@@ -78,8 +78,11 @@ namespace RepoQL.Data.DuckDB;
         var success = 0;
         var skipped = 0;
         var batchSize = 8;
-        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_BATCH_SIZE"), out var bs) && bs > 0) batchSize = bs;
-        for (int ofs = 0; ofs < rows.Count; ofs += batchSize)
+        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_BATCH_SIZE"), out var bs) && bs > 0)
+        {
+            batchSize = bs;
+        }
+        for (var ofs = 0; ofs < rows.Count; ofs += batchSize)
         {
             using var tx = _connection.BeginTransaction();
             var slice = rows.GetRange(ofs, Math.Min(batchSize, rows.Count - ofs));
@@ -123,7 +126,10 @@ namespace RepoQL.Data.DuckDB;
         using (var w = new Utf8JsonWriter(ms))
         {
             w.WriteStartArray();
-            for (int i = 0; i < vec.Length; i++) w.WriteNumberValue(vec[i]);
+            for (var i = 0; i < vec.Length; i++)
+            {
+                w.WriteNumberValue(vec[i]);
+            }
             w.WriteEndArray();
             w.Flush();
         }
@@ -137,6 +143,7 @@ namespace RepoQL.Data.DuckDB;
     /// <param name="enableExtensions">Install/Load recommended extensions when true.</param>
     /// <param name="registerUdfs">Register repository URI and media type scalar UDFs when true.</param>
     /// <param name="logger">Optional logger for macro/view creation warnings.</param>
+    /// <param name="embeddingProvider">Optional embedding provider for document embeddings.</param>
     public DuckDbGraphStore(DuckDBConnection connection, bool enableExtensions = true, bool registerUdfs = true, ILogger<DuckDbGraphStore>? logger = null, RepoQL.Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null)
     {
         this._connection = connection ?? throw new ArgumentNullException(nameof(connection));
@@ -156,6 +163,7 @@ namespace RepoQL.Data.DuckDB;
     /// <param name="enableExtensions">Install/Load recommended extensions when true.</param>
     /// <param name="registerUdfs">Register repository URI and media type scalar UDFs when true.</param>
     /// <param name="logger">Optional logger for macro/view creation warnings.</param>
+    /// <param name="embeddingProvider">Optional embedding provider for document embeddings.</param>
     public DuckDbGraphStore(string filePath, bool enableExtensions = true, bool registerUdfs = true, ILogger<DuckDbGraphStore>? logger = null, RepoQL.Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null)
     {
         _connection = new DuckDBConnection($"Data Source={filePath}");

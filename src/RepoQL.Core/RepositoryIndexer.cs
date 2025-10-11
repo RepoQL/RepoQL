@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
 using RepoQL.Contracts.Data;
@@ -30,8 +32,10 @@ public class RepositoryIndexer(
     IDatabaseWriter? dbWriter = null,
     IAnalysisResultWriter? analysisWriter = null,
     IAnalyzerSettingsProvider? settingsProvider = null,
-    string? repositoryRoot = null) : IRepositoryIndexer
+    string? repositoryRoot = null,
+    ILogger<RepositoryIndexer>? logger = null) : IRepositoryIndexer
 {
+    private ILogger<RepositoryIndexer> Logger { get; } = logger ?? NullLogger<RepositoryIndexer>.Instance;
     private static readonly ActivitySource Activity = new("RepoQL.Indexing");
     private WorkQueue<DiscoveredArtifact>? _classificationQueue;
     private WorkQueue<DiscoveredArtifact>? _parsingQueue;
@@ -329,7 +333,7 @@ public class RepositoryIndexer(
         GC.SuppressFinalize(this);
     }
 
-    public async Task QueueForIndexingAsync(params IFileInfo[] files)
+    public async Task QueueForIndexingAsync(IEnumerable<IFileInfo> files, bool skipUnchanged = true)
     {
         if (_classificationQueue is null)
             throw new InvalidOperationException("The indexer has not been started.");
@@ -351,18 +355,18 @@ public class RepositoryIndexer(
             {
                 throw new NotSupportedException("QueueForIndexingAsync(IFileInfo) cannot infer RepoUri. Use QueueForIndexingAsync(RepoUri) instead.");
             }
-            await ScheduleIfChangedAsync(file, repoUri, _stopping.Token);
+            await ScheduleIfChangedAsync(file, repoUri, !skipUnchanged, _stopping.Token);
         }
     }
 
-    public async Task QueueForIndexingAsync(params RepoUri[] uris)
+    public async Task QueueForIndexingAsync(IEnumerable<RepoUri> uris, bool skipUnchanged = true)
     {
         if (_classificationQueue is null)
             throw new InvalidOperationException("The indexer has not been started.");
         foreach (var uri in uris)
         {
             var file = fileSystem.GetFile(uri);
-            await ScheduleIfChangedAsync(file, uri, _stopping.Token);
+            await ScheduleIfChangedAsync(file, uri, !skipUnchanged, _stopping.Token);
         }
     }
 
@@ -411,6 +415,10 @@ public class RepositoryIndexer(
             await Task.Yield();
         }
     }
+
+    public int ClassificationQueueDepth => _enrichmentQueue?.Depth ?? 0;
+    public int ParsingQueueDepth => _parsingQueue?.Depth ?? 0;
+    public int EnrichmentQueueDepth => _enrichmentQueue?.Depth ?? 0;
 
     public async Task WaitForWriterIdle(CancellationToken cancellationToken = default)
     {
@@ -761,7 +769,7 @@ public class RepositoryIndexer(
         }
     }
 
-    private async Task ScheduleIfChangedAsync(IFileInfo file, RepoUri uri, CancellationToken ct)
+    private async Task ScheduleIfChangedAsync(IFileInfo file, RepoUri uri, bool forceScheduling = false, CancellationToken ct = default)
     {
         try
         {
@@ -807,38 +815,41 @@ public class RepositoryIndexer(
             }
 
             // DB short-circuit: skip if existing doc digest matches
-            try
+            if (!forceScheduling)
             {
-                var existing = _storage.GetDocumentByUri(uri);
-                if (existing?.ArtifactId is { } aid)
+                try
                 {
-                    var art = _storage.GetArtifact(aid);
-                    if (art is not null && string.Equals(art.Digest, digest, StringComparison.Ordinal))
+                    var existing = _storage.GetDocumentByUri(uri);
+                    if (existing?.ArtifactId is { } aid)
                     {
-                        try { metrics.RecordFileProcessed("unknown/unknown", "skipped_same", file.Length, 0); } catch (Exception mex) { ReportError(mex); }
-                        try { chain.RootActivity?.SetTag("repoql.status", "skipped_same"); } catch { }
-                        hashAct?.SetTag("repoql.status", "skipped_same");
-                        StopRootIfPresent(key);
-                        return;
+                        var art = _storage.GetArtifact(aid);
+                        if (art is not null && string.Equals(art.Digest, digest, StringComparison.Ordinal))
+                        {
+                            metrics.RecordFileProcessed("unknown/unknown", "skipped_same", file.Length, 0);
+                            chain.RootActivity?.SetTag("repoql.status", "skipped_same");
+                            hashAct?.SetTag("repoql.status", "skipped_same");
+                            StopRootIfPresent(key);
+                            return;
+                        }
                     }
                 }
+                catch (Exception ex)
+                {
+                    ReportError(ex);
+                }
             }
-            catch (Exception ex)
+            else
             {
-                ReportError(ex);
+                chain.RootActivity?.SetTag("repoql.force_index", "true");
             }
 
             // Mark pending and enqueue for classification with hash pre-set
             _pendingDigestByUri[key] = digest;
             // Record hash context for later span links
-            try
+            if (hashAct is not null)
             {
-                if (hashAct is not null)
-                {
-                    chain.Hash = hashAct.Context;
-                }
+                chain.Hash = hashAct.Context;
             }
-            catch { }
             var artifact = new DiscoveredArtifact { File = file, RepoUri = uri, Hash = hash };
             await _classificationQueue!.EnqueueAsync(artifact, _stopping.Token);
         }
@@ -886,6 +897,7 @@ public class RepositoryIndexer(
 
     private void ReportError(Exception exception)
     {
+        Logger.LogWarning(exception, exception.Message);
         lock (_observerLock)
         {
             foreach (var observer in _observers.ToList())

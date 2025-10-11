@@ -1,4 +1,6 @@
-namespace RepoQL.Grammar;
+using RepoQL.Grammar.Core;
+
+namespace RepoQL.Grammar.Diagnostics;
 
 public sealed record Diagnostic(
     DiagnosticId Id,

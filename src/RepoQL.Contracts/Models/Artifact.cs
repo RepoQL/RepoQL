@@ -36,7 +36,7 @@ public sealed class Artifact
     /// <summary>
     ///     Gets an optional external location where the bytes are stored, for example a file path or object store URI.
     /// </summary>
-    public string? StoreUri { get; init; }
+    public RepoUri? StoreUri { get; init; }
 
     /// <summary>
     ///     X-ray Headline (Level 0): essential identity in a single line. Producers should always populate this for documents.

@@ -1,12 +1,7 @@
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Encodings.Web;
-using System.Threading;
-using System.Threading.Tasks;
 using Fluid;
 using Fluid.Values;
 using Microsoft.Extensions.FileProviders;
@@ -42,6 +37,7 @@ public sealed class LiquidTemplateRenderer : ITemplateRenderer
     /// <param name="resourceRoot">Root namespace for templates (e.g., "My.Assembly.Namespace.Templates"). May be null to use assembly default.</param>
     /// <param name="defaultExtension">Default extension appended when none supplied, defaults to ".liquid".</param>
     /// <param name="configure">Optional hook to customize <see cref="TemplateOptions"/> (filters, culture, etc).</param>
+    /// <param name="defaultEncoder">Optional encoder for HTML/XML encoding of template output.</param>
     public LiquidTemplateRenderer(Assembly assembly, string? resourceRoot = null, string defaultExtension = ".liquid", Action<TemplateOptions>? configure = null, HtmlEncoder? defaultEncoder = null)
         : this(new EmbeddedFileProvider(assembly, resourceRoot ?? string.Empty), defaultExtension, configure, defaultEncoder)
     {
@@ -93,6 +89,7 @@ public sealed class LiquidTemplateRenderer : ITemplateRenderer
             context.Options.MemberAccessStrategy.Register(model.GetType());
             context.SetValue("model", FluidValue.Create(model, _options));
         }
+        
 
         var template = await GetOrParseTemplateAsync(templateNameOrPath, cancellationToken);
         if (_defaultEncoder is not null)
@@ -125,10 +122,10 @@ public sealed class LiquidTemplateRenderer : ITemplateRenderer
             throw new FileNotFoundException($"Template not found: {path}");
 
         string content;
-        using (var stream = file.CreateReadStream())
+        await using (var stream = file.CreateReadStream())
         using (var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
         {
-            content = await reader.ReadToEndAsync(ct);
+            content = (await reader.ReadToEndAsync(ct)).Trim();
         }
 
         if (!_parser.TryParse(content, out var tpl, out var errors))
@@ -141,7 +138,7 @@ public sealed class LiquidTemplateRenderer : ITemplateRenderer
     private string NormalizePath(string nameOrPath)
     {
         var p = nameOrPath.Replace('\\', '/');
-        if (p.StartsWith("/", StringComparison.Ordinal))
+        if (p.StartsWith('/'))
             p = p[1..];
         if (!p.EndsWith(_defaultExtension, StringComparison.OrdinalIgnoreCase))
             p += _defaultExtension;

@@ -12,7 +12,7 @@ using RepoQL.Formats.Mermaid;
 
 namespace RepoQL.Tests;
 
-public class IndexerIntegrationTests
+internal class IndexerIntegrationTests
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 
@@ -51,10 +51,9 @@ public class IndexerIntegrationTests
     {
         // Arrange: embedded repo with markdown resources
         var asm = typeof(IndexerIntegrationTests).Assembly;
-        var asmName = asm.GetName().Name ?? "RepoQL.Tests";
 
-        var meter = new Meter("RepoQL.Tests.Indexer");
-        var metrics = new IndexingMetrics();
+        using var meter = new Meter("RepoQL.Tests.Indexer");
+        using var metrics = new IndexingMetrics();
         var vfs = new FileSystem.Embedded.EmbeddedStore(asm);
         var fsRegistry = new FileSystemRegistry([vfs]);
         var hub = new MultiFileSystem(fsRegistry, [vfs]);
@@ -103,8 +102,8 @@ public class IndexerIntegrationTests
         var asm = typeof(IndexerIntegrationTests).Assembly;
         var asmName = asm.GetName().Name ?? "RepoQL.Tests";
 
-        var meter = new Meter("RepoQL.Tests.Indexer");
-        var metrics = new IndexingMetrics();
+        using var meter = new Meter("RepoQL.Tests.Indexer");
+        using var metrics = new IndexingMetrics();
         var vfs = new FileSystem.Embedded.EmbeddedStore(asm);
         var fsRegistry = new FileSystemRegistry([vfs]);
         var hub = new MultiFileSystem(fsRegistry, [vfs]);
@@ -149,7 +148,7 @@ public class IndexerIntegrationTests
                 if (ev is IRepositoryIndexer.ItemIndexedEvent e && e.CurrentUri.AbsoluteUri == uri2.AbsoluteUri)
                     secondIndexed.TrySetResult(true);
             }));
-        await indexer.QueueForIndexingAsync(uri2);
+        await indexer.QueueForIndexingAsync([uri2]);
 
         var secondDone = await Task.WhenAny(secondIndexed.Task, error2.Task, Task.Delay(DefaultTimeout));
         if (secondDone == error2.Task)
@@ -180,13 +179,13 @@ public class IndexerIntegrationTests
                 markdownLoader,
                 markdownAnalyzer,
                 markdownLoader,
-                new[] { "markdown" }),
+                ["markdown"]),
             new FormatDescriptor(
                 SemanticMediaType.Create("text", "mermaid").WithKind("mermaid.doc"),
                 mermaidLoader,
                 mermaidAnalyzer,
                 mermaidLoader,
-                new[] { "mermaid", "mmd" }),
+                ["mermaid", "mmd"]),
             new FormatDescriptor(
                 SemanticMediaType.Create("text", "plain").WithKind("plain.document"),
                 plainLoader,

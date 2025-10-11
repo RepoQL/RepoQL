@@ -7,7 +7,7 @@ using Artifact = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Tests;
 
-public class AnnotationsTests
+internal class AnnotationsTests
 {
     [Test]
     public void UpsertAnnotation_Idempotent_BySemanticKey()

@@ -1,0 +1,15 @@
+﻿<Project>
+
+    <Import Project="../../Directory.Build.props" />
+
+    <!-- 
+        Anything in this file will be applied to all projects built in this repository
+        This file is injected at the top of your project files
+    -->
+
+    <!-- Constants for this repository -->
+    <PropertyGroup>
+        <WarningLevel>1</WarningLevel>
+    </PropertyGroup>
+
+</Project>

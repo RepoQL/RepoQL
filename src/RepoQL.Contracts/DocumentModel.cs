@@ -40,7 +40,7 @@ public sealed class DocumentModel(
         return new DocumentModel(Uri, MediaType, Text, SyntaxTree, dict, LoadedAt);
     }
 
-    public T? GetMetadata<T>(string key)
+    public T? GetMetadataOrDefault<T>(string key)
     {
         if (Metadata.TryGetValue(key, out var value) && value is T typed)
         {

@@ -1,11 +1,11 @@
 using System.Net.Sockets;
-using System.Reflection;
 using System.Runtime.CompilerServices;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
+using RepoQL.Contracts;
 
-namespace RepoQL.Contracts;
+namespace RepoQL.Protocol;
 
 /// <summary>
 /// Simple gRPC client wrapper for the RepoQL service using a Unix domain socket transport.
@@ -17,7 +17,7 @@ namespace RepoQL.Contracts;
 public sealed class RepoQlClient : IRepoQlClient
 {
     public GrpcChannel Channel { get; }
-    private readonly RepoQL.RepoQLClient _client;
+    private readonly Contracts.RepoQL.RepoQLClient _client;
     private readonly TimeSpan? _defaultTimeout;
     private readonly CancellationTokenSource _leaseCts = new();
     private AsyncClientStreamingCall<ClientLeaseBeat, ClientLeaseSummary>? _leaseCall;
@@ -25,7 +25,7 @@ public sealed class RepoQlClient : IRepoQlClient
     private RepoQlClient(GrpcChannel channel, TimeSpan? defaultTimeout)
     {
         Channel = channel;
-        _client = new RepoQL.RepoQLClient(channel);
+        _client = new Contracts.RepoQL.RepoQLClient(channel);
         _defaultTimeout = defaultTimeout;
     }
 
@@ -39,7 +39,8 @@ public sealed class RepoQlClient : IRepoQlClient
     /// Create a client connected to the repository's RepoQL server over a Unix domain socket.
     /// </summary>
     /// <param name="options">Optional configuration for socket discovery and default timeouts.</param>
-    public static RepoQlClient Create(RepoQlClientOptions? options = null)
+    /// <param name="cancellationToken"></param>
+    public static async Task<RepoQlClient> CreateAsync(RepoQlClientOptions? options = null, CancellationToken cancellationToken = default)
     {
         options ??= new RepoQlClientOptions();
 
@@ -49,37 +50,17 @@ public sealed class RepoQlClient : IRepoQlClient
             socketPath = ResolveSocketPath(repoPath);
 
         // Ensure server is up (autostart if enabled)
-        EnsureServerRunning(socketPath!, repoPath, TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_START_TIMEOUT_MS", 30000)));
+        var finalSocketPath = await EnsureServerRunning(socketPath!, repoPath, TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_START_TIMEOUT_MS", 30000)), cancellationToken);
 
         var handler = new SocketsHttpHandler
         {
             ConnectCallback = async (_, ct) =>
             {
-                var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-                try
-                {
-                    var endpoint = new UnixDomainSocketEndPoint(socketPath!);
-                    await socket.ConnectAsync(endpoint, ct).ConfigureAwait(false);
-                    // Avoid TCP-specific options on AF_UNIX to support Windows UDS; safely ignore failures
-                    try { socket.SendBufferSize = 64 * 1024; }
-                    catch
-                    {
-                        // ignored
-                    }
-
-                    try { socket.ReceiveBufferSize = 64 * 1024; }
-                    catch
-                    {
-                        // ignored
-                    }
-
-                    return new NetworkStream(socket, ownsSocket: true);
-                }
-                catch
-                {
-                    socket.Dispose();
-                    throw;
-                }
+                var s = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.Unix, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Unspecified);
+                await s.ConnectAsync(new System.Net.Sockets.UnixDomainSocketEndPoint(finalSocketPath), ct).ConfigureAwait(false);
+                try { s.SendBufferSize = 64 * 1024; } catch { }
+                try { s.ReceiveBufferSize = 64 * 1024; } catch { }
+                return new System.Net.Sockets.NetworkStream(s, ownsSocket: true);
             },
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
@@ -101,9 +82,15 @@ public sealed class RepoQlClient : IRepoQlClient
         return client;
     }
 
-    private static void EnsureServerRunning(string socketPath, string repoPath, TimeSpan timeout)
+    private static async Task<string> EnsureServerRunning(string socketPath, string repoPath, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
-        if (CanConnect(socketPath)) return;
+        var s = await ConnectAsync(socketPath, cancellationToken);
+        if (s != null)
+        {
+            var ok = HealthServing(s);
+            try { s.Dispose(); } catch { }
+            if (ok) return socketPath;
+        }
 
         if (!AutostartEnabled())
             throw new InvalidOperationException($"RepoQL host is not running, and autostart is disabled. Expected socket at {socketPath}");
@@ -115,35 +102,37 @@ public sealed class RepoQlClient : IRepoQlClient
         {
             // Re-resolve socket path each iteration to pick up mapping file written by the host (WSL scenario)
             try { socketPath = ResolveSocketPath(repoPath); } catch { /* ignore and keep prior */ }
-            if (CanConnect(socketPath) && HealthServing(socketPath)) return;
-            Thread.Sleep(100);
+
+            var socket = await ConnectAsync(socketPath, cancellationToken);
+            if (socket != null && HealthServing(socket))
+            {
+                try { socket.Dispose(); } catch { }
+                return socketPath;
+            }
+            try { socket?.Dispose(); } catch { }
+            await Task.Delay(TimeSpan.FromSeconds(0.1), cancellationToken);
         }
         throw new TimeoutException($"RepoQL host did not become ready within {timeout.TotalMilliseconds} ms (socket: {socketPath})");
     }
 
-    private static bool CanConnect(string socketPath)
+    private static async Task<Socket?> ConnectAsync(string socketPath, CancellationToken cancellationToken)
     {
         try
         {
-            using var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-            s.Connect(new UnixDomainSocketEndPoint(socketPath));
-            return true;
+            var s = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            await s.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), cancellationToken);
+            return s;
         }
-        catch { return false; }
+        catch { return null; }
     }
 
-    private static bool HealthServing(string socketPath)
+    private static bool HealthServing(Socket socket)
     {
         try
         {
             var handler = new SocketsHttpHandler
             {
-                ConnectCallback = async (_, ct) =>
-                {
-                    var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-                    await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), ct).ConfigureAwait(false);
-                    return new NetworkStream(socket, ownsSocket: true);
-                }
+                ConnectCallback = (_, _) => new ValueTask<Stream>(new NetworkStream(socket, ownsSocket: false))
             };
             using var channel = GrpcChannel.ForAddress("http://unix", new GrpcChannelOptions { HttpHandler = handler, Credentials = ChannelCredentials.Insecure });
             var hc = new Grpc.Health.V1.Health.HealthClient(channel);
@@ -162,35 +151,10 @@ public sealed class RepoQlClient : IRepoQlClient
         {
             ["REPOQL_IMPLICIT"] = "1"
         };
-
-        // 1) Honor explicit override
-        var exe = Environment.GetEnvironmentVariable("REPOQL_HOST_PATH");
-        if (!string.IsNullOrWhiteSpace(exe))
-        {
-            StartProcess(exe!, new[] { repoPath }, implicitEnv);
-            return;
-        }
-
-        // 2) Prefer unified app in the same directory: repoql-app or repoql
+        
         var baseDir = AppContext.BaseDirectory;
-        var unifiedNames = new[] { "repoql-app", "repoql" };
-        foreach (var name in unifiedNames)
-        {
-            var candidates = BuildExecutableCandidates(Path.Combine(baseDir, name));
-            var found = candidates.FirstOrDefault(File.Exists);
-            if (!string.IsNullOrEmpty(found))
-            {
-                // Unified app expects: host serve [--repo <path>]
-                var args = new List<string> { "host", "serve", "--repo", repoPath };
-                StartProcess(found, args, implicitEnv);
-                return;
-            }
-        }
-
-        // 3) Fallback to legacy repoql-host
-        var hostBase = Path.Combine(baseDir, "repoql-host");
-        var hostExe = BuildExecutableCandidates(hostBase).FirstOrDefault(File.Exists) ?? "repoql-host";
-        StartProcess(hostExe, new[] { repoPath }, implicitEnv);
+        var args = new List<string> { "serve", "--repository", repoPath, "--implicit-start" };
+        StartProcess(BuildExecutableCandidates(Path.Join(baseDir, "repoql")).FirstOrDefault(File.Exists) ?? "repoql" ,args, implicitEnv);
     }
 
     private static IEnumerable<string> BuildExecutableCandidates(string basePath)
@@ -236,7 +200,7 @@ public sealed class RepoQlClient : IRepoQlClient
 
     private void EstablishLeaseOrThrow(string repoPath, TimeSpan timeout)
     {
-        var leaseClient = new RepoQL.RepoQLClient(Channel);
+        var leaseClient = new Contracts.RepoQL.RepoQLClient(Channel);
         _leaseCall = leaseClient.HoldClientLease(cancellationToken: _leaseCts.Token);
 
         var clientId = Guid.NewGuid().ToString();
@@ -422,5 +386,16 @@ public sealed class RepoQlClient : IRepoQlClient
             IEnumerable<string> list => new Value { ListValue = new ListValue { Values = { list.Select(Value.ForString) } } },
             _ => Value.ForString(o.ToString() ?? string.Empty)
         };
+    }
+
+
+    public async IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, TimeSpan? timeout = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? _defaultTimeout);
+        var call = _client.ReindexAll(new ReindexRequest { Clear = clear }, deadline: deadline, cancellationToken: cancellationToken);
+        while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
+        {
+            yield return call.ResponseStream.Current;
+        }
     }
 }

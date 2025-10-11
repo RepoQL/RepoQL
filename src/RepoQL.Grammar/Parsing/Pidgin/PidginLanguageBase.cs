@@ -1,7 +1,11 @@
 using Pidgin;
+using RepoQL.Grammar.Core;
+using RepoQL.Grammar.Diagnostics;
+using RepoQL.Grammar.Language;
+using RepoQL.Grammar.Syntax;
 using static Pidgin.Parser<char>;
 
-namespace RepoQL.Grammar;
+namespace RepoQL.Grammar.Parsing.Pidgin;
 
 /// <summary>
 /// Base class for Pidgin-powered languages. Implement <see cref="Root"/> and return an <see cref="ISyntaxNode"/> tree.
@@ -15,7 +19,7 @@ public abstract class PidginLanguageBase : ILanguage
         => new PidginTree(text, Root);
 
     public virtual ISemanticModel? Bind(ISyntaxTree tree, LanguageBindOptions? options = null) => null;
-    public virtual string Print(ISyntaxNode node) => node.ToString() ?? string.Empty;
+    public virtual string Print(ISyntaxNode? node) => node?.ToString() ?? string.Empty;
 
     private sealed class PidginTree : ISyntaxTree
     {
@@ -31,21 +35,21 @@ public abstract class PidginLanguageBase : ILanguage
             try
             {
                 Root = root.Before(End).ParseOrThrow(text);
-                ParseDiagnostics = Array.Empty<Diagnostic>();
+                ParseDiagnostics = [];
             }
             catch (Exception e)
             {
                 Root = new ErrorNode(new TextSpan(0, text.Length));
-                ParseDiagnostics = new[]
-                {
-                    new Diagnostic(new("parse/error"), Severity.Error, e.Message, new TextSpan(0, 0), Array.Empty<CodeFix>())
-                };
+                ParseDiagnostics =
+                [
+                    new Diagnostic(new("parse/error"), Severity.Error, e.Message, new TextSpan(0, 0), [])
+                ];
             }
         }
 
         public ISyntaxTree WithChanges(params TextChange[] changes)
         {
-            if (changes is null || changes.Length == 0) return this;
+            if (changes.Length == 0) return this;
             var ordered = changes.OrderByDescending(c => c.Span.Start);
             var sb = new System.Text.StringBuilder(SourceText);
             foreach (var c in ordered)

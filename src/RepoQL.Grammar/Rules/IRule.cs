@@ -1,4 +1,6 @@
-namespace RepoQL.Grammar;
+using RepoQL.Grammar.Diagnostics;
+
+namespace RepoQL.Grammar.Rules;
 
 public interface IRule
 {

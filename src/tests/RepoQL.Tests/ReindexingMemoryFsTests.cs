@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using RepoQL.Core.Analysis;
@@ -13,7 +14,8 @@ using RepoQL.Formats.Mermaid;
 
 namespace RepoQL.Tests;
 
-public class ReindexingMemoryFsTests
+[SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope")]
+internal class ReindexingMemoryFsTests
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 
@@ -169,13 +171,13 @@ public class ReindexingMemoryFsTests
                 markdownLoader,
                 markdownAnalyzer,
                 markdownLoader,
-                new[] { "markdown" }),
+                ["markdown"]),
             new FormatDescriptor(
                 SemanticMediaType.Create("text", "mermaid").WithKind("mermaid.doc"),
                 mermaidLoader,
                 mermaidAnalyzer,
                 mermaidLoader,
-                new[] { "mermaid", "mmd" }),
+                ["mermaid", "mmd"]),
             new FormatDescriptor(
                 SemanticMediaType.Create("text", "plain").WithKind("plain.document"),
                 plainLoader,

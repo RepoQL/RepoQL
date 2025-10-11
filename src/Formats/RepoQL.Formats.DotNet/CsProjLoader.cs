@@ -4,6 +4,7 @@ using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace RepoQL.Formats.DotNet;
 
@@ -11,7 +12,7 @@ namespace RepoQL.Formats.DotNet;
 /// Loader + materializer for C# project files (*.csproj).
 /// Produces a document node with child items for TargetFramework(s), PackageReference(s), and ProjectReference(s).
 /// </summary>
-public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, IFormatMaterializer
+public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLoader, IFormatMaterializer
 {
     internal const string StateKey = "csproj.state";
 
@@ -19,12 +20,11 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, I
         .Create("text", "xml")
         .WithKind("dotnet.csproj");
 
-    private readonly ITemplateRenderer? _renderer = renderer ?? new LiquidTemplateRenderer(
+    private readonly ITemplateRenderer _renderer = new LiquidTemplateRenderer(
         assembly: typeof(CsProjLoader).Assembly,
         resourceRoot: "RepoQL.Formats.DotNet.Templates");
 
-    public CsProjLoader() : this(null) { }
-
+    /// <inheritdoc />
     public bool Supports(SemanticMediaType mediaType)
     {
         ArgumentNullException.ThrowIfNull(mediaType);
@@ -34,6 +34,7 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, I
                && string.Equals(mediaType.Subtype, CsProjType.Subtype, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <inheritdoc />
     public Task<bool> CanLoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(artifact);
@@ -43,13 +44,10 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, I
             artifact.MediaType = CsProjType;
             return Task.FromResult(true);
         }
-
-        if (artifact.MediaType is not null && string.Equals(artifact.MediaType.Kind, "dotnet.csproj", StringComparison.OrdinalIgnoreCase))
-            return Task.FromResult(true);
-
-        return Task.FromResult(false);
+        return Task.FromResult(artifact.MediaType is not null && string.Equals(artifact.MediaType.Kind, "dotnet.csproj", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <inheritdoc />
     public async Task<DocumentModel> LoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(artifact);
@@ -62,7 +60,7 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, I
             text = await sr.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        var digest = "xxh64:" + Convert.ToHexString(artifact.Hash ?? Array.Empty<byte>()).ToLowerInvariant();
+        var digest = "xxh64:" + Convert.ToHexString(artifact.Hash ?? []).ToLowerInvariant();
 
         // Parse minimal project facts via XDocument (tolerant)
         var sdk = string.Empty;
@@ -149,27 +147,21 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, I
         return new DocumentModel(artifact.RepoUri, state.MediaType, text, metadata: metadata);
     }
 
+    /// <inheritdoc />
     public Records Materialize(DocumentModel document)
     {
-        var state = document.GetMetadata<CsProjState>(StateKey)
+        var state = document.GetMetadataOrDefault<CsProjState>(StateKey)
                     ?? throw new InvalidOperationException("csproj missing state");
 
         // Build x-ray strings (concise, deterministic)
         var fileName = GetFileName(document.Uri);
-        var tfmText = state.TargetFrameworks.Count > 0 ? string.Join(';', state.TargetFrameworks) : (state.Properties.TryGetValue("TargetFramework", out var tf) ? tf : "");
+        var tfmText = state.TargetFrameworks.Count > 0 
+            ? string.Join(';', state.TargetFrameworks) 
+            : state.Properties.GetValueOrDefault("TargetFramework", "");
         var pkgCount = state.Packages.Count;
         var prjCount = state.ProjectRefs.Count;
-        var sizeHuman = FormatBytes(state.Size);
 
         var sdkDisplay = string.IsNullOrWhiteSpace(state.Sdk) ? string.Empty : NormalizeSdk(state.Sdk);
-        var sdkPart = string.IsNullOrWhiteSpace(sdkDisplay) ? string.Empty : $" | sdk:{sdkDisplay}";
-        var outPart = string.IsNullOrWhiteSpace(state.OutputType)
-            ? string.Empty
-            : $" | output:{state.OutputType}{(state.Pack ? "+pack" : string.Empty)}";
-
-        string? headline = null;
-        string? summary = null;
-        string? structure = null;
 
         // Prepare template model
         var model = new Dictionary<string, object?>
@@ -183,25 +175,23 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, I
             ["tfms"] = state.TargetFrameworks,
             ["package_count"] = pkgCount,
             ["project_ref_count"] = prjCount,
-            ["packages"] = state.Packages.Select(p => new Dictionary<string, object?> { ["id"] = p.Id, ["version"] = string.IsNullOrWhiteSpace(p.Version) ? null : p.Version }).ToList(),
-            ["project_refs"] = state.ProjectRefs.Select(r => new Dictionary<string, object?> { ["include"] = r.Include, ["file_name"] = FileNameOnly(r.Include) }).ToList(),
+            ["packages"] = state.Packages.Select(p => new 
+            {
+                id = p.Id, 
+                version = p.Version
+            }),
+            ["project_refs"] = state.ProjectRefs.Select(r => new Dictionary<string, object?>
+            {
+                ["include"] = r.Include, 
+                ["file_name"] = FileNameOnly(r.Include)
+            }).ToList(),
         };
 
-        try
-        {
-            if (_renderer is not null)
-            {
-                headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
-                summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
-                structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
-            }
-        }
-        catch { /* fall back below */ }
 
-        // Fallbacks if templating is unavailable
-        headline ??= $"{fileName} | dotnet.csproj | {sizeHuman}{sdkPart}{outPart} | tfm:{(string.IsNullOrEmpty(tfmText) ? "?" : tfmText)} | packages:{pkgCount} projrefs:{prjCount}";
-        summary ??= BuildSummary(state, fileName);
-        structure ??= BuildStructure(state);
+        var headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
+        var summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
+        var structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
+        
 
         var artifact = new Artifact
         {
@@ -240,7 +230,7 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, I
         var edges = new List<Edge>();
         var spans = new List<Span>();
 
-        int ordinal = 0;
+        var ordinal = 0;
 
         if (state.TargetFrameworks.Count > 0)
         {
@@ -360,67 +350,6 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, I
         return string.IsNullOrEmpty(slash) ? uri.AbsoluteUri : slash;
     }
 
-    private static string FormatBytes(long bytes)
-    {
-        const long KB = 1024;
-        const long MB = KB * 1024;
-        const long GB = MB * 1024;
-        if (bytes >= GB) return ($"{bytes / (double)GB:0.##} GB");
-        if (bytes >= MB) return ($"{bytes / (double)MB:0.##} MB");
-        if (bytes >= KB) return ($"{bytes / (double)KB:0.##} KB");
-        return ($"{bytes} B");
-    }
-
-    private static string? BuildSummary(CsProjState s, string fileName)
-    {
-        try
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine($"Name: {fileName}");
-            if (!string.IsNullOrWhiteSpace(s.Sdk)) sb.AppendLine($"SDK: {NormalizeSdk(s.Sdk)}");
-            if (!string.IsNullOrWhiteSpace(s.OutputType)) sb.AppendLine($"OutputType: {s.OutputType}{(s.Pack ? " + pack" : string.Empty)}");
-            if (s.TargetFrameworks.Count > 0) sb.AppendLine($"TargetFrameworks: {string.Join(", ", s.TargetFrameworks)}");
-            var pkgs = s.Packages.Take(8).Select(p => string.IsNullOrWhiteSpace(p.Version) ? p.Id : $"{p.Id} ({p.Version})");
-            if (s.Packages.Count > 0) sb.AppendLine($"Packages: {string.Join(", ", pkgs)}{(s.Packages.Count > 8 ? ", …" : string.Empty)}");
-            var prs = s.ProjectRefs.Take(8).Select(r => r.Include);
-            if (s.ProjectRefs.Count > 0) sb.AppendLine($"ProjectRefs: {string.Join(", ", prs)}{(s.ProjectRefs.Count > 8 ? ", …" : string.Empty)}");
-            return sb.ToString().TrimEnd();
-        }
-        catch { return null; }
-    }
-
-    private static string? BuildStructure(CsProjState s)
-    {
-        try
-        {
-            var lines = new List<string>();
-            lines.Add("Project");
-            if (!string.IsNullOrWhiteSpace(s.Sdk)) lines.Add($"  SDK: {NormalizeSdk(s.Sdk)}");
-            if (!string.IsNullOrWhiteSpace(s.OutputType)) lines.Add($"  OutputType: {s.OutputType}");
-            lines.Add($"  Pack: {(s.Pack ? "Yes" : "No")}");
-            if (s.TargetFrameworks.Count > 0)
-            {
-                lines.Add("  TargetFrameworks:");
-                foreach (var tf in s.TargetFrameworks.Take(15)) lines.Add($"    - {tf}");
-                if (s.TargetFrameworks.Count > 15) lines.Add($"    - [... {s.TargetFrameworks.Count - 15} more]");
-            }
-            if (s.Packages.Count > 0)
-            {
-                lines.Add("  PackageReference:");
-                foreach (var p in s.Packages.Take(20)) lines.Add($"    - {p.Id}{(string.IsNullOrWhiteSpace(p.Version) ? string.Empty : $" ({p.Version})")}");
-                if (s.Packages.Count > 20) lines.Add($"    - [... {s.Packages.Count - 20} more]");
-            }
-            if (s.ProjectRefs.Count > 0)
-            {
-                lines.Add("  ProjectReference:");
-                foreach (var r in s.ProjectRefs.Take(20)) lines.Add($"    - {r.Include}");
-                if (s.ProjectRefs.Count > 20) lines.Add($"    - [... {s.ProjectRefs.Count - 20} more]");
-            }
-            return string.Join('\n', lines);
-        }
-        catch { return null; }
-    }
-
     private static (int line, int col) FindApproxLine(string text, string snippet)
     {
         try
@@ -430,8 +359,8 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer) : IFormatLoader, I
             if (idx < 0) return (0, 0);
             var upTo = text.AsSpan(0, idx);
             var line = 1;
-            int lastNl = -1;
-            for (int i = 0; i < upTo.Length; i++)
+            var lastNl = -1;
+            for (var i = 0; i < upTo.Length; i++)
             {
                 if (upTo[i] == '\n') { line++; lastNl = i; }
             }
@@ -475,10 +404,10 @@ internal sealed class CsProjState
     public required string StoreUri { get; init; }
 
     public string Sdk { get; init; } = string.Empty;
-    public List<string> TargetFrameworks { get; init; } = new();
+    public List<string> TargetFrameworks { get; init; } = [];
     public Dictionary<string, string> Properties { get; init; } = new();
-    public List<CsPackage> Packages { get; init; } = new();
-    public List<CsProjectRef> ProjectRefs { get; init; } = new();
+    public List<CsPackage> Packages { get; init; } = [];
+    public List<CsProjectRef> ProjectRefs { get; init; } = [];
     public string? OutputType { get; init; }
     public bool Pack { get; init; }
 }

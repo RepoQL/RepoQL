@@ -1,7 +1,7 @@
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 
-namespace RepoQL.FileSystem;
+namespace RepoQL.FileSystem.Abstractions;
 
 public interface IFileClassifier
 {

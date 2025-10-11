@@ -1,3 +1,3 @@
-namespace RepoQL.Grammar;
+namespace RepoQL.Grammar.Language;
 
 public sealed class LanguageBindOptions { }

@@ -49,7 +49,7 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
         var media = artifact.MediaType ?? PlainText;
         var metadata = new Dictionary<string, object?>
         {
-            ["plaintext.digest"] = "xxh64:" + Convert.ToHexString(artifact.Hash ?? Array.Empty<byte>()).ToLowerInvariant(),
+            ["plaintext.digest"] = "xxh64:" + Convert.ToHexString(artifact.Hash ?? []).ToLowerInvariant(),
             ["plaintext.size"] = artifact.File.Length
         };
 
@@ -58,8 +58,8 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
 
     public Records Materialize(DocumentModel document)
     {
-        var digest = document.GetMetadata<string>("plaintext.digest") ?? "unknown";
-        var size = document.GetMetadata<long>("plaintext.size");
+        var digest = document.GetMetadataOrDefault<string>("plaintext.digest") ?? "unknown";
+        var size = document.GetMetadataOrDefault<long>("plaintext.size");
 
         // Prepare x-ray fields for initializer; best-effort and terse
         string? headline = null;
@@ -122,8 +122,8 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
         {
             Artifacts = [artifact],
             Nodes = [node],
-            Spans = Array.Empty<Span>(),
-            Edges = Array.Empty<Edge>()
+            Spans = [],
+            Edges = []
         };
     }
 

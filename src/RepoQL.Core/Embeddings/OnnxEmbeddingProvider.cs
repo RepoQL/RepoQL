@@ -190,7 +190,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Embedding inference failed; returning null");
+            _logger?.LogWarning(ex, "Embedding inference failed; returning null");
             return null;
         }
     }
@@ -329,7 +329,6 @@ internal sealed class WordPieceTokenizer
             if (matchedId == -1)
             {
                 ids.Add(_unkId);
-                remaining--;
                 consumed++;
                 break;
             }

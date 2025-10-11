@@ -10,7 +10,7 @@ using RepoQL.Formats.DotNet;
 
 namespace RepoQL.Tests;
 
-public class CsProjXrayTests
+internal class CsProjXrayTests
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 
@@ -69,7 +69,7 @@ public class CsProjXrayTests
         ]);
 
         var workspace = new AnalysisWorkspace(hub, classifier, hasher, registry);
-        await using var indexer = new Core.RepositoryIndexer(new Core.Metrics.IndexingMetrics(), new System.Diagnostics.Metrics.Meter("RepoQL.Tests.CsProj"), hub, store, classifier, registry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
+        await using var indexer = new RepositoryIndexer(new Core.Metrics.IndexingMetrics(), new System.Diagnostics.Metrics.Meter("RepoQL.Tests.CsProj"), hub, store, classifier, registry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
 
         await indexer.StartAsync(CancellationToken.None);
         var indexed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -86,10 +86,10 @@ public class CsProjXrayTests
         var artifact = store.GetArtifact(doc.ArtifactId!.Value)!;
 
         // Assert headline/summary/structure
-        artifact.Headline.Should().Contain("dotnet.csproj");
-        artifact.Headline.Should().Contain("packages:2");
-        artifact.Summary.Should().Contain("Serilog");
-        artifact.Structure.Should().Contain("PackageReference");
+        artifact.Headline!.Should().Contain("dotnet.csproj");
+        artifact.Headline!.Should().Contain("packages:2");
+        artifact.Summary!.Should().Contain("Serilog");
+        artifact.Structure!.Should().Contain("PackageReference");
         artifact.Summary.Should().Contain("SDK:");
         artifact.Summary.Should().Contain("OutputType: Exe");
         artifact.Summary.Should().Contain("Pack: Yes");

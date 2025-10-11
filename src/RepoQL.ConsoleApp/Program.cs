@@ -1,15 +1,49 @@
-﻿// See https://aka.ms/new-console-template for more information
 using Microsoft.Extensions.Hosting;
 using ConsoleAppFramework;
-using RepoQL.Core;
+using Grpc.Core;
+using JetBrains.Annotations;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using RepoQL.ConsoleApp.Helpers;
+using Spectre.Console;
 
-var builder = Host.CreateApplicationBuilder(args);
+var app = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
+{
+    ApplicationName = "RepoQL", 
+    Args = args
+}).ToConsoleAppBuilder();
 
+app.ConfigureDefaultConfiguration(c => c
+    .AddEnvironmentVariables()
+    .AddCommandLine(args));
 
-var app = builder.ToConsoleAppBuilder();
+AnsiConsole.Profile.Width = 250;
 
-app.Add<ServeCommand>();
+app.ConfigureServices(s =>
+{
+    s.AddRepoQlConsoleServices();
+});
 
-await app.RunAsync(args); // Run
+app.UseFilter<ExceptionLoggingFilter>();
 
-Console.WriteLine("Hello, World!");
+await app.RunAsync(args);
+
+[UsedImplicitly]
+internal class ExceptionLoggingFilter(ConsoleAppFilter next, IAnsiConsole console) : ConsoleAppFilter(next)
+{
+    public override async Task InvokeAsync(ConsoleAppContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Next.InvokeAsync(context, cancellationToken);
+        }
+        catch (RpcException rpcEx)
+        {
+            console.WriteLine(rpcEx.Status.Detail, Color.Red);
+        }
+        catch (Exception e)
+        {
+            console.WriteLine(e.GetBaseException().Message, Color.Red);
+        }
+    }
+} 

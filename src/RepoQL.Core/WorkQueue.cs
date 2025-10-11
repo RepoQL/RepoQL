@@ -7,7 +7,9 @@ namespace RepoQL.Core;
 /// <summary>
 /// Bounded work queue that prevents the same item being enqueued when already pending or inflight.
 /// </summary>
+#pragma warning disable CA1711
 public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
+#pragma warning restore CA1711
 {
     private readonly Channel<T> _channel;
     private readonly ConcurrentDictionary<T, byte> _waitSet = new();

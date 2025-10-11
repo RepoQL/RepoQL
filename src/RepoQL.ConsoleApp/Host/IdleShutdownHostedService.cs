@@ -1,12 +1,12 @@
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using RepoQL.Contracts.Data;
 
-namespace RepoQL.App.Host;
+namespace RepoQL.ConsoleApp.Host;
 
-public sealed class HostState
+internal sealed class HostState
 {
     public required string RepositoryPath { get; init; }
     public required bool ImplicitStart { get; init; }
@@ -15,15 +15,15 @@ public sealed class HostState
 
 internal static class LeaseRegistry
 {
-    public sealed record LeaseEntry(string ClientId, DateTime LastBeatUtc);
+    internal sealed record LeaseEntry(string ClientId, DateTime LastBeatUtc);
 
-    private static readonly ConcurrentDictionary<string, LeaseEntry> _leases = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly ConcurrentDictionary<string, LeaseEntry> Leases = new(StringComparer.OrdinalIgnoreCase);
 
-    public static int Count => _leases.Count;
+    public static int Count => Leases.Count;
     public static void Upsert(string clientId, DateTime beatUtc)
-        => _leases.AddOrUpdate(clientId, new LeaseEntry(clientId, beatUtc), (_, _) => new LeaseEntry(clientId, beatUtc));
-    public static void Remove(string clientId) => _leases.TryRemove(clientId, out _);
-    public static IEnumerable<LeaseEntry> Snapshot() => _leases.Values.ToArray();
+        => Leases.AddOrUpdate(clientId, new LeaseEntry(clientId, beatUtc), (_, _) => new LeaseEntry(clientId, beatUtc));
+    public static void Remove(string clientId) => Leases.TryRemove(clientId, out _);
+    public static IEnumerable<LeaseEntry> Snapshot() => Leases.Values.ToArray();
 }
 
 internal sealed class IdleShutdownHostedService(

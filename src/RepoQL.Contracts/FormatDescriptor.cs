@@ -17,7 +17,7 @@ public sealed class FormatDescriptor
         Materializer = materializer;
         Labels = labels is null
             ? ImmutableArray<string>.Empty
-            : labels.Select(static l => l.Trim()).Where(static l => !string.IsNullOrWhiteSpace(l)).ToImmutableArray();
+            : [..labels.Select(static l => l.Trim()).Where(static l => !string.IsNullOrWhiteSpace(l))];
     }
 
     public SemanticMediaType MediaType { get; }

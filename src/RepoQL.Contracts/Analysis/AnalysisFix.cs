@@ -6,7 +6,7 @@ namespace RepoQL.Contracts.Analysis;
 /// </summary>
 public sealed class AnalysisFix
 {
-    public required string Uri { get; init; }
+    public required RepoUri Uri { get; init; }
     public required IReadOnlyList<AnalysisReplacement> Replacements { get; init; }
     public string? Description { get; init; }
 }

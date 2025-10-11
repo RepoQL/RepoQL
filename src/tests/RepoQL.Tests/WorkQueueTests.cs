@@ -1,10 +1,12 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using RepoQL.Core;
 
 namespace RepoQL.Tests;
 
-public class WorkQueueTests
+[SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope")]
+internal class WorkQueueTests
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
 

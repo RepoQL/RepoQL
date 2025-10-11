@@ -10,7 +10,7 @@ using NodeModel = RepoQL.Contracts.Models.Node;
 
 namespace RepoQL.Tests;
 
-public class SearchProjectionTests
+internal class SearchProjectionTests
 {
     [Test]
     public async Task WriterRefreshesDocumentSearchAutomatically()

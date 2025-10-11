@@ -1,0 +1,26 @@
+{% comment -%}
+expects:
+ - records: array of { has_multiline: bool, fields: [{ name, single: bool, value?, lines?[] }] }
+ - display_count, total_count
+{% endcomment -%}
+{%- for rec in records -%}
+  {%- if rec.has_multiline -%}
+{
+  {%- for f in rec.fields -%}
+    {%- if f.single -%}
+	{{ f.name }}: {{ f.value }}
+    {%- else -%}
+	{{ f.name }}:
+      {%- for ln in f.lines -%}
+		{{ ln }}
+      {%- endfor -%}
+    {%- endif -%}
+  {%- endfor -%}
+}
+  {%- else -%}
+  {%- for f in rec.fields -%}
+{{ f.name }}: {{ f.value }}
+  {%- endfor -%}
+  {%- endif -%}
+{%- endfor -%}
+[{{ display_count | abbr }} / {{ total_count | abbr }} rows]

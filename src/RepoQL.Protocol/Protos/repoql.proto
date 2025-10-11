@@ -26,6 +26,10 @@ service RepoQL {
   // periodically sends beats while it is active. The server uses lease presence to
   // determine when an implicitly-started host can shut down after an idle grace period.
   rpc HoldClientLease(stream ClientLeaseBeat) returns (ClientLeaseSummary);
+
+  // Trigger a full re-index of the repository. The server enumerates all files
+  // and re-queues them for indexing. Progress is streamed as phases with counts.
+  rpc ReindexAll(ReindexRequest) returns (stream ReindexProgress);
 }
 
 // ----- Raw query -----
@@ -173,4 +177,22 @@ message ClientLeaseSummary {
   int32 active_clients = 3;
   // Idle shutdown grace period in seconds (if implicit).
   int32 shutdown_after_idle_seconds = 4;
+}
+
+
+// ----- Maintenance: full re-index -----
+
+message ReindexRequest {
+  // When true, the server MAY attempt to clear existing graph rows prior to re-indexing.
+  // Implementations are allowed to ignore this flag and rely on upsert semantics.
+  bool clear = 1;
+}
+
+message ReindexProgress {
+  // Phase label: e.g., "preparing", "enumerating", "enqueued", "indexing", "finalizing", "completed".
+  string phase = 1;
+  // Total number of items planned to index (documents/files).
+  int64 total = 2;
+  // Number of items processed so far.
+  int64 completed = 3;
 }

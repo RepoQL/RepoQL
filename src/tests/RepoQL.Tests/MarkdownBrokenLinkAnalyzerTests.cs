@@ -9,7 +9,7 @@ using RepoQL.Formats.Markdown;
 
 namespace RepoQL.Tests;
 
-public class MarkdownBrokenLinkAnalyzerTests
+internal class MarkdownBrokenLinkAnalyzerTests
 {
     [Test]
     public async Task Analyzer_FlagsMissingAnchor_InSameDocument()
@@ -24,12 +24,11 @@ public class MarkdownBrokenLinkAnalyzerTests
         var markdownAnalyzer = new MarkdownAnalyzer();
         var plainLoader = new PlainTextLoader();
         var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
-        var registry = new FormatRegistry(new[]
-        {
+        var registry = new FormatRegistry([
             new FormatDescriptor(SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"), markdownLoader, markdownAnalyzer, markdownLoader,
-                new[] { "markdown" }),
+                ["markdown"]),
             new FormatDescriptor(SemanticMediaType.Create("text", "plain").WithKind("plain.document"), plainLoader, plainAnalyzer, plainLoader)
-        });
+        ]);
         var documents = new Dictionary<string, DocumentModel>(StringComparer.OrdinalIgnoreCase);
 
         var document = await IndexMarkdownAsync(store, markdownLoader, uri, content);
@@ -66,12 +65,11 @@ public class MarkdownBrokenLinkAnalyzerTests
         var markdownAnalyzer = new MarkdownAnalyzer();
         var plainLoader = new PlainTextLoader();
         var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
-        var registry = new FormatRegistry(new[]
-        {
+        var registry = new FormatRegistry([
             new FormatDescriptor(SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"), markdownLoader, markdownAnalyzer, markdownLoader,
-                new[] { "markdown" }),
+                ["markdown"]),
             new FormatDescriptor(SemanticMediaType.Create("text", "plain").WithKind("plain.document"), plainLoader, plainAnalyzer, plainLoader)
-        });
+        ]);
         var documents = new Dictionary<string, DocumentModel>(StringComparer.OrdinalIgnoreCase);
 
         var sourceDoc = await IndexMarkdownAsync(store, markdownLoader, sourceUri, source);

@@ -12,6 +12,7 @@ using RepoQL.Core.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
+using RepoQL.FileSystem.Classification;
 using RepoQL.FileSystem.Embedded;
 using RepoQL.FileSystem.Physical;
 using RepoQL.Formats.DotNet;
@@ -109,8 +110,9 @@ public static class RepoIndexerServiceCollectionExtensions
                     log?.LogWarning("Embedding provider: shipped model failed to initialize; falling back");
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                log?.LogWarning(ex, "Embedding provider: embedding failed to initialize");
                 // swallow and fall back to hashed provider
             }
 
@@ -168,19 +170,19 @@ public static class RepoIndexerServiceCollectionExtensions
                     markdownLoader,
                     markdownAnalyzer,
                     markdownLoader,
-                    new[] { "markdown" }),
+                    ["markdown"]),
                 new FormatDescriptor(
                     SemanticMediaType.Create("text", "mermaid").WithKind("mermaid.doc"),
                     mermaidLoader,
                     mermaidAnalyzer,
                     mermaidLoader,
-                    new[] { "mermaid", "mmd" }),
+                    ["mermaid", "mmd"]),
                 new FormatDescriptor(
                     SemanticMediaType.Create("text", "xml").WithKind("dotnet.csproj"),
                     csprojLoader,
                     csprojAnalyzer,
                     csprojLoader,
-                    new[] { "csproj" }),
+                    ["csproj"]),
                 // Catch‑all plain last so it doesn't shadow specific handlers
                 new FormatDescriptor(
                     SemanticMediaType.Create("text", "plain").WithKind("plain.document"),

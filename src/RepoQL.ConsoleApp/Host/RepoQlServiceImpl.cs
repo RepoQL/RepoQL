@@ -1,15 +1,25 @@
+using System.Globalization;
+using System.Text.Json;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
-using System.Text.Json;
 using Grpc.Core;
-using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Core;
+using RepoQL.FileSystem;
+using RepoQL.FileSystem.Abstractions;
 
-namespace RepoQL.App.Host;
+namespace RepoQL.ConsoleApp.Host;
 
-public sealed class RepoQlServiceImpl(IGraphStore store, RepositoryConfiguration repoConfig, IInitialIndexingBarrier barrier) : Contracts.RepoQL.RepoQLBase
+public sealed class RepoQlServiceImpl(
+    IGraphStore store,
+    RepositoryConfiguration repoConfig,
+    IInitialIndexingBarrier barrier,
+    IRepositoryIndexer indexer,
+    IMultiFileSystem fileSystem,
+    IUriFilter uriFilter,
+    IDatabaseWriter writer) : Contracts.RepoQL.RepoQLBase
 {
     private static int GetEnvInt(string name, int dflt)
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
@@ -86,7 +96,7 @@ public sealed class RepoQlServiceImpl(IGraphStore store, RepositoryConfiguration
     {
         await barrier.InitialScanCompleted.WaitAsync(context.CancellationToken).ConfigureAwait(false);
         var resp = new GetDocumentSummariesResponse();
-        var kinds = request.Kinds.Count > 0 ? request.Kinds.Select(k => k.Trim()).ToArray() : new[] { "outline" };
+        var kinds = request.Kinds.Count > 0 ? request.Kinds.Select(k => k.Trim()).ToArray() : ["outline"];
         var minSeverity = string.IsNullOrWhiteSpace(request.MinSeverity) ? null : request.MinSeverity.Trim();
         var includeData = request.IncludeData;
         var includeMessage = request.IncludeMessage;
@@ -121,8 +131,14 @@ public sealed class RepoQlServiceImpl(IGraphStore store, RepositoryConfiguration
                         ann.Message = row["message"]?.ToString() ?? string.Empty;
                     if (includeData && row.TryGetValue("data", out var d) && d is not null)
                     {
-                        if (d is string sjson) ann.Data = ParseStruct(sjson);
-                        else ann.Data = ParseStruct(JsonSerializer.Serialize(d));
+                        if (d is string sjson)
+                        {
+                            ann.Data = ParseStruct(sjson);
+                        }
+                        else
+                        {
+                            ann.Data = ParseStruct(SerializeToJson(d));
+                        }
                     }
                     if (includeResolvedTargetUri)
                         ann.ResolvedTargetUri = row["resolved_target_uri"]?.ToString() ?? string.Empty;
@@ -142,7 +158,10 @@ public sealed class RepoQlServiceImpl(IGraphStore store, RepositoryConfiguration
                     var exists = store.RawQuery(existsSql, canonicalUri).Any();
                     result.Status = exists ? SummaryStatus.Ok : SummaryStatus.NotFound;
                 }
-                else result.Status = SummaryStatus.Ok;
+                else
+                {
+                    result.Status = SummaryStatus.Ok;
+                }
             }
             catch (Exception ex)
             {
@@ -186,6 +205,13 @@ public sealed class RepoQlServiceImpl(IGraphStore store, RepositoryConfiguration
         if (!string.IsNullOrWhiteSpace(s) && DateTime.TryParse(s, null, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var dt))
             return dt.ToUniversalTime();
         return DateTime.UtcNow;
+    }
+
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "JSON serialization for dynamic data structures; fallback serialization")]
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "JSON serialization for dynamic data structures; fallback serialization")]
+    private static string SerializeToJson(object obj)
+    {
+        return JsonSerializer.Serialize(obj);
     }
 
     private static Struct ParseStruct(string json)
@@ -283,5 +309,46 @@ public sealed class RepoQlServiceImpl(IGraphStore store, RepositoryConfiguration
             byte[] => "BLOB",
             _ => "VARCHAR"
         };
+    }
+
+
+    public override async Task ReindexAll(ReindexRequest request, IServerStreamWriter<ReindexProgress> responseStream, ServerCallContext context)
+    {
+        // Phase: preparing
+        await responseStream.WriteAsync(new ReindexProgress { Phase = "preparing", Total = 0, Completed = 0 }).ConfigureAwait(false);
+
+        // Phase: enumerating
+        var list = new List<RepoUri>(capacity: 4096);
+        await foreach (var entry in fileSystem.EnumerateAsync(context.CancellationToken).ConfigureAwait(false))
+        {
+            if (!uriFilter.IncludeFile(entry.Uri)) continue;
+            list.Add(entry.Uri);
+        }
+
+        var total = list.Count;
+
+        // Subscribe to indexer events to count completed items
+        var processed = 0;
+        using var sub = indexer.Subscribe(new Observer(() => { }, _ => { }, ev =>
+        {
+            responseStream.WriteAsync(new ReindexProgress { Phase = "Classified", Total = total, Completed = indexer.ClassificationQueueDepth });
+            responseStream.WriteAsync(new ReindexProgress { Phase = "Parsed", Total = total, Completed = indexer.ParsingQueueDepth });
+            responseStream.WriteAsync(new ReindexProgress { Phase = "Analyzed", Total = total, Completed = indexer.EnrichmentQueueDepth });
+        }));
+        
+        // Phase: enqueued
+        await indexer.QueueForIndexingAsync(list, false).ConfigureAwait(false);
+
+        // Finalize: wait for idle and flush
+        await indexer.WaitForIdle(context.CancellationToken).ConfigureAwait(false);
+        await writer.FlushAsync(context.CancellationToken).ConfigureAwait(false);
+        await responseStream.WriteAsync(new ReindexProgress { Phase = "completed", Total = total, Completed = Math.Max(total, processed) }).ConfigureAwait(false);
+    }
+
+    private sealed class Observer(System.Action completed, System.Action<System.Exception> error, System.Action<IndexerEvent> next) : IObserver<IndexerEvent>
+    {
+        public void OnCompleted() => completed();
+        public void OnError(System.Exception err) => error(err);
+        public void OnNext(IndexerEvent value) => next(value);
     }
 }

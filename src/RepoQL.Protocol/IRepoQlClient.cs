@@ -1,6 +1,7 @@
 using Grpc.Net.Client;
+using RepoQL.Contracts;
 
-namespace RepoQL.Contracts;
+namespace RepoQL.Protocol;
 
 /// <summary>
 /// Typed client for the RepoQL gRPC service using a Unix domain socket transport.

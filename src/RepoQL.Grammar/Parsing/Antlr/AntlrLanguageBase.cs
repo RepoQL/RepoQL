@@ -1,8 +1,13 @@
 using System.Diagnostics.CodeAnalysis;
 using Antlr4.Runtime;
 using Antlr4.Runtime.Tree;
+using RepoQL.Grammar.Core;
+using RepoQL.Grammar.Diagnostics;
+using RepoQL.Grammar.Language;
+using RepoQL.Grammar.Syntax;
+using ISyntaxTree = RepoQL.Grammar.Syntax.ISyntaxTree;
 
-namespace RepoQL.Grammar;
+namespace RepoQL.Grammar.Parsing.Antlr;
 
 /// <summary>
 /// Base class for ANTLR4-powered languages. Implement ParseRoot and Convert to map the parse tree to ISyntaxNode.
@@ -36,12 +41,14 @@ public abstract class AntlrLanguageBase<
             var node = Convert(root, text, out diags);
             return new Tree(text, node, diags);
         }
+#pragma warning disable CA1031
         catch (Exception e)
+#pragma warning restore CA1031
         {
-            diags = new[]
-            {
-                new Diagnostic(new("parse/error"), Severity.Error, e.Message, new TextSpan(0, 0), Array.Empty<CodeFix>())
-            };
+            diags =
+            [
+                new Diagnostic(new("parse/error"), Severity.Error, e.Message, new TextSpan(0, 0), [])
+            ];
             return new Tree(text, new ErrorNode(new TextSpan(0, text.Length)), diags);
         }
     }

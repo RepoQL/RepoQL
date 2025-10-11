@@ -10,6 +10,7 @@ using RepoQL.Core;
 using RepoQL.Core.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
+using RepoQL.FileSystem.Classification;
 using RepoQL.FileSystem.InMemory;
 using Artifact = RepoQL.Contracts.Models.Artifact;
 
@@ -22,7 +23,7 @@ namespace RepoQL.Tests;
 /// This test SHOULD FAIL with the current implementation and PASS after the fix.
 /// </summary>
 [UsedImplicitly]
-public class ConcurrencyBugTest
+internal class ConcurrencyBugTest
 {
     private class TestFormatLoader : IFormatLoader, IFormatMaterializer
     {
@@ -48,7 +49,9 @@ public class ConcurrencyBugTest
         public async Task<DocumentModel> LoadAsync(DiscoveredArtifact file, CancellationToken cancellationToken = default)
         {
             // Simulate some CPU work
+#pragma warning disable CA5394
             await Task.Delay(Random.Shared.Next(10, 50), cancellationToken);
+#pragma warning restore CA5394
 
             string text;
             await using (var stream = file.File.CreateReadStream())
@@ -65,7 +68,7 @@ public class ConcurrencyBugTest
             var fileUri = document.Uri;
 
             var parseNum = Interlocked.Increment(ref _parseCount);
-            Console.WriteLine($"[Parser {Thread.CurrentThread.ManagedThreadId}] Parsing file {fileUri} (parse #{parseNum})");
+            Console.WriteLine($"[Parser {Environment.CurrentManagedThreadId}] Parsing file {fileUri} (parse #{parseNum})");
 
             // Create substantial data to increase chance of overlap
             var docId = Guid.NewGuid();
@@ -228,7 +231,7 @@ public class ConcurrencyBugTest
 
         while (DateTime.UtcNow < waitUntil)
         {
-            await Task.Delay(100);
+            await Task.Delay(100, cancellationToken);
 
             // Check if we've processed all files or hit errors
             if (successfulIndexes + errors.Count >= fileCount)
@@ -281,7 +284,9 @@ public class ConcurrencyBugTest
             {
                 // Each operation gets its OWN connection
                 using var connection = new DuckDBConnection("Data Source=:memory:");
+#pragma warning disable CA1849
                 connection.Open();
+#pragma warning restore CA1849
 
                 using var store = new DuckDbGraphStore(connection, enableExtensions: false, registerUdfs: false);
                 store.EnsureSchema();

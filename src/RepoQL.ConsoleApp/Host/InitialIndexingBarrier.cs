@@ -1,11 +1,11 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System.Diagnostics;
 using RepoQL.Contracts.Data;
 using RepoQL.Core;
 using RepoQL.Data.DuckDB;
 
-namespace RepoQL.App.Host;
+namespace RepoQL.ConsoleApp.Host;
 
 public interface IInitialIndexingBarrier
 {
@@ -67,6 +67,7 @@ internal sealed class InitialIndexingBarrier(
         if (!embeddingProvider.Enabled) return;
         try
         {
+            await Task.Yield(); // Run on background thread
             using var span = Activity.StartActivity("repoql.embed.refresh", ActivityKind.Internal);
             using var conn = connectionFactory.CreateConnection();
             using var duck = new DuckDbGraphStore(conn, enableExtensions: true, registerUdfs: false, logger: null, embeddingProvider: embeddingProvider);

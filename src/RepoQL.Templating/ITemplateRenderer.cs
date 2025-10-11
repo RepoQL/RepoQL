@@ -1,7 +1,3 @@
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-
 namespace RepoQL.Templating;
 
 /// <summary>
@@ -24,4 +20,3 @@ public interface ITemplateRenderer
     /// </summary>
     Task<string> RenderAsync(string templateNameOrPath, IReadOnlyDictionary<string, object?> model, CancellationToken cancellationToken = default);
 }
-

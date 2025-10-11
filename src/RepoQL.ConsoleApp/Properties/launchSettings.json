@@ -1,0 +1,13 @@
+﻿{
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+  "profiles": {
+      "host": {
+        "commandName": "Project",
+        "commandLineArgs": "serve"
+      },
+      "xray": {
+          "commandName": "Project",
+          "commandLineArgs": "xray **/*.md"
+      }
+  }
+}

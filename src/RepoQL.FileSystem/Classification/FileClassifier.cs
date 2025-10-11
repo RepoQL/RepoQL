@@ -3,8 +3,9 @@ using MimeDetective;
 using MimeDetective.Definitions;
 using MimeDetective.Engine;
 using RepoQL.Contracts;
+using RepoQL.FileSystem.Abstractions;
 
-namespace RepoQL.FileSystem;
+namespace RepoQL.FileSystem.Classification;
 
 public class FileClassifier : IFileClassifier
 {

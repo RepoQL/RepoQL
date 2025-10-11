@@ -1,14 +1,17 @@
+using System.Diagnostics.CodeAnalysis;
 using AwesomeAssertions;
 using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Core;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
+using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.InMemory;
 
 namespace RepoQL.Tests;
 
-public class MarkdownXrayRichTests
+[SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope")]
+internal class MarkdownXrayRichTests
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 
@@ -42,15 +45,14 @@ public class MarkdownXrayRichTests
         var fsRegistry = new FileSystemRegistry([fs]);
         var hub = new MultiFileSystem(fsRegistry, [fs]);
         var registry = new FormatRegistry(
-            new Contracts.FormatDescriptor[]
-            {
-                new(
+        [
+            new(
                     SemanticMediaType.Create("text","markdown").WithKind("markdown.doc"),
                     new Formats.Markdown.MarkdownLoader(),
                     new Formats.Markdown.MarkdownAnalyzer(),
                     new Formats.Markdown.MarkdownLoader(),
                     ["markdown"])
-            });
+        ]);
         var workspace = new AnalysisWorkspace(hub, classifier, hasher, registry);
         await using var indexer = new Core.RepositoryIndexer(new Core.Metrics.IndexingMetrics(), new System.Diagnostics.Metrics.Meter("RepoQL.Tests.Xray"), hub, store, classifier, registry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
 

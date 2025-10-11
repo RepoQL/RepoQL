@@ -1,0 +1,12 @@
+{% comment -%}
+Unstructured output — single column → bullet list
+Model:
+  items: [string]
+  display_count: number
+  total_count: number
+{% endcomment -%}
+{%- for it in items -%}
+- {{- it }}
+{% endfor -%}
+[{{- display_count | abbr }} / {{- total_count | abbr }} rows]
+
