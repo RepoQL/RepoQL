@@ -1,0 +1,11 @@
+Solution
+  Format: {{ format_version }}{% if vs_version and vs_version != '?' %} (Visual Studio {{ vs_version }}){% endif %}
+{% if folder_count > 0 %}  Solution Folders:
+{% for folder in folders %}    - {{ folder.name }}
+{% endfor %}{% endif %}{% if project_count > 0 %}  Projects: {{ project_count }}
+{% for proj in projects limit:20 %}    - {{ proj.name }}{% if proj.path and proj.path != '' %} → {{ proj.path }}{% endif %}
+{% endfor %}{% if project_count > 20 %}    - [... {{ project_count | minus: 20 }} more]
+{% endif %}{% endif %}{% if config_count > 0 %}  Configurations: {{ config_count }}
+{% for config in configs limit:10 %}    - {{ config }}
+{% endfor %}{% if config_count > 10 %}    - [... {{ config_count | minus: 10 }} more]
+{% endif %}{% endif %}

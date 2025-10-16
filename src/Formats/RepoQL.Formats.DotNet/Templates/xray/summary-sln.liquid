@@ -1,0 +1,5 @@
+Name: {{ file_name }}
+Format: {{ format_version }}{% if vs_version and vs_version != '?' %} (Visual Studio {{ vs_version }}){% endif %}
+Projects: {{ project_count }}
+{% if folder_count > 0 %}Solution Folders: {{ folder_count }}
+{% endif %}Configurations: {{ config_count }}{% if configs_text and configs_text != '' %} ({{ configs_text }}){% endif %}
