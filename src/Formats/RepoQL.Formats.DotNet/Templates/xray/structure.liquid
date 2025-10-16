@@ -4,11 +4,11 @@ Project
 {% if tfms and tfms.size > 0 %}  TargetFrameworks:
 {% for t in tfms %}    - {{ t }}
 {% endfor %}{% endif %}
-{% if packages and packages.size > 0 %}  PackageReference:
-{% for p in packages limit:20 %}    - {{ p.id }}{% if p.version %} ({{ p.version }}){% endif %}
+{% if package_lines and package_lines.size > 0 %}  PackageReference:
+{% for line in package_lines limit:20 %}    - {{ line }}
 {% endfor %}{% if package_count > 20 %}    - [... more]
 {% endif %}{% endif %}
-{% if project_refs and project_refs.size > 0 %}  ProjectReference:
-{% for r in project_refs limit:20 %}    - {{ r.include }}
+{% if project_ref_lines and project_ref_lines.size > 0 %}  ProjectReference:
+{% for line in project_ref_lines limit:20 %}    - {{ line }}
 {% endfor %}{% if project_ref_count > 20 %}    - [... more]
 {% endif %}{% endif %}{% endif %}

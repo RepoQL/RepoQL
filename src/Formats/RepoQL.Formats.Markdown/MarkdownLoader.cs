@@ -5,6 +5,8 @@ using Markdig.Extensions.Yaml;
 using Markdig.Extensions.Tables;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
@@ -13,10 +15,11 @@ using YamlDotNet.Serialization.NamingConventions;
 
 namespace RepoQL.Formats.Markdown;
 
-public sealed class MarkdownLoader(ITemplateRenderer? renderer = null) : IFormatLoader, IFormatMaterializer
+public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = null) : IFormatLoader, IFormatMaterializer
 {
     internal const string StateMetadataKey = "markdown.state";
 
+    private ILogger<MarkdownLoader> Logger = logger ?? NullLogger<MarkdownLoader>.Instance;
     private static readonly SemanticMediaType MarkdownMediaType = SemanticMediaType
         .Create("text", "markdown")
         .WithKind("markdown.doc");
@@ -34,11 +37,9 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer = null) : IFormat
         .UseMediaLinks()
         .Build();
 
-    private readonly ITemplateRenderer _renderer = new LiquidTemplateRenderer(
+    private readonly LiquidTemplateRenderer _renderer = new(
         assembly: typeof(MarkdownLoader).Assembly,
         resourceRoot: "RepoQL.Formats.Markdown.Templates");
-
-    public MarkdownLoader() : this(null) { }
 
     public bool Supports(SemanticMediaType mediaType)
     {
@@ -74,10 +75,9 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer = null) : IFormat
         // Peek first non-empty line for markdown hints (#, ---)
         try
         {
-            using var stream = artifact.File.CreateReadStream();
+            await using var stream = artifact.File.CreateReadStream();
             using var reader = new StreamReader(stream);
-            string? line;
-            while ((line = await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false)) is not null)
+            while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
                 var trimmed = line.TrimStart();
@@ -89,8 +89,9 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer = null) : IFormat
                 break;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            LogFailedToParseNameAsMarkdown(ex, artifact.File.Name);
         }
 
         return false;
@@ -137,12 +138,15 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer = null) : IFormat
                 case HeadingBlock heading:
                 {
                     var headingText = InlineText(heading.Inline).Trim();
-                    var slug = MarkdownTextUtilities.Slug(headingText);
-                    var span = ToDocumentSpan(lineMap, heading.Span);
-                    var spanId = Guid.NewGuid();
-                    var nodeId = Guid.NewGuid();
-                    headings.Add(new HeadingInfo(nodeId, spanId, heading.Level, headingText, slug, span));
-                    headingBySlug[slug] = nodeId;
+                    if (!string.IsNullOrWhiteSpace(headingText))
+                    {
+                        var slug = MarkdownTextUtilities.Slug(headingText);
+                        var span = ToDocumentSpan(lineMap, heading.Span);
+                        var spanId = Guid.NewGuid();
+                        var nodeId = Guid.NewGuid();
+                        headings.Add(new HeadingInfo(nodeId, spanId, heading.Level, headingText, slug, span));
+                        headingBySlug[slug] = nodeId;
+                    }
                     break;
                 }
                 case FencedCodeBlock fenced:
@@ -226,108 +230,105 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer = null) : IFormat
         string? structure = null;
         try
         {
-            if (_renderer is not null)
+            var fileName = GetFileName(document.Uri);
+            // Compute additional counts from SyntaxTree when available
+            var imagesCount = 0;
+            var tablesCount = 0;
+            try
             {
-                var fileName = GetFileName(document.Uri);
-                // Compute additional counts from SyntaxTree when available
-                var imagesCount = 0;
-                var tablesCount = 0;
-                try
+                if (document.SyntaxTree is MarkdownDocument mdDoc)
                 {
-                    if (document.SyntaxTree is MarkdownDocument mdDoc)
-                    {
-                        imagesCount = mdDoc.Descendants<LinkInline>().Count(l => l.IsImage);
-                        tablesCount = mdDoc.Descendants<Table>().Count();
-                    }
+                    imagesCount = mdDoc.Descendants<LinkInline>().Count(l => l.IsImage);
+                    tablesCount = mdDoc.Descendants<Table>().Count();
                 }
-                catch { }
-
-                var langCounts = state.Surface.CodeBlocks
-                    .Select(cb => (cb.Language ?? string.Empty).Trim())
-                    .Where(s => s.Length > 0)
-                    .GroupBy(s => s, StringComparer.OrdinalIgnoreCase)
-                    .OrderByDescending(g => g.Count())
-                    .ToDictionary(g => g.Key, g => g.Count());
-
-                var frontmatterKeys = 0;
-                string? title = null;
-                var topics = new List<string>();
-                string? topLang = null;
-                var tags = new List<string>();
-                try
-                {
-                    if (state.Surface.DocumentProperties["frontmatter"] is JsonObject fm)
-                    {
-                        frontmatterKeys = fm.Count;
-                        if (fm.TryGetPropertyValue("title", out var t) && t is not null)
-                        {
-                            title = t.ToString();
-                        }
-                        // Extract tags or keywords from frontmatter (array or comma-separated string)
-                        if (fm.TryGetPropertyValue("tags", out var tv) && tv is not null)
-                        {
-                            tags.AddRange(ExtractTags(tv));
-                        }
-                        else if (fm.TryGetPropertyValue("keywords", out var kv) && kv is not null)
-                        {
-                            tags.AddRange(ExtractTags(kv));
-                        }
-                    }
-                }
-                catch { }
-
-                // Prefer frontmatter title, else first H1 heading
-                title ??= state.Surface.Headings.FirstOrDefault(h => h.Level == 1)?.Text;
-
-                // Topics: first few distinct H2/H3 headings
-                topics = state.Surface.Headings
-                    .Where(h => h.Level >= 2)
-                    .Select(h => h.Text?.Trim())
-                    .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Take(3)
-                    .OfType<string>()
-                    .ToList();
-
-                // Top language: most frequent fenced code block language
-                if (langCounts.Count > 0)
-                {
-                    topLang = langCounts
-                        .OrderByDescending(kv => kv.Value)
-                        .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
-                        .First().Key;
-                }
-
-                var model = new Dictionary<string, object?>
-                {
-                    ["file_name"] = fileName,
-                    ["media_kind"] = state.MediaType.Kind ?? string.Empty,
-                    ["media_base"] = $"{state.MediaType.Type}/{state.MediaType.Subtype}",
-                    ["size_bytes"] = state.Size,
-                    ["line_count"] = document.LineMap.LineCount,
-                    ["headings_count"] = state.Surface.Headings.Count,
-                    ["codeblocks_count"] = state.Surface.CodeBlocks.Count,
-                    ["links_count"] = state.Surface.Links.Count,
-                    ["images_count"] = imagesCount,
-                    ["tables_count"] = tablesCount,
-                    ["frontmatter_keys"] = frontmatterKeys,
-                    ["code_lang_counts"] = langCounts,
-                    ["title"] = title,
-                    ["topics"] = topics,
-                    ["top_lang"] = topLang,
-                    ["tags"] = tags.Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToList(),
-                    ["headings"] = state.Surface.Headings.Select(h => new Dictionary<string, object?>
-                    {
-                        ["level"] = h.Level,
-                        ["text"] = h.Text,
-                        ["indent"] = new string(' ', Math.Max(0, (h.Level - 1) * 2))
-                    }).ToList()
-                };
-
-                headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
-                summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
-                structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
             }
+            catch { }
+
+            var langCounts = state.Surface.CodeBlocks
+                .Select(cb => (cb.Language ?? string.Empty).Trim())
+                .Where(s => s.Length > 0)
+                .GroupBy(s => s, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(g => g.Count())
+                .ToDictionary(g => g.Key, g => g.Count());
+
+            var frontmatterKeys = 0;
+            string? title = null;
+            var topics = new List<string>();
+            string? topLang = null;
+            var tags = new List<string>();
+            try
+            {
+                if (state.Surface.DocumentProperties["frontmatter"] is JsonObject fm)
+                {
+                    frontmatterKeys = fm.Count;
+                    if (fm.TryGetPropertyValue("title", out var t) && t is not null)
+                    {
+                        title = t.ToString();
+                    }
+                    // Extract tags or keywords from frontmatter (array or comma-separated string)
+                    if (fm.TryGetPropertyValue("tags", out var tv) && tv is not null)
+                    {
+                        tags.AddRange(ExtractTags(tv));
+                    }
+                    else if (fm.TryGetPropertyValue("keywords", out var kv) && kv is not null)
+                    {
+                        tags.AddRange(ExtractTags(kv));
+                    }
+                }
+            }
+            catch { }
+
+            // Prefer frontmatter title, else first H1 heading
+            title ??= state.Surface.Headings.FirstOrDefault(h => h.Level == 1)?.Text;
+
+            // Topics: first few distinct H2/H3 headings
+            topics = state.Surface.Headings
+                .Where(h => h.Level >= 2)
+                .Select(h => h.Text?.Trim())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .OfType<string>()
+                .ToList();
+
+            // Top language: most frequent fenced code block language
+            if (langCounts.Count > 0)
+            {
+                topLang = langCounts
+                    .OrderByDescending(kv => kv.Value)
+                    .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+                    .First().Key;
+            }
+
+            var model = new Dictionary<string, object?>
+            {
+                ["file_name"] = fileName,
+                ["media_kind"] = state.MediaType.Kind ?? string.Empty,
+                ["media_base"] = $"{state.MediaType.Type}/{state.MediaType.Subtype}",
+                ["size_bytes"] = state.Size,
+                ["line_count"] = document.LineMap.LineCount,
+                ["headings_count"] = state.Surface.Headings.Count,
+                ["codeblocks_count"] = state.Surface.CodeBlocks.Count,
+                ["links_count"] = state.Surface.Links.Count,
+                ["images_count"] = imagesCount,
+                ["tables_count"] = tablesCount,
+                ["frontmatter_keys"] = frontmatterKeys,
+                ["code_lang_counts"] = langCounts,
+                ["title"] = title,
+                ["topics"] = topics,
+                ["top_lang"] = topLang,
+                ["tags"] = tags.Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToList(),
+                ["headings"] = state.Surface.Headings.Select(h => new Dictionary<string, object?>
+                {
+                    ["level"] = h.Level,
+                    ["text"] = h.Text,
+                    ["indent"] = new string(' ', Math.Max(0, (h.Level - 1) * 2))
+                }).ToList()
+            };
+
+            headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
+            summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
+            structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
         }
         catch
         {
@@ -528,20 +529,20 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer = null) : IFormat
         return map.GetSpan(start, end);
     }
 
-    private static void TryLoadFrontMatter(string text, YamlFrontMatterBlock block, JsonObject props)
+    private static bool TryLoadFrontMatter(string text, YamlFrontMatterBlock block, JsonObject props)
     {
         try
         {
             var yaml = ExtractYamlText(text, block);
-            if (string.IsNullOrWhiteSpace(yaml)) return;
+            if (string.IsNullOrWhiteSpace(yaml)) return false;
             var json = YamlToJson(yaml);
-            if (json is not null)
-            {
+            if (json is not null) 
                 props["frontmatter"] = json;
-            }
+            return true;
         }
         catch
         {
+            return false;
         }
     }
 
@@ -643,4 +644,9 @@ public sealed class MarkdownLoader(ITemplateRenderer? renderer = null) : IFormat
         }
     }
 
+    [LoggerMessage(LogLevel.Warning, "Failed to parse {Name} as markdown")]
+    partial void LogFailedToParseNameAsMarkdown(Exception ex, string name);
+    
+    [LoggerMessage(LogLevel.Warning, "Failed to load front matter from {Name}")]
+    partial void LogFailedToLoadFrontmatter(Exception ex, string name);
 }

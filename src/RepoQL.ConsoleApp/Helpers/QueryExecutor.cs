@@ -3,13 +3,20 @@ using System.Threading.Tasks;
 using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.Contracts;
-using RepoQL.Protocol;
 
 namespace RepoQL.ConsoleApp.Helpers;
 
-internal sealed class QueryExecutor(ResultFormatterFactory formatterFactory)
+internal sealed class QueryExecutor
 {
-    private readonly ResultFormatterFactory _formatterFactory = formatterFactory;
+    private readonly ResultFormatterFactory _formatterFactory;
+    private readonly RepoQlClientProvider _clientProvider;
+
+    public QueryExecutor(ResultFormatterFactory formatterFactory, RepoQlClientProvider clientProvider)
+    {
+        _formatterFactory = formatterFactory;
+        _clientProvider = clientProvider;
+        _ = _clientProvider.EnsureStarted();
+    }
 
     public async Task<QueryExecutionResult> ExecuteAsync(
         string sql,
@@ -17,7 +24,7 @@ internal sealed class QueryExecutor(ResultFormatterFactory formatterFactory)
         ResultFormat format,
         CancellationToken cancellationToken)
     {
-        await using var client = await RepoQlClient.CreateAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+        var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
 
         RawQueryResponse result;
         long? total = null;

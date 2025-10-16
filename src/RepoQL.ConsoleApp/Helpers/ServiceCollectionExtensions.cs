@@ -7,12 +7,17 @@ namespace RepoQL.ConsoleApp.Helpers;
 
 internal static class ServiceCollectionExtensions
 {
-    public static IServiceCollection AddRepoQlConsoleServices(this IServiceCollection services)
+    public static IServiceCollection AddRepoQlConsoleServices(this IServiceCollection services, bool prewarmClient = true)
     {
         services.AddSingleton<IAnsiConsole>(_ => AnsiConsole.Console);
         services.AddSingleton<IResultFormatter, UnstructuredFormatter>();
         services.AddSingleton<IResultFormatter, JsonLDFormatter>();
         services.AddSingleton<ResultFormatterFactory>();
+        services.AddSingleton<RepoQlClientProvider>();
+        if (prewarmClient)
+        {
+            services.AddHostedService<RepoQlClientWarmupService>();
+        }
         services.AddSingleton<QueryExecutor>();
         services.AddLiquidTemplatingFromEmbedded(
             assembly: typeof(ServiceCollectionExtensions).Assembly,

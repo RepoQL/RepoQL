@@ -9,6 +9,7 @@
 
   <ItemGroup>
       <PackageReference Include="Markdig" Version="0.41.3" />
+      <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.5" />
       <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 

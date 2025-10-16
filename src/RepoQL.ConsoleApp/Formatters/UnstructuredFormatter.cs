@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.Linq;
 using Google.Protobuf.Collections;
@@ -73,39 +74,80 @@ public class UnstructuredFormatter : IResultFormatter
         return list;
     }
 
-    private async Task<string[]> RenderKv(RepeatedField<ColumnSchema> cols, RepeatedField<RowData> rows, List<int> includeIdx, int displayCount, long total, CancellationToken ct)
+    private Task<string[]> RenderKv(RepeatedField<ColumnSchema> cols, RepeatedField<RowData> rows, List<int> includeIdx, int displayCount, long total, CancellationToken ct)
     {
-        var columns = includeIdx.Select(i => cols[i].Name).ToArray();
-        var records = new List<Dictionary<string,string>>(displayCount);
+        var lines = new List<string>();
+        var produced = 0;
+        var anyOutput = false;
+
         for (int r = 0; r < displayCount && r < rows.Count; r++)
         {
-            var rec = new Dictionary<string,string>(columns.Length, StringComparer.Ordinal);
-            for (int i = 0; i < includeIdx.Count; i++)
+            var row = rows[r];
+            string? firstLine = null;
+            var extraLines = new List<string>();
+
+            foreach (var colIdx in includeIdx)
             {
-                var colIdx = includeIdx[i];
-                var name = columns[i];
-                string val = string.Empty;
-                if (colIdx < rows[r].Values.Count)
+                var name = cols[colIdx].Name;
+                string[] textLines;
+
+                if (colIdx < row.Values.Count)
                 {
-                    var v = rows[r].Values[colIdx];
-                    if (v.KindCase == Google.Protobuf.WellKnownTypes.Value.KindOneofCase.StringValue)
-                        val = v.StringValue ?? string.Empty;
+                    var value = row.Values[colIdx];
+                    if (value.KindCase == Value.KindOneofCase.NullValue || IsEmptyValue(value))
+                        continue;
+                    if (value.KindCase == Value.KindOneofCase.StringValue)
+                    {
+                        textLines = SplitMultiline(value.StringValue ?? string.Empty);
+                    }
                     else
-                        val = ToSingleLineString(v);
+                    {
+                        textLines = [ToSingleLineString(value)];
+                    }
                 }
-                rec[name] = val ?? string.Empty;
+                else
+                {
+                    textLines = Array.Empty<string>();
+                }
+
+                if (textLines.Length == 0)
+                    continue;
+
+                if (firstLine is null)
+                {
+                    firstLine = $"{name}: {textLines[0]}";
+                    for (int i = 1; i < textLines.Length; i++)
+                        extraLines.Add($"  {textLines[i]}");
+                }
+                else
+                {
+                    extraLines.Add($"{name}: {textLines[0]}");
+                    for (int i = 1; i < textLines.Length; i++)
+                        extraLines.Add($"  {textLines[i]}");
+                }
             }
-            records.Add(rec);
+
+            if (firstLine is not null)
+            {
+                var rowHasMultipleLines = extraLines.Count > 0;
+                if (rowHasMultipleLines && anyOutput)
+                {
+                    lines.Add("---");
+                }
+
+                lines.Add(firstLine);
+                if (rowHasMultipleLines)
+                {
+                    lines.AddRange(extraLines);
+                }
+
+                produced++;
+                anyOutput = true;
+            }
         }
-        var payload = new Dictionary<string, object?>
-        {
-            ["columns"] = columns,
-            ["records"] = records,
-            ["display_count"] = records.Count,
-            ["total_count"] = total
-        };
-        var text = await _renderer.RenderAsync("Unstructured/kv", payload, ct);
-        return SplitLines(text);
+
+        lines.Add($"[{produced} / {total} rows]");
+        return Task.FromResult(lines.ToArray());
     }
 
     private async Task<string[]> RenderTable(RepeatedField<ColumnSchema> cols, RepeatedField<RowData> rows, List<int> includeIdx, int displayCount, long total, CancellationToken ct)
@@ -152,6 +194,15 @@ public class UnstructuredFormatter : IResultFormatter
     }
 
     private static string[] SplitLines(string s) => s.Replace("\r\n", "\n").TrimEnd().Split('\n');
+
+    private static string[] SplitMultiline(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return Array.Empty<string>();
+
+        var normalized = text.Replace("\r\n", "\n").Replace('\r', '\n');
+        return normalized.Split('\n');
+    }
 
     private static string ToSingleLineString(Value v) => v.KindCase switch
     {

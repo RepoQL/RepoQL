@@ -11,12 +11,11 @@
     "engineer": {
       "type": "stdio",
       "command": "codex",
-      "args": ["mcp", "-c 'sandbox_permissions=[\"workspace-write\"]'", "-c 'shell_environment_policy.inherit=all'"]
-    },
-    "query-repository": {
-      "type": "stdio",
-      "command": "dotnet",
-      "args": ["./artifacts/bin/RepoQL.ConsoleApp/debug/repoql.dll", "mcp"]
+      "args": [
+        "mcp",
+        "-c 'sandbox_permissions=[\"workspace-write\"]'",
+        "-c 'shell_environment_policy.inherit=all'"
+      ]
     }
   }
 }

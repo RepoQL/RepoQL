@@ -1,15 +1,27 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using ConsoleAppFramework;
 using RepoQL.ConsoleApp.Helpers;
-using RepoQL.Protocol;
 using Spectre.Console;
 
 namespace RepoQL.ConsoleApp.Commands;
 
 [RegisterCommands]
-internal class TerminalCommands(QueryExecutor queryExecutor, IAnsiConsole console)
+internal class TerminalCommands
 {
+    private readonly QueryExecutor _queryExecutor;
+    private readonly RepoQlClientProvider _clientProvider;
+    private readonly IAnsiConsole _console;
+
+    public TerminalCommands(QueryExecutor queryExecutor, RepoQlClientProvider clientProvider, IAnsiConsole console)
+    {
+        _queryExecutor = queryExecutor;
+        _clientProvider = clientProvider;
+        _console = console;
+        _ = _clientProvider.EnsureStarted();
+    }
+
     /// <summary>
     ///    Queries the structure  repository 
     /// </summary>
@@ -20,16 +32,16 @@ internal class TerminalCommands(QueryExecutor queryExecutor, IAnsiConsole consol
     public async Task Query([Argument] string query, int maxRows = 100, ResultFormat format = ResultFormat.Unstructured, CancellationToken cancel = default)
     {
         string[] lines = Array.Empty<string>();
-        await console.Status().StartAsync("Launching RepoQL host...", async context =>
+        await _console.Status().StartAsync("Launching RepoQL host...", async context =>
         {
             context.Status = "Running query...";
-            var result = await queryExecutor.ExecuteAsync(query, maxRows, format, cancel);
+            var result = await _queryExecutor.ExecuteAsync(query, maxRows, format, cancel);
             lines = result.Lines;
         });
         foreach (var line in lines) 
-            console.WriteLine(line);
+            _console.WriteLine(line);
     }
-    
+
     /// <summary>
     /// Show x-ray summaries for repository documents filtered by a glob pattern and optional search terms.
     /// </summary>
@@ -49,7 +61,7 @@ internal class TerminalCommands(QueryExecutor queryExecutor, IAnsiConsole consol
         var likeFile = BuildLikePattern("file:///", pattern);
         var likeEmbed = BuildLikePattern("embed:///", pattern);
 
-        await using var client = await RepoQlClient.CreateAsync(cancellationToken: cancel);
+        var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
         // Base query: fetch uri + x-ray fields (not text_content). Do not limit at server; we handle display limit.
         var sql = string.IsNullOrWhiteSpace(search) ?
@@ -139,7 +151,7 @@ internal class TerminalCommands(QueryExecutor queryExecutor, IAnsiConsole consol
             //if (i < displayCount - 1) console.WriteLine("");
         }
 
-        console.WriteLine(omitted > 0
+        _console.WriteLine(omitted > 0
             ? $"[{displayCount} / {total} items] — {omitted} omitted"
             : $"[{displayCount} / {total} items]");
 
@@ -147,7 +159,7 @@ internal class TerminalCommands(QueryExecutor queryExecutor, IAnsiConsole consol
         void WriteBlock(string text)
         {
             text = text.Replace("\r\n", "\n").Replace('\r', '\n');
-            foreach (var ln in text.Split('\n')) console.WriteLine(ln);
+            foreach (var ln in text.Split('\n')) _console.WriteLine(ln);
         }
     }
 

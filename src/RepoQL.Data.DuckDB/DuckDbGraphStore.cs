@@ -434,8 +434,8 @@ COMMENT ON TABLE annotation IS 'Out-of-band facts (lint, outline, metrics, hints
   END
 );", tx);
 
-        // Create the annotations VIEW only if UDFs are registered
-        // because it depends on repository_uri_join and fragment_from_line_range functions
+        // Create annotations view/macro. When UDFs are registered we create the rich version that
+        // resolves URIs. Otherwise fall back to a simpler projection so tests can still query annotations.
         if (_udfsRegistered)
         {
             Execute(@"CREATE OR REPLACE VIEW annotations AS
@@ -500,10 +500,10 @@ LEFT JOIN edge_uri eu  ON eu.id = a.id;", tx);
           SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
           WHERE lower(trim(k.value)) = lower(a.kind)))
     AND (_severity_rank(a.severity) >= _severity_rank(COALESCE(min_severity,'hint')))
-  ORDER BY severity_rank DESC, created_at DESC
+  ORDER BY severity_rank DESC, a.created_at DESC
 );", tx);
 
-        Execute(@"CREATE OR REPLACE MACRO annotations_all(kinds, min_severity) AS TABLE (
+            Execute(@"CREATE OR REPLACE MACRO annotations_all(kinds, min_severity) AS TABLE (
   SELECT *
   FROM annotations
   WHERE (kinds IS NULL OR EXISTS (
@@ -522,6 +522,34 @@ LEFT JOIN edge_uri eu  ON eu.id = a.id;", tx);
   updated_at TIMESTAMP NOT NULL
 );", tx);
         Execute(@"CREATE INDEX IF NOT EXISTS document_embedding_model_idx ON document_embedding(model);", tx);
+        }
+        else
+        {
+            Execute(@"CREATE OR REPLACE VIEW annotations AS
+  SELECT a.*, a.scope_document_id AS scope_document_uri, _severity_rank(a.severity) AS severity_rank
+  FROM annotation a;", tx);
+
+            Execute(@"CREATE OR REPLACE MACRO annotations_for(u, kinds, min_severity) AS TABLE (
+  SELECT a.*
+  FROM annotations a
+  JOIN node n ON n.id = a.scope_document_id
+  WHERE lower(n.uri) = lower(u)
+    AND (kinds IS NULL OR EXISTS (
+          SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
+          WHERE lower(trim(k.value)) = lower(a.kind)))
+    AND (_severity_rank(a.severity) >= _severity_rank(COALESCE(min_severity,'hint')))
+  ORDER BY severity_rank DESC, created_at DESC
+);", tx);
+
+            Execute(@"CREATE OR REPLACE MACRO annotations_all(kinds, min_severity) AS TABLE (
+  SELECT *
+  FROM annotations
+  WHERE (kinds IS NULL OR EXISTS (
+          SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
+          WHERE lower(trim(k.value)) = lower(annotations.kind)))
+    AND (_severity_rank(severity) >= _severity_rank(COALESCE(min_severity,'hint')))
+  ORDER BY severity_rank DESC, created_at DESC
+);", tx);
         }
 
         tx.Commit();
@@ -873,6 +901,20 @@ LIMIT CAST(k AS BIGINT)
         {
             using var r = cmd.ExecuteReader();
             if (!r.Read()) return null;
+            var storeUriValue = r.GetValue(5);
+            RepoUri? storeUri = null;
+            if (storeUriValue is string rawUri && !string.IsNullOrWhiteSpace(rawUri))
+            {
+                try
+                {
+                    storeUri = RepoUri.Parse(rawUri);
+                }
+                catch (FormatException)
+                {
+                    storeUri = null;
+                }
+            }
+
             return new Artifact
             {
                 Id = r.GetGuid(0),
@@ -880,7 +922,7 @@ LIMIT CAST(k AS BIGINT)
                 Size = r.GetInt64(2),
                 MediaType = ParseMediaType(r.IsDBNull(3) ? null : r.GetString(3)),
                 Text = r.IsDBNull(4) ? null : r.GetString(4),
-                StoreUri = r.IsDBNull(5) ? null : r.GetString(5),
+                StoreUri = storeUri,
                 Headline = r.IsDBNull(6) ? null : r.GetString(6),
                 Summary = r.IsDBNull(7) ? null : r.GetString(7),
                 Structure = r.IsDBNull(8) ? null : r.GetString(8)
@@ -904,6 +946,20 @@ LIMIT CAST(k AS BIGINT)
         {
             using var r = cmd.ExecuteReader();
             if (!r.Read()) return null;
+            var storeUriValue = r.GetValue(5);
+            RepoUri? storeUri = null;
+            if (storeUriValue is string rawUri && !string.IsNullOrWhiteSpace(rawUri))
+            {
+                try
+                {
+                    storeUri = RepoUri.Parse(rawUri);
+                }
+                catch (FormatException)
+                {
+                    storeUri = null;
+                }
+            }
+
             return new Artifact
             {
                 Id = r.GetGuid(0),
@@ -911,7 +967,7 @@ LIMIT CAST(k AS BIGINT)
                 Size = r.GetInt64(2),
                 MediaType = ParseMediaType(r.IsDBNull(3) ? null : r.GetString(3)),
                 Text = r.IsDBNull(4) ? null : r.GetString(4),
-                StoreUri = r.IsDBNull(5) ? null : r.GetString(5),
+                StoreUri = storeUri,
                 Headline = r.IsDBNull(6) ? null : r.GetString(6),
                 Summary = r.IsDBNull(7) ? null : r.GetString(7),
                 Structure = r.IsDBNull(8) ? null : r.GetString(8)
@@ -999,7 +1055,7 @@ FROM (
                 artifact.Size,
                 artifact.MediaType?.ToString(),
                 artifact.Text,
-                artifact.StoreUri,
+                artifact.StoreUri?.ToString(),
                 artifact.Headline,
                 artifact.Summary,
                 artifact.Structure);
@@ -1905,25 +1961,56 @@ FROM (
 
     private Annotation MapAnnotation(IDataRecord r)
     {
-        var dataJson = r.IsDBNull(7) ? "{}" : r.GetString(7);
+        var idOrdinal = r.GetOrdinal("id");
+        var semanticKeyOrdinal = r.GetOrdinal("semantic_key");
+        var kindOrdinal = r.GetOrdinal("kind");
+        var severityOrdinal = r.GetOrdinal("severity");
+        var sourceOrdinal = r.GetOrdinal("source");
+        var ruleIdOrdinal = r.GetOrdinal("rule_id");
+        var messageOrdinal = r.GetOrdinal("message");
+        var dataOrdinal = r.GetOrdinal("data");
+        var scopeDocumentOrdinal = r.GetOrdinal("scope_document_id");
+        var targetNodeOrdinal = r.GetOrdinal("target_node_id");
+        var targetEdgeOrdinal = r.GetOrdinal("target_edge_id");
+        var targetSpanOrdinal = r.GetOrdinal("target_span_id");
+        var targetUriOrdinal = r.GetOrdinal("target_uri");
+        var createdAtOrdinal = r.GetOrdinal("created_at");
+        var expiresAtOrdinal = r.GetOrdinal("expires_at");
+
+        var dataJson = r.IsDBNull(dataOrdinal) ? "{}" : r.GetString(dataOrdinal);
         var data = JsonNode.Parse(dataJson)?.AsObject() ?? new JsonObject();
+
+        RepoUri? targetUri = null;
+        var rawTargetUri = r.GetValue(targetUriOrdinal);
+        if (rawTargetUri is string raw && !string.IsNullOrWhiteSpace(raw))
+        {
+            try
+            {
+                targetUri = RepoUri.Parse(raw);
+            }
+            catch (FormatException)
+            {
+                targetUri = null;
+            }
+        }
+
         return new Annotation
         {
-            Id = r.GetGuid(0),
-            SemanticKey = r.IsDBNull(1) ? null : r.GetString(1),
-            Kind = r.GetString(2),
-            Severity = r.GetString(3),
-            Source = r.GetString(4),
-            RuleId = r.IsDBNull(5) ? null : r.GetString(5),
-            Message = r.GetString(6),
+            Id = r.GetGuid(idOrdinal),
+            SemanticKey = r.IsDBNull(semanticKeyOrdinal) ? null : r.GetString(semanticKeyOrdinal),
+            Kind = r.GetString(kindOrdinal),
+            Severity = r.GetString(severityOrdinal),
+            Source = r.GetString(sourceOrdinal),
+            RuleId = r.IsDBNull(ruleIdOrdinal) ? null : r.GetString(ruleIdOrdinal),
+            Message = r.GetString(messageOrdinal),
             Data = data,
-            ScopeDocumentId = r.GetGuid(8),
-            TargetNodeId = r.IsDBNull(9) ? null : r.GetGuid(9),
-            TargetEdgeId = r.IsDBNull(10) ? null : r.GetGuid(10),
-            TargetSpanId = r.IsDBNull(11) ? null : r.GetGuid(11),
-            TargetUri = r.IsDBNull(12) ? null : r.GetString(12),
-            CreatedAt = DateTime.SpecifyKind(r.GetDateTime(13), DateTimeKind.Utc),
-            ExpiresAt = r.IsDBNull(14) ? null : DateTime.SpecifyKind(r.GetDateTime(14), DateTimeKind.Utc)
+            ScopeDocumentId = r.GetGuid(scopeDocumentOrdinal),
+            TargetNodeId = r.IsDBNull(targetNodeOrdinal) ? null : r.GetGuid(targetNodeOrdinal),
+            TargetEdgeId = r.IsDBNull(targetEdgeOrdinal) ? null : r.GetGuid(targetEdgeOrdinal),
+            TargetSpanId = r.IsDBNull(targetSpanOrdinal) ? null : r.GetGuid(targetSpanOrdinal),
+            TargetUri = targetUri,
+            CreatedAt = DateTime.SpecifyKind(r.GetDateTime(createdAtOrdinal), DateTimeKind.Utc),
+            ExpiresAt = r.IsDBNull(expiresAtOrdinal) ? null : DateTime.SpecifyKind(r.GetDateTime(expiresAtOrdinal), DateTimeKind.Utc)
         };
     }
 

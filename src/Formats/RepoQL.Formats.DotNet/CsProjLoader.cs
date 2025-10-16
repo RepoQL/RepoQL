@@ -124,6 +124,9 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
             // tolerate broken XML; leave lists empty
         }
 
+        if (string.IsNullOrWhiteSpace(outputType))
+            outputType = "Library";
+
         var state = new CsProjState
         {
             Digest = digest,
@@ -164,6 +167,13 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
         var sdkDisplay = string.IsNullOrWhiteSpace(state.Sdk) ? string.Empty : NormalizeSdk(state.Sdk);
 
         // Prepare template model
+        var packageDisplay = BuildPackageDisplay(state.Packages, limit: 8);
+        var projectRefDisplay = BuildProjectRefDisplay(state.ProjectRefs, limit: 8);
+        var packageItems = state.Packages.Select(p => new { id = p.Id, version = string.IsNullOrWhiteSpace(p.Version) ? null : p.Version }).ToList();
+        var projectRefItems = state.ProjectRefs.Select(r => new { include = r.Include, file_name = FileNameOnly(r.Include) }).ToList();
+        var packageLines = state.Packages.Select(p => string.IsNullOrWhiteSpace(p.Version) ? p.Id : $"{p.Id} ({p.Version})").ToList();
+        var projectRefLines = state.ProjectRefs.Select(r => r.Include).ToList();
+
         var model = new Dictionary<string, object?>
         {
             ["file_name"] = fileName,
@@ -175,16 +185,12 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
             ["tfms"] = state.TargetFrameworks,
             ["package_count"] = pkgCount,
             ["project_ref_count"] = prjCount,
-            ["packages"] = state.Packages.Select(p => new 
-            {
-                id = p.Id, 
-                version = p.Version
-            }),
-            ["project_refs"] = state.ProjectRefs.Select(r => new Dictionary<string, object?>
-            {
-                ["include"] = r.Include, 
-                ["file_name"] = FileNameOnly(r.Include)
-            }).ToList(),
+            ["packages"] = packageItems,
+            ["project_refs"] = projectRefItems,
+            ["packages_text"] = packageDisplay,
+            ["project_refs_text"] = projectRefDisplay,
+            ["package_lines"] = packageLines,
+            ["project_ref_lines"] = projectRefLines,
         };
 
 
@@ -393,6 +399,35 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
         if (string.IsNullOrWhiteSpace(sdk)) return string.Empty;
         try { return sdk.Replace(".Sdk", string.Empty, StringComparison.OrdinalIgnoreCase); }
         catch { return sdk; }
+    }
+
+    private static string BuildPackageDisplay(IReadOnlyList<CsPackage> packages, int limit)
+    {
+        if (packages.Count == 0) return string.Empty;
+        var list = new List<string>();
+        for (var i = 0; i < packages.Count && i < limit; i++)
+        {
+            var pkg = packages[i];
+            list.Add(string.IsNullOrWhiteSpace(pkg.Version) ? pkg.Id : $"{pkg.Id} ({pkg.Version})");
+        }
+        var text = string.Join(", ", list);
+        if (packages.Count > limit)
+            text += ", …";
+        return text;
+    }
+
+    private static string BuildProjectRefDisplay(IReadOnlyList<CsProjectRef> refs, int limit)
+    {
+        if (refs.Count == 0) return string.Empty;
+        var list = new List<string>();
+        for (var i = 0; i < refs.Count && i < limit; i++)
+        {
+            list.Add(FileNameOnly(refs[i].Include) ?? refs[i].Include);
+        }
+        var text = string.Join(", ", list);
+        if (refs.Count > limit)
+            text += ", …";
+        return text;
     }
 }
 

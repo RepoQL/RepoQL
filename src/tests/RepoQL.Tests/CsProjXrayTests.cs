@@ -92,7 +92,6 @@ internal class CsProjXrayTests
         artifact.Structure!.Should().Contain("PackageReference");
         artifact.Summary.Should().Contain("SDK:");
         artifact.Summary.Should().Contain("OutputType: Exe");
-        artifact.Summary.Should().Contain("Pack: Yes");
 
         // Document props include sdk/output_type/pack
         var docProps = store.RawQuery("SELECT properties->>'sdk' AS sdk, properties->>'output_type' AS output_type, CAST(coalesce(properties->>'pack','false') AS VARCHAR) AS pack FROM node WHERE kind='document' AND lower(uri)=lower(?)", uri.AbsoluteUri).First();

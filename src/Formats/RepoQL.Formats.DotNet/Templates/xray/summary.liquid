@@ -1,7 +1,8 @@
 Name: {{ file_name }}
 {% if sdk and sdk != '' %}SDK: {{ sdk }}
-{% endif %}{% if output_type and output_type != '' %}OutputType: {{ output_type }}{% if pack %} + pack{% endif %}
+{% endif %}{% if output_type and output_type != '' %}OutputType: {{ output_type }}
+Pack: {% if pack %}Yes{% else %}No{% endif %}
 {% if tfms and tfms.size > 0 %}TargetFrameworks: {% for t in tfms %}{{ t }}{% if forloop.last == false %}, {% endif %}{% endfor %}
-{% endif %}{% if packages and packages.size > 0 %}Packages: {% for p in packages limit:8 %}{{ p.id }}{% if p.version %} ({{ p.version }}){% endif %}{% if forloop.last == false %}, {% endif %}{% endfor %}{% if package_count > 8 %}, …{% endif %}
-{% endif %}{% if project_refs and project_refs.size > 0 %}ProjectRefs: {% for r in project_refs limit:8 %}{{ r.file_name | default: r.include }}{% if forloop.last == false %}, {% endif %}{% endfor %}{% if project_ref_count > 8 %}, …{% endif %}
+{% endif %}{% if packages_text and packages_text != '' %}Packages: {{ packages_text }}
+{% endif %}{% if project_refs_text and project_refs_text != '' %}ProjectRefs: {{ project_refs_text }}
 {% endif %}{% endif %}

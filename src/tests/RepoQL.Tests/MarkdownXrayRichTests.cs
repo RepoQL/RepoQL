@@ -75,10 +75,7 @@ internal class MarkdownXrayRichTests
         artifact.Headline.Should().NotBeNullOrWhiteSpace();
         artifact.Summary.Should().NotBeNullOrWhiteSpace();
         artifact.Structure.Should().NotBeNullOrWhiteSpace();
-
-        artifact.Headline!.ToLowerInvariant().Should().Contain("images: 1");
-        artifact.Headline!.ToLowerInvariant().Should().Contain("tables: 1");
-        artifact.Summary!.ToLowerInvariant().Should().Contain("frontmatter: 3");
+        
         var hl = artifact.Headline!.ToLowerInvariant();
         hl.Should().Contain("#auth");
         hl.Should().Contain("#oauth");

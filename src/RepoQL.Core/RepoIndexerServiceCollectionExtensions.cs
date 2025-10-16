@@ -144,11 +144,12 @@ public static class RepoIndexerServiceCollectionExtensions
             resourceRoot: "RepoQL.Formats.DotNet.Templates");
 
         services.AddSingleton<MarkdownAnalyzer>();
-        services.AddSingleton<MarkdownLoader>(sp => new MarkdownLoader(sp.GetRequiredService<ITemplateRenderer>()));
+        services.AddSingleton<MarkdownLoader>(sp => new MarkdownLoader());
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjLoader>(sp => new CsProjLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<CsProjAnalyzer>();
+        services.AddSingleton<SlnLoader>(sp => new SlnLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<PlainTextLoader>();
 
         services.AddSingleton<IFormatRegistry>(sp =>
@@ -159,6 +160,8 @@ public static class RepoIndexerServiceCollectionExtensions
             var mermaidAnalyzer = sp.GetRequiredService<MermaidAnalyzer>();
             var csprojLoader = sp.GetRequiredService<CsProjLoader>();
             var csprojAnalyzer = sp.GetRequiredService<CsProjAnalyzer>();
+            var slnLoader = sp.GetRequiredService<SlnLoader>();
+            var slnAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"));
             var plainLoader = sp.GetRequiredService<PlainTextLoader>();
             var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
 
@@ -183,6 +186,12 @@ public static class RepoIndexerServiceCollectionExtensions
                     csprojAnalyzer,
                     csprojLoader,
                     ["csproj"]),
+                new FormatDescriptor(
+                    SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"),
+                    slnLoader,
+                    slnAnalyzer,
+                    slnLoader,
+                    ["sln"]),
                 // Catch‑all plain last so it doesn't shadow specific handlers
                 new FormatDescriptor(
                     SemanticMediaType.Create("text", "plain").WithKind("plain.document"),

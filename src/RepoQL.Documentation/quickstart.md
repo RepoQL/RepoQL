@@ -1,12 +1,4 @@
-# RepoQL treats the structures within all of the files in a repository as a graph.
-
-It allows you to 'x-ray' the repository, quickly discovering what exists without token waste. 
-
-You can query the structures in the repository files using the power of DuckDB flavored SQL + full text & semantic search
-
-The documentation for RepoQL can be read by querying the database - consider obtaining it to be the tutorial.
-
-## RepoQL URIs
+## Repo URIs
 
 All elements are identified by special URIs defined as follows:
 
@@ -162,18 +154,6 @@ FROM r JOIN document_search ds USING (doc_id)
 WHERE lower(ds.basename) LIKE '%.md' AND lower(ds.dirname) LIKE '%/docs%';
 ```
 More info in embed:///advanced-search.md
-
-## X-ray
-
-Summarize files fast with headline/summary/structure.
-
-- CLI
-  - `repoql xray --search "auth token" --level auto`
-  - `repoql xray docs/**/*.md --level structure`
-
-- MCP
-  - `XRay(inputs="docs/,**/*.md", level=Summary)`
-  - `XRaySearch(query="auth token", level=Auto, top=50)`
 
 ## Quick Start
 

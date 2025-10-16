@@ -188,6 +188,8 @@ public sealed class RepoQlClient : IRepoQlClient
             Arguments = arguments,
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardOutput = false,
+            RedirectStandardError = true
         };
         foreach (var kv in env) psi.Environment[kv.Key] = kv.Value;
         try { System.Diagnostics.Process.Start(psi); }

@@ -29,6 +29,8 @@ internal class HostCommands(IAnsiConsole console)
         var builder = WebApplication.CreateSlimBuilder([]);
         builder.Host.UseConsoleLifetime();
         builder.Logging.ClearProviders();
+        if (!implicitStart)
+            builder.Logging.AddSimpleConsole(sc => sc.SingleLine = true);
         builder.Logging.AddOpenTelemetry();
         builder.Services.AddOpenTelemetry()
             .WithMetrics(m => m
