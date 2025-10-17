@@ -18,6 +18,7 @@
     </PropertyGroup>
 
     <PropertyGroup>
+        <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
         <NoWarn>$(NoWarn);CA1305</NoWarn>
         <InvariantGlobalization>true</InvariantGlobalization>
         <!-- Creates a documentation xml file on build for intellisense, also mandates documentation comments -->

@@ -1,0 +1,76 @@
+{% if operations and operations.size > 0 -%}
+Operations
+{% for op in operations -%}
+- {{ op.kind }} {{ op.display_name }} (vars:{{ op.variable_count }}{% if op.fragment_count > 0 %}, fragments:{{ op.fragment_count }}{% endif %}{% if op.directive_count > 0 %}, directives:{{ op.directive_count }}{% endif %})
+{% if op.top_fields and op.top_fields.size > 0 -%}
+  fields:
+  {% for field in op.top_fields -%}
+  • {{ field }}
+  {% endfor -%}
+  {% if op.top_fields_truncated -%}
+  • …
+  {% endif -%}
+{% endif -%}
+{% if op.variables and op.variables.size > 0 -%}
+  variables:
+  {% for variable in op.variables -%}
+  • ${{ variable.name }}: {{ variable.type }}{% if variable.is_required %}!{% endif %}{% if variable.has_default %} (default){% endif %}
+  {% endfor -%}
+  {% if op.variables_truncated -%}
+  • …
+  {% endif -%}
+{% endif -%}
+{% endfor -%}
+{% endif -%}
+
+{% if fragments and fragments.size > 0 -%}
+Fragments
+{% for fragment in fragments -%}
+- fragment {{ fragment.name }}{% if fragment.type_condition %} on {{ fragment.type_condition }}{% endif %}{% if fragment.usage_count > 0 %} (used:{{ fragment.usage_count }}){% endif %}
+{% endfor -%}
+{% endif -%}
+
+{% if types and types.size > 0 -%}
+Schema Types
+{% for type in types -%}
+- {{ type.kind }} {{ type.name }}{% if type.implements and type.implements.size > 0 %} implements {{ type.implements | join: ", " }}{% endif %}{% if type.field_count or type.enum_value_count or type.union_member_count %} (fields:{{ type.field_count }}{% if type.enum_value_count > 0 %}, values:{{ type.enum_value_count }}{% endif %}{% if type.union_member_count > 0 %}, members:{{ type.union_member_count }}{% endif %}){% endif %}
+{% if type.fields and type.fields.size > 0 -%}
+  fields:
+  {% for field in type.fields -%}
+  • {{ field.name }}: {{ field.type }}{% if field.is_deprecated %} (deprecated{% if field.deprecation_reason %}: {{ field.deprecation_reason }}{% endif %}){% endif %}
+  {% endfor -%}
+  {% if type.fields_truncated -%}
+  • …
+  {% endif -%}
+{% endif -%}
+{% if type.enum_values and type.enum_values.size > 0 -%}
+  values:
+  {% for value in type.enum_values -%}
+  • {{ value.name }}{% if value.is_deprecated %} (deprecated{% if value.deprecation_reason %}: {{ value.deprecation_reason }}{% endif %}){% endif %}
+  {% endfor -%}
+  {% if type.enum_values_truncated -%}
+  • …
+  {% endif -%}
+{% endif -%}
+{% if type.union_members and type.union_members.size > 0 -%}
+  members:
+  {% for member in type.union_members -%}
+  • {{ member }}
+  {% endfor -%}
+  {% if type.union_members_truncated -%}
+  • …
+  {% endif -%}
+{% endif -%}
+{% endfor -%}
+{% endif -%}
+
+{% if directives and directives.size > 0 -%}
+Directives
+{% for directive in directives -%}
+- @{{ directive.name }}{% if directive.repeatable %} (repeatable){% endif %}
+  locations: {{ directive.locations | join: ", " }}
+  {% if directive.argument_count > 0 -%}
+  arguments: {{ directive.argument_count }}
+  {% endif -%}
+{% endfor -%}
+{% endif -%}

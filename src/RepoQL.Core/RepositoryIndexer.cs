@@ -262,7 +262,7 @@ public class RepositoryIndexer(
     {
         _storage.EnsureSchema();
 
-        _classificationQueue = new("classification", 10000, 1, ClassifyFileAsync, cancellationToken, meter);
+        _classificationQueue = new("classification", 10000, 3, ClassifyFileAsync, cancellationToken, meter);
         _parsingQueue = new("parsing", 10000, 3, ParseAndStoreFileAsync, cancellationToken, meter);
 
         {
@@ -729,6 +729,11 @@ public class RepositoryIndexer(
     {
         try
         {
+            if (!item.File.Exists)
+            {
+                // Sometimes it takes a moment if the file is new
+                await Task.Yield();
+            }
             // Hash is computed before enqueue; ensure present
             if (item.Hash is null)
             {
@@ -1130,11 +1135,9 @@ public class RepositoryIndexer(
         }
     }
 
-    private sealed class ReindexScope : IDisposable
+    private sealed class ReindexScope(RepositoryIndexer owner) : IDisposable
     {
-        private RepositoryIndexer? _owner;
-
-        public ReindexScope(RepositoryIndexer owner) => _owner = owner;
+        private RepositoryIndexer? _owner = owner;
 
         public void Dispose()
         {

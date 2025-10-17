@@ -47,9 +47,9 @@ Authentication.md | 5 sections, 3 code examples | 2.1 KB
 
 ### Level 1: Summary
 
-**Goal**: Enable decision-making. Answer "should I open this file?"
+**Goal**: Enable decision-making. Answer "do I need to read this?"
 
-**Target**: ~5-7 lines. Hard limit: 10 lines.
+**Target**: Keep it under 20 lines (most should fit in 6‑12). Trim aggressively—only the facts someone must know before diving in.
 
 **What to include**:
 - Identity (name, type, role)
@@ -94,9 +94,9 @@ AWS credentials. Production environment configuration.
 
 ### Level 2: Structure
 
-**Goal**: Enable navigation. Show complete outline so agents can locate specific elements without reading implementations.
+**Goal**: Enable navigation. Show complete outline so agents can locate specific elements without reading the source.
 
-**Target**: ~15-20 lines. Hard limit: 25 lines.
+**Target**: No hard limit, but aim for <100 lines. Err on the side of completeness—include everything needed to skip opening the file while avoiding unnecessary noise.
 
 **What to include**:
 - Complete structural outline

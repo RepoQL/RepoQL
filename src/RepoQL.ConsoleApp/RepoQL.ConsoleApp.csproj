@@ -2,16 +2,16 @@
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <TargetFramework>net9.0</TargetFramework>
-        <LangVersion>13</LangVersion>
-        <PublishAot Condition="'$(RuntimeIdentifier)' != ''">true</PublishAot>
+        <TargetFramework>net10.0</TargetFramework>
+        <PublishAot>true</PublishAot>
         <InvariantGlobalization>true</InvariantGlobalization>
         <AssemblyName>repoql</AssemblyName>
         <PackAsTool>true</PackAsTool>
         <ToolCommandName>repoql</ToolCommandName>
         <PackageId>RepoQL.Tool</PackageId>
         <PackageOutputPath>$(ArtifactsDirectory)/packages</PackageOutputPath>
-        <PublishTrimmed>false</PublishTrimmed>
+        <!--<PublishTrimmed>false</PublishTrimmed>-->
+        <RuntimeIdentifiers>any;osx-arm64;win-x64</RuntimeIdentifiers>
     </PropertyGroup>
 
     <ItemGroup>

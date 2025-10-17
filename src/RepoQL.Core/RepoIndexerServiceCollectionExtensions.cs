@@ -18,6 +18,7 @@ using RepoQL.FileSystem.Physical;
 using RepoQL.Formats.DotNet;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
+using RepoQL.Formats.GraphQL;
 using RepoQL.Templating;
 
 namespace RepoQL.Core;
@@ -151,6 +152,8 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<CsProjAnalyzer>();
         services.AddSingleton<SlnLoader>(sp => new SlnLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<PlainTextLoader>();
+        services.AddSingleton<GraphQLLoader>();
+        services.AddSingleton<GraphQLAnalyzer>();
 
         services.AddSingleton<IFormatRegistry>(sp =>
         {
@@ -162,6 +165,8 @@ public static class RepoIndexerServiceCollectionExtensions
             var csprojAnalyzer = sp.GetRequiredService<CsProjAnalyzer>();
             var slnLoader = sp.GetRequiredService<SlnLoader>();
             var slnAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"));
+            var graphQlLoader = sp.GetRequiredService<GraphQLLoader>();
+            var graphQlAnalyzer = sp.GetRequiredService<GraphQLAnalyzer>();
             var plainLoader = sp.GetRequiredService<PlainTextLoader>();
             var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
 
@@ -180,6 +185,12 @@ public static class RepoIndexerServiceCollectionExtensions
                     mermaidAnalyzer,
                     mermaidLoader,
                     ["mermaid", "mmd"]),
+                new FormatDescriptor(
+                    SemanticMediaType.Create("text", "graphql").WithKind("graphql.doc"),
+                    graphQlLoader,
+                    graphQlAnalyzer,
+                    graphQlLoader,
+                    ["graphql", "gql"]),
                 new FormatDescriptor(
                     SemanticMediaType.Create("text", "xml").WithKind("dotnet.csproj"),
                     csprojLoader,

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.FileProviders.Physical;
 using RepoQL.Contracts;
 using RepoQL.FileSystem.Abstractions;
 using IFileSystemWatcher = RepoQL.FileSystem.Abstractions.IFileSystemWatcher;
@@ -21,17 +22,20 @@ public sealed class PhysicalFileSystem(string rootPath) : IVirtualFileSystem
 
     public IFileInfo GetFile(RepoUri uri)
     {
-        return _fileSystem.GetFileInfo(ToAbsolutePath(uri));
+        var resolved = FileUriPathResolver.Resolve(RootPath, uri);
+        var relative = string.IsNullOrEmpty(resolved.RelativePath)
+            ? "."
+            : resolved.RelativePath;
+
+        var info = _fileSystem.GetFileInfo(relative);
+        return info is NotFoundFileInfo
+            ? new PhysicalFileInfo(new FileInfo(resolved.AbsolutePath))
+            : info;
     }
 
     /// <summary>Convert file:// URI to absolute filesystem path.</summary>
-    public string ToAbsolutePath(RepoUri repoUri)
-    {
-        if (!string.Equals(repoUri.Scheme, Scheme, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"URI scheme must be '{Scheme}'.");
-        var rel = repoUri.AbsolutePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
-        return Path.Combine(RootPath, rel);
-    }
+    private string ToAbsolutePath(RepoUri repoUri)
+        => FileUriPathResolver.ToAbsolutePath(RootPath, repoUri);
 
     /// <summary>Convert absolute filesystem path under root to a file:// URI.</summary>
     public RepoUri ToRepoUri(string absolutePath)

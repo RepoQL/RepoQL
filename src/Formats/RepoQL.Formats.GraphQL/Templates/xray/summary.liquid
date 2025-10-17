@@ -1,0 +1,45 @@
+Kind: {{ media_kind | default: media_base }}
+Size: {{ size_human }}
+{% if stats.operation_counts and stats.operation_counts.size > 0 -%}
+Operations: {% for item in stats.operation_counts -%}{{ item.label }}:{{ item.count }}{% unless forloop.last %}, {% endunless %}{%- endfor %}
+{% endif -%}
+{% if stats.fragment_count > 0 -%}
+Fragments: {{ stats.fragment_count }}
+{% endif -%}
+{% if stats.type_counts and stats.type_counts.size > 0 -%}
+Types: {% for item in stats.type_counts -%}{{ item.label }}:{{ item.count }}{% unless forloop.last %}, {% endunless %}{%- endfor %}
+{% endif -%}
+{% if stats.directive_count > 0 -%}
+Directives: {{ stats.directive_count }}
+{% endif -%}
+
+{% if operations and operations.size > 0 -%}
+Operations:
+{% for op in operations limit:4 -%}
+- {{ op.kind }} {{ op.display_name }} (vars:{{ op.variable_count }}{% if op.fragment_count > 0 %}, fragments:{{ op.fragment_count }}{% endif %}{% if op.directive_count > 0 %}, directives:{{ op.directive_count }}{% endif %})
+{% if op.top_fields and op.top_fields.size > 0 -%}
+  fields: {{ op.top_fields | join: ", " }}{% if op.top_fields_truncated %}, …{% endif %}
+{% endif -%}
+{% endfor -%}
+{% endif -%}
+
+{% if fragments and fragments.size > 0 -%}
+Fragments:
+{% for fragment in fragments limit:4 -%}
+- {{ fragment.name }}{% if fragment.type_condition %} on {{ fragment.type_condition }}{% endif %}{% if fragment.usage_count > 0 %} (used:{{ fragment.usage_count }}){% endif %}
+{% endfor -%}
+{% endif -%}
+
+{% if types and types.size > 0 -%}
+Schema:
+{% for type in types limit:4 -%}
+- {{ type.kind }} {{ type.name }}{% if type.implements and type.implements.size > 0 %} implements {{ type.implements | join: ", " }}{% endif %} (fields:{{ type.field_count }}{% if type.enum_value_count > 0 %}, values:{{ type.enum_value_count }}{% endif %}{% if type.union_member_count > 0 %}, members:{{ type.union_member_count }}{% endif %})
+{% endfor -%}
+{% endif -%}
+
+{% if directives and directives.size > 0 -%}
+Directives:
+{% for directive in directives limit:3 -%}
+- @{{ directive.name }}{% if directive.repeatable %} (repeatable){% endif %} locations: {{ directive.locations | join: ", " }}{% if directive.argument_count > 0 %} (args:{{ directive.argument_count }}){% endif %}
+{% endfor -%}
+{% endif -%}

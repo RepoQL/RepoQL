@@ -18,4 +18,8 @@
       <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+      <InternalsVisibleTo Include="RepoQL.FileSystem.Tests" />
+    </ItemGroup>
+
 </Project>
