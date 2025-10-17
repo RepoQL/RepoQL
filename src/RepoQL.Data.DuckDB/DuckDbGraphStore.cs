@@ -510,7 +510,7 @@ LEFT JOIN edge_uri eu  ON eu.id = a.id;", tx);
           SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
           WHERE lower(trim(k.value)) = lower(annotations.kind)))
     AND (_severity_rank(severity) >= _severity_rank(COALESCE(min_severity,'hint')))
-  ORDER BY severity_rank DESC, created_at DESC
+  ORDER BY severity_rank DESC, annotations.created_at DESC
 );", tx);
 
         // Embeddings table (optional, used when semantic search is enabled)
@@ -538,7 +538,7 @@ LEFT JOIN edge_uri eu  ON eu.id = a.id;", tx);
           SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
           WHERE lower(trim(k.value)) = lower(a.kind)))
     AND (_severity_rank(a.severity) >= _severity_rank(COALESCE(min_severity,'hint')))
-  ORDER BY severity_rank DESC, created_at DESC
+  ORDER BY severity_rank DESC, a.created_at DESC
 );", tx);
 
             Execute(@"CREATE OR REPLACE MACRO annotations_all(kinds, min_severity) AS TABLE (
@@ -548,7 +548,7 @@ LEFT JOIN edge_uri eu  ON eu.id = a.id;", tx);
           SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
           WHERE lower(trim(k.value)) = lower(annotations.kind)))
     AND (_severity_rank(severity) >= _severity_rank(COALESCE(min_severity,'hint')))
-  ORDER BY severity_rank DESC, created_at DESC
+  ORDER BY severity_rank DESC, annotations.created_at DESC
 );", tx);
         }
 

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AwesomeAssertions;
 using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
@@ -99,8 +100,17 @@ internal class CsProjXrayTests
         docProps["output_type"]!.ToString()!.ToLowerInvariant().Should().Be("exe");
         docProps["pack"]!.ToString()!.ToLowerInvariant().Should().BeOneOf("true","yes");
 
+        await indexer.WaitForStagesIdleAsync(PipelineStage.Analysis, CancellationToken.None);
+
         // Analyzer: one unpinned package (Dapper)
-        var ann = store.RawQuery("SELECT kind,severity,message FROM annotations_for(?, 'lint', 'hint')", uri.AbsoluteUri).ToArray();
+        var sw = Stopwatch.StartNew();
+        IReadOnlyDictionary<string, object?>[] ann;
+        do
+        {
+            ann = store.RawQuery("SELECT kind,severity,message FROM annotations_for(?, 'lint', 'hint')", uri.AbsoluteUri).ToArray();
+            if (ann.Length > 0) break;
+            await Task.Delay(50, CancellationToken.None);
+        } while (sw.Elapsed < DefaultTimeout);
         ann.Length.Should().BeGreaterThan(0);
         ann.Any(r => r["message"]!.ToString()!.Contains("Dapper", StringComparison.OrdinalIgnoreCase)).Should().BeTrue();
 

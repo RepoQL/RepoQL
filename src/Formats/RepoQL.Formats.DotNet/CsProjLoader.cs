@@ -1,10 +1,10 @@
 using System.Text;
+using System.Xml;
 using System.Xml.Linq;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace RepoQL.Formats.DotNet;
 
@@ -71,9 +71,10 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
         string? outputType = null;
         bool? pack = null;
 
-        try
+        var parseOptions = LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo;
+        var doc = TryParseProject(text, parseOptions, out var parseSource);
+        if (doc is not null)
         {
-            var doc = XDocument.Parse(text, LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
             var root = doc.Root;
             if (root is not null)
             {
@@ -106,22 +107,18 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
                     {
                         var include = pr.Attribute("Include")?.Value ?? string.Empty;
                         var version = pr.Attribute("Version")?.Value ?? pr.Element(pr.Name.Namespace + "Version")?.Value ?? string.Empty;
-                        var (line, col) = FindApproxLine(text, pr.ToString());
+                        var (line, col) = FindApproxLine(parseSource, pr.ToString());
                         packages.Add(new CsPackage(include, version, line));
                     }
 
                     foreach (var rr in ig.Elements().Where(e => e.Name.LocalName == "ProjectReference"))
                     {
                         var include = rr.Attribute("Include")?.Value ?? string.Empty;
-                        var (line, col) = FindApproxLine(text, rr.ToString());
+                        var (line, col) = FindApproxLine(parseSource, rr.ToString());
                         projRefs.Add(new CsProjectRef(include, line));
                     }
                 }
             }
-        }
-        catch
-        {
-            // tolerate broken XML; leave lists empty
         }
 
         if (string.IsNullOrWhiteSpace(outputType))
@@ -339,6 +336,48 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
             ScopeDocumentId = scopeDocumentId,
             CreatedAt = ts
         };
+
+    private static XDocument? TryParseProject(string text, LoadOptions options, out string parseSource)
+    {
+        parseSource = text;
+        try
+        {
+            return XDocument.Parse(parseSource, options);
+        }
+        catch (XmlException)
+        {
+            var sanitized = SanitizeForXmlParsing(parseSource);
+            if (!ReferenceEquals(sanitized, parseSource))
+            {
+                parseSource = sanitized;
+                try
+                {
+                    return XDocument.Parse(parseSource, options);
+                }
+                catch (XmlException)
+                {
+                    parseSource = text;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string SanitizeForXmlParsing(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        var needsReplacement = text.AsSpan().IndexOf("\\\"") >= 0 || text.AsSpan().IndexOf("\\'") >= 0;
+        if (!needsReplacement)
+            return text;
+
+        var sanitized = text.Replace("\\\"", "\"");
+        if (sanitized.AsSpan().IndexOf("\\'") >= 0)
+            sanitized = sanitized.Replace("\\'", "'");
+        return sanitized;
+    }
 
     private static string GetFileName(RepoUri uri)
     {

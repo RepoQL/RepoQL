@@ -67,11 +67,6 @@ internal class CsProjVariantsTests
         artifact.Summary.Should().Contain("Pack: No");
         artifact.Structure.Should().Contain("TargetFrameworks:");
         artifact.Structure.Should().Contain("net9.0");
-        foreach (var row in store.RawQuery("SELECT properties FROM node WHERE id=?", doc.Id))
-        {
-            Console.WriteLine($"NODE PROPS: {row["properties"]}");
-        }
-
         await indexer.StopAsync(CancellationToken.None);
     }
 }
