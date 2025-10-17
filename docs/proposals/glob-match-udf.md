@@ -3,12 +3,28 @@
 ## Summary
 Introduce a DuckDB scalar UDF `glob_match(uri, pattern, ignore_case := TRUE, default_scheme := 'file:///') -> BOOLEAN` that applies Git-style glob rules to RepoQL URIs. The helper keeps glob semantics consistent across CLI tools, macros, and ad-hoc SQL, reducing duplicated pattern translation logic and enabling future filters to stay server-side and deterministic.
 
+## Goals
+- Provide a single, documented globbing primitive for queries, macros, and automation agents.
+- Match familiar Git-style glob semantics to minimize onboarding friction.
+- Keep evaluation deterministic by matching against stored URIs instead of dynamically scanning the filesystem.
+
+## Non-goals
+- Implement `.gitignore` rule precedence (`!`, `#` comments, etc.).
+- Provide streaming filesystem enumeration during query execution.
+- Replace existing higher-level CLI convenience commands—those will delegate to the UDF.
+
 ## Motivation
 - **Unified semantics.** The CLI currently emulates globbing by translating patterns into `LIKE` expressions (`TerminalCommands.BuildLikePattern`). Every macro or tool that wants glob support must replicate those rules, increasing divergence risk.
 - **Agent ergonomics.** SQL-first workflows (agents, automation) can filter documents with `WHERE glob_match(uri, 'src/**/*.md')`, avoiding brittle escaping and keeping queries short.
 - **Deterministic results.** Operating inside DuckDB ensures filters apply to the indexed repository state, instead of hitting the live filesystem per query (which can drift or miss synthetic URIs such as `embed:///…`).
 
-## Design
+## Intended Use Cases
+- Narrowing `xray_documents()` or custom document inventories to a sub-tree (`glob_match(uri, 'src/**/*.md')`).
+- Scoping annotation or lint queries to specific folders or file types without hand-written `LIKE` clauses.
+- Combining with macros like `file_search` to keep semantic search output within directories relevant to a policy or feature area.
+- Powering CLI filters (e.g., `repoql xray src/**/*.md`) by delegating the pattern directly to SQL.
+
+## Design Overview
 
 ### Function signature
 ```sql
@@ -48,11 +64,11 @@ glob_match(uri TEXT, pattern TEXT,
 Add the new function to `RepositoryUserDefinedFunctions.RegisterAll`, adjacent to other URI helpers. Mark it pure (`isPureFunction: true`) so DuckDB can reuse results when inputs repeat.
 
 ### Integration touches
-- **CLI:** Update `TerminalCommands.BuildLikePattern` to delegate to SQL (`WHERE glob_match(lower(n.uri), pattern)`) once the UDF ships, eliminating the custom translation code.
+- **CLI:** Update `TerminalCommands.BuildLikePattern` to delegate to SQL (`WHERE glob_match(uri, ?)`) once the UDF ships, eliminating the custom translation code.
 - **Docs:** Document the helper alongside existing URI UDFs in `docs/Schema.md`, with a short table of examples.
 - **Macros:** Optional future macro `documents_glob(pattern)` can wrap the predicate for discoverability.
 
-## Sample usage
+## Sample Usage
 ```sql
 -- Filter Markdown documents inside src/
 SELECT uri, headline
@@ -75,13 +91,13 @@ FROM ranked
 WHERE glob_match(uri, 'docs/**/*.md');
 ```
 
-## Implementation plan
+## Implementation Plan
 1. Implement the translator and caching helper inside `RepositoryUserDefinedFunctions` and register `glob_match`.
 2. Add unit tests covering positive/negative cases, case sensitivity, inferred scheme, and `**` semantics (`RepoQL.Tests`).
 3. Update CLI commands/macros to use `glob_match` where globbing is required.
 4. Document the UDF in `docs/Schema.md` and update any quickstart/advanced-search examples.
 
-## Risks & mitigations
+## Risks & Mitigations
 - **Regex translation bugs.** Start with focused tests mirroring Git’s glob expectations, including tricky edge cases (`**/*.md`, leading slash, double wildcards). Keep the translator small and comment it thoroughly.
 - **Performance regressions.** Cache compiled regexes and avoid per-row allocations; trim memory usage by limiting cache size if necessary (LRU or `ConcurrentDictionary` with eviction logic).
 - **Dialect drift.** Call out Git-style rules in the docs and reuse the same translator everywhere (CLI & macros) to avoid divergence.
