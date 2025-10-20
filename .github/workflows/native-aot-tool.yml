@@ -58,13 +58,13 @@ jobs:
       - name: Restore
         run: dotnet restore
       - name: Pack ${{ matrix.rid }} tool
-        run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -r ${{ matrix.rid }} -o artifacts/tool/${{ matrix.rid }}
+        run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -r ${{ matrix.rid }} -o ./artifacts/tool/${{ matrix.rid }}
       - name: Upload ${{ matrix.rid }} package
         uses: actions/upload-artifact@v4
         with:
           name: repoql-tool-${{ matrix.rid }}
           if-no-files-found: error
-          path: artifacts/tool/${{ matrix.rid }}/*.nupkg
+          path: ./artifacts/tool/${{ matrix.rid }}/*.nupkg
       - name: Publish ${{ matrix.rid }} package to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: dotnet nuget push "artifacts/tool/${{ matrix.rid }}/*.nupkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
+        run: dotnet nuget push "./artifacts/tool/${{ matrix.rid }}/*.nupkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
