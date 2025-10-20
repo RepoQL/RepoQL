@@ -1,0 +1,526 @@
+@page "/explorer"
+@inject DocumentExplorerService ExplorerService
+@implements IDisposable
+
+<PageTitle>Repository Explorer</PageTitle>
+
+<h1>Repository Explorer</h1>
+
+<div class="explorer-layout">
+    <aside class="card explorer-sidebar">
+        <div class="explorer-search">
+            <label for="doc-search">Filter documents</label>
+            <div class="search-row">
+                <input id="doc-search"
+                       type="search"
+                       placeholder="file name or URI"
+                       @bind="_searchText"
+                       @bind:event="oninput"
+                       @onkeydown="HandleSearchKeyDown" />
+                <button class="btn primary" type="button" @onclick="async () => await SearchAsync()" disabled="@_isLoading">
+                    @_searchButtonLabel
+                </button>
+            </div>
+            <span class="search-hint">Default limit: 250 documents. Narrow your search to reduce the result set.</span>
+        </div>
+
+        <div class="explorer-list">
+            @if (!string.IsNullOrEmpty(_errorMessage))
+            {
+                <div class="error-callout">@_errorMessage</div>
+            }
+            else if (_isLoading && _documents.Count == 0)
+            {
+                <div class="loading">Loading documents…</div>
+            }
+            else if (_documents.Count == 0)
+            {
+                <div class="empty-state">No documents found. Try a different filter.</div>
+            }
+            else
+            {
+                <ul>
+                    @foreach (var doc in _documents)
+                    {
+                        var isSelected = _selectedDocument?.DocumentUri == doc.DocumentUri;
+                        <li class="@(isSelected ? "selected" : null)">
+                            <button type="button" @onclick="async () => await SelectDocumentAsync(doc)">
+                                <div class="doc-title">@doc.FileName</div>
+                                <div class="doc-meta">@doc.MediaLabel @FormatByteSize(doc.ByteSize)</div>
+                                @if (!string.IsNullOrWhiteSpace(doc.Headline))
+                                {
+                                    <div class="doc-headline">@doc.Headline</div>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(doc.KindsSummary))
+                                {
+                                    <div class="doc-kinds">@doc.KindsSummary</div>
+                                }
+                                <div class="doc-uri">@doc.DocumentUri</div>
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    </aside>
+
+    <section class="card explorer-detail">
+        @if (_selectedDocument is null)
+        {
+            <p>Select a document to view details.</p>
+        }
+        else
+        {
+            <div class="tab-header">
+                <button class="@GetTabClass(ExplorerTab.Overview)" @onclick="async () => await ActivateTabAsync(ExplorerTab.Overview)">Overview</button>
+                <button class="@GetTabClass(ExplorerTab.Structure)" @onclick="async () => await ActivateTabAsync(ExplorerTab.Structure)">Structure</button>
+                <button class="@GetTabClass(ExplorerTab.Snippet)" @onclick="async () => await ActivateTabAsync(ExplorerTab.Snippet)">Snippet</button>
+            </div>
+
+            <div class="tab-body">
+                @switch (_activeTab)
+                {
+                    case ExplorerTab.Overview:
+                        <div class="overview-pane">
+                            <h2>@_selectedDocument.FileName</h2>
+                            <dl class="document-summary">
+                                <dt>URI</dt>
+                                <dd>@_selectedDocument.DocumentUri</dd>
+                                <dt>Media</dt>
+                                <dd>@_selectedDocument.MediaLabel</dd>
+                                <dt>Size</dt>
+                                <dd>@FormatByteSize(_selectedDocument.ByteSize)</dd>
+                                @if (!string.IsNullOrWhiteSpace(_selectedDocument.KindsSummary))
+                                {
+                                    <dt>Detected Items</dt>
+                                    <dd>@_selectedDocument.KindsSummary</dd>
+                                }
+                            </dl>
+                            <p class="detail-placeholder">
+                                Switch to the Structure tab to explore extracted items, then open snippets for precise context.
+                            </p>
+                            @if (!string.IsNullOrWhiteSpace(_selectedDocument.Headline))
+                            {
+                                <section class="overview-block">
+                                    <h3>Headline</h3>
+                                    <p>@_selectedDocument.Headline</p>
+                                </section>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_selectedDocument.Summary))
+                            {
+                                <section class="overview-block">
+                                    <h3>Summary</h3>
+                                    <pre class="overview-pre">@_selectedDocument.Summary</pre>
+                                </section>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(_selectedDocument.Structure))
+                            {
+                                <section class="overview-block">
+                                    <h3>Structure</h3>
+                                    <pre class="overview-pre">@_selectedDocument.Structure</pre>
+                                </section>
+                            }
+                        </div>
+                        break;
+
+                    case ExplorerTab.Structure:
+                        if (_structureError is not null)
+                        {
+                            <div class="error-callout">@_structureError</div>
+                        }
+                        else if (_isStructureLoading)
+                        {
+                            <div class="loading">Loading document items…</div>
+                        }
+                        else if (_structure.Count == 0)
+                        {
+                            <div class="empty-state">No structure emitted for this document.</div>
+                        }
+                        else
+                        {
+                            <table class="structure-table">
+                                <thead>
+                                    <tr>
+                                        <th>Kind</th>
+                                        <th>Label</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var item in _structure)
+                                    {
+                                        var isCurrent = _selectedStructureItem?.ItemUri == item.ItemUri;
+                                        <tr class="@(isCurrent ? "selected" : null)">
+                                            <td>@item.Kind</td>
+                                            <td>@item.Label</td>
+                                            <td class="align-right">
+                                                <button type="button"
+                                                        class="btn secondary"
+                                                        @onclick="async () => await LoadSnippetAsync(item)">
+                                                    View snippet
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                        break;
+
+                    case ExplorerTab.Snippet:
+                        if (_snippetError is not null)
+                        {
+                            <div class="error-callout">@_snippetError</div>
+                        }
+                        else if (_isSnippetLoading)
+                        {
+                            <div class="loading">Loading snippet…</div>
+                        }
+                        else if (_snippetLines.Count == 0)
+                        {
+                            <div class="empty-state">
+                                @if (_selectedStructureItem is null)
+                                {
+                                    <span>Select an item from the Structure tab to load a focused snippet.</span>
+                                }
+                                else
+                                {
+                                    <span>No snippet available for the selected item.</span>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <SnippetViewer Title="@_snippetTitle"
+                                           FocusItem="@_selectedStructureItem?.Label"
+                                           Lines="_snippetLines" />
+                        }
+                        break;
+                }
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private enum ExplorerTab
+    {
+        Overview,
+        Structure,
+        Snippet
+    }
+
+    private readonly List<DocumentListItem> _documents = [];
+    private readonly List<DocumentItem> _structure = [];
+    private readonly List<SnippetLine> _snippetLines = [];
+    private DocumentListItem? _selectedDocument;
+    private DocumentItem? _selectedStructureItem;
+    private ExplorerTab _activeTab = ExplorerTab.Overview;
+    private string _searchText = string.Empty;
+    private string? _errorMessage;
+    private string? _structureError;
+    private string? _snippetError;
+    private bool _isLoading;
+    private bool _isStructureLoading;
+    private bool _isSnippetLoading;
+    private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _structureCts;
+    private CancellationTokenSource? _snippetCts;
+    private string _snippetTitle = string.Empty;
+
+    private string _searchButtonLabel => _isLoading ? "Searching…" : "Search";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDocumentsAsync().ConfigureAwait(false);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SearchAsync()
+    {
+        await LoadDocumentsAsync(_searchText).ConfigureAwait(false);
+    }
+
+    private async Task LoadDocumentsAsync(string? filter = null)
+    {
+        ResetLoadCts(cancelCurrent: true);
+        _loadCts = new CancellationTokenSource();
+
+        _isLoading = true;
+        _errorMessage = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var docs = await ExplorerService.GetDocumentsAsync(filter, _loadCts.Token).ConfigureAwait(false);
+            await InvokeAsync(() =>
+            {
+                _documents.Clear();
+                _documents.AddRange(docs);
+
+                if (_selectedDocument is not null && !_documents.Any(d => d.DocumentUri == _selectedDocument.DocumentUri))
+                {
+                    _selectedDocument = null;
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            // ignored
+        }
+        catch (Exception ex)
+        {
+            await InvokeAsync(() =>
+            {
+                _errorMessage = ex.GetBaseException().Message;
+                _documents.Clear();
+                _selectedDocument = null;
+            });
+        }
+        finally
+        {
+            await InvokeAsync(() =>
+            {
+                _isLoading = false;
+                ResetLoadCts(cancelCurrent: false);
+                StateHasChanged();
+            });
+        }
+    }
+
+    private async Task SelectDocumentAsync(DocumentListItem doc)
+    {
+        ResetStructureCts(cancelCurrent: true);
+        ResetSnippetCts(cancelCurrent: true);
+
+        await InvokeAsync(() =>
+        {
+            _selectedDocument = doc;
+            _activeTab = ExplorerTab.Overview;
+            _structure.Clear();
+            _snippetLines.Clear();
+            _structureError = null;
+            _snippetError = null;
+            _selectedStructureItem = null;
+            _snippetTitle = string.Empty;
+            StateHasChanged();
+        });
+
+        await LoadStructureAsync(doc);
+    }
+
+    private async Task HandleSearchKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Enter")
+        {
+            await SearchAsync();
+        }
+    }
+
+    private async Task LoadStructureAsync(DocumentListItem document)
+    {
+        ResetStructureCts(cancelCurrent: true);
+        _structureCts = new CancellationTokenSource();
+        _isStructureLoading = true;
+        _structureError = null;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var items = await ExplorerService.GetDocumentItemsAsync(document.DocumentUri, cancellationToken: _structureCts.Token).ConfigureAwait(false);
+            await InvokeAsync(() =>
+            {
+                _structure.Clear();
+                _structure.AddRange(items);
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            await InvokeAsync(() =>
+            {
+                _structureError = ex.GetBaseException().Message;
+                _structure.Clear();
+            });
+        }
+        finally
+        {
+            await InvokeAsync(() =>
+            {
+                _isStructureLoading = false;
+                ResetStructureCts(cancelCurrent: false);
+                StateHasChanged();
+            });
+        }
+    }
+
+    private async Task LoadSnippetAsync(DocumentItem sourceItem)
+    {
+        ResetSnippetCts(cancelCurrent: true);
+        _snippetCts = new CancellationTokenSource();
+        _isSnippetLoading = true;
+        _snippetError = null;
+        _selectedStructureItem = sourceItem;
+
+        await InvokeAsync(() =>
+        {
+            _activeTab = ExplorerTab.Snippet;
+            StateHasChanged();
+        });
+
+        try
+        {
+            var lines = await ExplorerService.GetSnippetAsync(sourceItem.ItemUri, cancellationToken: _snippetCts.Token).ConfigureAwait(false);
+            await InvokeAsync(() =>
+            {
+                _snippetLines.Clear();
+                _snippetLines.AddRange(lines);
+                _snippetTitle = sourceItem.Label;
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            await InvokeAsync(() =>
+            {
+                _snippetError = ex.GetBaseException().Message;
+                _snippetLines.Clear();
+            });
+        }
+        finally
+        {
+            await InvokeAsync(() =>
+            {
+                _isSnippetLoading = false;
+                ResetSnippetCts(cancelCurrent: false);
+                StateHasChanged();
+            });
+        }
+    }
+
+    private async Task ActivateTabAsync(ExplorerTab tab)
+    {
+        await InvokeAsync(() =>
+        {
+            _activeTab = tab;
+            StateHasChanged();
+        });
+
+        if (tab == ExplorerTab.Structure && !_structure.Any() && !_isStructureLoading && _selectedDocument is not null)
+        {
+            await LoadStructureAsync(_selectedDocument);
+        }
+
+        if (tab == ExplorerTab.Snippet)
+        {
+            if (!_structure.Any() && !_isStructureLoading && _selectedDocument is not null)
+            {
+                await LoadStructureAsync(_selectedDocument);
+            }
+
+            DocumentItem? target = null;
+            if (_structure.Any())
+            {
+                target = _selectedStructureItem ?? _structure[0];
+            }
+
+            if (target is not null)
+            {
+                await LoadSnippetAsync(target);
+            }
+        }
+    }
+
+    private string GetTabClass(ExplorerTab tab) => tab == _activeTab ? "tab active" : "tab";
+
+    private static string FormatByteSize(long? size)
+    {
+        if (size is null or <= 0)
+            return "—";
+
+        string[] units = ["B", "KB", "MB", "GB"];
+        double value = size.Value;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return $"{value:0.##} {units[unit]}";
+    }
+
+    private void ResetLoadCts(bool cancelCurrent)
+    {
+        var current = _loadCts;
+        if (current is null)
+            return;
+
+        _loadCts = null;
+        try
+        {
+            if (cancelCurrent)
+                current.Cancel();
+        }
+        catch
+        {
+            // ignored
+        }
+        finally
+        {
+            current.Dispose();
+        }
+    }
+
+    private void ResetStructureCts(bool cancelCurrent)
+    {
+        var current = _structureCts;
+        if (current is null)
+            return;
+
+        _structureCts = null;
+        try
+        {
+            if (cancelCurrent)
+                current.Cancel();
+        }
+        catch
+        {
+        }
+        finally
+        {
+            current.Dispose();
+        }
+    }
+
+    private void ResetSnippetCts(bool cancelCurrent)
+    {
+        var current = _snippetCts;
+        if (current is null)
+            return;
+
+        _snippetCts = null;
+        try
+        {
+            if (cancelCurrent)
+                current.Cancel();
+        }
+        catch
+        {
+        }
+        finally
+        {
+            current.Dispose();
+        }
+    }
+
+    void IDisposable.Dispose()
+    {
+        ResetLoadCts(cancelCurrent: true);
+        ResetStructureCts(cancelCurrent: true);
+        ResetSnippetCts(cancelCurrent: true);
+    }
+}

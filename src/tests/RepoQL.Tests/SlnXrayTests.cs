@@ -1,38 +1,27 @@
 using AwesomeAssertions;
-using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Core;
-using RepoQL.Data.DuckDB;
-using RepoQL.FileSystem;
-using RepoQL.FileSystem.Abstractions;
-using RepoQL.FileSystem.InMemory;
 using RepoQL.Formats.DotNet;
+using RepoQL.Tests.Scaffolding;
 
 namespace RepoQL.Tests;
 
 internal class SlnXrayTests
 {
-    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
-
-    private sealed class StubClassifier : IFileClassifier
-    {
-        public SemanticMediaType GetMediaType(Microsoft.Extensions.FileProviders.IFileInfo fileInfo)
-            => SemanticMediaType.Create("text", "plain");
-    }
-
-    private sealed class Observer(Action onCompleted, Action<Exception> onError, Action<IndexerEvent> onNext)
-        : IObserver<IndexerEvent>
-    {
-        public void OnCompleted() => onCompleted();
-        public void OnError(Exception error) => onError(error);
-        public void OnNext(IndexerEvent value) => onNext(value);
-    }
-
     [Test]
     public async Task Sln_Indexer_Populates_Xray_And_Items()
     {
-        // Arrange: simple solution file
-        var fs = new MemoryFileSystem("repo");
+        await using var repo = await IndexedRepoBuilder.CreateAsync(options =>
+        {
+            options.MeterName = "RepoQL.Tests.Sln";
+            options.AddFormat(new FormatDescriptor(
+                SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"),
+                new SlnLoader(),
+                new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln")),
+                new SlnLoader(),
+                ["sln"]));
+        });
+
         var sln = """
 
         Microsoft Visual Studio Solution File, Format Version 12.00
@@ -69,44 +58,13 @@ internal class SlnXrayTests
         	EndGlobalSection
         EndGlobal
         """;
-        fs.AddOrUpdateText("MySolution.sln", sln);
-        var uri = RepoUri.Parse("mem://repo/MySolution.sln");
+        var uri = repo.AddOrUpdateText("MySolution.sln", sln);
 
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
-        var classifier = new StubClassifier();
-        var hasher = new XxHasher();
-        var filter = new NoOpUriFilter();
-        var fsRegistry = new FileSystemRegistry([fs]);
-        var hub = new MultiFileSystem(fsRegistry, [fs]);
+        await repo.IndexAsync();
 
-        var registry = new FormatRegistry(
-        [
-            new(
-                    SemanticMediaType.Create("text","plain").WithKind("dotnet.sln"),
-                    new SlnLoader(),
-                    new NullAnalyzer(SemanticMediaType.Create("text","plain").WithKind("dotnet.sln")),
-                    new SlnLoader(),
-                    ["sln"])
-        ]);
+        var doc = repo.Store.GetDocumentByUri(uri)!;
+        var artifact = repo.Store.GetArtifact(doc.ArtifactId!.Value)!;
 
-        var workspace = new AnalysisWorkspace(hub, classifier, hasher, registry);
-        await using var indexer = new RepositoryIndexer(new Core.Metrics.IndexingMetrics(), new System.Diagnostics.Metrics.Meter("RepoQL.Tests.Sln"), hub, store, classifier, registry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
-
-        await indexer.StartAsync(CancellationToken.None);
-        var indexed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var sub = indexer.Subscribe(new Observer(() => { }, _ => { }, ev =>
-        {
-            if (ev is Core.IRepositoryIndexer.ItemIndexedEvent e && e.CurrentUri.AbsoluteUri == uri.AbsoluteUri)
-                indexed.TrySetResult(true);
-        }));
-        var done = await Task.WhenAny(indexed.Task, Task.Delay(DefaultTimeout));
-        if (done != indexed.Task) throw new TimeoutException("Timed out waiting for index");
-
-        // Act
-        var doc = store.GetDocumentByUri(uri)!;
-        var artifact = store.GetArtifact(doc.ArtifactId!.Value)!;
-
-        // Assert headline/summary/structure
         artifact.Headline!.Should().Contain("dotnet.sln");
         artifact.Headline!.Should().Contain("projects:2");
         artifact.Headline!.Should().Contain("folders:1");
@@ -119,13 +77,10 @@ internal class SlnXrayTests
         artifact.Structure!.Should().Contain("App");
         artifact.Structure!.Should().Contain("Core");
 
-        // Document props include format_version, project_count, folder_count
-        var docProps = store.RawQuery("SELECT properties->>'format_version' AS format_version, CAST(properties->>'project_count' AS INTEGER) AS project_count, CAST(properties->>'folder_count' AS INTEGER) AS folder_count FROM node WHERE kind='document' AND lower(uri)=lower(?)", uri.AbsoluteUri).First();
+        var docProps = repo.Store.RawQuery("SELECT properties->>'format_version' AS format_version, CAST(properties->>'project_count' AS INTEGER) AS project_count, CAST(properties->>'folder_count' AS INTEGER) AS folder_count FROM node WHERE kind='document' AND lower(uri)=lower(?)", uri.AbsoluteUri).First();
         docProps["format_version"].Should().NotBeNull();
         docProps["format_version"]!.ToString()!.Should().Contain("12.00");
         int.Parse(docProps["project_count"]!.ToString()!).Should().Be(2);
         int.Parse(docProps["folder_count"]!.ToString()!).Should().Be(1);
-
-        await indexer.StopAsync(CancellationToken.None);
     }
 }

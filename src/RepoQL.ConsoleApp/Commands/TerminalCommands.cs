@@ -1,9 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using ConsoleAppFramework;
-using RepoQL.ConsoleApp.Helpers;
+﻿using RepoQL.ConsoleApp.Helpers;
 using Spectre.Console;
+using ConsoleAppFramework;
 
 namespace RepoQL.ConsoleApp.Commands;
 

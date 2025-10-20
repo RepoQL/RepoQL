@@ -1,4 +1,3 @@
-using System.IO;
 using AwesomeAssertions;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;

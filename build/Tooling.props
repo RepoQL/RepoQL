@@ -18,6 +18,8 @@
     </PropertyGroup>
 
     <PropertyGroup>
+        <UseTestingPlatform>true</UseTestingPlatform>
+        <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
         <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
         <NoWarn>$(NoWarn);CA1305</NoWarn>
         <InvariantGlobalization>true</InvariantGlobalization>

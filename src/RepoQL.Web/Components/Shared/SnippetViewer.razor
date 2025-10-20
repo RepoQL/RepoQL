@@ -1,0 +1,33 @@
+<div class="snippet-header">
+    <div class="snippet-title">
+        <strong>@Title</strong>
+        @if (!string.IsNullOrWhiteSpace(FocusItem))
+        {
+            <span class="snippet-focus">(@FocusItem)</span>
+        }
+    </div>
+</div>
+
+<div class="snippet-body">
+    <pre class="snippet-lines">
+@foreach (var line in Lines)
+{
+    var classes = line.IsFocus ? "snippet-line focus" : "snippet-line";
+    <span class="@classes">
+        <span class="line-number">@line.LineNumber.ToString("D4")</span>
+        <span class="line-text">@line.Text</span>
+    </span>
+}
+    </pre>
+</div>
+
+@code {
+    [Parameter]
+    public string Title { get; set; } = string.Empty;
+
+    [Parameter]
+    public string? FocusItem { get; set; }
+
+    [Parameter]
+    public IReadOnlyList<SnippetLine> Lines { get; set; } = Array.Empty<SnippetLine>();
+}

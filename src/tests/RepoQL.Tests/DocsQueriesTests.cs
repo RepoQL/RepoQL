@@ -5,7 +5,6 @@ using RepoQL.Contracts;
 using RepoQL.Core;
 using RepoQL.Core.Metrics;
 using RepoQL.Data.DuckDB;
-using RepoQL.FileSystem;
 using RepoQL.FileSystem.Embedded;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Formats.Markdown;

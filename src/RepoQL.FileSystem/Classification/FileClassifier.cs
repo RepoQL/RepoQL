@@ -1,4 +1,3 @@
-using System.IO;
 using Microsoft.Extensions.FileProviders;
 using MimeDetective;
 using MimeDetective.Definitions;

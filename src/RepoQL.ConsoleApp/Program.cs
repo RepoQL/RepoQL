@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Hosting;
-using ConsoleAppFramework;
 using Grpc.Core;
 using JetBrains.Annotations;
 using Microsoft.Extensions.Configuration;
@@ -8,8 +7,9 @@ using Microsoft.Extensions.Logging;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
-using RepoQL.ConsoleApp.Helpers;
 using Spectre.Console;
+using ConsoleAppFramework;
+using RepoQL.ConsoleApp.Helpers;
 
 // Defaults to 80 :(
 AnsiConsole.Profile.Width = 300;
@@ -29,6 +29,7 @@ builder.Configuration
     .AddCommandLine(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddOpenTelemetry();
+builder.Services.AddRepoQlConsoleServices(ShouldPrewarmClient(args));
 builder.Services.AddOpenTelemetry()
     .WithMetrics(m => m
         .AddMeter("RepoQL.*")
@@ -40,11 +41,6 @@ builder.Services.AddOpenTelemetry()
     .UseOtlpExporter();
 
 var app = builder.ToConsoleAppBuilder();
-
-app.ConfigureServices(s =>
-{
-    s.AddRepoQlConsoleServices(ShouldPrewarmClient(args));
-});
 
 app.UseFilter<ExceptionLoggingFilter>();
 

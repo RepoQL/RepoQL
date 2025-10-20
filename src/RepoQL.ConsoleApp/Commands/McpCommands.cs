@@ -1,13 +1,9 @@
-﻿using System.Threading;
-using System.Threading.Tasks;
-using ConsoleAppFramework;
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using ModelContextProtocol.Protocol;
-using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Tools;
+using ConsoleAppFramework;
 
 namespace RepoQL.ConsoleApp.Commands;
 

@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
 using Grpc.Health.V1;
 using Grpc.HealthCheck;
 using Microsoft.Extensions.Hosting;

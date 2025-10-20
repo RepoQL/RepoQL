@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using ConsoleAppFramework;
 using Grpc.Health.V1;
 using Grpc.HealthCheck;
 using Microsoft.AspNetCore.Builder;
@@ -16,6 +15,7 @@ using RepoQL.Core;
 using RepoQL.Documentation;
 using RepoQL.Protocol;
 using Spectre.Console;
+using ConsoleAppFramework;
 
 namespace RepoQL.ConsoleApp.Commands;
 

@@ -1,0 +1,51 @@
+@page "/status"
+@inject RepoQlConnectionManager ConnectionManager
+@inject HostStatusStore HostStatusStore
+@implements IDisposable
+
+<PageTitle>Host Status</PageTitle>
+
+<h1>Host Status</h1>
+
+<div class="card status-card">
+    <dl>
+        <dt>Connection</dt>
+        <dd>@_connectionState.Description (@(_connectionState.IsConnected ? "online" : "offline"))</dd>
+        <dt>Host Check</dt>
+        <dd>@_hostStatus.Message</dd>
+        <dt>Last Updated</dt>
+        <dd>@_hostStatus.UpdatedAt.LocalDateTime</dd>
+    </dl>
+</div>
+
+@code {
+    private RepoQlConnectionManager.ConnectionState _connectionState = RepoQlConnectionManager.ConnectionState.Create(false, "Not connected");
+    private HostStatusSnapshot _hostStatus = HostStatusSnapshot.Offline("Waiting for host status");
+
+    protected override void OnInitialized()
+    {
+        _connectionState = ConnectionManager.State;
+        _hostStatus = HostStatusStore.Snapshot;
+
+        ConnectionManager.StateChanged += OnConnectionStateChanged;
+        HostStatusStore.SnapshotChanged += OnHostStatusChanged;
+    }
+
+    private void OnConnectionStateChanged(RepoQlConnectionManager.ConnectionState state)
+    {
+        _connectionState = state;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnHostStatusChanged(HostStatusSnapshot snapshot)
+    {
+        _hostStatus = snapshot;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        ConnectionManager.StateChanged -= OnConnectionStateChanged;
+        HostStatusStore.SnapshotChanged -= OnHostStatusChanged;
+    }
+}

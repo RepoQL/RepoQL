@@ -1,0 +1,171 @@
+@page "/query"
+@inject SqlExecutionService SqlExecutionService
+@implements IDisposable
+
+<PageTitle>Query Studio</PageTitle>
+
+<h1>Query Studio</h1>
+
+<div class="studio-grid">
+    <section class="card editor-card">
+        <div class="editor-header">
+            <label for="sql-input">SQL</label>
+            <span class="helper">Execute raw RepoQL/DuckDB SQL against the local index.</span>
+        </div>
+        <textarea id="sql-input"
+                  class="sql-text"
+                  spellcheck="false"
+                  @bind="_sql"
+                  @bind:event="oninput"
+                  placeholder="SELECT * FROM xray_documents();"></textarea>
+
+        <div class="editor-controls">
+            <div class="limit-group">
+                <label for="row-limit">Row limit</label>
+                <input id="row-limit"
+                       type="number"
+                       min="0"
+                       placeholder="none"
+                       value="@_rowLimitText"
+                       @oninput="OnRowLimitChanged" />
+                @if (_rowLimitInvalid)
+                {
+                    <span class="validation-hint">Enter a positive integer or leave blank.</span>
+                }
+            </div>
+
+            <button class="btn primary"
+                    type="button"
+                    @onclick="RunAsync"
+                    disabled="@IsRunDisabled">
+                @if (_isExecuting)
+                {
+                    <span>Running…</span>
+                }
+                else
+                {
+                    <span>Run</span>
+                }
+            </button>
+        </div>
+    </section>
+
+    <section class="card results-card">
+        @if (!string.IsNullOrEmpty(_errorMessage))
+        {
+            <div class="error-callout">@_errorMessage</div>
+        }
+        else if (_isExecuting && _result is null)
+        {
+            <div class="loading">Executing query…</div>
+        }
+        else
+        {
+            <SqlResultGrid Result="_result" />
+        }
+    </section>
+</div>
+
+@code {
+    private string _sql = "SELECT * FROM xray_documents() LIMIT 20;";
+    private string _rowLimitText = "200";
+    private bool _rowLimitInvalid;
+    private bool _isExecuting;
+    private SqlExecutionResult? _result;
+    private string? _errorMessage;
+    private CancellationTokenSource? _queryCts;
+
+    private bool IsRunDisabled => _isExecuting || string.IsNullOrWhiteSpace(_sql) || _rowLimitInvalid;
+
+    private async Task RunAsync()
+    {
+        if (IsRunDisabled)
+            return;
+
+        ResetQueryCts(cancelCurrent: true);
+        _queryCts = new CancellationTokenSource();
+
+        await InvokeAsync(() =>
+        {
+            _isExecuting = true;
+            _errorMessage = null;
+            _result = null;
+            StateHasChanged();
+        });
+
+        try
+        {
+            var limit = ParseRowLimit();
+            var result = await SqlExecutionService.ExecuteAsync(_sql, limit, _queryCts.Token).ConfigureAwait(false);
+
+            await InvokeAsync(() =>
+            {
+                _result = result;
+            });
+        }
+        catch (OperationCanceledException)
+        {
+            // ignored
+        }
+        catch (Exception ex)
+        {
+            await InvokeAsync(() =>
+            {
+                _errorMessage = ex.GetBaseException().Message;
+            });
+        }
+        finally
+        {
+            await InvokeAsync(() =>
+            {
+                _isExecuting = false;
+                ResetQueryCts(cancelCurrent: false);
+                StateHasChanged();
+            });
+        }
+    }
+
+    private void OnRowLimitChanged(ChangeEventArgs args)
+    {
+        _rowLimitText = args.Value?.ToString() ?? string.Empty;
+        _rowLimitInvalid = !string.IsNullOrWhiteSpace(_rowLimitText) && (!int.TryParse(_rowLimitText, out var parsed) || parsed < 0);
+    }
+
+    private int? ParseRowLimit()
+    {
+        if (string.IsNullOrWhiteSpace(_rowLimitText))
+            return null;
+        if (int.TryParse(_rowLimitText, out var parsed) && parsed > 0)
+            return parsed;
+        return null;
+    }
+
+    private void ResetQueryCts(bool cancelCurrent)
+    {
+        var current = _queryCts;
+        if (current is null)
+            return;
+
+        _queryCts = null;
+        try
+        {
+            if (cancelCurrent)
+            {
+                current.Cancel();
+            }
+        }
+        catch
+        {
+            // ignored
+        }
+        finally
+        {
+            current.Dispose();
+        }
+    }
+
+    void IDisposable.Dispose()
+    {
+        ResetQueryCts(cancelCurrent: true);
+    }
+}

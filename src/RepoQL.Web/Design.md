@@ -166,4 +166,3 @@ Blazor Server (RepoQL.Web)
 - **Long-running SQL**: run everything with cancellation tokens and UI cancel button; default limit for grid to keep memory low.
 - **Autostart failure**: surface raw error and provide link to launch `repoql serve` manually.
 - **Schema changes**: since macros encapsulate schema-shaped data, using them as primary data source minimises breakage when tables evolve.
-

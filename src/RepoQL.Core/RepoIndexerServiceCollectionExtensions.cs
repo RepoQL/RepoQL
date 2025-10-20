@@ -148,12 +148,12 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<MarkdownLoader>(sp => new MarkdownLoader());
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
-        services.AddSingleton<CsProjLoader>(sp => new CsProjLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<CsProjAnalyzer>();
         services.AddSingleton<SlnLoader>(sp => new SlnLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<PlainTextLoader>();
         services.AddSingleton<GraphQLLoader>();
         services.AddSingleton<GraphQLAnalyzer>();
+        services.AddSingleton<CsProjLoader>(sp => new CsProjLoader(sp.GetRequiredService<ITemplateRenderer>()));
 
         services.AddSingleton<IFormatRegistry>(sp =>
         {

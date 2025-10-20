@@ -1,4 +1,3 @@
-using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 using RepoQL.Contracts;
@@ -30,8 +29,7 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
         ArgumentNullException.ThrowIfNull(mediaType);
         if (string.Equals(mediaType.Kind, CsProjType.Kind, StringComparison.OrdinalIgnoreCase))
             return true;
-        return string.Equals(mediaType.Type, CsProjType.Type, StringComparison.OrdinalIgnoreCase)
-               && string.Equals(mediaType.Subtype, CsProjType.Subtype, StringComparison.OrdinalIgnoreCase);
+        return false;
     }
 
     /// <inheritdoc />

@@ -1,27 +1,17 @@
 using AwesomeAssertions;
-using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Core;
-using RepoQL.Data.DuckDB;
-using RepoQL.FileSystem;
-using RepoQL.FileSystem.Abstractions;
-using RepoQL.FileSystem.InMemory;
 using RepoQL.Formats.DotNet;
+using RepoQL.Tests.Scaffolding;
 
 namespace RepoQL.Tests;
 
 internal class SlnVariantsTests
 {
-    private sealed class StubClassifier : IFileClassifier
-    {
-        public SemanticMediaType GetMediaType(Microsoft.Extensions.FileProviders.IFileInfo fileInfo)
-            => SemanticMediaType.Create("text", "plain");
-    }
-
     [Test]
     public async Task Sln_MinimalFormat_Parses()
     {
-        // Minimal solution with no projects
+        await using var repo = await CreateSlnRepoAsync();
         var sln = """
 
         Microsoft Visual Studio Solution File, Format Version 12.00
@@ -31,43 +21,20 @@ internal class SlnVariantsTests
         	EndGlobalSection
         EndGlobal
         """;
+        var uri = repo.AddOrUpdateText("Test.sln", sln);
 
-        var fs = new MemoryFileSystem("repo");
-        fs.AddOrUpdateText("Test.sln", sln);
-        var uri = RepoUri.Parse("mem://repo/Test.sln");
+        await repo.IndexAsync();
 
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
-        var classifier = new StubClassifier();
-        var hasher = new XxHasher();
-        var filter = new NoOpUriFilter();
-        var fsRegistry = new FileSystemRegistry([fs]);
-        var hub = new MultiFileSystem(fsRegistry, [fs]);
-        var registry = new FormatRegistry(
-        [
-            new FormatDescriptor(
-                    SemanticMediaType.Create("text","plain").WithKind("dotnet.sln"),
-                    new SlnLoader(),
-                    new NullAnalyzer(SemanticMediaType.Create("text","plain").WithKind("dotnet.sln")),
-                    new SlnLoader(),
-                    ["sln"])
-        ]);
-        var workspace = new AnalysisWorkspace(hub, classifier, hasher, registry);
-        await using var indexer = new RepositoryIndexer(new Core.Metrics.IndexingMetrics(), new System.Diagnostics.Metrics.Meter("RepoQL.Tests.SlnVar"), hub, store, classifier, registry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
-
-        await indexer.StartAsync(CancellationToken.None);
-        await indexer.WaitForIdle(CancellationToken.None);
-
-        var doc = store.GetDocumentByUri(uri)!;
-        var artifact = store.GetArtifact(doc.ArtifactId!.Value)!;
+        var doc = repo.Store.GetDocumentByUri(uri)!;
+        var artifact = repo.Store.GetArtifact(doc.ArtifactId!.Value)!;
         artifact.Headline.Should().Contain("dotnet.sln");
         artifact.Headline.Should().Contain("projects:0");
-
-        await indexer.StopAsync(CancellationToken.None);
     }
 
     [Test]
     public async Task Sln_WithSolutionFolders_ParsesFolders()
     {
+        await using var repo = await CreateSlnRepoAsync();
         var sln = """
 
         Microsoft Visual Studio Solution File, Format Version 12.00
@@ -78,44 +45,21 @@ internal class SlnVariantsTests
         Global
         EndGlobal
         """;
+        var uri = repo.AddOrUpdateText("Test.sln", sln);
 
-        var fs = new MemoryFileSystem("repo");
-        fs.AddOrUpdateText("Test.sln", sln);
-        var uri = RepoUri.Parse("mem://repo/Test.sln");
+        await repo.IndexAsync();
 
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
-        var classifier = new StubClassifier();
-        var hasher = new XxHasher();
-        var filter = new NoOpUriFilter();
-        var fsRegistry = new FileSystemRegistry([fs]);
-        var hub = new MultiFileSystem(fsRegistry, [fs]);
-        var registry = new FormatRegistry(
-        [
-            new FormatDescriptor(
-                    SemanticMediaType.Create("text","plain").WithKind("dotnet.sln"),
-                    new SlnLoader(),
-                    new NullAnalyzer(SemanticMediaType.Create("text","plain").WithKind("dotnet.sln")),
-                    new SlnLoader(),
-                    ["sln"])
-        ]);
-        var workspace = new AnalysisWorkspace(hub, classifier, hasher, registry);
-        await using var indexer = new RepositoryIndexer(new Core.Metrics.IndexingMetrics(), new System.Diagnostics.Metrics.Meter("RepoQL.Tests.SlnVar"), hub, store, classifier, registry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
-
-        await indexer.StartAsync(CancellationToken.None);
-        await indexer.WaitForIdle(CancellationToken.None);
-
-        var doc = store.GetDocumentByUri(uri)!;
-        var artifact = store.GetArtifact(doc.ArtifactId!.Value)!;
+        var doc = repo.Store.GetDocumentByUri(uri)!;
+        var artifact = repo.Store.GetArtifact(doc.ArtifactId!.Value)!;
         artifact.Headline.Should().Contain("folders:2");
         artifact.Structure.Should().Contain("Folder1");
         artifact.Structure.Should().Contain("Folder2");
-
-        await indexer.StopAsync(CancellationToken.None);
     }
 
     [Test]
     public async Task Sln_WithProjects_ParsesProjects()
     {
+        await using var repo = await CreateSlnRepoAsync();
         var sln = """
 
         Microsoft Visual Studio Solution File, Format Version 12.00
@@ -126,38 +70,26 @@ internal class SlnVariantsTests
         Global
         EndGlobal
         """;
+        var uri = repo.AddOrUpdateText("Test.sln", sln);
 
-        var fs = new MemoryFileSystem("repo");
-        fs.AddOrUpdateText("Test.sln", sln);
-        var uri = RepoUri.Parse("mem://repo/Test.sln");
+        await repo.IndexAsync();
 
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
-        var classifier = new StubClassifier();
-        var hasher = new XxHasher();
-        var filter = new NoOpUriFilter();
-        var fsRegistry = new FileSystemRegistry([fs]);
-        var hub = new MultiFileSystem(fsRegistry, [fs]);
-        var registry = new FormatRegistry(
-        [
-            new FormatDescriptor(
-                    SemanticMediaType.Create("text","plain").WithKind("dotnet.sln"),
-                    new SlnLoader(),
-                    new NullAnalyzer(SemanticMediaType.Create("text","plain").WithKind("dotnet.sln")),
-                    new SlnLoader(),
-                    ["sln"])
-        ]);
-        var workspace = new AnalysisWorkspace(hub, classifier, hasher, registry);
-        await using var indexer = new RepositoryIndexer(new Core.Metrics.IndexingMetrics(), new System.Diagnostics.Metrics.Meter("RepoQL.Tests.SlnVar"), hub, store, classifier, registry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
-
-        await indexer.StartAsync(CancellationToken.None);
-        await indexer.WaitForIdle(CancellationToken.None);
-
-        var doc = store.GetDocumentByUri(uri)!;
-        var artifact = store.GetArtifact(doc.ArtifactId!.Value)!;
+        var doc = repo.Store.GetDocumentByUri(uri)!;
+        var artifact = repo.Store.GetArtifact(doc.ArtifactId!.Value)!;
         artifact.Headline.Should().Contain("projects:2");
         artifact.Structure.Should().Contain("ProjectA");
         artifact.Structure.Should().Contain("ProjectB");
-
-        await indexer.StopAsync(CancellationToken.None);
     }
+
+    private static Task<IndexedRepoBuilder> CreateSlnRepoAsync()
+        => IndexedRepoBuilder.CreateAsync(options =>
+        {
+            options.MeterName = "RepoQL.Tests.SlnVar";
+            options.AddFormat(new FormatDescriptor(
+                SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"),
+                new SlnLoader(),
+                new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln")),
+                new SlnLoader(),
+                ["sln"]));
+        });
 }

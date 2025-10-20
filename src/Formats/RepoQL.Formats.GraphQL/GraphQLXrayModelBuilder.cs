@@ -1,7 +1,5 @@
 using System.Globalization;
-using System.Linq;
 using RepoQL.Contracts;
-using RepoQL.Contracts.Models;
 
 namespace RepoQL.Formats.GraphQL;
 

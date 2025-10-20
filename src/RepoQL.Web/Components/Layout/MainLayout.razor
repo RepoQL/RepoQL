@@ -1,0 +1,65 @@
+﻿@inherits LayoutComponentBase
+@implements IDisposable
+@inject RepoQlConnectionManager ConnectionManager
+@inject HostStatusStore HostStatusStore
+
+<MudThemeProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<div class="app-shell">
+    <header class="app-header">
+        <div class="brand">RepoQL</div>
+        <NavMenu />
+        <div class="status-stack">
+            <span class="@ConnectionBadgeClass">@_connectionState.Description</span>
+            <span class="status-message">@_hostStatus.Message</span>
+        </div>
+    </header>
+
+    <main class="app-content">
+        @Body
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+@code {
+    private RepoQlConnectionManager.ConnectionState _connectionState = RepoQlConnectionManager.ConnectionState.Create(false, "Not connected");
+    private HostStatusSnapshot _hostStatus = HostStatusSnapshot.Offline("Waiting for host status");
+
+    protected override void OnInitialized()
+    {
+        _connectionState = ConnectionManager.State;
+        _hostStatus = HostStatusStore.Snapshot;
+
+        ConnectionManager.StateChanged += OnConnectionStateChanged;
+        HostStatusStore.SnapshotChanged += OnHostStatusChanged;
+
+        ConnectionManager.StartWarmup();
+    }
+
+    private void OnConnectionStateChanged(RepoQlConnectionManager.ConnectionState state)
+    {
+        _connectionState = state;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnHostStatusChanged(HostStatusSnapshot snapshot)
+    {
+        _hostStatus = snapshot;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private string ConnectionBadgeClass => _connectionState.IsConnected ? "badge badge-online" : "badge badge-offline";
+
+    public void Dispose()
+    {
+        ConnectionManager.StateChanged -= OnConnectionStateChanged;
+        HostStatusStore.SnapshotChanged -= OnHostStatusChanged;
+    }
+}

@@ -17,6 +17,7 @@ artifacts/
 **/bin/
 **/obj/
 .repoql/*
+.next
 
 # ML Models (too big)
 *.onnx

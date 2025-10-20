@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Linq;
 using System.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -60,6 +61,7 @@ public class RepositoryIndexer(
     private readonly ConcurrentQueue<DebugEvent> _recentEvents = new();
     private readonly ConcurrentQueue<Exception> _recentErrors = new();
     private readonly IGraphStore _storage = storage;
+    private readonly SemaphoreSlim _storageGate = new(1, 1);
     private readonly IDatabaseWriter? _dbWriter = dbWriter;
     private readonly int _writerCapacity = dbWriter is RepoQL.Data.DuckDB.SingleThreadedDatabaseWriter single ? single.QueueCapacity : 0;
     private readonly ConcurrentDictionary<string, DocumentModel> _documentCache = new(StringComparer.OrdinalIgnoreCase);
@@ -80,89 +82,119 @@ public class RepositoryIndexer(
         public Activity? RootActivity { get; set; }
     }
 
-    private Task WriteDirectAsync(DiscoveredArtifact artifact, Records records)
+    private async Task<T> WithStorageAsync<T>(Func<IGraphStore, T> work, CancellationToken ct = default)
     {
-        var artifactIdMap = new Dictionary<Guid, Guid>();
-        foreach (var a in records.Artifacts)
+        await _storageGate.WaitAsync(ct).ConfigureAwait(false);
+        try { return work(_storage); }
+        finally { _storageGate.Release(); }
+    }
+
+    private async Task WithStorageAsync(Action<IGraphStore> work, CancellationToken ct = default)
+    {
+        await _storageGate.WaitAsync(ct).ConfigureAwait(false);
+        try { work(_storage); }
+        finally { _storageGate.Release(); }
+    }
+
+    private T WithStorage<T>(Func<IGraphStore, T> work)
+    {
+        _storageGate.Wait();
+        try { return work(_storage); }
+        finally { _storageGate.Release(); }
+    }
+
+    private void WithStorage(Action<IGraphStore> work)
+    {
+        _storageGate.Wait();
+        try { work(_storage); }
+        finally { _storageGate.Release(); }
+    }
+
+    private async Task WriteDirectAsync(DiscoveredArtifact artifact, Records records)
+    {
+        await WithStorageAsync(store =>
         {
-            var saved = _storage.UpsertArtifact(a);
-            artifactIdMap[a.Id] = saved.Id;
-        }
-
-        var docRec = records.Nodes.FirstOrDefault(n => string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase));
-        if (docRec is null)
-            throw new InvalidOperationException("Format materializer did not produce a document node.");
-
-        var docArtifactId = docRec.ArtifactId is { } da && artifactIdMap.TryGetValue(da, out var newDa)
-            ? newDa
-            : docRec.ArtifactId;
-
-        var docNode = new Node
-        {
-            Id = docRec.Id,
-            Kind = "document",
-            Uri = artifact.RepoUri,
-            ArtifactId = docArtifactId,
-            SpanId = null,
-            Props = docRec.Props,
-            CreatedAt = docRec.CreatedAt,
-            UpdatedAt = DateTimeOffset.UtcNow
-        };
-
-        var savedDoc = _storage.UpsertDocumentByUri(artifact.RepoUri, docNode);
-        var savedDocId = savedDoc.Id;
-
-        var childNodes = new List<Node>();
-        foreach (var n in records.Nodes.Where(n => !string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase)))
-        {
-            var node = n;
-            if (n.ArtifactId is { } aid && artifactIdMap.TryGetValue(aid, out var newAid))
+            var artifactIdMap = new Dictionary<Guid, Guid>();
+            foreach (var a in records.Artifacts)
             {
-                node = new Node
-                {
-                    Id = n.Id,
-                    Kind = n.Kind,
-                    Uri = n.Uri,
-                    ArtifactId = newAid,
-                    SpanId = n.SpanId,
-                    Props = n.Props,
-                    CreatedAt = n.CreatedAt,
-                    UpdatedAt = n.UpdatedAt
-                };
+                var saved = store.UpsertArtifact(a);
+                artifactIdMap[a.Id] = saved.Id;
             }
-            childNodes.Add(node);
-        }
 
-        var spans = records.Spans.Select(s => new Span
-        {
-            Id = s.Id,
-            DocumentId = savedDocId,
-            StartByte = s.StartByte,
-            EndByte = s.EndByte,
-            StartLine = s.StartLine,
-            StartColumn = s.StartColumn,
-            EndLine = s.EndLine,
-            EndColumn = s.EndColumn
-        }).ToArray();
+            var docRec = records.Nodes.FirstOrDefault(n => string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase));
+            if (docRec is null)
+                throw new InvalidOperationException("Format materializer did not produce a document node.");
 
-        var edges = records.Edges.Select(e => new Edge
-        {
-            Id = e.Id,
-            SrcId = e.SrcId == docRec.Id ? savedDocId : e.SrcId,
-            DstId = e.DstId == docRec.Id ? savedDocId : e.DstId,
-            Type = e.Type,
-            IsComposition = e.IsComposition,
-            Ordinal = e.Ordinal,
-            ScopeDocumentId = savedDocId,
-            EdgeKey = e.EdgeKey,
-            SrcSpanId = e.SrcSpanId,
-            DstSpanId = e.DstSpanId,
-            Props = e.Props,
-            CreatedAt = e.CreatedAt
-        }).ToArray();
+            var docArtifactId = docRec.ArtifactId is { } da && artifactIdMap.TryGetValue(da, out var newDa)
+                ? newDa
+                : docRec.ArtifactId;
 
-        _storage.ReplaceDocumentContent(savedDocId, childNodes, spans, edges);
-        return Task.CompletedTask;
+            var docNode = new Node
+            {
+                Id = docRec.Id,
+                Kind = "document",
+                Uri = artifact.RepoUri,
+                ArtifactId = docArtifactId,
+                SpanId = null,
+                Props = docRec.Props,
+                CreatedAt = docRec.CreatedAt,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+
+            var savedDoc = store.UpsertDocumentByUri(artifact.RepoUri, docNode);
+            var savedDocId = savedDoc.Id;
+
+            var childNodes = new List<Node>();
+            foreach (var n in records.Nodes.Where(n => !string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase)))
+            {
+                var node = n;
+                if (n.ArtifactId is { } aid && artifactIdMap.TryGetValue(aid, out var newAid))
+                {
+                    node = new Node
+                    {
+                        Id = n.Id,
+                        Kind = n.Kind,
+                        Uri = n.Uri,
+                        ArtifactId = newAid,
+                        SpanId = n.SpanId,
+                        Props = n.Props,
+                        CreatedAt = n.CreatedAt,
+                        UpdatedAt = n.UpdatedAt
+                    };
+                }
+                childNodes.Add(node);
+            }
+
+            var spans = records.Spans.Select(s => new Span
+            {
+                Id = s.Id,
+                DocumentId = savedDocId,
+                StartByte = s.StartByte,
+                EndByte = s.EndByte,
+                StartLine = s.StartLine,
+                StartColumn = s.StartColumn,
+                EndLine = s.EndLine,
+                EndColumn = s.EndColumn
+            }).ToArray();
+
+            var edges = records.Edges.Select(e => new Edge
+            {
+                Id = e.Id,
+                SrcId = e.SrcId == docRec.Id ? savedDocId : e.SrcId,
+                DstId = e.DstId == docRec.Id ? savedDocId : e.DstId,
+                Type = e.Type,
+                IsComposition = e.IsComposition,
+                Ordinal = e.Ordinal,
+                ScopeDocumentId = savedDocId,
+                EdgeKey = e.EdgeKey,
+                SrcSpanId = e.SrcSpanId,
+                DstSpanId = e.DstSpanId,
+                Props = e.Props,
+                CreatedAt = e.CreatedAt
+            }).ToArray();
+
+            store.ReplaceDocumentContent(savedDocId, childNodes, spans, edges);
+        }, _stopping.Token).ConfigureAwait(false);
     }
 
     private static string FileNameFromUri(RepoUri uri)
@@ -260,7 +292,7 @@ public class RepositoryIndexer(
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        _storage.EnsureSchema();
+        await WithStorageAsync(store => store.EnsureSchema(), cancellationToken).ConfigureAwait(false);
 
         _classificationQueue = new("classification", 10000, 3, ClassifyFileAsync, cancellationToken, meter);
         _parsingQueue = new("parsing", 10000, 3, ParseAndStoreFileAsync, cancellationToken, meter);
@@ -390,6 +422,7 @@ public class RepositoryIndexer(
         _isDisposed = true;
         // Dispose the cancellation token source
         _stopping.Dispose();
+        _storageGate.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -795,25 +828,22 @@ public class RepositoryIndexer(
             // Short-circuit: if document exists and artifact digest matches, skip parsing
             try
             {
-                var existingDoc = _storage.GetDocumentByUri(item.RepoUri);
-                if (existingDoc?.ArtifactId is { } aid)
+                var existingArtifact = await WithStorageAsync(store =>
                 {
-                    var old = _storage.GetArtifact(aid);
-                    if (old is not null)
+                    var doc = store.GetDocumentByUri(item.RepoUri);
+                    return doc?.ArtifactId is Guid aid ? store.GetArtifact(aid) : null;
+                }, _stopping.Token).ConfigureAwait(false);
+                if (existingArtifact is not null && string.Equals(existingArtifact.Digest, digest, StringComparison.Ordinal))
+                {
+                    // Already up-to-date: record metrics only (do not emit duplicate Indexed event)
+                    try
                     {
-                        if (string.Equals(old.Digest, digest, StringComparison.Ordinal))
-                        {
-                            // Already up-to-date: record metrics only (do not emit duplicate Indexed event)
-                            try
-                            {
-                                var bytes = item.File.Length;
-                                metrics.RecordFileProcessed(type.ToString(), "skipped", bytes, 0);
-                            }
-                            catch { }
-                            StopRootIfPresent(corrKey);
-                            return;
-                        }
+                        var bytes = item.File.Length;
+                        metrics.RecordFileProcessed(type.ToString(), "skipped", bytes, 0);
                     }
+                    catch { }
+                    StopRootIfPresent(corrKey);
+                    return;
                 }
             }
             catch (Exception ex)
@@ -900,7 +930,7 @@ public class RepositoryIndexer(
                 ],
                 links: null);
 
-            var documentNode = _storage.GetDocumentByUri(repoUri);
+            var documentNode = await WithStorageAsync(store => store.GetDocumentByUri(repoUri), _stopping.Token).ConfigureAwait(false);
             if (documentNode is null)
                 return;
 
@@ -1006,18 +1036,18 @@ public class RepositoryIndexer(
             {
                 try
                 {
-                    var existing = _storage.GetDocumentByUri(uri);
-                    if (existing?.ArtifactId is { } aid)
+                    var existingArtifact = await WithStorageAsync(store =>
                     {
-                        var art = _storage.GetArtifact(aid);
-                        if (art is not null && string.Equals(art.Digest, digest, StringComparison.Ordinal))
-                        {
-                            metrics.RecordFileProcessed("unknown/unknown", "skipped_same", file.Length, 0);
-                            chain.RootActivity?.SetTag("repoql.status", "skipped_same");
-                            hashAct?.SetTag("repoql.status", "skipped_same");
-                            StopRootIfPresent(key);
-                            return;
-                        }
+                        var existing = store.GetDocumentByUri(uri);
+                        return existing?.ArtifactId is Guid aid ? store.GetArtifact(aid) : null;
+                    }, ct).ConfigureAwait(false);
+                    if (existingArtifact is not null && string.Equals(existingArtifact.Digest, digest, StringComparison.Ordinal))
+                    {
+                        metrics.RecordFileProcessed("unknown/unknown", "skipped_same", file.Length, 0);
+                        chain.RootActivity?.SetTag("repoql.status", "skipped_same");
+                        hashAct?.SetTag("repoql.status", "skipped_same");
+                        StopRootIfPresent(key);
+                        return;
                     }
                 }
                 catch (Exception ex)
@@ -1172,8 +1202,9 @@ public class RepositoryIndexer(
                             LEFT JOIN artifact a ON a.id = n.artifact_id
                             WHERE n.kind = 'document'
                             ORDER BY lower(n.uri)";
-                var list = new List<DocInfo>();
-                foreach (var row in owner._storage.RawQuery(sql))
+                var rows = owner.WithStorage(store => store.RawQuery(sql).ToList());
+                var list = new List<DocInfo>(rows.Count);
+                foreach (var row in rows)
                 {
                     list.Add(new DocInfo(
                         row.TryGetValue("uri", out var u) ? u?.ToString() ?? string.Empty : string.Empty,
@@ -1192,8 +1223,9 @@ public class RepositoryIndexer(
             get
             {
                 var sql = "SELECT kind, COUNT(*) AS count FROM node GROUP BY kind ORDER BY count DESC";
-                var list = new List<KindCount>();
-                foreach (var row in owner._storage.RawQuery(sql))
+                var rows = owner.WithStorage(store => store.RawQuery(sql).ToList());
+                var list = new List<KindCount>(rows.Count);
+                foreach (var row in rows)
                 {
                     list.Add(new KindCount(
                         row.TryGetValue("kind", out var k) ? k?.ToString() ?? string.Empty : string.Empty,
@@ -1235,9 +1267,12 @@ public class RepositoryIndexer(
 
         private long Count(string table)
         {
-            foreach (var row in owner._storage.RawQuery($"SELECT COUNT(*) AS c FROM {table}"))
-                return row.TryGetValue("c", out var v) && v is long l ? l : 0;
-            return 0;
+            return owner.WithStorage(store =>
+            {
+                foreach (var row in store.RawQuery($"SELECT COUNT(*) AS c FROM {table}"))
+                    return row.TryGetValue("c", out var v) && v is long l ? l : 0;
+                return 0;
+            });
         }
 
         [DebuggerDisplay("{Kind}: {Uri}")]

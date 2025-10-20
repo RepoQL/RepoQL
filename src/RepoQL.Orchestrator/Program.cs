@@ -1,9 +1,15 @@
+using Microsoft.Extensions.DependencyInjection;
 using Projects;
+using RepoQL.Orchestrator;
 
 var builder = DistributedApplication.CreateBuilder(args);
 
-builder.AddProject<RepoQL_ConsoleApp>("host", options => options.LaunchProfileName = "host");
+builder.Services.AddHealthChecks()
+    .AddCheck<RepoQlHostHealthCheck>("repoql-host");
 
-//builder.AddProject<RepoQL_ConsoleApp>("cli", options => options.LaunchProfileName = "xray");
+var host = builder.AddProject<RepoQL_ConsoleApp>("host", options => options.LaunchProfileName = "host")
+    .WithHealthCheck("repoql-host");
+builder.AddProject<RepoQL_Web>("web")
+    .WaitFor(host);
 
 builder.Build().Run();

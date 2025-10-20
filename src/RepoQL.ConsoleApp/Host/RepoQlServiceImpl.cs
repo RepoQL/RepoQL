@@ -11,7 +11,6 @@ using RepoQL.Core;
 using CorePipelineSnapshot = RepoQL.Core.PipelineSnapshot;
 using CorePipelineStage = RepoQL.Core.PipelineStage;
 using CorePipelineStageSnapshot = RepoQL.Core.PipelineStageSnapshot;
-using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using ProtoPipelineSnapshot = RepoQL.Contracts.PipelineSnapshot;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;

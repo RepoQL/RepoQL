@@ -1,5 +1,3 @@
-using System.Threading;
-using System.Threading.Tasks;
 using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.Contracts;
