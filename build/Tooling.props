@@ -17,7 +17,7 @@
         <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
     </PropertyGroup>
 
-    <PropertyGroup>
+    <PropertyGroup> 
         <UseTestingPlatform>true</UseTestingPlatform>
         <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
         <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
