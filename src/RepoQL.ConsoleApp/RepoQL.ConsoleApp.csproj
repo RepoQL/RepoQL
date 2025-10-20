@@ -9,6 +9,7 @@
         <PackageId>RepoQL.Tool</PackageId>
         <PackageOutputPath>$(ArtifactsDirectory)/packages</PackageOutputPath>
         <RollForward>Major</RollForward>
+        <Version>1.0.1</Version>
     </PropertyGroup>
 
     <!-- Root pack (no RID): multi-TFM so old SDKs get a framework-dependent tool -->
