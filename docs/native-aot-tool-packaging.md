@@ -17,7 +17,7 @@ dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj \
   -o artifacts/tool/root
 
 # RID-specific Native AOT packages (one per OS/arch)
-for rid in linux-x64 linux-arm64 win-x64 win-arm64 osx-arm64; do
+for rid in linux-x64 win-x64 win-arm64 osx-arm64; do
   dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj \
     -c Release \
     -r "$rid" \
@@ -35,3 +35,5 @@ dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj \
 - These commands require the .NET 10 SDK (10.0.100 or newer) because RID-specific tool packages ship with .NET 10.
 - Native AOT publishing needs to run on the target operating system. Build the RID-specific packages on matching OS runners (for example via a CI matrix).
 - When running in a restricted environment, a `dotnet restore` may fail if NuGet feeds cannot be reached. Publish steps assume network access to `api.nuget.org`.
+- The GitHub Actions workflow (`.github/workflows/native-aot-tool.yml`) publishes each `.nupkg` to the GitHub Packages NuGet feed at `https://nuget.pkg.github.com/<owner>/index.json` whenever `main` is pushed. Ensure repository permissions allow `GITHUB_TOKEN` to write packages or provide a custom PAT via repository secrets.
+- `linux-arm64` is temporarily excluded because the GitHub-hosted runners do not provide the required cross-linker tooling (`ld.bfd`), so that package will be added once a suitable builder is available.

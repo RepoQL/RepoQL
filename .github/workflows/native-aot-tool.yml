@@ -30,6 +30,9 @@ jobs:
           name: repoql-tool-root
           if-no-files-found: error
           path: artifacts/tool/root/*.nupkg
+      - name: Publish root packages to GitHub Packages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: dotnet nuget push "artifacts/tool/root/*.nupkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
 
   native:
     strategy:
@@ -37,7 +40,6 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, rid: linux-x64 }
-          - { os: ubuntu-latest, rid: linux-arm64 }
           - { os: windows-latest, rid: win-x64 }
           - { os: windows-latest, rid: win-arm64 }
           - { os: macos-14, rid: osx-arm64 }
@@ -59,3 +61,6 @@ jobs:
           name: repoql-tool-${{ matrix.rid }}
           if-no-files-found: error
           path: artifacts/tool/${{ matrix.rid }}/*.nupkg
+      - name: Publish ${{ matrix.rid }} package to GitHub Packages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: dotnet nuget push "artifacts/tool/${{ matrix.rid }}/*.nupkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
