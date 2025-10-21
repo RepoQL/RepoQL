@@ -36,7 +36,7 @@ jobs:
           path: artifacts/tool/root/*.nupkg
       - name: Publish root packages to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: dotnet nuget push "artifacts/tool/root/*.nupkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
+        run: dotnet nuget push artifacts/tool/root/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
 
   native:
     strategy:
@@ -68,4 +68,4 @@ jobs:
       - name: Publish ${{ matrix.rid }} package to GitHub Packages
         shell: bash
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: dotnet nuget push "./artifacts/tool/${{ matrix.rid }}/*.nupkg" --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
+        run: dotnet nuget push ./artifacts/tool/${{ matrix.rid }}/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate

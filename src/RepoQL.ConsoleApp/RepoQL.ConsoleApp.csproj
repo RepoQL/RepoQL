@@ -9,28 +9,21 @@
         <PackageId>RepoQL.Tool</PackageId>
         <PackageOutputPath>$(ArtifactsDirectory)/packages</PackageOutputPath>
         <RollForward>Major</RollForward>
-        <Version>1.0.1</Version>
+        <Version>1.0.2</Version>
     </PropertyGroup>
 
-    <!-- Root pack (no RID): multi-TFM so old SDKs get a framework-dependent tool -->
-    <PropertyGroup Condition="$(RuntimeIdentifier) == ''">
-        <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <!-- Root pack (no RID): framework-dependent for old SDKs -->
+    <PropertyGroup Condition="'$(RuntimeIdentifier)' == ''">
+        <TargetFramework>net8.0</TargetFramework>
     </PropertyGroup>
 
-    <!-- Per-RID inner builds: AOT for .NET 10 -->
-    <PropertyGroup Condition="$(RuntimeIdentifier) != ''">
+    <!-- Platform-specific packs -->
+    <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
         <TargetFramework>net10.0</TargetFramework>
         <PublishAot>true</PublishAot>
-        <PublishSelfContained>true</PublishSelfContained>
+        <SelfContained>true</SelfContained>
         <PublishTrimmed>true</PublishTrimmed>
         <StripSymbols>true</StripSymbols>
-    </PropertyGroup>
-
-    <!-- Tell pack which RIDs to emit tool packages for -->
-    <PropertyGroup>
-        <RuntimeIdentifiers>
-            linux-x64;win-x64;win-arm64;osx-arm64;any
-        </RuntimeIdentifiers>
     </PropertyGroup>
 
     <ItemGroup>
