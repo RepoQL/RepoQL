@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Tools;
+using RepoQL.ConsoleApp.Resources;
 using ConsoleAppFramework;
 
 namespace RepoQL.ConsoleApp.Commands;
@@ -154,7 +155,23 @@ internal class McpCommands
                                            """;
                 })
                 .WithStdioServerTransport()
-                .WithTools<QueryTool>();
+                .WithTools<QueryTool>()
+                .WithTools<XrayTool>()
+                .WithListResourceTemplatesHandler((ctx, ct) =>
+                {
+                    var service = ctx.Services.GetRequiredService<RepoResourceService>();
+                    return service.ListTemplatesAsync(ctx, ct);
+                })
+                .WithReadResourceHandler((ctx, ct) =>
+                {
+                    var service = ctx.Services.GetRequiredService<RepoResourceService>();
+                    return service.ReadResourceAsync(ctx, ct);
+                })
+                .WithListResourcesHandler((ctx, ct) =>
+                {
+                    var service = ctx.Services.GetRequiredService<RepoResourceService>();
+                    return service.ListResourcesAsync(ctx, ct);
+                });
     
     //.WithResources<SimpleResourceType>()
 

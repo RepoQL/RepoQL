@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Formatters;
+using RepoQL.ConsoleApp.Resources;
 using RepoQL.Templating;
 using Spectre.Console;
 
@@ -19,6 +20,7 @@ internal static class ServiceCollectionExtensions
             services.AddHostedService<RepoQlClientWarmupService>();
         }
         services.AddSingleton<QueryExecutor>();
+        services.AddSingleton<RepoResourceService>();
         services.AddLiquidTemplatingFromEmbedded(
             assembly: typeof(ServiceCollectionExtensions).Assembly,
             resourceRoot: "RepoQL.ConsoleApp.Templates");

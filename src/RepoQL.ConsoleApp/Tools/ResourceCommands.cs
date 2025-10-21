@@ -1,44 +1,29 @@
-﻿using RepoQL.ConsoleApp.Helpers;
+﻿using ModelContextProtocol.Protocol;
+using RepoQL.ConsoleApp.Helpers;
+using RepoQL.ConsoleApp.Resources;
 using Spectre.Console;
 using ConsoleAppFramework;
+using RepoQL.ConsoleApp.Commands;
 
-namespace RepoQL.ConsoleApp.Commands;
+namespace RepoQL.ConsoleApp.Tools;
 
 [RegisterCommands]
-internal class TerminalCommands
+internal class ResourceCommands
 {
     private readonly QueryExecutor _queryExecutor;
     private readonly RepoQlClientProvider _clientProvider;
     private readonly IAnsiConsole _console;
+    private readonly RepoResourceService _resourceService;
 
-    public TerminalCommands(QueryExecutor queryExecutor, RepoQlClientProvider clientProvider, IAnsiConsole console)
+    public ResourceCommands(QueryExecutor queryExecutor, RepoQlClientProvider clientProvider, IAnsiConsole console, RepoResourceService resourceService)
     {
         _queryExecutor = queryExecutor;
         _clientProvider = clientProvider;
         _console = console;
+        _resourceService = resourceService;
         _ = _clientProvider.EnsureStarted();
     }
-
-    /// <summary>
-    ///    Queries the structure  repository 
-    /// </summary>
-    /// <param name="query"></param>
-    /// <param name="maxRows"></param>
-    /// <param name="format"></param>
-    /// <param name="cancel"></param>
-    public async Task Query([Argument] string query, int maxRows = 100, ResultFormat format = ResultFormat.Unstructured, CancellationToken cancel = default)
-    {
-        string[] lines = Array.Empty<string>();
-        await _console.Status().StartAsync("Launching RepoQL host...", async context =>
-        {
-            context.Status = "Running query...";
-            var result = await _queryExecutor.ExecuteAsync(query, maxRows, format, cancel);
-            lines = result.Lines;
-        });
-        foreach (var line in lines) 
-            _console.WriteLine(line);
-    }
-
+    
     /// <summary>
     /// Show x-ray summaries for repository documents filtered by a glob pattern and optional search terms.
     /// </summary>
@@ -157,6 +142,55 @@ internal class TerminalCommands
         {
             text = text.Replace("\r\n", "\n").Replace('\r', '\n');
             foreach (var ln in text.Split('\n')) _console.WriteLine(ln);
+        }
+    }
+
+    /// <summary>
+    /// Fetches repository content or summaries using the same logic as MCP resources.
+    /// </summary>
+    /// <param name="uri">RepoURI or prefixed template (e.g., summarize:file:///...)</param>
+    /// <param name="cancel">Cancellation token.</param>
+    public async Task Resource(
+        [Argument] string uri,
+        CancellationToken cancel = default)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            _console.MarkupLine("[red]Resource URI is required.[/]");
+            return;
+        }
+
+        TextResourceContents? content = null;
+        try
+        {
+            await _console.Status().StartAsync("Fetching resource...", async context =>
+            {
+                context.Status = "Calling RepoQL...";
+                content = await _resourceService.FetchResourceAsync(uri, cancel).ConfigureAwait(false);
+            });
+        }
+        catch (Exception ex)
+        {
+            _console.MarkupLine($"[red]{ex.Message}[/]");
+            return;
+        }
+
+        if (content is null)
+        {
+            _console.MarkupLine("[red]No resource content returned.[/]");
+            return;
+        }
+
+        var text = content.Text ?? string.Empty;
+        if (string.IsNullOrEmpty(text))
+        {
+            _console.WriteLine("(empty content)");
+            return;
+        }
+
+        foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            _console.WriteLine(line);
         }
     }
 

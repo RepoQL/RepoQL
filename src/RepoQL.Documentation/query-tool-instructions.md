@@ -4,20 +4,16 @@
 Treat the entities and structures contained inside repo files as a database to quickly understand repository contents and find features in many different file types
 
 **Read unfamiliar files only after searching with  RepoQL first**
-
 </CONCEPT>
 
 <PURPOSE>
-
 - Find structures in files with semantic search, avoid reading files you don't need to
 - Understand contents of files without token waste (Structure, relationships, dependencies, technologies)
 - See linting errors across many file types (annotations)
 - Understand "what uses this?" and "What links to this?" and "What breaks if I change this?"
-
 </PURPOSE>
 
 <CONTEXT>
-
 - Dialect is DuckDB flavored SQL with custom UDFs
 - Assume all file types are supported
 - Every entity is represented by a repo URI e.g.
@@ -25,8 +21,50 @@ Treat the entities and structures contained inside repo files as a database to q
   `embed:///quickstart`
 - Semantic mime type indicates both file type and contents e.g.
   `application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
-
 </CONTEXT>
+
+<SCHEMA>
+ Everything is a graph. Files are nodes with artifacts (bytes). Entities inside files (headings, functions, etc.) are child nodes connected by edges. Precise locations use spans. Everything else (lint, metrics, outlines) is annotations.
+
+Core Tables
+
+-- Content (bytes + text + x-ray summaries)
+artifact(id, digest, media_type, text_content, headline, summary, structure)
+
+-- Entities (documents and everything inside them)
+node(id, kind, uri, artifact_id, span_id, properties[JSON])
+-- Only 'document' nodes have uri; others addressed via span
+
+-- Relationships (composition=tree, references=graph)
+edge(id, source_node_id, destination_node_id, type, is_composition, ordinal)
+-- type: 'HAS_PART' (composition) or 'REFERS_TO', 'CALLS', etc.
+
+-- Locations (precise line/char ranges)
+span(id, document_id, start_line, end_line, start_byte, end_byte)
+-- Lines: 1-based inclusive. Chars: 0-based half-open
+
+-- Diagnostics & facts (lint, outlines, metrics, etc.)
+annotation(id, kind, severity, source, message, data[JSON], scope_document_id, target_node_id, resolved_target_uri)
+
+</SCHEMA>
+
+<ESSENTIAL_MACROS>
+-- Inventory: what files exist?
+SELECT * FROM xray_documents()  -- file_name, media_kind, byte_size, kinds_summary
+
+-- Explore: what's IN a file? (without reading it)
+SELECT * FROM xray_items('md_heading,cs_class', 10)  -- kind, label, uri (with #line=)
+
+-- Preview: show me lines around a location
+SELECT * FROM snippet('file:///path#line=42', 3)  -- context lines before/after
+
+-- Search: find files by intent (lexical + semantic)
+SELECT uri, score FROM file_search('auth JWT token', k := 10)
+
+-- Diagnostics: what's broken/flagged?
+SELECT * FROM annotations WHERE severity = 'error'
+SELECT * FROM annotations_for('file:///path', 'lint', 'warning')
+</ESSENTIAL_MACROS>
 
 The documentation for RepoQL can be read by querying - consider obtaining it to be the tutorial.
 
@@ -95,6 +133,11 @@ WITH search_results AS (
   */
 ```
 
+```postgresql
+/* format-specific views */
+SELECT view_name FROM duckdb_views() ORDER BY view_name
+```
+
 ### POSIX Command line
 
 Repoql is also available as a command line tool - useful for piping
@@ -124,6 +167,6 @@ repoql query "WITH gql_headings AS (SELECT heading_uri, document_uri, text FROM 
 - [ ] Read `embed:///quickstart.md`
   *Before attempting complex queries*
 
-<INSTRUCTION>
+</INSTRUCTION>
 
 Do the above before attempting any non-trivial work.

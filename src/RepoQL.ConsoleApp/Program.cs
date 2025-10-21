@@ -52,7 +52,7 @@ static bool ShouldPrewarmClient(string[] commandLineArgs)
     {
         if (string.IsNullOrWhiteSpace(arg))
             continue;
-        if (arg.StartsWith("-", StringComparison.Ordinal))
+        if (arg.StartsWith('-'))
             continue;
 
         var normalized = arg.ToLowerInvariant();
