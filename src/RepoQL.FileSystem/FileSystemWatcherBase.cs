@@ -11,7 +11,7 @@ namespace RepoQL.FileSystem;
 public abstract class FileSystemWatcherBase : IFileSystemWatcher
 {
     private readonly List<IObserver<ResourceChange>> _observers = [];
-    private readonly Lock _lock = new();
+    private readonly object _lock = new();
     private bool _isStarted;
     private bool _isDisposed;
 

@@ -49,7 +49,7 @@ public class RepositoryIndexer(
     private long _enrichmentScheduled;
     private long _enrichmentCompleted;
     private int _activeReindexScopes;
-    private readonly Lock _observerLock = new();
+    private readonly object _observerLock = new();
     private readonly List<IObserver<IndexerEvent>> _observers = [];
     private readonly CancellationTokenSource _stopping = new();
     private bool _isDisposed;
