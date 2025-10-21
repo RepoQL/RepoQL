@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using RepoQL.Protocol.Transport;
 
@@ -20,27 +22,38 @@ public static class GrpcServerHelper
     {
         if (IsWslWindowsMount(repositoryPath))
         {
-            var repoHash = Math.Abs(repositoryPath.GetHashCode()).ToString();
+            var repoHash = ComputeStableHash(repositoryPath);
             var socketDir = Path.Combine("/tmp", "repoql", repoHash);
             Directory.CreateDirectory(socketDir);
+
             var repoqlDir = Path.Combine(repositoryPath, ".repoql");
             Directory.CreateDirectory(repoqlDir);
             var mappingFile = Path.Combine(repoqlDir, "socket.path");
+
             var socketPath = Path.Combine(socketDir, "repoql.sock");
-            File.WriteAllText(mappingFile, socketPath);
+            File.WriteAllText(mappingFile, socketPath + Environment.NewLine);
             return socketPath;
         }
-        else
-        {
-            var repoqlDir = Path.Combine(repositoryPath, ".repoql");
-            Directory.CreateDirectory(repoqlDir);
-            return Path.GetFullPath(Path.Combine(repoqlDir, "repoql.sock"));
-        }
+
+        var localRepoqlDir = Path.Combine(repositoryPath, ".repoql");
+        Directory.CreateDirectory(localRepoqlDir);
+        return Path.GetFullPath(Path.Combine(localRepoqlDir, "repoql.sock"));
     }
 
     private static bool IsWslWindowsMount(string path)
     {
         return path.StartsWith("/mnt/", StringComparison.OrdinalIgnoreCase) && File.Exists("/proc/sys/fs/binfmt_misc/WSLInterop");
+    }
+
+    private static string ComputeStableHash(string value)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        var builder = new StringBuilder(bytes.Length * 2);
+        foreach (var b in bytes)
+        {
+            builder.Append(b.ToString("x2"));
+        }
+        return builder.ToString();
     }
 
     private static void SetSocketPermissions(string socketPath)
@@ -66,4 +79,3 @@ public static class GrpcServerHelper
         catch { }
     }
 }
-
