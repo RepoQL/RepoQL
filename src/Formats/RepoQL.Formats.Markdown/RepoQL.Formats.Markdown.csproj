@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Templates\**\*.liquid" />
+    <EmbeddedResource Include="Schema\**\*.sql" />
   </ItemGroup>
 
     <ItemGroup>

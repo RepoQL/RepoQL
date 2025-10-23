@@ -1,0 +1,79 @@
+﻿CREATE TABLE IF NOT EXISTS document_search (
+                                               doc_id    UUID PRIMARY KEY,
+                                               uri       VARCHAR NOT NULL,
+                                               search_key VARCHAR NOT NULL,
+                                               basename  VARCHAR,
+                                               dirname   VARCHAR
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS document_search_uri_idx ON document_search(uri);
+CREATE INDEX IF NOT EXISTS document_search_search_idx ON document_search(search_key);
+CREATE INDEX IF NOT EXISTS document_search_basename_idx ON document_search(basename);
+CREATE INDEX IF NOT EXISTS document_search_dirname_idx ON document_search(dirname);
+
+CREATE OR REPLACE MACRO zero_one(x) AS (
+  CASE WHEN MAX(x) OVER () IS NULL OR MAX(x) OVER () = 0 THEN 0 ELSE COALESCE(x,0) / NULLIF(MAX(x) OVER (),0) END
+);
+                  
+CREATE OR REPLACE MACRO combine(bm25n, fuzzn, semn, wb := 0.45, wf := 0.45, ws := 0.10) AS (
+  coalesce(wb * bm25n, 0) + coalesce(wf * fuzzn, 0) + coalesce(ws * semn, 0)
+);
+                  
+CREATE OR REPLACE MACRO vss_candidates(qvec_json, top_k) AS TABLE (
+SELECT doc_id, cosine_similarity_json(qvec_json, embedding) AS sem
+FROM document_embedding
+ORDER BY sem DESC
+LIMIT CAST(top_k AS BIGINT)
+);
+
+CREATE OR REPLACE MACRO file_search(q, k := 50, max_cand := 5000) AS TABLE (
+WITH score_source AS (
+    SELECT
+        ds.doc_id,
+        ds.uri,
+        CASE WHEN position(lower(q) in ds.search_key) > 0 THEN 1.0 ELSE 0.0 END AS bm25,
+        match_score(q, ds.search_key) AS fuzz
+    FROM document_search ds
+),
+     ranked_lex AS (
+         SELECT *
+         FROM score_source
+         ORDER BY coalesce(bm25, 0) DESC, fuzz DESC, length(uri)
+         LIMIT CAST(max_cand AS BIGINT)
+     ),
+     normalized_lex AS (
+         SELECT
+             doc_id,
+             uri,
+             zero_one(bm25) AS bm25n,
+             zero_one(fuzz) AS fuzzn
+         FROM ranked_lex
+     ),
+     qv AS (
+         SELECT embed_text_json('Represent this sentence for searching relevant passages: ' || q) AS qjson
+     ),
+     sem_candidates AS (
+         SELECT * FROM vss_candidates((SELECT qjson FROM qv), max_cand)
+     ),
+     sem_norm AS (
+         SELECT doc_id, (sem / NULLIF(MAX(sem) OVER (), 0)) AS semn FROM sem_candidates
+     ),
+     union_ids AS (
+         SELECT doc_id FROM normalized_lex
+         UNION
+         SELECT doc_id FROM sem_candidates
+     )
+SELECT
+    u.doc_id,
+    ds.uri,
+    COALESCE(lx.bm25n, 0) AS bm25n,
+    COALESCE(lx.fuzzn, 0) AS fuzzn,
+    COALESCE(sn.semn, NULL) AS semn,
+    combine(COALESCE(lx.bm25n, 0), COALESCE(lx.fuzzn, 0), sn.semn) AS score
+FROM union_ids u
+         LEFT JOIN normalized_lex lx USING(doc_id)
+         LEFT JOIN sem_norm sn USING(doc_id)
+         JOIN document_search ds USING(doc_id)
+ORDER BY score DESC, length(ds.uri)
+LIMIT CAST(k AS BIGINT)
+);

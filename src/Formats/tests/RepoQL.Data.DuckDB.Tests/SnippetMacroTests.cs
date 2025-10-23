@@ -17,7 +17,7 @@ public class SnippetMacroTests : IDisposable
     {
         _connection = new DuckDBConnection("Data Source=:memory:");
         _connection.Open();
-        _store = new DuckDbGraphStore(_connection, enableExtensions: false, registerUdfs: true);
+        _store = new DuckDbGraphStore(_connection, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         _store.EnsureSchema();
         _store.CreateSnippetMacro();
     }

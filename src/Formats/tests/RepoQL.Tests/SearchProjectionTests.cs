@@ -16,7 +16,7 @@ public class SearchProjectionTests
     public async Task WriterRefreshesDocumentSearchAutomatically()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-search-{Guid.NewGuid():N}.duckdb");
-        await using var writer = new SingleThreadedDatabaseWriter(new DuckDBConnectionFactory($"Data Source={dbPath}"));
+        await using var writer = new SingleThreadedDatabaseWriter(new DuckDBConnectionFactory($"Data Source={dbPath}"), new RepoQL.Metrics.IndexingMetrics());
         await writer.StartAsync(CancellationToken.None);
 
         var docUri = RepoUri.Parse("file:///docs/sample.md");
@@ -25,7 +25,7 @@ public class SearchProjectionTests
         await writer.EnqueueAndWaitAsync(CreateWrite(otherUri, "Guide with different words."));
         await writer.FlushAsync();
 
-        using var store = new DuckDbGraphStore(dbPath, enableExtensions: true, registerUdfs: true);
+        using var store = new DuckDbGraphStore(dbPath, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: true, registerUdfs: true);
         store.EnsureSchema();
         store.RefreshSearchProjection(incrementalRefresh: false);
 

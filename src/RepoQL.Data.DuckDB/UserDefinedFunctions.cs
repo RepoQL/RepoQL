@@ -1,8 +1,11 @@
 using DuckDB.NET.Data;
 using System.Buffers;
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using RepoQL.Contracts;
+using RepoQL.Metrics;
 
 #pragma warning disable DuckDBNET001
 
@@ -17,17 +20,16 @@ public static class RepositoryUserDefinedFunctions
     /// <summary>
     ///     Registers all scalar UDFs on the provided open connection.
     /// </summary>
-    // Local OTEL instruments (collected under RepoQL.Indexing meter)
-    private static readonly System.Diagnostics.Metrics.Meter Meter = new("RepoQL.Indexing");
-    private static readonly System.Diagnostics.Metrics.Counter<long> EmbedRequests = Meter.CreateCounter<long>(
-        "repoql.embed.requests", unit: "calls", description: "Embedding requests (query-time or refresh)");
-    private static readonly System.Diagnostics.Metrics.Counter<long> EmbedErrors = Meter.CreateCounter<long>(
-        "repoql.embed.errors", unit: "errors", description: "Embedding failures");
-    private static readonly System.Diagnostics.Metrics.Histogram<double> EmbedDuration = Meter.CreateHistogram<double>(
-        "repoql.embed.duration", unit: "ms", description: "Embedding duration");
-
-    public static void RegisterAll(DuckDBConnection connection, RepoQL.Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null)
+    public static void RegisterAll(
+        DuckDBConnection connection,
+        IndexingMetrics metrics,
+        RepoQL.Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null)
     {
+        if (ScalarFunctionExists(connection, "repository_uri_container"))
+        {
+            return;
+        }
+
         // ------------------- Repository URI helpers -------------------
 
         connection.RegisterScalarFunction<string, string>(
@@ -742,24 +744,24 @@ public static class RepositoryUserDefinedFunctions
                         if (vec is null)
                         {
                             writer.WriteNull(i);
-                            EmbedErrors.Add(1, new System.Diagnostics.TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
-                            EmbedRequests.Add(1, new System.Diagnostics.TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "error" } });
-                            EmbedDuration.Record(sw.Elapsed.TotalMilliseconds, new System.Diagnostics.TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "error" } });
+                            metrics.EmbedErrors.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
+                            metrics.EmbedRequests.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "error" } });
+                            metrics.EmbedDuration.Record(sw.Elapsed.TotalMilliseconds, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "error" } });
                             continue;
                         }
                         var json = SerializeFloatArray(vec);
                         writer.WriteValue(json, i);
-                        EmbedRequests.Add(1, new System.Diagnostics.TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "ok" } });
-                        EmbedDuration.Record(sw.Elapsed.TotalMilliseconds, new System.Diagnostics.TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "ok" } });
+                        metrics.EmbedRequests.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "ok" } });
+                        metrics.EmbedDuration.Record(sw.Elapsed.TotalMilliseconds, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "ok" } });
                     }
                     catch
                     {
                         writer.WriteNull(i);
                         if (embeddingProvider is not null)
                         {
-                            EmbedErrors.Add(1, new System.Diagnostics.TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
-                            EmbedRequests.Add(1, new System.Diagnostics.TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "exception" } });
-                            EmbedDuration.Record(0, new System.Diagnostics.TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "exception" } });
+                            metrics.EmbedErrors.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
+                            metrics.EmbedRequests.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "exception" } });
+                            metrics.EmbedDuration.Record(0, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "exception" } });
                         }
                     }
                 }
@@ -965,6 +967,18 @@ public static class RepositoryUserDefinedFunctions
             ".xml" => "xml",
             _ => null
         };
+    }
+
+    private static bool ScalarFunctionExists(DuckDBConnection connection, string functionName)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM duckdb_functions() WHERE lower(function_name) = lower(?)";
+        cmd.Parameters.Add(new DuckDBParameter { Value = functionName });
+        var result = cmd.ExecuteScalar();
+        if (result is long l) return l > 0;
+        if (result is int i) return i > 0;
+        if (result is decimal dec) return dec > 0;
+        return Convert.ToInt64(result) > 0;
     }
 
     private static string? ExtractFragment(string? uri)

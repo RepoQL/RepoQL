@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using RepoQL.Contracts.Data;
 using RepoQL.Core;
 using RepoQL.Data.DuckDB;
+using RepoQL.Metrics;
 
 namespace RepoQL.ConsoleApp.Host;
 
@@ -17,11 +18,13 @@ internal sealed class InitialIndexingBarrier(
     IGraphStore store,
     Contracts.Embeddings.IEmbeddingProvider embeddingProvider,
     IDuckDBConnectionFactory connectionFactory,
+    IndexingMetrics metrics,
     ILogger<InitialIndexingBarrier>? logger = null)
     : BackgroundService, IInitialIndexingBarrier
 {
     private readonly TaskCompletionSource<bool> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ILogger<InitialIndexingBarrier> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<InitialIndexingBarrier>.Instance;
+    private readonly IndexingMetrics _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
     private static readonly ActivitySource Activity = new("RepoQL.Host");
 
     public Task InitialScanCompleted => _tcs.Task;
@@ -70,7 +73,7 @@ internal sealed class InitialIndexingBarrier(
             await Task.Yield(); // Run on background thread
             using var span = Activity.StartActivity("repoql.embed.refresh", ActivityKind.Internal);
             using var conn = connectionFactory.CreateConnection();
-            using var duck = new DuckDbGraphStore(conn, enableExtensions: true, registerUdfs: false, logger: null, embeddingProvider: embeddingProvider);
+            using var duck = new DuckDbGraphStore(conn, _metrics, logger: null, embeddingProvider: embeddingProvider);
             _logger.LogInformation("Background embedding refresh started (max_tokens may be reduced for speed)");
             duck.RefreshDocumentEmbeddings(embeddingProvider, ct);
             span!.SetTag("otel.status_code", "OK");
@@ -86,4 +89,3 @@ internal sealed class InitialIndexingBarrier(
         }
     }
 }
-

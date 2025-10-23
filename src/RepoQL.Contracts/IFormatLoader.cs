@@ -8,6 +8,11 @@ public interface IFormatLoader
 
     Task<DocumentModel> LoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default);
 
+    IEnumerable<FormatSqlScript> GetSchemaScripts()
+    {
+        return Array.Empty<FormatSqlScript>();
+    }
+
     async IAsyncEnumerable<EmbeddedFragment> DiscoverEmbedsAsync(DocumentModel document, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await Task.CompletedTask;

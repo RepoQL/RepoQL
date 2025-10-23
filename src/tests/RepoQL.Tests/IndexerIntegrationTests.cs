@@ -3,7 +3,7 @@ using AwesomeAssertions;
 using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Core;
-using RepoQL.Core.Metrics;
+using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
@@ -57,7 +57,7 @@ internal class IndexerIntegrationTests
         var vfs = new FileSystem.Embedded.EmbeddedStore(asm);
         var fsRegistry = new FileSystemRegistry([vfs]);
         var hub = new MultiFileSystem(fsRegistry, [vfs]);
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
+        using var store = new DuckDbGraphStore(":memory:", metrics);
         var classifier = new StubClassifier();
         var hasher = new XxHasher();
         var (formatRegistry, workspace) = CreateFormats(hub, classifier, hasher);
@@ -107,7 +107,7 @@ internal class IndexerIntegrationTests
         var vfs = new FileSystem.Embedded.EmbeddedStore(asm);
         var fsRegistry = new FileSystemRegistry([vfs]);
         var hub = new MultiFileSystem(fsRegistry, [vfs]);
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
+        using var store = new DuckDbGraphStore(":memory:", metrics);
         var classifier = new StubClassifier();
         var hasher = new XxHasher();
         var (formatRegistry, workspace) = CreateFormats(hub, classifier, hasher);

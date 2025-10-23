@@ -1,5 +1,8 @@
+using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -9,7 +12,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
-using System.Diagnostics.Metrics;
+using RepoQL.Metrics;
 
 namespace RepoQL.Data.DuckDB;
 
@@ -21,16 +24,9 @@ namespace RepoQL.Data.DuckDB;
     {
         private readonly DuckDBConnection _connection;
         private readonly bool _ownsConnection;
-        private readonly bool _udfsRegistered;
         private readonly ILogger<DuckDbGraphStore> _logger;
-        // Embedding metrics instruments (use the shared indexing meter name)
-        private static readonly Meter Meter = new("RepoQL.Indexing");
-        private static readonly Counter<long> EmbedRequests = Meter.CreateCounter<long>(
-            "repoql.embed.requests", unit: "calls", description: "Embedding requests (query-time or refresh)");
-        private static readonly Counter<long> EmbedErrors = Meter.CreateCounter<long>(
-            "repoql.embed.errors", unit: "errors", description: "Embedding failures");
-        private static readonly Histogram<double> EmbedDuration = Meter.CreateHistogram<double>(
-            "repoql.embed.duration", unit: "ms", description: "Embedding duration");
+        private readonly IndexingMetrics _metrics;
+        private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
 
     // OpenTelemetry-style instrumentation
     private static readonly ActivitySource ActivitySource = new("RepoQL.Data.DuckDB");
@@ -50,7 +46,7 @@ namespace RepoQL.Data.DuckDB;
     ///     Recompute embeddings for all documents using the provided local embedding provider.
     ///     Upserts rows into document_embedding (model, dim, embedding JSON, updated_at).
     /// </summary>
-    public void RefreshDocumentEmbeddings(RepoQL.Contracts.Embeddings.IEmbeddingProvider provider, CancellationToken ct = default)
+    public void RefreshDocumentEmbeddings(Contracts.Embeddings.IEmbeddingProvider provider, CancellationToken ct = default)
     {
         if (provider is null || !provider.Enabled)
             return;
@@ -95,9 +91,26 @@ namespace RepoQL.Data.DuckDB;
                 if (vec is null)
                 {
                     skipped++;
-                    EmbedErrors.Add(1, new System.Diagnostics.TagList { { "source", "refresh" }, { "model", provider.Model }, { "dim", provider.Dimension } });
-                    EmbedRequests.Add(1, new System.Diagnostics.TagList { { "source", "refresh" }, { "model", provider.Model }, { "dim", provider.Dimension }, { "status", "error" } });
-                    EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, new System.Diagnostics.TagList { { "source", "refresh" }, { "model", provider.Model }, { "dim", provider.Dimension }, { "status", "error" } });
+                    _metrics.EmbedErrors.Add(1, new TagList
+                    {
+                        { "source", "refresh" }, 
+                        { "model", provider.Model }, 
+                        { "dim", provider.Dimension }
+                    });
+                    _metrics.EmbedRequests.Add(1, new TagList
+                    {
+                        { "source", "refresh" }, 
+                        { "model", provider.Model }, 
+                        { "dim", provider.Dimension }, 
+                        { "status", "error" }
+                    });
+                    _metrics.EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, new TagList
+                    {
+                        { "source", "refresh" }, 
+                        { "model", provider.Model }, 
+                        { "dim", provider.Dimension }, 
+                        { "status", "error" }
+                    });
                     continue;
                 }
                 var json = SerializeFloatArray(vec);
@@ -111,10 +124,21 @@ namespace RepoQL.Data.DuckDB;
                 AddParameters(up, id, provider.Model, provider.Dimension, json);
                 up.ExecuteNonQuery();
                 success++;
-                EmbedRequests.Add(1, new System.Diagnostics.TagList { { "source", "refresh" }, { "model", provider.Model }, { "dim", provider.Dimension }, { "status", "ok" } });
-                EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, new System.Diagnostics.TagList { { "source", "refresh" }, { "model", provider.Model }, { "dim", provider.Dimension }, { "status", "ok" } });
+                _metrics.EmbedRequests.Add(1, new TagList
+                {
+                    { "source", "refresh" }, 
+                    { "model", provider.Model }, 
+                    { "dim", provider.Dimension }, 
+                    { "status", "ok" }
+                });
+                _metrics.EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, new TagList
+                {
+                    { "source", "refresh" }, 
+                    { "model", provider.Model }, 
+                    { "dim", provider.Dimension }, 
+                    { "status", "ok" }
+                });
             }
-            tx.Commit();
         }
         sw.Stop();
         _logger.LogInformation("Embeddings refreshed: docs={Success}, skipped={Skipped}, model={Model}, dim={Dim}, ms={Duration}", success, skipped, provider.Model, provider.Dimension, (long)sw.Elapsed.TotalMilliseconds);
@@ -126,9 +150,9 @@ namespace RepoQL.Data.DuckDB;
         using (var w = new Utf8JsonWriter(ms))
         {
             w.WriteStartArray();
-            for (var i = 0; i < vec.Length; i++)
+            foreach (var f in vec)
             {
-                w.WriteNumberValue(vec[i]);
+                w.WriteNumberValue(f);
             }
             w.WriteEndArray();
             w.Flush();
@@ -140,41 +164,65 @@ namespace RepoQL.Data.DuckDB;
     ///     Creates a DuckDbGraphStore with an existing connection.
     /// </summary>
     /// <param name="connection">An open DuckDB connection.</param>
+    /// <param name="metrics">Shared indexing metrics instance.</param>
     /// <param name="enableExtensions">Install/Load recommended extensions when true.</param>
     /// <param name="registerUdfs">Register repository URI and media type scalar UDFs when true.</param>
     /// <param name="logger">Optional logger for macro/view creation warnings.</param>
     /// <param name="embeddingProvider">Optional embedding provider for document embeddings.</param>
-    public DuckDbGraphStore(DuckDBConnection connection, bool enableExtensions = true, bool registerUdfs = true, ILogger<DuckDbGraphStore>? logger = null, RepoQL.Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null)
+    /// <param name="formatSchemaScripts">Optional SQL snippets supplied by format loaders.</param>
+    public DuckDbGraphStore(
+        DuckDBConnection connection,
+        IndexingMetrics? metrics = null,
+        bool enableExtensions = true,
+        bool registerUdfs = true,
+        ILogger<DuckDbGraphStore>? logger = null,
+        Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null,
+        IEnumerable<FormatSqlScript>? formatSchemaScripts = null)
     {
-        this._connection = connection ?? throw new ArgumentNullException(nameof(connection));
-        this._ownsConnection = false;
-        this._udfsRegistered = registerUdfs;
-        this._logger = logger ?? NullLogger<DuckDbGraphStore>.Instance;
-        this._databaseLabel = TryExtractDbNameSafe(_connection.ConnectionString);
+        _connection = connection ?? throw new ArgumentNullException(nameof(connection));
+        _ownsConnection = false;
+        _logger = logger ?? NullLogger<DuckDbGraphStore>.Instance;
+        _metrics = metrics ?? new IndexingMetrics();
+        _formatSchemaScripts = formatSchemaScripts?.ToArray() ?? Array.Empty<FormatSqlScript>();
+        _databaseLabel = TryExtractDbNameSafe(_connection.ConnectionString);
 
-        if (enableExtensions) EnableRecommendedExtensions();
-        if (registerUdfs) RepositoryUserDefinedFunctions.RegisterAll(connection, embeddingProvider);
+        if (enableExtensions)
+            EnableExtensions();
+        if (registerUdfs)
+            RepositoryUserDefinedFunctions.RegisterAll(connection, _metrics, embeddingProvider);
     }
 
     /// <summary>
     ///     Opens a DuckDB database from a file path. Optionally enables extensions and registers UDFs.
     /// </summary>
     /// <param name="filePath">Path to a DuckDB file.</param>
+    /// <param name="metrics">Shared indexing metrics instance.</param>
     /// <param name="enableExtensions">Install/Load recommended extensions when true.</param>
     /// <param name="registerUdfs">Register repository URI and media type scalar UDFs when true.</param>
     /// <param name="logger">Optional logger for macro/view creation warnings.</param>
     /// <param name="embeddingProvider">Optional embedding provider for document embeddings.</param>
-    public DuckDbGraphStore(string filePath, bool enableExtensions = true, bool registerUdfs = true, ILogger<DuckDbGraphStore>? logger = null, RepoQL.Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null)
+    /// <param name="formatSchemaScripts">Optional SQL snippets supplied by format loaders.</param>
+    public DuckDbGraphStore(
+        string filePath,
+        IndexingMetrics? metrics = null,
+        bool enableExtensions = true,
+        bool registerUdfs = true,
+        ILogger<DuckDbGraphStore>? logger = null,
+        Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null,
+        IEnumerable<FormatSqlScript>? formatSchemaScripts = null)
     {
         _connection = new DuckDBConnection($"Data Source={filePath}");
         _connection.Open();
         _ownsConnection = true;
-        _udfsRegistered = registerUdfs;
         _logger = logger ?? NullLogger<DuckDbGraphStore>.Instance;
+        _metrics = metrics ?? new IndexingMetrics();
+        _formatSchemaScripts = formatSchemaScripts?.ToArray() ?? Array.Empty<FormatSqlScript>();
         _databaseLabel = TryExtractDbNameSafe(_connection.ConnectionString);
 
-        if (enableExtensions) EnableRecommendedExtensions();
-        if (registerUdfs) RepositoryUserDefinedFunctions.RegisterAll(_connection, embeddingProvider);
+        if (enableExtensions)
+            EnableExtensions();
+        if (registerUdfs)
+            RepositoryUserDefinedFunctions.RegisterAll(_connection, _metrics, embeddingProvider);
     }
 
     /// <summary>
@@ -193,702 +241,41 @@ namespace RepoQL.Data.DuckDB;
     /// </summary>
     public void EnsureSchema()
     {
-        using var tx = _connection.BeginTransaction();
-
-        Execute(@"
-CREATE TABLE IF NOT EXISTS artifact (
-  id           UUID PRIMARY KEY,
-  digest       VARCHAR NOT NULL UNIQUE,
-  byte_size    BIGINT NOT NULL,
-  media_type   VARCHAR,
-  text_content VARCHAR,
-  storage_uri  VARCHAR,
-  headline     VARCHAR,
-  summary      VARCHAR,
-  structure    VARCHAR
-);");
-
-        Execute(@"
-CREATE TABLE IF NOT EXISTS node (
-  id                          UUID PRIMARY KEY,
-  kind                        VARCHAR NOT NULL,
-  uri                         VARCHAR,
-  container_uri_lowercase     VARCHAR,
-  artifact_id                 UUID,
-  span_id                     UUID,
-  properties                  JSON NOT NULL,
-  created_at                  TIMESTAMP NOT NULL,
-  updated_at                  TIMESTAMP NOT NULL,
-  CHECK (kind <> 'document' OR uri IS NOT NULL),
-  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
-);");
-
-        Execute(@"
-CREATE TABLE IF NOT EXISTS span (
-  id            UUID PRIMARY KEY,
-  document_id   UUID NOT NULL,
-  start_byte    BIGINT,
-  end_byte      BIGINT,
-  start_line    INTEGER,
-  start_column  INTEGER,
-  end_line      INTEGER,
-  end_column    INTEGER
-  -- FK constraint removed: See edge table comment
-);");
-
-        Execute(@"
-CREATE TABLE IF NOT EXISTS edge (
-  id                     UUID PRIMARY KEY,
-  source_node_id         UUID NOT NULL,
-  destination_node_id    UUID NOT NULL,
-  type                   VARCHAR NOT NULL,
-  is_composition         BOOLEAN NOT NULL,
-  ordinal                INTEGER,
-  scope_document_id      UUID,
-  semantic_key           VARCHAR,
-  source_span_id         UUID,
-  destination_span_id    UUID,
-  composition_child_id   UUID,
-  properties             JSON NOT NULL,
-  created_at             TIMESTAMP NOT NULL
-  -- FK constraints removed: DuckDB checks constraints immediately, even in transactions
-  -- This prevents deletion of composition trees. Referential integrity is maintained
-  -- at the application level instead.
-);");
-
-        Execute(
-            @"CREATE UNIQUE INDEX IF NOT EXISTS node_container_uri_lowercase_unique ON node(container_uri_lowercase);");
-        Execute(@"CREATE INDEX IF NOT EXISTS node_kind_idx ON node(kind);");
-        Execute(@"CREATE UNIQUE INDEX IF NOT EXISTS edge_semantic_key_unique ON edge(semantic_key);");
-        Execute(@"CREATE UNIQUE INDEX IF NOT EXISTS edge_composition_single_parent ON edge(composition_child_id);");
-        Execute(@"CREATE INDEX IF NOT EXISTS edge_source_idx      ON edge(source_node_id);");
-        Execute(@"CREATE INDEX IF NOT EXISTS edge_destination_idx ON edge(destination_node_id);");
-        Execute(@"CREATE INDEX IF NOT EXISTS edge_type_idx         ON edge(type);");
-        Execute(@"CREATE INDEX IF NOT EXISTS edge_scope_idx        ON edge(scope_document_id);");
-
-        Execute(@"
-COMMENT ON TABLE artifact IS 'Content-addressed artifact bytes and optional decoded text.';
-COMMENT ON COLUMN artifact.id IS 'Artifact identifier (GUID).';
-COMMENT ON COLUMN artifact.digest IS 'Content digest (e.g., sha256:...).';
-COMMENT ON COLUMN artifact.byte_size IS 'Uncompressed size in bytes.';
-COMMENT ON COLUMN artifact.media_type IS 'Semantic media type string with parameters.';
-COMMENT ON COLUMN artifact.text_content IS 'Optional decoded text for search and span mapping.';
-COMMENT ON COLUMN artifact.storage_uri IS 'External storage location for raw bytes (file/object store).';
-COMMENT ON COLUMN artifact.headline IS 'X-ray Level 0 (headline): essential identity (single line), always present for documents.';
-COMMENT ON COLUMN artifact.summary IS 'X-ray Level 1 (summary): key information (~5 lines, max 10) for understanding without reading full content.';
-COMMENT ON COLUMN artifact.structure IS 'X-ray Level 2 (structure): detailed outline (~15 lines, max 25) for navigation and exploration.';
-
-COMMENT ON TABLE node IS 'Property-graph vertex: documents, sections, symbols, etc.';
-COMMENT ON COLUMN node.id IS 'Node identifier (GUID).';
-COMMENT ON COLUMN node.kind IS 'Open taxonomy label (e.g., document, md_section, cs_class).';
-COMMENT ON COLUMN node.uri IS 'Repository-aware container URI for documents (no fragment).';
-COMMENT ON COLUMN node.container_uri_lowercase IS 'Lowercase container URI for uniqueness.';
-COMMENT ON COLUMN node.artifact_id IS 'Back-reference to artifact providing bytes.';
-COMMENT ON COLUMN node.span_id IS 'Span that locates this node within a document.';
-COMMENT ON COLUMN node.properties IS 'Arbitrary attributes as JSON.';
-COMMENT ON COLUMN node.created_at IS 'Creation timestamp (UTC).';
-COMMENT ON COLUMN node.updated_at IS 'Update timestamp (UTC).';
-
-COMMENT ON TABLE span IS 'Text/byte extent within a single document node.';
-COMMENT ON COLUMN span.id IS 'Span identifier (GUID).';
-COMMENT ON COLUMN span.document_id IS 'Owning document node id.';
-COMMENT ON COLUMN span.start_byte IS '0-based start byte offset (inclusive).';
-COMMENT ON COLUMN span.end_byte IS '0-based end byte offset (exclusive).';
-COMMENT ON COLUMN span.start_line IS '1-based start line.';
-COMMENT ON COLUMN span.start_column IS '1-based start column.';
-COMMENT ON COLUMN span.end_line IS '1-based end line.';
-COMMENT ON COLUMN span.end_column IS '1-based end column.';
-
-COMMENT ON TABLE edge IS 'Directed relationship between nodes with optional spans and attributes.';
-COMMENT ON COLUMN edge.id IS 'Edge identifier (GUID).';
-COMMENT ON COLUMN edge.source_node_id IS 'Source node id.';
-COMMENT ON COLUMN edge.destination_node_id IS 'Destination node id.';
-COMMENT ON COLUMN edge.type IS 'Relation type (e.g., HAS_PART, REFERS_TO, CALLS).';
-COMMENT ON COLUMN edge.is_composition IS 'True when expressing containment/ownership.';
-COMMENT ON COLUMN edge.ordinal IS 'Stable order among composition siblings.';
-COMMENT ON COLUMN edge.scope_document_id IS 'Document that scoped or produced this relation.';
-COMMENT ON COLUMN edge.semantic_key IS 'Optional business key for idempotent upserts.';
-COMMENT ON COLUMN edge.source_span_id IS 'Span at origin site (e.g., link text or call site).';
-COMMENT ON COLUMN edge.destination_span_id IS 'Span that the relation points to.';
-COMMENT ON COLUMN edge.composition_child_id IS 'Destination when is_composition=true; enforces single parent.';
-COMMENT ON COLUMN edge.properties IS 'Relation attributes as JSON.';
-COMMENT ON COLUMN edge.created_at IS 'Creation timestamp (UTC).';
-");
-
-        Execute(@"
-CREATE OR REPLACE MACRO entities_by_uri(u) AS TABLE (
-  WITH base AS (
-    SELECT
-      repository_uri_container(u)         AS base,
-      repository_uri_fragment(u)          AS frag,
-      repository_uri_fragment_kind(u)     AS kind,
-      repository_uri_line_start(u)        AS l1,
-      repository_uri_line_end(u)          AS l2
-  ),
-  char_rng AS (
-    SELECT
-      CASE WHEN kind='char' THEN try_cast(split_part(substr(frag, 6), ',', 1) AS BIGINT) END AS c1,
-      CASE WHEN kind='char' THEN try_cast(NULLIF(split_part(substr(frag, 6), ',', 2), '') AS BIGINT) END AS c2
-    FROM base
-  )
-  SELECT
-    'Document' AS entity, n.id AS id, n.kind AS aux,
-    n.uri AS uri, n.uri AS container_uri, NULL AS fragment
-  FROM base b
-  JOIN node n ON lower(n.uri) = lower(b.base)
-  WHERE b.frag IS NULL
-
-  UNION ALL
-  SELECT
-    'Edge', e.id, e.type,
-    repository_uri_join(n.uri, 'edge=' || CAST(e.id AS VARCHAR)),
-    n.uri, 'edge=' || CAST(e.id AS VARCHAR)
-  FROM base b
-  JOIN node n ON lower(n.uri) = lower(b.base)
-  JOIN edge e ON e.scope_document_id = n.id
-  WHERE b.frag LIKE 'edge=%' AND substr(b.frag, 6) = CAST(e.id AS VARCHAR)
-
-  UNION ALL
-  SELECT
-    'Span', s.id, NULL,
-    repository_uri_join(n.uri, fragment_from_line_range(s.start_line, s.end_line)),
-    n.uri, fragment_from_line_range(s.start_line, s.end_line)
-  FROM base b
-  JOIN node n ON lower(n.uri) = lower(b.base)
-  JOIN span s ON s.document_id = n.id
-  WHERE b.kind = 'line'
-    AND s.start_line <= COALESCE(b.l1, s.start_line)
-    AND s.end_line   >= COALESCE(b.l2, s.end_line)
-
-  UNION ALL
-  SELECT
-    'Span', s.id, NULL,
-    repository_uri_join(n.uri, fragment_from_char_range(s.start_byte, s.end_byte)),
-    n.uri, fragment_from_char_range(s.start_byte, s.end_byte)
-  FROM base b, char_rng r
-  JOIN node n ON lower(n.uri) = lower(b.base)
-  JOIN span s ON s.document_id = n.id
-  WHERE b.kind = 'char'
-    AND (r.c1 IS NOT NULL AND s.start_byte <= r.c1)
-    AND (r.c2 IS NULL    OR  s.end_byte   >= r.c2)
-);");
-
-        // Helper macro: extract a JSON string array at $.tags into a DuckDB LIST<VARCHAR>
-        // This avoids requiring the DuckDB JSON extension in read-only/test contexts.
-        // Usage: LATERAL UNNEST(json_extract_string_array(n.properties, '$.tags')) AS t(tag)
-        Execute(@"
-CREATE OR REPLACE MACRO json_extract_string_array(j, path) AS (
-  string_split(
-    REPLACE(
-      REGEXP_REPLACE(
-        REGEXP_REPLACE(CAST(j AS VARCHAR), '^.*""tags""\s*:\s*\[\s*', ''),
-        '\s*\].*$', ''
-      ),
-      '""',
-      ''
-    ),
-    ','
-  )
-);
-");
-
-        // Annotation table and indexes
-        Execute(@"
-CREATE TABLE IF NOT EXISTS annotation (
-  id                 UUID PRIMARY KEY,
-  semantic_key       TEXT,
-  kind               TEXT NOT NULL,
-  severity           TEXT NOT NULL,
-  source             TEXT NOT NULL,
-  rule_id            TEXT,
-  message            TEXT NOT NULL,
-  data               JSON NOT NULL,
-  scope_document_id  UUID NOT NULL,
-  target_node_id     UUID,
-  target_edge_id     UUID,
-  target_span_id     UUID,
-  target_uri         TEXT,
-  created_at         TIMESTAMP NOT NULL,
-  expires_at         TIMESTAMP,
-  UNIQUE(semantic_key)
-);
-
-CREATE INDEX IF NOT EXISTS annotation_kind_index           ON annotation(kind);
-CREATE INDEX IF NOT EXISTS annotation_severity_index       ON annotation(severity);
-CREATE INDEX IF NOT EXISTS annotation_scope_document_id_index ON annotation(scope_document_id);
-CREATE INDEX IF NOT EXISTS annotation_target_node_id_index ON annotation(target_node_id);
-CREATE INDEX IF NOT EXISTS annotation_target_edge_id_index ON annotation(target_edge_id);
-CREATE INDEX IF NOT EXISTS annotation_target_span_id_index ON annotation(target_span_id);
-
-COMMENT ON TABLE annotation IS 'Out-of-band facts (lint, outline, metrics, hints)..';
-", tx);
-
-        // Annotation helper macros and views
-        Execute(@"CREATE OR REPLACE MACRO _severity_rank(s) AS (
-  CASE lower(s)
-    WHEN 'error'   THEN 4
-    WHEN 'warning' THEN 3
-    WHEN 'info'    THEN 2
-    WHEN 'hint'    THEN 1
-    ELSE 0
-  END
-);", tx);
-
-        // Create annotations view/macro. When UDFs are registered we create the rich version that
-        // resolves URIs. Otherwise fall back to a simpler projection so tests can still query annotations.
-        if (_udfsRegistered)
-        {
-            Execute(@"CREATE OR REPLACE VIEW annotations AS
-WITH base AS (
-  SELECT a.*, sd.uri AS scope_document_uri
-  FROM annotation a
-  JOIN node sd ON sd.id = a.scope_document_id
-),
-span_uri AS (
-  SELECT a.id,
-         repository_uri_join(b.scope_document_uri,
-           fragment_from_line_range(s.start_line, s.end_line)) AS uri_from_span
-  FROM base b
-  JOIN annotation a ON a.id = b.id
-  LEFT JOIN span s  ON s.id = a.target_span_id
-),
-node_frag AS (
-  SELECT a.id,
-         -- Simplified fragment for nodes: just use line range if available
-         CASE 
-           WHEN s.start_line IS NOT NULL AND s.end_line IS NOT NULL 
-           THEN fragment_from_line_range(s.start_line, s.end_line)
-           ELSE NULL
-         END AS frag
-  FROM base b
-  JOIN annotation a ON a.id = b.id
-  LEFT JOIN node n  ON n.id = a.target_node_id
-  LEFT JOIN span s  ON s.id = n.span_id
-),
-edge_uri AS (
-  SELECT a.id,
-         repository_uri_join(b.scope_document_uri, 'edge=' || CAST(e.id AS TEXT)) AS uri_from_edge
-  FROM base b
-  JOIN annotation a ON a.id = b.id
-  LEFT JOIN edge e  ON e.id = a.target_edge_id
-)
-SELECT
-  a.*,
-  COALESCE(
-    a.target_uri,
-    su.uri_from_span,
-    CASE WHEN nf.frag IS NOT NULL THEN repository_uri_join(b.scope_document_uri, nf.frag) END,
-    eu.uri_from_edge,
-    b.scope_document_uri
-  ) AS resolved_target_uri,
-  _severity_rank(a.severity) AS severity_rank
-FROM annotation a
-JOIN base b   ON b.id = a.id
-LEFT JOIN span_uri su ON su.id = a.id
-LEFT JOIN node_frag nf ON nf.id = a.id
-LEFT JOIN edge_uri eu  ON eu.id = a.id;", tx);
-
-            Execute(@"CREATE OR REPLACE MACRO annotations_for(u, kinds, min_severity) AS TABLE (
-  WITH doc AS (
-    SELECT id AS doc_id FROM node
-    WHERE lower(uri) = lower(repository_uri_container(u))
-  )
-  SELECT *
-  FROM annotations a, doc
-  WHERE a.scope_document_id = doc.doc_id
-    AND (kinds IS NULL OR EXISTS (
-          SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
-          WHERE lower(trim(k.value)) = lower(a.kind)))
-    AND (_severity_rank(a.severity) >= _severity_rank(COALESCE(min_severity,'hint')))
-  ORDER BY severity_rank DESC, a.created_at DESC
-);", tx);
-
-            Execute(@"CREATE OR REPLACE MACRO annotations_all(kinds, min_severity) AS TABLE (
-  SELECT *
-  FROM annotations
-  WHERE (kinds IS NULL OR EXISTS (
-          SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
-          WHERE lower(trim(k.value)) = lower(annotations.kind)))
-    AND (_severity_rank(severity) >= _severity_rank(COALESCE(min_severity,'hint')))
-  ORDER BY severity_rank DESC, annotations.created_at DESC
-);", tx);
-
-        // Embeddings table (optional, used when semantic search is enabled)
-        Execute(@"CREATE TABLE IF NOT EXISTS document_embedding (
-  doc_id    UUID PRIMARY KEY,
-  model     VARCHAR NOT NULL,
-  dim       INTEGER NOT NULL,
-  embedding VARCHAR NOT NULL, -- JSON float array
-  updated_at TIMESTAMP NOT NULL
-);", tx);
-        Execute(@"CREATE INDEX IF NOT EXISTS document_embedding_model_idx ON document_embedding(model);", tx);
-        }
-        else
-        {
-            Execute(@"CREATE OR REPLACE VIEW annotations AS
-  SELECT a.*, a.scope_document_id AS scope_document_uri, _severity_rank(a.severity) AS severity_rank
-  FROM annotation a;", tx);
-
-            Execute(@"CREATE OR REPLACE MACRO annotations_for(u, kinds, min_severity) AS TABLE (
-  SELECT a.*
-  FROM annotations a
-  JOIN node n ON n.id = a.scope_document_id
-  WHERE lower(n.uri) = lower(u)
-    AND (kinds IS NULL OR EXISTS (
-          SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
-          WHERE lower(trim(k.value)) = lower(a.kind)))
-    AND (_severity_rank(a.severity) >= _severity_rank(COALESCE(min_severity,'hint')))
-  ORDER BY severity_rank DESC, a.created_at DESC
-);", tx);
-
-            Execute(@"CREATE OR REPLACE MACRO annotations_all(kinds, min_severity) AS TABLE (
-  SELECT *
-  FROM annotations
-  WHERE (kinds IS NULL OR EXISTS (
-          SELECT 1 FROM UNNEST(string_split(kinds, ',')) k(value)
-          WHERE lower(trim(k.value)) = lower(annotations.kind)))
-    AND (_severity_rank(severity) >= _severity_rank(COALESCE(min_severity,'hint')))
-  ORDER BY severity_rank DESC, annotations.created_at DESC
-);", tx);
-        }
-
-        tx.Commit();
-
-        if (_udfsRegistered)
-        {
-            try { CreateSnippetMacro(); } catch (Exception ex) { _logger.LogWarning(ex, "CreateSnippetMacro failed; continuing without snippet macro"); }
-            try { CreateMarkdownViews(); } catch (Exception ex) { _logger.LogWarning(ex, "CreateMarkdownViews failed; continuing without markdown views"); }
-            try { CreateXrayDocumentsMacro(); } catch (Exception ex) { _logger.LogWarning(ex, "CreateXrayDocumentsMacro failed; continuing without xray_documents macro"); }
-            try { CreateXrayItemsMacro(); } catch (Exception ex) { _logger.LogWarning(ex, "CreateXrayItemsMacro failed; continuing without xray_items macro"); }
-            try { CreateXrayLinesMacro(); } catch (Exception ex) { _logger.LogWarning(ex, "CreateXrayLinesMacro failed; continuing without xray_lines macro"); }
-            try { CreateSearchMacros(); } catch (Exception ex) { _logger.LogWarning(ex, "CreateSearchMacros failed; continuing without file_search macro"); }
-        }
-    }
-
-    public void CreateMarkdownViews()
-    {
-        Execute(@"CREATE OR REPLACE VIEW markdown_headings AS
-SELECT
-  d.uri AS document_uri,
-  h.uri AS heading_uri,
-  CAST(json_extract(h.properties, '$.level') AS INTEGER) AS level,
-  json_extract(h.properties, '$.text') AS text,
-  json_extract(h.properties, '$.slug') AS slug,
-  s.start_line,
-  s.end_line,
-  s.start_column,
-  s.end_column
-FROM node h
-JOIN edge e ON e.destination_node_id = h.id AND e.type = 'HAS_PART' AND e.is_composition = TRUE
-JOIN node d ON e.source_node_id = d.id AND d.kind = 'document'
-LEFT JOIN span s ON h.span_id = s.id;");
-
-        Execute(@"CREATE OR REPLACE VIEW markdown_links AS
-SELECT
-  d.uri AS document_uri,
-  l.uri AS link_uri,
-  json_extract(l.properties, '$.href') AS href,
-  json_extract(l.properties, '$.text') AS link_text,
-  json_extract(l.properties, '$.title') AS link_title,
-  s.start_line,
-  s.end_line,
-  s.start_column,
-  s.end_column
-FROM node l
-JOIN edge e ON e.destination_node_id = l.id AND e.type = 'HAS_PART' AND e.is_composition = TRUE
-JOIN node d ON e.source_node_id = d.id AND d.kind = 'document'
-LEFT JOIN span s ON l.span_id = s.id;");
-    }
-
-    public void CreateSnippetMacro()
-    {
-        // Add the snippet table macro for extracting code snippets with context
-        // Note: This requires the UDFs to be registered first
-        Execute(@"
-CREATE OR REPLACE MACRO snippet(u, context_lines) AS TABLE (
-  WITH base AS (
-    SELECT
-      repository_uri_container(u)     AS base,
-      repository_uri_fragment(u)      AS frag,
-      repository_uri_fragment_kind(u) AS kind,
-      repository_uri_line_start(u)    AS l1,
-      repository_uri_line_end(u)      AS l2
-  ),
-  doc AS (
-    SELECT n.id AS doc_id, n.uri AS uri, a.text_content, a.media_type, a.storage_uri
-    FROM base b
-    JOIN node n ON n.container_uri_lowercase = lower(b.base)
-    LEFT JOIN artifact a ON a.id = n.artifact_id
-  ),
-  edge_focus AS (
-    SELECT e.id AS edge_id,
-           ss.start_line   AS el1, ss.end_line   AS el2,
-           ss.start_column AS ec1, ss.end_column AS ec2
-    FROM base b
-    JOIN edge e ON b.frag LIKE 'edge=%' AND substr(b.frag, 6) = CAST(e.id AS VARCHAR)
-    LEFT JOIN span ss ON ss.id = e.source_span_id
-  ),
-  char_rng AS (
-    SELECT
-      CASE WHEN kind='char' THEN try_cast(split_part(substr(frag, 6), ',', 1) AS BIGINT) END AS c1,
-      CASE WHEN kind='char' THEN try_cast(NULLIF(split_part(substr(frag, 6), ',', 2), '') AS BIGINT) END AS c2
-    FROM base
-  ),
-  focus AS (
-    SELECT
-      COALESCE(
-        (SELECT el1 FROM edge_focus),
-        (SELECT l1  FROM base),
-        (SELECT line_for_byte_offset(text_content, c1) FROM doc, char_rng),
-        1
-      ) AS fl1,
-      COALESCE(
-        (SELECT el2 FROM edge_focus),
-        (SELECT l2  FROM base),
-        (SELECT NULLIF(line_for_byte_offset(text_content, c2), 0) FROM doc, char_rng)
-      ) AS fl2,
-      COALESCE(
-        (SELECT ec1 FROM edge_focus),
-        (SELECT column_for_byte_offset(text_content, c1) FROM doc, char_rng)
-      ) AS fc1,
-      COALESCE(
-        (SELECT ec2 FROM edge_focus),
-        (SELECT column_for_byte_offset(text_content, c2) FROM doc, char_rng)
-      ) AS fc2
-  ),
-  raw_text AS (
-    SELECT
-      CASE WHEN text_content IS NOT NULL THEN text_content
-           ELSE COALESCE(binary_preview(storage_uri, 4096), '')
-      END AS content
-    FROM doc
-  ),
-  lines AS (
-    SELECT
-      ROW_NUMBER() OVER () AS ln,
-      value AS line
-    FROM raw_text,
-         UNNEST(string_split(content, CHR(10))) AS t(value)
-  ),
-  win AS (
-    SELECT
-      GREATEST(1, COALESCE(fl1,1) - COALESCE(context_lines,3)) AS w1,
-      COALESCE(COALESCE(fl2,fl1) + COALESCE(context_lines,3), 1 + COALESCE(context_lines,3)*2) AS w2
-    FROM focus
-  )
-  SELECT
-    ln AS line_number,
-    line AS text,
-    (ln BETWEEN fl1 AND COALESCE(fl2, fl1)) AS is_focus,
-    CASE WHEN ln BETWEEN fl1 AND COALESCE(fl2, fl1) THEN fc1 ELSE NULL END AS focus_start_column,
-    CASE WHEN ln BETWEEN fl1 AND COALESCE(fl2, fl1) THEN fc2 ELSE NULL END AS focus_end_column,
-    language_from_media_type_or_uri((SELECT media_type FROM doc), (SELECT uri FROM doc)) AS language,
-    (SELECT uri FROM doc) AS document_uri,
-    repository_uri_join(
-      (SELECT uri FROM doc),
-      'line=' || CAST(fl1 AS VARCHAR) || COALESCE(',' || CAST(fl2 AS VARCHAR), '')
-    ) AS resolved_uri
-  FROM lines, win, focus
-  WHERE ln BETWEEN w1 AND w2
-  ORDER BY ln
-);");
-    }
-
-    public void CreateXrayDocumentsMacro()
-    {
-        // Add the document inventory macro used by RepoQL tooling
-        Execute(@"
-CREATE OR REPLACE MACRO xray_documents() AS TABLE (
-  WITH docs AS (
-    SELECT id, uri, artifact_id FROM node WHERE kind = 'document'
-  ),
-  media AS (
-    SELECT d.id AS doc_id, a.media_type, a.byte_size
-    FROM docs d LEFT JOIN artifact a ON a.id = d.artifact_id
-  ),
-  parts AS (
-    SELECT e.source_node_id AS doc_id, c.kind, COUNT(*) AS item_count
-    FROM edge e
-    JOIN node c ON c.id = e.destination_node_id
-    WHERE e.is_composition = TRUE
-    GROUP BY 1,2
-  ),
-  kinds AS (
-    SELECT doc_id, string_agg(kind || ':' || CAST(item_count AS TEXT), ' ') AS kinds_summary
-    FROM parts GROUP BY doc_id
-  )
-  SELECT
-    d.uri                                        AS document_uri,
-    repository_uri_file_name(d.uri)              AS file_name,
-    media_type_base(m.media_type)                AS media_base,
-    media_type_kind(m.media_type)                AS media_kind,
-    m.byte_size                                  AS byte_size,
-    COALESCE(k.kinds_summary, '')                AS kinds_summary
-  FROM docs d
-  LEFT JOIN media m ON m.doc_id = d.id
-  LEFT JOIN kinds k ON k.doc_id = d.id
-  ORDER BY lower(file_name)
-);");
-    }
-
-    public void CreateXrayItemsMacro()
-    {
+        ExecuteSqlResource("Tables/artifact.sql");
+        ExecuteSqlResource("Tables/node.sql");
+        ExecuteSqlResource("Tables/span.sql");
+        ExecuteSqlResource("Tables/edge.sql");
+        ExecuteSqlResource("Macros/entities_by_uri.sql");
+        ExecuteSqlResource("Macros/json_extract_string_array.sql");
+        ExecuteSqlResource("Tables/annotation.sql");
+        ExecuteSqlResource("Views/annotations.sql");
+        ExecuteSqlResource("Macros/annotations_for.sql");
+        ExecuteSqlResource("Macros/annotations_all.sql");
+        ExecuteSqlResource("Tables/document_embedding.sql");
+        ExecuteSqlResource("Macros/snippet.sql");
         // First create the node_primary_fragment macro as a workaround for the 6-parameter limitation
-        Execute(@"
-CREATE OR REPLACE MACRO node_primary_fragment(kind, properties_json, start_line, end_line, start_byte, end_byte) AS (
-  CASE
-    WHEN start_line IS NOT NULL OR end_line IS NOT NULL THEN
-      CASE
-        WHEN end_line IS NULL THEN 'line=' || CAST(start_line AS VARCHAR)
-        WHEN start_line IS NULL THEN 'line=,' || CAST(end_line AS VARCHAR)
-        ELSE 'line=' || CAST(start_line AS VARCHAR) || ',' || CAST(end_line AS VARCHAR)
-      END
-    WHEN start_byte IS NOT NULL OR end_byte IS NOT NULL THEN
-      CASE
-        WHEN end_byte IS NULL THEN 'char=' || CAST(start_byte AS VARCHAR)
-        WHEN start_byte IS NULL THEN 'char=,' || CAST(end_byte AS VARCHAR)
-        ELSE 'char=' || CAST(start_byte AS VARCHAR) || ',' || CAST(end_byte AS VARCHAR)
-      END
-    ELSE NULL
-  END
-);");
-
+        ExecuteSqlResource("Macros/node_primary_fragment.sql");
+        ExecuteSqlResource("Macros/xray_documents.sql");
         // Add the items-within-documents macro for exploring document structure
-        Execute(@"
-CREATE OR REPLACE MACRO xray_items(include_kinds, max_per_document) AS TABLE (
-  WITH docs AS (SELECT id, uri FROM node WHERE kind='document'),
-  cand AS (
-    SELECT
-      d.id AS doc_id, d.uri AS document_uri,
-      c.id AS item_id, c.kind AS item_kind,
-      node_display_label(c.kind, c.properties) AS item_label,
-      s.start_line, s.end_line, s.start_byte, s.end_byte, e.ordinal,
-      node_primary_fragment(c.kind, c.properties, s.start_line, s.end_line, s.start_byte, s.end_byte) AS frag
-    FROM docs d
-    JOIN edge e ON e.source_node_id=d.id AND e.is_composition=TRUE
-    JOIN node c ON c.id=e.destination_node_id
-    LEFT JOIN span s ON s.id=c.span_id
-    WHERE include_kinds IS NULL
-       OR EXISTS (
-         SELECT 1 FROM UNNEST(string_split(include_kinds, ',')) k(value)
-         WHERE lower(trim(k.value)) = lower(c.kind)
-       )
-  ),
-  ranked AS (
-    SELECT *,
-           ROW_NUMBER() OVER (
-             PARTITION BY doc_id
-             ORDER BY COALESCE(start_line, 2147483647), COALESCE(ordinal, 2147483647), item_id
-           ) AS rn
-    FROM cand
-  )
-  SELECT
-    document_uri,
-    repository_uri_file_name(document_uri) AS file_name,
-    item_kind,
-    COALESCE(item_label, '?') AS item_label,
-    COALESCE(repository_uri_join(document_uri, frag), document_uri) AS item_uri
-  FROM ranked
-  WHERE rn <= COALESCE(CAST(max_per_document AS INTEGER), 8)
-  ORDER BY lower(file_name), rn
-);");
+        ExecuteSqlResource("Macros/xray_items.sql");
+        ExecuteSqlResource("Macros/xray_lines.sql");
+        ExecuteSqlResource("Tables/document_search.sql");
+
+        foreach (var script in _formatSchemaScripts)
+        {
+            try
+            {
+                Execute(script.Sql);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to apply format schema {FormatSchema}", script.Identifier);
+            }
+        }
+
     }
 
-    public void CreateXrayLinesMacro()
-    {
-        // Add the combined text output macro that uses xray_documents and xray_items
-        Execute(@"
-CREATE OR REPLACE MACRO xray_lines(lod, include_kinds, max_per_document) AS TABLE (
-  WITH d AS (SELECT * FROM xray_documents()),
-       i AS (SELECT * FROM xray_items(include_kinds, max_per_document))
-  SELECT file_name, 0 AS ord,
-         (file_name || ' · ' || COALESCE(media_kind, media_base) ||
-          CASE WHEN kinds_summary <> '' THEN '  ' || kinds_summary ELSE '' END) AS line
-  FROM d
-  UNION ALL
-  SELECT repository_uri_file_name(document_uri) AS file_name, 1 AS ord,
-         ('  - ' || item_kind || ': ' || item_label || '  (' || item_uri || ')') AS line
-  FROM i
-  WHERE CAST(lod AS INTEGER) >= 1
-);");
-    }
 
-    public void CreateSearchMacros()
-    {
-        EnsureDocumentSearchSchema();
-
-        Execute(@"
-CREATE OR REPLACE MACRO zero_one(x) AS (
-  CASE WHEN MAX(x) OVER () IS NULL OR MAX(x) OVER () = 0 THEN 0 ELSE COALESCE(x,0) / NULLIF(MAX(x) OVER (),0) END
-);");
-
-        Execute(@"
-CREATE OR REPLACE MACRO combine(bm25n, fuzzn, semn, wb := 0.45, wf := 0.45, ws := 0.10) AS (
-  coalesce(wb * bm25n, 0) + coalesce(wf * fuzzn, 0) + coalesce(ws * semn, 0)
-);");
-
-        // capability wrapper: default to JSON cosine over document_embedding
-        Execute(@"
-CREATE OR REPLACE MACRO vss_candidates(qvec_json, top_k) AS TABLE (
-  SELECT doc_id, cosine_similarity_json(qvec_json, embedding) AS sem
-  FROM document_embedding
-  ORDER BY sem DESC
-  LIMIT CAST(top_k AS BIGINT)
-);");
-
-        Execute(@"
-CREATE OR REPLACE MACRO file_search(q, k := 50, max_cand := 5000) AS TABLE (
-WITH score_source AS (
-  SELECT
-    ds.doc_id,
-    ds.uri,
-    CASE WHEN position(lower(q) in ds.search_key) > 0 THEN 1.0 ELSE 0.0 END AS bm25,
-    match_score(q, ds.search_key) AS fuzz
-  FROM document_search ds
-),
-ranked_lex AS (
-  SELECT *
-  FROM score_source
-  ORDER BY coalesce(bm25, 0) DESC, fuzz DESC, length(uri)
-  LIMIT CAST(max_cand AS BIGINT)
-),
-normalized_lex AS (
-  SELECT
-    doc_id,
-    uri,
-    zero_one(bm25) AS bm25n,
-    zero_one(fuzz) AS fuzzn
-  FROM ranked_lex
-),
-qv AS (
-  SELECT embed_text_json('Represent this sentence for searching relevant passages: ' || q) AS qjson
-),
-sem_candidates AS (
-  SELECT * FROM vss_candidates((SELECT qjson FROM qv), max_cand)
-),
-sem_norm AS (
-  SELECT doc_id, (sem / NULLIF(MAX(sem) OVER (), 0)) AS semn FROM sem_candidates
-),
-union_ids AS (
-  SELECT doc_id FROM normalized_lex
-  UNION
-  SELECT doc_id FROM sem_candidates
-)
-SELECT
-  u.doc_id,
-  ds.uri,
-  COALESCE(lx.bm25n, 0) AS bm25n,
-  COALESCE(lx.fuzzn, 0) AS fuzzn,
-  COALESCE(sn.semn, NULL) AS semn,
-  combine(COALESCE(lx.bm25n, 0), COALESCE(lx.fuzzn, 0), sn.semn) AS score
-FROM union_ids u
-LEFT JOIN normalized_lex lx USING(doc_id)
-LEFT JOIN sem_norm sn USING(doc_id)
-JOIN document_search ds USING(doc_id)
-ORDER BY score DESC, length(ds.uri)
-LIMIT CAST(k AS BIGINT)
-);");
-    }
 
     public Artifact? GetArtifactByDigest(string digest)
     {
@@ -982,8 +369,6 @@ LIMIT CAST(k AS BIGINT)
 
     public void RefreshSearchProjection(bool incrementalRefresh)
     {
-        EnsureDocumentSearchSchema();
-
         using var activity = ActivitySource.StartActivity("repoql.search.refresh", ActivityKind.Internal);
         if (activity is not null)
         {
@@ -996,7 +381,7 @@ LIMIT CAST(k AS BIGINT)
         {
             try
             {
-                Execute("DELETE FROM document_search;", tx);
+                Execute("DELETE FROM document_search;");
                 inserted = Execute(@"
 INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
 SELECT
@@ -1023,8 +408,6 @@ FROM (
                 throw;
             }
         }
-
-        EnsureDocumentSearchIndexes();
 
         // Rebuild FTS index best effort; missing extension is tolerated
         TryExec("PRAGMA drop_fts_index('document_search');");
@@ -2015,29 +1398,9 @@ FROM (
     }
 
     // ---------- helpers ----------
+    
 
-    private void EnsureDocumentSearchSchema()
-    {
-        Execute(@"CREATE TABLE IF NOT EXISTS document_search (
-  doc_id    UUID PRIMARY KEY,
-  uri       VARCHAR NOT NULL,
-  search_key VARCHAR NOT NULL,
-  basename  VARCHAR,
-  dirname   VARCHAR
-);");
-
-        EnsureDocumentSearchIndexes();
-    }
-
-    private void EnsureDocumentSearchIndexes()
-    {
-        Execute("CREATE UNIQUE INDEX IF NOT EXISTS document_search_uri_idx ON document_search(uri);");
-        Execute("CREATE INDEX IF NOT EXISTS document_search_search_idx ON document_search(search_key);");
-        Execute("CREATE INDEX IF NOT EXISTS document_search_basename_idx ON document_search(basename);");
-        Execute("CREATE INDEX IF NOT EXISTS document_search_dirname_idx ON document_search(dirname);");
-    }
-
-    private void EnableRecommendedExtensions()
+    private void EnableExtensions()
     {
         string[] exts = ["icu", "fts", "httpfs", "parquet", "sqlite_scanner"];
         foreach (var ext in exts)
@@ -2161,6 +1524,40 @@ FROM (
             cmd.Parameters.Add(new DuckDBParameter { Value = v ?? DBNull.Value });
     }
 
+    private static string LoadSqlResource(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            throw new ArgumentException("Relative path must be provided", nameof(relativePath));
+
+        var assembly = typeof(DuckDbGraphStore).Assembly;
+        var normalized = relativePath.Trim()
+            .TrimStart('/', '\\')
+            .Replace('/', '.')
+            .Replace('\\', '.');
+        var resourceName = $"{typeof(DuckDbGraphStore).Namespace}.Schema.{normalized}";
+
+        using var stream = assembly.GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException($"Embedded SQL resource '{resourceName}' was not found for '{relativePath}'.");
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
+    private void ExecuteSqlResource(string relativePath, IDbTransaction? tx = null)
+    {
+        var sql = LoadSqlResource(relativePath);
+        if (string.IsNullOrWhiteSpace(sql))
+            return;
+
+        if (tx is null)
+        {
+            Execute(sql);
+        }
+        else
+        {
+            Execute(sql, tx);
+        }
+    }
+
     private static SemanticMediaType? ParseMediaType(string? s)
     {
         return string.IsNullOrWhiteSpace(s) ? null : SemanticMediaType.Parse(s);
@@ -2259,7 +1656,7 @@ FROM (
                 {
                     var value = kv[1];
                     if (string.Equals(value, ":memory:", StringComparison.OrdinalIgnoreCase)) return ":memory:";
-                    try { return System.IO.Path.GetFileName(value); } catch { return value; }
+                    try { return Path.GetFileName(value); } catch { return value; }
                 }
             }
         }

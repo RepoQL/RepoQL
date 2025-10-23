@@ -3,7 +3,7 @@ using AwesomeAssertions;
 using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Core;
-using RepoQL.Core.Metrics;
+using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Embedded;
@@ -26,11 +26,11 @@ public class DocsQueriesTests
         var hub = new FileSystem.MultiFileSystem(registry, [embed]);
 
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-docs-{Guid.NewGuid():N}.duckdb");
-        await using var writer = new SingleThreadedDatabaseWriter(new DuckDBConnectionFactory($"Data Source={dbPath}"), new ConsoleLogger<SingleThreadedDatabaseWriter>());
+        await using var writer = new SingleThreadedDatabaseWriter(new DuckDBConnectionFactory($"Data Source={dbPath}"), new RepoQL.Metrics.IndexingMetrics(), new ConsoleLogger<SingleThreadedDatabaseWriter>());
         await writer.StartAsync(CancellationToken.None);
 
         // Read store with UDFs/macros enabled for queries
-        using var store = new DuckDbGraphStore(dbPath, enableExtensions: false, registerUdfs: true);
+        using var store = new DuckDbGraphStore(dbPath, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
 
         var meter = new Meter("RepoQL.Tests.Docs");
         var metrics = new IndexingMetrics();

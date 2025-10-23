@@ -12,7 +12,7 @@ public class AnnotationsTests
     [Test]
     public void UpsertAnnotation_Idempotent_BySemanticKey()
     {
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: true);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         store.EnsureSchema();
 
         // Seed document
@@ -61,7 +61,7 @@ public class AnnotationsTests
     [Test]
     public void GetAnnotationsForDocument_FiltersByKindsAndSeverity()
     {
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: true);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         store.EnsureSchema();
 
         var uri = RepoUri.Parse("file:///repo/a.cs");
@@ -105,7 +105,7 @@ public class AnnotationsTests
     [Test]
     public void AnnotationsMacros_WorkViaRawQuery()
     {
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: true);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         store.EnsureSchema();
 
         var uri = RepoUri.Parse("file:///repo/b.md");
@@ -129,7 +129,7 @@ public class AnnotationsTests
     [Test]
     public void SnippetMacro_WorksViaRawQuery()
     {
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: true);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         store.EnsureSchema();
 
         // Seed artifact with text and document

@@ -18,7 +18,7 @@ public class DuckDbGraphStoreTests : IDisposable
         connection = new DuckDBConnection("Data Source=:memory:");
         connection.Open();
         // Create store and use production schema
-        store = new DuckDbGraphStore(connection, enableExtensions: false, registerUdfs: false);
+        store = new DuckDbGraphStore(connection, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         // Use production schema - this ensures tests match production behavior
         store.EnsureSchema();
     }
@@ -702,7 +702,7 @@ public class DuckDbGraphStoreTests : IDisposable
         // Arrange - create a connection with UDFs enabled for this test
         using var testConnection = new DuckDBConnection("Data Source=:memory:");
         testConnection.Open();
-        using var testStore = new DuckDbGraphStore(testConnection, enableExtensions: false, registerUdfs: true);
+        using var testStore = new DuckDbGraphStore(testConnection, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         testStore.EnsureSchema();
 
         RepoUri.TryParse("file:///test/file.cs", out var uri);
@@ -734,7 +734,7 @@ public class DuckDbGraphStoreTests : IDisposable
         // Arrange - create a connection with UDFs enabled for this test
         using var testConnection = new DuckDBConnection("Data Source=:memory:");
         testConnection.Open();
-        using var testStore = new DuckDbGraphStore(testConnection, enableExtensions: false, registerUdfs: true);
+        using var testStore = new DuckDbGraphStore(testConnection, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         testStore.EnsureSchema();
 
         RepoUri.TryParse("file:///doc.md", out var uri);
@@ -780,7 +780,7 @@ public class DuckDbGraphStoreTests : IDisposable
         testConnection.Open();
 
         // Act
-        var testStore = new DuckDbGraphStore(testConnection, enableExtensions: false, registerUdfs: false);
+        var testStore = new DuckDbGraphStore(testConnection, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         testStore.Dispose();
 
         // Assert - connection should still be open
@@ -797,7 +797,7 @@ public class DuckDbGraphStoreTests : IDisposable
         try
         {
             // Act
-            var testStore = new DuckDbGraphStore(tempFile, false, false);
+            var testStore = new DuckDbGraphStore(tempFile, new RepoQL.Metrics.IndexingMetrics(), false, false);
             // Don't call EnsureSchema as it requires UDFs
             testStore.Dispose();
 
@@ -819,7 +819,7 @@ public class DuckDbGraphStoreTests : IDisposable
     public Task Constructor_NullConnection_ThrowsArgumentNullException()
     {
         // Act & Assert
-        Action act = () => new DuckDbGraphStore((DuckDBConnection)null!, false, false);
+        Action act = () => new DuckDbGraphStore((DuckDBConnection)null!, new RepoQL.Metrics.IndexingMetrics(), false, false);
         act.Should().Throw<ArgumentNullException>()
             .WithParameterName("connection");
         return Task.CompletedTask;

@@ -1,10 +1,10 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
-namespace RepoQL.Core.Metrics;
+namespace RepoQL.Metrics;
 
 /// <summary>
-/// Centralized metrics for RepoQL indexing engine using OpenTelemetry
+/// Centralized metrics for RepoQL indexing engine using OpenTelemetry.
 /// </summary>
 public sealed class IndexingMetrics : IDisposable
 {

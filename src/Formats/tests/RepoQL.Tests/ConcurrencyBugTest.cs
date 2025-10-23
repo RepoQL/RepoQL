@@ -7,7 +7,7 @@ using JetBrains.Annotations;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Core;
-using RepoQL.Core.Metrics;
+using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.InMemory;
@@ -139,7 +139,7 @@ public class ConcurrencyBugTest
         // Arrange - Single-writer design: writer owns a single connection; reads use separate connections
         // Use a temporary DuckDB file so writer and store see the same database
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-concurrency-{Guid.NewGuid():N}.duckdb");
-        using var store = new DuckDbGraphStore(dbPath, enableExtensions: false, registerUdfs: false);
+        using var store = new DuckDbGraphStore(dbPath, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         store.EnsureSchema();
 
         // Create in-memory file system with multiple files
@@ -178,7 +178,7 @@ public class ConcurrencyBugTest
         var hub = new MultiFileSystem(registry, [fileSystem]);
         // Single writer (hosted service lifecycle simulated here)
         var factory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        await using var writer = new SingleThreadedDatabaseWriter(factory);
+        await using var writer = new SingleThreadedDatabaseWriter(factory, new RepoQL.Metrics.IndexingMetrics());
         await writer.StartAsync(CancellationToken.None);
 
         var workspace = new AnalysisWorkspace(hub, classifier, hasher, formatRegistry);
@@ -283,7 +283,7 @@ public class ConcurrencyBugTest
                 using var connection = new DuckDBConnection("Data Source=:memory:");
                 connection.Open();
 
-                using var store = new DuckDbGraphStore(connection, enableExtensions: false, registerUdfs: false);
+                using var store = new DuckDbGraphStore(connection, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
                 store.EnsureSchema();
 
                 // Simulate some work

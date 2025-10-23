@@ -3,7 +3,7 @@ using AwesomeAssertions;
 using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Core;
-using RepoQL.Core.Metrics;
+using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
@@ -46,7 +46,7 @@ public class ReindexingMemoryFsTests
 
         var meter = new Meter("RepoQL.Tests.Indexer");
         var metrics = new IndexingMetrics();
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         var classifier = new StubClassifier();
         var hasher = new XxHasher();
         var filter = new NoOpUriFilter();
@@ -108,7 +108,7 @@ public class ReindexingMemoryFsTests
 
         var meter = new Meter("RepoQL.Tests.Indexer");
         var metrics = new IndexingMetrics();
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         var classifier = new StubClassifier();
         var hasher = new XxHasher();
         var filter = new NoOpUriFilter();

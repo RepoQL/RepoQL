@@ -35,7 +35,7 @@ public class MermaidXrayTests
         fs.AddOrUpdateText("diagrams/flow.mmd", mmd);
         var uri = RepoUri.Parse("mem://repo/diagrams/flow.mmd");
 
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         var classifier = new StubClassifier();
         var hasher = new XxHasher();
         var filter = new NoOpUriFilter();

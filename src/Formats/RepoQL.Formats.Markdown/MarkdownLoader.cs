@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
 using System.Text.Json.Nodes;
 using Markdig;
@@ -40,6 +42,9 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
     private readonly LiquidTemplateRenderer _renderer = new(
         assembly: typeof(MarkdownLoader).Assembly,
         resourceRoot: "RepoQL.Formats.Markdown.Templates");
+
+    private static readonly Lazy<string> MarkdownViewsSql = new(
+        () => ReadEmbeddedResource("RepoQL.Formats.Markdown.Schema.markdown_views.sql"));
 
     public bool Supports(SemanticMediaType mediaType)
     {
@@ -642,6 +647,19 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
                 if (!string.IsNullOrWhiteSpace(part)) yield return part.Trim();
             }
         }
+    }
+
+    public IEnumerable<FormatSqlScript> GetSchemaScripts()
+    {
+        yield return new FormatSqlScript("markdown_views", MarkdownViewsSql.Value);
+    }
+
+    private static string ReadEmbeddedResource(string resourceName)
+    {
+        using var stream = typeof(MarkdownLoader).Assembly.GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException($"Embedded SQL resource {resourceName} was not found.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     [LoggerMessage(LogLevel.Warning, "Failed to parse {Name} as markdown")]

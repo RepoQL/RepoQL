@@ -36,7 +36,7 @@ public class CsProjVariantsTests
         fs.AddOrUpdateText("src/Lib/Lib.csproj", csproj);
         var uri = RepoUri.Parse("mem://repo/src/Lib/Lib.csproj");
 
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         var classifier = new StubClassifier();
         var hasher = new XxHasher();
         var filter = new NoOpUriFilter();

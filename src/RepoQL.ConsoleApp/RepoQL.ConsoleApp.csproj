@@ -1,6 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <PublishTrimmed>false</PublishTrimmed>
         <OutputType>Exe</OutputType>
         <InvariantGlobalization>true</InvariantGlobalization>
         <AssemblyName>repoql</AssemblyName>
@@ -10,13 +12,7 @@
         <PackageId>RepoQL.Tool</PackageId>
         <PackageOutputPath>$(ArtifactsDirectory)/packages</PackageOutputPath>
         <RollForward>Major</RollForward>
-        <Version>1.0.3</Version>
-    </PropertyGroup>
-
-    <!-- Root pack (no RID): framework-dependent for old SDKs -->
-    <PropertyGroup Condition="'$(RuntimeIdentifier)' == ''">
-        <TargetFramework>net8.0</TargetFramework>
-        <PublishTrimmed>false</PublishTrimmed>
+        <Version>1.0.4</Version>
     </PropertyGroup>
 
     <!-- Platform-specific packs -->

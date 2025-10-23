@@ -5,7 +5,7 @@ using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Core;
 using RepoQL.Core.Analysis;
-using RepoQL.Core.Metrics;
+using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
@@ -75,8 +75,8 @@ internal sealed class IndexedRepoBuilder : IAsyncDisposable
         var fileSystem = new MemoryFileSystem(options.Root);
         var registry = new FileSystemRegistry([fileSystem]);
         var hub = new MultiFileSystem(registry, [fileSystem]);
-        var store = options.CreateStore();
         var metrics = new IndexingMetrics();
+        var store = options.CreateStore(metrics);
         var meter = new Meter(options.MeterName);
         var hasher = options.ResolveHasher();
         var classifier = options.ResolveClassifier();
@@ -226,15 +226,15 @@ internal sealed class IndexedRepoOptions
     public IAnalyzerSettingsProvider? SettingsProvider { get; set; }
     public ILogger<RepositoryIndexer>? Logger { get; set; }
     public string? RepositoryRoot { get; set; }
-    public Func<DuckDbGraphStore>? StoreFactory { get; set; }
+    public Func<IndexingMetrics, DuckDbGraphStore>? StoreFactory { get; set; }
     public Func<DuckDbGraphStore, IAnalysisResultWriter?>? CreateAnalysisWriter { get; set; } = store => new AnnotationResultWriter(store);
     public IList<FormatDescriptor> Formats { get; } = new List<FormatDescriptor>();
 
     public void AddFormat(FormatDescriptor descriptor)
         => Formats.Add(descriptor);
 
-    internal DuckDbGraphStore CreateStore()
-        => StoreFactory?.Invoke() ?? new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: false);
+    internal DuckDbGraphStore CreateStore(IndexingMetrics metrics)
+        => StoreFactory?.Invoke(metrics) ?? new DuckDbGraphStore(":memory:", metrics);
 
     internal IFileClassifier ResolveClassifier()
     {

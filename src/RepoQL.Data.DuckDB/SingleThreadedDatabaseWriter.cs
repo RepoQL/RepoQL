@@ -4,14 +4,17 @@ using DuckDB.NET.Data;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Diagnostics.CodeAnalysis;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
+using RepoQL.Metrics;
 
 namespace RepoQL.Data.DuckDB;
 
 public sealed class SingleThreadedDatabaseWriter(
     IDuckDBConnectionFactory connectionFactory,
+    IndexingMetrics metrics,
     ILogger<SingleThreadedDatabaseWriter>? logger = null)
     : IDatabaseWriter, IHostedService
 {
@@ -22,6 +25,8 @@ public sealed class SingleThreadedDatabaseWriter(
         FullMode = BoundedChannelFullMode.Wait
     });
     private readonly IDuckDBConnectionFactory _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Metrics lifetime is managed by the DI container.")]
+    private readonly IndexingMetrics _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
 
     private readonly ILogger<SingleThreadedDatabaseWriter> _logger =
         logger ?? NullLogger<SingleThreadedDatabaseWriter>.Instance;
@@ -89,7 +94,7 @@ public sealed class SingleThreadedDatabaseWriter(
         // Initialize connection and store once
         _writeConnection = _connectionFactory.CreateConnection();
         // Writer does not need UDFs; avoid duplicate registration conflicts
-        _store = new DuckDbGraphStore(_writeConnection, enableExtensions: true, registerUdfs: false);
+        _store = new DuckDbGraphStore(_writeConnection, _metrics);
         _store.EnsureSchema();
 
         _writerTask = Task.Run(WriterLoop, cancellationToken);

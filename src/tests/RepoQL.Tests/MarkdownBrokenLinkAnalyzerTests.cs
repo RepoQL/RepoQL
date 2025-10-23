@@ -17,7 +17,7 @@ internal class MarkdownBrokenLinkAnalyzerTests
         const string content = "# Heading\n\nSee [broken](#missing-anchor).\n";
         var uri = RepoUri.Parse("file:///repo/doc.md");
 
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: true);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics());
         store.EnsureSchema();
 
         var markdownLoader = new MarkdownLoader();
@@ -58,7 +58,7 @@ internal class MarkdownBrokenLinkAnalyzerTests
         var sourceUri = RepoUri.Parse("file:///repo/source.md");
         var targetUri = RepoUri.Parse("file:///repo/other.md");
 
-        using var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: true);
+        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics());
         store.EnsureSchema();
 
         var markdownLoader = new MarkdownLoader();

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
+using RepoQL.Metrics;
 using Artifact = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Data.DuckDB.Tests;
@@ -12,19 +13,21 @@ public class SnippetMacroTests : IDisposable
 {
     private readonly DuckDBConnection _connection;
     private readonly DuckDbGraphStore _store;
+    private readonly IndexingMetrics _metrics;
 
     public SnippetMacroTests()
     {
         _connection = new DuckDBConnection("Data Source=:memory:");
         _connection.Open();
-        _store = new DuckDbGraphStore(_connection, enableExtensions: false, registerUdfs: true);
+        _metrics = new IndexingMetrics();
+        _store = new DuckDbGraphStore(_connection, _metrics);
         _store.EnsureSchema();
-        _store.CreateSnippetMacro();
     }
 
     public void Dispose()
     {
         _store?.Dispose();
+        _metrics?.Dispose();
         _connection?.Dispose();
     }
 

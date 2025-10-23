@@ -23,11 +23,14 @@ internal static class RepoUriGlobMatcher
         if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(pattern))
             return null;
 
-        var scheme = NormalizeDefaultScheme(defaultScheme ?? DefaultScheme);
-        var normalizedUri = NormalizeUri(uri, ignoreCase);
-        var normalizedPattern = NormalizePattern(pattern, scheme, ignoreCase);
+        var normalizedDefaultScheme = NormalizeDefaultScheme(defaultScheme ?? DefaultScheme);
+        if (ignoreCase)
+            normalizedDefaultScheme = normalizedDefaultScheme.ToLowerInvariant();
 
-        var cacheKey = new GlobCacheKey(normalizedPattern, ignoreCase);
+        var uriInfo = NormalizeUri(uri, ignoreCase);
+        var patternInfo = NormalizePattern(pattern, normalizedDefaultScheme, uriInfo, ignoreCase);
+
+        var cacheKey = new GlobCacheKey(patternInfo.Pattern, ignoreCase);
         var regex = RegexCache.GetOrAdd(cacheKey, static key =>
         {
             var regexPattern = ConvertGlobToRegex(key.Pattern);
@@ -37,28 +40,73 @@ internal static class RepoUriGlobMatcher
             return new Regex(regexPattern, options);
         });
 
-        return regex.IsMatch(normalizedUri);
+        return regex.IsMatch(uriInfo.Absolute);
     }
 
-    private static string NormalizeUri(string value, bool ignoreCase)
+    private static UriInfo NormalizeUri(string value, bool ignoreCase)
     {
         var trimmed = value.Trim();
         var normalized = CollapseSlashes(trimmed.Replace('\\', '/'));
-        return ignoreCase ? normalized.ToLowerInvariant() : normalized;
+        if (ignoreCase)
+            normalized = normalized.ToLowerInvariant();
+
+        var schemeIndex = normalized.IndexOf("://", StringComparison.Ordinal);
+        var schemePrefix = schemeIndex >= 0 ? normalized[..(schemeIndex + 3)] : string.Empty;
+        var pathPortion = schemeIndex >= 0 ? normalized[(schemeIndex + 3)..] : normalized;
+
+        var hasLeadingSlash = pathPortion.StartsWith('/');
+        var pathWithoutLeading = hasLeadingSlash ? pathPortion[1..] : pathPortion;
+
+        var firstSlash = pathWithoutLeading.IndexOf('/');
+        var rootSegment = firstSlash >= 0 ? pathWithoutLeading[..firstSlash] : string.Empty;
+
+        var basePrefixBuilder = new StringBuilder();
+        if (!string.IsNullOrEmpty(schemePrefix))
+        {
+            basePrefixBuilder.Append(schemePrefix);
+            if (hasLeadingSlash)
+                basePrefixBuilder.Append('/');
+            if (!string.IsNullOrEmpty(rootSegment))
+                basePrefixBuilder.Append(rootSegment).Append('/');
+        }
+
+        var basePrefix = basePrefixBuilder.ToString();
+
+        return new UriInfo(
+            Absolute: normalized,
+            BasePrefix: basePrefix,
+            SchemePrefix: schemePrefix);
     }
 
-    private static string NormalizePattern(string value, string defaultScheme, bool ignoreCase)
+    private static PatternInfo NormalizePattern(string value, string defaultScheme, UriInfo uriInfo, bool ignoreCase)
     {
         var trimmed = value.Trim();
         var normalized = trimmed.Replace('\\', '/');
 
-        if (!normalized.Contains("://", StringComparison.Ordinal))
+        string candidate;
+        if (normalized.Contains("://", StringComparison.Ordinal))
         {
-            normalized = defaultScheme + normalized.TrimStart('/');
+            candidate = normalized;
+        }
+        else
+        {
+            var prefix = uriInfo.BasePrefix;
+            if (string.IsNullOrEmpty(prefix))
+            {
+                prefix = uriInfo.Absolute.Contains("://", StringComparison.Ordinal)
+                    ? defaultScheme
+                    : string.Empty;
+            }
+
+            candidate = string.IsNullOrEmpty(prefix)
+                ? normalized.TrimStart('/')
+                : prefix + normalized.TrimStart('/');
         }
 
-        normalized = CollapseSlashes(normalized);
-        return ignoreCase ? normalized.ToLowerInvariant() : normalized;
+        candidate = CollapseSlashes(candidate);
+        if (ignoreCase)
+            candidate = candidate.ToLowerInvariant();
+        return new PatternInfo(candidate);
     }
 
     private static string NormalizeDefaultScheme(string value)
@@ -284,4 +332,8 @@ internal static class RepoUriGlobMatcher
     }
 
     private readonly record struct GlobCacheKey(string Pattern, bool IgnoreCase);
+
+    private readonly record struct UriInfo(string Absolute, string BasePrefix, string SchemePrefix);
+
+    private readonly record struct PatternInfo(string Pattern);
 }

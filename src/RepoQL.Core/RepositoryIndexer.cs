@@ -10,7 +10,7 @@ using RepoQL.Contracts.Analysis;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
 using RepoQL.Core.Analysis;
-using RepoQL.Core.Metrics;
+using RepoQL.Metrics;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using IFileInfo = Microsoft.Extensions.FileProviders.IFileInfo;

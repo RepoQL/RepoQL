@@ -4,7 +4,7 @@ using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Core;
-using RepoQL.Core.Metrics;
+using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
@@ -36,7 +36,7 @@ public class FrontmatterParsingTests
         var meter = new Meter("RepoQL.Tests.Frontmatter");
         var metrics = new IndexingMetrics();
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-fm-{Guid.NewGuid():N}.duckdb");
-        using var store = new DuckDbGraphStore(dbPath, enableExtensions: false, registerUdfs: false);
+        using var store = new DuckDbGraphStore(dbPath, new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
         var classifier = new TestClassifier();
         var hasher = new XxHasher();
         var filter = new FileSystem.NoOpUriFilter();
@@ -45,7 +45,7 @@ public class FrontmatterParsingTests
         var hub = new FileSystem.MultiFileSystem(fsRegistry, [fs]);
         var (formatRegistry, workspace) = CreateFormats(hub, classifier, hasher);
         var factory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        await using var writer = new SingleThreadedDatabaseWriter(factory, new ConsoleLogger<SingleThreadedDatabaseWriter>());
+        await using var writer = new SingleThreadedDatabaseWriter(factory, new RepoQL.Metrics.IndexingMetrics(), new ConsoleLogger<SingleThreadedDatabaseWriter>());
         await writer.StartAsync(CancellationToken.None);
         await using var indexer = new RepositoryIndexer(metrics, meter, hub, store, classifier, formatRegistry, workspace, filter, hasher, writer, analysisWriter: new AnnotationResultWriter(store));
 

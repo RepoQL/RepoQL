@@ -10,10 +10,11 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <None Include="$(RepositoryRoot).*;$(RepositoryRoot)qodana.yaml" Link="%(Filename)"/>
-        <None Include="$(RepositoryRoot)**/*.md" Exclude="$(RepositoryRoot)docs/**/*.*" Link="[Documentation]\%(RecursiveDir)%(Filename)"/>
+        <None Include="$(RepositoryRoot)*.*" Exclude="$(RepositoryRoot)*.user" Link="%(Filename)"/>
+        <None Include="$(RepositoryRoot)src/**/*.md" Link="[Documentation]\src\%(RecursiveDir)%(Filename)"/>
         <None Include="$(RepositoryRoot)docs/**/*.*" Link="[Documentation]\docs\%(RecursiveDir)%(Filename)"/>
         <None Include="$(RepositoryRoot)build/**/*.*" Link="[Build]\%(RecursiveDir)%(Filename)"/>
+        <None Include="$(RepositoryRoot).github/**/*.*" Link="[Pipelines]\%(RecursiveDir)%(Filename)"/>
         <None Remove="artifacts\**" />
     </ItemGroup>
 

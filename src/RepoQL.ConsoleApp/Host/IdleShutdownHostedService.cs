@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts.Data;
@@ -30,21 +29,21 @@ internal sealed class IdleShutdownHostedService(
     IHostApplicationLifetime lifetime,
     ILogger<IdleShutdownHostedService> logger,
     HostState state,
-    IDatabaseWriter writer
+    IDatabaseWriter writer,
+    HostMetrics metrics
 ) : BackgroundService
 {
     private readonly TimeSpan _poll = TimeSpan.FromSeconds(5);
     private readonly TimeSpan _leaseTtl = TimeSpan.FromSeconds(GetEnvInt("REPOQL_LEASE_TTL_SECONDS", 30));
     private readonly TimeSpan _idleGrace = TimeSpan.FromSeconds(GetEnvInt("REPOQL_IDLE_GRACE_SECONDS", 45));
-    private readonly Meter _meter = new("RepoQL.Host");
     private double _idleSecondsRemaining = -1;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _meter.CreateObservableGauge("repoql.host.leases.active", () => LeaseRegistry.Count, unit: "count");
-        _meter.CreateObservableGauge("repoql.host.writer.pending", () => writer.GetStatus().PendingCount, unit: "items");
-        _meter.CreateObservableGauge("repoql.host.implicit", () => state.ImplicitStart ? 1 : 0, unit: "bool");
-        _meter.CreateObservableGauge("repoql.host.idle.seconds_until_shutdown", () => _idleSecondsRemaining, unit: "s");
+        metrics.SetLeaseCountProvider(() => LeaseRegistry.Count);
+        metrics.SetWriterPendingProvider(() => writer.GetStatus().PendingCount);
+        metrics.SetImplicitStartProvider(() => state.ImplicitStart ? 1 : 0);
+        metrics.SetIdleSecondsProvider(() => _idleSecondsRemaining);
 
         if (!state.ImplicitStart) return;
 
@@ -86,4 +85,3 @@ internal sealed class IdleShutdownHostedService(
     private static int GetEnvInt(string name, int dflt)
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
 }
-

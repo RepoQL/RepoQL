@@ -48,7 +48,7 @@ public class RepoQlGrpcTests
             webBuilder.ConfigureServices(services =>
             {
                 services.AddGrpc();
-                var store = new DuckDbGraphStore(":memory:", enableExtensions: false, registerUdfs: true);
+                var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics(), enableExtensions: false, registerUdfs: true);
                 store.EnsureSchema();
                 services.AddSingleton<IGraphStore>(store);
                 // Satisfy RepoQlServiceImpl DI

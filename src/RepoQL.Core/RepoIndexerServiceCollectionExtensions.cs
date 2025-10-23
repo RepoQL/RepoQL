@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Linq;
 using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -9,6 +10,7 @@ using RepoQL.Core.Analysis;
 using RepoQL.Core.Analysis.EditorConfig;
 using RepoQL.Core.Embeddings;
 using RepoQL.Core.Metrics;
+using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
@@ -125,14 +127,6 @@ public static class RepoIndexerServiceCollectionExtensions
             return new HashedEmbeddingProvider(dim);
         });
 
-        // Graph store for reads uses embedding provider for UDFs
-        services.AddSingleton<IGraphStore>(sp => new DuckDbGraphStore(
-            dbFileFullPath,
-            enableExtensions: true,
-            registerUdfs: true,
-            logger: null,
-            embeddingProvider: sp.GetRequiredService<IEmbeddingProvider>()));
-
         services.AddSingleton<IAnalysisResultWriter, AnnotationResultWriter>();
         services.AddSingleton<IAnalyzerSettingsProvider>(_ => new EditorConfigSettingsProvider(resolvedRoot));
 
@@ -222,6 +216,22 @@ public static class RepoIndexerServiceCollectionExtensions
 
         // Register metrics
         services.AddSingleton<IndexingMetrics>();
+
+        services.AddSingleton<IGraphStore>(sp =>
+        {
+            var formatRegistry = sp.GetRequiredService<IFormatRegistry>();
+            var scripts = formatRegistry.Formats
+                .SelectMany(f => f.Loader.GetSchemaScripts())
+                .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
+                .ToList();
+
+            return new DuckDbGraphStore(
+                dbFileFullPath,
+                sp.GetRequiredService<IndexingMetrics>(),
+                logger: sp.GetService<ILogger<DuckDbGraphStore>>(),
+                embeddingProvider: sp.GetRequiredService<IEmbeddingProvider>(),
+                formatSchemaScripts: scripts);
+        });
         // In-memory OTEL sink for dashboards/tests
         services.AddSingleton<InMemoryMetricsSink>(_ => new InMemoryMetricsSink("RepoQL.Indexing"));
         services.AddSingleton<InMemoryRateProvider>(sp => new InMemoryRateProvider(sp.GetRequiredService<InMemoryMetricsSink>()));
