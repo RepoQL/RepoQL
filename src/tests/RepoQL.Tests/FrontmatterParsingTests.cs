@@ -1,16 +1,13 @@
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Core;
-using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.InMemory;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
-using RepoQL.Tests.Scaffolding;
 
 namespace RepoQL.Tests;
 
@@ -31,11 +28,9 @@ internal class FrontmatterParsingTests
         # Title
         """;
         var uri = RepoUri.Parse("mem://repo/docs/fm.md");
-
-        var meter = new Meter("RepoQL.Tests.Frontmatter");
-        var metrics = new IndexingMetrics();
+        
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-fm-{Guid.NewGuid():N}.duckdb");
-        using var store = new DuckDbGraphStore(dbPath, new RepoQL.Metrics.IndexingMetrics());
+        using var store = new DuckDbGraphStore(dbPath);
         var classifier = new TestClassifier();
         var hasher = new XxHasher();
         var filter = new FileSystem.NoOpUriFilter();
@@ -44,9 +39,9 @@ internal class FrontmatterParsingTests
         var hub = new FileSystem.MultiFileSystem(fsRegistry, [fs]);
         var (formatRegistry, workspace) = CreateFormats(hub, classifier, hasher);
         var factory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        await using var writer = new SingleThreadedDatabaseWriter(factory, new RepoQL.Metrics.IndexingMetrics(), new ConsoleLogger<SingleThreadedDatabaseWriter>());
+        await using var writer = new SingleThreadedDatabaseWriter(factory);
         await writer.StartAsync(CancellationToken.None);
-        await using var indexer = new RepositoryIndexer(metrics, meter, hub, store, classifier, formatRegistry, workspace, filter, hasher, writer, analysisWriter: new AnnotationResultWriter(store));
+        await using var indexer = new RepositoryIndexer(hub, store, classifier, formatRegistry, workspace, filter, hasher, writer, analysisWriter: new AnnotationResultWriter(store));
 
         // Act
         var errors = new List<Exception>();

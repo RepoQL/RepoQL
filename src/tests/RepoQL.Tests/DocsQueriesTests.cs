@@ -1,15 +1,12 @@
-using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using RepoQL.Core.Analysis;
 using RepoQL.Contracts;
 using RepoQL.Core;
-using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem.Embedded;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
-using RepoQL.Tests.Scaffolding;
 
 namespace RepoQL.Tests;
 
@@ -25,21 +22,19 @@ internal class DocsQueriesTests
         var hub = new FileSystem.MultiFileSystem(registry, [embed]);
 
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-docs-{Guid.NewGuid():N}.duckdb");
-        await using var writer = new SingleThreadedDatabaseWriter(new DuckDBConnectionFactory($"Data Source={dbPath}"), new RepoQL.Metrics.IndexingMetrics(), new ConsoleLogger<SingleThreadedDatabaseWriter>());
+        await using var writer = new SingleThreadedDatabaseWriter(new DuckDBConnectionFactory($"Data Source={dbPath}"));
         await writer.StartAsync(CancellationToken.None);
-
-        var metrics = new IndexingMetrics();
+        
         // Read store with UDFs/macros enabled for queries
-        using var store = new DuckDbGraphStore(dbPath, metrics);
+        using var store = new DuckDbGraphStore(dbPath);
 
-        var meter = new Meter("RepoQL.Tests.Docs");
         var classifier = new TestClassifier();
         var hasher = new XxHasher();
         var filter = new FileSystem.NoOpUriFilter();
 
         var (formatRegistry, workspace) = CreateFormats(hub, classifier, hasher);
 
-        await using var indexer = new RepositoryIndexer(metrics, meter, hub, store, classifier, formatRegistry, workspace, filter, hasher, writer, analysisWriter: new AnnotationResultWriter(store));
+        await using var indexer = new RepositoryIndexer(hub, store, classifier, formatRegistry, workspace, filter, hasher, writer, analysisWriter: new AnnotationResultWriter(store));
         var errors = new List<Exception>();
         using var sub = indexer.Subscribe(new TestObserver(ex => {
             errors.Add(ex);

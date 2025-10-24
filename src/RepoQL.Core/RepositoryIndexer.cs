@@ -22,8 +22,6 @@ public record IndexerEvent(IFileInfo FileInfo, RepoUri CurrentUri);
 
 [DebuggerTypeProxy(typeof(RepositoryIndexerDebugView))]
 public class RepositoryIndexer(
-    IndexingMetrics metrics,
-    Meter meter,
     IMultiFileSystem fileSystem,
     IGraphStore storage,
     IFileClassifier classifier,
@@ -32,6 +30,8 @@ public class RepositoryIndexer(
     IUriFilter uriFilter,
     IHasher hasher,
     IDatabaseWriter? dbWriter = null,
+    IndexingMetrics? metrics = null,
+    Meter? meter = null,
     IAnalysisResultWriter? analysisWriter = null,
     IAnalyzerSettingsProvider? settingsProvider = null,
     string? repositoryRoot = null,

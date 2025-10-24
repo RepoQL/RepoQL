@@ -22,7 +22,7 @@ public static class ServiceCollectionExtensions
         HtmlEncoder? defaultEncoder = null,
         string defaultExtension = ".liquid")
     {
-        if (templates is null) throw new ArgumentNullException(nameof(templates));
+        ArgumentNullException.ThrowIfNull(templates);
 
         // Build a reusable TemplateOptions instance
         var options = new TemplateOptions

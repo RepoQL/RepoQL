@@ -1,13 +1,11 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using DuckDB.NET.Data;
 using AwesomeAssertions;
 using JetBrains.Annotations;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Core;
-using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Classification;
@@ -142,8 +140,7 @@ internal class ConcurrencyBugTest
         // Arrange - Single-writer design: writer owns a single connection; reads use separate connections
         // Use a temporary DuckDB file so writer and store see the same database
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-concurrency-{Guid.NewGuid():N}.duckdb");
-        var metrics = new IndexingMetrics();
-        using var store = new DuckDbGraphStore(dbPath, metrics);
+        using var store = new DuckDbGraphStore(dbPath);
         store.EnsureSchema();
 
         // Create in-memory file system with multiple files
@@ -158,7 +155,6 @@ internal class ConcurrencyBugTest
         }
 
         // Set up indexer components
-        var meter = new Meter("RepoQL.Tests.Concurrency");
         var classifier = new FileClassifier();
         var hasher = new XxHasher();
         var filter = new NoOpUriFilter(); // Include all files
@@ -181,14 +177,12 @@ internal class ConcurrencyBugTest
         var hub = new MultiFileSystem(registry, [fileSystem]);
         // Single writer (hosted service lifecycle simulated here)
         var factory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        await using var writer = new SingleThreadedDatabaseWriter(factory, new RepoQL.Metrics.IndexingMetrics());
+        await using var writer = new SingleThreadedDatabaseWriter(factory);
         await writer.StartAsync(CancellationToken.None);
 
         var workspace = new AnalysisWorkspace(hub, classifier, hasher, formatRegistry);
 
         await using var indexer = new RepositoryIndexer(
-            metrics,
-            meter,
             hub,
             store,
             classifier,

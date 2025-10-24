@@ -38,6 +38,9 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.GraphQL", "src\Formats\RepoQL.Formats.GraphQL\RepoQL.Formats.GraphQL.csproj", "{9D670AD0-118F-4FDE-B4BA-15FB8D501B01}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{CEA09484-30F6-4D44-02F6-822E06DBC57C}"
+	ProjectSection(SolutionItems) = preProject
+		src\tests\Directory.Build.props = src\tests\Directory.Build.props
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Cli.Tests", "src\tests\RepoQL.Cli.Tests\RepoQL.Cli.Tests.csproj", "{7567B68B-F399-400C-895A-F755DADBA9D0}"
 EndProject
@@ -56,6 +59,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Orchestrator", "src\RepoQL.Orchestrator\RepoQL.Orchestrator.csproj", "{82F789A8-143C-4254-AA74-9AA82D7CF226}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Web", "src\RepoQL.Web\RepoQL.Web.csproj", "{D0627619-C910-4652-9038-6D0414D5E740}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Formats", "Formats", "{CF3BB764-123E-4A7B-8A47-05F15D677FE5}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -373,5 +378,6 @@ Global
 		{32630BD1-DC67-403D-AE30-6280EF27D9FC} = {CEA09484-30F6-4D44-02F6-822E06DBC57C}
 		{82F789A8-143C-4254-AA74-9AA82D7CF226} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{D0627619-C910-4652-9038-6D0414D5E740} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{CF3BB764-123E-4A7B-8A47-05F15D677FE5} = {CEA09484-30F6-4D44-02F6-822E06DBC57C}
 	EndGlobalSection
 EndGlobal

@@ -14,7 +14,7 @@ namespace RepoQL.Data.DuckDB;
 
 public sealed class SingleThreadedDatabaseWriter(
     IDuckDBConnectionFactory connectionFactory,
-    IndexingMetrics metrics,
+    IndexingMetrics? metrics = null,
     ILogger<SingleThreadedDatabaseWriter>? logger = null)
     : IDatabaseWriter, IHostedService
 {
@@ -25,8 +25,10 @@ public sealed class SingleThreadedDatabaseWriter(
         FullMode = BoundedChannelFullMode.Wait
     });
     private readonly IDuckDBConnectionFactory _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
-    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed", Justification = "Metrics lifetime is managed by the DI container.")]
-    private readonly IndexingMetrics _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
+
+    [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed",
+        Justification = "Metrics lifetime is managed by the DI container.")]
+    private readonly IndexingMetrics _metrics = metrics ?? new IndexingMetrics();
 
     private readonly ILogger<SingleThreadedDatabaseWriter> _logger =
         logger ?? NullLogger<SingleThreadedDatabaseWriter>.Instance;

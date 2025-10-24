@@ -15,7 +15,7 @@ public class MermaidRulesTests
     public Task Flowchart_LabelNeedsQuoting_Fixed()
     {
         var src = "flowchart LR\nC[Test|Pipe]\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var rules = new MermaidRuleSet();
         var ctx = new RuleContext { Language = lang, Tree = tree, FilePath = "mem://mmd", Cancel = default };
@@ -29,7 +29,7 @@ public class MermaidRulesTests
     public Task Flowchart_UnclosedShape_Fixed()
     {
         var src = "flowchart LR\nA[Unclosed\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var rules = new MermaidRuleSet();
         var ctx = new RuleContext { Language = lang, Tree = tree, FilePath = "mem://mmd", Cancel = default };
@@ -43,7 +43,7 @@ public class MermaidRulesTests
     public Task Pie_LabelAndValue_Fixed()
     {
         var src = "pie\nDogs : -10\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var rules = new MermaidRuleSet();
         var ctx = new RuleContext { Language = lang, Tree = tree, FilePath = "mem://mmd", Cancel = default };
@@ -57,7 +57,7 @@ public class MermaidRulesTests
     public Task Sequence_BareEnd_Warned()
     {
         var src = "sequenceDiagram\nAlice->>Bob: end\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var rules = new MermaidRuleSet();
         var ctx = new RuleContext { Language = lang, Tree = tree, FilePath = "mem://mmd", Cancel = default };
@@ -71,7 +71,7 @@ public class MermaidRulesTests
     public Task Flowchart_Fixes_ApplyAndReparse()
     {
         var src = "flowchart LR\nC[Test|Pipe\n"; // unclosed + needs quoting
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var rules = new MermaidRuleSet();
         var ctx = new RuleContext { Language = lang, Tree = tree, FilePath = "mem://mmd", Cancel = default };
@@ -94,7 +94,7 @@ public class MermaidRulesTests
     public Task Pie_Fixes_ApplyAndReparse()
     {
         var src = "pie\nDogs : -10\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var rules = new MermaidRuleSet();
         var ctx = new RuleContext { Language = lang, Tree = tree, FilePath = "mem://mmd", Cancel = default };
@@ -113,7 +113,7 @@ public class MermaidRulesTests
     public Task Sequence_Fixes_ApplyAndReparse()
     {
         var src = "sequenceDiagram\nA->>B: end\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var rules = new MermaidRuleSet();
         var ctx = new RuleContext { Language = lang, Tree = tree, FilePath = "mem://mmd", Cancel = default };
@@ -149,7 +149,7 @@ public class MermaidRulesTests
                   "C(foo)-->D(bar)\n" +           // valid nodes/edges
                   "E{Guard?} -->|a -> b| F\n";    // edge with mid-label
 
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var rules = new MermaidRuleSet();
         var ctx = new RuleContext { Language = lang, Tree = tree, FilePath = "mem://mmd", Cancel = default };

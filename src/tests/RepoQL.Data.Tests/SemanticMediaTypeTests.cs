@@ -3,7 +3,7 @@ using RepoQL.Contracts;
 
 namespace RepoQL.Data.Tests;
 
-public class SemanticMediaTypeTests
+internal class SemanticMediaTypeTests
 {
     // ========== Parsing Tests ==========
 

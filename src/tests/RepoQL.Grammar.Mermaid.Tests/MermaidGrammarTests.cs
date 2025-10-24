@@ -11,7 +11,7 @@ public class MermaidGrammarTests
     public Task Flowchart_NodesAndEdge_Parsed()
     {
         var src = "flowchart LR\nA[Hello]\nA --> B\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var doc = (MDocument)tree.Root;
 
@@ -26,7 +26,7 @@ public class MermaidGrammarTests
     public Task Sequence_Message_Parsed()
     {
         var src = "sequenceDiagram\nparticipant Alice\nAlice->>Bob: hello\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var doc = (MDocument)tree.Root;
 
@@ -40,7 +40,7 @@ public class MermaidGrammarTests
     public Task Pie_Entries_Parsed()
     {
         var src = "pie\n\"Dogs\" : 10\n\"Cats\" : 20\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var doc = (MDocument)tree.Root;
 
@@ -56,7 +56,7 @@ public class MermaidGrammarTests
     public Task Flow_Subgraph_ClassDef_Click_Parsed()
     {
         var src = "flowchart LR\nsubgraph Group A\nA[Node]\nend\nclassDef red fill:#f00,stroke:#000\nclick A href \"https://example.com\" \"Go\"\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var doc = (MDocument)tree.Root;
 
@@ -72,7 +72,7 @@ public class MermaidGrammarTests
     public Task Sequence_Blocks_Parsed()
     {
         var src = "sequenceDiagram\nparticipant A\nalt condition\nA->>A: work\nend\nopt maybe\nA->>A: try\nend\n";
-        ILanguage lang = new MermaidLanguage();
+        var lang = new MermaidLanguage();
         var tree = lang.Parse(src, new LanguageParseOptions { Tolerant = true });
         var doc = (MDocument)tree.Root;
 

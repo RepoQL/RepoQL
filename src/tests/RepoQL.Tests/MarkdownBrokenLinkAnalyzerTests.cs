@@ -2,7 +2,6 @@ using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
 using RepoQL.Contracts.Models;
-using RepoQL.Contracts.Data;
 using RepoQL.Core;
 using RepoQL.Data.DuckDB;
 using RepoQL.Formats.Markdown;
@@ -17,7 +16,7 @@ internal class MarkdownBrokenLinkAnalyzerTests
         const string content = "# Heading\n\nSee [broken](#missing-anchor).\n";
         var uri = RepoUri.Parse("file:///repo/doc.md");
 
-        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics());
+        using var store = new DuckDbGraphStore(":memory:");
         store.EnsureSchema();
 
         var markdownLoader = new MarkdownLoader();
@@ -58,7 +57,7 @@ internal class MarkdownBrokenLinkAnalyzerTests
         var sourceUri = RepoUri.Parse("file:///repo/source.md");
         var targetUri = RepoUri.Parse("file:///repo/other.md");
 
-        using var store = new DuckDbGraphStore(":memory:", new RepoQL.Metrics.IndexingMetrics());
+        using var store = new DuckDbGraphStore(":memory:");
         store.EnsureSchema();
 
         var markdownLoader = new MarkdownLoader();
@@ -92,9 +91,9 @@ internal class MarkdownBrokenLinkAnalyzerTests
         results[0].Message.Should().Contain("other.md");
     }
 
-    private static async Task<DocumentModel> IndexMarkdownAsync(IGraphStore store, MarkdownLoader loader, RepoUri uri, string content)
+    private static async Task<DocumentModel> IndexMarkdownAsync(DuckDbGraphStore store, MarkdownLoader loader, RepoUri uri, string content)
     {
-        var fileName = System.IO.Path.GetFileName(uri.AbsolutePath);
+        var fileName = Path.GetFileName(uri.AbsolutePath);
         var fileInfo = new StringFileInfo(fileName, content);
         var hasher = new XxHasher();
         var hash = await hasher.HashAsync(fileInfo, CancellationToken.None);

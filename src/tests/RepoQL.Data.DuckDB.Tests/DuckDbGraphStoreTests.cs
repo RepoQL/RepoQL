@@ -8,7 +8,7 @@ using Artifact = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Data.DuckDB.Tests;
 
-public class DuckDbGraphStoreTests : IDisposable
+public sealed class DuckDbGraphStoreTests : IDisposable
 {
     private readonly DuckDBConnection connection;
     private readonly DuckDbGraphStore store;
@@ -28,9 +28,9 @@ public class DuckDbGraphStoreTests : IDisposable
 
     public void Dispose()
     {
-        store?.Dispose();
-        metrics?.Dispose();
-        connection?.Dispose();
+        store.Dispose();
+        metrics.Dispose();
+        connection.Dispose();
     }
 
     // ========== Schema Tests ==========

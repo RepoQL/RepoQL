@@ -34,7 +34,7 @@ public static class RepoLocator
         }
 
         // no marker; return the topmost directory we reached (usually drive root)
-        return last?.FullName ?? Path.GetFullPath(".");
+        return last.FullName;
     }
 
     /// <summary>

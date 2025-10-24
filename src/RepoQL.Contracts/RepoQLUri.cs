@@ -241,6 +241,7 @@ public sealed class RepoUri : Uri
     /// Structured sub-resource location carried in the fragment.
     /// Combine fields as needed. For example: a symbol with a line range.
     /// </summary>
+    [SuppressMessage("Design", "CA1034:Nested types should not be visible")]
     public readonly record struct Location
     {
         /// <summary>Original fragment text (no '#'). Preserved for round-tripping.</summary>

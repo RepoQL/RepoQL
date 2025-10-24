@@ -8,6 +8,7 @@
     <!-- Constants for this repository -->
     <PropertyGroup>
         <RepositoryRoot>$(MSBuildThisFileDirectory)</RepositoryRoot>
+        <NoWarn>$(NoWarn);CA1056;CA1054</NoWarn>
     </PropertyGroup>
 
     <!-- Repository Areas -->

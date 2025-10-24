@@ -21,7 +21,8 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
 {
     internal const string StateMetadataKey = "markdown.state";
 
-    private ILogger<MarkdownLoader> Logger = logger ?? NullLogger<MarkdownLoader>.Instance;
+    private ILogger<MarkdownLoader> Logger { get; } = logger ?? NullLogger<MarkdownLoader>.Instance;
+
     private static readonly SemanticMediaType MarkdownMediaType = SemanticMediaType
         .Create("text", "markdown")
         .WithKind("markdown.doc");

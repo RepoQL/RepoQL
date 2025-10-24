@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
@@ -19,7 +20,6 @@ namespace RepoQL.Tests.Scaffolding;
 internal sealed class IndexedRepoBuilder : IAsyncDisposable
 {
     private readonly IndexedRepoOptions _options;
-    private readonly FileSystemRegistry _registry;
     private readonly MultiFileSystem _hub;
     private readonly IAnalysisResultWriter? _analysisWriter;
     private readonly ConcurrentDictionary<string, RepoUri> _trackedUris = new(StringComparer.OrdinalIgnoreCase);
@@ -27,7 +27,6 @@ internal sealed class IndexedRepoBuilder : IAsyncDisposable
     private IndexedRepoBuilder(
         IndexedRepoOptions options,
         MemoryFileSystem fileSystem,
-        FileSystemRegistry registry,
         MultiFileSystem hub,
         DuckDbGraphStore store,
         IndexingMetrics metrics,
@@ -40,7 +39,6 @@ internal sealed class IndexedRepoBuilder : IAsyncDisposable
     {
         _options = options;
         FileSystem = fileSystem;
-        _registry = registry;
         _hub = hub;
         Store = store;
         Metrics = metrics;
@@ -85,8 +83,6 @@ internal sealed class IndexedRepoBuilder : IAsyncDisposable
         var analysisWriter = options.CreateAnalysisWriter?.Invoke(store);
 
         var indexer = new RepositoryIndexer(
-            metrics,
-            meter,
             hub,
             store,
             classifier,
@@ -94,7 +90,7 @@ internal sealed class IndexedRepoBuilder : IAsyncDisposable
             workspace,
             options.Filter,
             hasher,
-            dbWriter: options.DatabaseWriter,
+            options.DatabaseWriter,
             analysisWriter: analysisWriter,
             settingsProvider: options.SettingsProvider,
             repositoryRoot: options.RepositoryRoot,
@@ -120,7 +116,6 @@ internal sealed class IndexedRepoBuilder : IAsyncDisposable
         return new IndexedRepoBuilder(
             options,
             fileSystem,
-            registry,
             hub,
             store,
             metrics,
@@ -233,6 +228,7 @@ internal sealed class IndexedRepoOptions
     public void AddFormat(FormatDescriptor descriptor)
         => Formats.Add(descriptor);
 
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope")]
     internal DuckDbGraphStore CreateStore(IndexingMetrics metrics)
         => StoreFactory?.Invoke(metrics) ?? new DuckDbGraphStore(":memory:", metrics);
 

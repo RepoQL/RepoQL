@@ -55,7 +55,7 @@ internal class ReindexingMemoryFsTests
         var fsRegistry = new FileSystemRegistry([fs]);
         var hub = new MultiFileSystem(fsRegistry, [fs]);
         var (formatRegistry, workspace) = CreateFormats(hub, classifier, hasher);
-        await using var indexer = new RepositoryIndexer(metrics, meter, hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
+        await using var indexer = new RepositoryIndexer(hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
 
         await indexer.StartAsync(CancellationToken.None);
 
@@ -117,7 +117,7 @@ internal class ReindexingMemoryFsTests
         var fsRegistry = new FileSystemRegistry([fs]);
         var hub = new MultiFileSystem(fsRegistry, [fs]);
         var (formatRegistry, workspace) = CreateFormats(hub, classifier, hasher);
-        await using var indexer = new RepositoryIndexer(metrics, meter, hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
+        await using var indexer = new RepositoryIndexer(hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
 
         await indexer.StartAsync(CancellationToken.None);
 

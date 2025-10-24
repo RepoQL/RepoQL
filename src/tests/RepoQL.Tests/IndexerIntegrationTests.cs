@@ -63,7 +63,7 @@ internal class IndexerIntegrationTests
         var (formatRegistry, workspace) = CreateFormats(hub, classifier, hasher);
         var uri1 = RepoUri.Parse($"embed:///Resources/Doc1.md");
         var filter = new IncludeOnlyUriFilter(uri1);
-        await using var indexer = new RepositoryIndexer(metrics, meter, hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
+        await using var indexer = new RepositoryIndexer(hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
 
         // Act: start, then explicitly queue the file to avoid any enumeration/platform quirks
         await indexer.StartAsync(CancellationToken.None);
@@ -114,7 +114,7 @@ internal class IndexerIntegrationTests
         var uri1w = RepoUri.Parse($"embed:///Resources/Doc1.md");
         var uri2 = RepoUri.Parse($"embed:///Resources/Doc2.md");
         var filter = new IncludeOnlyUriFilter(uri1w);
-        await using var indexer = new RepositoryIndexer(metrics, meter, hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
+        await using var indexer = new RepositoryIndexer(hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
 
         await indexer.StartAsync(CancellationToken.None);
         var firstIndexed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
