@@ -43,5 +43,3 @@ internal sealed class QueryExecutor
         return new QueryExecutionResult(lines, total ?? result.RowCount);
     }
 }
-
-internal readonly record struct QueryExecutionResult(string[] Lines, long TotalRowCount);

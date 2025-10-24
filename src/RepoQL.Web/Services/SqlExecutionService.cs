@@ -55,9 +55,3 @@ public sealed class SqlExecutionService
         };
     }
 }
-
-public sealed record SqlExecutionResult(
-    IReadOnlyList<string> Columns,
-    IReadOnlyList<IReadOnlyList<string>> Rows,
-    long RowCount,
-    bool Truncated);

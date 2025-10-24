@@ -1,6 +1,4 @@
 using Microsoft.Extensions.Hosting;
-using Grpc.Core;
-using JetBrains.Annotations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -8,7 +6,6 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using Spectre.Console;
-using ConsoleAppFramework;
 using RepoQL.ConsoleApp.Helpers;
 
 // Defaults to 80 :(
@@ -69,23 +66,3 @@ static bool ShouldPrewarmClient(string[] commandLineArgs)
 
     return false;
 }
-
-[UsedImplicitly]
-internal class ExceptionLoggingFilter(ConsoleAppFilter next, IAnsiConsole console) : ConsoleAppFilter(next)
-{
-    public override async Task InvokeAsync(ConsoleAppContext context, CancellationToken cancellationToken)
-    {
-        try
-        {
-            await Next.InvokeAsync(context, cancellationToken);
-        }
-        catch (RpcException rpcEx)
-        {
-            console.WriteLine(rpcEx.Status.Detail, Color.Red);
-        }
-        catch (Exception e)
-        {
-            console.WriteLine(e.GetBaseException().Message, Color.Red);
-        }
-    }
-} 

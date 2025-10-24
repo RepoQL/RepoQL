@@ -227,26 +227,3 @@ LIMIT 250
         return -1;
     }
 }
-
-public sealed record DocumentListItem(
-    string DocumentUri,
-    string FileName,
-    string MediaLabel,
-    long? ByteSize,
-    string KindsSummary,
-    string? Headline,
-    string? Summary,
-    string? Structure);
-
-public sealed record DocumentItem(
-    string Kind,
-    string Label,
-    string ItemUri);
-
-public sealed record SnippetLine(
-    int LineNumber,
-    string Text,
-    bool IsFocus,
-    int? FocusStartColumn,
-    int? FocusEndColumn,
-    string Language);

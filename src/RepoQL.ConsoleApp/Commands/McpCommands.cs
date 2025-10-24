@@ -159,21 +159,22 @@ internal class McpCommands
                 .WithTools<XrayTool>()
                 .WithListResourceTemplatesHandler((ctx, ct) =>
                 {
+                    ArgumentNullException.ThrowIfNull(ctx.Services);
                     var service = ctx.Services.GetRequiredService<RepoResourceService>();
                     return service.ListTemplatesAsync(ctx, ct);
                 })
                 .WithReadResourceHandler((ctx, ct) =>
                 {
+                    ArgumentNullException.ThrowIfNull(ctx.Services);
                     var service = ctx.Services.GetRequiredService<RepoResourceService>();
                     return service.ReadResourceAsync(ctx, ct);
                 })
                 .WithListResourcesHandler((ctx, ct) =>
                 {
+                    ArgumentNullException.ThrowIfNull(ctx.Services);
                     var service = ctx.Services.GetRequiredService<RepoResourceService>();
                     return service.ListResourcesAsync(ctx, ct);
                 });
-    
-    //.WithResources<SimpleResourceType>()
 
         await builder.Build().RunAsync(cancel);
     }

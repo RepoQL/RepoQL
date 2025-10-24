@@ -8,11 +8,6 @@ using RepoQL.Metrics;
 
 namespace RepoQL.ConsoleApp.Host;
 
-public interface IInitialIndexingBarrier
-{
-    Task InitialScanCompleted { get; }
-}
-
 internal sealed class InitialIndexingBarrier(
     RepositoryIndexer indexer,
     IGraphStore store,

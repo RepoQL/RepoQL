@@ -2,11 +2,6 @@ using DuckDB.NET.Data;
 
 namespace RepoQL.Data.DuckDB;
 
-public interface IDuckDBConnectionFactory
-{
-    DuckDBConnection CreateConnection();
-}
-
 public sealed class DuckDBConnectionFactory(string connectionString) : IDuckDBConnectionFactory
 {
     private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));

@@ -1,15 +1,6 @@
-using Microsoft.Extensions.FileProviders;
-using RepoQL.Core;
+﻿using Microsoft.Extensions.FileProviders;
 
 namespace RepoQL.Tests;
-
-internal sealed class TestObserver(Action<Exception> onError, Action<IndexerEvent> onNext) : IObserver<IndexerEvent>
-{
-    public void OnCompleted() { }
-    public void OnError(Exception error) => onError(error);
-    public void OnNext(IndexerEvent value) => onNext(value);
-}
-
 
 internal sealed class StringFileInfo(string name, string content) : IFileInfo
 {

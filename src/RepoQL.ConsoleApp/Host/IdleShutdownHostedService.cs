@@ -1,29 +1,8 @@
-using System.Collections.Concurrent;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts.Data;
 
 namespace RepoQL.ConsoleApp.Host;
-
-internal sealed class HostState
-{
-    public required string RepositoryPath { get; init; }
-    public required bool ImplicitStart { get; init; }
-    public required DateTime StartedAtUtc { get; init; }
-}
-
-internal static class LeaseRegistry
-{
-    internal sealed record LeaseEntry(string ClientId, DateTime LastBeatUtc);
-
-    private static readonly ConcurrentDictionary<string, LeaseEntry> Leases = new(StringComparer.OrdinalIgnoreCase);
-
-    public static int Count => Leases.Count;
-    public static void Upsert(string clientId, DateTime beatUtc)
-        => Leases.AddOrUpdate(clientId, new LeaseEntry(clientId, beatUtc), (_, _) => new LeaseEntry(clientId, beatUtc));
-    public static void Remove(string clientId) => Leases.TryRemove(clientId, out _);
-    public static IEnumerable<LeaseEntry> Snapshot() => Leases.Values.ToArray();
-}
 
 internal sealed class IdleShutdownHostedService(
     IHostApplicationLifetime lifetime,

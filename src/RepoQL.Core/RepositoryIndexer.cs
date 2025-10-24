@@ -18,8 +18,6 @@ using IFileSystemWatcher = RepoQL.FileSystem.Abstractions.IFileSystemWatcher;
 
 namespace RepoQL.Core;
 
-public record IndexerEvent(IFileInfo FileInfo, RepoUri CurrentUri);
-
 [DebuggerTypeProxy(typeof(RepositoryIndexerDebugView))]
 public class RepositoryIndexer(
     IMultiFileSystem fileSystem,

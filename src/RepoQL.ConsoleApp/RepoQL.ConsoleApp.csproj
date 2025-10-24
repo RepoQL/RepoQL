@@ -55,8 +55,13 @@
         <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
     </ItemGroup>
 
+    
+    
     <ItemGroup>
-        <Content Include="..\RepoQL.Core\Embeddings\Model\**" Link="Embeddings\Model\%(FileName)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+        <Content Include="..\RepoQL.Core\Embeddings\Model\**" Link="Embeddings\Model\%(FileName)%(Extension)" >
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+            <PackageCopyToOutput>true</PackageCopyToOutput>
+        </Content>
     </ItemGroup>
 
     <ItemGroup>
