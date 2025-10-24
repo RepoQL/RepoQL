@@ -51,6 +51,13 @@ jobs:
           fi
 
           for project in "${test_projects[@]}"; do
+            project_dir="$(dirname "$project")"
+            first_source=$(find "$project_dir" -maxdepth 5 -name '*.cs' -type f | head -n1)
+            if [[ -z "$first_source" ]]; then
+              echo "Skipping $project (no test sources detected)"
+              continue
+            fi
+
             echo "Running tests for: $project"
             dotnet run \
               --project "$project" \
