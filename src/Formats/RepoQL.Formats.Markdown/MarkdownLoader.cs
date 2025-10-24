@@ -76,29 +76,6 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
             artifact.MediaType = artifact.MediaType.WithKind("markdown.doc");
             return true;
         }
-
-        // Peek first non-empty line for markdown hints (#, ---)
-        try
-        {
-            await using var stream = artifact.File.CreateReadStream();
-            using var reader = new StreamReader(stream);
-            while (await reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
-            {
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                var trimmed = line.TrimStart();
-                if (trimmed.StartsWith('#') || trimmed.StartsWith("---"))
-                {
-                    artifact.MediaType = MarkdownMediaType;
-                    return true;
-                }
-                break;
-            }
-        }
-        catch (Exception ex)
-        {
-            LogFailedToParseNameAsMarkdown(ex, artifact.File.Name);
-        }
-
         return false;
     }
 

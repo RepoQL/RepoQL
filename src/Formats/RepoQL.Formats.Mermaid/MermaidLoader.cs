@@ -53,6 +53,17 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
             return true;
         }
 
+        // Only apply content heuristic if the file doesn't already have a specific media type classification.
+        // Don't override well-established types (e.g., code.javascript, code.python) based on content patterns.
+        // Only check content for truly unclassified files (no media type, or generic text/plain without specific kind).
+        if (artifact.MediaType is not null &&
+            !string.IsNullOrEmpty(artifact.MediaType.Kind) &&
+            !string.Equals(artifact.MediaType.Kind, "plain.document", StringComparison.OrdinalIgnoreCase))
+        {
+            // File already has a specific classification, don't override
+            return false;
+        }
+
         try
         {
             await using var stream = artifact.File.CreateReadStream();

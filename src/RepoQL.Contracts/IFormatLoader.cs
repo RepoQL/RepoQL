@@ -10,7 +10,7 @@ public interface IFormatLoader
 
     IEnumerable<FormatSqlScript> GetSchemaScripts()
     {
-        return Array.Empty<FormatSqlScript>();
+        return [];
     }
 
     async IAsyncEnumerable<EmbeddedFragment> DiscoverEmbedsAsync(DocumentModel document, [EnumeratorCancellation] CancellationToken cancellationToken = default)
