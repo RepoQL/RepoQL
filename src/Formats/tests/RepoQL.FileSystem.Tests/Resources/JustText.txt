@@ -1,3 +1,0 @@
-This is a plain text file.
-It should not be treated as markdown by extension.
-
