@@ -138,12 +138,6 @@ jobs:
         run: dotnet restore
       - name: Pack root tool
         run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -o artifacts/tool/root -p:RuntimeIdentifiers=
-      - name: Upload root packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: repoql-tool-root
-          if-no-files-found: error
-          path: artifacts/tool/root/*.nupkg
       - name: Publish root packages to GitHub Packages
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: dotnet nuget push artifacts/tool/root/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
@@ -170,12 +164,6 @@ jobs:
         run: dotnet restore
       - name: Pack ${{ matrix.rid }} tool
         run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -r ${{ matrix.rid }} -o ./artifacts/tool/${{ matrix.rid }}
-      - name: Upload ${{ matrix.rid }} package
-        uses: actions/upload-artifact@v4
-        with:
-          name: repoql-tool-${{ matrix.rid }}
-          if-no-files-found: error
-          path: ./artifacts/tool/${{ matrix.rid }}/*.nupkg
       - name: Publish ${{ matrix.rid }} package to GitHub Packages
         shell: bash
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
