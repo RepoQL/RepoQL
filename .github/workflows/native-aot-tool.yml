@@ -14,9 +14,112 @@ env:
 permissions:
   contents: read
   packages: write
+  checks: write
+  pull-requests: read
 
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACTS_PATH: ${{ github.workspace }}/artifacts/tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          include-prerelease: true
+      - name: Install coverage tooling
+        run: |
+          dotnet tool install --global dotnet-coverage
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+      - name: Restore
+        run: dotnet restore
+      - name: Run tests with coverage
+        id: test
+        run: |
+          set -euo pipefail
+
+          ARTIFACTS_DIR="${{ env.ARTIFACTS_PATH }}"
+          rm -rf "$ARTIFACTS_DIR"
+          mkdir -p "$ARTIFACTS_DIR/coverage" "$ARTIFACTS_DIR/test-results"
+
+          mapfile -t test_projects < <(find src -path "*/tests/*.Tests.csproj" -type f | sort)
+          echo "Found ${#test_projects[@]} test project(s) under src/**/tests"
+          if [[ "${#test_projects[@]}" -eq 0 ]]; then
+            echo "No test projects found under src/**/tests" >&2
+            exit 1
+          fi
+
+          for project in "${test_projects[@]}"; do
+            echo "Running tests for: $project"
+            dotnet run \
+              --project "$project" \
+              --configuration Release \
+              -- \
+              --coverage \
+              --coverage-output-format cobertura \
+              --report-trx \
+              --results-directory "$ARTIFACTS_DIR/test-results"
+          done
+
+          mapfile -t coverage_files < <(find "$ARTIFACTS_DIR/test-results" -name "*.cobertura.xml" -type f | sort)
+          echo "Found ${#coverage_files[@]} coverage file(s)"
+          if [[ "${#coverage_files[@]}" -eq 0 ]]; then
+            echo "No coverage files generated" >&2
+            exit 1
+          fi
+
+          if [[ "${#coverage_files[@]}" -eq 1 ]]; then
+            cp "${coverage_files[0]}" "$ARTIFACTS_DIR/coverage/coverage.cobertura.xml"
+          else
+            merge_args=()
+            for file in "${coverage_files[@]}"; do
+              merge_args+=("--reports" "$file")
+            done
+            dotnet-coverage merge "${merge_args[@]}" --output "$ARTIFACTS_DIR/coverage/coverage.cobertura.xml" --output-format cobertura
+          fi
+
+          if [[ ! -f "$ARTIFACTS_DIR/test-results/tests.trx" ]]; then
+            mapfile -t trx_candidates < <(find "$ARTIFACTS_DIR/test-results" -name '*.trx' -type f | sort)
+            if [[ "${#trx_candidates[@]}" -gt 0 ]]; then
+              cp "${trx_candidates[-1]}" "$ARTIFACTS_DIR/test-results/tests.trx"
+            fi
+          fi
+      - name: Generate coverage report
+        if: steps.test.outcome == 'success'
+        uses: danielpalme/ReportGenerator-GitHub-Action@5
+        with:
+          reports: '${{ env.ARTIFACTS_PATH }}/coverage/coverage.cobertura.xml'
+          targetdir: '${{ env.ARTIFACTS_PATH }}/coverage/report'
+          reporttypes: 'Html;MarkdownSummaryGithub'
+          tag: '${{ github.run_number }}_${{ github.run_id }}'
+      - name: Publish coverage summary
+        if: steps.test.outcome == 'success'
+        run: |
+          summary='${{ env.ARTIFACTS_PATH }}/coverage/report/SummaryGithub.md'
+          if [[ -f "$summary" ]]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Coverage summary not generated (missing $summary)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Publish test results (GitHub UI)
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: |
+            ${{ env.ARTIFACTS_PATH }}/test-results/**/*.trx
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            ${{ env.ARTIFACTS_PATH }}/test-results/**/*
+            ${{ env.ARTIFACTS_PATH }}/coverage/coverage.cobertura.xml
+            ${{ env.ARTIFACTS_PATH }}/coverage/report/**
+
   root:
+    needs: tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +142,7 @@ jobs:
         run: dotnet nuget push artifacts/tool/root/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
 
   native:
+    needs: root
     strategy:
       fail-fast: false
       matrix:
