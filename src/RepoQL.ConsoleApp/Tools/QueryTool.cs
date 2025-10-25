@@ -70,7 +70,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              SELECT * FROM snippet('file:///path#line=42', 3)  -- context lines before/after
                                              
                                              -- Search: find files by intent (lexical + semantic)
-                                             SELECT uri, score FROM file_search('auth JWT token', k := 10)
+                                             SELECT uri, score FROM file_search('auth token', 'How do we refresh JWTs?', k := 10)
                                              
                                              -- Diagnostics: what's broken/flagged?
                                              SELECT * FROM annotations WHERE severity = 'error'
@@ -125,7 +125,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              ```postgresql
                                              WITH search_results AS (
                                                  SELECT uri, score
-                                                 FROM file_search('navigation loading bar timeout', k := 3)
+                                             FROM file_search('navigation loading', 'Why does the progress bar stick?', k := 3)
                                                )
                                                SELECT
                                                  sr.uri,
@@ -167,7 +167,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                                | column -t -s $'\t'
                                              ```
                                              
-                                             TL;DR: Use xray_documents() to see what exists, file_search() to find things, snippet() to preview, and artifact.headline/summary/structure to understand files without reading them. Everything else is just SQL JOINs on the graph.
+                                             TL;DR: Use xray_documents() to see what exists, file_search(keywords, question) to find things, snippet() to preview, and artifact.headline/summary/structure to understand files without reading them. Everything else is just SQL JOINs on the graph.
                                                
                                              <INSTRUCTION>
                                              

@@ -59,7 +59,7 @@ SELECT * FROM xray_items('md_heading,cs_class', 10)  -- kind, label, uri (with #
 SELECT * FROM snippet('file:///path#line=42', 3)  -- context lines before/after
 
 -- Search: find files by intent (lexical + semantic)
-SELECT uri, score FROM file_search('auth JWT token', k := 10)
+SELECT uri, score FROM file_search('auth token', 'How do we refresh JWTs?', k := 10)
 
 -- Diagnostics: what's broken/flagged?
 SELECT * FROM annotations WHERE severity = 'error'
@@ -114,7 +114,7 @@ Do this before starting work so that you know what documentation exists
 ```postgresql
 WITH search_results AS (
     SELECT uri, score
-    FROM file_search('navigation loading bar timeout', k := 3)
+    FROM file_search('navigation loading', 'Why does the loading bar hang?', k := 3)
   )
   SELECT
     sr.uri,
@@ -126,7 +126,7 @@ WITH search_results AS (
        LATERAL snippet(sr.uri, 2) AS sn
   ORDER BY sr.score DESC, sn.line_number;
   /*
-  - file_search does the semantic lookup (k := 3 keeps the top three hits).
+  - file_search(keywords, question) does the lexical + semantic lookup (k := 3 keeps the top three hits).
   - snippet(uri, 2) returns two lines of context around each match; is_focus marks the snippet’s focal line.
   - Ordering by score first keeps the best semantic hits at the top, then list the snippet lines in-order.
   Tweak the search phrase, k, or context window to suit your needs.

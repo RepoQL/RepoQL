@@ -129,25 +129,25 @@ to see how it maps back to the base schema.
 
 ## Search
 
-Search = lexical + semantic. One name. No flags.
+Search = lexical + semantic. One name. Two knobs.
 
-- `file_search(q, k := 50, max_cand := 5000)` → `uri, score` (and `bm25n, fuzzn, semn` if you want them)
+- `file_search(keywords, question := NULL, k := 50, max_cand := 5000)` → `doc_id, uri, bm25n, fuzzn, semn, score`
 
-Intent‑only: write what you want; the host blends signals.
+Use `keywords` for literal fragments (paths, symbols) and `question` for natural-language description. Leave either blank when not needed—the macro handles defaults.
 
 ```sql
--- Top files by intent
+-- Top files by intent (question only)
 SELECT uri, score, semn
-FROM file_search('mermaid diagram classes', k := 10);
+FROM file_search('', 'Where do we render mermaid diagram classes?', k := 10);
 
--- Semantics-first view
+-- Semantics-first view mixing literals + question
 SELECT uri, semn, score
-FROM file_search('embedding runtime broadcast error', k := 20)
+FROM file_search('embedding runtime', 'Why does the embedding runtime broadcast error?', k := 20)
 ORDER BY semn DESC NULLS LAST;
 
 -- Filter by file type/location
 WITH r AS (
-  SELECT doc_id, uri, score FROM file_search('frontmatter', k := 50)
+  SELECT doc_id, uri, score FROM file_search('frontmatter docs', NULL, k := 50)
 )
 SELECT r.uri, r.score
 FROM r JOIN document_search ds USING (doc_id)

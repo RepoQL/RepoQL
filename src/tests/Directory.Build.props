@@ -11,6 +11,7 @@
     <PropertyGroup>
         <WarningLevel>1</WarningLevel>
         <NoWarn>$(NoWarn);CA1707;CA1515</NoWarn>
+        <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
     </PropertyGroup>
 
 </Project>

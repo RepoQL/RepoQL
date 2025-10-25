@@ -37,6 +37,10 @@ public class RepositoryIndexer(
 {
     private ILogger<RepositoryIndexer> Logger { get; } = logger ?? NullLogger<RepositoryIndexer>.Instance;
     private static readonly ActivitySource Activity = new("RepoQL.Indexing");
+    private readonly bool _ownsMetrics = metrics is null;
+    private readonly bool _ownsMeter = meter is null;
+    private readonly IndexingMetrics _metrics = metrics ?? new IndexingMetrics();
+    private readonly Meter _meter = meter ?? new Meter("RepoQL.Indexing");
     private WorkQueue<DiscoveredArtifact>? _classificationQueue;
     private WorkQueue<DiscoveredArtifact>? _parsingQueue;
     private WorkQueue<string>? _enrichmentQueue;
@@ -292,12 +296,12 @@ public class RepositoryIndexer(
     {
         await WithStorageAsync(store => store.EnsureSchema(), cancellationToken).ConfigureAwait(false);
 
-        _classificationQueue = new("classification", 10000, 3, ClassifyFileAsync, cancellationToken, meter);
-        _parsingQueue = new("parsing", 10000, 3, ParseAndStoreFileAsync, cancellationToken, meter);
+        _classificationQueue = new("classification", 10000, 3, ClassifyFileAsync, cancellationToken, _meter);
+        _parsingQueue = new("parsing", 10000, 3, ParseAndStoreFileAsync, cancellationToken, _meter);
 
         {
             var workerCount = Math.Max(Environment.ProcessorCount / 2, 1);
-            _enrichmentQueue = new("enrichment", 4000, workerCount, EnrichDocumentAsync, cancellationToken, meter);
+            _enrichmentQueue = new("enrichment", 4000, workerCount, EnrichDocumentAsync, cancellationToken, _meter);
         }
 
         await foreach (var entry in fileSystem.EnumerateAsync(cancellationToken))
@@ -309,7 +313,7 @@ public class RepositoryIndexer(
             };
             if (!uriFilter.IncludeFile(artifact.RepoUri))
                 continue;
-            metrics.IncrementDiscover();
+            _metrics.IncrementDiscover();
             RaiseEvent(new IRepositoryIndexer.ItemDiscoveredEvent(entry.File, artifact.RepoUri));
 
             // Initial enumeration should enqueue immediately so callers can wait deterministically
@@ -334,7 +338,7 @@ public class RepositoryIndexer(
             {
                 // Raise appropriate event based on the change type
                 // Record FS event metric
-                metrics.RecordFsEvent(change.Kind.ToString());
+                _metrics.RecordFsEvent(change.Kind.ToString());
                 switch (change.Kind)
                 {
                     case ResourceEvent.Created:
@@ -421,6 +425,10 @@ public class RepositoryIndexer(
         // Dispose the cancellation token source
         _stopping.Dispose();
         _storageGate.Dispose();
+        if (_ownsMetrics)
+            _metrics.Dispose();
+        if (_ownsMeter)
+            _meter.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -666,11 +674,11 @@ public class RepositoryIndexer(
                 throw new InvalidOperationException($"Format '{document.MediaType}' does not provide a materializer.");
 
             var records = descriptor.Materializer.Materialize(document);
-            metrics.IncrementParse();
+            _metrics.IncrementParse();
             try
             {
-                metrics.NodesExtracted.Add(records.Nodes.Length);
-                metrics.NodesPerDocument.Record(records.Nodes.Length);
+                _metrics.NodesExtracted.Add(records.Nodes.Length);
+                _metrics.NodesPerDocument.Record(records.Nodes.Length);
                 parseActivity?.SetTag("repoql.nodes.count", records.Nodes.Length);
                 parseActivity?.SetTag("repoql.spans.count", records.Spans.Length);
                 parseActivity?.SetTag("repoql.edges.count", records.Edges.Length);
@@ -726,12 +734,12 @@ public class RepositoryIndexer(
                 }
             }
 
-            metrics.IncrementIndex();
+            _metrics.IncrementIndex();
 
             try
             {
                 var bytes = file.File.Length;
-                metrics.RecordFileProcessed(document.MediaType.ToString(), "indexed", bytes, sw.Elapsed.TotalMilliseconds);
+                _metrics.RecordFileProcessed(document.MediaType.ToString(), "indexed", bytes, sw.Elapsed.TotalMilliseconds);
             }
             catch (Exception ex)
             {
@@ -769,7 +777,7 @@ public class RepositoryIndexer(
             if (item.Hash is null)
             {
                 item.Hash = await hasher.HashAsync(item.File, _stopping.Token);
-                metrics.IncrementHash();
+                _metrics.IncrementHash();
             }
 
             // Classify the item
@@ -818,7 +826,7 @@ public class RepositoryIndexer(
                 && (DateTimeOffset.UtcNow - seen.At) < TimeSpan.FromSeconds(5))
             {
                 // Already processed very recently; record metric and skip
-                try { metrics.RecordFileProcessed(type.ToString(), "skipped_recent", item.File.Length, 0); } catch { }
+                try { _metrics.RecordFileProcessed(type.ToString(), "skipped_recent", item.File.Length, 0); } catch { }
                 StopRootIfPresent(corrKey);
                 return;
             }
@@ -837,7 +845,7 @@ public class RepositoryIndexer(
                     try
                     {
                         var bytes = item.File.Length;
-                        metrics.RecordFileProcessed(type.ToString(), "skipped", bytes, 0);
+                        _metrics.RecordFileProcessed(type.ToString(), "skipped", bytes, 0);
                     }
                     catch { }
                     StopRootIfPresent(corrKey);
@@ -959,7 +967,7 @@ public class RepositoryIndexer(
                 await _analysisWriter.WriteAsync(containerUri, results, _stopping.Token).ConfigureAwait(false);
             }
 
-            metrics.EnrichmentDuration.Record(sw.Elapsed.TotalMilliseconds);
+            _metrics.EnrichmentDuration.Record(sw.Elapsed.TotalMilliseconds);
             if (enrich is not null)
             {
                 var c = _traceChains.GetOrAdd(corrKey, _ => new TraceChain());
@@ -979,7 +987,7 @@ public class RepositoryIndexer(
             if (!_stopping.IsCancellationRequested)
             {
                 Interlocked.Increment(ref _enrichmentCompleted);
-                metrics.IncrementEnrich();
+                _metrics.IncrementEnrich();
             }
         }
     }
@@ -1014,7 +1022,7 @@ public class RepositoryIndexer(
                     new KeyValuePair<string, object?>("repoql.uri", uri.AbsoluteUri)
                 ]);
             var hash = await hasher.HashAsync(file, ct).ConfigureAwait(false);
-            metrics.IncrementHash();
+            _metrics.IncrementHash();
             var digest = "xxh64:" + Convert.ToHexString(hash).ToLowerInvariant();
             hashAct?.SetTag("file.size", file.Length);
             hashAct?.SetTag("file.hash", digest);
@@ -1022,7 +1030,7 @@ public class RepositoryIndexer(
             // If same digest already pending, skip
             if (_pendingDigestByUri.TryGetValue(key, out var pend) && string.Equals(pend, digest, StringComparison.Ordinal))
             {
-                try { metrics.RecordFileProcessed("unknown/unknown", "skipped_pending", file.Length, 0); } catch { }
+                try { _metrics.RecordFileProcessed("unknown/unknown", "skipped_pending", file.Length, 0); } catch { }
                 try { chain.RootActivity?.SetTag("repoql.status", "skipped_pending"); } catch { }
                 hashAct?.SetTag("repoql.status", "skipped_pending");
                 StopRootIfPresent(key);
@@ -1041,7 +1049,7 @@ public class RepositoryIndexer(
                     }, ct).ConfigureAwait(false);
                     if (existingArtifact is not null && string.Equals(existingArtifact.Digest, digest, StringComparison.Ordinal))
                     {
-                        metrics.RecordFileProcessed("unknown/unknown", "skipped_same", file.Length, 0);
+                        _metrics.RecordFileProcessed("unknown/unknown", "skipped_same", file.Length, 0);
                         chain.RootActivity?.SetTag("repoql.status", "skipped_same");
                         hashAct?.SetTag("repoql.status", "skipped_same");
                         StopRootIfPresent(key);

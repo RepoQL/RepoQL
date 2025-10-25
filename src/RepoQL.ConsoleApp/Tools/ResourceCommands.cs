@@ -25,15 +25,17 @@ internal class ResourceCommands
     }
     
     /// <summary>
-    /// Show x-ray summaries for repository documents filtered by a glob pattern and optional search terms.
+    /// Show x-ray summaries for repository documents filtered by a glob pattern plus optional search keywords/question.
     /// </summary>
     /// <param name="pattern">Glob pattern for document URIs (e.g., "src/**/*.md").</param>
-    /// <param name="search">Optional search terms; uses the file_search(q) macro for ranking.</param>
+    /// <param name="keywords">Literal filename or symbol filters passed to file_search keywords.</param>
+    /// <param name="question">Optional natural-language question passed to file_search.</param>
     /// <param name="detail">Level of detail: Headline, Summary, Structure, or Full.</param>
     /// <param name="limit">Display limit (default 100). Query returns all; output notes how many were omitted.</param>
     public async Task Xray(
         [Argument] string pattern,
-        string? search = null,
+        string? keywords = null,
+        string? question = null,
         LevelOfDetail? detail = null,
         int limit = 100,
         CancellationToken cancel = default)
@@ -45,8 +47,12 @@ internal class ResourceCommands
 
         var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
+        var keywordsText = keywords?.Trim();
+        var questionText = question?.Trim();
+        var hasSearch = !string.IsNullOrEmpty(keywordsText) || !string.IsNullOrEmpty(questionText);
+
         // Base query: fetch uri + x-ray fields (not text_content). Do not limit at server; we handle display limit.
-        var sql = string.IsNullOrWhiteSpace(search) ?
+        var sql = !hasSearch ?
             """
             SELECT n.uri, a.headline, a.summary, a.structure
                           FROM node n
@@ -57,7 +63,7 @@ internal class ResourceCommands
             """ :
             """
             WITH s AS (
-                             SELECT doc_id, uri, score FROM file_search(?, k := 100000, max_cand := 5000)
+                             SELECT doc_id, uri, score FROM file_search(?, ?, k := 100000, max_cand := 5000)
                            )
                            SELECT n.uri, a.headline, a.summary, a.structure
                            FROM s
@@ -68,9 +74,19 @@ internal class ResourceCommands
                            ORDER BY s.score DESC, length(n.uri)
             """;
 
-        var result = string.IsNullOrWhiteSpace(search)
-            ? await client.ExecuteRawQueryAsync(sql, [likeFile, likeEmbed], null, cancel)
-            : await client.ExecuteRawQueryAsync(sql, [search!, likeFile, likeEmbed], null, cancel);
+        object?[] parameters;
+        if (!hasSearch)
+        {
+            parameters = [likeFile, likeEmbed];
+        }
+        else
+        {
+            var keywordParam = keywordsText ?? string.Empty;
+            object? questionParam = string.IsNullOrEmpty(questionText) ? null : questionText;
+            parameters = [keywordParam, questionParam, likeFile, likeEmbed];
+        }
+
+        var result = await client.ExecuteRawQueryAsync(sql, parameters, null, cancel);
 
         var total = (int)result.RowCount;
         var displayCount = Math.Min(total, limit);
@@ -89,8 +105,8 @@ internal class ResourceCommands
 
             if (topUris.Length > 0)
             {
-                var (sqlFull, parameters) = BuildFullContentQuery(topUris);
-                var fullResult = await client.ExecuteRawQueryAsync(sqlFull, parameters, null, cancel);
+                var (sqlFull, fullParameters) = BuildFullContentQuery(topUris);
+                var fullResult = await client.ExecuteRawQueryAsync(sqlFull, fullParameters, null, cancel);
                 fullMap = fullResult.Rows.ToDictionary(
                     r => r.Values[0].StringValue ?? string.Empty,
                     r => r.Values.Count > 1 ? r.Values[1].StringValue : null,

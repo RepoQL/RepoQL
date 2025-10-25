@@ -84,7 +84,7 @@ WHERE kind = 'document'
 -- Combine with semantic search to keep results under docs/
 WITH ranked AS (
   SELECT uri, score
-  FROM file_search('embedding runtime', k := 100)
+  FROM file_search('docs', 'Show embedding runtime references', k := 100)
 )
 SELECT *
 FROM ranked

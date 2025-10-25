@@ -22,8 +22,9 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     private int _startedReaders;
 
     /// <summary>Create a queue with a bounded capacity.</summary>
-    public WorkQueue(string name, int capacity, int readers, Func<T, Task> processItem, CancellationToken cancellationToken, Meter meter)
+    public WorkQueue(string name, int capacity, int readers, Func<T, Task> processItem, CancellationToken cancellationToken, Meter? meter = null)
     {
+        meter ??= new Meter($"RepoQL.WorkQueue.{name}");
         QueueDepth = meter.CreateObservableGauge(
             $"repoql.queue.{name}.depth",
             () => _depth,

@@ -210,13 +210,13 @@ SELECT * FROM xray_documents() WHERE file_name LIKE '%knowledge/%'
 ```
 
 Capsule: **IntentSearch** 🔍 Discovery
-file_search() blends lexical + fuzzy + semantic—express intent, not keywords.
+file_search(keywords, question) blends lexical + fuzzy + semantic—use `keywords` for literal file/symbol filters and `question` for natural-language intent.
 
 **Example**
 ```sql
 -- Natural language intent query
 SELECT uri, score, semn
-FROM file_search('authentication patterns JWT token refresh', k := 10)
+FROM file_search('auth token refresh', 'How do we handle authentication renewal?', k := 10)
 ORDER BY semn DESC NULLS LAST
 ```
 
@@ -227,7 +227,7 @@ JOIN semantic search with structural views for deep insight.
 ```sql
 -- Find top matches + see their structure
 WITH hits AS (
-  SELECT uri, score FROM file_search('consolidation synthesis', k := 5)
+  SELECT uri, score FROM file_search('Schema/Tables', 'Where do we combine lexical and semantic scores?', k := 5)
 )
 SELECT h.uri, mh.level, mh.text
 FROM hits h
@@ -253,12 +253,12 @@ semn (semantic score) fills progressively after startup—may be NULL initially.
 ```sql
 -- Order by semantic when ready, lexical fallback
 SELECT uri, COALESCE(semn, bm25n) as relevance
-FROM file_search('topic', k := 20)
+FROM file_search('projection docs', 'Explain semantic normalization defaults', k := 20)
 ORDER BY relevance DESC
 ```
 
 **☑ RepoQL Non-Negotiables**
-☑ Use xray_documents() for inventory, file_search() for discovery
+☑ Use xray_documents() for inventory, file_search(keywords, question) for discovery
 ☑ Set k parameter to limit breadth (k := 10, k := 50)
 ☑ Query duckdb_views() to discover available views
 ☑ Compose with JOINs—search → structure → insight
@@ -287,7 +287,7 @@ Search→Read→Edit. Always this order.
 ### Standard Tool Patterns
 
 Capsule: **CodeVsKnowledge** 🔀 Critical
-Code→search_code. Knowledge/docs→RepoQL file_search().
+Code→search_code. Knowledge/docs→RepoQL file_search(keywords, question).
 
 Capsule: **ExactVsConcept** 🎯 Search  
 Literal syntax→Grep. Semantic meaning→search_code.
@@ -339,7 +339,7 @@ Capsule: **QuickPicks** ⚡ Speed
 **Example**
 ```
 Find code concept → search_code
-Find knowledge/docs → RepoQL file_search()
+Find knowledge/docs → RepoQL file_search(keywords, question)
 Find exact syntax → Grep
 Browse directory → LS
 ```
@@ -349,7 +349,7 @@ Browse directory → LS
 ☑ Intent drives tool choice, not tool capabilities
 ☑ Search→Read→Edit, never reverse order
 ☑ Code concepts→search_code, knowledge→RepoQL
-☑ Exact text→Grep, semantic meaning→file_search()
+☑ Exact text→Grep, semantic meaning→file_search(keywords, question)
 ☑ Verify files exist before Write
 ☑ Use specialized tools over Bash commands
 

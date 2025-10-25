@@ -1,17 +1,11 @@
-﻿using System.Text.Json;
+﻿using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace RepoQL.Core.Embeddings;
 
 /// <summary>
-/// Minimal WordPiece tokenizer sufficient for the shipped BGE model.
-///
-/// It loads vocabulary and special token IDs from tokenizer.json and performs:
-/// - optional lowercasing
-/// - basic pre-tokenization on whitespace/punctuation
-/// - WordPiece segmentation with '##' continuation
-/// - Adds [CLS] and [SEP], pads to max length with [PAD]
-///
-/// This is not a complete HuggingFace tokenizer, but it’s adequate and fast for our usage.
+/// Minimal WordPiece tokenizer for BGE small v1.5.
+/// Preserves punctuation as standalone tokens. Adds [CLS]/[SEP] and pads to maxLen.
 /// </summary>
 internal sealed class WordPieceTokenizer
 {
@@ -29,100 +23,120 @@ internal sealed class WordPieceTokenizer
 
     public bool Lowercase => _lower;
     public int VocabSize => _vocab.Count;
-    public int ClsId => _clsId;
-    public int SepId => _sepId;
-    public int PadId => _padId;
-    public int UnkId => _unkId;
 
-    /// <summary>
-    /// Construct a tokenizer instance from a HuggingFace-style tokenizer.json payload.
-    /// </summary>
     public static WordPieceTokenizer LoadFromTokenizerJson(string json)
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
+
         var model = root.GetProperty("model");
         var vocab = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var kv in model.GetProperty("vocab").EnumerateObject())
-        {
             vocab[kv.Name] = kv.Value.GetInt32();
+
+        var lowercase = false;
+        if (root.TryGetProperty("normalizer", out var norm))
+        {
+            lowercase = FindLowercaseFlag(norm);
         }
-        var norm = root.TryGetProperty("normalizer", out var n) ? n : default;
-        var lowercase = norm.ValueKind == JsonValueKind.Object && norm.TryGetProperty("lowercase", out var lc) && lc.GetBoolean();
-        var cls = vocab.GetValueOrDefault("[CLS]", 101);
-        var sep = vocab.GetValueOrDefault("[SEP]", 102);
-        var pad = vocab.GetValueOrDefault("[PAD]", 0);
-        var unk = vocab.GetValueOrDefault("[UNK]", 100);
+
+        var cls = GetOr(vocab, "[CLS]", 101);
+        var sep = GetOr(vocab, "[SEP]", 102);
+        var pad = GetOr(vocab, "[PAD]", 0);
+        var unk = GetOr(vocab, "[UNK]", 100);
+
         return new WordPieceTokenizer(vocab, lowercase, cls, sep, pad, unk);
     }
 
-    /// <summary>
-    /// Encode text into token IDs and attention mask, including [CLS]/[SEP], padded to <paramref name="maxLen"/>.
-    /// </summary>
-    public EncodingResult Encode(string text, int maxLen)
+    private static int GetOr(Dictionary<string, int> d, string k, int def) => d.TryGetValue(k, out var v) ? v : def;
+
+    private static bool FindLowercaseFlag(JsonElement e)
     {
-        // Basic normalize
-        if (_lower) text = text.ToLowerInvariant();
-        var pieces = PreTokenize(text);
-        // Collect subword IDs excluding special tokens first
-        var subIds = new List<int>(maxLen);
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var p in e.EnumerateObject())
+                {
+                    if (string.Equals(p.Name, "lowercase", StringComparison.OrdinalIgnoreCase) && p.Value.ValueKind == JsonValueKind.True) return true;
+                    if (FindLowercaseFlag(p.Value)) return true;
+                }
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in e.EnumerateArray())
+                    if (FindLowercaseFlag(item)) return true;
+                break;
+        }
+        return false;
+    }
+
+    public EncodingResult Encode(string? text, int maxLen)
+    {
+        if (_lower && text is not null) text = text.ToLowerInvariant();
+
+        var pieces = PreTokenize(text ?? string.Empty);
+
+        var budget = Math.Max(2, maxLen);
+        var subIds = new List<int>(Math.Min(budget, 64));
+        var truncated = false;
+
         foreach (var piece in pieces)
         {
-            var remaining = Math.Max(0, maxLen - 2 - subIds.Count); // room for SEP
-            if (remaining == 0) break;
-            var consumed = WordPiece(piece, subIds, remaining);
-            if (consumed == 0) continue;
+            if (subIds.Count >= budget - 2) { truncated = true; break; }
+            var remaining = budget - 2 - subIds.Count;
+            var hitBudget = WordPiece(piece, subIds, remaining); // returns true if budget exhausted mid-token
+            if (hitBudget) { truncated = true; break; }
         }
 
-        var truncated = subIds.Count > maxLen - 2;
-        if (truncated)
-        {
-            subIds.RemoveRange(maxLen - 2, subIds.Count - (maxLen - 2));
-        }
+        // Assemble [CLS] + subIds + [SEP] + [PAD]*
+        var ids  = new int[budget];
+        var attn = new int[budget];
 
-        // Assemble final sequence: [CLS] + subIds + [SEP]
-        var ids = new List<int>(maxLen) { _clsId };
-        ids.AddRange(subIds);
-        ids.Add(_sepId);
+        var idx = 0;
+        ids[idx] = _clsId;  attn[idx] = 1; idx++;
+        for (var i = 0; i < subIds.Count && idx < budget - 1; i++, idx++) { ids[idx] = subIds[i]; attn[idx] = 1; }
+        ids[idx] = _sepId;  attn[idx] = 1; idx++;
 
-        // Build mask + pad
-        var attn = new List<int>(ids.Count);
-        for (var i = 0; i < ids.Count; i++) attn.Add(1);
-        while (ids.Count < maxLen) { ids.Add(_padId); attn.Add(0); }
-        return new EncodingResult([.. ids], [.. attn], truncated);
+        while (idx < budget) { ids[idx] = _padId; attn[idx] = 0; idx++; } // use PAD id explicitly
+
+        return new EncodingResult(ids, attn, truncated);
     }
 
-    /// <summary>
-    /// Very small pre-tokenizer: split on whitespace and punctuation.
-    /// </summary>
     private static IEnumerable<string> PreTokenize(string text)
     {
-        // Simple split on whitespace and punctuation (approximation of BertPreTokenizer)
-        var buff = new List<char>(32);
-        foreach (var ch in text)
+        var buf = new List<char>(32);
+        // ReSharper disable once ForCanBeConvertedToForeach - performance
+        for (var i = 0; i < text.Length; i++)
         {
-            if (char.IsWhiteSpace(ch) || char.IsPunctuation(ch))
+            var ch = text[i];
+            if (char.IsWhiteSpace(ch))
             {
-                if (buff.Count > 0) { yield return new string([.. buff]); buff.Clear(); }
+                if (buf.Count > 0) { yield return new string(CollectionsMarshal.AsSpan(buf)); buf.Clear(); }
                 continue;
             }
-            buff.Add(ch);
+            if (char.IsPunctuation(ch))
+            {
+                if (buf.Count > 0) { yield return new string(CollectionsMarshal.AsSpan(buf)); buf.Clear(); }
+                yield return ch.ToString();
+                continue;
+            }
+            buf.Add(ch);
         }
-        if (buff.Count > 0) yield return new string([.. buff]);
+        if (buf.Count > 0) yield return new string(CollectionsMarshal.AsSpan(buf));
     }
 
-    /// <summary>
-    /// Segment a token into WordPiece subwords, appending IDs into <paramref name="ids"/> until <paramref name="remaining"/> is exhausted.
-    /// </summary>
-    private int WordPiece(string token, List<int> ids, int remaining)
+    // WordPiece now signals budget exhaustion
+    private bool WordPiece(string token, List<int> ids, int remaining)
     {
-        if (string.IsNullOrEmpty(token) || remaining <= 0) return 0;
+        if (string.IsNullOrEmpty(token) || remaining <= 0) return remaining <= 0;
+
         var start = 0;
-        var consumed = 0;
-        while (start < token.Length && remaining > 0)
+        while (start < token.Length)
         {
+            if (remaining <= 0) return true; // hit budget mid-token
+
             var end = token.Length;
             var matchedId = -1;
+
             while (start < end)
             {
                 var sub = token.Substring(start, end - start);
@@ -130,17 +144,18 @@ internal sealed class WordPieceTokenizer
                 if (_vocab.TryGetValue(sub, out matchedId)) break;
                 end--;
             }
+
             if (matchedId == -1)
             {
-                ids.Add(_unkId);
-                consumed++;
+                ids.Add(_unkId); // consume the token with [UNK]
+                remaining--;
                 break;
             }
+
             ids.Add(matchedId);
             remaining--;
-            consumed++;
             start = end;
         }
-        return consumed;
+        return false; // did not hit budget mid-token
     }
 }

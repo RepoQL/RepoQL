@@ -74,14 +74,14 @@ internal class McpCommands
                                            ```
                                            
                                            Capsule: **IntentSearch** 🔍 Discovery
-                                           file_search() blends lexical + fuzzy + semantic—express intent, not keywords.
+                                           file_search(keywords, question) blends lexical + fuzzy + semantic—use keywords for literals, question for intent.
                                            
                                            **Example**
                                            
                                            ```sql
                                            -- Natural language intent query
                                            SELECT uri, score, semn
-                                           FROM file_search('authentication patterns JWT token refresh', k := 10)
+                                           FROM file_search('auth token refresh', 'How do we rotate JWT secrets?', k := 10)
                                            ORDER BY semn DESC NULLS LAST
                                            ```
                                            
@@ -93,7 +93,7 @@ internal class McpCommands
                                            ```sql
                                            -- Find top matches + see their structure
                                            WITH hits AS (
-                                             SELECT uri, score FROM file_search('authentication login', k := 5)
+                                             SELECT uri, score FROM file_search('login controller', 'Where is authentication validated?', k := 5)
                                            )
                                            SELECT h.uri, mh.level, mh.text
                                            FROM hits h
@@ -121,12 +121,12 @@ internal class McpCommands
                                            ```sql
                                            -- Order by semantic when ready, lexical fallback
                                            SELECT uri, COALESCE(semn, bm25n) as relevance
-                                           FROM file_search('topic', k := 20)
+                                           FROM file_search('docs', 'Show me references about this topic', k := 20)
                                            ORDER BY relevance DESC
                                            ```
                                            
                                            **☑ RepoQL Non-Negotiables**
-                                           ☑ Use artifact.headline, artifact.summary, artifact.structure for inventory, file_search() for discovery
+                                           ☑ Use artifact.headline, artifact.summary, artifact.structure for inventory, file_search(keywords, question) for discovery
                                            ☑ Set k parameter to limit breadth (k := 10, k := 50)
                                            ☑ Query duckdb_views() to discover available views
                                            ☑ Compose with JOINs—search → structure → insight

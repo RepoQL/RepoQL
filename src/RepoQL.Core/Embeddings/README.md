@@ -30,7 +30,7 @@ by default; if a compatible GPU is available, ONNX Runtime may use CUDA or DML.
 
 - Documents: embeddings are computed once the initial index scan reaches idle and
   stored in DuckDB table `document_embedding` as JSON arrays.
-- Queries: the search macro `file_search(q, ...)` computes a query vector on the fly
+- Queries: the search macro `file_search(keywords, question := NULL, ...)` computes a query vector on the fly
   via the `embed_text_json(text)` UDF.
 - The macro prepends the standard BGE retrieval instruction to queries:
   `"Represent this sentence for searching relevant passages: " || q`
@@ -80,7 +80,7 @@ SELECT COUNT(*) FROM document_embedding;
 SELECT embed_text_json('hello world');
 
 -- Search
-SELECT uri, score, semn FROM file_search('markdown', k := 5);
+SELECT uri, score, semn FROM file_search('docs', 'Find markdown references', k := 5);
 ```
 
 ## Configuration Summary

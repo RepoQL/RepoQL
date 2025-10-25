@@ -31,7 +31,8 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     public async Task<string> SummarizeAsync(
         [Description("Glob pattern for RepoURIs (default **/*).")] string? pattern = null,
         [Description("Optional wildcard pattern for media type, e.g. *csharp*.")] string? type = null,
-        [Description("Optional semantic search query to filter and rank results.")] string? query = null,
+        [Description("Literal filename or symbol filters passed to file_search keywords.")] string? keywords = null,
+        [Description("Optional natural-language question passed to file_search.")] string? question = null,
         [Description("Detail level: headline, summary, snippet.")] string? detail = null,
         [Description("Maximum results to return. Uses detail-specific defaults when not provided.")] int limit = 0,
         CancellationToken cancellationToken = default)
@@ -43,7 +44,7 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         var typePattern = NormalizeTypePattern(type);
 
         var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-        var rows = await QueryDocumentsAsync(client, likeFile, likeEmbed, typePattern, query, effectiveLimit, cancellationToken).ConfigureAwait(false);
+        var rows = await QueryDocumentsAsync(client, likeFile, likeEmbed, typePattern, keywords, question, effectiveLimit, cancellationToken).ConfigureAwait(false);
 
         if (rows.Count == 0)
         {
@@ -149,7 +150,8 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         string likeFile,
         string likeEmbed,
         string? typePattern,
-        string? query,
+        string? keywords,
+        string? question,
         int limit,
         CancellationToken cancellationToken)
     {
@@ -167,13 +169,18 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
             parameters.Add(typePattern);
         }
 
-        if (!string.IsNullOrWhiteSpace(query))
+        var keywordsText = keywords?.Trim();
+        var questionText = question?.Trim();
+        var hasKeywords = !string.IsNullOrEmpty(keywordsText);
+        var hasQuestion = !string.IsNullOrEmpty(questionText);
+
+        if (hasKeywords || hasQuestion)
         {
             var searchLimit = Math.Max(limit * 3, limit);
             sql = $"""
                 WITH search AS (
                     SELECT doc_id, score
-                    FROM file_search(?, k := {searchLimit}, max_cand := 5000)
+                    FROM file_search(?, ?, k := {searchLimit}, max_cand := 5000)
                 ),
                 filtered AS (
                     SELECT n.id,
@@ -199,7 +206,10 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
                 ORDER BY s.score DESC, lower(f.uri)
                 LIMIT ?
                 """;
-            parameters.Insert(0, query);
+            var keywordsParam = hasKeywords ? keywordsText! : string.Empty;
+            object? questionParam = hasQuestion ? questionText : null;
+            parameters.Insert(0, questionParam);
+            parameters.Insert(0, keywordsParam);
             parameters.Add(limit);
         }
         else

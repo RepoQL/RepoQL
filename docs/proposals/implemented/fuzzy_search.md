@@ -35,9 +35,9 @@
 
 **Surface**
 
-- A single macro `file_search(q, k := 50, max_cand := 5000)` returning `(doc_id, uri, bm25n, fuzzn, semn, score)`.
+- A single macro `file_search(keywords, question := NULL, k := 50, max_cand := 5000)` returning `(doc_id, uri, bm25n, fuzzn, semn, score)`.
 - Additional macros for specialized tasks (e.g., diagnostics, OpenAPI, owner lookup) compose the same building blocks without new tables.
-- CLI: extend the existing `xray` command with a search mode; consumers never choose "semantic" explicitly.
+- CLI: extend the existing `xray` command with a search mode that surfaces both `--keywords` and `--question`; consumers never choose "semantic" explicitly.
 
 ------
 

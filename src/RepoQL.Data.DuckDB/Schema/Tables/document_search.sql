@@ -26,15 +26,32 @@ ORDER BY sem DESC
 LIMIT CAST(top_k AS BIGINT)
 );
 
-CREATE OR REPLACE MACRO file_search(q, k := 50, max_cand := 5000) AS TABLE (
-WITH score_source AS (
+CREATE OR REPLACE MACRO file_search(
+    keywords,
+    question := NULL,
+    k := 50,
+    max_cand := 5000,
+    bm25_weight := 0.45,
+    fuzzy_weight := 0.45,
+    semantic_weight := 0.10
+) AS TABLE (
+WITH inputs AS (
     SELECT
-        ds.doc_id,
-        ds.uri,
-        CASE WHEN position(lower(q) in ds.search_key) > 0 THEN 1.0 ELSE 0.0 END AS bm25,
-        match_score(q, ds.search_key) AS fuzz
-    FROM document_search ds
+        coalesce(keywords, '') AS keywords_raw,
+        lower(coalesce(keywords, '')) AS keywords_lc,
+        CASE WHEN question IS NULL OR length(trim(question)) = 0 THEN NULL ELSE question END AS question_clean,
+        CASE WHEN length(trim(coalesce(keywords, ''))) = 0 THEN TRUE ELSE FALSE END AS keywords_empty
 ),
+     score_source AS (
+         SELECT
+             ds.doc_id,
+             ds.uri,
+             CASE WHEN position(inp.keywords_lc IN ds.search_key) > 0 THEN 1.0 ELSE 0.0 END AS bm25,
+             match_score(inp.keywords_lc, ds.search_key) AS fuzz
+         FROM document_search ds
+                  CROSS JOIN inputs inp
+         WHERE inp.keywords_empty = FALSE
+     ),
      ranked_lex AS (
          SELECT *
          FROM score_source
@@ -49,11 +66,25 @@ WITH score_source AS (
              zero_one(fuzz) AS fuzzn
          FROM ranked_lex
      ),
+     semantic_seed AS (
+         SELECT
+             CASE
+                 WHEN inp.question_clean IS NOT NULL THEN inp.question_clean
+                 WHEN inp.keywords_empty THEN NULL
+                 ELSE inp.keywords_raw
+                 END AS query_text
+         FROM inputs inp
+     ),
      qv AS (
-         SELECT embed_text_json('Represent this sentence for searching relevant passages: ' || q) AS qjson
+         SELECT embed_text_json(
+                        'Represent this sentence for searching relevant passages: ' || query_text) AS qjson
+         FROM semantic_seed
+         WHERE query_text IS NOT NULL
      ),
      sem_candidates AS (
-         SELECT * FROM vss_candidates((SELECT qjson FROM qv), max_cand)
+         SELECT vc.doc_id, vc.sem
+         FROM qv
+                  CROSS JOIN vss_candidates(qv.qjson, max_cand) AS vc
      ),
      sem_norm AS (
          SELECT doc_id, (sem / NULLIF(MAX(sem) OVER (), 0)) AS semn FROM sem_candidates
@@ -68,8 +99,15 @@ SELECT
     ds.uri,
     COALESCE(lx.bm25n, 0) AS bm25n,
     COALESCE(lx.fuzzn, 0) AS fuzzn,
-    COALESCE(sn.semn, NULL) AS semn,
-    combine(COALESCE(lx.bm25n, 0), COALESCE(lx.fuzzn, 0), sn.semn) AS score
+    sn.semn AS semn,
+    combine(
+            COALESCE(lx.bm25n, 0),
+            COALESCE(lx.fuzzn, 0),
+            sn.semn,
+            wb := bm25_weight,
+            wf := fuzzy_weight,
+            ws := semantic_weight
+        ) AS score
 FROM union_ids u
          LEFT JOIN normalized_lex lx USING(doc_id)
          LEFT JOIN sem_norm sn USING(doc_id)

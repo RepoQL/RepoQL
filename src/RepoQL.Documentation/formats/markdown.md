@@ -33,7 +33,7 @@ WHERE rule_id = 'markdown/broken-link'
 
 -- Search → structure
 WITH hits AS (
-  SELECT uri FROM file_search('auth patterns', k := 5)
+  SELECT uri FROM file_search('docs', 'Show markdown auth patterns', k := 5)
 )
 SELECT h.uri, mh.level, mh.text
 FROM hits h
