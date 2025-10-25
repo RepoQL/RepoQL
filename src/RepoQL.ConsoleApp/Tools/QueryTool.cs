@@ -71,6 +71,10 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              
                                              -- Search: find files by intent (lexical + semantic)
                                              SELECT uri, score FROM file_search('auth token', 'How do we refresh JWTs?', k := 10)
+
+                                             -- Path filters: glob_match(uri, 'docs/**/*.md') -> boolean
+                                             SELECT uri, score FROM file_search('markdown', 'Where is onboarding documented?', k := 10)
+                                             WHERE glob_match(uri, 'docs/**/*.md')
                                              
                                              -- Diagnostics: what's broken/flagged?
                                              SELECT * FROM annotations WHERE severity = 'error'

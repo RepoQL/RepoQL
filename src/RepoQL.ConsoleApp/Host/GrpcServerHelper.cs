@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using RepoQL.Contracts;
 using RepoQL.Protocol.Transport;
 
 namespace RepoQL.ConsoleApp.Host;
@@ -26,8 +27,7 @@ public static class GrpcServerHelper
             var socketDir = Path.Combine("/tmp", "repoql", repoHash);
             Directory.CreateDirectory(socketDir);
 
-            var repoqlDir = Path.Combine(repositoryPath, ".repoql");
-            Directory.CreateDirectory(repoqlDir);
+            var repoqlDir = RepoLocator.EnsureRepoqlDirectory(repositoryPath);
             var mappingFile = Path.Combine(repoqlDir, "socket.path");
 
             var socketPath = Path.Combine(socketDir, "repoql.sock");
@@ -35,8 +35,7 @@ public static class GrpcServerHelper
             return socketPath;
         }
 
-        var localRepoqlDir = Path.Combine(repositoryPath, ".repoql");
-        Directory.CreateDirectory(localRepoqlDir);
+        var localRepoqlDir = RepoLocator.EnsureRepoqlDirectory(repositoryPath);
         return Path.GetFullPath(Path.Combine(localRepoqlDir, "repoql.sock"));
     }
 

@@ -251,6 +251,7 @@ namespace RepoQL.Data.DuckDB;
         ExecuteSqlResource("Views/annotations.sql");
         ExecuteSqlResource("Macros/annotations_for.sql");
         ExecuteSqlResource("Macros/annotations_all.sql");
+        ExecuteSqlResource("Macros/glob_match.sql");
         ExecuteSqlResource("Tables/document_embedding.sql");
         ExecuteSqlResource("Macros/snippet.sql");
         // First create the node_primary_fragment macro as a workaround for the 6-parameter limitation
@@ -1507,13 +1508,28 @@ FROM (
 
     private bool TryExec(string sql)
     {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = sql;
         try
         {
-            Execute(sql);
+            cmd.ExecuteNonQuery();
             return true;
         }
-        catch
+        catch (Exception ex)
         {
+            // Some PRAGMAs (e.g., drop_fts_index on first run) are best-effort. Avoid surfacing them as errors.
+            try
+            {
+                var op = ExtractOperation(sql) ?? "SQL";
+                _logger.LogDebug(ex,
+                    "Ignored DuckDB best-effort command op={Operation} db={Db}",
+                    op,
+                    _databaseLabel ?? "(unknown)");
+            }
+            catch
+            {
+                // logging must not throw
+            }
             return false;
         }
     }

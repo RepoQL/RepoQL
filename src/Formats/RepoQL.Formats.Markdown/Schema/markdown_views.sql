@@ -37,4 +37,3 @@ FROM node l
 JOIN edge e ON e.destination_node_id = l.id AND e.type = 'HAS_PART' AND e.is_composition = TRUE
 JOIN node d ON e.source_node_id = d.id AND d.kind = 'document'
 LEFT JOIN span s ON l.span_id = s.id;
-EOF}

@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using RepoQL.Contracts;
 
 namespace RepoQL.Protocol.Transport;
 
@@ -89,13 +90,7 @@ public sealed class UnixSocketTransport
         // Socket should be colocated with the database in the repository
         // Default to current directory's .repoql folder
         var currentDir = Directory.GetCurrentDirectory();
-        var repoqlDir = Path.Combine(currentDir, ".repoql");
-
-        // Ensure .repoql directory exists
-        if (!Directory.Exists(repoqlDir))
-        {
-            Directory.CreateDirectory(repoqlDir);
-        }
+        var repoqlDir = RepoLocator.EnsureRepoqlDirectory(currentDir);
 
         return Path.Combine(repoqlDir, "repoql.sock");
     }

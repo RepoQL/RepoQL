@@ -241,6 +241,38 @@ public static class RepositoryUserDefinedFunctions
             }
         );
 
+        connection.RegisterScalarFunction<string, string, bool, string, bool>(
+            "repoql_glob_match",
+            (readers, writer, rowCount) =>
+            {
+                var uriReader = readers[0];
+                var patternReader = readers[1];
+                var ignoreReader = readers[2];
+                var defaultSchemeReader = readers[3];
+
+                for (ulong rowIndex = 0; rowIndex < rowCount; rowIndex++)
+                {
+                    var uri = uriReader.IsValid(rowIndex) ? uriReader.GetValue<string>(rowIndex) : null;
+                    var pattern = patternReader.IsValid(rowIndex) ? patternReader.GetValue<string>(rowIndex) : null;
+                    var ignoreCase = ignoreReader.IsValid(rowIndex) ? ignoreReader.GetValue<bool>(rowIndex) : true;
+                    var defaultScheme = defaultSchemeReader.IsValid(rowIndex)
+                        ? defaultSchemeReader.GetValue<string>(rowIndex)
+                        : null;
+
+                    var matched = RepoUriGlobMatcher.IsMatch(uri, pattern, ignoreCase, defaultScheme);
+                    if (matched is null)
+                    {
+                        writer.WriteNull(rowIndex);
+                    }
+                    else
+                    {
+                        writer.WriteValue(matched.Value, rowIndex);
+                    }
+                }
+            },
+            true
+        );
+
         // ------------------- Fragment builders -------------------
 
         connection.RegisterScalarFunction<int, int, string>(

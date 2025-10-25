@@ -223,6 +223,8 @@ COMMENT ON TABLE annotation IS 'Out-of-band facts (lint, outline, metrics, hints
 * `fragment_from_line_range(int? start, int? end) -> text?`
 * `fragment_from_char_range(bigint? start, bigint? end) -> text?`
 * `repository_uri_file_name(text) -> text?`
+* `glob_match(text uri, text pattern, bool ignore_case := TRUE, text default_scheme := 'file:///') -> boolean?`
+  * Git-style glob matching over RepoURIs (supports `**`, `?`, character classes, and `[!negated]`). When a pattern omits the scheme, `default_scheme` is prepended—callers can pass `'embed:///'` to target embedded docs.
 
 **Media type**
 

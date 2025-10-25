@@ -44,4 +44,58 @@ public static class RepoLocator
     {
         return Path.Combine(".repoql", dbFileName).Replace('\\', '/');
     }
+
+
+    /// <summary>
+    ///     Ensure the repository-local ".repoql" directory exists and return its absolute path.
+    ///     If a file already occupies that path it is renamed aside so RepoQL can create the required directory.
+    /// </summary>
+    public static string EnsureRepoqlDirectory(string repoRootPath)
+    {
+        if (string.IsNullOrWhiteSpace(repoRootPath))
+        {
+            throw new ArgumentException("Repository root path cannot be null or empty", nameof(repoRootPath));
+        }
+
+        var resolvedRoot = Path.GetFullPath(repoRootPath);
+        var repoqlDir = Path.Combine(resolvedRoot, ".repoql");
+
+        if (Directory.Exists(repoqlDir))
+        {
+            return repoqlDir;
+        }
+
+        if (File.Exists(repoqlDir))
+        {
+            var backup = BuildBackupPath(repoqlDir);
+            try
+            {
+                File.Move(repoqlDir, backup);
+            }
+            catch (Exception ex)
+            {
+                throw new IOException(
+                    $"A file named .repoql exists at {repoqlDir}, but RepoQL needs that path to be a directory. " +
+                    "Delete or move the file and rerun the command.",
+                    ex);
+            }
+        }
+
+        Directory.CreateDirectory(repoqlDir);
+        return repoqlDir;
+    }
+
+    private static string BuildBackupPath(string originalPath)
+    {
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
+        var candidate = $"{originalPath}.bak-{timestamp}";
+        var suffix = 0;
+        while (Directory.Exists(candidate) || File.Exists(candidate))
+        {
+            suffix++;
+            candidate = $"{originalPath}.bak-{timestamp}-{suffix}";
+        }
+
+        return candidate;
+    }
 }

@@ -1,5 +1,7 @@
 # Proposal: `glob_match` UDF for RepoQL
 
+> **Status (October 2025):** Implemented as the `glob_match(...)` macro backed by the `repoql_glob_match` scalar UDF. CLI tools and docs now consume the macro directly.
+
 ## Summary
 Introduce a DuckDB scalar UDF `glob_match(uri, pattern, ignore_case := TRUE, default_scheme := 'file:///') -> BOOLEAN` that applies Git-style glob rules to RepoQL URIs. The helper keeps glob semantics consistent across CLI tools, macros, and ad-hoc SQL, reducing duplicated pattern translation logic and enabling future filters to stay server-side and deterministic.
 

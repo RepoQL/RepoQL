@@ -48,8 +48,7 @@ public static class RepoIndexerServiceCollectionExtensions
         // ensure .repoql directory exists and compute repo-relative db path
         var dbName = "index.duckdb";
         var dbRelPath = RepoLocator.DefaultDbRelativePath(dbName); // ".repoql/index.duckdb"
-        var dbDirFull = Path.Combine(resolvedRoot, ".repoql");
-        Directory.CreateDirectory(dbDirFull);
+        var dbDirFull = RepoLocator.EnsureRepoqlDirectory(resolvedRoot);
 
         // Stores - RepoStore should be given the repo root and the repo-relative DB path so it can exclude the DB
         services.AddSingleton(new Meter("RepoQL"));

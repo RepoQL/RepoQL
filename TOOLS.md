@@ -210,7 +210,7 @@ SELECT * FROM xray_documents() WHERE file_name LIKE '%knowledge/%'
 ```
 
 Capsule: **IntentSearch** 🔍 Discovery
-file_search(keywords, question) blends lexical + fuzzy + semantic—use `keywords` for literal file/symbol filters and `question` for natural-language intent.
+file_search(keywords, question) blends lexical + fuzzy + semantic—use `keywords` for literal file/symbol filters and `question` for natural-language intent. Filter by path with `glob_match(uri, 'docs/**/*.md')`.
 
 **Example**
 ```sql
