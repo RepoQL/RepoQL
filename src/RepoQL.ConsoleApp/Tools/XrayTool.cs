@@ -29,7 +29,7 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "xray"), Description(SummarizeInstructions)]
     
     public async Task<string> SummarizeAsync(
-        [Description("Glob pattern for RepoURIs (default **/*).")] string? pattern = null,
+        [Description("Git-style glob pattern for RepoURIs (default **/*).")] string? pattern = null,
         [Description("Optional wildcard pattern for media type, e.g. *csharp*.")] string? type = null,
         [Description("Literal filename or symbol filters passed to file_search keywords.")] string? keywords = null,
         [Description("Optional natural-language question passed to file_search.")] string? question = null,
@@ -39,12 +39,11 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     {
         var detailKind = ParseDetail(detail);
         var effectiveLimit = limit > 0 ? limit : GetDefaultLimit(detailKind);
-        var likeFile = BuildLikePattern("file:///", pattern);
-        var likeEmbed = BuildLikePattern("embed:///", pattern);
+        var globPattern = NormalizeGlobPattern(pattern);
         var typePattern = NormalizeTypePattern(type);
 
         var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-        var rows = await QueryDocumentsAsync(client, likeFile, likeEmbed, typePattern, keywords, question, effectiveLimit, cancellationToken).ConfigureAwait(false);
+        var rows = await QueryDocumentsAsync(client, globPattern, typePattern, keywords, question, effectiveLimit, cancellationToken).ConfigureAwait(false);
 
         if (rows.Count == 0)
         {
@@ -101,33 +100,8 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         _ => 100
     };
 
-    private static string BuildLikePattern(string schemePrefix, string? glob)
-    {
-        var pattern = string.IsNullOrWhiteSpace(glob) ? "**/*" : glob.Trim();
-        pattern = pattern.Replace('\\', '/');
-        if (!pattern.StartsWith("file:///", StringComparison.OrdinalIgnoreCase) &&
-            !pattern.StartsWith("embed:///", StringComparison.OrdinalIgnoreCase))
-        {
-            if (pattern.StartsWith("/"))
-            {
-                pattern = pattern.TrimStart('/');
-            }
-            pattern = schemePrefix + pattern;
-        }
-
-        pattern = pattern.Replace("**", "%");
-        pattern = pattern.Replace("*", "%");
-        pattern = pattern.Replace("?", "_");
-        if (!pattern.Contains('%') && !pattern.Contains('_'))
-        {
-            if (!pattern.EndsWith('%'))
-            {
-                pattern += "%";
-            }
-        }
-
-        return pattern.ToLowerInvariant();
-    }
+	private static string? NormalizeGlobPattern(string? glob) =>
+		string.IsNullOrWhiteSpace(glob) ? null : glob.Trim();
 
     private static string? NormalizeTypePattern(string? type)
     {
@@ -145,100 +119,109 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         return t;
     }
 
-    private async Task<List<DocumentRow>> QueryDocumentsAsync(
-        IRepoQlClient client,
-        string likeFile,
-        string likeEmbed,
-        string? typePattern,
-        string? keywords,
-        string? question,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        var parameters = new List<object?>();
-        string sql;
+	private async Task<List<DocumentRow>> QueryDocumentsAsync(
+		IRepoQlClient client,
+		string? globPattern,
+		string? typePattern,
+		string? keywords,
+		string? question,
+		int limit,
+		CancellationToken cancellationToken)
+	{
+		var whereClauses = new List<string> { "n.kind = 'document'" };
+		var whereParameters = new List<object?>();
+		if (!string.IsNullOrEmpty(globPattern))
+		{
+			whereClauses.Add("(glob_match(n.uri, ?, default_scheme := 'file:///') OR glob_match(n.uri, ?, default_scheme := 'embed:///'))");
+			whereParameters.Add(globPattern);
+			whereParameters.Add(globPattern);
+		}
 
-        var where = new StringBuilder();
-        where.Append("(lower(n.uri) LIKE ? ESCAPE '\\' OR lower(n.uri) LIKE ? ESCAPE '\\')");
-        parameters.Add(likeFile);
-        parameters.Add(likeEmbed);
+		if (!string.IsNullOrWhiteSpace(typePattern))
+		{
+			whereClauses.Add("a.media_type ILIKE ?");
+			whereParameters.Add(typePattern);
+		}
 
-        if (!string.IsNullOrWhiteSpace(typePattern))
-        {
-            where.Append(" AND a.media_type ILIKE ?");
-            parameters.Add(typePattern);
-        }
+		var parameters = new List<object?>();
+		string sql;
 
-        var keywordsText = keywords?.Trim();
-        var questionText = question?.Trim();
-        var hasKeywords = !string.IsNullOrEmpty(keywordsText);
-        var hasQuestion = !string.IsNullOrEmpty(questionText);
+		const string WherePlaceholder = "{WHERE_CLAUSE}";
 
-        if (hasKeywords || hasQuestion)
-        {
-            var searchLimit = Math.Max(limit * 3, limit);
-            sql = $"""
-                WITH search AS (
-                    SELECT doc_id, score
-                    FROM file_search(?, ?, k := {searchLimit}, max_cand := 5000)
-                ),
-                filtered AS (
-                    SELECT n.id,
-                           n.uri,
-                           a.headline,
-                           a.summary,
-                           a.structure,
-                           a.media_type,
-                           a.byte_size
-                    FROM node n
-                    JOIN artifact a ON a.id = n.artifact_id
-                    WHERE n.kind = 'document' AND {where}
-                )
-                SELECT f.uri,
-                       f.headline,
-                       f.summary,
-                       f.structure,
-                       f.media_type,
-                       f.byte_size,
-                       s.score
-                FROM filtered f
-                JOIN search s ON s.doc_id = f.id
-                ORDER BY s.score DESC, lower(f.uri)
-                LIMIT ?
-                """;
-            var keywordsParam = hasKeywords ? keywordsText! : string.Empty;
-            object? questionParam = hasQuestion ? questionText : null;
-            parameters.Insert(0, questionParam);
-            parameters.Insert(0, keywordsParam);
-            parameters.Add(limit);
-        }
-        else
-        {
-            sql = $"""
-                SELECT n.uri,
-                       a.headline,
-                       a.summary,
-                       a.structure,
-                       a.media_type,
-                       a.byte_size,
-                       NULL AS score
-                FROM node n
-                JOIN artifact a ON a.id = n.artifact_id
-                WHERE n.kind = 'document' AND {where}
-                ORDER BY
-                    CASE
-                        WHEN lower(n.uri) LIKE 'embed://%' THEN 0
-                        WHEN lower(n.uri) LIKE 'file:///readme%' THEN 1
-                        WHEN lower(n.uri) LIKE 'file:///docs/%' THEN 2
-                        ELSE 3
-                    END,
-                    lower(n.uri)
-                LIMIT ?
-                """;
-            parameters.Add(limit);
-        }
+		var keywordsText = keywords?.Trim();
+		var questionText = question?.Trim();
+		var hasKeywords = !string.IsNullOrEmpty(keywordsText);
+		var hasQuestion = !string.IsNullOrEmpty(questionText);
 
-        var response = await client.ExecuteRawQueryAsync(sql, parameters.ToArray(), null, cancellationToken).ConfigureAwait(false);
+		if (hasKeywords || hasQuestion)
+		{
+			var searchLimit = Math.Max(limit * 3, limit);
+			sql = $"""
+				WITH search AS (
+					SELECT doc_id, score
+					FROM file_search(?, ?, k := {searchLimit}, max_cand := 5000)
+				),
+				filtered AS (
+					SELECT n.id,
+						   n.uri,
+						   a.headline,
+						   a.summary,
+						   a.structure,
+						   a.media_type,
+						   a.byte_size
+					FROM node n
+					JOIN artifact a ON a.id = n.artifact_id
+					WHERE {WherePlaceholder}
+				)
+				SELECT f.uri,
+					   f.headline,
+					   f.summary,
+					   f.structure,
+					   f.media_type,
+					   f.byte_size,
+					   s.score
+				FROM filtered f
+				JOIN search s ON s.doc_id = f.id
+				ORDER BY s.score DESC, lower(f.uri)
+				LIMIT ?
+				""";
+			var keywordsParam = hasKeywords ? keywordsText! : string.Empty;
+			object? questionParam = hasQuestion ? questionText : null;
+			parameters.Add(keywordsParam);
+			parameters.Add(questionParam);
+			parameters.AddRange(whereParameters);
+			parameters.Add(limit);
+		}
+		else
+		{
+			sql = $"""
+				SELECT n.uri,
+					   a.headline,
+					   a.summary,
+					   a.structure,
+					   a.media_type,
+					   a.byte_size,
+					   NULL AS score
+				FROM node n
+				JOIN artifact a ON a.id = n.artifact_id
+				WHERE {WherePlaceholder}
+				ORDER BY
+					CASE
+						WHEN lower(n.uri) LIKE 'embed://%' THEN 0
+						WHEN lower(n.uri) LIKE 'file:///readme%' THEN 1
+						WHEN lower(n.uri) LIKE 'file:///docs/%' THEN 2
+						ELSE 3
+					END,
+					lower(n.uri)
+				LIMIT ?
+				""";
+			parameters.AddRange(whereParameters);
+			parameters.Add(limit);
+		}
+
+		sql = sql.Replace(WherePlaceholder, string.Join(" AND ", whereClauses));
+
+		var response = await client.ExecuteRawQueryAsync(sql, parameters.ToArray(), null, cancellationToken).ConfigureAwait(false);
         var list = new List<DocumentRow>(response.Rows.Count);
         foreach (var row in response.Rows)
         {

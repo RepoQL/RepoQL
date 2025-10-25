@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using RepoQL.Core;
+using RepoQL.Contracts;
 
 namespace RepoQL.Tests;
 

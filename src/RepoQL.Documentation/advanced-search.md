@@ -8,25 +8,30 @@ Quick use
 ```sql
 -- Top files by intent (question only)
 SELECT uri, score, semn
-FROM file_search('', 'Where are mermaid diagram classes defined?', k := 10);
+FROM file_search('', question := 'Where are mermaid diagram classes defined?', k := 10);
 
 -- Semantics-first view combining literals + question
 SELECT uri, semn, score
-FROM file_search('embedding runtime', 'Why is there a broadcast error?', k := 20)
+FROM file_search('embedding runtime', question := 'Why is there a broadcast error?', k := 20)
 ORDER BY semn DESC NULLS LAST;
 
 -- Filter by file type/location
 WITH r AS (
-  SELECT doc_id, uri, score FROM file_search('frontmatter docs', NULL, k := 50)
+  SELECT doc_id, uri, score FROM file_search('frontmatter docs', question := NULL, k := 50)
 )
 SELECT r.uri, r.score
 FROM r JOIN document_search ds USING (doc_id)
 WHERE lower(ds.basename) LIKE '%.md' AND lower(ds.dirname) LIKE '%/docs%';
 
+-- Use glob_match for path filters
+SELECT uri, score
+FROM file_search('embeddings', question := 'Where do we register DuckDB functions?', k := 20)
+WHERE glob_match(uri, 'src/**/*.cs');
+
 -- Headings for top hits
 WITH s AS (
   SELECT doc_id, uri, ROW_NUMBER() OVER (ORDER BY score DESC) rn
-  FROM file_search('mermaid graph', 'Show class diagrams', k := 10)
+  FROM file_search('mermaid graph', question := 'Show class diagrams', k := 10)
 )
 SELECT s.uri, h.level, h.text
 FROM s JOIN markdown_headings h ON h.document_uri = s.uri

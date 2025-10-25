@@ -138,20 +138,25 @@ Use `keywords` for literal fragments (paths, symbols) and `question` for natural
 ```sql
 -- Top files by intent (question only)
 SELECT uri, score, semn
-FROM file_search('', 'Where do we render mermaid diagram classes?', k := 10);
+FROM file_search('', question := 'Where do we render mermaid diagram classes?', k := 10);
 
 -- Semantics-first view mixing literals + question
 SELECT uri, semn, score
-FROM file_search('embedding runtime', 'Why does the embedding runtime broadcast error?', k := 20)
+FROM file_search('embedding runtime', question := 'Why does the embedding runtime broadcast error?', k := 20)
 ORDER BY semn DESC NULLS LAST;
 
 -- Filter by file type/location
 WITH r AS (
-  SELECT doc_id, uri, score FROM file_search('frontmatter docs', NULL, k := 50)
+  SELECT doc_id, uri, score FROM file_search('frontmatter docs', question := NULL, k := 50)
 )
 SELECT r.uri, r.score
 FROM r JOIN document_search ds USING (doc_id)
 WHERE lower(ds.basename) LIKE '%.md' AND lower(ds.dirname) LIKE '%/docs%';
+
+-- Filter paths directly via glob_match
+SELECT uri, score
+FROM file_search('markdown', question := 'Where is onboarding documented?', k := 10)
+WHERE glob_match(uri, 'docs/**/*.md');
 ```
 More info in embed:///advanced-search.md
 

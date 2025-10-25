@@ -2,13 +2,13 @@ using System.Collections.Concurrent;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace RepoQL.Core;
+namespace RepoQL.Contracts;
 
 /// <summary>
 /// Provides Git-style glob matching for RepoQL URIs. Normalizes inputs, infers
 /// default schemes, and caches compiled regular expressions for reuse.
 /// </summary>
-internal static class RepoUriGlobMatcher
+public static class RepoUriGlobMatcher
 {
     private const string DefaultScheme = "file:///";
 

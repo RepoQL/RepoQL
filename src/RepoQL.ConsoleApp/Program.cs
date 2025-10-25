@@ -85,7 +85,7 @@ internal class ExceptionLoggingFilter(ConsoleAppFramework.ConsoleAppFilter next,
         }
         catch (Exception e)
         {
-            console.WriteLine(e.GetBaseException().Message, Color.Red);
+            console.WriteLine(e.GetBaseException().ToString(), Color.Red);
         }
     }
 }

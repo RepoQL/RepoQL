@@ -42,8 +42,7 @@ internal class ResourceCommands
     {
         if (limit <= 0) limit = 100;
 
-        var likeFile = BuildLikePattern("file:///", pattern);
-        var likeEmbed = BuildLikePattern("embed:///", pattern);
+        var globPattern = NormalizeGlobPattern(pattern);
 
         var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
@@ -51,14 +50,22 @@ internal class ResourceCommands
         var questionText = question?.Trim();
         var hasSearch = !string.IsNullOrEmpty(keywordsText) || !string.IsNullOrEmpty(questionText);
 
+        var whereClauses = new List<string> { "n.kind='document'" };
+        var whereParameters = new List<object?>();
+        if (!string.IsNullOrEmpty(globPattern))
+        {
+            whereClauses.Add("(glob_match(n.uri, ?, default_scheme := 'file:///') OR glob_match(n.uri, ?, default_scheme := 'embed:///'))");
+            whereParameters.Add(globPattern);
+            whereParameters.Add(globPattern);
+        }
+
         // Base query: fetch uri + x-ray fields (not text_content). Do not limit at server; we handle display limit.
         var sql = !hasSearch ?
             """
             SELECT n.uri, a.headline, a.summary, a.structure
                           FROM node n
                           JOIN artifact a ON a.id = n.artifact_id
-                          WHERE n.kind='document'
-                            AND (lower(n.uri) LIKE ? ESCAPE '\' OR lower(n.uri) LIKE ? ESCAPE '\')
+                          WHERE {WHERE_CLAUSE}
                           ORDER BY lower(n.uri)
             """ :
             """
@@ -69,21 +76,21 @@ internal class ResourceCommands
                            FROM s
                            JOIN node n ON n.id = s.doc_id
                            JOIN artifact a ON a.id = n.artifact_id
-                           WHERE n.kind='document'
-                             AND (lower(n.uri) LIKE ? ESCAPE '\' OR lower(n.uri) LIKE ? ESCAPE '\')
+                           WHERE {WHERE_CLAUSE}
                            ORDER BY s.score DESC, length(n.uri)
             """;
+        sql = sql.Replace("{WHERE_CLAUSE}", string.Join(" AND ", whereClauses));
 
         object?[] parameters;
         if (!hasSearch)
         {
-            parameters = [likeFile, likeEmbed];
+            parameters = whereParameters.ToArray();
         }
         else
         {
             var keywordParam = keywordsText ?? string.Empty;
             object? questionParam = string.IsNullOrEmpty(questionText) ? null : questionText;
-            parameters = [keywordParam, questionParam, likeFile, likeEmbed];
+            parameters = [keywordParam, questionParam, .. whereParameters];
         }
 
         var result = await client.ExecuteRawQueryAsync(sql, parameters, null, cancel);
@@ -227,26 +234,6 @@ internal class ResourceCommands
          : displayCount <= 15 ? LevelOfDetail.Summary
          : LevelOfDetail.Headline;
 
-    private static string BuildLikePattern(string schemePrefix, string glob)
-    {
-        if (string.IsNullOrWhiteSpace(glob)) glob = "**";
-        var p = glob.Replace('\\', '/');
-        if (p.StartsWith("file:///", StringComparison.OrdinalIgnoreCase) || p.StartsWith("embed:///", StringComparison.OrdinalIgnoreCase))
-        {
-            // Keep as-typed
-        }
-        else
-        {
-            p = schemePrefix + p.TrimStart('/');
-        }
-
-        // Escape LIKE wildcards first, using \\ as ESCAPE
-        p = p.Replace("\\", "\\\\");
-        p = p.Replace("%", "\\%").Replace("_", "\\_");
-        // Translate glob to LIKE
-        p = p.Replace("**", "%");
-        p = p.Replace("*", "%");
-        p = p.Replace("?", "_");
-        return p.ToLowerInvariant();
-    }
+    private static string? NormalizeGlobPattern(string? glob) =>
+        string.IsNullOrWhiteSpace(glob) ? null : glob.Trim();
 }
