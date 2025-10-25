@@ -51,14 +51,11 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
         ArgumentNullException.ThrowIfNull(artifact);
         if (artifact.RepoUri is null) throw new InvalidOperationException("RepoUri required for csproj loader.");
 
-        string text;
-        await using (var fs = artifact.File.CreateReadStream())
-        using (var sr = new StreamReader(fs))
-        {
-            text = await sr.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        var digest = "xxh64:" + Convert.ToHexString(artifact.Hash ?? []).ToLowerInvariant();
+        var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
+            artifact.File,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var text = loaded.Text;
+        var digest = loaded.Digest;
 
         // Parse minimal project facts via XDocument (tolerant)
         var sdk = string.Empty;
@@ -125,7 +122,7 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
         var state = new CsProjState
         {
             Digest = digest,
-            Size = artifact.File.Length,
+            Size = loaded.ByteLength,
             MediaType = artifact.MediaType ?? CsProjType,
             StoreUri = artifact.RepoUri.ToString(),
             Sdk = sdk,

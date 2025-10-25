@@ -59,7 +59,10 @@ SELECT * FROM xray_items('md_heading,cs_class', 10)  -- kind, label, uri (with #
 SELECT * FROM snippet('file:///path#line=42', 3)  -- context lines before/after
 
 -- Search: find files by intent (lexical + semantic)
+-- CRITICAL: 'question' requires named parameter syntax (question := ...)
 SELECT uri, score FROM file_search('auth token', question := 'How do we refresh JWTs?', k := 10)
+SELECT uri, score FROM file_search('DuckDB', question := NULL, k := 5)  -- keywords only
+SELECT uri, score, semn FROM file_search('', question := 'How does indexing work?', k := 5)  -- semantic only
 
 -- Path filters: glob_match(uri, 'docs/**/*.md') -> boolean
 SELECT uri, score
@@ -72,6 +75,13 @@ SELECT * FROM annotations_for('file:///path', 'lint', 'warning')
 </ESSENTIAL_MACROS>
 
 The documentation for RepoQL can be read by querying - consider obtaining it to be the tutorial.
+
+<SEARCH_TIPS>
+Score components: score (final), semn (semantic), bm25n (exact match), fuzzn (typo tolerance)
+- If semn is NULL → embeddings not ready (SELECT COUNT(*) FROM document_embedding to check)
+- Keywords-only: Fast, exact. Question-only: Conceptual. Combined: Best of both.
+- Add WHERE glob_match(uri, 'pattern') to filter by path
+</SEARCH_TIPS>
 
 ## Examples
 

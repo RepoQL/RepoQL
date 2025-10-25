@@ -6,28 +6,43 @@ namespace RepoQL.Core;
 
 /// <summary>
 /// Bounded work queue that prevents the same item being enqueued when already pending or inflight.
+/// De-dupe is keyed by an optional equality comparer.
 /// </summary>
 #pragma warning disable CA1711
 public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
 #pragma warning restore CA1711
 {
     private readonly Channel<T> _channel;
-    private readonly ConcurrentDictionary<T, byte> _waitSet = new();
+    private readonly ConcurrentDictionary<T, byte> _waitSet;
     private readonly Task[] _readers;
+    private readonly IEqualityComparer<T> _comparer;
     private int _depth;
+    private int _busy;
+    private readonly int _readerCount;
+
     public int Depth => _depth;
     public int MaxDepth { get; }
+
     private TaskCompletionSource<bool> _idleTcs = NewCompletedTcs();
     private readonly TaskCompletionSource<bool> _workersReadyTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _startedReaders;
 
-    /// <summary>Create a queue with a bounded capacity.</summary>
-    public WorkQueue(string name, int capacity, int readers, Func<T, Task> processItem, CancellationToken cancellationToken, Meter? meter = null)
+    public WorkQueue(
+        string name,
+        int capacity,
+        int readers,
+        Func<T, Task> processItem,
+        CancellationToken cancellationToken,
+        Meter? meter = null,
+        IEqualityComparer<T>? comparer = null)
     {
+        _comparer = comparer ?? EqualityComparer<T>.Default;
+        _waitSet = new ConcurrentDictionary<T, byte>(_comparer);
+
         meter ??= new Meter($"RepoQL.WorkQueue.{name}");
         QueueDepth = meter.CreateObservableGauge(
             $"repoql.queue.{name}.depth",
-            () => _depth,
+            () => Volatile.Read(ref _depth),
             unit: "items",
             description: "Current queue size");
         QueueCapacity = meter.CreateObservableGauge(
@@ -37,48 +52,56 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             description: "Maximum queue capacity");
         WorkersActive = meter.CreateObservableGauge(
             $"repoql.workers.{name}.active",
-            () => _readers?.Count() ?? 0,
+            () => Volatile.Read(ref _busy),
             unit: "workers",
-            description: "Number of active worker threads");
+            description: "Number of workers currently processing items");
+
         MaxDepth = capacity;
-        var readerCount = readers;
+        _readerCount = Math.Max(1, readers);
+
         _channel = Channel.CreateBounded<T>(new BoundedChannelOptions(capacity)
         {
             FullMode = BoundedChannelFullMode.Wait,
-            SingleReader = readers == 1
+            SingleReader = _readerCount == 1
         });
 
-        _readers = Enumerable.Range(0, readers).Select(_ => Task.Run(async () =>
+        _readers = Enumerable.Range(0, _readerCount).Select(_ => Task.Run(async () =>
         {
             var startedNow = Interlocked.Increment(ref _startedReaders);
-            if (startedNow == readerCount)
+            if (startedNow == _readerCount)
                 _workersReadyTcs.TrySetResult(true);
-            await foreach (var item in _channel.Reader.ReadAllAsync())
+
+            await foreach (var item in _channel.Reader.ReadAllAsync(cancellationToken))
             {
-                await processItem(item);
-                Complete(item);
+                Interlocked.Increment(ref _busy);
+                try
+                {
+                    await processItem(item);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref _busy);
+                    Complete(item);
+                }
             }
         }, cancellationToken)).ToArray();
-
     }
 
-    public ObservableGauge<int> WorkersActive { get; set; }
-
-    public ObservableGauge<int> QueueCapacity { get; set; }
-
-    public ObservableGauge<int> QueueDepth { get; set; }
+    public ObservableGauge<int> WorkersActive { get; }
+    public ObservableGauge<int> QueueCapacity { get; }
+    public ObservableGauge<int> QueueDepth { get; }
 
     /// <summary>Enqueue an item if not already pending. Removes on failure to allow retries.</summary>
     public async ValueTask<bool> EnqueueAsync(T item, CancellationToken ct)
     {
         if (!_waitSet.TryAdd(item, 0))
             return false;
+
         try
         {
             var newDepth = Interlocked.Increment(ref _depth);
             if (newDepth == 1)
             {
-                // Transitioned from idle -> busy: create a fresh TCS
                 Volatile.Write(ref _idleTcs, new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
             }
             await _channel.Writer.WriteAsync(item, ct).ConfigureAwait(false);
@@ -99,7 +122,6 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             var newDepth = Interlocked.Decrement(ref _depth);
             if (newDepth == 0)
             {
-                // Transitioned to idle: complete the TCS
                 Volatile.Read(ref _idleTcs).TrySetResult(true);
             }
         }
@@ -107,27 +129,14 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
 
     public async ValueTask DisposeAsync()
     {
-        try
-        {
-            _channel.Writer.Complete();
-        }
-        catch (System.Threading.Channels.ChannelClosedException)
-        {
-            // Channel already closed; ignore to allow graceful disposal
-        }
+        try { _channel.Writer.Complete(); } catch { }
         await Task.WhenAll(_readers);
     }
 
-    /// <summary>
-    ///     Returns a task that completes the next time the queue becomes idle
-    ///     (i.e., has no pending or in-flight items). If already idle, completes immediately.
-    /// </summary>
+    /// <summary>Completes the next time the queue has no pending or in-flight items.</summary>
     public Task WhenIdleAsync() => Volatile.Read(ref _idleTcs).Task;
 
-    /// <summary>
-    ///     Returns a task that completes once all worker tasks have started running.
-    ///     Useful in tests to avoid races before enqueueing multiple items.
-    /// </summary>
+    /// <summary>Completes once all worker tasks have started running.</summary>
     public Task WorkersReadyAsync() => _workersReadyTcs.Task;
 
     private static TaskCompletionSource<bool> NewCompletedTcs()

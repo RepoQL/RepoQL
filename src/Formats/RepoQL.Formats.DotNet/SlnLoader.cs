@@ -64,14 +64,11 @@ public sealed class SlnLoader(ITemplateRenderer? renderer = null) : IFormatLoade
         ArgumentNullException.ThrowIfNull(artifact);
         if (artifact.RepoUri is null) throw new InvalidOperationException("RepoUri required for sln loader.");
 
-        string text;
-        await using (var fs = artifact.File.CreateReadStream())
-        using (var sr = new StreamReader(fs))
-        {
-            text = await sr.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        var digest = "xxh64:" + Convert.ToHexString(artifact.Hash ?? []).ToLowerInvariant();
+        var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
+            artifact.File,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var text = loaded.Text;
+        var digest = loaded.Digest;
 
         // Parse solution file
         var formatVersion = string.Empty;
@@ -166,7 +163,7 @@ public sealed class SlnLoader(ITemplateRenderer? renderer = null) : IFormatLoade
         var state = new SlnState
         {
             Digest = digest,
-            Size = artifact.File.Length,
+            Size = loaded.ByteLength,
             MediaType = artifact.MediaType ?? SlnType,
             StoreUri = artifact.RepoUri.ToString(),
             FormatVersion = formatVersion,

@@ -41,15 +41,18 @@ public class RepositoryIndexer(
     private readonly bool _ownsMeter = meter is null;
     private readonly IndexingMetrics _metrics = metrics ?? new IndexingMetrics();
     private readonly Meter _meter = meter ?? new Meter("RepoQL.Indexing");
+
     private WorkQueue<DiscoveredArtifact>? _classificationQueue;
     private WorkQueue<DiscoveredArtifact>? _parsingQueue;
     private WorkQueue<string>? _enrichmentQueue;
+
     private long _classificationScheduled;
     private long _classificationCompleted;
     private long _parsingScheduled;
     private long _parsingCompleted;
     private long _enrichmentScheduled;
     private long _enrichmentCompleted;
+
     private int _activeReindexScopes;
     private readonly object _observerLock = new();
     private readonly List<IObserver<IndexerEvent>> _observers = [];
@@ -57,18 +60,23 @@ public class RepositoryIndexer(
     private bool _isDisposed;
     private readonly IFileSystemWatcher _watcher = fileSystem.WatchAll();
     private readonly KeyedDebouncer<string> _classifyDebouncer = new(TimeSpan.FromMilliseconds(500));
+
     private readonly ConcurrentDictionary<string, byte> _inflightParses = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, (string Digest, DateTimeOffset At)> _recentByUri = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _pendingDigestByUri = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly ConcurrentQueue<DebugEvent> _recentEvents = new();
     private readonly ConcurrentQueue<Exception> _recentErrors = new();
+
     private readonly IGraphStore _storage = storage;
     private readonly SemaphoreSlim _storageGate = new(1, 1);
     private readonly IDatabaseWriter? _dbWriter = dbWriter;
-    private readonly int _writerCapacity = dbWriter is RepoQL.Data.DuckDB.SingleThreadedDatabaseWriter single ? single.QueueCapacity : 0;
+    private readonly int _writerCapacity = dbWriter?.QueueCapacity ?? 0;
+
     private readonly ConcurrentDictionary<string, DocumentModel> _documentCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly IAnalysisResultWriter _analysisWriter = analysisWriter ?? NullAnalysisResultWriter.Instance;
     private readonly string _repositoryRoot = string.IsNullOrWhiteSpace(repositoryRoot) ? Directory.GetCurrentDirectory() : repositoryRoot;
+
     private const int RecentCapacity = 64;
 
     // Correlate pipeline steps per document (by container URI). We link spans across steps using ActivityLinks.
@@ -209,10 +217,7 @@ public class RepositoryIndexer(
                 return container; // fallback
             return container[lastSlash..];
         }
-        catch
-        {
-            return uri.AbsoluteUri;
-        }
+        catch { return uri.AbsoluteUri; }
     }
 
     private static string? FileExtFromUri(RepoUri uri)
@@ -241,6 +246,15 @@ public class RepositoryIndexer(
         public object? GetService(Type serviceType) => null;
     }
 
+    // Equality: de-dup by RepoUri.AbsoluteUri (case-insensitive)
+    private sealed class ArtifactUriComparer : IEqualityComparer<DiscoveredArtifact>
+    {
+        public bool Equals(DiscoveredArtifact? x, DiscoveredArtifact? y)
+            => string.Equals(x?.RepoUri.AbsoluteUri, y?.RepoUri.AbsoluteUri, StringComparison.OrdinalIgnoreCase);
+        public int GetHashCode(DiscoveredArtifact obj)
+            => StringComparer.OrdinalIgnoreCase.GetHashCode(obj.RepoUri.AbsoluteUri);
+    }
+
     private async Task<bool> TryEnqueueClassificationAsync(DiscoveredArtifact artifact)
     {
         if (_classificationQueue is null)
@@ -248,14 +262,10 @@ public class RepositoryIndexer(
         try
         {
             var enqueued = await _classificationQueue.EnqueueAsync(artifact, _stopping.Token).ConfigureAwait(false);
-            if (enqueued)
-                Interlocked.Increment(ref _classificationScheduled);
+            if (enqueued) Interlocked.Increment(ref _classificationScheduled);
             return enqueued;
         }
-        catch (OperationCanceledException)
-        {
-            return false;
-        }
+        catch (OperationCanceledException) { return false; }
     }
 
     private async Task<bool> TryEnqueueParsingAsync(DiscoveredArtifact artifact)
@@ -265,100 +275,94 @@ public class RepositoryIndexer(
         try
         {
             var enqueued = await _parsingQueue.EnqueueAsync(artifact, _stopping.Token).ConfigureAwait(false);
-            if (enqueued)
-                Interlocked.Increment(ref _parsingScheduled);
+            if (enqueued) Interlocked.Increment(ref _parsingScheduled);
             return enqueued;
         }
-        catch (OperationCanceledException)
-        {
-            return false;
-        }
+        catch (OperationCanceledException) { return false; }
     }
 
     private async Task<bool> TryEnqueueEnrichmentAsync(string containerUri)
     {
-        if (_enrichmentQueue is null)
-            return false;
+        if (_enrichmentQueue is null) return false;
         try
         {
             var enqueued = await _enrichmentQueue.EnqueueAsync(containerUri, _stopping.Token).ConfigureAwait(false);
-            if (enqueued)
-                Interlocked.Increment(ref _enrichmentScheduled);
+            if (enqueued) Interlocked.Increment(ref _enrichmentScheduled);
             return enqueued;
         }
-        catch (OperationCanceledException)
-        {
-            return false;
-        }
+        catch (OperationCanceledException) { return false; }
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await WithStorageAsync(store => store.EnsureSchema(), cancellationToken).ConfigureAwait(false);
 
-        _classificationQueue = new("classification", 10000, 3, ClassifyFileAsync, cancellationToken, _meter);
-        _parsingQueue = new("parsing", 10000, 3, ParseAndStoreFileAsync, cancellationToken, _meter);
+        // Right-size concurrency
+        var cpu = Environment.ProcessorCount;
+        var clsReaders = Math.Min(cpu * 2, 16);
+        var prsReaders = Math.Min(cpu, 8);
 
-        {
-            var workerCount = Math.Max(Environment.ProcessorCount / 2, 1);
-            _enrichmentQueue = new("enrichment", 4000, workerCount, EnrichDocumentAsync, cancellationToken, _meter);
-        }
+        _classificationQueue = new("classification", 20000, clsReaders, ClassifyFileAsync, cancellationToken, _meter, new ArtifactUriComparer());
+        _parsingQueue       = new("parsing",        20000, prsReaders, ParseAndStoreFileAsync, cancellationToken, _meter, new ArtifactUriComparer());
 
-        await foreach (var entry in fileSystem.EnumerateAsync(cancellationToken))
+        // Defer or keep small; can be scaled higher post-initial sweep if needed
+        var enrichReaders = Math.Max(cpu / 2, 1);
+        _enrichmentQueue = new("enrichment", 4000, enrichReaders, EnrichDocumentAsync, cancellationToken, _meter, StringComparer.OrdinalIgnoreCase);
+
+        // Initial enumerate: backpressure by awaiting enqueue. Run in reindex fast-path.
+        using (EnterReindexScope())
         {
-            var artifact = new DiscoveredArtifact
+            await foreach (var entry in fileSystem.EnumerateAsync(cancellationToken))
             {
-                File = entry.File,
-                RepoUri = entry.Uri
-            };
-            if (!uriFilter.IncludeFile(artifact.RepoUri))
-                continue;
-            _metrics.IncrementDiscover();
-            RaiseEvent(new IRepositoryIndexer.ItemDiscoveredEvent(entry.File, artifact.RepoUri));
+                var artifact = new DiscoveredArtifact { File = entry.File, RepoUri = entry.Uri };
+                if (!uriFilter.IncludeFile(artifact.RepoUri))
+                    continue;
 
-            // Initial enumeration should enqueue immediately so callers can wait deterministically
-            // via WaitForIdle(). Debouncing is applied only to watcher events below.
-            var a = artifact; // capture
-            _ = TryEnqueueClassificationAsync(a);
+                _metrics.IncrementDiscover();
+                RaiseEvent(new IRepositoryIndexer.ItemDiscoveredEvent(entry.File, artifact.RepoUri));
+                await TryEnqueueClassificationAsync(artifact).ConfigureAwait(false);
+            }
         }
 
-        _watcher.Subscribe(new FileSystemChangeObserver(change =>
+        _watcher.Subscribe(new FileSystemChangeObserver(async change =>
         {
             if (!uriFilter.IncludeFile(change.CurrentUri))
                 return;
 
-            // Queue for classification/indexing
-            var artifact = new DiscoveredArtifact
+            var changedKey = change.CurrentUri.AbsoluteUri.ToLowerInvariant();
+            _classifyDebouncer.Push(changedKey, async () =>
             {
-                File = change.File,
-                RepoUri = change.CurrentUri
-            };
-            var changedKey = artifact.RepoUri.AbsoluteUri.ToLowerInvariant();
-            _classifyDebouncer.Push(changedKey, () =>
-            {
-                // Raise appropriate event based on the change type
-                // Record FS event metric
                 _metrics.RecordFsEvent(change.Kind.ToString());
+
                 switch (change.Kind)
                 {
                     case ResourceEvent.Created:
                         RaiseEvent(new IRepositoryIndexer.ItemDiscoveredEvent(change.File, change.CurrentUri));
+                        await TryEnqueueClassificationAsync(new DiscoveredArtifact { File = change.File, RepoUri = change.CurrentUri }).ConfigureAwait(false);
                         break;
+
                     case ResourceEvent.Updated:
                         RaiseEvent(new IRepositoryIndexer.ItemUpdatedEvent(change.File, change.CurrentUri));
+                        await TryEnqueueClassificationAsync(new DiscoveredArtifact { File = change.File, RepoUri = change.CurrentUri }).ConfigureAwait(false);
                         break;
+
                     case ResourceEvent.Deleted:
                         RaiseEvent(new IRepositoryIndexer.ItemDeletedEvent(change.File, change.CurrentUri));
+                        // Requires IGraphStore.DeleteDocumentByUri. If missing, implement or emulate via ReplaceDocumentContent with empty children.
+                        await WithStorageAsync(s => s.DeleteDocumentByUri(change.CurrentUri), _stopping.Token).ConfigureAwait(false);
+                        StopRootIfPresent(changedKey);
                         break;
+
                     case ResourceEvent.Moved:
-                        RaiseEvent(new IRepositoryIndexer.ItemMovedEvent(change.File, change.CurrentUri,
-                            change.PreviousUri!));
+                        RaiseEvent(new IRepositoryIndexer.ItemMovedEvent(change.File, change.CurrentUri, change.PreviousUri!));
+                        // Preferred: atomic move in store. If unavailable, delete old then index new.
+                        await WithStorageAsync(s => s.MoveDocumentUri(change.PreviousUri!, change.CurrentUri), _stopping.Token).ConfigureAwait(false);
+                        await TryEnqueueClassificationAsync(new DiscoveredArtifact { File = change.File, RepoUri = change.CurrentUri }).ConfigureAwait(false);
                         break;
+
                     default:
                         throw new ArgumentOutOfRangeException(nameof(change));
                 }
-                var a = artifact; // capture
-                _ = TryEnqueueClassificationAsync(a);
             });
         }, ReportError));
         await _watcher.StartAsync(cancellationToken);
@@ -366,55 +370,33 @@ public class RepositoryIndexer(
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        if (_isDisposed)
-            return;
+        if (_isDisposed) return;
 
-        // Stop accepting new work
         await _stopping.CancelAsync();
 
-        // Wait for classification worker to complete
-        if (_classificationQueue is not null)
-            await _classificationQueue.DisposeAsync();
+        if (_classificationQueue is not null) await _classificationQueue.DisposeAsync();
+        if (_parsingQueue is not null)       await _parsingQueue.DisposeAsync();
+        if (_enrichmentQueue is not null)    await _enrichmentQueue.DisposeAsync();
 
-        // Wait for parsing worker to complete
-        if (_parsingQueue is not null)
-            await _parsingQueue.DisposeAsync();
-
-        if (_enrichmentQueue is not null)
-            await _enrichmentQueue.DisposeAsync();
-
-        // Stop and dispose the watcher
         await _watcher.StopAsync(CancellationToken.None);
         await _watcher.DisposeAsync();
 
-        // Notify all observers that the sequence is complete
+        List<IObserver<IndexerEvent>> snapshot;
         lock (_observerLock)
         {
-            foreach (var observer in _observers.ToList())
-            {
-                try
-                {
-                    observer.OnCompleted();
-                }
-                catch
-                {
-                    // Swallow exceptions
-                }
-            }
-
+            snapshot = _observers.ToList();
             _observers.Clear();
+        }
+        foreach (var o in snapshot)
+        {
+            try { o.OnCompleted(); } catch { }
         }
     }
 
     public IDisposable Subscribe(IObserver<IndexerEvent> observer)
     {
         ArgumentNullException.ThrowIfNull(observer);
-
-        lock (_observerLock)
-        {
-            _observers.Add(observer);
-        }
-
+        lock (_observerLock) { _observers.Add(observer); }
         return new Unsubscriber(_observers, observer);
     }
 
@@ -422,13 +404,9 @@ public class RepositoryIndexer(
     {
         await StopAsync(CancellationToken.None);
         _isDisposed = true;
-        // Dispose the cancellation token source
-        _stopping.Dispose();
         _storageGate.Dispose();
-        if (_ownsMetrics)
-            _metrics.Dispose();
-        if (_ownsMeter)
-            _meter.Dispose();
+        if (_ownsMetrics) _metrics.Dispose();
+        if (_ownsMeter)   _meter.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -436,25 +414,17 @@ public class RepositoryIndexer(
     {
         if (_classificationQueue is null)
             throw new InvalidOperationException("The indexer has not been started.");
+
         foreach (var file in files)
         {
-            // Best-effort: require callers to use the RepoUri overload for non-physical files.
-            // For physical files, attempt to build a canonical file:/// URI using absolute path.
-            RepoUri repoUri;
-            var physPath = file.PhysicalPath;
-            if (!string.IsNullOrEmpty(physPath))
-            {
-                // Normalize to file:/// absolute path under repo root is unknown here,
-                // so use file:/// with absolute path segments.
-                var abs = System.IO.Path.GetFullPath(physPath).Replace('\\', '/');
-                if (!abs.StartsWith('/')) abs = "/" + abs;
-                repoUri = RepoUri.Parse($"file://{abs}");
-            }
-            else
-            {
-                throw new NotSupportedException("QueueForIndexingAsync(IFileInfo) cannot infer RepoUri. Use QueueForIndexingAsync(RepoUri) instead.");
-            }
-            await ScheduleIfChangedAsync(file, repoUri, !skipUnchanged, _stopping.Token);
+            if (string.IsNullOrEmpty(file.PhysicalPath))
+                throw new NotSupportedException("QueueForIndexingAsync(IFileInfo) cannot infer RepoUri. Use QueueForIndexingAsync(RepoUri).");
+
+            var absPath = Path.GetFullPath(file.PhysicalPath!);
+            var uri = new Uri(absPath);                 // file:///... on all OSes
+            var repoUri = RepoUri.Parse(uri.AbsoluteUri);
+
+            await ScheduleIfChangedAsync(file, repoUri, !skipUnchanged, _stopping.Token).ConfigureAwait(false);
         }
     }
 
@@ -462,41 +432,30 @@ public class RepositoryIndexer(
     {
         if (_classificationQueue is null)
             throw new InvalidOperationException("The indexer has not been started.");
+
         foreach (var uri in uris)
         {
             var file = fileSystem.GetFile(uri);
-            await ScheduleIfChangedAsync(file, uri, !skipUnchanged, _stopping.Token);
+            await ScheduleIfChangedAsync(file, uri, !skipUnchanged, _stopping.Token).ConfigureAwait(false);
         }
     }
 
     public async Task WaitForIdle(CancellationToken cancellationToken = default)
     {
-        // If not started, nothing to wait for
-        if (_classificationQueue is null || _parsingQueue is null)
-            return;
+        if (_classificationQueue is null || _parsingQueue is null) return;
 
-        var readinessTasks = new List<Task>
-        {
-            _classificationQueue.WorkersReadyAsync(),
-            _parsingQueue.WorkersReadyAsync()
-        };
-        if (_enrichmentQueue is not null)
-            readinessTasks.Add(_enrichmentQueue.WorkersReadyAsync());
-
-        try { await Task.WhenAll(readinessTasks).ConfigureAwait(false); } catch { }
+        var readiness = new List<Task> { _classificationQueue.WorkersReadyAsync(), _parsingQueue.WorkersReadyAsync() };
+        if (_enrichmentQueue is not null) readiness.Add(_enrichmentQueue.WorkersReadyAsync());
+        try { await Task.WhenAll(readiness).ConfigureAwait(false); } catch { }
 
         while (true)
         {
-            var waitTasks = new List<Task>();
-            if (_classificationQueue.Depth > 0)
-                waitTasks.Add(_classificationQueue.WhenIdleAsync());
-            if (_parsingQueue.Depth > 0)
-                waitTasks.Add(_parsingQueue.WhenIdleAsync());
-            if (_enrichmentQueue is not null && _enrichmentQueue.Depth > 0)
-                waitTasks.Add(_enrichmentQueue.WhenIdleAsync());
+            var waits = new List<Task>();
+            if (_classificationQueue.Depth > 0) waits.Add(_classificationQueue.WhenIdleAsync());
+            if (_parsingQueue.Depth        > 0) waits.Add(_parsingQueue.WhenIdleAsync());
+            if (_enrichmentQueue is not null && _enrichmentQueue.Depth > 0) waits.Add(_enrichmentQueue.WhenIdleAsync());
 
-            if (waitTasks.Count > 0)
-                await Task.WhenAll(waitTasks).ConfigureAwait(false);
+            if (waits.Count > 0) await Task.WhenAll(waits).ConfigureAwait(false);
 
             if (_dbWriter is not null)
             {
@@ -505,11 +464,9 @@ public class RepositoryIndexer(
             }
 
             var classificationPending = _classificationQueue.Depth > 0;
-            var parsingPending = _parsingQueue.Depth > 0;
-            var enrichmentPending = _enrichmentQueue is not null && _enrichmentQueue.Depth > 0;
-
-            if (!classificationPending && !parsingPending && !enrichmentPending)
-                break;
+            var parsingPending        = _parsingQueue.Depth > 0;
+            var enrichmentPending     = _enrichmentQueue is not null && _enrichmentQueue.Depth > 0;
+            if (!classificationPending && !parsingPending && !enrichmentPending) break;
 
             await Task.Yield();
         }
@@ -519,42 +476,35 @@ public class RepositoryIndexer(
     {
         if ((stages & PipelineStage.Discovery) != 0 && _classificationQueue is not null)
         {
-            var task = _classificationQueue.WhenIdleAsync();
-            await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var t = _classificationQueue.WhenIdleAsync();
+            await t.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         if ((stages & PipelineStage.Parsing) != 0 && _parsingQueue is not null)
         {
-            var task = _parsingQueue.WhenIdleAsync();
-            await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var t = _parsingQueue.WhenIdleAsync();
+            await t.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         if ((stages & PipelineStage.Analysis) != 0 && _enrichmentQueue is not null)
         {
-            var task = _enrichmentQueue.WhenIdleAsync();
-            await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var t = _enrichmentQueue.WhenIdleAsync();
+            await t.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         if ((stages & PipelineStage.Writer) != 0)
-        {
             await WaitForWriterIdle(cancellationToken).ConfigureAwait(false);
-        }
     }
 
     public async Task WaitForAnyStageIdleAsync(PipelineStage stages, CancellationToken cancellationToken = default)
     {
         var waits = new List<Task>();
-        if ((stages & PipelineStage.Discovery) != 0 && _classificationQueue is not null)
-            waits.Add(_classificationQueue.WhenIdleAsync());
-        if ((stages & PipelineStage.Parsing) != 0 && _parsingQueue is not null)
-            waits.Add(_parsingQueue.WhenIdleAsync());
-        if ((stages & PipelineStage.Analysis) != 0 && _enrichmentQueue is not null)
-            waits.Add(_enrichmentQueue.WhenIdleAsync());
-        if ((stages & PipelineStage.Writer) != 0)
-            waits.Add(WaitForWriterIdle(cancellationToken));
+        if ((stages & PipelineStage.Discovery) != 0 && _classificationQueue is not null) waits.Add(_classificationQueue.WhenIdleAsync());
+        if ((stages & PipelineStage.Parsing)   != 0 && _parsingQueue is not null)       waits.Add(_parsingQueue.WhenIdleAsync());
+        if ((stages & PipelineStage.Analysis)  != 0 && _enrichmentQueue is not null)    waits.Add(_enrichmentQueue.WhenIdleAsync());
+        if ((stages & PipelineStage.Writer)    != 0)                                     waits.Add(WaitForWriterIdle(cancellationToken));
 
-        if (waits.Count == 0)
-            return;
+        if (waits.Count == 0) return;
 
         var awaited = waits.Select(t => t.WaitAsync(cancellationToken)).ToArray();
         await Task.WhenAny(awaited).ConfigureAwait(false);
@@ -594,10 +544,7 @@ public class RepositoryIndexer(
                     status.PendingCount + status.TotalProcessed,
                     status.TotalProcessed);
             }
-            catch (Exception ex)
-            {
-                ReportError(ex);
-            }
+            catch (Exception ex) { ReportError(ex); }
         }
 
         return new PipelineSnapshot(captured, discovery, parsing, analysis, writerSnapshot, IsReindexing);
@@ -611,10 +558,7 @@ public class RepositoryIndexer(
         return new ReindexScope(this);
     }
 
-    private void LeaveReindexScope()
-    {
-        Interlocked.Decrement(ref _activeReindexScopes);
-    }
+    private void LeaveReindexScope() => Interlocked.Decrement(ref _activeReindexScopes);
 
     public int ClassificationQueueDepth => _classificationQueue?.Depth ?? 0;
     public int ParsingQueueDepth => _parsingQueue?.Depth ?? 0;
@@ -637,13 +581,11 @@ public class RepositoryIndexer(
 
         try
         {
-            // Parent to previous step (classify preferred, else hash) to keep one distributed trace
             var corrKey = file.RepoUri.AbsoluteUri.ToLowerInvariant();
             ActivityContext parent = default;
             if (_traceChains.TryGetValue(corrKey, out var chain) && (chain.Classify is { } || chain.Hash is { }))
-            {
                 parent = chain.Classify ?? chain.Hash ?? default;
-            }
+
             using var parseActivity = Activity.StartActivity(
                 "repoql.parse",
                 ActivityKind.Internal,
@@ -654,22 +596,19 @@ public class RepositoryIndexer(
                     new KeyValuePair<string, object?>("repoql.uri", file.RepoUri.AbsoluteUri)
                 ],
                 links: null);
+
             if (parseActivity is not null)
             {
-                // Record file size if available and capture parse context for downstream parenting
                 try { parseActivity.SetTag("file.size", file.File.Length); } catch { }
-                try
-                {
-                    var c = _traceChains.GetOrAdd(corrKey, _ => new TraceChain());
-                    c.Parse = parseActivity.Context;
-                }
-                catch { }
+                try { _traceChains.AddOrUpdate(corrKey, _ => new TraceChain { Parse = parseActivity.Context }, (_, c) => { c.Parse = parseActivity.Context; return c; }); } catch { }
             }
+
             var descriptor = await ResolveDescriptorAsync(file, parseActivity).ConfigureAwait(false);
             var document = await descriptor.Loader.LoadAsync(file, _stopping.Token).ConfigureAwait(false);
             parseActivity?.SetTag("content.type", document.MediaType.ToString());
 
             var sw = Stopwatch.StartNew();
+
             if (descriptor.Materializer is null)
                 throw new InvalidOperationException($"Format '{document.MediaType}' does not provide a materializer.");
 
@@ -683,12 +622,8 @@ public class RepositoryIndexer(
                 parseActivity?.SetTag("repoql.spans.count", records.Spans.Length);
                 parseActivity?.SetTag("repoql.edges.count", records.Edges.Length);
             }
-            catch (Exception ex)
-            {
-                ReportError(ex);
-            }
+            catch (Exception ex) { ReportError(ex); }
 
-            // Prefer single-writer path when available
             if (_dbWriter is not null)
             {
                 var operationUri = file.RepoUri;
@@ -701,23 +636,11 @@ public class RepositoryIndexer(
                     ParentContext = parseActivity?.Context,
                     OnCommitted = (_, result) =>
                     {
-                        if (!result.Success)
-                            return Task.CompletedTask;
-                        try
-                        {
-                            if (parseActivity is not null)
-                            {
-                                var c = _traceChains.GetOrAdd(corrKey, _ => new TraceChain());
-                                c.Parse = parseActivity.Context;
-                            }
-                        }
-                        catch { }
+                        if (!result.Success) return Task.CompletedTask;
+                        try { _traceChains.AddOrUpdate(corrKey, _ => new TraceChain { Parse = parseActivity!.Context }, (_, c) => { c.Parse = parseActivity!.Context; return c; }); } catch { }
                         _documentCache[operationUri.AbsoluteUri.ToLowerInvariant()] = document;
                         ScheduleEnrichment(operationUri);
-                        if (_enrichmentQueue is null)
-                        {
-                            try { StopRootIfPresent(corrKey); } catch { }
-                        }
+                        if (_enrichmentQueue is null) { try { StopRootIfPresent(corrKey); } catch { } }
                         return Task.CompletedTask;
                     }
                 };
@@ -728,32 +651,21 @@ public class RepositoryIndexer(
                 await WriteDirectAsync(file, records).ConfigureAwait(false);
                 _documentCache[file.RepoUri.AbsoluteUri.ToLowerInvariant()] = document;
                 ScheduleEnrichment(file.RepoUri);
-                if (_enrichmentQueue is null)
-                {
-                    try { StopRootIfPresent(corrKey); } catch { }
-                }
+                if (_enrichmentQueue is null) { try { StopRootIfPresent(corrKey); } catch { } }
             }
 
             _metrics.IncrementIndex();
-
             try
             {
                 var bytes = file.File.Length;
                 _metrics.RecordFileProcessed(document.MediaType.ToString(), "indexed", bytes, sw.Elapsed.TotalMilliseconds);
             }
-            catch (Exception ex)
-            {
-                ReportError(ex);
-            }
+            catch (Exception ex) { ReportError(ex); }
 
             RaiseEvent(new IRepositoryIndexer.ItemIndexedEvent(file.File, file.RepoUri, document.MediaType));
-
             return;
         }
-        catch (Exception ex)
-        {
-            ReportError(ex);
-        }
+        catch (Exception ex) { ReportError(ex); }
         finally
         {
             _inflightParses.TryRemove(uriKey, out _);
@@ -768,70 +680,76 @@ public class RepositoryIndexer(
     {
         try
         {
+            var corrKey = item.RepoUri.AbsoluteUri.ToLowerInvariant();
+
+            // Deleted/missing: treat as removal, do not hash or parse
             if (!item.File.Exists)
             {
-                // Sometimes it takes a moment if the file is new
-                await Task.Yield();
+                RaiseEvent(new IRepositoryIndexer.ItemDeletedEvent(item.File, item.RepoUri));
+                await WithStorageAsync(s => s.DeleteDocumentByUri(item.RepoUri), _stopping.Token).ConfigureAwait(false);
+                StopRootIfPresent(corrKey);
+                return;
             }
-            // Hash is computed before enqueue; ensure present
+
+            // Reindex fast-path: skip hash + DB checks; classify and parse
+            if (IsReindexing)
+            {
+                var fastType = classifier.GetMediaType(item.File);
+                RaiseEvent(new IRepositoryIndexer.ItemClassifiedEvent(item.File, item.RepoUri, fastType));
+                item.MediaType = fastType;
+                await TryEnqueueParsingAsync(item).ConfigureAwait(false);
+                return;
+            }
+
+            ActivityContext parent = default;
+            // Hash if not already present (e.g., watcher paths)
             if (item.Hash is null)
             {
+                using var hashAct = Activity.StartActivity("repoql.hash", ActivityKind.Internal, parent,
+                    tags:
+                    [
+                        new KeyValuePair<string, object?>("url.full", item.RepoUri.AbsoluteUri),
+                        new KeyValuePair<string, object?>("repoql.uri", item.RepoUri.AbsoluteUri)
+                    ]);
                 item.Hash = await hasher.HashAsync(item.File, _stopping.Token);
                 _metrics.IncrementHash();
+                hashAct?.SetTag("file.size", item.File.Length);
+                hashAct?.SetTag("file.hash", "xxh64:" + Convert.ToHexString(item.Hash).ToLowerInvariant());
+                try { _traceChains.AddOrUpdate(corrKey, _ => new TraceChain { Hash = hashAct!.Context }, (_, c) => { c.Hash = hashAct!.Context; return c; }); } catch { }
             }
 
-            // Classify the item
+            // Classify
             var type = classifier.GetMediaType(item.File);
-
-            // Create classify activity with parent=hash (if present) to form a proper chain
-            var corrKey = item.RepoUri.AbsoluteUri.ToLowerInvariant();
-            ActivityContext parent = default;
-            if (_traceChains.TryGetValue(corrKey, out var existing) && existing.Hash is { } hc)
-                parent = hc;
-            using (var classify = Activity.StartActivity(
-                "repoql.classify",
-                ActivityKind.Internal,
-                parent,
-                tags:
-                [
-                    new KeyValuePair<string, object?>("url.full", item.RepoUri.AbsoluteUri),
-                    new KeyValuePair<string, object?>("repoql.uri", item.RepoUri.AbsoluteUri),
-                    new KeyValuePair<string, object?>("content.type", type.ToString())
-                ],
-                links: null))
+            using (var classify = Activity.StartActivity("repoql.classify", ActivityKind.Internal, parent,
+                       tags: new TagList
+                       {
+                           new KeyValuePair<string, object?>("url.full", item.RepoUri.AbsoluteUri),
+                           new KeyValuePair<string, object?>("repoql.uri", item.RepoUri.AbsoluteUri),
+                           new KeyValuePair<string, object?>("content.type", type.ToString())
+                       }))
             {
                 if (classify is not null)
                 {
-                    var chain = _traceChains.GetOrAdd(corrKey, _ => new TraceChain());
-                    chain.Classify = classify.Context;
-                    try
-                    {
-                        // Also tag the root with detected media info
-                        var baseType = $"{type.Type}/{type.Subtype}{(type.Suffix is null ? string.Empty : "+" + type.Suffix)}";
-                        chain.RootActivity?.SetTag("content.type", baseType);
-                    }
-                    catch { }
+                    try { _traceChains.AddOrUpdate(corrKey, _ => new TraceChain { Classify = classify.Context }, (_, c) => { c.Classify = classify.Context; return c; }); } catch { }
                 }
             }
 
-            // Raise item classified event
             RaiseEvent(new IRepositoryIndexer.ItemClassifiedEvent(item.File, item.RepoUri, type));
             item.MediaType = type;
 
-            // Recent dedup: if this exact (uri,digest) was handled very recently, skip
+            // Recent dedup guard (short window)
             var digest = "xxh64:" + Convert.ToHexString(item.Hash).ToLowerInvariant();
             var uriKey = item.RepoUri.AbsoluteUri.ToLowerInvariant();
             if (_recentByUri.TryGetValue(uriKey, out var seen)
                 && string.Equals(seen.Digest, digest, StringComparison.Ordinal)
                 && (DateTimeOffset.UtcNow - seen.At) < TimeSpan.FromSeconds(5))
             {
-                // Already processed very recently; record metric and skip
                 try { _metrics.RecordFileProcessed(type.ToString(), "skipped_recent", item.File.Length, 0); } catch { }
                 StopRootIfPresent(corrKey);
                 return;
             }
 
-            // Short-circuit: if document exists and artifact digest matches, skip parsing
+            // DB short-circuit
             try
             {
                 var existingArtifact = await WithStorageAsync(store =>
@@ -839,33 +757,20 @@ public class RepositoryIndexer(
                     var doc = store.GetDocumentByUri(item.RepoUri);
                     return doc?.ArtifactId is Guid aid ? store.GetArtifact(aid) : null;
                 }, _stopping.Token).ConfigureAwait(false);
+
                 if (existingArtifact is not null && string.Equals(existingArtifact.Digest, digest, StringComparison.Ordinal))
                 {
-                    // Already up-to-date: record metrics only (do not emit duplicate Indexed event)
-                    try
-                    {
-                        var bytes = item.File.Length;
-                        _metrics.RecordFileProcessed(type.ToString(), "skipped", bytes, 0);
-                    }
-                    catch { }
+                    try { _metrics.RecordFileProcessed(type.ToString(), "skipped", item.File.Length, 0); } catch { }
                     StopRootIfPresent(corrKey);
                     return;
                 }
             }
-            catch (Exception ex)
-            {
-                // Surface unexpected short-circuit failures to observers
-                ReportError(ex);
-            }
+            catch (Exception ex) { ReportError(ex); }
 
-            // Mark as recently scheduled and enqueue for parsing
             _recentByUri[uriKey] = (digest, DateTimeOffset.UtcNow);
             await TryEnqueueParsingAsync(item).ConfigureAwait(false);
         }
-        catch (Exception ex)
-        {
-            ReportError(ex);
-        }
+        catch (Exception ex) { ReportError(ex); }
         finally
         {
             if (!_stopping.IsCancellationRequested)
@@ -875,6 +780,13 @@ public class RepositoryIndexer(
 
     private async Task<FormatDescriptor> ResolveDescriptorAsync(DiscoveredArtifact artifact, Activity? activity)
     {
+        // Use the classified media type if available to avoid N× probing.
+        if (artifact.MediaType is not null && formatRegistry.TryResolveByMedia(artifact.MediaType, out var byMedia))
+        {
+            activity?.SetTag("repoql.loader", byMedia.Loader.GetType().Name);
+            return byMedia;
+        }
+
         foreach (var candidate in formatRegistry.Formats)
         {
             if (!await candidate.Loader.CanLoadAsync(artifact, _stopping.Token).ConfigureAwait(false))
@@ -888,27 +800,14 @@ public class RepositoryIndexer(
 
     private void ScheduleEnrichment(RepoUri uri)
     {
-        if (_enrichmentQueue is null)
-            return;
-
-        if (_stopping.IsCancellationRequested)
-            return;
+        if (_enrichmentQueue is null || _stopping.IsCancellationRequested) return;
 
         var value = uri.AbsoluteUri;
         _ = Task.Run(async () =>
         {
-            try
-            {
-                await TryEnqueueEnrichmentAsync(value).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // shutdown in progress
-            }
-            catch (Exception ex)
-            {
-                ReportError(ex);
-            }
+            try { await TryEnqueueEnrichmentAsync(value).ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { ReportError(ex); }
         });
     }
 
@@ -921,9 +820,7 @@ public class RepositoryIndexer(
             var corrKey = repoUri.AbsoluteUri.ToLowerInvariant();
             ActivityContext parent = default;
             if (_traceChains.TryGetValue(corrKey, out var chain))
-            {
                 parent = chain.Parse ?? chain.Classify ?? chain.Hash ?? default;
-            }
 
             using var enrich = Activity.StartActivity(
                 "repoql.enrich",
@@ -937,51 +834,36 @@ public class RepositoryIndexer(
                 links: null);
 
             var documentNode = await WithStorageAsync(store => store.GetDocumentByUri(repoUri), _stopping.Token).ConfigureAwait(false);
-            if (documentNode is null)
-                return;
+            if (documentNode is null) return;
 
             var cacheKey = repoUri.AbsoluteUri.ToLowerInvariant();
-            DocumentModel? document;
-            if (!_documentCache.TryRemove(cacheKey, out document) || document is null)
+            if (!_documentCache.TryRemove(cacheKey, out var document) || document is null)
             {
                 document = await analysisWorkspace.LoadAsync(repoUri, _stopping.Token).ConfigureAwait(false);
             }
+            if (document is null) return;
 
-            if (document is null)
-                return;
-
-            if (!formatRegistry.TryResolveByMedia(document.MediaType, out var descriptor))
-                return;
+            if (!formatRegistry.TryResolveByMedia(document.MediaType, out var descriptor)) return;
 
             var settings = settingsProvider?.Resolve(containerUri, document.MediaType, documentNode) ?? new AnalyzerSettings();
             var context = new AnalyzerContext(settings, _repositoryRoot, formatRegistry, analysisWorkspace);
 
             var results = new List<AnalysisResult>();
             await foreach (var result in descriptor.Analyzer.AnalyzeAsync(document, context, _stopping.Token).ConfigureAwait(false))
-            {
                 results.Add(result);
-            }
 
             if (results.Count > 0)
-            {
                 await _analysisWriter.WriteAsync(containerUri, results, _stopping.Token).ConfigureAwait(false);
-            }
 
             _metrics.EnrichmentDuration.Record(sw.Elapsed.TotalMilliseconds);
             if (enrich is not null)
             {
-                var c = _traceChains.GetOrAdd(corrKey, _ => new TraceChain());
-                c.Enrich = enrich.Context;
+                try { _traceChains.AddOrUpdate(corrKey, _ => new TraceChain { Enrich = enrich.Context }, (_, c) => { c.Enrich = enrich.Context; return c; }); } catch { }
                 StopRootIfPresent(corrKey);
             }
         }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            ReportError(ex);
-        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { ReportError(ex); }
         finally
         {
             if (!_stopping.IsCancellationRequested)
@@ -998,7 +880,7 @@ public class RepositoryIndexer(
         {
             var key = uri.AbsoluteUri.ToLowerInvariant();
             var chain = _traceChains.GetOrAdd(key, _ => new TraceChain());
-            // Ensure a root activity exists (name is just the file name, no path)
+
             if (chain.RootActivity is null)
             {
                 var fileName = FileNameFromUri(uri);
@@ -1027,7 +909,6 @@ public class RepositoryIndexer(
             hashAct?.SetTag("file.size", file.Length);
             hashAct?.SetTag("file.hash", digest);
 
-            // If same digest already pending, skip
             if (_pendingDigestByUri.TryGetValue(key, out var pend) && string.Equals(pend, digest, StringComparison.Ordinal))
             {
                 try { _metrics.RecordFileProcessed("unknown/unknown", "skipped_pending", file.Length, 0); } catch { }
@@ -1037,7 +918,6 @@ public class RepositoryIndexer(
                 return;
             }
 
-            // DB short-circuit: skip if existing doc digest matches
             if (!forceScheduling)
             {
                 try
@@ -1047,6 +927,7 @@ public class RepositoryIndexer(
                         var existing = store.GetDocumentByUri(uri);
                         return existing?.ArtifactId is Guid aid ? store.GetArtifact(aid) : null;
                     }, ct).ConfigureAwait(false);
+
                     if (existingArtifact is not null && string.Equals(existingArtifact.Digest, digest, StringComparison.Ordinal))
                     {
                         _metrics.RecordFileProcessed("unknown/unknown", "skipped_same", file.Length, 0);
@@ -1056,23 +937,16 @@ public class RepositoryIndexer(
                         return;
                     }
                 }
-                catch (Exception ex)
-                {
-                    ReportError(ex);
-                }
+                catch (Exception ex) { ReportError(ex); }
             }
             else
             {
                 chain.RootActivity?.SetTag("repoql.force_index", "true");
             }
 
-            // Mark pending and enqueue for classification with hash pre-set
             _pendingDigestByUri[key] = digest;
-            // Record hash context for later span links
-            if (hashAct is not null)
-            {
-                chain.Hash = hashAct.Context;
-            }
+            if (hashAct is not null) chain.Hash = hashAct.Context;
+
             var artifact = new DiscoveredArtifact { File = file, RepoUri = uri, Hash = hash };
             await TryEnqueueClassificationAsync(artifact).ConfigureAwait(false);
         }
@@ -1080,26 +954,17 @@ public class RepositoryIndexer(
         catch (Exception ex) { ReportError(ex); }
     }
 
-    /// <summary>
-    ///     Raises an indexer event to all subscribed observers.
-    /// </summary>
-    /// <param name="indexerEvent">The event to raise to all observers.</param>
+    /// <summary>Raises an indexer event to all observers. Notify outside the lock to avoid re-entrancy stalls.</summary>
     private void RaiseEvent(IndexerEvent indexerEvent)
     {
-        lock (_observerLock)
+        List<IObserver<IndexerEvent>> snapshot;
+        lock (_observerLock) { snapshot = _observers.ToList(); }
+
+        foreach (var observer in snapshot)
         {
-            foreach (var observer in _observers.ToList())
-            {
-                try
-                {
-                    observer.OnNext(indexerEvent);
-                }
-                catch
-                {
-                    // Swallow exceptions to prevent one observer from affecting others
-                }
-            }
+            try { observer.OnNext(indexerEvent); } catch { }
         }
+
         try
         {
             var etype = indexerEvent switch
@@ -1121,20 +986,15 @@ public class RepositoryIndexer(
     private void ReportError(Exception exception)
     {
         Logger.LogWarning(exception, exception.Message);
-        lock (_observerLock)
+
+        List<IObserver<IndexerEvent>> snapshot;
+        lock (_observerLock) { snapshot = _observers.ToList(); }
+
+        foreach (var observer in snapshot)
         {
-            foreach (var observer in _observers.ToList())
-            {
-                try
-                {
-                    observer.OnError(exception);
-                }
-                catch
-                {
-                    // Swallow exceptions to prevent one observer from affecting others
-                }
-            }
+            try { observer.OnError(exception); } catch { }
         }
+
         try
         {
             _recentErrors.Enqueue(exception);
@@ -1143,24 +1003,13 @@ public class RepositoryIndexer(
         catch { }
     }
 
-    private class FileSystemChangeObserver(Action<ResourceChange> onResourceChange, Action<Exception> onError)
+    private class FileSystemChangeObserver(Func<ResourceChange, Task> onResourceChange, Action<Exception> onError)
         : IObserver<ResourceChange>
     {
-        public void OnCompleted()
-        {
-        }
-
-        public void OnError(Exception error)
-        {
-            onError(error);
-        }
-
-        public void OnNext(ResourceChange value)
-        {
-            onResourceChange(value);
-        }
+        public void OnCompleted() { }
+        public void OnError(Exception error) => onError(error);
+        public void OnNext(ResourceChange value) => _ = onResourceChange(value);
     }
-
 
     private class Unsubscriber(List<IObserver<IndexerEvent>> observers, IObserver<IndexerEvent> observer) : IDisposable
     {
@@ -1174,7 +1023,6 @@ public class RepositoryIndexer(
     private sealed class ReindexScope(RepositoryIndexer owner) : IDisposable
     {
         private RepositoryIndexer? _owner = owner;
-
         public void Dispose()
         {
             var owner = Interlocked.Exchange(ref _owner, null);
@@ -1184,10 +1032,7 @@ public class RepositoryIndexer(
 
     private static void TrimRecent<T>(ConcurrentQueue<T> q)
     {
-        while (q.Count > RecentCapacity)
-        {
-            q.TryDequeue(out _);
-        }
+        while (q.Count > RecentCapacity) q.TryDequeue(out _);
     }
 
     private sealed record DebugEvent(DateTime AtUtc, string Type, string Uri);

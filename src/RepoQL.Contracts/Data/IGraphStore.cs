@@ -61,6 +61,16 @@ public interface IGraphStore : IDisposable
     Node? GetDocumentByUri(RepoUri uri);
 
     /// <summary>
+    ///     Delete document and all composed children by container URI.
+    /// </summary>
+    void DeleteDocumentByUri(RepoUri uri);
+
+    /// <summary>
+    ///     Update the document's container URI. Preserve identity and edges.
+    /// </summary>
+    void MoveDocumentUri(RepoUri oldUri, RepoUri newUri);
+
+    /// <summary>
     ///     Upsert a document node by its container URI. If a document already exists for the URI,
     ///     updates it in-place (preserving Id) and returns the saved node. Otherwise inserts and returns the new node.
     ///     The supplied <paramref name="document"/>'s properties (kind, artifact_id, properties, timestamps) are used.

@@ -70,14 +70,13 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
 
         var mediaType = artifact.MediaType ?? GraphQLMediaType;
 
-        string text;
-        await using (var fs = artifact.File.CreateReadStream())
-        using (var sr = new StreamReader(fs, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
-        {
-            text = await sr.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        var digest = "xxh64:" + Convert.ToHexString(artifact.Hash ?? throw new InvalidOperationException("Artifact hash missing")).ToLowerInvariant();
+        var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
+            artifact.File,
+            Encoding.UTF8,
+            detectEncodingFromByteOrderMarks: true,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var text = loaded.Text;
+        var digest = loaded.Digest;
         GraphQLDocument documentAst;
         try
         {
@@ -92,7 +91,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
             throw new InvalidOperationException($"Unexpected failure parsing GraphQL document: {artifact.File.Name}", ex);
         }
 
-        var state = BuildState(documentAst, artifact, digest, mediaType);
+        var state = BuildState(documentAst, artifact, digest, mediaType, loaded.ByteLength);
         var metadata = new Dictionary<string, object?>
         {
             [StateMetadataKey] = state
@@ -393,7 +392,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                || line.StartsWith("{", StringComparison.Ordinal);
     }
 
-    private static GraphQLDocumentState BuildState(GraphQLDocument document, DiscoveredArtifact artifact, string digest, SemanticMediaType mediaType)
+    private static GraphQLDocumentState BuildState(GraphQLDocument document, DiscoveredArtifact artifact, string digest, SemanticMediaType mediaType, long byteLength)
     {
         var operations = new List<GraphQLOperationInfo>();
         var fragments = new List<GraphQLFragmentInfo>();
@@ -533,7 +532,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
         {
             DocumentId = documentId,
             Digest = digest,
-            Size = artifact.File.Length,
+            Size = byteLength,
             MediaType = mediaType,
             StoreUri = artifact.RepoUri.ToString(),
             Operations = operations,

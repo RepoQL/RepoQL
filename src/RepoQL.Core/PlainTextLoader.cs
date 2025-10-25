@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json.Nodes;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
@@ -34,26 +35,33 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
         if (artifact.RepoUri is null)
             throw new InvalidOperationException("RepoUri required for plain text loader.");
 
-        string? text = null;
+        string text;
+        string digest;
+        long size;
         try
         {
-            await using var stream = artifact.File.CreateReadStream();
-            using var reader = new StreamReader(stream);
-            text = await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
+                artifact.File,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            text = loaded.Text;
+            digest = loaded.Digest;
+            size = loaded.ByteLength;
         }
         catch
         {
             text = string.Empty;
+            digest = ContentDigest.FromBytes(ReadOnlySpan<byte>.Empty);
+            size = artifact.File.Exists ? artifact.File.Length : 0;
         }
 
         var media = artifact.MediaType ?? PlainText;
         var metadata = new Dictionary<string, object?>
         {
-            ["plaintext.digest"] = "xxh64:" + Convert.ToHexString(artifact.Hash ?? []).ToLowerInvariant(),
-            ["plaintext.size"] = artifact.File.Length
+            ["plaintext.digest"] = digest,
+            ["plaintext.size"] = size
         };
 
-        return new DocumentModel(artifact.RepoUri, media, text ?? string.Empty, metadata: metadata);
+        return new DocumentModel(artifact.RepoUri, media, text, metadata: metadata);
     }
 
     public Records Materialize(DocumentModel document)

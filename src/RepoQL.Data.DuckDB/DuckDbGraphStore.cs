@@ -579,6 +579,70 @@ FROM (
         }
     }
 
+    public void DeleteDocumentByUri(RepoUri uri)
+    {
+        using var opActivity = StartOperationActivity("DeleteDocumentByUri");
+        try
+        {
+            if (uri is null) throw new ArgumentNullException(nameof(uri));
+            var doc = GetDocumentByUri(uri);
+            if (doc is null)
+                return;
+
+            using var tx = _connection.BeginTransaction();
+            DeleteSubtreeInternal(doc.Id, tx);
+            tx.Commit();
+        }
+        catch (Exception ex)
+        {
+            RecordException(opActivity, ex);
+            throw;
+        }
+    }
+
+    public void MoveDocumentUri(RepoUri oldUri, RepoUri newUri)
+    {
+        using var opActivity = StartOperationActivity("MoveDocumentUri");
+        try
+        {
+            if (oldUri is null) throw new ArgumentNullException(nameof(oldUri));
+            if (newUri is null) throw new ArgumentNullException(nameof(newUri));
+
+            var doc = GetDocumentByUri(oldUri);
+            if (doc is null)
+                return;
+
+            var existing = GetDocumentByUri(newUri);
+            if (existing is not null && existing.Id != doc.Id)
+                throw new InvalidOperationException($"Another node already exists at URI: {newUri.Container.AbsoluteUri}");
+
+            using var tx = _connection.BeginTransaction();
+            using (var cmd = _connection.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = @"UPDATE node
+                                    SET uri=?, container_uri_lowercase=?, updated_at=?
+                                    WHERE id=?;";
+                var uriStr = newUri.Container.AbsoluteUri;
+                AddParameters(cmd,
+                    uriStr,
+                    uriStr.ToLowerInvariant(),
+                    DateTimeOffset.UtcNow.UtcDateTime,
+                    doc.Id);
+                using var activity = StartDbActivity(cmd.CommandText);
+                var rows = cmd.ExecuteNonQuery();
+                activity?.SetTag("db.sql.rows_affected", rows);
+            }
+
+            tx.Commit();
+        }
+        catch (Exception ex)
+        {
+            RecordException(opActivity, ex);
+            throw;
+        }
+    }
+
     public Node UpsertDocumentByUri(RepoUri uri, Node document)
     {
         using var opActivity = StartOperationActivity("UpsertDocumentByUri");

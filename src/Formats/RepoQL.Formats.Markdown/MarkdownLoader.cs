@@ -88,14 +88,11 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
 
         var mediaType = artifact.MediaType ?? MarkdownMediaType;
 
-        string text;
-        await using (var fs = artifact.File.CreateReadStream())
-        using (var sr = new StreamReader(fs))
-        {
-            text = await sr.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        var digest = "xxh64:" + Convert.ToHexString(artifact.Hash ?? throw new InvalidOperationException("Artifact hash missing")).ToLowerInvariant();
+        var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
+            artifact.File,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var text = loaded.Text;
+        var digest = loaded.Digest;
         var docId = Guid.NewGuid();
         var markdigDoc = Markdig.Markdown.Parse(text, _pipeline);
 
@@ -188,7 +185,7 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
         {
             Surface = surface,
             Digest = digest,
-            Size = artifact.File.Length,
+            Size = loaded.ByteLength,
             MediaType = mediaType,
             StoreUri = artifact.RepoUri.ToString()
         };

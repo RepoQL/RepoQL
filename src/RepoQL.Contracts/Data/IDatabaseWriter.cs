@@ -6,4 +6,5 @@ public interface IDatabaseWriter : IAsyncDisposable
     ValueTask<CommitResult> EnqueueAndWaitAsync(WriteOperation operation, CancellationToken ct = default);
     Task<FlushResult> FlushAsync(CancellationToken ct = default);
     WriterStatus GetStatus();
+    int QueueCapacity { get; }
 }

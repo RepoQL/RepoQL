@@ -70,10 +70,13 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              SELECT * FROM snippet('file:///path#line=42', 3)  -- context lines before/after
                                              
                                              -- Search: find files by intent (lexical + semantic)
-                                             SELECT uri, score FROM file_search('auth token', 'How do we refresh JWTs?', k := 10)
+                                             -- CRITICAL: 'question' is a named parameter, use question := syntax
+                                             SELECT uri, score FROM file_search('auth token', question := 'How do we refresh JWTs?', k := 10)
+                                             SELECT uri, score FROM file_search('DuckDB', question := NULL, k := 5)  -- keywords only
+                                             SELECT uri, score, semn FROM file_search('', question := 'How does X work?', k := 5)  -- semantic only
 
                                              -- Path filters: glob_match(uri, 'docs/**/*.md') -> boolean
-                                             SELECT uri, score FROM file_search('markdown', 'Where is onboarding documented?', k := 10)
+                                             SELECT uri, score FROM file_search('markdown', question := 'Where is onboarding documented?', k := 10)
                                              WHERE glob_match(uri, 'docs/**/*.md')
                                              
                                              -- Diagnostics: what's broken/flagged?
@@ -82,6 +85,13 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              </ESSENTIAL_MACROS>
                                              
                                              The documentation for RepoQL can be read by querying - consider obtaining it to be the tutorial.
+
+                                             <SEARCH_TIPS>
+                                             file_search() returns: score (final), semn (semantic), bm25n (exact), fuzzn (typo tolerance)
+                                             - If semn is NULL → embeddings not ready yet (check: SELECT COUNT(*) FROM document_embedding)
+                                             - Keywords-only: Fast, exact matches. Question-only: Conceptual discovery. Combined: Best of both.
+                                             - Use WHERE glob_match(uri, 'pattern') to filter by path after search
+                                             </SEARCH_TIPS>
                                              
                                              ## Examples
                                              
@@ -129,7 +139,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              ```postgresql
                                              WITH search_results AS (
                                                  SELECT uri, score
-                                             FROM file_search('navigation loading', 'Why does the progress bar stick?', k := 3)
+                                             FROM file_search('navigation loading', question := 'Why does the progress bar stick?', k := 3)
                                                )
                                                SELECT
                                                  sr.uri,
@@ -141,10 +151,9 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                                     LATERAL snippet(sr.uri, 2) AS sn
                                                ORDER BY sr.score DESC, sn.line_number;
                                                /*
-                                               - file_search does the semantic lookup (k := 3 keeps the top three hits).
-                                               - snippet(uri, 2) returns two lines of context around each match; is_focus marks the snippet’s focal line.
-                                               - Ordering by score first keeps the best semantic hits at the top, then list the snippet lines in-order.
-                                               Tweak the search phrase, k, or context window to suit your needs.
+                                               - file_search(keywords, question := ...) combines lexical + semantic (k := 3 limits results).
+                                               - snippet(uri, 2) returns two lines of context around each match; is_focus marks the focal line.
+                                               - Order by score DESC to get best matches first.
                                                */
                                              ```
                                              

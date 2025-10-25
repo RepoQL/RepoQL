@@ -100,14 +100,11 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
         if (artifact.RepoUri is null)
             throw new InvalidOperationException("RepoUri required to load mermaid diagrams.");
 
-        string text;
-        await using (var fs = artifact.File.CreateReadStream())
-        using (var sr = new StreamReader(fs))
-        {
-            text = await sr.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        var digest = "xxh64:" + Convert.ToHexString(artifact.Hash ?? throw new InvalidOperationException("Artifact hash missing")).ToLowerInvariant();
+        var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
+            artifact.File,
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        var text = loaded.Text;
+        var digest = loaded.Digest;
         var lang = new MermaidLanguage();
         var tree = lang.Parse(text);
         var root = (MDocument)tree.Root;
@@ -117,7 +114,7 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
             DocumentId = Guid.NewGuid(),
             Ast = root,
             Digest = digest,
-            Size = artifact.File.Length,
+            Size = loaded.ByteLength,
             MediaType = artifact.MediaType ?? MermaidMediaType,
             StoreUri = artifact.RepoUri.ToString()
         };
