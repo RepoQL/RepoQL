@@ -41,7 +41,8 @@ public static class GrpcServerHelper
 
     private static bool IsWslWindowsMount(string path)
     {
-        return path.StartsWith("/mnt/", StringComparison.OrdinalIgnoreCase) && File.Exists("/proc/sys/fs/binfmt_misc/WSLInterop");
+        return path.StartsWith("/mnt/", StringComparison.OrdinalIgnoreCase) 
+        && (File.Exists("/proc/sys/fs/binfmt_misc/WSLInterop") || File.Exists("/proc/sys/fs/binfmt_misc/WSLInterop-late"));
     }
 
     private static string ComputeStableHash(string value)
