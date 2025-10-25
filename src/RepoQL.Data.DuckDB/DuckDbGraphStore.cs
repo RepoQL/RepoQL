@@ -133,12 +133,13 @@ namespace RepoQL.Data.DuckDB;
                 });
                 _metrics.EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, new TagList
                 {
-                    { "source", "refresh" }, 
-                    { "model", provider.Model }, 
-                    { "dim", provider.Dimension }, 
+                    { "source", "refresh" },
+                    { "model", provider.Model },
+                    { "dim", provider.Dimension },
                     { "status", "ok" }
                 });
             }
+            tx.Commit();
         }
         sw.Stop();
         _logger.LogInformation("Embeddings refreshed: docs={Success}, skipped={Skipped}, model={Model}, dim={Dim}, ms={Duration}", success, skipped, provider.Model, provider.Dimension, (long)sw.Elapsed.TotalMilliseconds);

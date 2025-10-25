@@ -47,7 +47,8 @@ internal class IndexerIntegrationTests
     }
 
     [Test]
-    public async Task StartAndWaitForIdle_IndexesMarkdownDocument_InMemoryDb()
+    [Timeout(60_000)]
+    public async Task StartAndWaitForIdle_IndexesMarkdownDocument_InMemoryDb(CancellationToken token)
     {
         // Arrange: embedded repo with markdown resources
         var asm = typeof(IndexerIntegrationTests).Assembly;
@@ -66,7 +67,7 @@ internal class IndexerIntegrationTests
         await using var indexer = new RepositoryIndexer(hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
 
         // Act: start, then explicitly queue the file to avoid any enumeration/platform quirks
-        await indexer.StartAsync(CancellationToken.None);
+        await indexer.StartAsync(token);
         var indexed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var errored = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var sub = indexer.Subscribe(new Observer(
@@ -77,7 +78,7 @@ internal class IndexerIntegrationTests
                 if (ev is IRepositoryIndexer.ItemIndexedEvent e && e.CurrentUri.AbsoluteUri == uri1.AbsoluteUri)
                     indexed.TrySetResult(true);
             }));
-        var done = await Task.WhenAny(indexed.Task, errored.Task, Task.Delay(DefaultTimeout));
+        var done = await Task.WhenAny(indexed.Task, errored.Task, Task.Delay(DefaultTimeout, token));
         if (done == errored.Task)
             throw await errored.Task;
         else if (done != indexed.Task)
@@ -92,7 +93,7 @@ internal class IndexerIntegrationTests
         nodes.Any(n => n.Kind == "md_code_block").Should().BeTrue();
 
         // Cleanup
-        await indexer.StopAsync(CancellationToken.None);
+        await indexer.StopAsync(token);
     }
 
     [Test]

@@ -36,8 +36,12 @@ internal sealed class InitialIndexingBarrier(
                     using var span = Activity.StartActivity("repoql.search.refresh");
                     span?.SetTag("repoql.search.refresh.phase", "initial");
                     span?.SetTag("repoql.search.refresh.trigger", "barrier");
+                    var sw = Stopwatch.StartNew();
                     duck.RefreshSearchProjection(incrementalRefresh: false);
+                    sw.Stop();
+                    _logger.LogInformation("Initial search refresh completed in {DurationMs} ms", (long)sw.Elapsed.TotalMilliseconds);
                     span?.SetTag("otel.status_code", "OK");
+                    span?.SetTag("repoql.search.refresh.duration_ms", sw.Elapsed.TotalMilliseconds);
                 }
             }
             catch (Exception ex)
