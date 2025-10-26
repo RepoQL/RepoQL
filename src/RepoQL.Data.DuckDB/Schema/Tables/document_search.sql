@@ -40,20 +40,38 @@ WITH inputs AS (
         coalesce(keywords, '') AS keywords_raw,
         lower(coalesce(keywords, '')) AS keywords_lc,
         CASE WHEN question IS NULL OR length(trim(question)) = 0 THEN NULL ELSE question END AS question_clean,
-        CASE WHEN length(trim(coalesce(keywords, ''))) = 0 THEN TRUE ELSE FALSE END AS keywords_empty
+        CASE WHEN length(trim(coalesce(keywords, ''))) = 0 THEN TRUE ELSE FALSE END AS keywords_empty,
+        -- Dynamic semantic weight: boost when keywords are weak/empty
+        CASE
+            WHEN length(trim(coalesce(keywords, ''))) = 0 THEN 0.70
+            WHEN length(trim(coalesce(keywords, ''))) < 5 THEN 0.30
+            ELSE semantic_weight
+        END AS effective_sem_weight
 ),
      score_source AS (
          SELECT
              ds.doc_id,
              ds.uri,
-             CASE WHEN position(inp.keywords_lc IN ds.search_key) > 0 THEN 1.0 ELSE 0.0 END AS bm25,
+             ds.basename,
+             -- Basename boost: prioritize exact filename matches
+             -- Note: bm25 values >1.0 survive normalization better in relative ranking
+             CASE
+                 -- Exact match (with or without extension)
+                 WHEN lower(ds.basename) = inp.keywords_lc
+                   OR lower(regexp_replace(ds.basename, '\.[^.]*$', '')) = inp.keywords_lc THEN 3.0
+                 -- Keyword in basename
+                 WHEN position(inp.keywords_lc IN lower(ds.basename)) > 0 THEN 2.0
+                 -- Keyword in path
+                 WHEN position(inp.keywords_lc IN ds.search_key) > 0 THEN 1.0
+                 ELSE 0.0
+             END AS bm25,
              match_score(inp.keywords_lc, ds.search_key) AS fuzz
          FROM document_search ds
                   CROSS JOIN inputs inp
          WHERE inp.keywords_empty = FALSE
      ),
      ranked_lex AS (
-         SELECT *
+         SELECT doc_id, uri, bm25, fuzz
          FROM score_source
          ORDER BY coalesce(bm25, 0) DESC, fuzz DESC, length(uri)
          LIMIT CAST(max_cand AS BIGINT)
@@ -87,7 +105,8 @@ WITH inputs AS (
                   CROSS JOIN vss_candidates(qv.qjson, max_cand) AS vc
      ),
      sem_norm AS (
-         SELECT doc_id, (sem / NULLIF(MAX(sem) OVER (), 0)) AS semn FROM sem_candidates
+         -- Enhanced semantic spread: apply power transformation to increase separation
+         SELECT doc_id, POWER((sem / NULLIF(MAX(sem) OVER (), 0)), 1.5) AS semn FROM sem_candidates
      ),
      union_ids AS (
          SELECT doc_id FROM normalized_lex
@@ -100,14 +119,19 @@ SELECT
     COALESCE(lx.bm25n, 0) AS bm25n,
     COALESCE(lx.fuzzn, 0) AS fuzzn,
     sn.semn AS semn,
-    combine(
+    -- Path-type penalty: de-rank test files, boost docs for questions
+    (combine(
             COALESCE(lx.bm25n, 0),
             COALESCE(lx.fuzzn, 0),
             sn.semn,
             wb := bm25_weight,
             wf := fuzzy_weight,
-            ws := semantic_weight
-        ) AS score
+            ws := (SELECT effective_sem_weight FROM inputs)
+        ) * CASE
+            WHEN (ds.uri LIKE '%/test%/%' OR ds.uri LIKE '%Test%.cs') THEN 0.7
+            WHEN ds.uri LIKE '%/docs/%' AND (SELECT question_clean FROM inputs) IS NOT NULL THEN 1.2
+            ELSE 1.0
+        END) AS score
 FROM union_ids u
          LEFT JOIN normalized_lex lx USING(doc_id)
          LEFT JOIN sem_norm sn USING(doc_id)
