@@ -66,23 +66,16 @@ internal class IndexerIntegrationTests
         var filter = new IncludeOnlyUriFilter(uri1);
         await using var indexer = new RepositoryIndexer(hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
 
-        // Act: start, then explicitly queue the file to avoid any enumeration/platform quirks
-        await indexer.StartAsync(token);
-        var indexed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Act: start, explicitly queue the file, and wait for the pipeline to drain
         var errored = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var sub = indexer.Subscribe(new Observer(
             onCompleted: () => { },
             onError: ex => errored.TrySetResult(ex),
-            onNext: ev =>
-            {
-                if (ev is IRepositoryIndexer.ItemIndexedEvent e && e.CurrentUri.AbsoluteUri == uri1.AbsoluteUri)
-                    indexed.TrySetResult(true);
-            }));
-        var done = await Task.WhenAny(indexed.Task, errored.Task, Task.Delay(DefaultTimeout, token));
-        if (done == errored.Task)
-            throw await errored.Task;
-        else if (done != indexed.Task)
-            throw new TimeoutException($"Timed out waiting to index {uri1.AbsoluteUri}");
+            onNext: _ => { }));
+
+        await indexer.StartAsync(token);
+        await indexer.QueueForIndexingAsync([uri1]);
+        await WaitForIdleOrErrorAsync(indexer, errored.Task, token, uri1);
 
         // Assert: document and some children exist
         var nodes = store.GetAllNodes().ToArray();
@@ -117,52 +110,55 @@ internal class IndexerIntegrationTests
         var filter = new IncludeOnlyUriFilter(uri1w);
         await using var indexer = new RepositoryIndexer(hub, store, classifier, formatRegistry, workspace, filter, hasher, analysisWriter: new AnnotationResultWriter(store));
 
-        await indexer.StartAsync(CancellationToken.None);
-        var firstIndexed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var error1 = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var sub1 = indexer.Subscribe(new Observer(
+        var errored = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var sub = indexer.Subscribe(new Observer(
             onCompleted: () => { },
-            onError: ex => error1.TrySetResult(ex),
-            onNext: ev =>
-            {
-                if (ev is IRepositoryIndexer.ItemIndexedEvent e && e.CurrentUri.AbsoluteUri == uri1w.AbsoluteUri)
-                    firstIndexed.TrySetResult(true);
-            }));
-        var firstDone = await Task.WhenAny(firstIndexed.Task, error1.Task, Task.Delay(DefaultTimeout));
-        if (firstDone == error1.Task)
-            throw await error1.Task;
-        else if (firstDone != firstIndexed.Task)
-            throw new TimeoutException($"Timed out waiting to index {uri1w.AbsoluteUri}");
+            onError: ex => errored.TrySetResult(ex),
+            onNext: _ => { }));
+
+        await indexer.StartAsync(CancellationToken.None);
+        await indexer.QueueForIndexingAsync([uri1w]);
+        await WaitForIdleOrErrorAsync(indexer, errored.Task, CancellationToken.None, uri1w);
 
         // Assert initial doc count
         var before = store.GetAllNodes().Count(n => n.Kind == "document");
         before.Should().Be(1);
 
         // Act: add a new file and queue explicitly
-        var secondIndexed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var error2 = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var sub2 = indexer.Subscribe(new Observer(
-            onCompleted: () => { },
-            onError: ex => error2.TrySetResult(ex),
-            onNext: ev =>
-            {
-                if (ev is IRepositoryIndexer.ItemIndexedEvent e && e.CurrentUri.AbsoluteUri == uri2.AbsoluteUri)
-                    secondIndexed.TrySetResult(true);
-            }));
         await indexer.QueueForIndexingAsync([uri2]);
-
-        var secondDone = await Task.WhenAny(secondIndexed.Task, error2.Task, Task.Delay(DefaultTimeout));
-        if (secondDone == error2.Task)
-            throw await error2.Task;
-        else if (secondDone != secondIndexed.Task)
-            throw new TimeoutException($"Timed out waiting to index {uri2.AbsoluteUri}");
+        await WaitForIdleOrErrorAsync(indexer, errored.Task, CancellationToken.None, uri2);
 
         // Assert: document count increased
         var after = store.GetAllNodes().Count(n => n.Kind == "document");
         after.Should().Be(2);
 
         await indexer.StopAsync(CancellationToken.None);
-}
+    }
+
+    private static async Task WaitForIdleOrErrorAsync(RepositoryIndexer indexer, Task<Exception> errorTask, CancellationToken cancellationToken, RepoUri? uri)
+    {
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var idleTask = indexer.WaitForIdle(cancellationToken);
+        var timeoutTask = Task.Delay(DefaultTimeout, timeoutCts.Token);
+
+        var completed = await Task.WhenAny(idleTask, errorTask, timeoutTask);
+        if (completed == errorTask)
+            throw await errorTask;
+
+        if (completed == timeoutTask)
+        {
+            if (timeoutTask.IsCanceled && cancellationToken.IsCancellationRequested)
+                cancellationToken.ThrowIfCancellationRequested();
+
+            var message = uri is null
+                ? "Timed out waiting for the indexer to become idle."
+                : $"Timed out waiting to index {uri.AbsoluteUri}";
+            throw new TimeoutException(message);
+        }
+
+        timeoutCts.Cancel();
+        await idleTask;
+    }
 
     private static (IFormatRegistry Registry, IAnalysisWorkspace Workspace) CreateFormats(IMultiFileSystem hub, IFileClassifier classifier, IHasher hasher)
     {
