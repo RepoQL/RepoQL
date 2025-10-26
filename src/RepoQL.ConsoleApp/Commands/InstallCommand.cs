@@ -32,10 +32,15 @@ internal class InstallCommand(IAnsiConsole console)
             console.MarkupLine("[dim]    \"repoql\": {[/]");
             console.MarkupLine("[dim]      \"type\": \"stdio\",[/]");
             console.MarkupLine("[dim]      \"command\": \"repoql\",[/]");
-            console.MarkupLine("[dim]      \"args\": [\"mcp\"][/]");
+            console.MarkupLine("[dim]      \"args\": [\"mcp\"],[/]");
+            console.MarkupLine("[dim]      \"env\": {[/]");
+            console.MarkupLine("[dim]        \"REPOQL_CWD\": \"/path/to/your/repo\"[/]");
+            console.MarkupLine("[dim]      }[/]");
             console.MarkupLine("[dim]    }[/]");
             console.MarkupLine("[dim]  }[/]");
             console.MarkupLine("[dim]}[/]");
+            console.WriteLine();
+            console.MarkupLine("[dim]Note: For Codex/Claude CLI, use \"{{workspace}}\" as the REPOQL_CWD value.[/]");
             return;
         }
 
@@ -75,6 +80,25 @@ internal class InstallCommand(IAnsiConsole console)
         {
             var selectedAgent = agents.First(a => selection.StartsWith(a.Name));
             agentsToUpdate = [selectedAgent];
+        }
+
+        // For Claude Desktop, ask for repository path
+        foreach (var agent in agentsToUpdate.Where(a => a.Type == AgentType.ClaudeDesktop))
+        {
+            console.WriteLine();
+            console.MarkupLine($"[cyan]{agent.Name}[/] needs to know which repository to use.");
+            console.MarkupLine("[dim]RepoQL requires a working directory to index and query your code.[/]");
+            console.WriteLine();
+
+            var repoPath = console.Ask<string>("Enter the [green]full path[/] to your repository:");
+
+            // Validate the path
+            if (!Directory.Exists(repoPath))
+            {
+                console.MarkupLine("[yellow]⚠ Warning: Directory does not exist. Configuration will be created anyway.[/]");
+            }
+
+            agent.WorkingDirectory = repoPath;
         }
 
         // Install to selected agents
@@ -280,12 +304,24 @@ internal class InstallCommand(IAnsiConsole console)
                     }
 
                     // Add/update RepoQL configuration
-                    mcpServers["repoql"] = new JsonObject
+                    var repoqlConfig = new JsonObject
                     {
                         ["type"] = "stdio",
                         ["command"] = "repoql",
                         ["args"] = new JsonArray("mcp")
                     };
+
+                    // Add REPOQL_CWD environment variable based on agent type
+                    var workingDir = agent.WorkingDirectory ?? GetDefaultWorkingDirectory(agent.Type);
+                    if (!string.IsNullOrEmpty(workingDir))
+                    {
+                        repoqlConfig["env"] = new JsonObject
+                        {
+                            ["REPOQL_CWD"] = workingDir
+                        };
+                    }
+
+                    mcpServers["repoql"] = repoqlConfig;
 
                     // Write back to file
                     var options = new JsonSerializerOptions
@@ -296,6 +332,10 @@ internal class InstallCommand(IAnsiConsole console)
                     await File.WriteAllTextAsync(agent.ConfigPath, updatedJson, cancel);
 
                     console.MarkupLine($"[green]  ✓ Installed to {agent.Name}[/]");
+                    if (!string.IsNullOrEmpty(workingDir))
+                    {
+                        console.MarkupLine($"[dim]    Working directory: {workingDir}[/]");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -304,11 +344,23 @@ internal class InstallCommand(IAnsiConsole console)
             });
     }
 
+    private string? GetDefaultWorkingDirectory(AgentType agentType)
+    {
+        return agentType switch
+        {
+            AgentType.Codex => "{workspace}",
+            AgentType.ClaudeCLI => "{workspace}",
+            AgentType.ClaudeDesktop => null, // Must be set by user
+            _ => null
+        };
+    }
+
     private record AgentInfo
     {
         public required string Name { get; init; }
         public required AgentType Type { get; init; }
         public required string ConfigPath { get; init; }
+        public string? WorkingDirectory { get; set; }
     }
 
     private enum AgentType
