@@ -20,4 +20,6 @@ public sealed class AnalyzerSettings(IReadOnlyDictionary<string, AnalyzerRuleSet
             EnableAutoFix = false
         };
     }
+
+    public bool HasRule(string ruleId) => _rules.ContainsKey(ruleId);
 }

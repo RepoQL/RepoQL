@@ -143,6 +143,10 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjAnalyzer>();
         services.AddSingleton<SlnLoader>(sp => new SlnLoader(sp.GetRequiredService<ITemplateRenderer>()));
+        services.AddSingleton<CSharpWorkspaceHost>();
+        services.AddHostedService(sp => sp.GetRequiredService<CSharpWorkspaceHost>());
+        services.AddSingleton<CSharpLoader>(sp => new CSharpLoader(sp.GetRequiredService<CSharpWorkspaceHost>()));
+        services.AddSingleton<CSharpAnalyzer>();
         services.AddSingleton<PlainTextLoader>();
         services.AddSingleton<GraphQLLoader>();
         services.AddSingleton<GraphQLAnalyzer>();
@@ -158,6 +162,8 @@ public static class RepoIndexerServiceCollectionExtensions
             var csprojAnalyzer = sp.GetRequiredService<CsProjAnalyzer>();
             var slnLoader = sp.GetRequiredService<SlnLoader>();
             var slnAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"));
+            var csharpLoader = sp.GetRequiredService<CSharpLoader>();
+            var csharpAnalyzer = sp.GetRequiredService<CSharpAnalyzer>();
             var graphQlLoader = sp.GetRequiredService<GraphQLLoader>();
             var graphQlAnalyzer = sp.GetRequiredService<GraphQLAnalyzer>();
             var plainLoader = sp.GetRequiredService<PlainTextLoader>();
@@ -196,6 +202,12 @@ public static class RepoIndexerServiceCollectionExtensions
                     slnAnalyzer,
                     slnLoader,
                     ["sln"]),
+                new FormatDescriptor(
+                    SemanticMediaType.Create("text", "plain").WithKind("code.csharp"),
+                    csharpLoader,
+                    csharpAnalyzer,
+                    csharpLoader,
+                    ["csharp", "cs"]),
                 // Catch‑all plain last so it doesn't shadow specific handlers
                 new FormatDescriptor(
                     SemanticMediaType.Create("text", "plain").WithKind("plain.document"),

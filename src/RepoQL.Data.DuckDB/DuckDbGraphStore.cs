@@ -27,6 +27,7 @@ namespace RepoQL.Data.DuckDB;
         private readonly ILogger<DuckDbGraphStore> _logger;
         private readonly IndexingMetrics _metrics;
         private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
+        private readonly object _annotationGate = new();
 
     // OpenTelemetry-style instrumentation
     private static readonly ActivitySource ActivitySource = new("RepoQL.Data.DuckDB");
@@ -1270,14 +1271,16 @@ FROM (
 
     public Annotation UpsertAnnotation(Annotation a)
     {
-        using var tx = _connection.BeginTransaction();
-        try
+        lock (_annotationGate)
         {
-            using var cmd = _connection.CreateCommand();
-            cmd.Transaction = tx;
-            var useSemantic = !string.IsNullOrWhiteSpace(a.SemanticKey);
-            cmd.CommandText = useSemantic
-                ? @"INSERT INTO annotation
+            using var tx = _connection.BeginTransaction();
+            try
+            {
+                using var cmd = _connection.CreateCommand();
+                cmd.Transaction = tx;
+                var useSemantic = !string.IsNullOrWhiteSpace(a.SemanticKey);
+                cmd.CommandText = useSemantic
+                    ? @"INSERT INTO annotation
                       (id,semantic_key,kind,severity,source,rule_id,message,data,scope_document_id,
                        target_node_id,target_edge_id,target_span_id,target_uri,created_at,expires_at)
                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -1296,7 +1299,7 @@ FROM (
                         created_at=excluded.created_at,
                         expires_at=excluded.expires_at
                       RETURNING id;"
-                : @"INSERT INTO annotation
+                    : @"INSERT INTO annotation
                       (id,semantic_key,kind,severity,source,rule_id,message,data,scope_document_id,
                        target_node_id,target_edge_id,target_span_id,target_uri,created_at,expires_at)
                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -1317,39 +1320,40 @@ FROM (
                         expires_at=excluded.expires_at
                       RETURNING id;";
 
-            AddParameters(cmd,
-                a.Id,
-                (object?)a.SemanticKey ?? DBNull.Value,
-                a.Kind,
-                a.Severity,
-                a.Source,
-                (object?)a.RuleId ?? DBNull.Value,
-                a.Message,
-                JsonFromNode(a.Data),
-                a.ScopeDocumentId,
-                (object?)a.TargetNodeId ?? DBNull.Value,
-                (object?)a.TargetEdgeId ?? DBNull.Value,
-                (object?)a.TargetSpanId ?? DBNull.Value,
-                (object?)a.TargetUri ?? DBNull.Value,
-                a.CreatedAt.UtcDateTime,
-                a.ExpiresAt?.UtcDateTime ?? (object)DBNull.Value);
-            using (var activity = StartDbActivity(cmd.CommandText))
-            {
-                using var r = cmd.ExecuteReader();
-                if (r.Read())
+                AddParameters(cmd,
+                    a.Id,
+                    (object?)a.SemanticKey ?? DBNull.Value,
+                    a.Kind,
+                    a.Severity,
+                    a.Source,
+                    (object?)a.RuleId ?? DBNull.Value,
+                    a.Message,
+                    JsonFromNode(a.Data),
+                    a.ScopeDocumentId,
+                    (object?)a.TargetNodeId ?? DBNull.Value,
+                    (object?)a.TargetEdgeId ?? DBNull.Value,
+                    (object?)a.TargetSpanId ?? DBNull.Value,
+                    (object?)a.TargetUri ?? DBNull.Value,
+                    a.CreatedAt.UtcDateTime,
+                    a.ExpiresAt?.UtcDateTime ?? (object)DBNull.Value);
+                using (var activity = StartDbActivity(cmd.CommandText))
                 {
-                    var id = r.GetGuid(0);
+                    using var r = cmd.ExecuteReader();
+                    if (r.Read())
+                    {
+                        var id = r.GetGuid(0);
+                        tx.Commit();
+                        return a;
+                    }
                     tx.Commit();
                     return a;
                 }
-                tx.Commit();
-                return a;
             }
-        }
-        catch
-        {
-            tx.Rollback();
-            throw;
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
         }
     }
 

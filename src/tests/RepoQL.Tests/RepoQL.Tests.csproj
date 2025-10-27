@@ -35,4 +35,8 @@
     <EmbeddedResource Include="Resources\Doc2.md" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Remove="CSourceRepoQLtest-results.txt" />
+  </ItemGroup>
+
 </Project>

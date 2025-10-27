@@ -19,7 +19,7 @@
 **`node.kind`**
 
 * **Format:** lowercase; segments `a–z 0–9 _ . -` (`^[a-z][a-z0-9._-]*$`)
-* **Examples:** `document`, `md_heading`, `cs_class`, `openapi.operation` (maps 1:1 with modeled items in documents). 
+* **Examples:** `document`, `md_heading`, `csharp.type`, `openapi.operation` (maps 1:1 with modeled items in documents). 
 
 **`edge.type`**
 
@@ -80,8 +80,9 @@
 | `md_heading`        | **stable**  | md item     | `text/markdown;kind=markdown.doc`           | Includes `level`, `text`, `slug` props; has span.  |
 | `md_code_block`     | **stable**  | md item     | `text/markdown;kind=markdown.doc`           | Includes `language`, `lines`.                      |
 | `md_link`           | **stable**  | md item     | `text/markdown;kind=markdown.doc`           | `properties.href/text` set; may have `REFERS_TO`.  |
-| `cs_class`          | provisional | code symbol | `text/x-csharp;kind=cs.class`               | C# modeling appears in examples/patterns.          |
-| `cs_method`         | provisional | code symbol | `text/x-csharp;kind=cs.class`               | Span to body if available.                         |
+| `csharp.namespace`  | **stable**  | code symbol | `text/plain;kind=code.csharp`               | C# namespace declaration with qualified name.      |
+| `csharp.type`       | **stable**  | code symbol | `text/plain;kind=code.csharp`               | C# type (class/struct/interface/record/enum).      |
+| `csharp.member`     | **stable**  | code symbol | `text/plain;kind=code.csharp`               | C# member (method/property/field/event).           |
 | `py_function`       | provisional | code symbol | `text/x-python;kind=py.module`              | From patterns.                                     |
 | `openapi.operation` | provisional | spec node   | `application/yaml;kind=openapi;version=3.1` | For API coherence tranche.                         |
 | `openapi.schema`    | provisional | spec node   | `application/yaml;kind=openapi;version=3.1` | For joining to code/docs.                          |
@@ -121,9 +122,9 @@
 | SemType (base)                | `;kind=`           | Status      | Notes                                                   |
 | ----------------------------- | ------------------ | ----------- | ------------------------------------------------------- |
 | `text/markdown`               | `markdown.doc`     | **stable**  | Markdown modeling present today.                        |
+| `text/plain`                  | `code.csharp`      | **stable**  | C# source files with full Roslyn analysis.              |
 | `application/yaml` or `+json` | `openapi`          | provisional | For API coherence tranche.                              |
 | `application/zip`             | `playwright.trace` | provisional | Treat archive entries as children via `jar:` RepoURIs.  |
-| `text/x-csharp`               | `cs.class`         | provisional | Examples throughout.                                    |
 | `text/x-python`               | `py.module`        | provisional | Examples.                                               |
 
 > **Normalization:** All SemType strings **must** follow the rendering rules (lowercase keys; sorted params; quote non‑tokens).

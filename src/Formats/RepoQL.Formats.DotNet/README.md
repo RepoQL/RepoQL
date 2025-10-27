@@ -87,82 +87,411 @@ See `SlnXrayTests` and `SlnVariantsTests` in `RepoQL.Tests` for end‑to‑end c
 
 ## C# Source Files (*.cs)
 
-> Planned Roslyn-backed format for individual C# files. This section documents the shape of the feature so other producers/consumers can prepare.
+Individual C# files are now indexed through Roslyn so RepoQL understands namespaces, types, and members without relying on project-level metadata.
 
 - Media type: `text/plain;kind=code.csharp`
-- Loader: builds Roslyn syntax tree + semantic model, captures facts into `CSharpDocumentState` (document id, digest, namespace/type/member inventories, metrics).
-- Materializer: renders progressive X-ray strings (Liquid templates under `Templates/xray/csharp-*`) and emits graph records for namespaces, types, members, attributes, and symbol references.
-- Diagnostics: execute the project's Roslyn analyzers through the MSBuild workspace so RepoQL surfaces the same diagnostics developers see in IDE/CI (respecting AnalyzerReferences and .editorconfig severity).
+- Loader: `CSharpLoader` builds a Roslyn syntax tree, walks namespaces/types/members/using directives, captures spans plus summary metadata (`CSharpDocumentState`), and optionally asks `CSharpWorkspaceHost` to reopen the owning `.csproj` via `MSBuildWorkspace` so symbol keys, semantic references, and diagnostics match `dotnet build`.
+- Materializer: emits progressive X-ray strings directly from the captured inventory and creates graph nodes for `csharp.namespace`, `csharp.type`, and `csharp.member` with precise spans, containment edges, and resolved `USES_SYMBOL` links (falling back to a lightweight compilation when no project is available).
 
-### X-ray Templates
+### X-ray
 
-- **headline** — single line such as  
-  `PaymentService.cs | namespace Contoso.Payments | 1 class, 2 interfaces, 5 public methods`
-- **summary** — YAML-style 8-12 line block listing namespaces, public types (kind/heritage), injected services, async API counts, XML doc coverage.
-- **structure** — hierarchical outline:
-  ```
-  namespace Contoso.Payments
-    public class PaymentService : IPaymentService, IDisposable
-      ctor(IPaymentGateway gateway, IRepository repo)
-      public Task<PaymentResult> ProcessAsync(PaymentRequest request)
-      public Task<RefundResult> RefundAsync(Guid paymentId)
-      private Task PublishEventAsync(PaymentEvent evt)
-  ```
-  Includes regions/partial indicators and notes async/static status.
+Generated inline (no Liquid templates yet):
+- **headline** – file name plus aggregate counts, e.g. `PaymentService.cs | class:1, interface:0 | methods:4 async:1`
+- **summary** – counts plus the top public types and async members.
+- **structure** – namespace/type tree with indented members for quick navigation.
 
-### Graph Projection
+### Graph Projection (current)
 
-- Nodes:
-  - `document` — `.cs` file (`props`: media type, namespace_count, public_type_count, xml_doc_ratio)
-  - `csharp.namespace` — logical namespace segments (`props`: name, qualified_name, line_span)
-  - `csharp.type` — classes/structs/interfaces/records/enums (`props`: name, kind, accessibility, base_type, interface_list, generic_arity, partial, is_static)
-  - `csharp.member` — methods/properties/fields/events (`props`: name, kind, accessibility, return_type, static, async, parameters json)
-  - `csharp.attribute` — attribute applications (`props`: type_name, arguments_raw)
-- Edges:
-  - `HAS_PART` for containment (document->namespace->type->member) with ordinal preserving declaration order
-  - `DECLARES_SYMBOL` linking document to top-level symbols
-  - `IMPLEMENTS` and `INHERITS_FROM` for file-local inheritance/interfaces
-  - `ANNOTATED_WITH` between symbols and attribute nodes
-  - `USES_SYMBOL` capturing intra-file references resolved via Roslyn (best-effort)
-- Spans: every node carries `span_id` with line/column offsets derived from `DocumentModel.LineMap`.
+- `document` node carries language + line/type/member counts.
+- `csharp.namespace` nodes for declared namespaces (nested where appropriate).
+- `csharp.type` nodes (classes/structs/records/interfaces/enums) with namespace, accessibility, inheritance metadata, and Roslyn `symbol_key`s.
+- `csharp.member` nodes (methods, constructors, properties, indexers, events, fields) with accessibility, async/static flags, return types, parameter lists, and `symbol_key`s.
+- Composition edges (`HAS_PART`) connect document → namespace → type → member hierarchies; span rows capture line ranges for every symbol.
+- `USES_SYMBOL` edges capture references resolved via Roslyn (e.g., base types, identifiers, cross-file usages when a project is available) with props for `symbol_key`, `symbol_kind`, and status.
 
-### Views
+### DuckDB helper views
 
-Helper SQL views planned in the DuckDB schema (prefix `view_csharp_*`), projecting the canonical tables:
+The loader registers views so queries stay concise:
 
-- `view_csharp_types` — flattens type nodes with document URI, namespace, base/interface metadata, counts of members.
-- `view_csharp_members` — exposes member signatures, modifiers, async/static flags, belonging type.
-- `view_csharp_implements` — pairs deriving types and their interface targets for easy policy checks.
-- Each view is additive and follows the stable naming guidance from `docs/Schema.md`.
+- `csharp_namespaces` — document URI + namespace metadata.
+- `csharp_types` — qualified names, accessibility, and inheritance info.
+- `csharp_members` — member declarations joined with their declaring types and parameter JSON.
 
 ### Diagnostics
 
-RepoQL does not ship bespoke lint rules for C#; instead it reuses the analyzers already referenced by each project. During enrichment we
-run Roslyn's `CompilationWithAnalyzers` over the MSBuild workspace so any analyzer DLLs (packages, `<Analyzer>` entries, .NET SDK defaults) execute as they would in IDE/CI. Key properties:
+`CSharpAnalyzer` reuses the loader’s Roslyn diagnostics (from the MSBuild-backed analysis when available, or the fallback compilation otherwise) to emit RepoQL `lint` results using rule ids `csharp/<ID>` (e.g., `csharp/CS0246`). Results include line/column metadata and respect per-rule overrides provided via `AnalyzerSettings`.
 
-- `.editorconfig` is honored: severities, suppressed IDs, and custom rule options flow directly from the project configuration.
-- Analyzer-generated diagnostics appear as RepoQL `lint` annotations with rule id, message, severity, and precise span anchors.
-- When analyzers expose code fixes, we translate them into `AnalysisFix` payloads so RepoPatch can apply safe edits.
-- Diagnostics are scoped to real project files; Markdown embedded C# blocks fall back to lightweight syntax checks (we surface them as hints without invoking full project analyzers, because they lack compilation context).
+### Source Generators
 
-This approach keeps RepoQL in sync with the developer's toolchain while preserving the option to add RepoQL-specific cross-file analyzers later if needed.
+When an owning `.csproj` is available, the shared `CSharpWorkspaceHost` runs all source generators referenced by the project. Their outputs are materialized as virtual documents with `StoreUri` values like `repoql://generated/<project>/<generator>/<hint>` and document props containing `is_generated=true`, `generator`, and `hint_name`. The generated documents share the same graph projection, spans, and diagnostics pipeline as real files, but are emitted exactly once per project to avoid duplication across multiple source files.
 
 ### Registration
 
-Once shipped, services will register:
+Registered in DI with:
 
 - `FormatDescriptor(text/plain;kind=code.csharp, labels=["csharp","cs"])`
-- Liquid templates via `AddLiquidTemplatingFromEmbedded(typeof(CSharpLoader).Assembly, "RepoQL.Formats.DotNet.Templates.CSharp")`
-- Roslyn services (workspace, metadata reference resolver) as singletons
-- Analyzer added to DI and to the format registry so Markdown embeddings resolve the same descriptor
+- Templating reuse is not required yet (strings are generated inline), but the assembly is already wired for future templates.
 
 ### Tests
 
-New suites under `RepoQL.Tests`:
+`CSharpLoaderTests` cover loader/materializer output, schema scripts, `USES_SYMBOL` edges, analyzer override behavior, and the project-aware diagnostics/reference flows.
 
-- `CSharpXrayTests` — validates headline/summary/structure content across sample files (class library, partial classes, record types).
-- `CSharpGraphTests` — asserts node/edge/span output for namespaces, inheritance, attributes.
-- `CSharpDiagnosticsTests` — integration tests that run standard Roslyn analyzers (e.g., CA1815) through the RepoQL pipeline and assert `.editorconfig` severity is respected.
-- `MarkdownEmbeddedCSharpTests` — validates the fallback syntax hints for embedded fences and that we do not surface project analyzer results when compilation context is missing.
+---
+
+## Usage Examples
+
+The C# format provides comprehensive querying capabilities through SQL. Below are practical examples demonstrating common use cases.
+
+### 1. Find all public types implementing IDisposable
+
+```sql
+SELECT
+    props->>'qualified_name' as qualified_name,
+    props->>'base_type' as base_type
+FROM csharp_types
+WHERE props->>'accessibility' = 'public'
+  AND json_array_length(props->'interfaces') > 0
+  AND EXISTS (
+    SELECT 1 FROM json_array_elements_text(props->'interfaces') AS iface
+    WHERE iface LIKE '%IDisposable%'
+  );
+```
+
+Useful for identifying resources that need proper cleanup. The `json_array_elements_text` function unpacks the interfaces array for searching.
+
+### 2. Find all async methods
+
+```sql
+SELECT
+    t.props->>'qualified_name' as type,
+    m.props->>'name' as method,
+    m.props->>'return_type' as return_type
+FROM csharp_members m
+JOIN csharp_types t ON (m.props->>'declaring_type')::text = t.node_id::text
+WHERE (m.props->>'is_async')::boolean = true
+  AND m.props->>'kind' = 'method';
+```
+
+Quickly identify all asynchronous operations across your codebase for performance analysis or migration planning.
+
+### 3. Find classes with no base type or interfaces (potential value objects)
+
+```sql
+SELECT
+    props->>'qualified_name' as qualified_name,
+    props->>'namespace' as namespace
+FROM csharp_types
+WHERE props->>'kind' = 'class'
+  AND props->>'base_type' IS NULL
+  AND (props->'interfaces' IS NULL OR json_array_length(props->'interfaces') = 0)
+ORDER BY props->>'namespace', props->>'name';
+```
+
+Identifies simple classes that might be value objects or POCOs, useful for architectural analysis.
+
+### 4. Cross-reference analysis - who calls this method?
+
+```sql
+WITH target AS (
+  SELECT node_id
+  FROM csharp_members
+  WHERE props->>'qualified_name' = 'MyNamespace.MyClass.MyMethod'
+)
+SELECT
+    src_t.props->>'qualified_name' as caller_type,
+    src_m.props->>'name' as caller_method,
+    e.props->>'symbol_key' as symbol
+FROM edge e
+JOIN target t ON e.dst_id = t.node_id
+JOIN csharp_members src_m ON e.src_id = src_m.node_id
+JOIN csharp_types src_t ON (src_m.props->>'declaring_type')::text = src_t.node_id::text
+WHERE e.type = 'USES_SYMBOL';
+```
+
+Powerful for impact analysis - find all code that depends on a specific method before refactoring.
+
+### 5. Find partial types
+
+```sql
+SELECT
+    props->>'namespace' as namespace,
+    props->>'name' as name,
+    COUNT(*) as file_count,
+    array_agg(DISTINCT uri) as files
+FROM csharp_types
+WHERE (props->>'is_partial')::boolean = true
+GROUP BY props->>'namespace', props->>'name'
+HAVING COUNT(*) > 1
+ORDER BY file_count DESC;
+```
+
+Lists partial types split across multiple files, showing how many files define each type.
+
+### 6. API surface analysis - all public methods in a namespace
+
+```sql
+SELECT
+    t.props->>'name' as type,
+    m.props->>'name' as method,
+    m.props->>'return_type' as return_type,
+    m.props->'parameters' as parameters
+FROM csharp_members m
+JOIN csharp_types t ON (m.props->>'declaring_type')::text = t.node_id::text
+WHERE t.props->>'namespace' LIKE 'MyApp.Public.%'
+  AND t.props->>'accessibility' = 'public'
+  AND m.props->>'accessibility' = 'public'
+  AND m.props->>'kind' = 'method'
+ORDER BY t.props->>'name', m.props->>'name';
+```
+
+Extract the complete public API surface of a namespace - perfect for generating documentation or tracking API changes.
+
+### 7. Find types with many dependencies (high coupling)
+
+```sql
+WITH refs AS (
+  SELECT
+    src_id,
+    COUNT(DISTINCT dst_id) as dep_count
+  FROM edge
+  WHERE type = 'USES_SYMBOL'
+  GROUP BY src_id
+)
+SELECT
+    t.props->>'qualified_name' as qualified_name,
+    r.dep_count as dependency_count
+FROM refs r
+JOIN csharp_types t ON r.src_id = t.node_id
+WHERE r.dep_count > 10
+ORDER BY r.dep_count DESC
+LIMIT 20;
+```
+
+Identifies highly coupled types that might benefit from refactoring. High dependency counts often indicate design issues.
+
+### 8. Find all static classes (utility classes)
+
+```sql
+SELECT
+    props->>'namespace' as namespace,
+    props->>'name' as name,
+    props->>'qualified_name' as qualified_name
+FROM csharp_types
+WHERE (props->>'is_static')::boolean = true
+  AND props->>'kind' = 'class'
+ORDER BY props->>'namespace', props->>'name';
+```
+
+Lists all static utility classes in your codebase for inventory or architectural review.
+
+### 9. Find record types
+
+```sql
+SELECT
+    props->>'qualified_name' as qualified_name,
+    props->>'namespace' as namespace,
+    props->>'accessibility' as accessibility
+FROM csharp_types
+WHERE (props->>'is_record')::boolean = true
+ORDER BY props->>'namespace', props->>'name';
+```
+
+Identifies all record types, useful for tracking usage of modern C# features.
+
+### 10. Find methods with specific parameter patterns
+
+```sql
+SELECT
+    t.props->>'qualified_name' as type,
+    m.props->>'name' as method,
+    m.props->'parameters' as parameters
+FROM csharp_members m
+JOIN csharp_types t ON (m.props->>'declaring_type')::text = t.node_id::text
+WHERE m.props->>'kind' = 'method'
+  AND json_array_length(m.props->'parameters') > 0
+  AND EXISTS (
+    SELECT 1 FROM json_array_elements(m.props->'parameters') AS param
+    WHERE param->>'type' LIKE '%CancellationToken%'
+  );
+```
+
+Find all methods accepting CancellationToken parameters, useful for async operation audits.
+
+---
+
+## Node Properties Schema
+
+All C# nodes store their metadata in the `props` JSON column. Below is the complete schema for each node kind.
+
+### document
+
+The root document node for each C# file.
+
+**Properties:**
+- `language` (string): Always "csharp"
+- `file_name` (string): Name of the file
+- `line_count` (number): Total lines in the file
+- `namespace_count` (number): Number of namespaces declared
+- `type_count` (number): Total number of types (classes, interfaces, structs, etc.)
+- `member_count` (number): Total number of members (methods, properties, fields, etc.)
+- `using_count` (number): Number of using directives
+- `public_type_count` (number): Number of public types
+- `method_count` (number): Number of methods
+- `async_member_count` (number): Number of async methods/properties
+
+### csharp.namespace
+
+Represents a namespace declaration.
+
+**Properties:**
+- `name` (string): Simple namespace name (last segment, e.g., "Generic" from "System.Collections.Generic")
+- `qualified_name` (string): Full namespace path (e.g., "System.Collections.Generic")
+- `parent_namespace_id` (string, optional): UUID of the parent namespace if nested
+
+**Example query:**
+```sql
+SELECT props->>'qualified_name' FROM csharp_namespaces;
+```
+
+### csharp.type
+
+Represents a type declaration (class, struct, interface, record, enum).
+
+**Properties:**
+- `name` (string): Simple type name without namespace
+- `qualified_name` (string): Full name including namespace (e.g., "MyApp.Services.PaymentService")
+- `kind` (string): One of: "class", "struct", "interface", "record", "enum", "delegate"
+- `namespace` (string): Declaring namespace (empty string if global namespace)
+- `accessibility` (string): One of: "public", "internal", "private", "protected", "protected internal", "private protected"
+- `is_partial` (boolean): Whether type is declared with `partial` keyword
+- `is_static` (boolean): Whether type is static (classes only)
+- `is_record` (boolean): Whether this is a record type
+- `base_type` (string, optional): Base class name (null if no base class or if this is an interface)
+- `interfaces` (array of strings): List of implemented interface names
+- `symbol_key` (string, optional): Roslyn documentation comment ID for cross-referencing
+
+**Example query:**
+```sql
+SELECT
+    props->>'qualified_name' as name,
+    props->>'kind' as kind,
+    props->>'accessibility' as access
+FROM csharp_types
+WHERE props->>'namespace' LIKE 'MyApp.%';
+```
+
+### csharp.member
+
+Represents a member declaration (method, property, field, event, constructor, indexer).
+
+**Properties:**
+- `name` (string): Member name
+- `kind` (string): One of: "method", "property", "field", "event", "constructor", "indexer"
+- `accessibility` (string): Same values as type accessibility
+- `is_static` (boolean): Whether member is static
+- `is_async` (boolean): Whether method/property is async
+- `return_type` (string): Return type for methods/properties, type for fields (empty string for constructors)
+- `declaring_type` (string): Simple name of the declaring type
+- `parameters` (array of objects): Parameter list, each with:
+  - `name` (string): Parameter name
+  - `type` (string): Parameter type
+  - `has_default` (boolean): Whether parameter has a default value
+- `symbol_key` (string, optional): Roslyn symbol key for cross-referencing
+
+**Example query:**
+```sql
+SELECT
+    props->>'name' as member,
+    props->>'kind' as kind,
+    props->>'return_type' as return_type,
+    json_array_length(props->'parameters') as param_count
+FROM csharp_members
+WHERE (props->>'is_async')::boolean = true;
+```
+
+### Accessing nested JSON properties
+
+DuckDB provides powerful JSON operators for querying node properties:
+
+- `props->>'key'` - Extract text value
+- `props->'key'` - Extract JSON value (preserves type)
+- `json_array_length(props->'array_key')` - Get array length
+- `json_array_elements(props->'array_key')` - Expand array to rows
+- `json_array_elements_text(props->'array_key')` - Expand array to text rows
+
+**Example - Query methods with multiple parameters:**
+```sql
+SELECT
+    props->>'name' as method,
+    json_array_length(props->'parameters') as param_count,
+    props->'parameters' as parameters
+FROM csharp_members
+WHERE props->>'kind' = 'method'
+  AND json_array_length(props->'parameters') > 3;
+```
+
+---
+
+## Troubleshooting
+
+### MSBuild/SDK Not Found
+
+**Symptom:** Files are indexed but no semantic analysis or diagnostics appear. Logs show "MSBuild workspace initialization failed" or "SDK not found".
+
+**Solution:**
+1. Ensure the .NET SDK is installed: `dotnet --version`
+2. For SDK-style projects, verify the SDK version matches the project's `TargetFramework` or `TargetFrameworks`
+3. On Linux/macOS, set `DOTNET_ROOT` environment variable if SDK is in a non-standard location
+4. Verify MSBuild can locate the SDK: `dotnet build --verbosity diagnostic`
+
+If MSBuild remains unavailable, the C# loader will fall back to a lightweight compilation mode with limited semantic analysis.
+
+### Analysis Slow or Timing Out
+
+**Symptom:** Indexing takes longer than expected or times out on large solutions.
+
+**Solution:**
+1. **Reduce concurrency:** The default allows up to 4 concurrent project analyses. Lower this if memory is constrained.
+2. **Exclude generated files:** Large auto-generated files (e.g., designer files, T4 templates) can slow analysis. Consider excluding them via `.gitignore` or repository configuration.
+3. **Check analyzers:** Third-party analyzers can significantly impact performance. Temporarily disable them by creating an empty `Directory.Build.props` or `.editorconfig` that sets all rules to "none".
+4. **Profile slow projects:** Use `dotnet build --diagnostic` to identify slow-building projects, then optimize or exclude them.
+
+### Out of Memory Errors
+
+**Symptom:** Process crashes with "OutOfMemoryException" during indexing.
+
+**Solution:**
+1. **Reduce concurrent projects:** Lower the concurrent analysis limit (default: 4 concurrent projects).
+2. **Increase available memory:** Ensure at least 4GB of RAM is available for indexing large solutions.
+3. **Process projects in batches:** Instead of indexing the entire repository at once, process subdirectories separately.
+4. **Dispose workspace:** The workspace host automatically disposes Roslyn trees after analysis, but you can force garbage collection between large projects by restarting the indexing process.
+
+### Analyzer Failures
+
+**Symptom:** Diagnostics are missing or incomplete. Logs show "Analyzer threw an exception" or "Analyzer timed out".
+
+**Solution:**
+1. **Update analyzers:** Ensure all analyzer packages are up to date. Outdated analyzers may not support newer Roslyn APIs.
+2. **Check analyzer configuration:** Verify `.editorconfig` and `Directory.Build.props` have correct severity settings.
+3. **Isolate failing analyzers:** Temporarily disable individual analyzers by setting their rules to "none" in `.editorconfig` to identify the problematic analyzer.
+4. **Report analyzer bugs:** If an analyzer consistently fails or times out, report the issue to the analyzer maintainer with minimal reproduction steps.
+
+### Symbol Resolution Issues
+
+**Symptom:** `USES_SYMBOL` edges are missing or `symbol_key` properties are null.
+
+**Solution:**
+1. **Verify project loads:** Ensure the owning `.csproj` file is present and valid. Run `dotnet build` to confirm the project builds successfully.
+2. **Check file membership:** Files must be included in a project for full semantic analysis. Orphaned `.cs` files (not in any project) fall back to lightweight mode.
+3. **Multi-project files:** If a file is included in multiple projects, symbol keys are resolved using the first successfully loaded project.
+4. **Generated code:** Source-generated files should have `symbol_key` values if the generator ran successfully. Check for generator errors in diagnostics.
+
+### Performance Optimization Tips
+
+1. **Cache indexing results:** RepoQL caches analysis results per project version. Avoid unnecessary changes to project files to maximize cache hits.
+2. **Incremental indexing:** When possible, index only changed files rather than the entire repository.
+3. **Disable unused features:** If you don't need diagnostics, disable analyzers entirely to speed up indexing.
+4. **Use SSD storage:** Roslyn heavily relies on disk I/O. Running on SSD significantly improves performance.
+5. **Warm up the JIT:** The first project analysis is always slower due to JIT compilation. Subsequent projects benefit from warmed-up code paths.
 
 ---

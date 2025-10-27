@@ -62,7 +62,7 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
             switch (detailKind)
             {
                 case SummaryDetail.Headline:
-                    FormatHeadline(builder, row);
+                    await FormatHeadlineAsync(builder, client, row, cancellationToken).ConfigureAwait(false);
                     break;
                 case SummaryDetail.Summary:
                     await FormatDefaultAsync(builder, client, row, cancellationToken).ConfigureAwait(false);
@@ -274,9 +274,33 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         return list;
     }
 
-    private static void FormatHeadline(StringBuilder builder, DocumentRow row)
+    private async Task FormatHeadlineAsync(StringBuilder builder, IRepoQlClient client, DocumentRow row, CancellationToken cancellationToken)
     {
         var headline = !string.IsNullOrWhiteSpace(row.Headline) ? row.Headline!.Trim() : ExtractFileName(row.Uri);
+
+        // Fetch annotation counts
+        var annotations = await FetchAnnotationsAsync(client, row.Uri, cancellationToken).ConfigureAwait(false);
+        var errorCount = annotations.Count(a => a.Severity.Equals("error", StringComparison.OrdinalIgnoreCase));
+        var warningCount = annotations.Count(a => a.Severity.Equals("warning", StringComparison.OrdinalIgnoreCase));
+
+        // Format: [ ⚠️ 5 | ❌ 2 ] uri - headline
+        if (errorCount > 0 || warningCount > 0)
+        {
+            builder.Append("[ ");
+            if (warningCount > 0)
+            {
+                builder.Append("⚠️ ");
+                builder.Append(warningCount);
+            }
+            if (errorCount > 0)
+            {
+                if (warningCount > 0) builder.Append(" | ");
+                builder.Append("❌ ");
+                builder.Append(errorCount);
+            }
+            builder.Append(" ] ");
+        }
+
         builder.Append(row.Uri);
         builder.Append(" - ");
         builder.Append(headline);
@@ -376,13 +400,17 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     private async Task<List<AnnotationRow>> FetchAnnotationsAsync(IRepoQlClient client, string uri, CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT severity,
-                   source,
-                   rule_id,
-                   message,
-                   resolved_target_uri
-            FROM annotations_for(?, NULL, NULL)
-            LIMIT 10
+            SELECT a.severity,
+                   a.source,
+                   a.rule_id,
+                   a.message,
+                   a.resolved_target_uri,
+                   s.start_line,
+                   s.end_line
+            FROM annotations_for(?, NULL, NULL) a
+            LEFT JOIN span s ON a.target_span_id = s.id
+            ORDER BY s.start_line NULLS LAST, a.severity_rank
+            LIMIT 100
             """;
 
         RawQueryResponse response;
@@ -405,7 +433,28 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
             var ruleId = values.Count > 2 ? ExtractString(values[2]) : null;
             var message = values.Count > 3 ? ExtractString(values[3]) : null;
             var targetUri = values.Count > 4 ? ExtractString(values[4]) : null;
-            annotations.Add(new AnnotationRow(severity ?? "info", source, ruleId, message, targetUri));
+
+            int? startLine = null;
+            if (values.Count > 5)
+            {
+                var lineStr = ExtractString(values[5]);
+                if (!string.IsNullOrWhiteSpace(lineStr) && int.TryParse(lineStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    startLine = parsed;
+                }
+            }
+
+            int? endLine = null;
+            if (values.Count > 6)
+            {
+                var lineStr = ExtractString(values[6]);
+                if (!string.IsNullOrWhiteSpace(lineStr) && int.TryParse(lineStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    endLine = parsed;
+                }
+            }
+
+            annotations.Add(new AnnotationRow(severity ?? "info", source, ruleId, message, targetUri, startLine, endLine));
         }
 
         return annotations;
@@ -459,16 +508,38 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
                 ? $"{annotation.Source ?? "unknown"}/{annotation.RuleId}"
                 : annotation.Source ?? "unknown";
 
-            builder.Append("- [");
+            // GitHub Actions format: ::error file={name},line={line},endLine={endLine},title={title}::{message}
+            var emoji = annotation.Severity.Equals("error", StringComparison.OrdinalIgnoreCase) ? "❌" :
+                       annotation.Severity.Equals("warning", StringComparison.OrdinalIgnoreCase) ? "⚠️" : "ℹ️";
+
+            builder.Append("::");
             builder.Append(annotation.Severity);
-            builder.Append("] ");
-            builder.Append(rulePart);
-            builder.Append(": ");
-            builder.AppendLine(annotation.Message ?? "(no message)");
+
             if (!string.IsNullOrWhiteSpace(annotation.TargetUri))
             {
-                builder.AppendLine($"  ↳ {annotation.TargetUri}");
+                // Extract filename from URI
+                var fileName = ExtractFileName(annotation.TargetUri);
+                builder.Append(" file=");
+                builder.Append(fileName);
             }
+
+            if (annotation.StartLine.HasValue)
+            {
+                builder.Append(",line=");
+                builder.Append(annotation.StartLine.Value);
+
+                if (annotation.EndLine.HasValue && annotation.EndLine.Value != annotation.StartLine.Value)
+                {
+                    builder.Append(",endLine=");
+                    builder.Append(annotation.EndLine.Value);
+                }
+            }
+
+            builder.Append(",title=");
+            builder.Append(emoji);
+            builder.Append(rulePart);
+            builder.Append("::");
+            builder.AppendLine(annotation.Message ?? "(no message)");
         }
 
         return builder.ToString().TrimEnd();
@@ -506,5 +577,7 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         string? Source,
         string? RuleId,
         string? Message,
-        string? TargetUri);
+        string? TargetUri,
+        int? StartLine,
+        int? EndLine);
 }
