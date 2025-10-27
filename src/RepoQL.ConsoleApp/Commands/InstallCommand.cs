@@ -78,7 +78,7 @@ internal class InstallCommand(IAnsiConsole console)
         }
         else
         {
-            var selectedAgent = agents.First(a => selection.StartsWith(a.Name));
+            var selectedAgent = agents.First(a => selection == $"{a.Name} ({a.ConfigPath})");
             agentsToUpdate = [selectedAgent];
         }
 
@@ -174,7 +174,7 @@ internal class InstallCommand(IAnsiConsole console)
 
         // Alternative Claude CLI location
         var altClaudeCliConfig = Path.Combine(homeDir, ".claude", ".mcp.json");
-        if (File.Exists(altClaudeCliConfig) && !agents.Any(a => a.ConfigPath == altClaudeCliConfig))
+        if (File.Exists(altClaudeCliConfig) && !agents.Any(a => a.Type == AgentType.ClaudeCLI))
         {
             agents.Add(new AgentInfo
             {
@@ -272,11 +272,6 @@ internal class InstallCommand(IAnsiConsole console)
                         {
                             Directory.CreateDirectory(directory);
                         }
-                    }
-
-                    if (config is null)
-                    {
-                        config = new JsonObject();
                     }
 
                     // Ensure mcpServers section exists
