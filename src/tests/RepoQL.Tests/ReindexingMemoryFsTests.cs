@@ -78,9 +78,7 @@ internal class ReindexingMemoryFsTests
         nodesBefore.Count(n => n.Kind == "document").Should().Be(1);
         nodesBefore.Count(n => n.Kind == "md_heading").Should().Be(2);
 
-        // Mutate file content and wait for reindex
-        fs.AddOrUpdateText("docs/x.md", "# Only\n\nText\n");
-
+        // Set up subscription before mutating to avoid race condition
         var secondIndexed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondError = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var sub2 = indexer.Subscribe(new Observer(() => { }, ex => secondError.TrySetResult(ex), ev =>
@@ -88,6 +86,10 @@ internal class ReindexingMemoryFsTests
             if (ev is IRepositoryIndexer.ItemIndexedEvent e && e.CurrentUri.AbsoluteUri == uri.AbsoluteUri)
                 secondIndexed.TrySetResult(true);
         }));
+
+        // Mutate file content and wait for reindex
+        fs.AddOrUpdateText("docs/x.md", "# Only\n\nText\n");
+
         var done2 = await Task.WhenAny(secondIndexed.Task, secondError.Task, Task.Delay(DefaultTimeout));
         if (done2 == secondError.Task) throw await secondError.Task;
         if (done2 != secondIndexed.Task) throw new TimeoutException("Timed out waiting for reindex");
@@ -134,13 +136,15 @@ internal class ReindexingMemoryFsTests
         var beforeArtifact = before.ArtifactId;
         var nodesBefore = store.GetAllNodes().ToArray();
 
-        // Re-add same content (should emit ItemIndexed via short-circuit, without DB modifications)
+        // Set up subscription before re-adding content to avoid race condition
         var secondIndexed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var sub2 = indexer.Subscribe(new Observer(() => { }, _ => { }, ev =>
         {
             if (ev is IRepositoryIndexer.ItemIndexedEvent e && e.CurrentUri.AbsoluteUri == uri.AbsoluteUri)
                 secondIndexed.TrySetResult(true);
         }));
+
+        // Re-add same content (should emit ItemIndexed via short-circuit, without DB modifications)
         fs.AddOrUpdateText("docs/y.md", content);
         await Task.WhenAny(secondIndexed.Task, Task.Delay(DefaultTimeout));
 

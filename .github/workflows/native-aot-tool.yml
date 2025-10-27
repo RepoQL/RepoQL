@@ -15,7 +15,7 @@ permissions:
   contents: read
   packages: write
   checks: write
-  pull-requests: read
+  pull-requests: write
 
 jobs:
   tests:
@@ -127,6 +127,7 @@ jobs:
 
   root:
     needs: tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -139,11 +140,11 @@ jobs:
       - name: Pack root tool
         run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -o artifacts/tool/root -p:RuntimeIdentifiers=
       - name: Publish root packages to GitHub Packages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: dotnet nuget push artifacts/tool/root/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
 
   native:
     needs: root
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
       matrix:
@@ -166,5 +167,4 @@ jobs:
         run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -r ${{ matrix.rid }} -o ./artifacts/tool/${{ matrix.rid }}
       - name: Publish ${{ matrix.rid }} package to GitHub Packages
         shell: bash
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: dotnet nuget push ./artifacts/tool/${{ matrix.rid }}/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
