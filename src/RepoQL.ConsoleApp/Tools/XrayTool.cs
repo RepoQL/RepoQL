@@ -55,7 +55,15 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         {
             if (i > 0)
             {
-                builder.AppendLine("---");
+                // For headline mode, just use newline; for summary/snippet use separator
+                if (detailKind == SummaryDetail.Headline)
+                {
+                    builder.AppendLine();
+                }
+                else
+                {
+                    builder.AppendLine("---");
+                }
             }
 
             var row = rows[i];

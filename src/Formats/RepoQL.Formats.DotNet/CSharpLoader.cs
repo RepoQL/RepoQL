@@ -8,6 +8,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
@@ -59,6 +60,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
     private static readonly MetadataReference[] DefaultReferences = CreateDefaultReferences();
     private readonly CSharpWorkspaceHost _workspaceHost;
     private readonly ILogger<CSharpLoader> _logger;
+    private readonly bool _analysisEnabled;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CSharpLoader"/> class with default settings.
@@ -68,7 +70,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
     /// prefer using the constructor that accepts CSharpWorkspaceHost to share a singleton instance.
     /// </remarks>
     public CSharpLoader()
-        : this(null, null)
+        : this(null, null, null)
     {
     }
 
@@ -77,7 +79,15 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
     /// </summary>
     /// <param name="workspaceHost">Workspace host for project-aware analysis. If null, creates a new instance (not recommended for production).</param>
     public CSharpLoader(CSharpWorkspaceHost? workspaceHost)
-        : this(workspaceHost, null)
+        : this(workspaceHost, null, null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance with a workspace host and configuration.
+    /// </summary>
+    public CSharpLoader(CSharpWorkspaceHost? workspaceHost, IConfiguration? configuration)
+        : this(workspaceHost, configuration, null)
     {
     }
 
@@ -86,10 +96,11 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
     /// </summary>
     /// <param name="workspaceHost">Workspace host for project-aware analysis. If null, creates a new instance (not recommended for production).</param>
     /// <param name="logger">Optional logger for diagnostic information. Uses null logger if null.</param>
-    public CSharpLoader(CSharpWorkspaceHost? workspaceHost, ILogger<CSharpLoader>? logger)
+    public CSharpLoader(CSharpWorkspaceHost? workspaceHost, IConfiguration? configuration, ILogger<CSharpLoader>? logger)
     {
         _workspaceHost = workspaceHost ?? new CSharpWorkspaceHost();
         _logger = logger ?? NullLogger<CSharpLoader>.Instance;
+        _analysisEnabled = ResolveAnalysisEnabled(configuration);
     }
 
     /// <summary>
@@ -476,7 +487,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
         TextLineMap lineMap,
         CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(filePath))
+        if (_analysisEnabled && !string.IsNullOrWhiteSpace(filePath))
         {
             var projectAnalysis = await _workspaceHost.TryAnalyzeAsync(filePath, surface, lineMap, cancellationToken).ConfigureAwait(false);
             if (projectAnalysis is not null)
@@ -800,6 +811,32 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
             .GroupBy(r => (r as PortableExecutableReference)?.FilePath ?? string.Empty)
             .Select(g => g.First())
             .ToArray();
+    }
+
+    private static bool ResolveAnalysisEnabled(IConfiguration? configuration)
+    {
+        static bool? TryParse(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+            if (bool.TryParse(raw, out var boolValue))
+                return boolValue;
+            if (int.TryParse(raw, out var numeric))
+                return numeric != 0;
+            return null;
+        }
+
+        bool? value = null;
+
+        if (configuration is not null)
+        {
+            value = TryParse(configuration["REPOQL_DOTNET_ANALYSIS"]) ??
+                    TryParse(configuration["RepoQL:DotNet:Analysis"]) ??
+                    TryParse(configuration["repoql:dotnet:analysis"]);
+        }
+
+        value ??= TryParse(Environment.GetEnvironmentVariable("REPOQL_DOTNET_ANALYSIS"));
+        return value ?? false;
     }
 
 }

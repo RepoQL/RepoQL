@@ -6,6 +6,7 @@ using AwesomeAssertions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
@@ -272,7 +273,8 @@ public class PaymentService
     [Test]
     public async Task ProjectAnalysis_Resolves_CrossFile_Symbols(CancellationToken token)
     {
-        var loader = new CSharpLoader();
+        using var host = new CSharpWorkspaceHost();
+        var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
         var projectDir = CreateTempProject(new Dictionary<string, string>
         {
             ["Helper.cs"] = """
@@ -325,7 +327,8 @@ public class Foo
     [Test]
     public async Task ProjectAnalysis_Reports_Project_Diagnostics(CancellationToken token)
     {
-        var loader = new CSharpLoader();
+        using var host = new CSharpWorkspaceHost();
+        var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
         var projectDir = CreateTempProject(new Dictionary<string, string>
         {
             ["Foo.cs"] = """
@@ -361,7 +364,7 @@ public class Foo
     public async Task WorkspaceHost_Caches_Project_Loads(CancellationToken token)
     {
         using var host = new CSharpWorkspaceHost();
-        var loader = new CSharpLoader(host);
+        var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
         var projectDir = CreateTempProject(new Dictionary<string, string>
         {
             ["Helper.cs"] = """
@@ -402,7 +405,7 @@ public class Foo
     public async Task WorkspaceHost_Skips_Files_Without_Project(CancellationToken token)
     {
         using var host = new CSharpWorkspaceHost();
-        var loader = new CSharpLoader(host);
+        var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
         await LoadCSharpDocumentAsync(loader, "Standalone.cs", "public class Foo { }");
 
         host.ActiveSessionCount.Should().Be(0);
@@ -420,7 +423,7 @@ public class Foo
         try
         {
             using var host = new CSharpWorkspaceHost();
-            var loader = new CSharpLoader(host);
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var fooPath = Path.Combine(projectDir, "Foo.cs");
             var document = await LoadPhysicalDocumentAsync(loader, fooPath);
             var analyzer = new CSharpAnalyzer();
@@ -460,7 +463,7 @@ dotnet_diagnostic.AN0001.severity = none
         try
         {
             using var host = new CSharpWorkspaceHost();
-            var loader = new CSharpLoader(host);
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var fooPath = Path.Combine(projectDir, "Foo.cs");
             var document = await LoadPhysicalDocumentAsync(loader, fooPath);
             var analyzer = new CSharpAnalyzer();
@@ -491,7 +494,7 @@ dotnet_diagnostic.AN0001.severity = none
         try
         {
             using var host = new CSharpWorkspaceHost();
-            var loader = new CSharpLoader(host);
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var fooPath = Path.Combine(projectDir, "Foo.cs");
             var document = await LoadPhysicalDocumentAsync(loader, fooPath);
             var analyzer = new CSharpAnalyzer();
@@ -536,7 +539,8 @@ dotnet_diagnostic.AN0001.severity = none
 
         try
         {
-            var loader = new CSharpLoader();
+            using var host = new CSharpWorkspaceHost();
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var helperDoc = await LoadPhysicalDocumentAsync(loader, Path.Combine(projectDir, "Helper.cs"));
             var helperRecords = loader.Materialize(helperDoc);
             var helperTypeNode = helperRecords.Nodes.First(n => n.Kind == "csharp.type" && n.Props["name"]!.ToString() == "Helper");
@@ -588,7 +592,8 @@ dotnet_diagnostic.AN0001.severity = none
 
         try
         {
-            var loader = new CSharpLoader();
+            using var host = new CSharpWorkspaceHost();
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var fooDoc = await LoadPhysicalDocumentAsync(loader, Path.Combine(projectDir, "Foo.cs"));
             var fooRecords = loader.Materialize(fooDoc);
 
@@ -624,7 +629,7 @@ dotnet_diagnostic.AN0001.severity = none
         try
         {
             using var host = new CSharpWorkspaceHost();
-            var loader = new CSharpLoader(host);
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var fooPath = Path.Combine(projectDir, "Foo.cs");
             var document = await LoadPhysicalDocumentAsync(loader, fooPath);
             var records = loader.Materialize(document);
@@ -662,7 +667,7 @@ dotnet_diagnostic.AN0001.severity = none
         try
         {
             using var host = new CSharpWorkspaceHost();
-            var loader = new CSharpLoader(host);
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
 
             var fooDocument = await LoadPhysicalDocumentAsync(loader, Path.Combine(projectDir, "Foo.cs"));
             var first = loader.Materialize(fooDocument);
@@ -899,10 +904,17 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
     {
         var dir = Path.Combine(Path.GetTempPath(), $"repoql_proj_{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
+
+        // Detect current target framework to match test runner environment
+        var currentFramework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription;
+        var targetFramework = currentFramework.Contains(".NET 10") ? "net10.0" :
+                              currentFramework.Contains(".NET 9") ? "net9.0" :
+                              currentFramework.Contains(".NET 8") ? "net8.0" : "net8.0";
+
         var sb = new StringBuilder();
         sb.AppendLine("<Project Sdk=\"Microsoft.NET.Sdk\">");
         sb.AppendLine("  <PropertyGroup>");
-        sb.AppendLine("    <TargetFramework>net8.0</TargetFramework>");
+        sb.AppendLine($"    <TargetFramework>{targetFramework}</TargetFramework>");
         sb.AppendLine("    <Nullable>enable</Nullable>");
         sb.AppendLine("  </PropertyGroup>");
         if (analyzers is not null)
@@ -1328,7 +1340,8 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
 
         try
         {
-            var loader = new CSharpLoader();
+            using var host = new CSharpWorkspaceHost();
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var doc1 = await LoadPhysicalDocumentAsync(loader, Path.Combine(projectDir, "Partial1.cs"));
             var doc2 = await LoadPhysicalDocumentAsync(loader, Path.Combine(projectDir, "Partial2.cs"));
             var doc3 = await LoadPhysicalDocumentAsync(loader, Path.Combine(projectDir, "Partial3.cs"));
@@ -1424,7 +1437,8 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
 
         try
         {
-            var loader = new CSharpLoader();
+            using var host = new CSharpWorkspaceHost();
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var filePath = Path.Combine(projectDir, "Test.cs");
 
             var doc1 = await LoadPhysicalDocumentAsync(loader, filePath);
@@ -1556,7 +1570,7 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
         try
         {
             using var host = new CSharpWorkspaceHost();
-            var loader = new CSharpLoader(host);
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var fooPath = Path.Combine(projectDir, "Foo.cs");
             var document = await LoadPhysicalDocumentAsync(loader, fooPath);
             var records = loader.Materialize(document);
@@ -1625,7 +1639,7 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
         try
         {
             using var host = new CSharpWorkspaceHost();
-            var loader = new CSharpLoader(host);
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
 
             var tasks = new List<Task<DocumentModel>>();
             for (int i = 1; i <= 5; i++)
@@ -1677,7 +1691,8 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
 
         try
         {
-            var loader = new CSharpLoader();
+            using var host = new CSharpWorkspaceHost();
+            var loader = new CSharpLoader(host, CreateAnalysisConfiguration());
             var containerDoc = await LoadPhysicalDocumentAsync(loader, Path.Combine(projectDir, "Container.cs"));
             var containerRecords = loader.Materialize(containerDoc);
 
@@ -1696,6 +1711,16 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
         }
     }
 
+    private static IConfiguration CreateAnalysisConfiguration()
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["REPOQL_DOTNET_ANALYSIS"] = "true"
+        };
+        return new ConfigurationBuilder()
+            .AddInMemoryCollection(values)
+            .Build();
+    }
+
     #endregion
 }
-

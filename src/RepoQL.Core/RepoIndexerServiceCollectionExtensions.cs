@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Linq;
 using System.Reflection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
@@ -145,7 +146,13 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<SlnLoader>(sp => new SlnLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<CSharpWorkspaceHost>();
         services.AddHostedService(sp => sp.GetRequiredService<CSharpWorkspaceHost>());
-        services.AddSingleton<CSharpLoader>(sp => new CSharpLoader(sp.GetRequiredService<CSharpWorkspaceHost>()));
+        services.AddSingleton<CSharpLoader>(sp =>
+        {
+            var host = sp.GetRequiredService<CSharpWorkspaceHost>();
+            var configuration = sp.GetService<IConfiguration>();
+            var logger = sp.GetService<ILogger<CSharpLoader>>();
+            return new CSharpLoader(host, configuration, logger);
+        });
         services.AddSingleton<CSharpAnalyzer>();
         services.AddSingleton<PlainTextLoader>();
         services.AddSingleton<GraphQLLoader>();

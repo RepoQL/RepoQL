@@ -1349,8 +1349,14 @@ FROM (
                     return a;
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError(ex,
+                    "Failed to upsert annotation: SemanticKey={SemanticKey}, Kind={Kind}, " +
+                    "RuleId={RuleId}, TargetUri={TargetUri}, TargetNodeId={TargetNodeId}, " +
+                    "TargetEdgeId={TargetEdgeId}, TargetSpanId={TargetSpanId}, ScopeDocumentId={ScopeDocumentId}",
+                    a.SemanticKey, a.Kind, a.RuleId, a.TargetUri,
+                    a.TargetNodeId, a.TargetEdgeId, a.TargetSpanId, a.ScopeDocumentId);
                 tx.Rollback();
                 throw;
             }

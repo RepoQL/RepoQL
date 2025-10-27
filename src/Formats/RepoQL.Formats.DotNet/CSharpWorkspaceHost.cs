@@ -219,7 +219,19 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             if (compilation is null)
                 return null;
 
-            // Register the file path to document ID mapping
+            var analysis = await AnalyzeCoreAsync(project, compilation, filePath, surface, lineMap, cancellationToken).ConfigureAwait(false);
+            await ReleaseCompilationResourcesAsync().ConfigureAwait(false);
+            return analysis;
+        }
+
+        private async Task<CSharpSemanticAnalysis?> AnalyzeCoreAsync(
+            Project project,
+            Compilation compilation,
+            string filePath,
+            CSharpDocumentSurface surface,
+            TextLineMap lineMap,
+            CancellationToken cancellationToken)
+        {
             var normalizedPath = Path.GetFullPath(filePath);
             _filePathToDocumentId[normalizedPath] = surface.DocumentId;
 
@@ -257,6 +269,31 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             var generatedDocuments = TryPublishGeneratedDocuments();
 
             return new CSharpSemanticAnalysis(collector.References, diagnostics, generatedDocuments);
+        }
+
+        private async Task ReleaseCompilationResourcesAsync()
+        {
+            if (_compilationWithGenerators is null &&
+                _generatedDocuments.IsDefaultOrEmpty &&
+                _generatorDiagnostics.IsDefaultOrEmpty &&
+                _analyzerDiagnostics.IsDefaultOrEmpty)
+            {
+                return;
+            }
+
+            await _compilationGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                _compilationWithGenerators = null;
+                _generatedDocuments = ImmutableArray<CSharpGeneratedDocumentState>.Empty;
+                _generatorDiagnostics = ImmutableArray<Diagnostic>.Empty;
+                _analyzerDiagnostics = ImmutableArray<Diagnostic>.Empty;
+                _analyzersComputed = false;
+            }
+            finally
+            {
+                _compilationGate.Release();
+            }
         }
 
         private async Task<Project?> EnsureProjectAsync(CancellationToken cancellationToken)
@@ -576,7 +613,7 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
                         walker.DeclaredNodeIds,
                         lineMap,
                         documentId,
-                        _filePathToDocumentId);
+                        filePathToDocumentId);
                     collector.Visit(csharpRoot);
 
                     var diagnostics = new List<CSharpDiagnostic>();
@@ -804,3 +841,4 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         public override SourceText GetText(CancellationToken cancellationToken = default) => _text;
     }
 }
+
