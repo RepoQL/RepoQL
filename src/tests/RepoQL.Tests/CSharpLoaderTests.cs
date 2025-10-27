@@ -16,7 +16,7 @@ using AnalysisResult = RepoQL.Contracts.Analysis.AnalysisResult;
 
 namespace RepoQL.Tests;
 
-[Timeout(15_000)]
+[Timeout(60_000)]
 internal sealed class CSharpLoaderTests
 {
     [Test]

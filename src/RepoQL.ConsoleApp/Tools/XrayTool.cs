@@ -276,8 +276,6 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 
     private async Task FormatHeadlineAsync(StringBuilder builder, IRepoQlClient client, DocumentRow row, CancellationToken cancellationToken)
     {
-        var headline = !string.IsNullOrWhiteSpace(row.Headline) ? row.Headline!.Trim() : ExtractFileName(row.Uri);
-
         // Fetch annotation counts
         var annotations = await FetchAnnotationsAsync(client, row.Uri, cancellationToken).ConfigureAwait(false);
         var errorCount = annotations.Count(a => a.Severity.Equals("error", StringComparison.OrdinalIgnoreCase));
@@ -303,7 +301,7 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 
         builder.Append(row.Uri);
         builder.Append(" - ");
-        builder.Append(headline);
+        builder.Append(!string.IsNullOrWhiteSpace(row.Headline) ? row.Headline!.Trim() : ExtractFileName(row.Uri));
     }
 
     private async Task FormatSummaryAsync(StringBuilder builder, IRepoQlClient client, DocumentRow row, CancellationToken cancellationToken)
@@ -400,16 +398,22 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     private async Task<List<AnnotationRow>> FetchAnnotationsAsync(IRepoQlClient client, string uri, CancellationToken cancellationToken)
     {
         const string sql = """
+            WITH doc AS (
+                SELECT id AS doc_id FROM node
+                WHERE lower(node.uri) = lower(repository_uri_container(?))
+            )
             SELECT a.severity,
                    a.source,
                    a.rule_id,
                    a.message,
-                   a.resolved_target_uri,
+                   ann.resolved_target_uri,
                    s.start_line,
                    s.end_line
-            FROM annotations_for(?, NULL, NULL) a
+            FROM annotation a
+            JOIN doc ON a.scope_document_id = doc.doc_id
+            LEFT JOIN annotations ann ON ann.id = a.id
             LEFT JOIN span s ON a.target_span_id = s.id
-            ORDER BY s.start_line NULLS LAST, a.severity_rank
+            ORDER BY s.start_line NULLS LAST, ann.severity_rank DESC
             LIMIT 100
             """;
 

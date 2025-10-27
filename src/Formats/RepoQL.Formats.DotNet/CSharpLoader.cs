@@ -635,16 +635,21 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
     private static string BuildHeadline(RepoUri uri, CSharpDocumentSurface surface)
     {
         var fileName = GetFileName(uri);
-        var typeSummary = surface.Types
-            .GroupBy(t => t.Kind)
-            .OrderByDescending(g => g.Count())
-            .Take(CSharpLoaderConstants.MaxTypesInHeadline)
-            .Select(g => $"{g.Key}:{g.Count()}")
+
+        // Show actual type names instead of counts
+        var topTypes = surface.Types
+            .Take(3)
+            .Select(t => $"{t.Kind} {t.Name}")
             .ToArray();
-        var typePart = typeSummary.Length > 0 ? string.Join(", ", typeSummary) : "types:0";
-        var methodCount = surface.Members.Count(m => string.Equals(m.Kind, CSharpValues.Method, StringComparison.OrdinalIgnoreCase));
-        var asyncCount = surface.Members.Count(m => m.IsAsync);
-        return $"{fileName} | {typePart} | methods:{methodCount} async:{asyncCount}";
+
+        if (topTypes.Length == 0)
+            return $"{fileName} | (empty)";
+
+        var typePart = string.Join(", ", topTypes);
+        if (surface.Types.Count > 3)
+            typePart += $" (+{surface.Types.Count - 3} more)";
+
+        return $"{fileName} | {typePart}";
     }
 
     private static string BuildSummary(CSharpDocumentSurface surface)
