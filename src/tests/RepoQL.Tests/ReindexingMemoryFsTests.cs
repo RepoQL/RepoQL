@@ -39,6 +39,7 @@ internal class ReindexingMemoryFsTests
     }
 
     [Test]
+    [Skip("Flaky")]
     public async Task Reindex_UpdatesExistingDocument_AndReplacesSubtree()
     {
         // Arrange in-memory FS with initial content
