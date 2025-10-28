@@ -4,7 +4,7 @@
         <TargetFramework>net9.0</TargetFramework>
         <PublishTrimmed>false</PublishTrimmed>
         <OutputType>Exe</OutputType>
-        <InvariantGlobalization>true</InvariantGlobalization>
+        <InvariantGlobalization>false</InvariantGlobalization>
         <AssemblyName>repoql</AssemblyName>
         <PackAsTool>true</PackAsTool>
         <IsPackable>true</IsPackable>
@@ -12,7 +12,7 @@
         <PackageId>RepoQL.Tool</PackageId>
         <PackageOutputPath>$(ArtifactsDirectory)/packages</PackageOutputPath>
         <RollForward>Major</RollForward>
-        <Version>1.0.8</Version>
+        <Version>1.0.9</Version>
     </PropertyGroup>
 
     <!-- Platform-specific packs -->
@@ -22,6 +22,8 @@
         <SelfContained>true</SelfContained>
         <PublishTrimmed>true</PublishTrimmed>
         <StripSymbols>true</StripSymbols>
+        <InvariantGlobalization>false</InvariantGlobalization>
+        <IlcInvariantGlobalization>false</IlcInvariantGlobalization>
     </PropertyGroup>
 
     <ItemGroup>

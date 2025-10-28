@@ -22,7 +22,7 @@
         <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
         <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
         <NoWarn>$(NoWarn);CA1305</NoWarn>
-        <InvariantGlobalization>true</InvariantGlobalization>
+        <InvariantGlobalization>false</InvariantGlobalization>
         <!-- Creates a documentation xml file on build for intellisense, also mandates documentation comments -->
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <!-- Faster nuget restore - https://www.gresearch.com/blog/article/improve-nuget-restores-with-static-graph-evaluation/ -->
