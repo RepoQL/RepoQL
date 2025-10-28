@@ -100,10 +100,25 @@ public static class RepoIndexerServiceCollectionExtensions
             }
 
             // Otherwise, attempt to load the shipped model placed by RepoQL project: Embeddings/Model/embedding_model.onnx
+            // If not present, extract from embedded resources in the entry assembly on first run.
             try
             {
                 var baseDir = AppContext.BaseDirectory;
-                var shipped = Path.Combine(baseDir, "Embeddings", "Model", "embedding_model.onnx");
+                var modelDir = Path.Combine(baseDir, "Embeddings", "Model");
+                var shipped = Path.Combine(modelDir, "embedding_model.onnx");
+
+                if (!File.Exists(shipped))
+                {
+                    try
+                    {
+                        ExtractEmbeddedModelIfAvailable(modelDir, log);
+                    }
+                    catch (Exception ex)
+                    {
+                        log?.LogWarning(ex, "Embedding provider: failed to extract embedded model resources");
+                    }
+                }
+
                 if (File.Exists(shipped))
                 {
                     log?.LogInformation("Embedding provider: using shipped model at {Path}", shipped);
@@ -271,5 +286,50 @@ public static class RepoIndexerServiceCollectionExtensions
     {
         services.AddSingleton<IVirtualFileSystem>(_ => new EmbeddedStore(assembly));
         return services;
+    }
+
+    private static void ExtractEmbeddedModelIfAvailable(string destinationModelDir, ILogger? log)
+    {
+        var entry = System.Reflection.Assembly.GetEntryAssembly();
+        if (entry == null)
+        {
+            log?.LogInformation("Embedding extract: no entry assembly");
+            return;
+        }
+
+        var resourceNames = entry.GetManifestResourceNames();
+        var zipName = resourceNames.FirstOrDefault(n => n.EndsWith("Embeddings.Model.embeddings.zip", StringComparison.OrdinalIgnoreCase));
+        if (zipName is null)
+        {
+            log?.LogInformation("Embedding extract: no embedded model zip found (resource name ends with 'Embeddings.Model.embeddings.zip')");
+            return;
+        }
+
+        Directory.CreateDirectory(destinationModelDir);
+        using var s = entry.GetManifestResourceStream(zipName);
+        if (s is null)
+        {
+            log?.LogWarning("Embedding extract: zip resource stream missing: {Res}", zipName);
+            return;
+        }
+
+        try
+        {
+            using var za = new System.IO.Compression.ZipArchive(s, System.IO.Compression.ZipArchiveMode.Read, leaveOpen: true);
+            foreach (var entryItem in za.Entries)
+            {
+                if (string.IsNullOrEmpty(entryItem.Name)) continue; // skip directories
+                var dst = Path.Combine(destinationModelDir, entryItem.Name);
+                if (File.Exists(dst)) continue;
+                using var es = entryItem.Open();
+                using var fs = File.Create(dst);
+                es.CopyTo(fs);
+                log?.LogInformation("Embedding extract: wrote {File}", dst);
+            }
+        }
+        catch (Exception ex)
+        {
+            log?.LogWarning(ex, "Embedding extract: failed to read embedded model zip");
+        }
     }
 }

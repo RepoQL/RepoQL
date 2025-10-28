@@ -1,10 +1,11 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
+        <Version>1.0.9</Version>
         <TargetFramework>net9.0</TargetFramework>
         <PublishTrimmed>false</PublishTrimmed>
         <OutputType>Exe</OutputType>
-        <InvariantGlobalization>false</InvariantGlobalization>
+        <InvariantGlobalization>true</InvariantGlobalization>
         <AssemblyName>repoql</AssemblyName>
         <PackAsTool>true</PackAsTool>
         <IsPackable>true</IsPackable>
@@ -12,7 +13,13 @@
         <PackageId>RepoQL.Tool</PackageId>
         <PackageOutputPath>$(ArtifactsDirectory)/packages</PackageOutputPath>
         <RollForward>Major</RollForward>
-        <Version>1.0.9</Version>
+        <PublishSelfContained>true</PublishSelfContained>
+        <PublishTrimmed>false</PublishTrimmed>
+        <StripSymbols>true</StripSymbols>
+        <IlcInvariantGlobalization>true</IlcInvariantGlobalization>
+        <!-- keep symbols out of nupkg -->
+        <DebugType>none</DebugType>
+        <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
     </PropertyGroup>
 
     <!-- Platform-specific packs -->
@@ -59,11 +66,11 @@
 
     
     
+    <!-- Prefer a prebuilt zip committed once; otherwise embed individual model files -->
     <ItemGroup>
-        <None Include="..\RepoQL.Core\Embeddings\Model\**" Link="Embeddings\Model\%(FileName)%(Extension)" >
-            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
-        </None>
+        <EmbeddedResource Include="Resources\EmbeddingsModel.zip"
+                          LogicalName="Embeddings.Model.embeddings.zip"
+                          Condition="Exists('$(MSBuildThisFileDirectory)Resources\\EmbeddingsModel.zip')" />
     </ItemGroup>
 
     <ItemGroup>
