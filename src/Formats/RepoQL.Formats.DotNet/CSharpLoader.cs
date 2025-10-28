@@ -538,6 +538,13 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
             var root = await syntaxTree.GetRootAsync(cancellationToken).ConfigureAwait(false);
             collector.Visit(root);
             var diagnostics = CollectDiagnostics(compilation, syntaxTree, lineMap, cancellationToken);
+            if (!_analysisEnabled)
+            {
+                diagnostics = diagnostics
+                    .Where(d => !SuppressedWhenAnalysisDisabled.Contains(d.Id, StringComparer.OrdinalIgnoreCase))
+                    .ToArray();
+            }
+
             return new SemanticInfo(collector.References, diagnostics, Array.Empty<CSharpGeneratedDocumentState>());
         }
         catch (Exception ex)
@@ -812,6 +819,38 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
             .Select(g => g.First())
             .ToArray();
     }
+
+    private static readonly string[] SuppressedWhenAnalysisDisabled =
+    {
+        "CS0234", // namespace missing
+        "CS0246", // type or namespace missing
+        "CS0518", // predefined type missing
+        "CS1061", // type does not contain definition (depends on semantic reference)
+        "CS0103", // name does not exist in current context
+        "CS0012", // assembly not referenced
+        "CS1674", // type must be implicitly convertible to IDisposable
+        "CS0161", // not all code paths return a value
+        "CS0126", // wrong return type
+        "CS0019", // operator cannot be applied
+        "CS1729", // constructor overload missing
+        "CS8130", // cannot infer type of deconstruction variable
+        "CS1503", // argument type conversion failure
+        "CS1579", // foreach cannot operate (GetEnumerator missing)
+        "CS8805", // top-level statements not supported (analysis fallback)
+        "CS0021", // cannot apply indexing with []
+        "CS0165", // use of unassigned variable
+        "CS0119", // member reference invalid in this context
+        "CS0535", // does not implement interface member
+        "CS8795", // partial method must have implementation
+        "CS0066", // event must be delegate type
+        "CS0403", // cannot convert null to type parameter
+        "CS4012", // ReadOnlySpan in async method (requires ref libs)
+        "CS8821", // static anonymous function reference
+        "CS1955", // non-invocable member used as method
+        "CS0428", // cannot convert method group
+        "CS0120", // object reference required
+        "CS1660"  // cannot convert lambda expression
+    };
 
     private static bool ResolveAnalysisEnabled(IConfiguration? configuration)
     {

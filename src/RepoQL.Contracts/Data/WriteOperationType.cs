@@ -3,5 +3,6 @@
 public enum WriteOperationType
 {
     ReplaceDocument,
+    UpsertAnnotations,
     Barrier
 }

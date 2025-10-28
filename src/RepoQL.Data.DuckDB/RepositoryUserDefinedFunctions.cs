@@ -241,6 +241,34 @@ public static class RepositoryUserDefinedFunctions
             }
         );
 
+        connection.RegisterScalarFunction<string, string>(
+            "repository_uri_symbol",
+            (readers, writer, rowCount) =>
+            {
+                var r0 = readers[0];
+                for (ulong rowIndex = 0; rowIndex < rowCount; rowIndex++)
+                {
+                    var frag = r0.IsValid(rowIndex) ? ExtractFragment(r0.GetValue<string>(rowIndex)) : null;
+                    var payload = frag is null ? null : ExtractKeyPayload(frag, "symbol", "symbol=");
+                    if (payload is null)
+                    {
+                        writer.WriteNull(rowIndex);
+                        continue;
+                    }
+
+                    try
+                    {
+                        writer.WriteValue(System.Uri.UnescapeDataString(payload), rowIndex);
+                    }
+                    catch
+                    {
+                        writer.WriteValue(payload, rowIndex);
+                    }
+                }
+            },
+            isPureFunction: true
+        );
+
         connection.RegisterScalarFunction<string, string, bool, string, bool>(
             "repoql_glob_match",
             (readers, writer, rowCount) =>

@@ -32,7 +32,10 @@
 - We do not extend the core schema without a very, very good reason
 - We use or extend common formats at the edges (SARIF, Sql, URIs mime)
 - RepoQL must 'just work' - no complex config without sensible defaults 
-- The heavy lifting happens in the host - the consumer specifies intent
+- The heavy lifting happens in the host - the consumer specifies intent. If we have to do something hard/computationally expensive to make agent's work easier then we should.
+- DuckDB does not support multiple writers. all writes MUST go through SingleThreadedDatabaseWriter
+- The amount of time it takes for the host to be ready to accept simple queries should be kept as low as possible
+- Errors when processing a file should never stop repoql from being usable
 
 ## Checklist
 - [ ] Do we need to explain it?

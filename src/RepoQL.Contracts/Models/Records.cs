@@ -6,4 +6,5 @@ public class Records
     public Node[] Nodes { get; init; } = [];
     public Span[] Spans { get; init; } = [];
     public Edge[] Edges { get; init; } = [];
+    public Annotation[] Annotations { get; init; } = [];
 }

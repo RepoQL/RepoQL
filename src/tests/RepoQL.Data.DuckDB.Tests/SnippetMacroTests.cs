@@ -362,6 +362,95 @@ public class SnippetMacroTests : IDisposable
     }
 
     [Test]
+    public void Snippet_HandlesSymbolFragment()
+    {
+        var text = """
+        namespace Demo;
+
+        public class Foo
+        {
+            public void Bar() { }
+        }
+        """.Trim('\r', '\n');
+
+        var artifact = new Artifact
+        {
+            Id = Guid.NewGuid(),
+            Digest = "test-digest-symbol",
+            Size = text.Length,
+            Text = text,
+            MediaType = SemanticMediaType.Parse("text/plain")
+        };
+        _store.UpsertArtifact(artifact);
+
+        var docUri = RepoUri.Parse("file:///demo/Foo.cs");
+        var documentNode = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "document",
+            Uri = docUri,
+            ArtifactId = artifact.Id,
+            Props = new JsonObject()
+        };
+        _store.UpsertNode(documentNode);
+
+        var symbolSpan = new Span
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = documentNode.Id,
+            StartLine = 3,
+            EndLine = 5,
+            StartColumn = 1,
+            EndColumn = 24
+        };
+        _store.InsertSpan(symbolSpan);
+
+        var symbolNode = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "csharp.type",
+            SpanId = symbolSpan.Id,
+            Props = new JsonObject
+            {
+                ["name"] = "Foo",
+                ["qualified_name"] = "Demo.Foo"
+            }
+        };
+        _store.UpsertNode(symbolNode);
+
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = @"
+            SELECT line_number, text, is_focus, focus_start_column, focus_end_column, resolved_uri
+            FROM snippet('file:///demo/Foo.cs#symbol=Demo.Foo', 1)
+            ORDER BY line_number";
+
+        using var reader = cmd.ExecuteReader();
+        var results = new List<(int line, string text, bool focus, int? startCol, int? endCol, string resolved)>();
+        while (reader.Read())
+        {
+            results.Add((
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetBoolean(2),
+                reader.IsDBNull(3) ? null : reader.GetInt32(3),
+                reader.IsDBNull(4) ? null : reader.GetInt32(4),
+                reader.IsDBNull(5) ? string.Empty : reader.GetString(5)
+            ));
+        }
+
+        results.Should().NotBeEmpty();
+        results.Select(r => r.line).Should().Equal(2, 3, 4, 5, 6);
+        results.Where(r => r.focus).Select(r => r.line).Should().BeEquivalentTo(new[] { 3, 4, 5 });
+
+        var focusRow = results.Single(r => r.line == 3);
+        focusRow.startCol.Should().Be(1);
+        focusRow.endCol.Should().Be(24);
+
+        var resolved = results.Select(r => r.resolved).Distinct().Single();
+        resolved.Should().Be("file:///demo/Foo.cs#line=3,5");
+    }
+
+    [Test]
     public void Snippet_HandlesEdgeFragment()
     {
         // Create documents with spans

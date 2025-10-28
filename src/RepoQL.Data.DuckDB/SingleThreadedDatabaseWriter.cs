@@ -164,6 +164,9 @@ public sealed class SingleThreadedDatabaseWriter(
                 case WriteOperationType.ReplaceDocument:
                     await ApplyReplaceDocumentAsync(op).ConfigureAwait(false);
                     break;
+                case WriteOperationType.UpsertAnnotations:
+                    ApplyUpsertAnnotations(op);
+                    break;
                 case WriteOperationType.Barrier:
                     // no-op
                     break;
@@ -305,6 +308,17 @@ public sealed class SingleThreadedDatabaseWriter(
         // 6) Document outline annotation removed: x-ray summaries live on artifact fields now.
 
         return Task.CompletedTask;
+    }
+
+    private void ApplyUpsertAnnotations(WriteOperation op)
+    {
+        if (_store is null) throw new InvalidOperationException("Writer not started");
+        var records = op.ParsedData;
+
+        foreach (var annotation in records.Annotations)
+        {
+            _store.UpsertAnnotation(annotation);
+        }
     }
 
     private static System.Text.Json.Nodes.JsonObject? EnrichDocPropsWithFrontmatter(System.Text.Json.Nodes.JsonObject? original)

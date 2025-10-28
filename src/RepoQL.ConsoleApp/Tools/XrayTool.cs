@@ -22,8 +22,21 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     }
 
     private const string SummarizeInstructions = """
-                                                 See a content-aware summary of file contents, filtering by glob pattern, type, and search with a configurable level of detail.
-                                                 Use this tool FIRST to very efficiently explore the codebase and work out what exists without reading whole files
+                                                 Scan repository efficiently: pre-indexed summaries of structure + linting. Filters: glob, media type, semantic search.
+
+                                                 headline: Scan files at scale. One line per file: name + key symbols + linting badges. Use for inventory, documentation discovery, finding files.
+                                                 summary: Understand structure of 5-20 files. Outline (headings/classes/methods) + linting details. Architecture without reading code.
+                                                 snippet: Review 1-3 files deeply. Full source + inline linting. Last step before Read.
+
+                                                 Examples:
+                                                 "Show all markdown docs" → headline, pattern:**/*.md
+                                                 "What authentication code exists?" → headline, question:"authentication"
+                                                 "Understand API structure" → summary, pattern:**/api/**/*.cs
+                                                 "Review UserService.cs structure" → summary, pattern:**/UserService.cs
+                                                 "Show code of ProcessRequest method" → snippet, pattern:file:///src/Handler.cs#symbol=ProcessRequest
+                                                 "Read Installation heading from README" → snippet, pattern:file:///README.md#symbol=Installation
+
+                                                 Flow: headline → summary → snippet → Read. Use xray for breadth, Read for depth.
                                                  """;
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "xray"), Description(SummarizeInstructions)]
@@ -76,7 +89,15 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
                     await FormatDefaultAsync(builder, client, row, cancellationToken).ConfigureAwait(false);
                     break;
                 case SummaryDetail.Snippet:
-                    await FormatSnippetAsync(builder, client, row, cancellationToken).ConfigureAwait(false);
+                    // For snippet with a specific URI that has a fragment, use the original pattern
+                    var uriForSnippet = row.Uri;
+                    if (!string.IsNullOrEmpty(globPattern) && !globPattern.Contains('*') &&
+                        Uri.TryCreate(globPattern, UriKind.Absolute, out var patternUri) && !string.IsNullOrEmpty(patternUri.Fragment))
+                    {
+                        // Pattern is a specific URI with a fragment - use it instead of the DB URI
+                        uriForSnippet = globPattern;
+                    }
+                    await FormatSnippetAsync(builder, client, row, uriForSnippet, cancellationToken).ConfigureAwait(false);
                     break;
             }
         }
@@ -111,6 +132,23 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 	private static string? NormalizeGlobPattern(string? glob) =>
 		string.IsNullOrWhiteSpace(glob) ? null : glob.Trim();
 
+	private static string StripFragment(string pattern)
+	{
+		// Only strip fragment if it looks like a URI (not a glob pattern with wildcards)
+		if (pattern.Contains('*'))
+		{
+			return pattern; // It's a glob pattern, don't touch it
+		}
+
+		// Try to parse as URI and strip fragment using Uri functionality
+		if (Uri.TryCreate(pattern, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Fragment))
+		{
+			return uri.GetLeftPart(UriPartial.Query);
+		}
+
+		return pattern;
+	}
+
     private static string? NormalizeTypePattern(string? type)
     {
         if (string.IsNullOrWhiteSpace(type))
@@ -140,9 +178,11 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 		var whereParameters = new List<object?>();
 		if (!string.IsNullOrEmpty(globPattern))
 		{
+			// Strip fragment from pattern for document filtering (fragments are used later in snippet())
+			var patternWithoutFragment = StripFragment(globPattern);
 			whereClauses.Add("(glob_match(n.uri, ?, default_scheme := 'file:///') OR glob_match(n.uri, ?, default_scheme := 'embed:///'))");
-			whereParameters.Add(globPattern);
-			whereParameters.Add(globPattern);
+			whereParameters.Add(patternWithoutFragment);
+			whereParameters.Add(patternWithoutFragment);
 		}
 
 		if (!string.IsNullOrWhiteSpace(typePattern))
@@ -347,10 +387,10 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         builder.AppendLine(FormatAnnotations(annotations));
     }
 
-    private async Task FormatSnippetAsync(StringBuilder builder, IRepoQlClient client, DocumentRow row, CancellationToken cancellationToken)
+    private async Task FormatSnippetAsync(StringBuilder builder, IRepoQlClient client, DocumentRow row, string uriForSnippet, CancellationToken cancellationToken)
     {
         builder.AppendLine(row.Uri);
-        var snippetText = await FetchSnippetAsync(client, row.Uri, cancellationToken).ConfigureAwait(false);
+        var snippetText = await FetchSnippetAsync(client, uriForSnippet, cancellationToken).ConfigureAwait(false);
         var mediaType = !string.IsNullOrWhiteSpace(row.MediaType) ? row.MediaType : "text/plain";
         builder.AppendLine($"```{mediaType}");
         builder.AppendLine(snippetText);
@@ -474,11 +514,13 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 
     private async Task<string> FetchSnippetAsync(IRepoQlClient client, string uri, CancellationToken cancellationToken)
     {
+        // snippet() macro automatically returns full file for document URIs (no fragment)
+        // and targeted context for URIs with fragments (like #line=10)
         const string sql = """
             SELECT line_number,
                    text,
                    is_focus
-            FROM snippet(?, 2)
+            FROM snippet(?, 3)
             ORDER BY line_number
             """;
 

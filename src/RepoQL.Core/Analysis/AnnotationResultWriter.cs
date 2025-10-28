@@ -6,12 +6,12 @@ using RepoQL.Contracts.Models;
 
 namespace RepoQL.Core.Analysis;
 
-public sealed class AnnotationResultWriter(IGraphStore store) : IAnalysisResultWriter
+public sealed class AnnotationResultWriter(IGraphStore store, IDatabaseWriter? writer = null) : IAnalysisResultWriter
 {
-    public Task WriteAsync(string containerUri, IReadOnlyList<AnalysisResult> results, CancellationToken cancellationToken = default)
+    public async Task WriteAsync(string containerUri, IReadOnlyList<AnalysisResult> results, CancellationToken cancellationToken = default)
     {
         if (results.Count == 0)
-            return Task.CompletedTask;
+            return;
 
         RepoUri repoUri;
         try
@@ -20,13 +20,14 @@ public sealed class AnnotationResultWriter(IGraphStore store) : IAnalysisResultW
         }
         catch
         {
-            return Task.CompletedTask;
+            return;
         }
 
         var document = store.GetDocumentByUri(repoUri);
         if (document is null)
-            return Task.CompletedTask;
+            return;
 
+        var annotations = new List<Annotation>();
         foreach (var result in results)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -51,10 +52,37 @@ public sealed class AnnotationResultWriter(IGraphStore store) : IAnalysisResultW
                 TargetUri = result.Target?.TargetUri
             };
 
-            store.UpsertAnnotation(annotation);
+            annotations.Add(annotation);
         }
 
-        return Task.CompletedTask;
+        if (annotations.Count == 0)
+            return;
+
+        // Route through single-threaded writer to avoid concurrency conflicts
+        if (writer is not null)
+        {
+            var operation = new WriteOperation
+            {
+                Id = Guid.NewGuid(),
+                Type = WriteOperationType.UpsertAnnotations,
+                Uri = repoUri,
+                ParsedData = new Records
+                {
+                    Artifacts = [],
+                    Annotations = [.. annotations]
+                }
+            };
+
+            await writer.EnqueueAsync(operation, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            // Fallback for tests and scenarios without database writer
+            foreach (var annotation in annotations)
+            {
+                store.UpsertAnnotation(annotation);
+            }
+        }
     }
 
     private static JsonObject? CloneData(JsonObject? data)

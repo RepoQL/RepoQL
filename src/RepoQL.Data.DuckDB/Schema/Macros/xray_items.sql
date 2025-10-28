@@ -33,5 +33,5 @@ SELECT document_uri,
        COALESCE(repository_uri_join(document_uri, frag), document_uri) AS item_uri
 FROM ranked
 WHERE rn <= COALESCE(CAST(max_per_document AS INTEGER), 8)
-ORDER BY lower(file_name), rn 
+ORDER BY lower(file_name), rn
 );

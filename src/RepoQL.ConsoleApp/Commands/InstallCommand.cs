@@ -1,4 +1,9 @@
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ConsoleAppFramework;
@@ -23,7 +28,7 @@ internal class InstallCommand(IAnsiConsole console)
         if (agents.Count == 0)
         {
             console.MarkupLine("[yellow]No supported agents detected.[/]");
-            console.MarkupLine("Supported agents: Claude Desktop, Claude CLI, Codex");
+            console.MarkupLine("Supported agents: Claude Desktop, Claude CLI, Claude Code, Codex");
             console.WriteLine();
             console.MarkupLine("You can manually add RepoQL to your agent's MCP configuration:");
             console.WriteLine();
@@ -160,112 +165,314 @@ internal class InstallCommand(IAnsiConsole console)
             }
         }
 
-        // Claude CLI - Linux/macOS
-        var claudeCliConfig = Path.Combine(homeDir, ".config", "claude", ".mcp.json");
-        if (File.Exists(claudeCliConfig))
-        {
-            agents.Add(new AgentInfo
-            {
-                Name = "Claude CLI",
-                Type = AgentType.ClaudeCLI,
-                ConfigPath = claudeCliConfig
-            });
-        }
+        // Gather other agent configurations
+        var candidateConfigs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Alternative Claude CLI location
-        var altClaudeCliConfig = Path.Combine(homeDir, ".claude", ".mcp.json");
-        if (File.Exists(altClaudeCliConfig) && !agents.Any(a => a.Type == AgentType.ClaudeCLI))
+        void AddCandidatesFromDirectory(string? root, int maxDepth)
         {
-            agents.Add(new AgentInfo
-            {
-                Name = "Claude CLI",
-                Type = AgentType.ClaudeCLI,
-                ConfigPath = altClaudeCliConfig
-            });
-        }
+            if (string.IsNullOrWhiteSpace(root))
+                return;
 
-        // Codex - check common locations
-        var codexConfig = Path.Combine(homeDir, ".mcp.json");
-        if (File.Exists(codexConfig))
-        {
-            // Try to determine if this is a Codex config by checking the content
-            var isCodex = await IsCodexConfigAsync(codexConfig);
-            if (isCodex)
+            foreach (var file in EnumerateMcpConfigFiles(root, maxDepth))
             {
-                agents.Add(new AgentInfo
-                {
-                    Name = "Codex",
-                    Type = AgentType.Codex,
-                    ConfigPath = codexConfig
-                });
+                candidateConfigs.Add(file);
             }
         }
 
-        // Codex - XDG config location
+        AddCandidatesFromDirectory(homeDir, 1);
+        AddCandidatesFromDirectory(Path.Combine(homeDir, ".config"), 2);
+        AddCandidatesFromDirectory(Path.Combine(homeDir, ".claude"), 2);
+        AddCandidatesFromDirectory(Path.Combine(homeDir, ".anthropic"), 2);
+        AddCandidatesFromDirectory(Path.Combine(homeDir, ".local", "share"), 2);
+
         var xdgConfigHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME")
             ?? Path.Combine(homeDir, ".config");
-        var codexXdgConfig = Path.Combine(xdgConfigHome, "codex", ".mcp.json");
-        if (File.Exists(codexXdgConfig))
+        AddCandidatesFromDirectory(xdgConfigHome, 2);
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            agents.Add(new AgentInfo
-            {
-                Name = "Codex",
-                Type = AgentType.Codex,
-                ConfigPath = codexXdgConfig
-            });
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            AddCandidatesFromDirectory(Path.Combine(appData, "Codex"), 3);
+            AddCandidatesFromDirectory(Path.Combine(appData, "You"), 3);
+            AddCandidatesFromDirectory(Path.Combine(appData, "Anthropic"), 3);
+            AddCandidatesFromDirectory(Path.Combine(appData, "Claude"), 3);
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            var library = Path.Combine(homeDir, "Library", "Application Support");
+            AddCandidatesFromDirectory(Path.Combine(library, "Codex"), 3);
+            AddCandidatesFromDirectory(Path.Combine(library, "You"), 3);
+            AddCandidatesFromDirectory(Path.Combine(library, "Anthropic"), 3);
+            AddCandidatesFromDirectory(Path.Combine(library, "Claude"), 3);
+            AddCandidatesFromDirectory(Path.Combine(library, "Claude Code"), 3);
+        }
+
+        foreach (var candidate in candidateConfigs)
+        {
+            await TryAddAgentFromConfigAsync(candidate, agents).ConfigureAwait(false);
         }
 
         return agents;
     }
 
-    private async Task<bool> IsCodexConfigAsync(string configPath)
+    private static IEnumerable<string> EnumerateMcpConfigFiles(string root, int maxDepth)
+    {
+        var stack = new Stack<(string Path, int Depth)>();
+        stack.Push((root, 0));
+
+        while (stack.Count > 0)
+        {
+            var (current, depth) = stack.Pop();
+            if (!Directory.Exists(current))
+                continue;
+
+            IEnumerable<string> EnumerateFiles(string pattern)
+            {
+                try
+                {
+                    return Directory.EnumerateFiles(current, pattern, SearchOption.TopDirectoryOnly);
+                }
+                catch
+                {
+                    return Array.Empty<string>();
+                }
+            }
+
+            foreach (var file in EnumerateFiles("*.mcp.json"))
+            {
+                yield return file;
+            }
+
+            foreach (var file in EnumerateFiles("config.toml"))
+            {
+                var normalized = file.Replace('\\', '/').ToLowerInvariant();
+                if (normalized.Contains("/.codex/") || normalized.Contains("/codex/"))
+                    yield return file;
+            }
+
+            if (depth >= maxDepth)
+                continue;
+
+            try
+            {
+                foreach (var dir in Directory.EnumerateDirectories(current))
+                {
+                    stack.Push((dir, depth + 1));
+                }
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private async Task TryAddAgentFromConfigAsync(string configPath, List<AgentInfo> agents)
+    {
+        if (!File.Exists(configPath))
+            return;
+
+        AgentType? agentType;
+        var extension = Path.GetExtension(configPath);
+        if (string.Equals(extension, ".toml", StringComparison.OrdinalIgnoreCase))
+        {
+            agentType = DetermineAgentTypeFromTomlConfig(configPath);
+        }
+        else
+        {
+            agentType = await DetermineAgentTypeFromJsonConfigAsync(configPath).ConfigureAwait(false);
+        }
+
+        if (agentType is null)
+            return;
+
+        if (agents.Any(a => string.Equals(a.ConfigPath, configPath, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        var displayName = agentType switch
+        {
+            AgentType.ClaudeCLI => "Claude CLI",
+            AgentType.ClaudeCode => "Claude Code",
+            AgentType.Codex => "Codex",
+            _ => agentType.ToString()
+        };
+
+        agents.Add(new AgentInfo
+        {
+            Name = displayName,
+            Type = agentType.Value,
+            ConfigPath = configPath
+        });
+    }
+
+    private async Task<AgentType?> DetermineAgentTypeFromJsonConfigAsync(string configPath)
     {
         try
         {
-            var json = await File.ReadAllTextAsync(configPath);
+            var json = await File.ReadAllTextAsync(configPath).ConfigureAwait(false);
             var doc = JsonDocument.Parse(json);
 
-            // Check if the config contains codex-specific entries
             if (doc.RootElement.TryGetProperty("mcpServers", out var servers))
             {
                 foreach (var server in servers.EnumerateObject())
                 {
+                    if (string.Equals(server.Name, "repoql", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
                     if (server.Value.TryGetProperty("command", out var cmd))
                     {
-                        var command = cmd.GetString();
-                        if (command?.Contains("codex", StringComparison.OrdinalIgnoreCase) == true)
-                        {
-                            return true;
-                        }
+                        var command = cmd.ValueKind == JsonValueKind.String ? cmd.GetString() : null;
+                        if (TryClassifyAgent(command, out var agentFromCommand))
+                            return agentFromCommand;
                     }
+
+                    if (server.Value.TryGetProperty("args", out var args) && args.ValueKind == JsonValueKind.Array)
+                    {
+                        var joined = string.Join(' ',
+                            args.EnumerateArray()
+                                .Select(a => a.ValueKind == JsonValueKind.String ? a.GetString() : null)
+                                .Where(s => !string.IsNullOrWhiteSpace(s))!);
+                        if (TryClassifyAgent(joined, out var agentFromArgs))
+                            return agentFromArgs;
+                    }
+
+                    if (TryClassifyAgent(server.Name, out var agentFromName))
+                        return agentFromName;
                 }
             }
 
-            return false;
+            if (TryClassifyAgent(configPath, out var agentFromPath))
+                return agentFromPath;
         }
         catch
         {
-            return false;
         }
+
+        return null;
+    }
+
+    private static AgentType? DetermineAgentTypeFromTomlConfig(string configPath)
+    {
+        var normalized = configPath.Replace('\\', '/').ToLowerInvariant();
+        if (normalized.Contains("/.codex/config.toml") ||
+            normalized.EndsWith("/codex/config.toml") ||
+            normalized.Contains("/application support/codex/config.toml"))
+            return AgentType.Codex;
+
+        try
+        {
+            var content = File.ReadAllText(configPath);
+            if (content.IndexOf("claude-code", StringComparison.OrdinalIgnoreCase) >= 0)
+                return AgentType.ClaudeCode;
+            if (content.IndexOf("[mcp_servers", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                content.IndexOf("codex", StringComparison.OrdinalIgnoreCase) >= 0)
+                return AgentType.Codex;
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    internal static bool TryClassifyAgent(string? text, out AgentType agentType)
+    {
+        agentType = default;
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        var normalized = text.ToLowerInvariant();
+
+        bool Contains(params string[] tokens) => tokens.Any(t => normalized.Contains(t, StringComparison.Ordinal));
+
+        if (Contains("claude-code", "claudecode"))
+        {
+            agentType = AgentType.ClaudeCode;
+            return true;
+        }
+
+        if ((Contains("anthropic", "claude") && !Contains("desktop")) || Contains("claude_cli"))
+        {
+            agentType = AgentType.ClaudeCLI;
+            return true;
+        }
+
+        if (Contains("codex") || Contains("you-cli", "you.com", "you_cli", "youapp", "you-app"))
+        {
+            agentType = AgentType.Codex;
+            return true;
+        }
+
+        return false;
     }
 
     private async Task InstallToAgentAsync(AgentInfo agent, CancellationToken cancel)
     {
+        var workingDir = agent.WorkingDirectory ?? GetDefaultWorkingDirectory(agent.Type);
+
+        if (TryGetCliDefinition(agent.Type, out var cliDefinition))
+        {
+            var cliResult = await InstallUsingCliAsync(agent, cliDefinition, workingDir, cancel).ConfigureAwait(false);
+            if (cliResult is { Success: true })
+            {
+                console.MarkupLine($"[green]  ✓ Installed to {agent.Name}[/]");
+                if (!string.IsNullOrEmpty(workingDir))
+                {
+                    console.MarkupLine($"[dim]    Working directory: {workingDir}[/]");
+                }
+                return;
+            }
+
+            var message = !string.IsNullOrWhiteSpace(cliResult.StandardError)
+                ? cliResult.StandardError
+                : (!string.IsNullOrWhiteSpace(cliResult.ErrorMessage) ? cliResult.ErrorMessage : $"{cliDefinition.ExecutableName} command failed.");
+
+            if (agent.Type == AgentType.Codex)
+            {
+                console.MarkupLine($"[red]  ✗ Failed to install to {agent.Name}: {message.Trim()}[/]");
+                console.MarkupLine("[dim]  Ensure the Codex CLI is installed and on PATH, then rerun 'repoql install'.[/]");
+                return;
+            }
+
+            console.MarkupLine($"[yellow]  CLI install for {agent.Name} failed: {message.Trim()}[/]");
+            console.MarkupLine("[dim]  Falling back to updating the configuration file directly.[/]");
+        }
+
+        await InstallViaConfigFileAsync(agent, workingDir, cancel).ConfigureAwait(false);
+    }
+
+    private async Task<CliCommandResult> InstallUsingCliAsync(AgentInfo agent, AgentCliDefinition definition, string? workingDir, CancellationToken cancel)
+    {
+        CliCommandResult? addResult = null;
+
         await console.Status()
-            .StartAsync($"Installing to {agent.Name}...", async ctx =>
+            .StartAsync($"Installing to {agent.Name} via {definition.ExecutableName}...", async _ =>
+            {
+                var removeArgs = definition.BuildRemoveArguments();
+                await RunCliCommandAsync(definition.ExecutableName, removeArgs, cancel, ignoreErrors: true).ConfigureAwait(false);
+
+                var addArgs = definition.BuildAddArguments(workingDir);
+                addResult = await RunCliCommandAsync(definition.ExecutableName, addArgs, cancel).ConfigureAwait(false);
+            });
+
+        return addResult ?? new CliCommandResult(false, -1, string.Empty, string.Empty, $"Failed to execute {definition.ExecutableName} CLI.");
+    }
+
+    private async Task InstallViaConfigFileAsync(AgentInfo agent, string? workingDir, CancellationToken cancel)
+    {
+        await console.Status()
+            .StartAsync($"Installing to {agent.Name}...", async _ =>
             {
                 try
                 {
-                    // Read existing config
                     JsonNode? config;
                     if (File.Exists(agent.ConfigPath))
                     {
-                        var json = await File.ReadAllTextAsync(agent.ConfigPath, cancel);
+                        var json = await File.ReadAllTextAsync(agent.ConfigPath, cancel).ConfigureAwait(false);
                         config = JsonNode.Parse(json);
                     }
                     else
                     {
-                        // Create new config
                         config = new JsonObject();
                         var directory = Path.GetDirectoryName(agent.ConfigPath);
                         if (!string.IsNullOrEmpty(directory))
@@ -274,7 +481,6 @@ internal class InstallCommand(IAnsiConsole console)
                         }
                     }
 
-                    // Ensure mcpServers section exists
                     if (config["mcpServers"] is null)
                     {
                         config["mcpServers"] = new JsonObject();
@@ -282,7 +488,6 @@ internal class InstallCommand(IAnsiConsole console)
 
                     var mcpServers = config["mcpServers"]!.AsObject();
 
-                    // Check if repoql already exists
                     if (mcpServers.ContainsKey("repoql"))
                     {
                         console.MarkupLine($"[yellow]  RepoQL is already configured in {agent.Name}[/]");
@@ -298,7 +503,6 @@ internal class InstallCommand(IAnsiConsole console)
                         }
                     }
 
-                    // Add/update RepoQL configuration
                     var repoqlConfig = new JsonObject
                     {
                         ["type"] = "stdio",
@@ -306,8 +510,6 @@ internal class InstallCommand(IAnsiConsole console)
                         ["args"] = new JsonArray("mcp")
                     };
 
-                    // Add REPOQL_CWD environment variable based on agent type
-                    var workingDir = agent.WorkingDirectory ?? GetDefaultWorkingDirectory(agent.Type);
                     if (!string.IsNullOrEmpty(workingDir))
                     {
                         repoqlConfig["env"] = new JsonObject
@@ -318,13 +520,12 @@ internal class InstallCommand(IAnsiConsole console)
 
                     mcpServers["repoql"] = repoqlConfig;
 
-                    // Write back to file
                     var options = new JsonSerializerOptions
                     {
                         WriteIndented = true
                     };
                     var updatedJson = config.ToJsonString(options);
-                    await File.WriteAllTextAsync(agent.ConfigPath, updatedJson, cancel);
+                    await File.WriteAllTextAsync(agent.ConfigPath, updatedJson, cancel).ConfigureAwait(false);
 
                     console.MarkupLine($"[green]  ✓ Installed to {agent.Name}[/]");
                     if (!string.IsNullOrEmpty(workingDir))
@@ -339,16 +540,274 @@ internal class InstallCommand(IAnsiConsole console)
             });
     }
 
-    private string? GetDefaultWorkingDirectory(AgentType agentType)
+    private static bool TryGetCliDefinition(AgentType agentType, out AgentCliDefinition definition)
     {
-        return agentType switch
+        if (CliDefinitions.TryGetValue(agentType, out var value))
+        {
+            definition = value;
+            return true;
+        }
+
+        definition = null!;
+        return false;
+    }
+
+    internal static readonly IReadOnlyDictionary<AgentType, AgentCliDefinition> CliDefinitions =
+        new Dictionary<AgentType, AgentCliDefinition>
+        {
+            [AgentType.Codex] = new AgentCliDefinition(
+                ExecutableName: "codex",
+                BuildAddArguments: workingDir =>
+                {
+                    var args = new List<string> { "mcp", "add" };
+                    if (!string.IsNullOrWhiteSpace(workingDir))
+                    {
+                        args.Add("--env");
+                        args.Add($"REPOQL_CWD={workingDir}");
+                    }
+
+                    args.Add("repoql"); // command
+                    args.Add("mcp");    // command argument
+                    args.Add("repoql"); // name
+                    return args;
+                },
+                BuildRemoveArguments: () => new[] { "mcp", "remove", "repoql" }),
+
+            [AgentType.ClaudeCLI] = new AgentCliDefinition(
+                ExecutableName: "claude",
+                BuildAddArguments: workingDir =>
+                {
+                    var args = new List<string>
+                    {
+                        "mcp",
+                        "add",
+                        "--scope",
+                        "user",
+                        "--transport",
+                        "stdio"
+                    };
+
+                    if (!string.IsNullOrWhiteSpace(workingDir))
+                    {
+                        args.Add("--env");
+                        args.Add($"REPOQL_CWD={workingDir}");
+                    }
+
+                    args.Add("repoql");
+                    args.Add("--");
+                    args.Add("repoql");
+                    args.Add("mcp");
+                    return args;
+                },
+                BuildRemoveArguments: () => new[] { "mcp", "remove", "--scope", "user", "repoql" }),
+
+            [AgentType.ClaudeCode] = new AgentCliDefinition(
+                ExecutableName: "claude",
+                BuildAddArguments: workingDir =>
+                {
+                    var args = new List<string>
+                    {
+                        "mcp",
+                        "add",
+                        "--scope",
+                        "user",
+                        "--transport",
+                        "stdio"
+                    };
+
+                    if (!string.IsNullOrWhiteSpace(workingDir))
+                    {
+                        args.Add("--env");
+                        args.Add($"REPOQL_CWD={workingDir}");
+                    }
+
+                    args.Add("repoql");
+                    args.Add("--");
+                    args.Add("repoql");
+                    args.Add("mcp");
+                    return args;
+                },
+                BuildRemoveArguments: () => new[] { "mcp", "remove", "--scope", "user", "repoql" })
+        };
+
+    private async Task<CliCommandResult> RunCliCommandAsync(string command, IEnumerable<string> arguments, CancellationToken cancel, bool ignoreErrors = false)
+    {
+        var executable = LocateExecutable(command);
+        if (string.IsNullOrEmpty(executable))
+        {
+            var message = $"Unable to locate '{command}' on PATH.";
+            return new CliCommandResult(ignoreErrors, -1, string.Empty, string.Empty, ignoreErrors ? null : message);
+        }
+
+        var psi = CreateProcessStartInfo(executable, arguments);
+
+        try
+        {
+            using var process = Process.Start(psi);
+            if (process is null)
+                return new CliCommandResult(ignoreErrors, -1, string.Empty, string.Empty, ignoreErrors ? null : $"Failed to start '{command}'.");
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync(cancel).ConfigureAwait(false);
+            var stdout = await stdoutTask.ConfigureAwait(false);
+            var stderr = await stderrTask.ConfigureAwait(false);
+
+            var success = process.ExitCode == 0 || ignoreErrors;
+            var errorMessage = success ? null : $"{command} exited with code {process.ExitCode}";
+            return new CliCommandResult(success, process.ExitCode, stdout, stderr, errorMessage);
+        }
+        catch (Exception ex)
+        {
+            return new CliCommandResult(ignoreErrors, -1, string.Empty, string.Empty, ignoreErrors ? null : ex.Message);
+        }
+    }
+
+    private static ProcessStartInfo CreateProcessStartInfo(string executablePath, IEnumerable<string> arguments)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var extension = Path.GetExtension(executablePath);
+            if (string.Equals(extension, ".cmd", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(extension, ".bat", StringComparison.OrdinalIgnoreCase))
+            {
+                var commandLine = BuildWindowsCommandLine(executablePath, arguments);
+                var psiCmd = new ProcessStartInfo(Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                psiCmd.ArgumentList.Add("/C");
+                psiCmd.ArgumentList.Add(commandLine);
+                return psiCmd;
+            }
+        }
+
+        var psi = new ProcessStartInfo(executablePath)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+
+        foreach (var arg in arguments)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        return psi;
+    }
+
+    private static string BuildWindowsCommandLine(string executable, IEnumerable<string> arguments)
+    {
+        var builder = new StringBuilder();
+        builder.Append(QuoteForShell(executable));
+        foreach (var arg in arguments)
+        {
+            builder.Append(' ');
+            builder.Append(QuoteForShell(arg));
+        }
+        return builder.ToString();
+    }
+
+    private static string QuoteForShell(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return "\"\"";
+
+        var needsQuotes = value.Any(char.IsWhiteSpace) || value.Contains('"');
+        if (!needsQuotes)
+            return value;
+
+        var escaped = value.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        return $"\"{escaped}\"";
+    }
+
+    private static string? LocateExecutable(string command)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+            return null;
+
+        if (command.Contains(Path.DirectorySeparatorChar) || command.Contains(Path.AltDirectorySeparatorChar))
+            return TryResolveWithExtensions(command);
+
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrEmpty(pathEnv))
+            return null;
+
+        foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = dir.Trim();
+            if (string.IsNullOrEmpty(trimmed))
+                continue;
+
+            var candidate = TryResolveWithExtensions(Path.Combine(trimmed, command));
+            if (candidate is not null)
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static string? TryResolveWithExtensions(string path)
+    {
+        var executableExtensions = GetExecutableExtensions().ToArray();
+
+        if (File.Exists(path))
+        {
+            if (!OperatingSystem.IsWindows() || HasExecutableExtension(Path.GetExtension(path), executableExtensions))
+                return path;
+        }
+
+        foreach (var ext in executableExtensions)
+        {
+            var candidate = path.EndsWith(ext, StringComparison.OrdinalIgnoreCase) ? path : path + ext;
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return File.Exists(path) ? path : null;
+    }
+
+    private static IEnumerable<string> GetExecutableExtensions()
+    {
+        if (!OperatingSystem.IsWindows())
+            return new[] { string.Empty };
+
+        var pathext = Environment.GetEnvironmentVariable("PATHEXT");
+        if (string.IsNullOrEmpty(pathext))
+            return new[] { ".exe", ".cmd", ".bat", ".com" };
+
+        return pathext.Split(';', StringSplitOptions.RemoveEmptyEntries)
+            .Select(ext => ext.StartsWith('.') ? ext : "." + ext)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool HasExecutableExtension(string? extension, string[] executableExtensions)
+    {
+        if (!OperatingSystem.IsWindows())
+            return true;
+
+        if (string.IsNullOrEmpty(extension))
+            return false;
+
+        return executableExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase);
+    }
+
+    internal sealed record AgentCliDefinition(
+        string ExecutableName,
+        Func<string?, IReadOnlyList<string>> BuildAddArguments,
+        Func<IReadOnlyList<string>> BuildRemoveArguments);
+
+    private sealed record CliCommandResult(bool Success, int ExitCode, string StandardOutput, string StandardError, string? ErrorMessage);
+
+    private string? GetDefaultWorkingDirectory(AgentType agentType) =>
+        agentType switch
         {
             AgentType.Codex => "{workspace}",
-            AgentType.ClaudeCLI => "{workspace}",
-            AgentType.ClaudeDesktop => null, // Must be set by user
             _ => null
         };
-    }
 
     private record AgentInfo
     {
@@ -358,10 +817,11 @@ internal class InstallCommand(IAnsiConsole console)
         public string? WorkingDirectory { get; set; }
     }
 
-    private enum AgentType
+    internal enum AgentType
     {
         ClaudeDesktop,
         ClaudeCLI,
+        ClaudeCode,
         Codex
     }
 }

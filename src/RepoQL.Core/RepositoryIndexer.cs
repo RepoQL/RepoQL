@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Linq;
@@ -239,6 +240,98 @@ public class RepositoryIndexer(
         }
     }
 
+    private async Task<bool> HasPersistedSnapshotAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await WithStorageAsync(store =>
+            {
+                foreach (var _ in store.RawQuery("SELECT 1 FROM node WHERE kind = 'document' LIMIT 1"))
+                    return true;
+                return false;
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ReportError(ex);
+            return false;
+        }
+    }
+
+    private async Task PruneMissingDocumentsAsync(ISet<string> liveContainers, CancellationToken cancellationToken)
+    {
+        List<RepoUri> staleDocuments;
+
+        try
+        {
+            staleDocuments = await WithStorageAsync(store =>
+            {
+                var missing = new List<RepoUri>();
+                foreach (var row in store.RawQuery("SELECT uri FROM node WHERE kind = 'document'"))
+                {
+                    if (!row.TryGetValue("uri", out var value) || value is not string uriText || string.IsNullOrWhiteSpace(uriText))
+                        continue;
+
+                    if (liveContainers.Contains(uriText))
+                        continue;
+
+                    if (!RepoUri.TryParse(uriText, out var parsed) || parsed is null)
+                        continue;
+
+                    if (!string.Equals(parsed.Scheme, "file", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    missing.Add(parsed);
+                }
+
+                return missing;
+            }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            ReportError(ex);
+            return;
+        }
+
+        foreach (var uri in staleDocuments)
+        {
+            try
+            {
+                await WithStorageAsync(s => s.DeleteDocumentByUri(uri), _stopping.Token).ConfigureAwait(false);
+                var placeholder = CreatePlaceholderFileInfo(uri);
+                RaiseEvent(new IRepositoryIndexer.ItemDeletedEvent(placeholder, uri));
+                var key = uri.AbsoluteUri.ToLowerInvariant();
+                StopRootIfPresent(key);
+                _recentByUri.TryRemove(key, out _);
+            }
+            catch (Exception ex)
+            {
+                ReportError(ex);
+            }
+        }
+    }
+
+    private static IFileInfo CreatePlaceholderFileInfo(RepoUri uri)
+    {
+        string? name = null;
+        if (uri.IsFile)
+        {
+            name = Path.GetFileName(uri.LocalPath);
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            var segments = uri.Segments;
+            if (segments.Length > 0)
+                name = segments[^1].Trim('/');
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+            name = uri.AbsoluteUri;
+
+        return new Microsoft.Extensions.FileProviders.NotFoundFileInfo(name);
+    }
+
     private sealed class NullServiceProvider : IServiceProvider
     {
         public static readonly NullServiceProvider Instance = new();
@@ -296,6 +389,7 @@ public class RepositoryIndexer(
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await WithStorageAsync(store => store.EnsureSchema(), cancellationToken).ConfigureAwait(false);
+        var hasPersistedSnapshot = await HasPersistedSnapshotAsync(cancellationToken).ConfigureAwait(false);
 
         // Right-size concurrency
         var cpu = Environment.ProcessorCount;
@@ -310,8 +404,26 @@ public class RepositoryIndexer(
         _enrichmentQueue = new("enrichment", 4000, enrichReaders, EnrichDocumentAsync, cancellationToken, _meter, StringComparer.OrdinalIgnoreCase);
 
         // Initial enumerate: backpressure by awaiting enqueue. Run in reindex fast-path.
-        using (EnterReindexScope())
+        if (!hasPersistedSnapshot)
         {
+            using (EnterReindexScope())
+            {
+                await foreach (var entry in fileSystem.EnumerateAsync(cancellationToken))
+                {
+                    var artifact = new DiscoveredArtifact { File = entry.File, RepoUri = entry.Uri };
+                    if (!uriFilter.IncludeFile(artifact.RepoUri))
+                        continue;
+
+                    _metrics.IncrementDiscover();
+                    RaiseEvent(new IRepositoryIndexer.ItemDiscoveredEvent(entry.File, artifact.RepoUri));
+                    await TryEnqueueClassificationAsync(artifact).ConfigureAwait(false);
+                }
+            }
+        }
+        else
+        {
+            var liveContainers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             await foreach (var entry in fileSystem.EnumerateAsync(cancellationToken))
             {
                 var artifact = new DiscoveredArtifact { File = entry.File, RepoUri = entry.Uri };
@@ -320,8 +432,11 @@ public class RepositoryIndexer(
 
                 _metrics.IncrementDiscover();
                 RaiseEvent(new IRepositoryIndexer.ItemDiscoveredEvent(entry.File, artifact.RepoUri));
-                await TryEnqueueClassificationAsync(artifact).ConfigureAwait(false);
+                liveContainers.Add(artifact.RepoUri.AbsoluteUri);
+                await ScheduleIfChangedAsync(entry.File, entry.Uri, ct: cancellationToken).ConfigureAwait(false);
             }
+
+            await PruneMissingDocumentsAsync(liveContainers, cancellationToken).ConfigureAwait(false);
         }
 
         _watcher.Subscribe(new FileSystemChangeObserver(async change =>

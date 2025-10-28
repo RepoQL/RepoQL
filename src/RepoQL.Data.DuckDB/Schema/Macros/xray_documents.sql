@@ -23,9 +23,13 @@ SELECT
     media_type_base(m.media_type)                AS media_base,
     media_type_kind(m.media_type)                AS media_kind,
     m.byte_size                                  AS byte_size,
-    COALESCE(k.kinds_summary, '')                AS kinds_summary
+    COALESCE(k.kinds_summary, '')                AS kinds_summary,
+    a.headline                                   AS headline,
+    a.summary                                    AS summary,
+    a.structure                                  AS structure
 FROM docs d
          LEFT JOIN media m ON m.doc_id = d.id
          LEFT JOIN kinds k ON k.doc_id = d.id
+         LEFT JOIN artifact a ON a.id = d.artifact_id
 ORDER BY lower(file_name)
 );

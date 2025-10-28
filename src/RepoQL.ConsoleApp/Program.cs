@@ -1,3 +1,4 @@
+using System.IO;
 using Grpc.Core;
 using JetBrains.Annotations;
 using Microsoft.Extensions.Hosting;
@@ -15,8 +16,12 @@ using ConsoleAppFramework;
 AnsiConsole.Profile.Width = 300;
 
 var explicitWorkingDirectory = Environment.GetEnvironmentVariable("REPOQL_CWD");
-if (!string.IsNullOrWhiteSpace(explicitWorkingDirectory))
+if (!string.IsNullOrWhiteSpace(explicitWorkingDirectory) &&
+    !explicitWorkingDirectory.Contains('{') &&
+    Directory.Exists(explicitWorkingDirectory))
+{
     Environment.CurrentDirectory = explicitWorkingDirectory;
+}
 
 var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
 {

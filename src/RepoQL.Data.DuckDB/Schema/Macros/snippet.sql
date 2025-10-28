@@ -1,11 +1,12 @@
-﻿CREATE OR REPLACE MACRO snippet(u, context_lines) AS TABLE (
+CREATE OR REPLACE MACRO snippet(u, context_lines) AS TABLE (
 WITH base AS (
     SELECT
         repository_uri_container(u)     AS base,
         repository_uri_fragment(u)      AS frag,
         repository_uri_fragment_kind(u) AS kind,
         repository_uri_line_start(u)    AS l1,
-        repository_uri_line_end(u)      AS l2
+        repository_uri_line_end(u)      AS l2,
+        repository_uri_symbol(u)        AS symbol
 ),
      doc AS (
          SELECT n.id AS doc_id, n.uri AS uri, a.text_content, a.media_type, a.storage_uri
@@ -21,6 +22,41 @@ WITH base AS (
                   JOIN edge e ON b.frag LIKE 'edge=%' AND substr(b.frag, 6) = CAST(e.id AS VARCHAR)
                   LEFT JOIN span ss ON ss.id = e.source_span_id
      ),
+     symbol_focus AS (
+         SELECT
+             sym.node_id,
+             sym.sl1,
+             sym.sl2,
+             sym.sc1,
+             sym.sc2
+         FROM base b
+                  LEFT JOIN doc d ON TRUE
+                  LEFT JOIN LATERAL (
+             SELECT
+                 n.id AS node_id,
+                 s.start_line   AS sl1,
+                 s.end_line     AS sl2,
+                 s.start_column AS sc1,
+                 s.end_column   AS sc2
+             FROM node n
+                      LEFT JOIN span s ON s.id = n.span_id
+             WHERE d.doc_id IS NOT NULL
+               AND s.document_id = d.doc_id
+               AND b.symbol IS NOT NULL
+               AND (
+                       lower(coalesce(json_extract_string(n.properties, '$.qualified_name'), '')) = lower(b.symbol)
+                    OR lower(coalesce(json_extract_string(n.properties, '$.name'), '')) = lower(b.symbol)
+                    OR lower(coalesce(json_extract_string(n.properties, '$.slug'), '')) = lower(b.symbol)
+                    OR lower(coalesce(json_extract_string(n.properties, '$.identifier'), '')) = lower(b.symbol)
+                    OR lower(coalesce(node_display_label(n.kind, CAST(n.properties AS VARCHAR)), '')) = lower(b.symbol)
+               )
+             ORDER BY
+                 s.start_line NULLS LAST,
+                 s.start_column NULLS LAST,
+                 n.updated_at DESC
+             LIMIT 1
+         ) sym ON true
+     ),
      char_rng AS (
          SELECT
              CASE WHEN kind='char' THEN try_cast(split_part(substr(frag, 6), ',', 1) AS BIGINT) END AS c1,
@@ -30,21 +66,25 @@ WITH base AS (
      focus AS (
          SELECT
              COALESCE(
+                 (SELECT sl1 FROM symbol_focus),
                  (SELECT el1 FROM edge_focus),
                  (SELECT l1  FROM base),
                  (SELECT line_for_byte_offset(text_content, c1) FROM doc, char_rng),
                  1
              ) AS fl1,
              COALESCE(
+                 (SELECT sl2 FROM symbol_focus),
                  (SELECT el2 FROM edge_focus),
                  (SELECT l2  FROM base),
                  (SELECT NULLIF(line_for_byte_offset(text_content, c2), 0) FROM doc, char_rng)
              ) AS fl2,
              COALESCE(
+                 (SELECT sc1 FROM symbol_focus),
                  (SELECT ec1 FROM edge_focus),
                  (SELECT column_for_byte_offset(text_content, c1) FROM doc, char_rng)
              ) AS fc1,
              COALESCE(
+                 (SELECT sc2 FROM symbol_focus),
                  (SELECT ec2 FROM edge_focus),
                  (SELECT column_for_byte_offset(text_content, c2) FROM doc, char_rng)
              ) AS fc2
@@ -65,8 +105,15 @@ WITH base AS (
      ),
      win AS (
          SELECT
-             GREATEST(1, COALESCE(fl1,1) - COALESCE(context_lines,3)) AS w1,
-             COALESCE(COALESCE(fl2,fl1) + COALESCE(context_lines,3), 1 + COALESCE(context_lines,3)*2) AS w2
+             -- If no fragment specified (frag is NULL or empty), show entire file
+             CASE WHEN (SELECT frag FROM base) IS NULL OR (SELECT frag FROM base) = ''
+                  THEN 1
+                  ELSE GREATEST(1, COALESCE(fl1,1) - COALESCE(context_lines,3))
+             END AS w1,
+             CASE WHEN (SELECT frag FROM base) IS NULL OR (SELECT frag FROM base) = ''
+                  THEN (SELECT MAX(ln) FROM lines)
+                  ELSE COALESCE(COALESCE(fl2,fl1) + COALESCE(context_lines,3), 1 + COALESCE(context_lines,3)*2)
+             END AS w2
          FROM focus
      )
 SELECT
