@@ -1,10 +1,8 @@
-name: repoql-tool-native-aot
+name: repoql-tests
 
 on:
   push:
-    branches: [ main ]
   pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 env:
@@ -28,6 +26,13 @@ jobs:
         with:
           dotnet-version: '10.0.x'
           include-prerelease: true
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
       - name: Install coverage tooling
         run: |
           dotnet tool install --global dotnet-coverage
@@ -124,47 +129,3 @@ jobs:
             ${{ env.ARTIFACTS_PATH }}/test-results/**/*
             ${{ env.ARTIFACTS_PATH }}/coverage/coverage.cobertura.xml
             ${{ env.ARTIFACTS_PATH }}/coverage/report/**
-
-  root:
-    needs: tests
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-          include-prerelease: true
-      - name: Restore
-        run: dotnet restore
-      - name: Pack root tool
-        run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -o artifacts/tool/root -p:RuntimeIdentifiers=
-      - name: Publish root packages to GitHub Packages
-        run: dotnet nuget push artifacts/tool/root/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
-
-  native:
-    needs: root
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, rid: linux-x64 }
-          - { os: windows-latest, rid: win-x64 }
-          - { os: windows-latest, rid: win-arm64 }
-          - { os: macos-14, rid: osx-arm64 }
-          - { os: ubuntu-latest, rid: any }
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-          include-prerelease: true
-      - name: Restore
-        run: dotnet restore
-      - name: Pack ${{ matrix.rid }} tool
-        run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -r ${{ matrix.rid }} -o ./artifacts/tool/${{ matrix.rid }}
-      - name: Publish ${{ matrix.rid }} package to GitHub Packages
-        shell: bash
-        run: dotnet nuget push ./artifacts/tool/${{ matrix.rid }}/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate

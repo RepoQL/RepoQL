@@ -1,0 +1,157 @@
+name: repoql-tool-native-publish
+
+on:
+  workflow_run:
+    workflows: [ repoql-tests ]
+    types:
+      - completed
+  workflow_dispatch:
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+permissions:
+  contents: read
+  packages: write
+  checks: write
+  pull-requests: write
+
+jobs:
+  version-check:
+    name: Determine version change
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.diff.outputs.publish }}
+      current-version: ${{ steps.diff.outputs.current }}
+      previous-version: ${{ steps.diff.outputs.previous }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+      - name: Compare RepoQL.ConsoleApp version
+        id: diff
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          csproj="src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj"
+          current_version=$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' "$csproj" | head -n1)
+
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            previous_file=$(git show HEAD^:"$csproj" 2>/dev/null || echo '')
+          else
+            previous_file=''
+          fi
+
+          if [[ -n "$previous_file" ]]; then
+            previous_version=$(printf '%s\n' "$previous_file" | sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' | head -n1)
+          else
+            previous_version=''
+          fi
+
+          publish=false
+          if [[ -n "$current_version" && "$current_version" != "$previous_version" ]]; then
+            publish=true
+          fi
+
+          {
+            echo "current=$current_version"
+            echo "previous=$previous_version"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "$publish" == "true" ]]; then
+            echo "Version changed: $previous_version -> $current_version"
+          else
+            echo "RepoQL.ConsoleApp version unchanged ($current_version)."
+          fi
+
+  root:
+    needs: version-check
+    if: needs.version-check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          include-prerelease: true
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: Restore
+        run: dotnet restore
+      - name: Pack root tool
+        run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -o artifacts/tool/root -p:RuntimeIdentifiers=
+      - name: Publish root packages to GitHub Packages
+        run: dotnet nuget push artifacts/tool/root/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
+
+  native:
+    needs: [version-check, root]
+    if: needs.version-check.outputs.publish == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, rid: linux-x64 }
+          - { os: windows-latest, rid: win-x64 }
+          - { os: windows-latest, rid: win-arm64 }
+          - { os: macos-14, rid: osx-arm64 }
+          - { os: ubuntu-latest, rid: any }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          include-prerelease: true
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: Restore
+        run: dotnet restore
+      - name: Pack ${{ matrix.rid }} tool
+        run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -r ${{ matrix.rid }} -o ./artifacts/tool/${{ matrix.rid }}
+      - name: Publish ${{ matrix.rid }} package to GitHub Packages
+        shell: bash
+        run: dotnet nuget push ./artifacts/tool/${{ matrix.rid }}/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
+
+  skip-notice:
+    needs: version-check
+    if: >
+      needs.version-check.result == 'success' && needs.version-check.outputs.publish != 'true' ||
+      needs.version-check.result == 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish skipped
+        shell: bash
+        run: |
+          if [[ "${{ needs.version-check.result }}" == "skipped" ]]; then
+            if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+              echo "Skip native publish: repoql-tests did not complete successfully on main."
+            else
+              echo "Skip native publish: workflow dispatched without meeting publish conditions."
+            fi
+          else
+            echo "RepoQL.ConsoleApp version unchanged (${{ needs.version-check.outputs.current-version }}). Skipping native publish workflow."
+          fi
