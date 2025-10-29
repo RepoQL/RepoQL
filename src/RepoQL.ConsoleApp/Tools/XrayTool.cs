@@ -207,7 +207,7 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 			sql = $"""
 				WITH search AS (
 					SELECT doc_id, score
-					FROM file_search(?, ?, k := {searchLimit}, max_cand := 5000)
+					FROM file_search(?, k := {searchLimit}, max_cand := 5000, question := ?)
 				),
 				filtered AS (
 					SELECT n.id,
