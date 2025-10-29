@@ -173,6 +173,8 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<GraphQLLoader>();
         services.AddSingleton<GraphQLAnalyzer>();
         services.AddSingleton<CsProjLoader>(sp => new CsProjLoader(sp.GetRequiredService<ITemplateRenderer>()));
+        services.AddSingleton<AppSettingsLoader>(sp => new AppSettingsLoader(sp.GetRequiredService<ITemplateRenderer>()));
+        services.AddSingleton<AppSettingsAnalyzer>();
 
         services.AddSingleton<IFormatRegistry>(sp =>
         {
@@ -188,6 +190,8 @@ public static class RepoIndexerServiceCollectionExtensions
             var csharpAnalyzer = sp.GetRequiredService<CSharpAnalyzer>();
             var graphQlLoader = sp.GetRequiredService<GraphQLLoader>();
             var graphQlAnalyzer = sp.GetRequiredService<GraphQLAnalyzer>();
+            var appSettingsLoader = sp.GetRequiredService<AppSettingsLoader>();
+            var appSettingsAnalyzer = sp.GetRequiredService<AppSettingsAnalyzer>();
             var plainLoader = sp.GetRequiredService<PlainTextLoader>();
             var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
 
@@ -230,6 +234,12 @@ public static class RepoIndexerServiceCollectionExtensions
                     csharpAnalyzer,
                     csharpLoader,
                     ["csharp", "cs"]),
+                new FormatDescriptor(
+                    SemanticMediaType.Create("application", "json").WithKind("config.appsettings"),
+                    appSettingsLoader,
+                    appSettingsAnalyzer,
+                    appSettingsLoader,
+                    ["appsettings", "config"]),
                 // Catch‑all plain last so it doesn't shadow specific handlers
                 new FormatDescriptor(
                     SemanticMediaType.Create("text", "plain").WithKind("plain.document"),

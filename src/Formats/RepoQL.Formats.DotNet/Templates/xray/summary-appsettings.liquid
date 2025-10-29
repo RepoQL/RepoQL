@@ -1,0 +1,13 @@
+﻿Name: {{ file_name }}
+Type: .NET Configuration{% if environment %} ({{ environment }}){% endif %}
+Size: {{ size_bytes | filesize }}, Lines: {{ line_count }}
+{% if top_keys.size > 0 %}
+Configuration sections:
+{% for key in top_keys %}  - {{ key }}
+{% endfor %}{% endif %}
+{% if connection_strings.size > 0 %}
+Connection strings: {{ connection_strings | join: ', ' }}
+{% endif %}
+{% if services.size > 0 %}
+Detected services: {{ services | join: ', ' }}
+{% endif %}

@@ -1,7 +1,7 @@
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Formats.DotNet;
-using RepoQL.Tests.Scaffolding;
+using RepoQL.Testing.Scaffolding;
 
 namespace RepoQL.Tests;
 

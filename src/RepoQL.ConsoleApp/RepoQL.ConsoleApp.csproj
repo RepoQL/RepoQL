@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <Version>1.0.9</Version>
+        <Version>1.1.0</Version>
         <TargetFramework>net9.0</TargetFramework>
         <PublishTrimmed>false</PublishTrimmed>
         <OutputType>Exe</OutputType>

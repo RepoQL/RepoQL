@@ -5,6 +5,7 @@ using RepoQL.Contracts.Models;
 using RepoQL.Core;
 using RepoQL.Data.DuckDB;
 using RepoQL.Formats.Markdown;
+using RepoQL.Testing.FileSystem;
 
 namespace RepoQL.Tests;
 

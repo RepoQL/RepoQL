@@ -1,0 +1,1 @@
+﻿{{ file_name }}{% if environment %}.{{ environment }}{% endif %} | {{ media_kind }} | {{ size_bytes | filesize }} | {{ line_count }} lines{% if top_keys.size > 0 %} | {{ top_keys | join: ', ' }}{% endif %}{% if connection_strings.size > 0 %} | cs:{{ connection_strings | join: ',' }}{% endif %}{% if services.size > 0 %} | {{ services | join: ', ' }}{% endif %}

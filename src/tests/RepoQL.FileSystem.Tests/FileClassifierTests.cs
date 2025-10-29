@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 using RepoQL.FileSystem.Classification;
+using RepoQL.Testing.FileSystem;
 
 namespace RepoQL.FileSystem.Tests;
 
@@ -108,19 +109,6 @@ public class FileClassifierTests
             mediaType.Subtype.Should().Be(subtype);
             mediaType.Kind.Should().Be(kind);
         }
-    }
-
-    private sealed class StringFileInfo(string name, string content) : IFileInfo
-    {
-        private readonly byte[] _bytes = System.Text.Encoding.UTF8.GetBytes(content);
-
-        public bool Exists => true;
-        public long Length => _bytes.Length;
-        public string PhysicalPath => string.Empty;
-        public string Name => name;
-        public DateTimeOffset LastModified => DateTimeOffset.UtcNow;
-        public bool IsDirectory => false;
-        public Stream CreateReadStream() => new MemoryStream(_bytes, writable: false);
     }
 
     private sealed class BinaryFileInfo(string name, byte[] content) : IFileInfo

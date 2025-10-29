@@ -10,6 +10,7 @@ using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Classification;
 using RepoQL.FileSystem.InMemory;
+using RepoQL.Testing;
 using Artifact = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Tests;
@@ -314,10 +315,4 @@ internal class ConcurrencyBugTest
         successCount.Should().Be(fileCount, "All operations should succeed");
     }
 
-    private class TestObserver(Action<Exception> onError, Action<IndexerEvent> onNext) : IObserver<IndexerEvent>
-    {
-        public void OnCompleted() { }
-        public void OnError(Exception error) => onError(error);
-        public void OnNext(IndexerEvent value) => onNext(value);
-    }
 }

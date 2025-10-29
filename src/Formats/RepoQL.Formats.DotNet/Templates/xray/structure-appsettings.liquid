@@ -1,0 +1,13 @@
+﻿Configuration{% if environment %} ({{ environment }}){% endif %}
+{% for key in top_keys %}  - {{ key }}
+{% endfor %}
+{% if connection_strings.size > 0 %}
+
+Connection Strings:
+{% for cs in connection_strings %}  - {{ cs }}
+{% endfor %}{% endif %}
+{% if services.size > 0 %}
+
+Detected Services:
+{% for svc in services %}  - {{ svc }}
+{% endfor %}{% endif %}

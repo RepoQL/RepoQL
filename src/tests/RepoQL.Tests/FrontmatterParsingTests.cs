@@ -8,6 +8,7 @@ using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.InMemory;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
+using RepoQL.Testing;
 
 namespace RepoQL.Tests;
 
