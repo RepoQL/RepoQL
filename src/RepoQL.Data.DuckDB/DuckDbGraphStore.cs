@@ -3,6 +3,7 @@ using System.Data;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Linq;
+using System.Threading;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -18,7 +19,7 @@ namespace RepoQL.Data.DuckDB;
 
 /// <summary>
 ///     DuckDB-backed implementation of <see cref="IGraphStore" />. Provides a self-describing schema,
-///     enables helpful extensions, registers UDFs, and installs the “anything by URI” macro.
+///     enables helpful extensions, registers UDFs, and installs the "anything by URI" macro.
 /// </summary>
     public sealed class DuckDbGraphStore : IGraphStore
     {
@@ -28,6 +29,31 @@ namespace RepoQL.Data.DuckDB;
         private readonly IndexingMetrics _metrics;
         private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
         private readonly object _annotationGate = new();
+        private readonly object _connectionLock = new();
+
+        private readonly struct ConnectionScope : IDisposable
+        {
+            private readonly object _lock;
+            private readonly bool _ownsLock;
+
+            public ConnectionScope(object @lock, bool ownsLock)
+            {
+                _lock = @lock;
+                _ownsLock = ownsLock;
+            }
+
+            public void Dispose()
+            {
+                if (!_ownsLock) return;
+                Monitor.Exit(_lock);
+            }
+        }
+
+        private ConnectionScope EnterConnectionScope()
+        {
+            Monitor.Enter(_connectionLock);
+            return new ConnectionScope(_connectionLock, ownsLock: true);
+        }
 
     // OpenTelemetry-style instrumentation
     private static readonly ActivitySource ActivitySource = new("RepoQL.Data.DuckDB");
@@ -49,6 +75,7 @@ namespace RepoQL.Data.DuckDB;
     /// </summary>
     public void RefreshDocumentEmbeddings(Contracts.Embeddings.IEmbeddingProvider provider, CancellationToken ct = default)
     {
+        using var connectionLock = EnterConnectionScope();
         if (provider is null || !provider.Enabled)
             return;
 
@@ -232,6 +259,7 @@ namespace RepoQL.Data.DuckDB;
     /// </summary>
     public void Dispose()
     {
+        using var connectionLock = EnterConnectionScope();
         if (_ownsConnection)
         {
             _connection.Dispose();
@@ -243,6 +271,7 @@ namespace RepoQL.Data.DuckDB;
     /// </summary>
     public void EnsureSchema()
     {
+        using var connectionLock = EnterConnectionScope();
         ExecuteSqlResource("Tables/artifact.sql");
         ExecuteSqlResource("Tables/node.sql");
         ExecuteSqlResource("Tables/span.sql");
@@ -282,6 +311,7 @@ namespace RepoQL.Data.DuckDB;
 
     public Artifact? GetArtifactByDigest(string digest)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
             "SELECT id,digest,byte_size,media_type,text_content,storage_uri,headline,summary,structure FROM artifact WHERE digest = ?;";
@@ -327,6 +357,7 @@ namespace RepoQL.Data.DuckDB;
 
     public Artifact? GetArtifact(Guid id)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
             "SELECT id,digest,byte_size,media_type,text_content,storage_uri,headline,summary,structure FROM artifact WHERE id = ?;";
@@ -372,6 +403,7 @@ namespace RepoQL.Data.DuckDB;
 
     public void RefreshSearchProjection(bool incrementalRefresh)
     {
+        using var connectionLock = EnterConnectionScope();
         using var activity = ActivitySource.StartActivity("repoql.search.refresh", ActivityKind.Internal);
         if (activity is not null)
         {
@@ -424,6 +456,7 @@ FROM (
 
     public Artifact UpsertArtifact(Artifact artifact)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("UpsertArtifact");
         var existing = GetArtifactByDigest(artifact.Digest);
         if (existing is not null) return existing;
@@ -471,6 +504,7 @@ FROM (
 
     public Span InsertSpan(Span span)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("InsertSpan");
         using var tx = _connection.BeginTransaction();
         using var cmd = _connection.CreateCommand();
@@ -500,6 +534,7 @@ FROM (
 
     public Span? GetSpan(Guid id)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
             @"SELECT id,document_id,start_byte,end_byte,start_line,start_column,end_line,end_column
@@ -531,6 +566,7 @@ FROM (
 
     public bool DeleteSpan(Guid id)
     {
+        using var connectionLock = EnterConnectionScope();
         using var tx = _connection.BeginTransaction();
         var n = Execute("DELETE FROM span WHERE id=?;", tx, id);
         tx.Commit();
@@ -539,6 +575,7 @@ FROM (
 
     public Node? GetNode(Guid id)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
             @"SELECT id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,created_at,updated_at
@@ -560,6 +597,7 @@ FROM (
 
     public Node? GetDocumentByUri(RepoUri uri)
     {
+        using var connectionLock = EnterConnectionScope();
         var lc = uri.Container.AbsoluteUri.ToLowerInvariant();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
@@ -582,6 +620,7 @@ FROM (
 
     public void DeleteDocumentByUri(RepoUri uri)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("DeleteDocumentByUri");
         try
         {
@@ -603,6 +642,7 @@ FROM (
 
     public void MoveDocumentUri(RepoUri oldUri, RepoUri newUri)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("MoveDocumentUri");
         try
         {
@@ -646,6 +686,7 @@ FROM (
 
     public Node UpsertDocumentByUri(RepoUri uri, Node document)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("UpsertDocumentByUri");
         try
         {
@@ -735,6 +776,7 @@ FROM (
 
     public void ReplaceDocumentContent(Guid documentId, IEnumerable<Node> children, IEnumerable<Span> spans, IEnumerable<Edge> edges)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("ReplaceDocumentContent");
         try
         {
@@ -859,6 +901,7 @@ FROM (
 
     public IEnumerable<Node> GetAllNodes()
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
             @"SELECT id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,created_at,updated_at
@@ -873,6 +916,7 @@ FROM (
 
     public bool MoveNode(Guid id, RepoUri newUri)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("MoveNode");
         try
         {
@@ -928,6 +972,7 @@ FROM (
 
     public Node UpsertNode(Node node)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("UpsertNode");
         try
         {
@@ -1009,6 +1054,7 @@ FROM (
 
     public bool DeleteNode(Guid id, bool cascadeComposition = false)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("DeleteNode");
         using var tx = _connection.BeginTransaction();
         try
@@ -1048,6 +1094,7 @@ FROM (
 
     public IEnumerable<Edge> GetEdgesForNode(Guid nodeId, bool outgoing = true, bool incoming = true)
     {
+        using var connectionLock = EnterConnectionScope();
         if (!outgoing && !incoming) yield break;
         var where = outgoing && incoming ? "(source_node_id=? OR destination_node_id=?)"
             : outgoing ? "source_node_id=?"
@@ -1066,6 +1113,7 @@ FROM (
 
     public Edge? GetEdge(Guid id)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
             @"SELECT id,source_node_id,destination_node_id,type,is_composition,ordinal,scope_document_id,semantic_key,
@@ -1080,6 +1128,7 @@ FROM (
 
     public Edge UpsertEdge(Edge edge)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("UpsertEdge");
         edge.Validate();
         if (GetNode(edge.SrcId) is null || GetNode(edge.DstId) is null)
@@ -1145,6 +1194,7 @@ FROM (
 
     public int DeleteSubtree(params Guid[] rootIds)
     {
+        using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("DeleteSubtree");
         if (rootIds == null || rootIds.Length == 0)
             return 0;
@@ -1219,6 +1269,7 @@ FROM (
 
     public IEnumerable<T> RawQuery<T>(string sql, Func<IDataRecord, T> map, params object?[] parameters)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = sql;
         AddParameters(cmd, parameters);
@@ -1229,6 +1280,7 @@ FROM (
 
     public IEnumerable<IReadOnlyDictionary<string, object?>> RawQuery(string sql, params object?[] parameters)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = sql;
         AddParameters(cmd, parameters);
@@ -1249,6 +1301,7 @@ FROM (
 
     public IEnumerable<ResolvedEntity> EntitiesByUri(string repositoryUri)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = @"SELECT entity, id, aux, uri, container_uri, fragment FROM entities_by_uri(?);";
         AddParameters(cmd, repositoryUri);
@@ -1271,6 +1324,7 @@ FROM (
 
     public Annotation UpsertAnnotation(Annotation a)
     {
+        using var connectionLock = EnterConnectionScope();
         lock (_annotationGate)
         {
             using var tx = _connection.BeginTransaction();
@@ -1365,6 +1419,7 @@ FROM (
 
     public Annotation? GetAnnotation(Guid id)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = @"SELECT id,semantic_key,kind,severity,source,rule_id,message,data,
                                    scope_document_id,target_node_id,target_edge_id,target_span_id,
@@ -1379,11 +1434,13 @@ FROM (
 
     public bool DeleteAnnotation(Guid id)
     {
+        using var connectionLock = EnterConnectionScope();
         return Execute("DELETE FROM annotation WHERE id=?;", id) > 0;
     }
 
     public IEnumerable<Annotation> GetAnnotationsForDocument(Guid documentId, string? kinds = null, string? minSeverity = null)
     {
+        using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = @"SELECT id,semantic_key,kind,severity,source,rule_id,message,data,
                                    scope_document_id,target_node_id,target_edge_id,target_span_id,

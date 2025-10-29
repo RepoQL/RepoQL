@@ -16,7 +16,6 @@ public static class GrpcServerHelper
         transport.EnsureCleanForBinding();
         options.ListenUnixSocket(socketPath, listenOptions => { listenOptions.Protocols = HttpProtocols.Http2; });
         SetSocketPermissions(socketPath);
-        Console.WriteLine($"gRPC server listening on Unix socket: {socketPath}");
     }
 
     private static string GetActualSocketPath(string repositoryPath)
