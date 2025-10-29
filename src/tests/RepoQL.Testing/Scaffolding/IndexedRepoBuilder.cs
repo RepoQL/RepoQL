@@ -1,20 +1,20 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using RepoQL.Contracts;
 using RepoQL.Core;
 using RepoQL.Core.Analysis;
-using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.InMemory;
+using RepoQL.Metrics;
 
-namespace RepoQL.Tests.Scaffolding;
+namespace RepoQL.Testing.Scaffolding;
 
 /// <summary>
 /// Builds an in-memory repository backed by DuckDB storage and RepositoryIndexer for tests.
 /// </summary>
-internal sealed class IndexedRepoBuilder : IAsyncDisposable
+public sealed class IndexedRepoBuilder : IAsyncDisposable
 {
     private readonly IndexedRepoOptions _options;
     private readonly MultiFileSystem _hub;

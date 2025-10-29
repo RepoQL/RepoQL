@@ -9,9 +9,9 @@ using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Metrics;
 
-namespace RepoQL.Tests.Scaffolding;
+namespace RepoQL.Testing.Scaffolding;
 
-internal sealed class IndexedRepoOptions
+public sealed class IndexedRepoOptions
 {
     private const string DefaultMeterName = "RepoQL.Tests.IndexedRepo";
 
