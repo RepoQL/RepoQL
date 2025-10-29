@@ -70,7 +70,7 @@ internal class ResourceCommands
             """ :
             """
             WITH s AS (
-                             SELECT doc_id, uri, score FROM file_search(?, ?, k := 100000, max_cand := 5000)
+                             SELECT doc_id, uri, score FROM file_search(?, k := 100000, max_cand := 5000, question := ?)
                            )
                            SELECT n.uri, a.headline, a.summary, a.structure
                            FROM s
