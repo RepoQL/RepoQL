@@ -2,10 +2,7 @@
 using AwesomeAssertions;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
-using RepoQL.Contracts.Models;
-using RepoQL.Formats.DotNet;
 using RepoQL.Templating;
-using TUnit.Core;
 
 namespace RepoQL.Formats.DotNet.Tests;
 

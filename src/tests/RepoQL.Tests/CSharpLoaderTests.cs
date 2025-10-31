@@ -1,5 +1,3 @@
-using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
@@ -10,7 +8,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
-using RepoQL.Contracts.Models;
 using RepoQL.Formats.DotNet;
 using RepoQL.Core;
 using AnalysisResult = RepoQL.Contracts.Analysis.AnalysisResult;

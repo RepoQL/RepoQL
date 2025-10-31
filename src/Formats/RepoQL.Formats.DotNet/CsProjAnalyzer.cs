@@ -8,7 +8,7 @@ namespace RepoQL.Formats.DotNet;
 /// <summary>
 /// Minimal analyzer for *.csproj: flags unpinned packages (no Version or floating).
 /// </summary>
-public sealed class CsProjAnalyzer : IFormatAnalyzer
+public sealed class CsProjAnalyzer : IFormatAnalyzer, IAnnotationSourceProvider
 {
     private const string RuleId = "csproj/unpinned-package";
     private const string Source = "RepoQL.CsProj";
@@ -52,5 +52,10 @@ public sealed class CsProjAnalyzer : IFormatAnalyzer
             }
         }
         await Task.CompletedTask;
+    }
+
+    public IEnumerable<string> GetAnalyzerSources(DocumentModel document, AnalyzerContext context)
+    {
+        yield return Source;
     }
 }

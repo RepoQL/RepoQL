@@ -10,7 +10,7 @@ using RepoQL.Grammar.Syntax;
 
 namespace RepoQL.Formats.Mermaid;
 
-public sealed class  MermaidAnalyzer : IFormatAnalyzer
+public sealed class  MermaidAnalyzer : IFormatAnalyzer, IAnnotationSourceProvider
 {
     public bool Supports(SemanticMediaType mediaType)
         => string.Equals(mediaType.Kind, "mermaid.doc", StringComparison.OrdinalIgnoreCase);
@@ -140,5 +140,10 @@ public sealed class  MermaidAnalyzer : IFormatAnalyzer
             Severity.Error => AnalysisSeverity.Error,
             _ => AnalysisSeverity.Warning
         };
+    }
+
+    public IEnumerable<string> GetAnalyzerSources(DocumentModel document, AnalyzerContext context)
+    {
+        yield return "RepoQL.Mermaid";
     }
 }

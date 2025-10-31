@@ -1,4 +1,3 @@
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using RepoQL.Contracts;
@@ -15,7 +14,7 @@ namespace RepoQL.Formats.DotNet;
 /// The analyzer respects analyzer settings configured in <see cref="AnalyzerContext"/>, allowing users
 /// to override diagnostic severity or disable specific rules.
 /// </remarks>
-public sealed class CSharpAnalyzer : IFormatAnalyzer
+public sealed class CSharpAnalyzer : IFormatAnalyzer, IAnnotationSourceProvider
 {
     private const string RulePrefix = "csharp/";
     private const string Source = "RepoQL.CSharp";
@@ -132,4 +131,9 @@ public sealed class CSharpAnalyzer : IFormatAnalyzer
             "hidden" => AnalysisSeverity.Suggestion,
             _ => AnalysisSeverity.Warning
         };
+
+    public IEnumerable<string> GetAnalyzerSources(DocumentModel document, AnalyzerContext context)
+    {
+        yield return Source;
+    }
 }

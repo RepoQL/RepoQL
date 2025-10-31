@@ -1,9 +1,6 @@
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using System.Linq;
-using System.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
@@ -967,8 +964,25 @@ public class RepositoryIndexer(
             await foreach (var result in descriptor.Analyzer.AnalyzeAsync(document, context, _stopping.Token).ConfigureAwait(false))
                 results.Add(result);
 
-            if (results.Count > 0)
-                await _analysisWriter.WriteAsync(containerUri, results, _stopping.Token).ConfigureAwait(false);
+            var sources = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var result in results)
+            {
+                if (!string.IsNullOrWhiteSpace(result.Source))
+                    sources.Add(result.Source);
+            }
+
+            if (descriptor.Analyzer is IAnnotationSourceProvider sourceProvider)
+            {
+                foreach (var src in sourceProvider.GetAnalyzerSources(document, context))
+                {
+                    if (!string.IsNullOrWhiteSpace(src))
+                        sources.Add(src);
+                }
+            }
+
+            await _analysisWriter
+                .WriteAsync(containerUri, results, sources.Count > 0 ? sources : null, _stopping.Token)
+                .ConfigureAwait(false);
 
             _metrics.EnrichmentDuration.Record(sw.Elapsed.TotalMilliseconds);
             if (enrich is not null)

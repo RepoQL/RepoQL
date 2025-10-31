@@ -314,10 +314,57 @@ public sealed class SingleThreadedDatabaseWriter(
     {
         if (_store is null) throw new InvalidOperationException("Writer not started");
         var records = op.ParsedData;
+        var annotations = records.Annotations ?? Array.Empty<Annotation>();
+        var globalSources = records.AnnotationSources ?? Array.Empty<string>();
 
-        foreach (var annotation in records.Annotations)
+        var docIds = new HashSet<Guid>(annotations.Select(a => a.ScopeDocumentId));
+        if (docIds.Count == 0)
         {
-            _store.UpsertAnnotation(annotation);
+            var doc = _store.GetDocumentByUri(op.Uri);
+            if (doc is not null)
+            {
+                docIds.Add(doc.Id);
+            }
+        }
+
+        foreach (var docId in docIds)
+        {
+            var newForDocument = annotations.Where(a => a.ScopeDocumentId == docId).ToList();
+            var sourcesToClear = new HashSet<string>(globalSources, StringComparer.Ordinal);
+            foreach (var annotation in newForDocument)
+            {
+                if (!string.IsNullOrWhiteSpace(annotation.Source))
+                    sourcesToClear.Add(annotation.Source);
+            }
+
+            if (sourcesToClear.Count > 0)
+            {
+                var newKeys = new HashSet<string>(newForDocument.Where(a => !string.IsNullOrEmpty(a.SemanticKey)).Select(a => a.SemanticKey!), StringComparer.Ordinal);
+                var includeNullKey = newForDocument.Any(a => string.IsNullOrEmpty(a.SemanticKey));
+
+                var existing = _store.GetAnnotationsForDocument(docId).ToList();
+                foreach (var stale in existing)
+                {
+                    if (string.IsNullOrEmpty(stale.Source))
+                        continue;
+                    if (!sourcesToClear.Contains(stale.Source))
+                        continue;
+
+                    var key = stale.SemanticKey;
+                    if (!string.IsNullOrEmpty(key) && newKeys.Contains(key))
+                        continue;
+
+                    if (string.IsNullOrEmpty(key) && includeNullKey)
+                        continue;
+
+                    _store.DeleteAnnotation(stale.Id);
+                }
+            }
+
+            foreach (var annotation in newForDocument)
+            {
+                _store.UpsertAnnotation(annotation);
+            }
         }
     }
 

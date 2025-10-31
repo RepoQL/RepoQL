@@ -7,4 +7,5 @@ public class Records
     public Span[] Spans { get; init; } = [];
     public Edge[] Edges { get; init; } = [];
     public Annotation[] Annotations { get; init; } = [];
+    public string[] AnnotationSources { get; init; } = [];
 }

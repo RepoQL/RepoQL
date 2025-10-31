@@ -5,7 +5,7 @@ using RepoQL.Contracts.Analysis;
 
 namespace RepoQL.Formats.Markdown;
 
-public sealed class MarkdownAnalyzer : IFormatAnalyzer
+public sealed class MarkdownAnalyzer : IFormatAnalyzer, IAnnotationSourceProvider
 {
     private const string RuleId = "markdown/broken-link";
     private const string Source = "RepoQL.Markdown";
@@ -243,5 +243,10 @@ public sealed class MarkdownAnalyzer : IFormatAnalyzer
                 EndColumn = span.EndColumn
             }
         };
+    }
+
+    public IEnumerable<string> GetAnalyzerSources(DocumentModel document, AnalyzerContext context)
+    {
+        yield return Source;
     }
 }

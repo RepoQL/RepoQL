@@ -1,7 +1,6 @@
 using DuckDB.NET.Data;
 using System.Buffers;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using RepoQL.Contracts;

@@ -9,7 +9,7 @@ namespace RepoQL.Formats.DotNet;
 /// Analyzer for .NET appsettings.json files.
 /// Detects potential security issues and configuration problems.
 /// </summary>
-public sealed class AppSettingsAnalyzer : IFormatAnalyzer
+public sealed class AppSettingsAnalyzer : IFormatAnalyzer, IAnnotationSourceProvider
 {
     private static readonly SemanticMediaType AppSettingsType = SemanticMediaType
         .Create("application", "json")
@@ -117,5 +117,10 @@ public sealed class AppSettingsAnalyzer : IFormatAnalyzer
         }
 
         await Task.CompletedTask;
+    }
+
+    public IEnumerable<string> GetAnalyzerSources(DocumentModel document, AnalyzerContext context)
+    {
+        yield return "RepoQL.Config";
     }
 }

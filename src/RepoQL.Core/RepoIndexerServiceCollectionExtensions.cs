@@ -1,5 +1,4 @@
 using System.Diagnostics.Metrics;
-using System.Linq;
 using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

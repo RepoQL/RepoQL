@@ -1,14 +1,131 @@
 using System.Text.Json.Nodes;
+using RepoQL.Contracts.Analysis;
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
+using RepoQL.Core.Analysis;
 using Artifact = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Tests;
 
 internal class AnnotationsTests
 {
+    [Test]
+    public async Task AnnotationWriter_RemovesStaleAnnotations_WhenNoResults()
+    {
+        using var store = new DuckDbGraphStore(":memory:");
+        store.EnsureSchema();
+
+        var uri = RepoUri.Parse("file:///repo/clean.cs");
+        var doc = store.UpsertDocumentByUri(uri, new Node { Id = Guid.NewGuid(), Kind = "document", Uri = uri, Props = new JsonObject() });
+
+        var writer = new AnnotationResultWriter(store);
+        var results = new[]
+        {
+            new AnalysisResult
+            {
+                SemanticKey = "lint:CS1000",
+                Kind = "lint",
+                Severity = AnalysisSeverity.Warning,
+                Source = "cs-lint",
+                RuleId = "CS1000",
+                Message = "first issue",
+                Data = new JsonObject(),
+                Target = new AnalysisTarget { TargetUri = uri }
+            }
+        };
+
+        await writer.WriteAsync(uri.AbsoluteUri, results, ["cs-lint"], CancellationToken.None);
+        store.GetAnnotationsForDocument(doc.Id).Should().HaveCount(1);
+
+        await writer.WriteAsync(uri.AbsoluteUri, Array.Empty<AnalysisResult>(), ["cs-lint"], CancellationToken.None);
+        store.GetAnnotationsForDocument(doc.Id).Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task AnnotationWriter_PreservesAnnotationsFromOtherSources()
+    {
+        using var store = new DuckDbGraphStore(":memory:");
+        store.EnsureSchema();
+
+        var uri = RepoUri.Parse("file:///repo/mixed.cs");
+        var doc = store.UpsertDocumentByUri(uri, new Node { Id = Guid.NewGuid(), Kind = "document", Uri = uri, Props = new JsonObject() });
+
+        store.UpsertAnnotation(new Annotation
+        {
+            SemanticKey = "lint:CS9999",
+            Kind = "lint",
+            Severity = "warning",
+            Source = "cs-lint",
+            Message = "outdated issue",
+            ScopeDocumentId = doc.Id
+        });
+
+        store.UpsertAnnotation(new Annotation
+        {
+            SemanticKey = "outline:1",
+            Kind = "outline",
+            Severity = "hint",
+            Source = "outline-generator",
+            Message = "outline entry",
+            ScopeDocumentId = doc.Id
+        });
+
+        var writer = new AnnotationResultWriter(store);
+        await writer.WriteAsync(uri.AbsoluteUri, Array.Empty<AnalysisResult>(), ["cs-lint"], CancellationToken.None);
+
+        var remaining = store.GetAnnotationsForDocument(doc.Id).ToArray();
+        remaining.Should().HaveCount(1);
+        remaining[0].Source.Should().Be("outline-generator");
+    }
+
+    [Test]
+    public async Task AnnotationWriter_WithDatabaseWriter_RemovesStaleAnnotations()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-writer-{Guid.NewGuid():N}.duckdb");
+        try
+        {
+            var factory = new DuckDBConnectionFactory($"Data Source={dbPath}");
+            await using var dbWriter = new SingleThreadedDatabaseWriter(factory);
+            await dbWriter.StartAsync(CancellationToken.None);
+
+            using var store = new DuckDbGraphStore(dbPath);
+            store.EnsureSchema();
+
+            var uri = RepoUri.Parse("file:///repo/clean2.cs");
+            var doc = store.UpsertDocumentByUri(uri, new Node { Id = Guid.NewGuid(), Kind = "document", Uri = uri, Props = new JsonObject() });
+
+            var writer = new AnnotationResultWriter(store, dbWriter);
+            var initial = new[]
+            {
+                new AnalysisResult
+                {
+                    SemanticKey = "lint:CS2000",
+                    Kind = "lint",
+                    Severity = AnalysisSeverity.Warning,
+                    Source = "cs-lint",
+                    RuleId = "CS2000",
+                    Message = "issue 1",
+                    Data = new JsonObject(),
+                    Target = new AnalysisTarget { TargetUri = uri }
+                }
+            };
+
+            await writer.WriteAsync(uri.AbsoluteUri, initial, ["cs-lint"], CancellationToken.None);
+            await dbWriter.FlushAsync(CancellationToken.None);
+            store.GetAnnotationsForDocument(doc.Id).Should().HaveCount(1);
+
+            await writer.WriteAsync(uri.AbsoluteUri, Array.Empty<AnalysisResult>(), ["cs-lint"], CancellationToken.None);
+            await dbWriter.FlushAsync(CancellationToken.None);
+            store.GetAnnotationsForDocument(doc.Id).Should().BeEmpty();
+        }
+        finally
+        {
+            try { File.Delete(dbPath); } catch { }
+        }
+    }
+
     [Test]
     public void UpsertAnnotation_Idempotent_BySemanticKey()
     {

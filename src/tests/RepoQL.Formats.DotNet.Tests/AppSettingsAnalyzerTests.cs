@@ -3,10 +3,7 @@ using AwesomeAssertions;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
-using RepoQL.Contracts.Models;
 using RepoQL.Core;
-using RepoQL.Formats.DotNet;
-using TUnit.Core;
 
 namespace RepoQL.Formats.DotNet.Tests;
 

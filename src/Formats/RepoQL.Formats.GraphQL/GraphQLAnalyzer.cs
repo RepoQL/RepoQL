@@ -5,7 +5,7 @@ using RepoQL.Contracts.Analysis;
 
 namespace RepoQL.Formats.GraphQL;
 
-public sealed class GraphQLAnalyzer : IFormatAnalyzer
+public sealed class GraphQLAnalyzer : IFormatAnalyzer, IAnnotationSourceProvider
 {
     private const string Source = "RepoQL.GraphQL";
     private const string NamedOperationRuleId = "graphql/named-operation";
@@ -364,5 +364,10 @@ public sealed class GraphQLAnalyzer : IFormatAnalyzer
             await Task.CompletedTask;
             yield break;
         }
+    }
+
+    public IEnumerable<string> GetAnalyzerSources(DocumentModel document, AnalyzerContext context)
+    {
+        yield return Source;
     }
 }

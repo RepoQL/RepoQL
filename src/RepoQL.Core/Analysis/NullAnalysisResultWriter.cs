@@ -8,6 +8,10 @@ public sealed class NullAnalysisResultWriter : IAnalysisResultWriter
 
     private NullAnalysisResultWriter() { }
 
-        public Task WriteAsync(string containerUri, IReadOnlyList<AnalysisResult> results, CancellationToken cancellationToken = default)
+        public Task WriteAsync(
+            string containerUri,
+            IReadOnlyList<AnalysisResult> results,
+            IReadOnlyCollection<string>? analyzerSources = null,
+            CancellationToken cancellationToken = default)
         => Task.CompletedTask;
 }
