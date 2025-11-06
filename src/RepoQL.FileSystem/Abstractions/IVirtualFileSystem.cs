@@ -20,6 +20,13 @@ public interface IVirtualFileSystem
 
     /// <summary>Open a read-only stream for the canonical resource URI. Caller disposes the stream.</summary>
     IFileInfo GetFile(RepoUri uri);
+    
+    /// <summary>
+    ///   Gets the uri for a given file
+    /// </summary>
+    /// <param name="file">The file to get the uri for</param>
+    /// <returns>The RepoURI</returns>
+    RepoUri GetUri(IFileInfo file);
 
     /// <summary>Create a watcher that emits canonical resource changes.</summary>
     IFileSystemWatcher Watch();

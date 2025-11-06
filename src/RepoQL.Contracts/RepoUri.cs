@@ -92,7 +92,7 @@ public sealed class RepoUri : Uri
         if (!TryCreate(s, UriKind.Absolute, out _)) return false;
 
         // Get the raw fragment without URL decoding
-        var hashIndex = s.IndexOf('#');
+        var hashIndex = s.IndexOf('#', StringComparison.Ordinal);
         var rawFrag = hashIndex >= 0 ? s[(hashIndex + 1)..] : string.Empty;
         var loc = ParseFragment(rawFrag);
 

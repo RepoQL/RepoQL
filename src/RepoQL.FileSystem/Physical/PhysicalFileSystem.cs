@@ -47,6 +47,15 @@ public sealed class PhysicalFileSystem(string rootPath) : IVirtualFileSystem
         return RepoUri.Parse($"{Scheme}:///{rel}");
     }
 
+    public RepoUri GetUri(IFileInfo file)
+    {
+        if (file?.PhysicalPath == null)
+            throw new ArgumentException("File must have a PhysicalPath", nameof(file));
+
+        // Use the existing ToRepoUri method to convert the physical path
+        return ToRepoUri(file.PhysicalPath);
+    }
+
     /// <inheritdoc/>
     public async IAsyncEnumerable<IFileInfo> EnumerateAsync([EnumeratorCancellation] CancellationToken ct)
     {

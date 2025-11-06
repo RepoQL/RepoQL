@@ -14,6 +14,11 @@ namespace RepoQL.Contracts;
 /// </summary>
 public sealed class SemanticMediaType
 {
+    /// <summary>
+    ///     The default mediatype - text/plain
+    /// </summary>
+    public static SemanticMediaType Default { get; } = Parse("text/plain");
+
     private readonly SortedDictionary<string, string?> _parameters;
 
     private SemanticMediaType(string type, string subtype, string? suffix, IDictionary<string, string?>? parameters)

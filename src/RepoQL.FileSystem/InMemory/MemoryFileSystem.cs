@@ -14,9 +14,10 @@ public sealed class MemoryFileSystem(string defaultRoot = "repo") : IVirtualFile
 {
     private readonly ConcurrentDictionary<string, MemoryFileInfo> _files = new(StringComparer.Ordinal);
     private readonly MemoryWatcher _watcher = new();
-
+    
     public string DefaultRoot { get; } = string.IsNullOrWhiteSpace(defaultRoot) ? "repo" : defaultRoot;
 
+    /// <inheritdoc />
     public string Scheme => "mem";
 
     public async IAsyncEnumerable<IFileInfo> EnumerateAsync([EnumeratorCancellation] CancellationToken ct)
@@ -29,6 +30,7 @@ public sealed class MemoryFileSystem(string defaultRoot = "repo") : IVirtualFile
         }
     }
 
+    /// <inheritdoc />
     public IFileInfo GetFile(RepoUri uri)
     {
         // Expected form: mem://{physicalPath}
@@ -39,6 +41,16 @@ public sealed class MemoryFileSystem(string defaultRoot = "repo") : IVirtualFile
         if (_files.TryGetValue(key, out var fi))
             return fi;
         return new NotFoundFileInfo(uri.AbsoluteUri);
+    }
+
+    /// <inheritdoc />
+    public RepoUri GetUri(IFileInfo file)
+    {
+        if (file?.PhysicalPath == null)
+            throw new ArgumentException("File must have a PhysicalPath", nameof(file));
+
+        // PhysicalPath is in the format "root/relative/path", convert to "mem://root/relative/path"
+        return RepoUri.Parse($"{Scheme}://{file.PhysicalPath}");
     }
 
     public IFileSystemWatcher Watch() => _watcher;

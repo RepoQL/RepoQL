@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+        <ProjectReference Include="..\..\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <PackageReference Include="DotNext.Threading" Version="5.26.0" />
+    </ItemGroup>
+
+</Project>

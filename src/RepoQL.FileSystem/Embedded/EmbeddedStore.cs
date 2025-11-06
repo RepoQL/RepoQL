@@ -65,6 +65,17 @@ public sealed class EmbeddedStore : IVirtualFileSystem
     }
 
     /// <inheritdoc />
+    public RepoUri GetUri(IFileInfo file)
+    {
+        if (file.PhysicalPath == null)
+            throw new ArgumentException("File must have a PhysicalPath", nameof(file));
+
+        // PhysicalPath is in the format "/logical/path.ext", convert to "embed:///logical/path.ext"
+        var logicalPath = file.PhysicalPath.TrimStart('/');
+        return RepoUri.Parse($"{Scheme}:///{logicalPath}");
+    }
+
+    /// <inheritdoc />
     public IFileSystemWatcher Watch() => new ManualWatcher();
 
     private static string ToLogicalPath(string manifestName, string asmName)
