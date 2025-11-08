@@ -78,7 +78,7 @@ public sealed class SingleThreadedDatabaseWriter(
             Id = Guid.NewGuid(),
             Type = WriteOperationType.Barrier,
             Uri = RepoUri.Parse("mem://writer-barrier"),
-            ParsedData = new Records { Artifacts = [], Nodes = [], Spans = [], Edges = [] }
+            ParsedData = Records.Empty
         };
         await EnqueueAndWaitAsync(barrierOp, ct).ConfigureAwait(false);
         var after = _processed;
@@ -166,6 +166,9 @@ public sealed class SingleThreadedDatabaseWriter(
                     break;
                 case WriteOperationType.UpsertAnnotations:
                     ApplyUpsertAnnotations(op);
+                    break;
+                case WriteOperationType.DeleteDocument:
+                    ApplyDeleteDocument(op);
                     break;
                 case WriteOperationType.Barrier:
                     // no-op
@@ -366,6 +369,12 @@ public sealed class SingleThreadedDatabaseWriter(
                 _store.UpsertAnnotation(annotation);
             }
         }
+    }
+
+    private void ApplyDeleteDocument(WriteOperation op)
+    {
+        if (_store is null) throw new InvalidOperationException("Writer not started");
+        _store.DeleteDocumentByUri(op.Uri);
     }
 
     private static System.Text.Json.Nodes.JsonObject? EnrichDocPropsWithFrontmatter(System.Text.Json.Nodes.JsonObject? original)

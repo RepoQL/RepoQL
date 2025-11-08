@@ -73,9 +73,9 @@ public sealed class FormatTestHarness
             ? new[] { _analyzer }
             : Array.Empty<IAsyncPipeline<IParsedArtifact, Annotation[]>>();
 
-        var classificationPipeline = new ClassificationPipeline(classificationProcessors, CreateLogger<ClassificationPipeline>());
-        var parsingPipeline = new ParsingPipeline(parsingProcessors, CreateLogger<ParsingPipeline>());
-        var analysisPipeline = new SingleFileAnalysisPipeline(analysisProcessors, CreateLogger<SingleFileAnalysisPipeline>());
+        var classificationPipeline = new ClassificationPipeline(classificationProcessors, TestLogging.CreateLogger<ClassificationPipeline>());
+        var parsingPipeline = new ParsingPipeline(parsingProcessors, TestLogging.CreateLogger<ParsingPipeline>());
+        var analysisPipeline = new SingleFileAnalysisPipeline(analysisProcessors, TestLogging.CreateLogger<SingleFileAnalysisPipeline>());
 
         return new IndexingEngine(
             databaseWriter: null,
@@ -83,15 +83,7 @@ public sealed class FormatTestHarness
             classifier: classificationPipeline,
             parser: parsingPipeline,
             singleFileAnalyzer: analysisPipeline,
-            logger: CreateLogger<IndexingEngine>());
-    }
-
-    private static ILogger<T> CreateLogger<T>()
-    {
-        var tunitLogger = TestContext.Current!.GetDefaultLogger();
-        var factory = Microsoft.Extensions.Logging.LoggerFactory.Create(builder =>
-            builder.AddProvider(new TUnitLoggerProvider(tunitLogger)));
-        return factory.CreateLogger<T>();
+            logger: TestLogging.CreateLogger<IndexingEngine>());
     }
 
     /// <summary>

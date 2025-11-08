@@ -52,6 +52,8 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     /// </summary>
     public DocumentCatalogEntry? ExistingEntry { get; set; }
 
+    internal long Epoch { get; private set; } = -1;
+
     /// <summary>
     ///     Materialized graph records (artifacts, nodes, spans, edges)
     /// </summary>
@@ -165,4 +167,9 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
 
     public bool IsDirectory => rawArtifact.IsDirectory;
     #endregion
+
+    internal void SetEpoch(long epoch)
+    {
+        Epoch = epoch;
+    }
 }

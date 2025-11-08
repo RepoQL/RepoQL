@@ -22,5 +22,6 @@
   <ItemGroup>
     <ProjectReference Include="..\RepoQL.Indexing\RepoQL.Indexing.csproj" />
     <ProjectReference Include="..\..\Formats\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
+    <ProjectReference Include="..\..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
   </ItemGroup>
 </Project>

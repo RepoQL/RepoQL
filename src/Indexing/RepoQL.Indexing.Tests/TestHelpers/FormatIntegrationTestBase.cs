@@ -11,13 +11,7 @@ public abstract class FormatIntegrationTestBase
     /// <summary>
     /// Creates a logger for the specified type using TUnit's logging infrastructure.
     /// </summary>
-    protected static ILogger<T> CreateLogger<T>()
-    {
-        var tunitLogger = TestContext.Current!.GetDefaultLogger();
-        var factory = LoggerFactory.Create(builder =>
-            builder.AddProvider(new TUnitLoggerProvider(tunitLogger)));
-        return factory.CreateLogger<T>();
-    }
+    protected static ILogger<T> CreateLogger<T>() => TestLogging.CreateLogger<T>();
     
 
     /// <summary>

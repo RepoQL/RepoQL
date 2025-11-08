@@ -117,6 +117,15 @@ item.Annotations.AddRange(lintResults);
 - **Updates**: the catalog tracks in-flight digests today; when the writer wiring lands, `WriteOperation.OnCommitted` will call `DocumentCatalog.ApplyUpsert` / `ApplyDelete` to keep it authoritative.
 - **Later**: snapshotting the catalog to disk is deferred until the new engine owns persistence end-to-end.
 
+### Committer
+
+- **Goal**: isolate “persist records + annotations + catalog update” into a small service (`IIndexingCommitter`) so the engine can stay focused on orchestration.
+- **Responsibilities**:
+  - Translate a fully populated `IndexItem` into the right `WriteOperation` set and hand them to `IDatabaseWriter`.
+  - Update `DocumentCatalog` inside the writer’s `OnCommitted` callback so catalog state stays consistent with the DB.
+  - Forward analyzer output to `IAnalysisResultWriter` once document IDs are stable.
+- **Why separate**: keeps the engine lean, makes persistence logic testable on its own, and lets us swap commit strategies (batching, dry-run, alternate writers) through DI later.
+
 ### The Flow Interfaces
 
 Each stage sees progressively more complete data:
