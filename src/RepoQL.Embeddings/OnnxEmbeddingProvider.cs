@@ -5,7 +5,7 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using System.Buffers;
 using RepoQL.Contracts.Embeddings;
 
-namespace RepoQL.Core.Embeddings;
+namespace RepoQL.Embeddings;
 
 /// <summary>
 /// Local ONNX embedding provider for BGE small v1.5.

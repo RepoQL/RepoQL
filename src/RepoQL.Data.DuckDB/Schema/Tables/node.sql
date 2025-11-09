@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS node (
                                     artifact_id                 UUID,
                                     span_id                     UUID,
                                     properties                  JSON NOT NULL,
+                                    headline                    VARCHAR,
+                                    structure                   VARCHAR,
                                     created_at                  TIMESTAMP NOT NULL,
                                     updated_at                  TIMESTAMP NOT NULL,
                                     CHECK (kind <> 'document' OR uri IS NOT NULL),
@@ -23,5 +25,7 @@ COMMENT ON COLUMN node.container_uri_lowercase IS 'Lowercase container URI for u
 COMMENT ON COLUMN node.artifact_id IS 'Back-reference to artifact providing bytes.';
 COMMENT ON COLUMN node.span_id IS 'Span that locates this node within a document.';
 COMMENT ON COLUMN node.properties IS 'Arbitrary attributes as JSON.';
+COMMENT ON COLUMN node.headline IS 'X-ray summary (Level 0) for this node, if available.';
+COMMENT ON COLUMN node.structure IS 'X-ray outline (Level 2) for this node, if available.';
 COMMENT ON COLUMN node.created_at IS 'Creation timestamp (UTC).';
 COMMENT ON COLUMN node.updated_at IS 'Update timestamp (UTC).';

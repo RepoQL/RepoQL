@@ -574,8 +574,8 @@ FROM (
         using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
-            @"SELECT id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,created_at,updated_at
-                  FROM node WHERE id=?;";
+            @"SELECT id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at
+                    FROM node WHERE id=?;";
         AddParameters(cmd, id);
         using var activity = StartDbActivity(cmd.CommandText);
         try
@@ -597,8 +597,8 @@ FROM (
         var lc = uri.Container.AbsoluteUri.ToLowerInvariant();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
-            @"SELECT id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,created_at,updated_at
-                  FROM node WHERE container_uri_lowercase=?;";
+            @"SELECT id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at
+                    FROM node WHERE container_uri_lowercase=?;";
         AddParameters(cmd, lc);
         using var activity = StartDbActivity(cmd.CommandText);
         try
@@ -706,8 +706,8 @@ FROM (
                     var id = r.GetGuid(0);
                     using var upd = _connection.CreateCommand();
                     upd.Transaction = tx;
-                    upd.CommandText = @"UPDATE node
-                                    SET kind=?, uri=?, container_uri_lowercase=?, artifact_id=?, span_id=?, properties=?, updated_at=?
+                upd.CommandText = @"UPDATE node
+                                    SET kind=?, uri=?, container_uri_lowercase=?, artifact_id=?, span_id=?, properties=?, headline=?, structure=?, updated_at=?
                                   WHERE id=?;";
                     var uriStr = uri.Container.AbsoluteUri;
                     AddParameters(upd,
@@ -716,9 +716,11 @@ FROM (
                         uriStr.ToLowerInvariant(),
                         document.ArtifactId,
                         document.SpanId,
-                        JsonFromNode(document.Props),
-                        document.UpdatedAt.UtcDateTime,
-                        id);
+                    JsonFromNode(document.Props),
+                    document.Headline,
+                    document.Structure,
+                    document.UpdatedAt.UtcDateTime,
+                    id);
                     using (var activityUpd = StartDbActivity(upd.CommandText))
                     {
                         var rows = upd.ExecuteNonQuery();
@@ -733,9 +735,9 @@ FROM (
             using (var ins = _connection.CreateCommand())
             {
                 ins.Transaction = tx;
-                ins.CommandText = @"INSERT INTO node
-                  (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,created_at,updated_at)
-                  VALUES (?,?,?,?,?,?,?,?,?);";
+            ins.CommandText = @"INSERT INTO node
+                  (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at)
+                  VALUES (?,?,?,?,?,?,?,?,?,?,?);";
                 var uriStr = uri.Container.AbsoluteUri;
                 AddParameters(ins,
                     document.Id,
@@ -744,9 +746,11 @@ FROM (
                     uriStr.ToLowerInvariant(),
                     document.ArtifactId,
                     document.SpanId,
-                    JsonFromNode(document.Props),
-                    document.CreatedAt.UtcDateTime,
-                    document.UpdatedAt.UtcDateTime);
+                JsonFromNode(document.Props),
+                document.Headline,
+                document.Structure,
+                document.CreatedAt.UtcDateTime,
+                document.UpdatedAt.UtcDateTime);
                 using (var activityIns = StartDbActivity(ins.CommandText))
                 {
                     var rows = ins.ExecuteNonQuery();
@@ -829,8 +833,8 @@ FROM (
                 using var ins = _connection.CreateCommand();
                 ins.Transaction = tx;
                 ins.CommandText = @"INSERT INTO node
-                  (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,created_at,updated_at)
-                  VALUES (?,?,?,?,?,?,?,?,?);";
+                  (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at)
+                  VALUES (?,?,?,?,?,?,?,?,?,?,?);";
                 var uriStr = n.Uri?.Container.AbsoluteUri;
                 AddParameters(ins,
                     n.Id,
@@ -840,6 +844,8 @@ FROM (
                     n.ArtifactId,
                     n.SpanId,
                     JsonFromNode(n.Props),
+                    n.Headline,
+                    n.Structure,
                     n.CreatedAt.UtcDateTime,
                     n.UpdatedAt.UtcDateTime);
                 using (var activity = StartDbActivity(ins.CommandText))
@@ -900,8 +906,8 @@ FROM (
         using var connectionLock = EnterConnectionScope();
         using var cmd = _connection.CreateCommand();
         cmd.CommandText =
-            @"SELECT id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,created_at,updated_at
-                  FROM node ORDER BY created_at;";
+            @"SELECT id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at
+                    FROM node ORDER BY created_at;";
         using var activity = StartDbActivity(cmd.CommandText);
         using var r = cmd.ExecuteReader();
         while (r.Read())
@@ -988,7 +994,7 @@ FROM (
                 using var cmd = _connection.CreateCommand();
                 cmd.CommandText =
                     @"UPDATE node
-                          SET kind=?, uri=?, container_uri_lowercase=?, artifact_id=?, span_id=?, properties=?, updated_at=?
+                          SET kind=?, uri=?, container_uri_lowercase=?, artifact_id=?, span_id=?, properties=?, headline=?, structure=?, updated_at=?
                           WHERE id=?;";
                 var uriStr = node.Uri?.Container.AbsoluteUri;
                 AddParameters(cmd,
@@ -998,6 +1004,8 @@ FROM (
                     node.ArtifactId,
                     node.SpanId,
                     JsonFromNode(node.Props),
+                    node.Headline,
+                    node.Structure,
                     node.UpdatedAt.UtcDateTime,
                     node.Id);
                 using (var activity = StartDbActivity(cmd.CommandText))
@@ -1011,8 +1019,8 @@ FROM (
                 using var cmd = _connection.CreateCommand();
                 cmd.CommandText =
                     @"INSERT INTO node
-                          (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,created_at,updated_at)
-                          VALUES (?,?,?,?,?,?,?,?,?);";
+                          (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at)
+                          VALUES (?,?,?,?,?,?,?,?,?,?,?);";
                 var uriStr = node.Uri?.Container.AbsoluteUri;
                 AddParameters(cmd,
                     node.Id,
@@ -1022,6 +1030,8 @@ FROM (
                     node.ArtifactId,
                     node.SpanId,
                     JsonFromNode(node.Props),
+                    node.Headline,
+                    node.Structure,
                     node.CreatedAt.UtcDateTime,
                     node.UpdatedAt.UtcDateTime);
                 using (var activity = StartDbActivity(cmd.CommandText))
@@ -1568,8 +1578,10 @@ FROM (
             ArtifactId = r.IsDBNull(4) ? null : r.GetGuid(4),
             SpanId = r.IsDBNull(5) ? null : r.GetGuid(5),
             Props = props,
-            CreatedAt = DateTime.SpecifyKind(r.GetDateTime(7), DateTimeKind.Utc),
-            UpdatedAt = DateTime.SpecifyKind(r.GetDateTime(8), DateTimeKind.Utc)
+            Headline = r.IsDBNull(7) ? null : r.GetString(7),
+            Structure = r.IsDBNull(8) ? null : r.GetString(8),
+            CreatedAt = DateTime.SpecifyKind(r.GetDateTime(9), DateTimeKind.Utc),
+            UpdatedAt = DateTime.SpecifyKind(r.GetDateTime(10), DateTimeKind.Utc)
         };
     }
 

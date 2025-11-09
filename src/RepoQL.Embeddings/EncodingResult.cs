@@ -1,4 +1,4 @@
-﻿namespace RepoQL.Core.Embeddings;
+namespace RepoQL.Embeddings;
 
 internal readonly record struct EncodingResult(int[] Ids, int[] AttentionMask, bool Truncated)
 {

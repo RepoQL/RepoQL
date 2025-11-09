@@ -8,7 +8,7 @@ using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Core.Analysis;
 using RepoQL.Core.Analysis.EditorConfig;
-using RepoQL.Core.Embeddings;
+using RepoQL.Embeddings;
 using RepoQL.Core.Metrics;
 using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;

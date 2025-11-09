@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using RepoQL.Contracts.Embeddings;
 
-namespace RepoQL.Core.Embeddings;
+namespace RepoQL.Embeddings;
 
 /// <summary>
 /// A lightweight, local embedding provider that produces a deterministic hashed bag-of-words vector.

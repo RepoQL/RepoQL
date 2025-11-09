@@ -248,6 +248,8 @@ public sealed class SingleThreadedDatabaseWriter(
             ArtifactId = docArtifactId,
             SpanId = null,
             Props = EnrichDocPropsWithFrontmatter(docRec.Props) ?? new System.Text.Json.Nodes.JsonObject(),
+            Headline = docRec.Headline,
+            Structure = docRec.Structure,
             CreatedAt = docRec.CreatedAt,
             UpdatedAt = DateTimeOffset.UtcNow
         };
@@ -269,6 +271,8 @@ public sealed class SingleThreadedDatabaseWriter(
                     ArtifactId = newAid,
                     SpanId = n.SpanId,
                     Props = n.Props,
+                    Headline = n.Headline,
+                    Structure = n.Structure,
                     CreatedAt = n.CreatedAt,
                     UpdatedAt = n.UpdatedAt
                 };

@@ -41,6 +41,16 @@ public sealed class Node
     public JsonObject Props { get; init; } = new();
 
     /// <summary>
+    ///     Optional headline (X-ray Level 0) describing this node.
+    /// </summary>
+    public string? Headline { get; init; }
+
+    /// <summary>
+    ///     Optional outline/structure (X-ray Level 2) for this node.
+    /// </summary>
+    public string? Structure { get; init; }
+
+    /// <summary>
     ///     Gets the creation timestamp in UTC. Set by the ingester.
     /// </summary>
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;

@@ -1,7 +1,7 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 
-namespace RepoQL.Core.Embeddings;
+namespace RepoQL.Embeddings;
 
 /// <summary>
 /// Minimal WordPiece tokenizer for BGE small v1.5.
