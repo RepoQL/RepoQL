@@ -1,5 +1,3 @@
-using System;
-
 namespace RepoQL.Indexing.Indexing;
 
 public sealed class IndexingStateChangedEventArgs : EventArgs

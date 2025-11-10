@@ -1,0 +1,50 @@
+using AwesomeAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
+using RepoQL.Indexing.Indexing.PostProcessing;
+using RepoQL.Testing.Indexing;
+
+namespace RepoQL.Indexing.Tests.Indexing.PostProcessing;
+
+internal class StorageBackedArtifactPrunerTests
+{
+    [Test]
+    [DisplayName("No stale documents when catalog matches pending set")]
+    public async Task Given_AllDocumentsReindexed_When_PruneAsync_Then_ReturnsEmpty()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        store.SeedDocument("file:///repo/doc-a.md");
+
+        var pruner = new StorageBackedArtifactPruner(new SingleConnectionFactory(store.Connection), NullLogger<StorageBackedArtifactPruner>.Instance);
+        var pending = new[]
+        {
+            new IndexingTestItemBuilder()
+                .WithUri("file:///repo/doc-a.md")
+                .WithContent("text")
+                .Build()
+        };
+
+        var result = await pruner.PruneAsync(pending, CancellationToken.None);
+        result.DeletedArtifacts.Should().BeEmpty();
+    }
+
+    [Test]
+    [DisplayName("Returns URIs missing from the latest epoch")]
+    public async Task Given_StaleDocument_When_PruneAsync_Then_ReturnsUri()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        store.SeedDocument("file:///repo/doc-live.md");
+        store.SeedDocument("file:///repo/doc-stale.md");
+
+        var pruner = new StorageBackedArtifactPruner(new SingleConnectionFactory(store.Connection), NullLogger<StorageBackedArtifactPruner>.Instance);
+        var pending = new[]
+        {
+            new IndexingTestItemBuilder()
+                .WithUri("file:///repo/doc-live.md")
+                .WithContent("text")
+                .Build()
+        };
+
+        var result = await pruner.PruneAsync(pending, CancellationToken.None);
+        result.DeletedArtifacts.Should().ContainSingle().Which.AbsoluteUri.Should().Be("file:///repo/doc-stale.md");
+    }
+}

@@ -1,7 +1,10 @@
+using System.Linq;
+using System.Text;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using DuckDB.NET.Data;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Metrics;
 using Artifact = RepoQL.Contracts.Models.Artifact;
@@ -698,6 +701,225 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         return Task.CompletedTask;
     }
 
+    // ========== Embedding Tests ==========
+
+    [Test]
+    public Task RefreshDocumentEmbeddings_WritesDocumentAndObjectScopes()
+    {
+        using var metrics = new IndexingMetrics();
+        using var testConnection = new DuckDBConnection("Data Source=:memory:");
+        testConnection.Open();
+        using var testStore = new DuckDbGraphStore(testConnection, metrics);
+        testStore.EnsureSchema();
+
+        var docUri = RepoUri.Parse("file:///repo/src/Foo.cs");
+        var (document, child, _) = InsertDocumentGraph(testStore, docUri);
+
+        var provider = new TestEmbeddingProvider(text => new[] { text.Length, 1f, 2f });
+        testStore.RefreshDocumentEmbeddings(provider);
+
+        provider.Payloads.Should().HaveCount(2);
+
+        var rows = ReadEmbeddingRows(testConnection);
+        rows.Should().HaveCount(2);
+
+        var docRow = rows.Single(r => r.Scope == "document");
+        docRow.DocId.Should().Be(document.Id);
+        docRow.NodeId.Should().Be(document.Id);
+        docRow.Uri.Should().Be(docUri.ToString());
+        docRow.Vector.Length.Should().Be(3);
+        docRow.Vector[0].Should().Be(provider.Payloads[0].Length);
+
+        var objectRow = rows.Single(r => r.Scope == "object");
+        objectRow.DocId.Should().Be(document.Id);
+        objectRow.NodeId.Should().Be(child.Id);
+        objectRow.Uri.Should().Contain("#node/cs_function/");
+        objectRow.Vector.Length.Should().Be(3);
+        objectRow.Vector[0].Should().Be(provider.Payloads[1].Length);
+
+        return Task.CompletedTask;
+    }
+
+    // ========== Repo Index Tests ==========
+
+    [Test]
+    public Task RepoIndex_ContainsDocumentProjection()
+    {
+        var docUri = RepoUri.Parse("file:///repo/docs/readme.md");
+        var (document, _, _) = InsertDocumentGraph(store, docUri);
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+                          SELECT uri, path, scope, headline, structure, body, lang, mime, digest
+                          FROM repo_index
+                          WHERE scope = 'document' AND uri = ?
+                          """;
+        var p = cmd.CreateParameter();
+        p.Value = docUri.ToString();
+        cmd.Parameters.Add(p);
+
+        using var reader = cmd.ExecuteReader();
+        reader.Read().Should().BeTrue("repo_index should project document rows");
+
+        reader.GetString(0).Should().Be(docUri.ToString());
+        reader.GetString(1).Should().Be(docUri.ToString());
+        reader.GetString(2).Should().Be("document");
+        reader.GetString(3).Should().Be(document.Headline);
+        reader.GetString(4).Should().Be(document.Structure);
+        reader.GetString(5).Should().Contain("Foo summary");
+        reader.GetString(6).Should().Be("docs.code");
+        reader.GetString(7).Should().Be("text/markdown");
+
+        var artifact = store.GetArtifact(document.ArtifactId!.Value)!;
+        reader.GetString(8).Should().Be(artifact.Digest);
+
+        reader.Read().Should().BeFalse("query should return exactly one document row");
+
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task RepoIndex_ContainsObjectProjection()
+    {
+        var docUri = RepoUri.Parse("file:///repo/src/Foo.cs");
+        var (_, child, span) = InsertDocumentGraph(store, docUri);
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = """
+                          SELECT uri, path, scope, headline, structure, body, lang, mime, digest, line_start, line_end, embedding
+                          FROM repo_index
+                          WHERE scope = 'object' AND headline = ?
+                          """;
+        var p = cmd.CreateParameter();
+        p.Value = child.Headline;
+        cmd.Parameters.Add(p);
+
+        using var reader = cmd.ExecuteReader();
+        reader.Read().Should().BeTrue("repo_index should project object rows");
+
+        reader.GetString(0).Should().EndWith("#line=1,4");
+        reader.GetString(1).Should().Be(docUri.ToString());
+        reader.GetString(2).Should().Be("object");
+        reader.GetString(3).Should().Be(child.Headline);
+        reader.GetString(4).Should().Be(child.Structure);
+        reader.GetString(5).Should().Contain(child.Structure);
+        reader.GetString(6).Should().Be("docs.code");
+        reader.GetString(7).Should().Be("text/markdown");
+        reader.GetString(8).Should().NotBeNullOrEmpty();
+        reader.GetInt32(9).Should().Be(span.StartLine);
+        reader.GetInt32(10).Should().Be(span.EndLine);
+        reader.IsDBNull(11).Should().BeTrue("embedding is null until refresh runs");
+
+        reader.Read().Should().BeFalse("query should return exactly one object row");
+
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task Search_ReturnsDocumentRow_ForPathKeyword()
+    {
+        var docUri = RepoUri.Parse("file:///repo/docs/readme.md");
+        InsertDocumentGraph(store, docUri);
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT scope, uri FROM search('readme', k := 5)";
+
+        using var reader = cmd.ExecuteReader();
+        reader.Read().Should().BeTrue("search should return document rows for basename hits");
+        reader.GetString(0).Should().Be("document");
+        reader.GetString(1).Should().Contain("readme.md");
+
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task Search_ReturnsObjectRow_ForSymbolKeyword()
+    {
+        var docUri = RepoUri.Parse("file:///repo/src/Foo.cs");
+        var (_, child, _) = InsertDocumentGraph(store, docUri);
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT scope, kind, headline FROM search('Bar', k := 5)";
+
+        using var reader = cmd.ExecuteReader();
+        reader.Read().Should().BeTrue("search should surface object rows for symbol matches");
+        reader.GetString(0).Should().Be("object");
+        reader.GetString(1).Should().Be(child.Kind);
+        reader.GetString(2).Should().Contain("Bar");
+
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task Search_HonorsUriGlob()
+    {
+        var readme = RepoUri.Parse("file:///repo/docs/readme.md");
+        var code = RepoUri.Parse("file:///repo/src/Foo.cs");
+        InsertDocumentGraph(store, readme);
+        InsertDocumentGraph(store, code);
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT DISTINCT scope, uri FROM search('repo', uri_glob := '*/docs/*', k := 10)";
+
+        using var reader = cmd.ExecuteReader();
+        var uris = new List<string>();
+        while (reader.Read())
+        {
+            uris.Add(reader.GetString(1));
+            reader.GetString(0).Should().Be("document");
+        }
+
+        uris.Should().NotBeEmpty();
+        uris.Should().OnlyContain(u => u.Contains("/docs/"));
+
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task Related_ReturnsSimilarDocuments()
+    {
+        var doc1 = RepoUri.Parse("file:///repo/docs/install.md");
+        var doc2 = RepoUri.Parse("file:///repo/docs/upgrade.md");
+        InsertDocumentGraph(store, doc1);
+        InsertDocumentGraph(store, doc2);
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT uri, bm25_score FROM related(?, k := 5)";
+        var p = cmd.CreateParameter();
+        p.Value = doc1.ToString();
+        cmd.Parameters.Add(p);
+
+        using var reader = cmd.ExecuteReader();
+        reader.Read().Should().BeTrue("related should return at least one match");
+        reader.GetString(0).Should().Contain("upgrade");
+        reader.GetDouble(1).Should().BeGreaterThanOrEqualTo(0);
+
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task RefreshDocumentEmbeddings_UsesNodeProvidedUriWhenAvailable()
+    {
+        using var metrics = new IndexingMetrics();
+        using var testConnection = new DuckDBConnection("Data Source=:memory:");
+        testConnection.Open();
+        using var testStore = new DuckDbGraphStore(testConnection, metrics);
+        testStore.EnsureSchema();
+
+        var docUri = RepoUri.Parse("file:///repo/src/Foo.cs");
+        var childUri = RepoUri.Parse($"repoql://symbol/{Guid.NewGuid():N}");
+        var (_, child, _) = InsertDocumentGraph(testStore, docUri, childUri);
+
+        var provider = new TestEmbeddingProvider(_ => new[] { 1f, 2f, 3f });
+        testStore.RefreshDocumentEmbeddings(provider);
+
+        var rows = ReadEmbeddingRows(testConnection);
+        var objectRow = rows.Single(r => r.Scope == "object" && r.NodeId == child.Id);
+        objectRow.Uri.Should().Be(childUri.ToString());
+
+        return Task.CompletedTask;
+    }
+
     // ========== EntitiesByUri Tests ==========
 
     [Test]
@@ -827,6 +1049,114 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         act.Should().Throw<ArgumentNullException>()
             .WithParameterName("connection");
         return Task.CompletedTask;
+    }
+
+    private static (Node Document, Node Child, Span Span) InsertDocumentGraph(DuckDbGraphStore targetStore, RepoUri docUri, RepoUri? childUri = null)
+    {
+        var text = """
+                   public class Foo
+                   {
+                       void Bar() {}
+                   }
+                   """;
+        var bytes = Encoding.UTF8.GetBytes(text);
+        var artifact = new Artifact
+        {
+            Id = Guid.NewGuid(),
+            Digest = $"sha256:{Guid.NewGuid():N}",
+            Size = bytes.Length,
+            Text = text,
+            MediaType = SemanticMediaType.Parse("text/markdown; kind=docs.code"),
+            Headline = "Foo.cs",
+            Summary = "Foo summary",
+            Structure = "Foo structure"
+        };
+        targetStore.UpsertArtifact(artifact);
+
+        var document = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "document",
+            Uri = docUri,
+            ArtifactId = artifact.Id,
+            Headline = "Document headline",
+            Structure = "Document structure",
+            Props = new JsonObject(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        targetStore.UpsertNode(document);
+
+        var span = new Span
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = document.Id,
+            StartByte = 0,
+            EndByte = bytes.Length,
+            StartLine = 1,
+            EndLine = 4
+        };
+        targetStore.InsertSpan(span);
+
+        var child = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "cs_function",
+            Uri = childUri,
+            SpanId = span.Id,
+            Headline = "void Bar()",
+            Structure = "Method Bar body",
+            Props = new JsonObject { ["signature"] = "void Bar()" },
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        targetStore.UpsertNode(child);
+
+        return (document, child, span);
+    }
+
+    private static List<(Guid DocId, Guid NodeId, string Uri, string Scope, float[] Vector)> ReadEmbeddingRows(DuckDBConnection connection)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT doc_id, node_id, uri, scope, embedding FROM document_embedding ORDER BY scope, node_id;";
+        using var reader = cmd.ExecuteReader();
+        var rows = new List<(Guid, Guid, string, string, float[])>();
+        while (reader.Read())
+        {
+            rows.Add((reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3), ParseEmbedding(reader.GetString(4))));
+        }
+
+        return rows;
+    }
+
+    private static float[] ParseEmbedding(string json)
+    {
+        var array = JsonNode.Parse(json)!.AsArray();
+        return array.Select(node => node!.GetValue<float>()).ToArray();
+    }
+
+    private sealed class TestEmbeddingProvider : IEmbeddingProvider
+    {
+        private readonly Func<string, float[]?> _factory;
+
+        public TestEmbeddingProvider(Func<string, float[]?> factory, string model = "test-model", int dimension = 3, bool enabled = true)
+        {
+            _factory = factory ?? throw new ArgumentNullException(nameof(factory));
+            Model = model;
+            Dimension = dimension;
+            Enabled = enabled;
+        }
+
+        public List<string> Payloads { get; } = new();
+        public string Model { get; }
+        public int Dimension { get; }
+        public bool Enabled { get; }
+
+        public Task<float[]?> EmbedAsync(string text, CancellationToken cancellationToken = default)
+        {
+            Payloads.Add(text);
+            return Task.FromResult(_factory(text));
+        }
     }
 
     // ========== Helper Methods ==========

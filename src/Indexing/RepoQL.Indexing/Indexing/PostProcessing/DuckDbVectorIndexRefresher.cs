@@ -55,7 +55,8 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
         await using var cmd = connection.CreateCommand();
         cmd.CommandText = """
                           DELETE FROM document_embedding
-                          WHERE doc_id NOT IN (SELECT id FROM node WHERE kind = 'document');
+                          WHERE doc_id NOT IN (SELECT id FROM node WHERE kind = 'document')
+                             OR node_id NOT IN (SELECT id FROM node);
                           """;
         await Task.Run(() => cmd.ExecuteNonQuery(), cancellationToken).ConfigureAwait(false);
     }

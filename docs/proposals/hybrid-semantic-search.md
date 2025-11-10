@@ -18,7 +18,7 @@
 ### 1. Dual-layer embeddings
 - **Document scope** (existing): keep storing a vector per document so every artifact participates in semantic search.
 - **Object scope** (new): when analyzers emit structured nodes (functions/classes/sections/etc.), compute embeddings for the node's "body" (code + docstring + summary) and store them alongside document vectors.
-- Store vectors in `document_embedding(doc_id UUID, node_id UUID NULL, uri TEXT, scope TEXT CHECK(scope in ('document','object')), model TEXT, dim INT, embedding JSON, updated_at TIMESTAMP)`.
+- Store vectors in `document_embedding(doc_id UUID, node_id UUID, uri TEXT, scope TEXT CHECK(scope in ('document','object')), model TEXT, dim INT, embedding JSON, updated_at TIMESTAMP)`. Document rows set `node_id = doc_id`; object rows reference their specific node id.
 
 ### 2. Per-object summaries
 - Extend analyzers to produce `headline` (one-line summary) and `structure` (outline snippet) for each node.

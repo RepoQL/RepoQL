@@ -26,6 +26,13 @@ namespace RepoQL.Data.DuckDB;
         private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
         private readonly object _annotationGate = new();
         private readonly object _connectionLock = new();
+        private const int DefaultEmbeddingBatchSize = 8;
+        private const int MaxDocumentPayloadChars = int.MaxValue;
+        private const int MaxObjectPayloadChars = 6000;
+        private const int MaxSnippetBytes = 4096;
+        private const string DocumentEmbeddingScope = "document";
+        private const string ObjectEmbeddingScope = "object";
+        private static readonly JsonSerializerOptions CompactJsonOptions = new() { WriteIndented = false };
 
         private readonly struct ConnectionScope : IDisposable
         {
@@ -67,7 +74,7 @@ namespace RepoQL.Data.DuckDB;
 
     /// <summary>
     ///     Recompute embeddings for all documents using the provided local embedding provider.
-    ///     Upserts rows into document_embedding (model, dim, embedding JSON, updated_at).
+    ///     Upserts rows into document_embedding with both document and object scopes.
     /// </summary>
     public void RefreshDocumentEmbeddings(Contracts.Embeddings.IEmbeddingProvider provider, CancellationToken ct = default)
     {
@@ -75,99 +82,349 @@ namespace RepoQL.Data.DuckDB;
         if (provider is null || !provider.Enabled)
             return;
 
-        // Read documents with text content
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"SELECT n.id, a.text_content FROM node n LEFT JOIN artifact a ON a.id = n.artifact_id WHERE n.kind='document' AND a.text_content IS NOT NULL;";
-        using var activity = StartDbActivity(cmd.CommandText);
-
-        var rows = new List<(Guid Id, string Text)>();
-        using (var r = cmd.ExecuteReader())
-        {
-            while (r.Read())
-            {
-                var id = r.GetGuid(0);
-                var text = r.IsDBNull(1) ? string.Empty : r.GetString(1);
-                rows.Add((id, text));
-            }
-        }
-
-        if (rows.Count == 0)
+        var documents = LoadDocumentEmbeddingSources();
+        if (documents.Count == 0)
             return;
 
-        var sw = Stopwatch.StartNew();
-        var success = 0;
-        var skipped = 0;
-        var batchSize = 8;
+        var workItems = BuildEmbeddingWorkItems(documents);
+        if (workItems.Count == 0)
+            return;
+
+        var batchSize = DefaultEmbeddingBatchSize;
         if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_BATCH_SIZE"), out var bs) && bs > 0)
         {
             batchSize = bs;
         }
-        for (var ofs = 0; ofs < rows.Count; ofs += batchSize)
+
+        var sw = Stopwatch.StartNew();
+        var docSuccess = 0;
+        var objSuccess = 0;
+        var docSkipped = 0;
+        var objSkipped = 0;
+
+        for (var ofs = 0; ofs < workItems.Count; ofs += batchSize)
         {
             using var tx = _connection.BeginTransaction();
-            var slice = rows.GetRange(ofs, Math.Min(batchSize, rows.Count - ofs));
-            foreach (var (id, text) in slice)
+            var sliceLength = Math.Min(batchSize, workItems.Count - ofs);
+            for (var i = 0; i < sliceLength; i++)
             {
+                var item = workItems[ofs + i];
                 ct.ThrowIfCancellationRequested();
                 var t0 = Stopwatch.StartNew();
-                var vec = provider.EmbedAsync(text, ct).GetAwaiter().GetResult();
+                var vec = provider.EmbedAsync(item.Payload, ct).GetAwaiter().GetResult();
                 t0.Stop();
+
                 if (vec is null)
                 {
-                    skipped++;
+                    if (item.Scope == DocumentEmbeddingScope) docSkipped++; else objSkipped++;
                     _metrics.EmbedErrors.Add(1, new TagList
                     {
-                        { "source", "refresh" }, 
-                        { "model", provider.Model }, 
+                        { "source", "refresh" },
+                        { "scope", item.Scope },
+                        { "model", provider.Model },
                         { "dim", provider.Dimension }
                     });
-                    _metrics.EmbedRequests.Add(1, new TagList
+                    var errorTags = new TagList
                     {
-                        { "source", "refresh" }, 
-                        { "model", provider.Model }, 
-                        { "dim", provider.Dimension }, 
+                        { "source", "refresh" },
+                        { "scope", item.Scope },
+                        { "model", provider.Model },
+                        { "dim", provider.Dimension },
                         { "status", "error" }
-                    });
-                    _metrics.EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, new TagList
-                    {
-                        { "source", "refresh" }, 
-                        { "model", provider.Model }, 
-                        { "dim", provider.Dimension }, 
-                        { "status", "error" }
-                    });
+                    };
+                    _metrics.EmbedRequests.Add(1, errorTags);
+                    _metrics.EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, errorTags);
                     continue;
                 }
+
                 var json = SerializeFloatArray(vec);
                 using var up = _connection.CreateCommand();
                 up.Transaction = tx;
                 up.CommandText = """
-                                 INSERT INTO document_embedding(doc_id, model, dim, embedding, updated_at)
-                                 VALUES (?,?,?,?, CURRENT_TIMESTAMP)
-                                 ON CONFLICT (doc_id) DO UPDATE SET model=excluded.model, dim=excluded.dim, embedding=excluded.embedding, updated_at=excluded.updated_at;
+                                 INSERT INTO document_embedding(doc_id, node_id, uri, scope, model, dim, embedding, updated_at)
+                                 VALUES (?,?,?,?,?,?,?, CURRENT_TIMESTAMP)
+                                 ON CONFLICT (doc_id, node_id)
+                                 DO UPDATE SET
+                                     uri = excluded.uri,
+                                     scope = excluded.scope,
+                                     model = excluded.model,
+                                     dim = excluded.dim,
+                                     embedding = excluded.embedding,
+                                     updated_at = excluded.updated_at;
                                  """;
-                AddParameters(up, id, provider.Model, provider.Dimension, json);
+                AddParameters(up, item.DocId, item.NodeId, item.Uri, item.Scope, provider.Model, provider.Dimension, json);
                 up.ExecuteNonQuery();
-                success++;
-                _metrics.EmbedRequests.Add(1, new TagList
-                {
-                    { "source", "refresh" }, 
-                    { "model", provider.Model }, 
-                    { "dim", provider.Dimension }, 
-                    { "status", "ok" }
-                });
-                _metrics.EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, new TagList
+
+                if (item.Scope == DocumentEmbeddingScope) docSuccess++; else objSuccess++;
+
+                var okTags = new TagList
                 {
                     { "source", "refresh" },
+                    { "scope", item.Scope },
                     { "model", provider.Model },
                     { "dim", provider.Dimension },
                     { "status", "ok" }
-                });
+                };
+                _metrics.EmbedRequests.Add(1, okTags);
+                _metrics.EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, okTags);
             }
             tx.Commit();
         }
+
         sw.Stop();
-        _logger.LogInformation("Embeddings refreshed: docs={Success}, skipped={Skipped}, model={Model}, dim={Dim}, ms={Duration}", success, skipped, provider.Model, provider.Dimension, (long)sw.Elapsed.TotalMilliseconds);
+        _logger.LogInformation(
+            "Embeddings refreshed: docs={DocRows}, objects={ObjectRows}, skipped_docs={SkippedDocs}, skipped_objects={SkippedObjects}, model={Model}, dim={Dim}, ms={Duration}",
+            docSuccess,
+            objSuccess,
+            docSkipped,
+            objSkipped,
+            provider.Model,
+            provider.Dimension,
+            (long)sw.Elapsed.TotalMilliseconds);
     }
+
+    private Dictionary<Guid, DocumentEmbeddingRow> LoadDocumentEmbeddingSources()
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = """
+                          SELECT n.id,
+                                 n.uri,
+                                 a.text_content,
+                                 a.headline,
+                                 a.summary,
+                                 a.structure
+                          FROM node n
+                                   JOIN artifact a ON a.id = n.artifact_id
+                          WHERE n.kind = 'document'
+                            AND a.text_content IS NOT NULL;
+                          """;
+        using var activity = StartDbActivity(cmd.CommandText);
+        using var reader = cmd.ExecuteReader();
+
+        var documents = new Dictionary<Guid, DocumentEmbeddingRow>();
+        while (reader.Read())
+        {
+            var id = reader.GetGuid(0);
+            var uri = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var text = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+            var bytes = Encoding.UTF8.GetBytes(text);
+            documents[id] = new DocumentEmbeddingRow(
+                id,
+                string.IsNullOrWhiteSpace(uri) ? $"repoql://document/{id:D}" : uri!,
+                text,
+                bytes,
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5));
+        }
+
+        return documents;
+    }
+
+    private List<NodeEmbeddingRow> LoadNodeEmbeddingRows()
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = """
+                          SELECT child.id,
+                                 child.kind,
+                                 child.uri,
+                                 child.headline,
+                                 child.structure,
+                                 child.properties,
+                                 span.document_id,
+                                 span.start_byte,
+                                 span.end_byte
+                          FROM node child
+                                   JOIN span ON span.id = child.span_id
+                          WHERE child.kind <> 'document';
+                          """;
+        using var activity = StartDbActivity(cmd.CommandText);
+        using var reader = cmd.ExecuteReader();
+
+        var nodes = new List<NodeEmbeddingRow>();
+        while (reader.Read())
+        {
+            nodes.Add(new NodeEmbeddingRow(
+                reader.GetGuid(0),
+                reader.GetGuid(6),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.GetString(1),
+                reader.IsDBNull(3) ? null : reader.GetString(3),
+                reader.IsDBNull(4) ? null : reader.GetString(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(7) ? null : reader.GetInt64(7),
+                reader.IsDBNull(8) ? null : reader.GetInt64(8)));
+        }
+
+        return nodes;
+    }
+
+    private List<EmbeddingWorkItem> BuildEmbeddingWorkItems(IReadOnlyDictionary<Guid, DocumentEmbeddingRow> documents)
+    {
+        var work = new List<EmbeddingWorkItem>(documents.Count);
+        foreach (var doc in documents.Values)
+        {
+            var payload = BuildDocumentEmbeddingText(doc);
+            if (!string.IsNullOrWhiteSpace(payload))
+            {
+                work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, doc.Uri, DocumentEmbeddingScope, payload));
+            }
+        }
+
+        foreach (var node in LoadNodeEmbeddingRows())
+        {
+            if (!documents.TryGetValue(node.DocumentId, out var doc))
+                continue;
+
+            var payload = BuildObjectEmbeddingText(node, doc);
+            if (string.IsNullOrWhiteSpace(payload))
+                continue;
+
+            var uri = SynthesizeNodeUri(doc.Uri, node);
+            work.Add(new EmbeddingWorkItem(doc.Id, node.NodeId, uri, ObjectEmbeddingScope, payload));
+        }
+
+        return work;
+    }
+
+    private static string BuildDocumentEmbeddingText(DocumentEmbeddingRow doc)
+    {
+        return CombineSegments(
+            new[] { doc.Headline, doc.Summary, doc.Structure, doc.Text },
+            MaxDocumentPayloadChars);
+    }
+
+    private static string BuildObjectEmbeddingText(NodeEmbeddingRow node, DocumentEmbeddingRow doc)
+    {
+        var snippet = ExtractSnippet(doc, node.StartByte, node.EndByte);
+        var propertySummary = SummarizeProperties(node.Properties);
+
+        return CombineSegments(
+            new[]
+            {
+                node.Headline,
+                node.Structure,
+                snippet,
+                propertySummary,
+                $"Kind: {node.Kind}"
+            },
+            MaxObjectPayloadChars);
+    }
+
+    private static string CombineSegments(IEnumerable<string?> segments, int maxChars)
+    {
+        var builder = new StringBuilder();
+        foreach (var segment in segments)
+        {
+            if (string.IsNullOrWhiteSpace(segment))
+                continue;
+
+            if (builder.Length > 0)
+            {
+                builder.AppendLine().AppendLine();
+            }
+
+            builder.Append(segment.Trim());
+
+            if (builder.Length >= maxChars)
+                break;
+        }
+
+        if (builder.Length == 0)
+            return string.Empty;
+
+        var text = builder.ToString();
+        return text.Length <= maxChars ? text : text[..maxChars];
+    }
+
+    private static string ExtractSnippet(DocumentEmbeddingRow doc, long? startByte, long? endByte)
+    {
+        if (doc.Utf8Bytes.Length == 0 || startByte is null || endByte is null)
+            return string.Empty;
+
+        var boundedStart = (int)Math.Clamp(startByte.Value, 0, (long)doc.Utf8Bytes.Length);
+        var boundedEnd = (int)Math.Clamp(endByte.Value, 0, (long)doc.Utf8Bytes.Length);
+        if (boundedEnd <= boundedStart)
+            return string.Empty;
+
+        var length = Math.Min(boundedEnd - boundedStart, MaxSnippetBytes);
+        return Encoding.UTF8.GetString(doc.Utf8Bytes, boundedStart, length);
+    }
+
+    private static string SummarizeProperties(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return string.Empty;
+
+        try
+        {
+            if (JsonNode.Parse(json)?.AsObject() is not JsonObject obj)
+                return string.Empty;
+
+            string[] priorityKeys = ["signature", "name", "summary", "docstring", "title", "description"];
+            var important = new List<string>();
+            foreach (var key in priorityKeys)
+            {
+                if (obj.TryGetPropertyValue(key, out var value) && value is not null)
+                {
+                    var text = value.ToString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        important.Add($"{key}: {text}");
+                    }
+                }
+            }
+
+            if (important.Count > 0)
+                return string.Join(Environment.NewLine, important);
+
+            var raw = obj.ToJsonString(CompactJsonOptions);
+            return raw.Length <= 600 ? raw : raw[..600];
+        }
+        catch (JsonException)
+        {
+            return json.Length <= 600 ? json : json[..600];
+        }
+    }
+
+    private static string SynthesizeNodeUri(string documentUri, NodeEmbeddingRow node)
+    {
+        if (!string.IsNullOrWhiteSpace(node.Uri))
+            return node.Uri!;
+
+        var baseUri = string.IsNullOrWhiteSpace(documentUri)
+            ? $"repoql://document/{node.DocumentId:D}"
+            : documentUri;
+
+        return $"{baseUri}#node/{node.Kind}/{node.NodeId:N}";
+    }
+
+    private sealed record DocumentEmbeddingRow(
+        Guid Id,
+        string Uri,
+        string Text,
+        byte[] Utf8Bytes,
+        string? Headline,
+        string? Summary,
+        string? Structure);
+
+    private sealed record NodeEmbeddingRow(
+        Guid NodeId,
+        Guid DocumentId,
+        string? Uri,
+        string Kind,
+        string? Headline,
+        string? Structure,
+        string? Properties,
+        long? StartByte,
+        long? EndByte);
+
+    private readonly record struct EmbeddingWorkItem(
+        Guid DocId,
+        Guid NodeId,
+        string Uri,
+        string Scope,
+        string Payload);
 
     private static string SerializeFloatArray(float[] vec)
     {
@@ -280,6 +537,7 @@ namespace RepoQL.Data.DuckDB;
         ExecuteSqlResource("Macros/annotations_all.sql");
         ExecuteSqlResource("Macros/glob_match.sql");
         ExecuteSqlResource("Tables/document_embedding.sql");
+        ExecuteSqlResource("Views/repo_index.sql");
         ExecuteSqlResource("Macros/snippet.sql");
         // First create the node_primary_fragment macro as a workaround for the 6-parameter limitation
         ExecuteSqlResource("Macros/node_primary_fragment.sql");
@@ -288,6 +546,7 @@ namespace RepoQL.Data.DuckDB;
         ExecuteSqlResource("Macros/xray_items.sql");
         ExecuteSqlResource("Macros/xray_lines.sql");
         ExecuteSqlResource("Tables/document_search.sql");
+        ExecuteSqlResource("Macros/search.sql");
 
         foreach (var script in _formatSchemaScripts)
         {

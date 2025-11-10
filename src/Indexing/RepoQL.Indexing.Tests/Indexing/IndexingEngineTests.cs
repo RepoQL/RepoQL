@@ -1,11 +1,8 @@
 using System;
 using AwesomeAssertions;
 using FakeItEasy;
-using Microsoft.Extensions.FileProviders;
-using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
-using RepoQL.FileSystem.Abstractions;
 using RepoQL.Contracts.Data;
 using RepoQL.Indexing.Indexing;
 using RepoQL.Indexing.Indexing.Commit;
@@ -15,7 +12,9 @@ using RepoQL.Indexing.Indexing.Pipelines.Classification;
 using RepoQL.Indexing.Indexing.Pipelines.Parsing;
 using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Indexing.Indexing.State;
-using RepoQL.Indexing.Tests.TestHelpers;
+using RepoQL.Testing;
+using RepoQL.Testing.Indexing;
+using RepoQL.Testing.Logging;
 
 namespace RepoQL.Indexing.Tests.Indexing;
 
@@ -26,18 +25,6 @@ public class IndexingEngineTests
     public async Task Given_CatalogReportsUpToDate_When_IndexItemAsync_Then_SkipsProcessing()
     {
         // Arrange
-        var classifier = A.Fake<ClassificationPipeline>();
-        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Throws(new InvalidOperationException("Classifier should not run when catalog skips the item."));
-
-        var parser = A.Fake<ParsingPipeline>();
-        A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Throws(new InvalidOperationException("Parser should not run when catalog skips the item."));
-
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Throws(new InvalidOperationException("Analyzer should not run when catalog skips the item."));
-
         var catalog = A.Fake<IDocumentCatalog>();
         A.CallTo(() => catalog.EnsureInitializedAsync(A<CancellationToken>._))
             .Returns(Task.CompletedTask);
@@ -57,32 +44,22 @@ public class IndexingEngineTests
                 return new DocumentCatalogEvaluation(DocumentCatalogDecision.SkipUpToDate, existing);
             });
 
-        var filter = A.Fake<IUriFilter>();
-        A.CallTo(() => filter.IncludeFile(A<RepoUri>._)).Returns(false);
+        var context = IndexingEngineTestFactory.Create(builder => builder.WithCatalog(catalog));
 
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: filter,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: catalog,
-            committer: NullIndexingCommitter.Instance,
-            options: null,
-            logger: TestLogging.CreateLogger<IndexingEngine>());
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Throws(new InvalidOperationException("Classifier should not run when catalog skips the item."));
+        A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Throws(new InvalidOperationException("Parser should not run when catalog skips the item."));
+        A.CallTo(() => context.SingleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Throws(new InvalidOperationException("Analyzer should not run when catalog skips the item."));
 
-        var item = CreateTestItem();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
         // Act
-        await engine.IndexItemAsync(item, CancellationToken.None);
+        await context.Engine.IndexItemAsync(item, CancellationToken.None);
 
         // Assert
-        A.CallTo(() => catalog.EnsureInitializedAsync(A<CancellationToken>._)).MustHaveHappenedOnceExactly();
-        A.CallTo(() => catalog.Evaluate(item.Uri, A<string>._)).MustHaveHappenedOnceExactly();
-        A.CallTo(() => catalog.BeginProcessing(A<RepoUri>._, A<string>._)).MustNotHaveHappened();
-        A.CallTo(() => catalog.CompleteProcessing(A<RepoUri>._)).MustNotHaveHappened();
+        catalog.ShouldMatch(item.Uri, CatalogInvocationPlan.SkipProcessing);
 
         evaluatedDigest.Should().NotBeNull();
         item.DigestHex.Should().Be(evaluatedDigest);
@@ -94,18 +71,6 @@ public class IndexingEngineTests
     public async Task Given_CatalogRequiresReindex_When_IndexItemAsync_Then_ProcessesAndTracksPendingState()
     {
         // Arrange
-        var classifier = A.Fake<ClassificationPipeline>();
-        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Returns(Task.FromResult(PipelineResult.Success));
-
-        var parser = A.Fake<ParsingPipeline>();
-        A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Returns(Task.FromResult(PipelineResult.Success));
-
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Returns(Task.FromResult(PipelineResult.Success));
-
         var catalog = A.Fake<IDocumentCatalog>();
         A.CallTo(() => catalog.EnsureInitializedAsync(A<CancellationToken>._))
             .Returns(Task.CompletedTask);
@@ -129,36 +94,21 @@ public class IndexingEngineTests
         A.CallTo(() => catalog.BeginProcessing(A<RepoUri>._, A<string>._))
             .Invokes(call => pendingDigest = call.GetArgument<string>(1));
 
-        var filter = A.Fake<IUriFilter>();
-        A.CallTo(() => filter.IncludeFile(A<RepoUri>._)).Returns(false);
-
         var committer = A.Fake<IIndexingCommitter>();
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithCatalog(catalog);
+            builder.WithCommitter(committer);
+        });
 
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: filter,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: catalog,
-            committer: committer,
-            options: null,
-            logger: TestLogging.CreateLogger<IndexingEngine>());
-
-        var item = CreateTestItem();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
         // Act
-        await engine.IndexItemAsync(item, CancellationToken.None);
+        await context.Engine.IndexItemAsync(item, CancellationToken.None);
 
         // Assert
-        A.CallTo(() => catalog.BeginProcessing(item.Uri, A<string>._)).MustHaveHappenedOnceExactly();
-        A.CallTo(() => catalog.CompleteProcessing(item.Uri)).MustHaveHappenedOnceExactly();
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._)).MustHaveHappenedOnceExactly();
-        A.CallTo(() => parser.ProcessItemAsync(item, A<CancellationToken>._)).MustHaveHappenedOnceExactly();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(item, A<CancellationToken>._)).MustHaveHappenedOnceExactly();
-        A.CallTo(() => committer.CommitAsync(item, A<CancellationToken>._)).MustHaveHappenedOnceExactly();
+        catalog.ShouldMatch(item.Uri, CatalogInvocationPlan.Reindex);
+        context.ShouldMatchPipeline(item, PipelineInvocationPlan.HotPathSuccess);
 
         evaluatedDigest.Should().NotBeNull();
         pendingDigest.Should().Be(evaluatedDigest);
@@ -171,18 +121,6 @@ public class IndexingEngineTests
     public async Task Given_PipelineReturnsError_When_IndexItemAsync_Then_CatalogStateIsCleared()
     {
         // Arrange
-        var classifier = A.Fake<ClassificationPipeline>();
-        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Returns(Task.FromResult(PipelineResult.Success));
-
-        var parser = A.Fake<ParsingPipeline>();
-        A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Returns(Task.FromResult(PipelineResult.Error));
-
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Throws(new InvalidOperationException("Analyzer should not run when parser fails."));
-
         var catalog = A.Fake<IDocumentCatalog>();
         A.CallTo(() => catalog.EnsureInitializedAsync(A<CancellationToken>._))
             .Returns(Task.CompletedTask);
@@ -190,34 +128,31 @@ public class IndexingEngineTests
         A.CallTo(() => catalog.Evaluate(A<RepoUri>._, A<string>._))
             .Returns(new DocumentCatalogEvaluation(DocumentCatalogDecision.Reindex, null));
 
-        var filter = A.Fake<IUriFilter>();
-        A.CallTo(() => filter.IncludeFile(A<RepoUri>._)).Returns(false);
-
         var committer = A.Fake<IIndexingCommitter>();
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithCatalog(catalog);
+            builder.WithCommitter(committer);
+        });
 
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: filter,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: catalog,
-            committer: committer,
-            options: null,
-            logger: TestLogging.CreateLogger<IndexingEngine>());
+        A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Returns(Task.FromResult(PipelineResult.Error));
+        A.CallTo(() => context.SingleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Throws(new InvalidOperationException("Analyzer should not run when parser fails."));
 
-        var item = CreateTestItem();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
         // Act
-        await engine.IndexItemAsync(item, CancellationToken.None);
+        await context.Engine.IndexItemAsync(item, CancellationToken.None);
 
         // Assert
-        A.CallTo(() => catalog.BeginProcessing(item.Uri, A<string>._)).MustHaveHappenedOnceExactly();
-        A.CallTo(() => catalog.CompleteProcessing(item.Uri)).MustHaveHappenedOnceExactly();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._)).MustNotHaveHappened();
-        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._)).MustNotHaveHappened();
+        catalog.ShouldMatch(item.Uri, CatalogInvocationPlan.Reindex);
+        var failurePlan = PipelineInvocationPlan.HotPathSuccess with
+        {
+            SingleFileAnalyzer = InvocationExpectation.None,
+            Committer = InvocationExpectation.None
+        };
+        context.ShouldMatchPipeline(item, failurePlan);
     }
 
     [Test]
@@ -225,41 +160,15 @@ public class IndexingEngineTests
     public async Task Given_AllPipelinesSucceed_When_ApplyIndexerPipeline_Then_ReturnsSuccess()
     {
         // Arrange
-        var classifier = A.Fake<ClassificationPipeline>();
-        var parser = A.Fake<ParsingPipeline>();
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
-        
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: null,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: new DocumentCatalog(NullDocumentCatalogDataSource.Instance),
-            committer: NullIndexingCommitter.Instance);
-
-        var item = CreateTestItem();
-
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
-            .Returns(Task.FromResult(PipelineResult.Success));
-        A.CallTo(() => parser.ProcessItemAsync(item, A<CancellationToken>._))
-            .Returns(Task.FromResult(PipelineResult.Success));
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(item, A<CancellationToken>._))
-            .Returns(Task.FromResult(PipelineResult.Success));
+        var context = IndexingEngineTestFactory.Create();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
         // Act
-        var result = await engine.ApplyIndexerPipeline(item, CancellationToken.None);
+        var result = await context.Engine.ApplyIndexerPipeline(item, CancellationToken.None);
 
         // Assert
         result.Should().Be(PipelineResult.Success);
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
-        A.CallTo(() => parser.ProcessItemAsync(item, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(item, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
+        context.ShouldMatchPipeline(item, PipelineInvocationPlan.Success);
     }
 
     [Test]
@@ -267,37 +176,18 @@ public class IndexingEngineTests
     public async Task Given_ClassifierFilters_When_ApplyIndexerPipeline_Then_ReturnsFilteredWithoutCallingSubsequentStages()
     {
         // Arrange
-        var classifier = A.Fake<ClassificationPipeline>();
-        var parser = A.Fake<ParsingPipeline>();
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
+        var context = IndexingEngineTestFactory.Create();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: null,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: new DocumentCatalog(NullDocumentCatalogDataSource.Instance),
-            committer: NullIndexingCommitter.Instance);
-
-        var item = CreateTestItem();
-
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
+        A.CallTo(() => context.Classifier.ProcessItemAsync(item, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Filtered));
 
         // Act
-        var result = await engine.ApplyIndexerPipeline(item, CancellationToken.None);
+        var result = await context.Engine.ApplyIndexerPipeline(item, CancellationToken.None);
 
         // Assert
         result.Should().Be(PipelineResult.Filtered, "pipeline should short-circuit on non-success result");
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
-        A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .MustNotHaveHappened();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .MustNotHaveHappened();
+        context.ShouldMatchPipeline(item, PipelineInvocationPlan.ShortCircuitAfterClassifier);
     }
 
     [Test]
@@ -305,35 +195,18 @@ public class IndexingEngineTests
     public async Task Given_ClassifierErrors_When_ApplyIndexerPipeline_Then_ReturnsErrorWithoutCallingSubsequentStages()
     {
         // Arrange
-        var classifier = A.Fake<ClassificationPipeline>();
-        var parser = A.Fake<ParsingPipeline>();
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
+        var context = IndexingEngineTestFactory.Create();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: null,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: new DocumentCatalog(NullDocumentCatalogDataSource.Instance),
-            committer: NullIndexingCommitter.Instance);
-
-        var item = CreateTestItem();
-
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
+        A.CallTo(() => context.Classifier.ProcessItemAsync(item, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Error));
 
         // Act
-        var result = await engine.ApplyIndexerPipeline(item, CancellationToken.None);
+        var result = await context.Engine.ApplyIndexerPipeline(item, CancellationToken.None);
 
         // Assert
         result.Should().Be(PipelineResult.Error, "pipeline should propagate error from classifier");
-        A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .MustNotHaveHappened();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .MustNotHaveHappened();
+        context.ShouldMatchPipeline(item, PipelineInvocationPlan.ShortCircuitAfterClassifier);
     }
 
     [Test]
@@ -341,39 +214,20 @@ public class IndexingEngineTests
     public async Task Given_ParserFails_When_ApplyIndexerPipeline_Then_ReturnsErrorWithoutCallingAnalyzer()
     {
         // Arrange
-        var classifier = A.Fake<ClassificationPipeline>();
-        var parser = A.Fake<ParsingPipeline>();
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
+        var context = IndexingEngineTestFactory.Create();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: null,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: new DocumentCatalog(NullDocumentCatalogDataSource.Instance),
-            committer: NullIndexingCommitter.Instance);
-
-        var item = CreateTestItem();
-
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
+        A.CallTo(() => context.Classifier.ProcessItemAsync(item, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
-        A.CallTo(() => parser.ProcessItemAsync(item, A<CancellationToken>._))
+        A.CallTo(() => context.Parser.ProcessItemAsync(item, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Error));
 
         // Act
-        var result = await engine.ApplyIndexerPipeline(item, CancellationToken.None);
+        var result = await context.Engine.ApplyIndexerPipeline(item, CancellationToken.None);
 
         // Assert
         result.Should().Be(PipelineResult.Error, "pipeline should propagate error from parser");
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
-        A.CallTo(() => parser.ProcessItemAsync(item, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .MustNotHaveHappened();
+        context.ShouldMatchPipeline(item, PipelineInvocationPlan.ShortCircuitAfterParser);
     }
 
     [Test]
@@ -381,41 +235,22 @@ public class IndexingEngineTests
     public async Task Given_AnalyzerFails_When_ApplyIndexerPipeline_Then_ReturnsAnalyzerResult()
     {
         // Arrange
-        var classifier = A.Fake<ClassificationPipeline>();
-        var parser = A.Fake<ParsingPipeline>();
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
+        var context = IndexingEngineTestFactory.Create();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: null,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: new DocumentCatalog(NullDocumentCatalogDataSource.Instance),
-            committer: NullIndexingCommitter.Instance);
-
-        var item = CreateTestItem();
-
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
+        A.CallTo(() => context.Classifier.ProcessItemAsync(item, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
-        A.CallTo(() => parser.ProcessItemAsync(item, A<CancellationToken>._))
+        A.CallTo(() => context.Parser.ProcessItemAsync(item, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(item, A<CancellationToken>._))
+        A.CallTo(() => context.SingleFileAnalyzer.ProcessItemAsync(item, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Error));
 
         // Act
-        var result = await engine.ApplyIndexerPipeline(item, CancellationToken.None);
+        var result = await context.Engine.ApplyIndexerPipeline(item, CancellationToken.None);
 
         // Assert
         result.Should().Be(PipelineResult.Error, "final stage result should be returned");
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
-        A.CallTo(() => parser.ProcessItemAsync(item, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(item, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
+        context.ShouldMatchPipeline(item, PipelineInvocationPlan.Success);
     }
 
     [Test]
@@ -426,35 +261,24 @@ public class IndexingEngineTests
         PipelineResult pipelineResult)
     {
         // Arrange
-        var classifier = A.Fake<ClassificationPipeline>();
-        var parser = A.Fake<ParsingPipeline>();
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
+        var context = IndexingEngineTestFactory.Create();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: null,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: new DocumentCatalog(NullDocumentCatalogDataSource.Instance),
-            committer: NullIndexingCommitter.Instance);
-
-        var item = CreateTestItem();
-
-        A.CallTo(() => classifier.ProcessItemAsync(item, A<CancellationToken>._))
+        A.CallTo(() => context.Classifier.ProcessItemAsync(item, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
-        A.CallTo(() => parser.ProcessItemAsync(item, A<CancellationToken>._))
+        A.CallTo(() => context.Parser.ProcessItemAsync(item, A<CancellationToken>._))
             .Returns(Task.FromResult(pipelineResult));
 
         // Act
-        var result = await engine.ApplyIndexerPipeline(item, CancellationToken.None);
+        var result = await context.Engine.ApplyIndexerPipeline(item, CancellationToken.None);
 
         // Assert
         result.Should().Be(pipelineResult);
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .MustNotHaveHappened();
+        var plan = PipelineInvocationPlan.Success with
+        {
+            SingleFileAnalyzer = InvocationExpectation.None
+        };
+        context.ShouldMatchPipeline(item, plan);
     }
 
     [Test]
@@ -464,45 +288,22 @@ public class IndexingEngineTests
     {
         // Arrange
         var gate = NewTaskCompletionSource<bool>();
-        var classifier = A.Fake<ClassificationPipeline>();
-        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+        var context = IndexingEngineTestFactory.Create();
+
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
             .ReturnsLazily(async _ =>
             {
                 await gate.Task.ConfigureAwait(false);
                 return PipelineResult.Success;
             });
-
-        var parser = A.Fake<ParsingPipeline>();
-        A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+        A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
-
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+        A.CallTo(() => context.SingleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
-
-        var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
-        var filter = A.Fake<IUriFilter>();
-        A.CallTo(() => filter.IncludeFile(A<RepoUri>._)).Returns(false);
-        var committer = A.Fake<IIndexingCommitter>();
-        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Returns(Task.CompletedTask);
-
-        var engine = new IndexingEngine(
-            databaseWriter: null,
-            filter: filter,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: catalog,
-            committer: committer,
-            options: null,
-            logger: TestLogging.CreateLogger<IndexingEngine>());
 
         var transitions = new List<(IndexingState OldState, IndexingState NewState)>();
         var busySignal = NewTaskCompletionSource<bool>();
-        engine.StateChanged += (_, args) =>
+        context.Engine.StateChanged += (_, args) =>
         {
             transitions.Add((args.OldState, args.NewState));
             if (args.NewState.HasFlag(IndexingState.ClassificationBusy) &&
@@ -512,11 +313,11 @@ public class IndexingEngineTests
             }
         };
 
-        var item = CreateTestItem();
+        var item = IndexingTestItemFactory.CreateIndexItem();
 
-        var processingTask = engine.IndexItemAsync(item, token);
+        var processingTask = context.Engine.IndexItemAsync(item, token);
         await busySignal.Task;
-        var waitTask = engine.WaitForAsync(IndexingState.AllIdle, token).AsTask();
+        var waitTask = context.Engine.WaitForAsync(IndexingState.AllIdle, token).AsTask();
         waitTask.IsCompleted.Should().BeFalse("engine should report busy while classification is blocked");
 
         gate.SetResult(true);
@@ -528,7 +329,43 @@ public class IndexingEngineTests
         transitions.Should().NotBeEmpty();
         transitions.Should().Contain(t => t.NewState.HasFlag(IndexingState.ClassificationBusy));
         transitions.Last().NewState.Should().Be(IndexingState.AllIdle);
-        A.CallTo(() => committer.CommitAsync(item, A<CancellationToken>._)).MustHaveHappenedOnceExactly();
+        context.ShouldMatchPipeline(item, PipelineInvocationPlan.HotPathSuccess);
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("WaitForAsync signals once hot path starts processing")]
+    public async Task Given_WorkQueued_When_WaitingForStarted_Then_CompletesAfterBusy(CancellationToken token)
+    {
+        var gate = NewTaskCompletionSource<bool>();
+        var busySignal = NewTaskCompletionSource<bool>();
+
+        var classifier = A.Fake<ClassificationPipeline>();
+        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async _ =>
+            {
+                busySignal.TrySetResult(true);
+                await gate.Task.ConfigureAwait(false);
+                return PipelineResult.Success;
+            });
+
+        var context = IndexingEngineTestFactory.Create(builder => builder.WithClassifier(classifier));
+        var item = IndexingTestItemFactory.CreateIndexItem();
+
+        var waitTask = context.Engine.WaitForAsync(IndexingState.Started, token).AsTask();
+        var processingTask = context.Engine.IndexItemAsync(item, token);
+
+        await busySignal.Task.WaitAsync(token);
+        context.Engine.State.HasFlag(IndexingState.Started).Should().BeTrue("started flag should raise once any stage begins work");
+        waitTask.IsCompleted.Should().BeTrue("WaitForAsync should complete once the started flag is observed");
+        await waitTask;
+        context.Engine.State.HasFlag(IndexingState.ClassificationBusy).Should().BeTrue("started should coincide with an active stage");
+
+        gate.TrySetResult(true);
+        await processingTask;
+        await context.Engine.WaitForAsync(IndexingState.AllIdle, token);
+
+        context.Engine.State.HasFlag(IndexingState.Started).Should().BeFalse("started flag clears when the hot path drains");
     }
 
     [Test]
@@ -538,18 +375,10 @@ public class IndexingEngineTests
         var engine = CreateEngineForIdleTests();
         var artifact = CreateRawArtifact("file:///repo/hot1.md");
 
-        var idleTcs = NewTaskCompletionSource<long>();
-        EventHandler<HotPathIdleEventArgs>? handler = null;
-        handler = (_, args) =>
-        {
-            idleTcs.TrySetResult(args.Epoch);
-            if (handler != null)
-                engine.HotPathIdle -= handler;
-        };
-        engine.HotPathIdle += handler;
+        var idleTask = engine.AwaitHotPathIdleAsync();
 
         await engine.EnqueueItemAsync(artifact, IndexItemOptions.Default, CancellationToken.None);
-        (await idleTcs.Task.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(0);
+        (await idleTask.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(0);
     }
 
     [Test]
@@ -561,17 +390,16 @@ public class IndexingEngineTests
         var artifact1 = CreateRawArtifact("file:///repo/pending-a.md");
         var artifact2 = CreateRawArtifact("file:///repo/pending-b.md");
 
-        var idleTcs = NewTaskCompletionSource<long>();
-        engine.HotPathIdle += (_, args) => idleTcs.TrySetResult(args.Epoch);
+        var idleTask = engine.AwaitHotPathIdleAsync();
 
         await engine.EnqueueItemAsync(artifact1, IndexItemOptions.Default, CancellationToken.None);
         await engine.EnqueueItemAsync(artifact2, IndexItemOptions.Default, CancellationToken.None);
 
         await Task.Delay(100);
-        idleTcs.Task.IsCompleted.Should().BeFalse("event should not fire while work is still running");
+        idleTask.IsCompleted.Should().BeFalse("event should not fire while work is still running");
 
         gate.SetResult(true);
-        (await idleTcs.Task.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(0);
+        (await idleTask.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(0);
     }
 
     [Test]
@@ -580,25 +408,16 @@ public class IndexingEngineTests
     {
         var engine = CreateEngineForIdleTests();
 
-        var firstIdle = NewTaskCompletionSource<long>();
-        EventHandler<HotPathIdleEventArgs>? firstHandler = null;
-        firstHandler = (_, args) =>
-        {
-            firstIdle.TrySetResult(args.Epoch);
-            if (firstHandler != null)
-                engine.HotPathIdle -= firstHandler;
-        };
-        engine.HotPathIdle += firstHandler;
+        var firstIdle = engine.AwaitHotPathIdleAsync();
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/epoch0.md"), IndexItemOptions.Default, CancellationToken.None);
-        (await firstIdle.Task.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(0);
+        (await firstIdle.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(0);
 
         var nextEpoch = engine.BeginNewEpoch();
-        var secondIdle = NewTaskCompletionSource<long>();
-        engine.HotPathIdle += (_, args) => secondIdle.TrySetResult(args.Epoch);
+        var secondIdle = engine.AwaitHotPathIdleAsync();
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/epoch1.md"), IndexItemOptions.Default, CancellationToken.None);
-        (await secondIdle.Task.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(nextEpoch);
+        (await secondIdle.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(nextEpoch);
     }
 
     [Test]
@@ -694,10 +513,8 @@ public class IndexingEngineTests
 
         await analysisSignal.Task.WaitAsync(token);
         vectorApplied.Task.IsCompleted.Should().BeTrue("Vector updates should complete before analysis starts.");
-        A.CallTo(() => vector.ApplyDeletesAsync(pruneResult.DeletedArtifacts, A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
-        A.CallTo(() => vector.ApplyAsync(A<IndexItem>._, A<CancellationToken>._))
-            .MustHaveHappened();
+        vector.ShouldHaveAppliedVectorDeletes(pruneResult.DeletedArtifacts);
+        vector.ShouldHaveAppliedVectors(InvocationExpectation.AtLeastOnce);
     }
 
     [Test]
@@ -728,34 +545,7 @@ public class IndexingEngineTests
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/live.md"), IndexItemOptions.Default, token);
 
         await analysisSignal.Task.WaitAsync(token);
-        A.CallTo(() => writer.EnqueueAndWaitAsync(
-                A<WriteOperation>.That.Matches(op => op.Type == WriteOperationType.DeleteDocument && op.Uri == deleteUri),
-                A<CancellationToken>._))
-            .MustHaveHappenedOnceExactly();
-    }
-
-    private static IndexItem CreateTestItem()
-    {
-        // Create mock IFileInfo
-        var fileInfo = A.Fake<IFileInfo>();
-        A.CallTo(() => fileInfo.Name).Returns("test.txt");
-        A.CallTo(() => fileInfo.Exists).Returns(true);
-        A.CallTo(() => fileInfo.Length).Returns(100L);
-        A.CallTo(() => fileInfo.LastModified).Returns(DateTimeOffset.UtcNow);
-        A.CallTo(() => fileInfo.IsDirectory).Returns(false);
-        A.CallTo(() => fileInfo.PhysicalPath).Returns("C:\\test\\test.txt");
-        A.CallTo(() => fileInfo.CreateReadStream()).Returns(new MemoryStream());
-
-        // Create mock IVirtualFileSystem
-        var fileSystem = A.Fake<IVirtualFileSystem>();
-        if (!RepoUri.TryParse("file:///test.txt", out var testUri))
-            throw new InvalidOperationException("Failed to parse test URI");
-        A.CallTo(() => fileSystem.GetUri(fileInfo)).Returns(testUri);
-
-        // Create real RawArtifact
-        var rawArtifact = new RawArtifact(fileInfo, fileSystem);
-
-        return new IndexItem(rawArtifact, IndexItemOptions.Default);
+        writer.ShouldHaveDeletedDocuments(deleteUri);
     }
 
     private static RepoUri CreateUri(string value)
@@ -766,42 +556,37 @@ public class IndexingEngineTests
     }
 
     private static RawArtifact CreateRawArtifact(string uri)
-    {
-        var fileInfo = A.Fake<IFileInfo>();
-        A.CallTo(() => fileInfo.Name).Returns(Path.GetFileName(uri));
-        A.CallTo(() => fileInfo.Exists).Returns(true);
-        A.CallTo(() => fileInfo.Length).Returns(64L);
-        A.CallTo(() => fileInfo.LastModified).Returns(DateTimeOffset.UtcNow);
-        A.CallTo(() => fileInfo.IsDirectory).Returns(false);
-        A.CallTo(() => fileInfo.PhysicalPath).Returns(uri);
-        A.CallTo(() => fileInfo.CreateReadStream()).Returns(new MemoryStream(new byte[32]));
-
-        var fileSystem = A.Fake<IVirtualFileSystem>();
-        if (!RepoUri.TryParse(uri, out var repoUri))
-            throw new InvalidOperationException($"Unable to parse URI '{uri}'.");
-        A.CallTo(() => fileSystem.GetUri(fileInfo)).Returns(repoUri);
-
-        return new RawArtifact(fileInfo, fileSystem);
-    }
+        => IndexingTestItemFactory.CreateRawArtifact(uri);
 
     private static IndexingEngine CreateEngineForIdleTests(
         TaskCompletionSource<bool>? parsingGate = null,
         IArtifactPruner? pruner = null,
         IVectorIndexCoordinator? vectorCoordinator = null)
     {
-        var classifier = A.Fake<ClassificationPipeline>();
-        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            if (pruner is not null)
+            {
+                builder.WithArtifactPruner(pruner);
+            }
+
+            if (vectorCoordinator is not null)
+            {
+                builder.WithVectorCoordinator(vectorCoordinator);
+            }
+        });
+
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
 
-        var parser = A.Fake<ParsingPipeline>();
         if (parsingGate is null)
         {
-            A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
                 .Returns(Task.FromResult(PipelineResult.Success));
         }
         else
         {
-            A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
                 .ReturnsLazily(async _ =>
                 {
                     await parsingGate.Task.ConfigureAwait(false);
@@ -809,31 +594,10 @@ public class IndexingEngineTests
                 });
         }
 
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+        A.CallTo(() => context.SingleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
 
-        var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
-        var filter = A.Fake<IUriFilter>();
-        A.CallTo(() => filter.IncludeFile(A<RepoUri>._)).Returns(false);
-        var committer = A.Fake<IIndexingCommitter>();
-        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Returns(Task.CompletedTask);
-
-        return new IndexingEngine(
-            databaseWriter: null,
-            filter: filter,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: null,
-            indexRebuilder: null,
-            documentCatalog: catalog,
-            committer: committer,
-            artifactPruner: pruner,
-            vectorCoordinator: vectorCoordinator,
-            options: null,
-            logger: TestLogging.CreateLogger<IndexingEngine>());
+        return context.Engine;
     }
 
     private static IndexingEngine CreateEngineForAnalysisTests(
@@ -843,19 +607,43 @@ public class IndexingEngineTests
         IVectorIndexCoordinator? vectorCoordinator = null,
         IDatabaseWriter? writer = null)
     {
-        var classifier = A.Fake<ClassificationPipeline>();
-        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1
+            });
+
+            if (pruner is not null)
+            {
+                builder.WithArtifactPruner(pruner);
+            }
+
+            if (vectorCoordinator is not null)
+            {
+                builder.WithVectorCoordinator(vectorCoordinator);
+            }
+
+            if (writer is not null)
+            {
+                builder.WithDatabaseWriter(writer);
+            }
+        });
+
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
 
-        var parser = A.Fake<ParsingPipeline>();
         if (parsingGate is null)
         {
-            A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
                 .Returns(Task.FromResult(PipelineResult.Success));
         }
         else
         {
-            A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
                 .ReturnsLazily(async _ =>
                 {
                     await parsingGate.Task.ConfigureAwait(false);
@@ -863,55 +651,18 @@ public class IndexingEngineTests
                 });
         }
 
-        var singleFileAnalyzer = A.Fake<SingleFileAnalysisPipeline>();
-        A.CallTo(() => singleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+        A.CallTo(() => context.SingleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
-
-        var multiFileAnalyzer = A.Fake<MultiFileAnalysisPipeline>(options =>
-            options.WithArgumentsForConstructor(() =>
-                new MultiFileAnalysisPipeline(Array.Empty<IAsyncPipeline<IAnnotatedArtifact, Annotation[]>>())));
-        A.CallTo(() => multiFileAnalyzer.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._))
+        A.CallTo(() => context.MultiFileAnalyzer.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._))
             .ReturnsLazily(_ =>
             {
                 multiFileSignal.TrySetResult(true);
                 return Task.FromResult(PipelineResult.Success);
             });
-
-        var indexRebuilder = A.Fake<IndexRebuildPipeline>(options =>
-            options.WithArgumentsForConstructor(() =>
-                new IndexRebuildPipeline(Array.Empty<IAsyncPipeline<IAnnotatedArtifact, string>>())));
-        A.CallTo(() => indexRebuilder.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._))
+        A.CallTo(() => context.IndexRebuilder.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._))
             .Returns(Task.FromResult(PipelineResult.Success));
 
-        var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
-        var filter = A.Fake<IUriFilter>();
-        A.CallTo(() => filter.IncludeFile(A<RepoUri>._)).Returns(false);
-        var committer = A.Fake<IIndexingCommitter>();
-        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Returns(Task.CompletedTask);
-
-        var options = new IndexingEngineOptions
-        {
-            IndexingQueueSize = 32,
-            IndexingWorkers = 1,
-            AnalysisQueueSize = 32,
-            AnalysisWorkers = 1
-        };
-
-        return new IndexingEngine(
-            databaseWriter: writer,
-            filter: filter,
-            classifier: classifier,
-            parser: parser,
-            singleFileAnalyzer: singleFileAnalyzer,
-            multiFileAnalyzer: multiFileAnalyzer,
-            indexRebuilder: indexRebuilder,
-            documentCatalog: catalog,
-            committer: committer,
-            artifactPruner: pruner,
-            vectorCoordinator: vectorCoordinator,
-            options: options,
-            logger: TestLogging.CreateLogger<IndexingEngine>());
+        return context.Engine;
     }
 
     private static TaskCompletionSource<T> NewTaskCompletionSource<T>() =>

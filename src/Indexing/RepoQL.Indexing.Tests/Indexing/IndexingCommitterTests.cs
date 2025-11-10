@@ -7,7 +7,7 @@ using RepoQL.Contracts.Models;
 using RepoQL.Indexing.Indexing.Commit;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.State;
-using RepoQL.Indexing.Tests.TestHelpers;
+using RepoQL.Testing.Indexing;
 using TUnit.Core;
 
 namespace RepoQL.Indexing.Tests.Indexing;
@@ -62,7 +62,7 @@ public class IndexingCommitterTests
     public async Task Given_ItemWithoutRecords_When_CommitAsync_Then_DoesNothing()
     {
         // Arrange
-        var item = TestItemBuilder.ForMarkdown().WithContent("Hello").Build();
+        var item = IndexingTestItemBuilder.ForMarkdown().WithContent("Hello").Build();
         item.DigestHex = Convert.ToHexString(await item.RawArtifact.Digest.WithCancellation(CancellationToken.None));
         item.MediaType = SemanticMediaType.Parse("text/markdown;kind=markdown.doc");
 
@@ -107,7 +107,7 @@ public class IndexingCommitterTests
 
     private static async Task<IndexItem> CreatePopulatedItemAsync(string uri)
     {
-        var item = TestItemBuilder.ForMarkdown().WithUri(uri).WithContent("# Title").Build();
+        var item = IndexingTestItemBuilder.ForMarkdown().WithUri(uri).WithContent("# Title").Build();
         item.MediaType = SemanticMediaType.Parse("text/markdown;kind=markdown.doc");
         item.DigestHex = Convert.ToHexString(await item.RawArtifact.Digest.WithCancellation(CancellationToken.None));
 

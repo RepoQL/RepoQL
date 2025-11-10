@@ -1,10 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using System.Threading;
-using System.Threading.Tasks;
-using DotNext.Threading;
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
@@ -35,6 +31,12 @@ public partial class IndexingEngine
     private const string TelemetrySourceName = "RepoQL.Indexing";
     internal static readonly ActivitySource ActivitySource = new(TelemetrySourceName);
     internal static readonly Meter Meter = new(TelemetrySourceName);
+    private const IndexingState BusyMask =
+        IndexingState.ClassificationBusy |
+        IndexingState.ParsingBusy |
+        IndexingState.SingleFileAnalysisBusy |
+        IndexingState.MultiFileAnalysisBusy |
+        IndexingState.IndexRebuildBusy;
     
     public ClassificationPipeline Classifier { get; }
     public ParsingPipeline Parser { get; }
@@ -57,6 +59,14 @@ public partial class IndexingEngine
     private readonly EpochTracker _epochTracker = new();
     private readonly object _analysisLock = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingAnalysis = new();
+    private readonly Channel<long> _analysisEpochChannel = Channel.CreateUnbounded<long>(new UnboundedChannelOptions
+    {
+        AllowSynchronousContinuations = false,
+        SingleReader = true,
+        SingleWriter = false
+    });
+    private readonly Task _idleProcessingTask;
+    private long _lastReleasedEpoch = long.MinValue;
     private IArtifactPruner ArtifactPruner { get; }
     private IVectorIndexCoordinator VectorCoordinator { get; }
 
@@ -148,6 +158,8 @@ public partial class IndexingEngine
             IndexingState.IndexRebuildIdle,
             (item, ct) => IndexRebuilder.ProcessItemAsync(item, ct));
         HotPathIdle += OnHotPathIdle;
+        Shutdown.Token.Register(() => _analysisEpochChannel.Writer.TryComplete());
+        _idleProcessingTask = Task.Run(ProcessIdleEpochsAsync);
     }
 
     public event EventHandler<IndexingStateChangedEventArgs>? StateChanged;
@@ -264,7 +276,48 @@ public partial class IndexingEngine
 
     private void OnHotPathIdle(object? sender, HotPathIdleEventArgs args)
     {
-        _ = ReleaseAnalysisAsync(args.Epoch);
+        EnqueueIdleEpoch(args.Epoch);
+    }
+
+    internal void EnqueueIdleEpoch(long epoch)
+    {
+        if (!_analysisEpochChannel.Writer.TryWrite(epoch))
+        {
+            Logger.LogWarning("Failed to enqueue epoch {Epoch} for idle processing.", epoch);
+        }
+    }
+
+    private async Task ProcessIdleEpochsAsync()
+    {
+        var reader = _analysisEpochChannel.Reader;
+        try
+        {
+            while (await reader.WaitToReadAsync(Shutdown.Token).ConfigureAwait(false))
+            {
+                while (reader.TryRead(out var epoch))
+                {
+                    if (epoch <= Interlocked.Read(ref _lastReleasedEpoch))
+                        continue;
+
+                    try
+                    {
+                        await ReleaseAnalysisAsync(epoch).ConfigureAwait(false);
+                        Interlocked.Exchange(ref _lastReleasedEpoch, epoch);
+                    }
+                    catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
+                    {
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex, "Idle post-processing failed for epoch {Epoch}.", epoch);
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
+        {
+        }
     }
 
     private async Task ReleaseAnalysisAsync(long epoch)
@@ -286,10 +339,11 @@ public partial class IndexingEngine
             var pendingItems = backlog.ToArray();
             var pruningResult = await ArtifactPruner.PruneAsync(pendingItems, Shutdown.Token).ConfigureAwait(false);
 
-            await DeleteStaleDocumentsAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
-
             if (pruningResult.DeletedArtifacts.Count > 0)
+            {
+                await DeleteStaleDocumentsAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
                 await VectorCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
+            }
 
             foreach (var item in pendingItems)
             {
@@ -326,7 +380,16 @@ public partial class IndexingEngine
                 Type = WriteOperationType.DeleteDocument,
                 Uri = uri,
                 ParsedData = Records.Empty,
-                ParentContext = Activity.Current?.Context
+                ParentContext = Activity.Current?.Context,
+                OnCommitted = (_, result) =>
+                {
+                    if (result.Success)
+                    {
+                        DocumentCatalog.ApplyDelete(uri);
+                    }
+
+                    return Task.CompletedTask;
+                }
             };
 
             var commitResult = await Writer.EnqueueAndWaitAsync(operation, cancellationToken).ConfigureAwait(false);
@@ -334,8 +397,6 @@ public partial class IndexingEngine
             {
                 throw commitResult.Error ?? new InvalidOperationException($"Database delete failed for {uri}.");
             }
-
-            DocumentCatalog.ApplyDelete(uri);
         }
     }
 
@@ -418,6 +479,15 @@ public partial class IndexingEngine
             {
                 state &= ~busyFlag;
                 state |= idleFlag;
+            }
+
+            if ((state & BusyMask) != 0)
+            {
+                state |= IndexingState.Started;
+            }
+            else
+            {
+                state &= ~IndexingState.Started;
             }
 
             if (state == State)

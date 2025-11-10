@@ -28,10 +28,11 @@ by default; if a compatible GPU is available, ONNX Runtime may use CUDA or DML.
 
 ## Document vs Query Embeddings
 
-- Documents: embeddings are computed once the initial index scan reaches idle and
-  stored in DuckDB table `document_embedding` as JSON arrays.
-- Queries: the search macro `file_search(keywords, question := NULL, ...)` computes a query vector on the fly
-  via the `embed_text_json(text)` UDF.
+- Documents & objects: embeddings are computed once the initial index scan reaches idle and
+  stored in DuckDB table `document_embedding` (document rows use `node_id = doc_id`, object rows
+  capture structured children) as JSON arrays.
+- Queries: the primary `search(q, mode := 'auto', ...)` macro (and the legacy `file_search` wrapper) compute a query
+  vector on the fly via the `embed_text_json(text)` UDF.
 - The macro prepends the standard BGE retrieval instruction to queries:
   `"Represent this sentence for searching relevant passages: " || q`
 
@@ -53,7 +54,9 @@ by default; if a compatible GPU is available, ONNX Runtime may use CUDA or DML.
 
 - `embed_text_json(text)` → JSON float array or NULL if disabled
 - `cosine_similarity_json(a_json, b_json)` → cosine similarity (0..1)
-- `document_embedding` table stores embeddings as JSON (VARCHAR) for portability
+- `document_embedding` stores both document- and object-scope vectors as JSON (VARCHAR) for portability:<br/>
+  `(doc_id UUID, node_id UUID, uri TEXT, scope TEXT CHECK(scope IN ('document','object')), model TEXT, dim INT, embedding JSON, updated_at TIMESTAMP)`.<br/>
+  Document rows set `node_id = doc_id`; object rows point at structured nodes so search can return precise URIs.
 
 ## Failure Modes / Fallbacks
 

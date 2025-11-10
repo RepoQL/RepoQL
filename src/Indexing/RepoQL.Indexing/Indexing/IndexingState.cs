@@ -3,6 +3,7 @@
 [Flags]
 public enum IndexingState
 {
+    Started               = 0b0000_0100_0000_0000,
     ClassificationIdle      = 0b0000_0000_0000_0001,
     ParsingIdle             = 0b0000_0000_0000_0010,
     SingleFileAnalysisIdle  = 0b0000_0000_0000_0100,

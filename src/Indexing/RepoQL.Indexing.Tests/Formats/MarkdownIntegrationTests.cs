@@ -1,6 +1,7 @@
+using System.Diagnostics;
 using AwesomeAssertions;
 using RepoQL.Formats.Markdown;
-using RepoQL.Indexing.Tests.TestHelpers;
+using RepoQL.Testing.Formats;
 
 namespace RepoQL.Indexing.Tests.Formats;
 

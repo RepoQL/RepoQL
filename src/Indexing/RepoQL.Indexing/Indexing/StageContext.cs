@@ -1,7 +1,4 @@
-﻿using System;
-using System.Threading;
-using System.Threading.Tasks;
-using RepoQL.Indexing.Indexing.Pipelines;
+﻿using RepoQL.Indexing.Indexing.Pipelines;
 
 namespace RepoQL.Indexing.Indexing;
 

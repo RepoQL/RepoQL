@@ -1,7 +1,4 @@
-﻿using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using RepoQL.Contracts;
+﻿using RepoQL.Contracts;
 using RepoQL.Indexing.Indexing.Pipelines;
 
 namespace RepoQL.Indexing.Indexing.PostProcessing;
