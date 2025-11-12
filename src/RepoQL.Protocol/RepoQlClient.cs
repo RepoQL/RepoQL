@@ -4,7 +4,7 @@ using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
 using RepoQL.Contracts;
-using ProtoPipelineSnapshot = RepoQL.Contracts.PipelineSnapshot;
+using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 
 namespace RepoQL.Protocol;
@@ -403,7 +403,7 @@ public sealed class RepoQlClient : IRepoQlClient
         }
     }
 
-    public async Task<ProtoPipelineSnapshot> WaitForPipelineAsync(
+    public async Task<ProtoPipelineStatus> WaitForPipelineAsync(
         IEnumerable<ProtoPipelineStage>? stages = null,
         bool waitAll = true,
         CancellationToken cancellationToken = default)
@@ -414,6 +414,13 @@ public sealed class RepoQlClient : IRepoQlClient
 
         var deadline = _defaultTimeout.HasValue ? DateTime.UtcNow + _defaultTimeout.Value : (DateTime?)null;
         var response = await _client.WaitForPipelineAsync(request, deadline: deadline, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
-        return response.Snapshot ?? new ProtoPipelineSnapshot();
+        return response.Status ?? new ProtoPipelineStatus();
+    }
+
+    public async Task<ProtoPipelineStatus> GetPipelineStatusAsync(CancellationToken cancellationToken = default)
+    {
+        var deadline = _defaultTimeout.HasValue ? DateTime.UtcNow + _defaultTimeout.Value : (DateTime?)null;
+        var response = await _client.GetPipelineStatusAsync(new GetPipelineStatusRequest(), deadline: deadline, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
+        return response.Status ?? new ProtoPipelineStatus();
     }
 }

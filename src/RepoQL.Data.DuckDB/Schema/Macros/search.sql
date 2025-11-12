@@ -57,11 +57,25 @@ config AS (
         END                                                      AS dense_limit
     FROM classified
 ),
+filtered_source AS (
+    SELECT
+        ri.*,
+        CASE
+            WHEN ri.uri IS NULL THEN NULL
+            ELSE regexp_replace(lower(ri.uri), '^[^:]+://+', '')
+        END AS uri_local
+    FROM repo_index ri
+),
 filtered AS (
     SELECT *
-    FROM repo_index
-    WHERE (uri_glob IS NULL OR repoql_glob_match(uri, uri_glob, TRUE, NULL) IS TRUE)
+    FROM filtered_source
+    WHERE (
+            uri_glob IS NULL
+            OR repoql_glob_match(uri, uri_glob, TRUE, 'file:///') IS TRUE
+            OR repoql_glob_match(uri_local, uri_glob, TRUE, NULL) IS TRUE
+        )
       AND (mime_glob IS NULL OR repoql_glob_match(coalesce(mime, ''), mime_glob, TRUE, NULL) IS TRUE)
+      AND (uri_glob IS NULL OR scope = 'document')
 ),
 score_source AS (
     SELECT
@@ -84,15 +98,21 @@ score_source AS (
     WHERE cfg.keywords_empty = FALSE
 ),
 ranked_lex AS (
-    SELECT node_id, doc_id, bm25, fuzz
-    FROM score_source
-    ORDER BY coalesce(bm25, 0) DESC, fuzz DESC, node_id
-    LIMIT (SELECT lex_limit FROM config)
+    SELECT node_id, doc_id, bm25, fuzz, lex_row
+    FROM (
+        SELECT
+            node_id,
+            doc_id,
+            bm25,
+            fuzz,
+            ROW_NUMBER() OVER (ORDER BY coalesce(bm25, 0) DESC, fuzz DESC, node_id) AS lex_row
+        FROM score_source
+    ) ranked
+         JOIN config cfg ON TRUE
+    WHERE lex_row <= cfg.lex_limit
 ),
 lex_ranked AS (
-    SELECT
-        node_id,
-        ROW_NUMBER() OVER (ORDER BY coalesce(bm25, 0) DESC, fuzz DESC, node_id) AS lex_rank
+    SELECT node_id, lex_row AS lex_rank
     FROM ranked_lex
 ),
 normalized_lex AS (
@@ -112,45 +132,47 @@ semantic_seed AS (
         CASE
             WHEN cfg.keywords_empty THEN NULL
             ELSE cls.raw_query
-        END AS query_text,
-        cfg.dense_limit                                   AS dense_limit
+        END AS query_text
     FROM classified cls
          JOIN config cfg ON TRUE
 ),
 qv AS (
     SELECT embed_text_json(
-                   'Represent this sentence for searching relevant passages: ' || query_text) AS qjson,
-           dense_limit
+                   'Represent this sentence for searching relevant passages: ' || query_text) AS qjson
     FROM semantic_seed
     WHERE query_text IS NOT NULL
 ),
-sem_candidates AS (
-    SELECT vc.node_id, vc.doc_id, vc.sem
-    FROM qv
-             CROSS JOIN vss_candidates(qv.qjson, qv.dense_limit) AS vc
-),
-sem_filtered AS (
-    SELECT sc.node_id, sc.doc_id, sc.sem
-    FROM sem_candidates sc
-             JOIN filtered ri ON ri.node_id = sc.node_id
-),
-sem_ranked AS (
+sem_scored AS (
     SELECT
-        node_id,
-        ROW_NUMBER() OVER (ORDER BY sem DESC, node_id) AS sem_rank,
-        sem
-    FROM sem_filtered
+        ri.node_id,
+        ri.doc_id,
+        cosine_similarity_json(qv.qjson, ri.embedding) AS sem
+    FROM qv
+             JOIN filtered ri ON ri.embedding IS NOT NULL
+),
+sem_top AS (
+    SELECT node_id, doc_id, sem, sem_rank
+    FROM (
+        SELECT
+            node_id,
+            doc_id,
+            sem,
+            ROW_NUMBER() OVER (ORDER BY sem DESC, node_id) AS sem_rank
+        FROM sem_scored
+    ) ranked
+             JOIN config cfg ON TRUE
+    WHERE sem_rank <= cfg.dense_limit
 ),
 sem_norm AS (
     SELECT
         node_id,
         doc_id,
         POWER((sem / NULLIF(MAX(sem) OVER (), 0)), 1.5) AS semn
-    FROM sem_filtered
+    FROM sem_top
 ),
 sem_rrf AS (
     SELECT node_id, 1.0 / (60 + sem_rank) AS rrf_sem
-    FROM sem_ranked
+    FROM sem_top
 ),
 union_nodes AS (
     SELECT node_id FROM normalized_lex
@@ -159,9 +181,14 @@ union_nodes AS (
 ),
 fallback_nodes AS (
     SELECT node_id
-    FROM filtered
-    ORDER BY mtime DESC, node_id
-    LIMIT (SELECT result_k FROM base_params)
+    FROM (
+        SELECT
+            node_id,
+            ROW_NUMBER() OVER (ORDER BY mtime DESC, node_id) AS fallback_row
+        FROM filtered
+    ) fallback
+         JOIN base_params bp ON TRUE
+    WHERE fallback_row <= bp.result_k
 ),
 combined_nodes AS (
     SELECT node_id FROM union_nodes
@@ -170,9 +197,18 @@ combined_nodes AS (
     WHERE NOT EXISTS (SELECT 1 FROM union_nodes)
 ),
 final_nodes AS (
-    SELECT DISTINCT node_id
-    FROM combined_nodes
-    LIMIT (SELECT result_k FROM base_params)
+    SELECT node_id AS fn_node_id
+    FROM (
+        SELECT
+            node_id,
+            ROW_NUMBER() OVER (ORDER BY node_id) AS final_row
+        FROM (
+            SELECT DISTINCT node_id
+            FROM combined_nodes
+        )
+    ) final
+         JOIN base_params bp ON TRUE
+    WHERE final_row <= bp.result_k
 ),
 lex_stats AS (
     SELECT COUNT(*) AS cnt FROM normalized_lex
@@ -256,13 +292,22 @@ SELECT
         'requested_mode', (SELECT requested_mode FROM classified)
     )                                                  AS explain_json
 FROM final_nodes fn
-         JOIN filtered ri ON ri.node_id = fn.node_id
-         LEFT JOIN normalized_lex lx USING (node_id)
-         LEFT JOIN sem_norm sn USING (node_id)
-         LEFT JOIN lex_rrf rlex USING (node_id)
-         LEFT JOIN sem_rrf rsem USING (node_id)
-ORDER BY score DESC, length(ri.uri)
-LIMIT (SELECT result_k FROM base_params)
+         JOIN filtered ri ON ri.node_id = fn.fn_node_id
+         LEFT JOIN normalized_lex lx ON lx.node_id = fn.fn_node_id
+         LEFT JOIN sem_norm sn ON sn.node_id = fn.fn_node_id
+         LEFT JOIN lex_rrf rlex ON rlex.node_id = fn.fn_node_id
+         LEFT JOIN sem_rrf rsem ON rsem.node_id = fn.fn_node_id
+ORDER BY
+    CASE
+        WHEN uri_glob IS NOT NULL AND ri.scope = 'document' THEN 0
+        WHEN uri_glob IS NOT NULL THEN 1
+        WHEN uri_glob IS NULL
+             AND coalesce(ri.symbol_key, '') = (SELECT keywords_lc FROM classified)
+             AND (SELECT keywords_lc FROM classified) <> '' THEN -1
+        ELSE 0
+    END,
+    score DESC,
+    length(ri.uri)
 );
 
 CREATE OR REPLACE MACRO related(
@@ -278,11 +323,24 @@ WITH seed AS (
     WHERE uri = seed_uri
     LIMIT 1
 ),
-filtered AS (
-    SELECT *
+related_source AS (
+    SELECT
+        *,
+        CASE
+            WHEN uri IS NULL THEN NULL
+            ELSE regexp_replace(lower(uri), '^[^:]+://+', '')
+        END AS uri_local
     FROM repo_index
     WHERE uri <> seed_uri
-      AND (uri_glob IS NULL OR repoql_glob_match(uri, uri_glob, TRUE, NULL) IS TRUE)
+),
+filtered AS (
+    SELECT *
+    FROM related_source
+    WHERE (
+            uri_glob IS NULL
+            OR repoql_glob_match(uri, uri_glob, TRUE, 'file:///') IS TRUE
+            OR repoql_glob_match(uri_local, uri_glob, TRUE, NULL) IS TRUE
+        )
       AND (mime_glob IS NULL OR repoql_glob_match(coalesce(mime, ''), mime_glob, TRUE, NULL) IS TRUE)
 ),
 scored AS (

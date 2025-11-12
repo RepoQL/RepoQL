@@ -1,4 +1,3 @@
-using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -6,6 +5,7 @@ using Microsoft.Extensions.Options;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Indexing.FileSystems;
+using RepoQL.Indexing.Indexing;
 using RepoQL.Indexing.Indexing.Pipelines;
 
 namespace RepoQL.Indexing.Hosting;
@@ -16,37 +16,40 @@ namespace RepoQL.Indexing.Hosting;
 public sealed class RepoqlHost : BackgroundService
 {
     private readonly CompositeFileSystem _fileSystem;
-    private readonly IIndexingWorkScheduler _scheduler;
+    private readonly Func<RawArtifact, IndexItemOptions, CancellationToken, Task> _enqueue;
     private readonly RepoqlHostOptions _options;
     private readonly ILogger<RepoqlHost> _logger;
-    private readonly Channel<EnqueueRequest> _queue;
 
     private IFileSystemWatcher? _watcher;
     private IDisposable? _watcherSubscription;
-    private bool _channelCompleted;
 
     public RepoqlHost(
         CompositeFileSystem fileSystem,
-        IIndexingWorkScheduler scheduler,
+        IndexingEngine engine,
+        IOptions<RepoqlHostOptions> options,
+        ILogger<RepoqlHost>? logger = null)
+        : this(
+            fileSystem,
+            (artifact, enqueueOptions, token) => engine.EnqueueItemAsync(artifact, enqueueOptions, token),
+            options,
+            logger)
+    {
+    }
+
+    internal RepoqlHost(
+        CompositeFileSystem fileSystem,
+        Func<RawArtifact, IndexItemOptions, CancellationToken, Task> enqueue,
         IOptions<RepoqlHostOptions> options,
         ILogger<RepoqlHost>? logger = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
-        _scheduler = scheduler ?? throw new ArgumentNullException(nameof(scheduler));
+        _enqueue = enqueue ?? throw new ArgumentNullException(nameof(enqueue));
         _options = options?.Value ?? new RepoqlHostOptions();
         _logger = logger ?? NullLogger<RepoqlHost>.Instance;
-        _queue = Channel.CreateUnbounded<EnqueueRequest>(new UnboundedChannelOptions
-        {
-            AllowSynchronousContinuations = false,
-            SingleReader = true,
-            SingleWriter = false
-        });
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var processingTask = ProcessQueueAsync(stoppingToken);
-
         if (_options.RunFullScanOnStartup)
         {
             await EnqueueFullScanAsync(stoppingToken).ConfigureAwait(false);
@@ -56,14 +59,10 @@ public sealed class RepoqlHost : BackgroundService
         {
             await StartWatcherAsync(stoppingToken).ConfigureAwait(false);
         }
-
-        await processingTask.ConfigureAwait(false);
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
-        CompleteChannel();
-
         if (_watcherSubscription is not null)
         {
             _watcherSubscription.Dispose();
@@ -103,7 +102,7 @@ public sealed class RepoqlHost : BackgroundService
                 continue;
 
             var artifact = new RawArtifact(resource.File, store);
-            await WriteAsync(new EnqueueRequest(artifact, _options.DefaultIndexItemOptions), cancellationToken).ConfigureAwait(false);
+            await _enqueue(artifact, _options.DefaultIndexItemOptions, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -114,63 +113,6 @@ public sealed class RepoqlHost : BackgroundService
         await _watcher.StartAsync(cancellationToken).ConfigureAwait(false);
         _logger.LogInformation("RepoqlHost change watcher started for all mounted file systems.");
     }
-
-    private async Task ProcessQueueAsync(CancellationToken cancellationToken)
-    {
-        var reader = _queue.Reader;
-        try
-        {
-            while (await reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                while (reader.TryRead(out var work))
-                {
-                    try
-                    {
-                        await _scheduler.EnqueueAsync(work.Artifact, work.Options, cancellationToken).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                    {
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to enqueue artifact {Uri}.", work.Artifact.Uri);
-                    }
-                }
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            // Graceful shutdown.
-        }
-    }
-
-    private ValueTask WriteAsync(EnqueueRequest request, CancellationToken cancellationToken)
-    {
-        if (_queue.Writer.TryWrite(request))
-            return ValueTask.CompletedTask;
-
-        return _queue.Writer.WriteAsync(request, cancellationToken);
-    }
-
-    private void TryWriteFromWatcher(EnqueueRequest request)
-    {
-        if (_queue.Writer.TryWrite(request))
-            return;
-
-        _ = _queue.Writer.WriteAsync(request, CancellationToken.None).AsTask();
-    }
-
-    private void CompleteChannel()
-    {
-        if (_channelCompleted)
-            return;
-
-        _channelCompleted = true;
-        _queue.Writer.TryComplete();
-    }
-
-    private readonly record struct EnqueueRequest(RawArtifact Artifact, IndexItemOptions Options);
 
     private sealed class WatcherObserver : IObserver<ResourceChange>
     {
@@ -203,7 +145,7 @@ public sealed class RepoqlHost : BackgroundService
             }
 
             var artifact = new RawArtifact(value.File, store);
-            _host.TryWriteFromWatcher(new EnqueueRequest(artifact, _host._options.DefaultIndexItemOptions));
+            _ = _host._enqueue(artifact, _host._options.DefaultIndexItemOptions, CancellationToken.None);
         }
     }
 }

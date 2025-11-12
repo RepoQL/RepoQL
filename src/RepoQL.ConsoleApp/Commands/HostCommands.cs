@@ -79,21 +79,22 @@ internal class HostCommands(IAnsiConsole console)
     {
         await using var client = await RepoQlClient.CreateAsync(cancellationToken: cancel);
 
-        await console.Progress()
-            .AutoClear(false)
-            .Columns(new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new RemainingTimeColumn())
-            .StartAsync(async ctx =>
-            {
-                var tasks = new ConcurrentDictionary<string, ProgressTask>();
-                await foreach (var p in client.ReindexAllAsync(clear, timeout: TimeSpan.FromMinutes(10), cancellationToken: cancel))
-                {
-                    var task = tasks.GetOrAdd(p.Phase, (phase) => ctx.AddTask(phase));
-                    task.MaxValue = p.Total;
-                    task.Value = p.Completed;
-                }
+                await console.Progress()
+                    .AutoClear(false)
+                    .Columns(new TaskDescriptionColumn(), new ProgressBarColumn(), new PercentageColumn(), new RemainingTimeColumn())
+                    .StartAsync(async ctx =>
+                    {
+                        var tasks = new ConcurrentDictionary<string, ProgressTask>();
+                        await foreach (var p in client.ReindexAllAsync(clear, timeout: TimeSpan.FromMinutes(10), cancellationToken: cancel))
+                        {
+                            var phase = p.Phase.ToString();
+                            var task = tasks.GetOrAdd(phase, value => ctx.AddTask(value));
+                            task.MaxValue = p.TotalItems > 0 ? p.TotalItems : 1;
+                            task.Value = Math.Min(p.ProcessedItems, task.MaxValue);
+                        }
 
-                foreach (var task in tasks.Values) task.StopTask();
-            });
+                        foreach (var task in tasks.Values) task.StopTask();
+                    });
 
         console.MarkupLine("[green]Repopulation complete[/]");
     }

@@ -33,6 +33,9 @@ service RepoQL {
 
   // Wait for selected pipeline stages to become idle. Returns once the condition is met.
   rpc WaitForPipeline(WaitForPipelineRequest) returns (WaitForPipelineResponse);
+
+  // Retrieve the current pipeline status without blocking.
+  rpc GetPipelineStatus(GetPipelineStatusRequest) returns (GetPipelineStatusResponse);
 }
 
 // ----- Raw query -----
@@ -192,12 +195,26 @@ message ReindexRequest {
 }
 
 message ReindexProgress {
-  // Phase label: e.g., "preparing", "enumerating", "enqueued", "indexing", "finalizing", "completed".
-  string phase = 1;
-  // Total number of items planned to index (documents/files).
-  int64 total = 2;
-  // Number of items processed so far.
-  int64 completed = 3;
+  ReindexPhase phase = 1;
+  // Number of items discovered (for phases that track it).
+  uint64 total_items = 2;
+  // Number of items processed in this phase (queued, indexed, analyzed, etc).
+  uint64 processed_items = 3;
+  // Milliseconds elapsed within the current phase.
+  uint64 phase_elapsed_ms = 4;
+}
+
+enum ReindexPhase {
+  REINDEX_PHASE_UNSPECIFIED = 0;
+  REINDEX_PHASE_PREPARING = 1;
+  REINDEX_PHASE_ENUMERATING = 2;
+  REINDEX_PHASE_QUEUEING = 3;
+  REINDEX_PHASE_HOT_PATH = 4;
+  REINDEX_PHASE_PRUNING = 5;
+  REINDEX_PHASE_VECTOR_REFRESH = 6;
+  REINDEX_PHASE_MULTIFILE_ANALYSIS = 7;
+  REINDEX_PHASE_INDEX_REBUILD = 8;
+  REINDEX_PHASE_COMPLETED = 9;
 }
 
 enum PipelineStage {
@@ -208,21 +225,6 @@ enum PipelineStage {
   PIPELINE_STAGE_WRITER = 4;
 }
 
-message PipelineStageStatus {
-  PipelineStage stage = 1;
-  int32 depth = 2;
-  int32 capacity = 3;
-  int64 scheduled = 4;
-  int64 completed = 5;
-}
-
-message PipelineSnapshot {
-  google.protobuf.Timestamp captured_at = 1;
-  repeated PipelineStageStatus stages = 2;
-  bool reindexing = 3;
-  bool writer_pending = 4;
-}
-
 message WaitForPipelineRequest {
   // Stages to wait on. When empty, defaults to discovery+parsing+analysis.
   repeated PipelineStage stages = 1;
@@ -231,5 +233,25 @@ message WaitForPipelineRequest {
 }
 
 message WaitForPipelineResponse {
-  PipelineSnapshot snapshot = 1;
+  PipelineStatus status = 1;
+}
+
+message GetPipelineStatusRequest {}
+
+message GetPipelineStatusResponse {
+  PipelineStatus status = 1;
+}
+
+message PipelineStatus {
+  google.protobuf.Timestamp captured_at = 1;
+  repeated StageStatus stages = 2;
+  bool reindexing = 3;
+  bool writer_pending = 4;
+}
+
+message StageStatus {
+  PipelineStage stage = 1;
+  bool busy = 2;
+  uint32 queued = 3;
+  uint32 in_progress = 4;
 }

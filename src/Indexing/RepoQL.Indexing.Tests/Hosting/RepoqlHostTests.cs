@@ -19,14 +19,14 @@ internal class RepoqlHostTests
         primary.AddOrUpdateText("docs/readme.md", "text");
 
         var composite = new CompositeFileSystem(CompositeFileSystemMount.CreatePrimary(primary));
-        var sink = new RecordingScheduler();
+        var sink = new RecordingSink();
         var options = Options.Create(new RepoqlHostOptions
         {
             RunFullScanOnStartup = true,
             EnableWatching = false
         });
 
-        var host = new RepoqlHost(composite, sink, options, NullLogger<RepoqlHost>.Instance);
+        var host = new RepoqlHost(composite, sink.Handler, options, NullLogger<RepoqlHost>.Instance);
 
         await host.StartAsync(CancellationToken.None);
         await sink.WaitForAsync(1, TimeSpan.FromSeconds(2));
@@ -41,14 +41,14 @@ internal class RepoqlHostTests
     {
         var primary = new MemoryFileSystem("primary");
         var composite = new CompositeFileSystem(CompositeFileSystemMount.CreatePrimary(primary));
-        var sink = new RecordingScheduler();
+        var sink = new RecordingSink();
         var options = Options.Create(new RepoqlHostOptions
         {
             RunFullScanOnStartup = false,
             EnableWatching = true
         });
 
-        var host = new RepoqlHost(composite, sink, options, NullLogger<RepoqlHost>.Instance);
+        var host = new RepoqlHost(composite, sink.Handler, options, NullLogger<RepoqlHost>.Instance);
         await host.StartAsync(CancellationToken.None);
 
         primary.AddOrUpdateText("docs/new-file.md", "hello");
@@ -59,21 +59,22 @@ internal class RepoqlHostTests
         sink.Uris.Should().Contain(uri => uri.AbsoluteUri == "mem://primary/docs/new-file.md");
     }
 
-    private sealed class RecordingScheduler : IIndexingWorkScheduler
+    private sealed class RecordingSink
     {
         private readonly List<RepoUri> _uris = new();
         private readonly TaskCompletionSource<bool> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task EnqueueAsync(RawArtifact artifact, IndexItemOptions options, CancellationToken cancellationToken)
-        {
-            lock (_uris)
+        public Func<RawArtifact, IndexItemOptions, CancellationToken, Task> Handler =>
+            (artifact, _, _) =>
             {
-                _uris.Add(artifact.Uri);
-                _tcs.TrySetResult(true);
-            }
+                lock (_uris)
+                {
+                    _uris.Add(artifact.Uri);
+                    _tcs.TrySetResult(true);
+                }
 
-            return Task.CompletedTask;
-        }
+                return Task.CompletedTask;
+            };
 
         public IReadOnlyList<RepoUri> Uris
         {
@@ -98,7 +99,7 @@ internal class RepoqlHostTests
                 }
 
                 var wait = _tcs.Task;
-                await Task.WhenAny(wait, Task.Delay(10, cts.Token));
+                await Task.WhenAny(wait, Task.Delay(10, cts.Token)).ConfigureAwait(false);
             }
 
             int observed;

@@ -3,24 +3,38 @@ using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Analysis;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Models;
 using RepoQL.Core.Analysis;
 using RepoQL.Core.Analysis.EditorConfig;
-using RepoQL.Embeddings;
 using RepoQL.Core.Metrics;
-using RepoQL.Metrics;
 using RepoQL.Data.DuckDB;
+using RepoQL.Embeddings;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.Classification;
 using RepoQL.FileSystem.Embedded;
 using RepoQL.FileSystem.Physical;
 using RepoQL.Formats.DotNet;
+using RepoQL.Formats.GraphQL;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
-using RepoQL.Formats.GraphQL;
+using RepoQL.Indexing.FileSystems;
+using RepoQL.Indexing.Hosting;
+using RepoQL.Indexing.Indexing;
+using RepoQL.Indexing.Indexing.Commit;
+using RepoQL.Indexing.Indexing.Pipelines;
+using RepoQL.Indexing.Indexing.Pipelines.Analysis;
+using RepoQL.Indexing.Indexing.Pipelines.Classification;
+using RepoQL.Indexing.Indexing.Pipelines.Discovery;
+using RepoQL.Indexing.Indexing.Pipelines.Parsing;
+using RepoQL.Indexing.Indexing.PostProcessing;
+using RepoQL.Indexing.Indexing.State;
+using RepoQL.Metrics;
 using RepoQL.Templating;
 
 namespace RepoQL.Core;
@@ -55,13 +69,18 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton(_ => new PhysicalFileSystem(resolvedRoot));
         services.AddSingleton<IFileClassifier, FileClassifier>();
         services.AddSingleton<IVirtualFileSystem>(sp => sp.GetRequiredService<PhysicalFileSystem>());
-        services.AddSingleton<IFileSystemRegistry>(sp => new FileSystemRegistry(sp.GetServices<IVirtualFileSystem>()));
-        services.AddSingleton<IMultiFileSystem>(sp => new MultiFileSystem(
-            sp.GetRequiredService<IFileSystemRegistry>(),
-            sp.GetServices<IVirtualFileSystem>()
-        ));
         services.AddSingleton<IUriFilter>(_ => new RepoGitIgnoreFilter(resolvedRoot, [dbRelPath]));
         services.AddSingleton<IHasher, XxHasher>();
+
+        services.AddSingleton(sp =>
+        {
+            var primary = CompositeFileSystemMount.CreatePrimary(sp.GetRequiredService<PhysicalFileSystem>(), "primary");
+            var mounts = sp.GetServices<CompositeFileSystemMount>()
+                .Where(m => !m.IsPrimary)
+                .ToArray();
+            return new CompositeFileSystem(primary, mounts);
+        });
+        services.AddSingleton<IMultiFileSystem>(sp => sp.GetRequiredService<CompositeFileSystem>());
 
         // DuckDB connection string uses the repo root + the repo-relative DB path
         var cs = RepoIndexingBootstrap.DuckDbConnectionString(resolvedRoot, dbRelPath);
@@ -69,6 +88,9 @@ public static class RepoIndexerServiceCollectionExtensions
 
         // Provide a connection factory for components that need fresh connections
         services.AddSingleton<IDuckDBConnectionFactory>(_ => new DuckDBConnectionFactory(cs));
+
+        services.AddOptions<IndexingEngineOptions>();
+        services.AddOptions<RepoqlHostOptions>();
 
         // Single-writer for all write operations
         services.AddSingleton<IDatabaseWriter, SingleThreadedDatabaseWriter>();
@@ -143,6 +165,12 @@ public static class RepoIndexerServiceCollectionExtensions
 
         services.AddSingleton<IAnalysisResultWriter, AnnotationResultWriter>();
         services.AddSingleton<IAnalyzerSettingsProvider>(_ => new EditorConfigSettingsProvider(resolvedRoot));
+        services.AddSingleton<Func<AnalyzerContext>>(sp =>
+        {
+            var workspace = sp.GetRequiredService<IAnalysisWorkspace>();
+            var registry = sp.GetRequiredService<IFormatRegistry>();
+            return () => new AnalyzerContext(new AnalyzerSettings(), resolvedRoot, registry, workspace);
+        });
 
         // Templating for x-ray summaries (embedded defaults)
         services.AddLiquidTemplatingFromEmbedded(
@@ -152,8 +180,7 @@ public static class RepoIndexerServiceCollectionExtensions
             assembly: typeof(CsProjLoader).Assembly,
             resourceRoot: "RepoQL.Formats.DotNet.Templates");
 
-        services.AddSingleton<MarkdownAnalyzer>();
-        services.AddSingleton<MarkdownLoader>(sp => new MarkdownLoader());
+        services.AddMarkdownFormat();
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjAnalyzer>();
@@ -175,78 +202,86 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<AppSettingsLoader>(sp => new AppSettingsLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<AppSettingsAnalyzer>();
 
+        services.AddSingleton<FormatDescriptor>(sp =>
+        {
+            var loader = sp.GetRequiredService<MermaidLoader>();
+            var analyzer = sp.GetRequiredService<MermaidAnalyzer>();
+            return new FormatDescriptor(
+                SemanticMediaType.Create("text", "mermaid").WithKind("mermaid.doc"),
+                loader,
+                analyzer,
+                loader,
+                new[] { "mermaid", "mmd" });
+        });
+        services.AddSingleton<FormatDescriptor>(sp =>
+        {
+            var loader = sp.GetRequiredService<GraphQLLoader>();
+            var analyzer = sp.GetRequiredService<GraphQLAnalyzer>();
+            return new FormatDescriptor(
+                SemanticMediaType.Create("text", "graphql").WithKind("graphql.doc"),
+                loader,
+                analyzer,
+                loader,
+                new[] { "graphql", "gql" });
+        });
+        services.AddSingleton<FormatDescriptor>(sp =>
+        {
+            var loader = sp.GetRequiredService<CsProjLoader>();
+            var analyzer = sp.GetRequiredService<CsProjAnalyzer>();
+            return new FormatDescriptor(
+                SemanticMediaType.Create("text", "xml").WithKind("dotnet.csproj"),
+                loader,
+                analyzer,
+                loader,
+                new[] { "csproj" });
+        });
+        services.AddSingleton<FormatDescriptor>(sp =>
+        {
+            var loader = sp.GetRequiredService<SlnLoader>();
+            var analyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"));
+            return new FormatDescriptor(
+                SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"),
+                loader,
+                analyzer,
+                loader,
+                new[] { "sln" });
+        });
+        services.AddSingleton<FormatDescriptor>(sp =>
+        {
+            var loader = sp.GetRequiredService<CSharpLoader>();
+            var analyzer = sp.GetRequiredService<CSharpAnalyzer>();
+            return new FormatDescriptor(
+                SemanticMediaType.Create("text", "plain").WithKind("code.csharp"),
+                loader,
+                analyzer,
+                loader,
+                new[] { "csharp", "cs" });
+        });
+        services.AddSingleton<FormatDescriptor>(sp =>
+        {
+            var loader = sp.GetRequiredService<AppSettingsLoader>();
+            var analyzer = sp.GetRequiredService<AppSettingsAnalyzer>();
+            return new FormatDescriptor(
+                SemanticMediaType.Create("application", "json").WithKind("config.appsettings"),
+                loader,
+                analyzer,
+                loader,
+                new[] { "appsettings", "config" });
+        });
+        services.AddSingleton<FormatDescriptor>(sp =>
+        {
+            var loader = sp.GetRequiredService<PlainTextLoader>();
+            var analyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
+            return new FormatDescriptor(
+                SemanticMediaType.Create("text", "plain").WithKind("plain.document"),
+                loader,
+                analyzer,
+                loader);
+        });
+
         services.AddSingleton<IFormatRegistry>(sp =>
         {
-            var markdownLoader = sp.GetRequiredService<MarkdownLoader>();
-            var markdownAnalyzer = sp.GetRequiredService<MarkdownAnalyzer>();
-            var mermaidLoader = sp.GetRequiredService<MermaidLoader>();
-            var mermaidAnalyzer = sp.GetRequiredService<MermaidAnalyzer>();
-            var csprojLoader = sp.GetRequiredService<CsProjLoader>();
-            var csprojAnalyzer = sp.GetRequiredService<CsProjAnalyzer>();
-            var slnLoader = sp.GetRequiredService<SlnLoader>();
-            var slnAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"));
-            var csharpLoader = sp.GetRequiredService<CSharpLoader>();
-            var csharpAnalyzer = sp.GetRequiredService<CSharpAnalyzer>();
-            var graphQlLoader = sp.GetRequiredService<GraphQLLoader>();
-            var graphQlAnalyzer = sp.GetRequiredService<GraphQLAnalyzer>();
-            var appSettingsLoader = sp.GetRequiredService<AppSettingsLoader>();
-            var appSettingsAnalyzer = sp.GetRequiredService<AppSettingsAnalyzer>();
-            var plainLoader = sp.GetRequiredService<PlainTextLoader>();
-            var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
-
-            var descriptors = new[]
-            {
-                // Specific formats first
-                new FormatDescriptor(
-                    SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"),
-                    markdownLoader,
-                    markdownAnalyzer,
-                    markdownLoader,
-                    ["markdown"]),
-                new FormatDescriptor(
-                    SemanticMediaType.Create("text", "mermaid").WithKind("mermaid.doc"),
-                    mermaidLoader,
-                    mermaidAnalyzer,
-                    mermaidLoader,
-                    ["mermaid", "mmd"]),
-                new FormatDescriptor(
-                    SemanticMediaType.Create("text", "graphql").WithKind("graphql.doc"),
-                    graphQlLoader,
-                    graphQlAnalyzer,
-                    graphQlLoader,
-                    ["graphql", "gql"]),
-                new FormatDescriptor(
-                    SemanticMediaType.Create("text", "xml").WithKind("dotnet.csproj"),
-                    csprojLoader,
-                    csprojAnalyzer,
-                    csprojLoader,
-                    ["csproj"]),
-                new FormatDescriptor(
-                    SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"),
-                    slnLoader,
-                    slnAnalyzer,
-                    slnLoader,
-                    ["sln"]),
-                new FormatDescriptor(
-                    SemanticMediaType.Create("text", "plain").WithKind("code.csharp"),
-                    csharpLoader,
-                    csharpAnalyzer,
-                    csharpLoader,
-                    ["csharp", "cs"]),
-                new FormatDescriptor(
-                    SemanticMediaType.Create("application", "json").WithKind("config.appsettings"),
-                    appSettingsLoader,
-                    appSettingsAnalyzer,
-                    appSettingsLoader,
-                    ["appsettings", "config"]),
-                // Catch‑all plain last so it doesn't shadow specific handlers
-                new FormatDescriptor(
-                    SemanticMediaType.Create("text", "plain").WithKind("plain.document"),
-                    plainLoader,
-                    plainAnalyzer,
-                    plainLoader)
-            };
-
+            var descriptors = sp.GetServices<FormatDescriptor>();
             return new FormatRegistry(descriptors);
         });
 
@@ -278,10 +313,60 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<InMemoryMetricsSink>(_ => new InMemoryMetricsSink("RepoQL.Indexing"));
         services.AddSingleton<InMemoryRateProvider>(sp => new InMemoryRateProvider(sp.GetRequiredService<InMemoryMetricsSink>()));
 
-        // Register RepositoryIndexer as both the concrete type and IRepositoryIndexer interface
-        services.AddSingleton<RepositoryIndexer>(sp => ActivatorUtilities.CreateInstance<RepositoryIndexer>(sp, resolvedRoot));
-        services.AddSingleton<IRepositoryIndexer>(sp => sp.GetRequiredService<RepositoryIndexer>());
-        services.AddHostedService<IRepositoryIndexer>(sp => sp.GetRequiredService<IRepositoryIndexer>());
+        services.AddSingleton<IDocumentCatalogDataSource>(_ => NullDocumentCatalogDataSource.Instance);
+        services.AddSingleton<IDocumentCatalog>(sp => new DocumentCatalog(sp.GetRequiredService<IDocumentCatalogDataSource>()));
+        services.AddSingleton<IArtifactPruner, StorageBackedArtifactPruner>();
+        services.AddSingleton<IVectorIndexCoordinator, VectorIndexCoordinator>();
+        services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
+            sp.GetRequiredService<IDatabaseWriter>(),
+            sp.GetRequiredService<IDocumentCatalog>(),
+            sp.GetService<ILogger<IndexingCommitter>>()));
+
+        services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, MarkdownClassifier>();
+        services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, MarkdownParser>();
+        services.AddSingleton<IAsyncPipeline<IParsedArtifact, Annotation[]>>(sp =>
+            new MarkdownAnalysisProcessor(
+                sp.GetRequiredService<MarkdownAnalyzer>(),
+                sp.GetRequiredService<Func<AnalyzerContext>>(),
+                sp.GetService<ILogger<MarkdownAnalysisProcessor>>()));
+
+        services.AddSingleton(sp => new ClassificationPipeline(
+            sp.GetServices<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>>(),
+            sp.GetService<ILogger<ClassificationPipeline>>()));
+        services.AddSingleton(sp => new ParsingPipeline(
+            sp.GetServices<IAsyncPipeline<IClassifiedArtifact, Records?>>(),
+            sp.GetService<ILogger<ParsingPipeline>>()));
+        services.AddSingleton(sp => new SingleFileAnalysisPipeline(
+            sp.GetServices<IAsyncPipeline<IParsedArtifact, Annotation[]>>(),
+            sp.GetService<ILogger<SingleFileAnalysisPipeline>>()));
+        services.AddSingleton(sp => new MultiFileAnalysisPipeline(
+            sp.GetServices<IAsyncPipeline<IAnnotatedArtifact, Annotation[]>>(),
+            sp.GetService<ILogger<MultiFileAnalysisPipeline>>()));
+        services.AddSingleton(sp => new IndexRebuildPipeline(
+            sp.GetServices<IAsyncPipeline<IAnnotatedArtifact, string>>(),
+            sp.GetService<ILogger<IndexRebuildPipeline>>()));
+
+        services.AddSingleton(sp => new IndexingEngine(
+            sp.GetRequiredService<IDatabaseWriter>(),
+            sp.GetRequiredService<IUriFilter>(),
+            sp.GetRequiredService<ClassificationPipeline>(),
+            sp.GetRequiredService<ParsingPipeline>(),
+            sp.GetRequiredService<SingleFileAnalysisPipeline>(),
+            sp.GetRequiredService<MultiFileAnalysisPipeline>(),
+            sp.GetRequiredService<IndexRebuildPipeline>(),
+            sp.GetRequiredService<IDocumentCatalog>(),
+            sp.GetRequiredService<IIndexingCommitter>(),
+            sp.GetRequiredService<IArtifactPruner>(),
+            sp.GetRequiredService<IVectorIndexCoordinator>(),
+            sp.GetService<IOptions<IndexingEngineOptions>>()?.Value,
+            sp.GetService<ILogger<IndexingEngine>>()));
+
+        services.AddSingleton<IIndexingCoordinator>(sp => new IndexingCoordinator(
+            sp.GetRequiredService<CompositeFileSystem>(),
+            sp.GetRequiredService<IndexingEngine>(),
+            sp.GetRequiredService<IDatabaseWriter>(),
+            sp.GetService<ILogger<IndexingCoordinator>>()));
+        services.AddHostedService<RepoqlHost>();
 
         return services;
     }
@@ -293,7 +378,15 @@ public static class RepoIndexerServiceCollectionExtensions
     /// <param name="assembly">Assembly containing embedded resources.</param>
     public static IServiceCollection AddEmbedStore(this IServiceCollection services, Assembly assembly)
     {
-        services.AddSingleton<IVirtualFileSystem>(_ => new EmbeddedStore(assembly));
+        var store = new EmbeddedStore(assembly);
+        services.AddSingleton<IVirtualFileSystem>(store);
+        var mountId = $"embed:{assembly.GetName().Name}".ToLowerInvariant();
+        services.AddSingleton(new CompositeFileSystemMount
+        {
+            Id = mountId,
+            FileSystem = store,
+            IncludeInEnumeration = true
+        });
         return services;
     }
 

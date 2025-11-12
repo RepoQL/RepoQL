@@ -20,7 +20,7 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     private int _busy;
     private readonly int _readerCount;
 
-    public int Depth => _depth;
+    public int Depth => Volatile.Read(ref _depth);
     public int MaxDepth { get; }
 
     private TaskCompletionSource<bool> _idleTcs = NewCompletedTcs();
@@ -145,4 +145,15 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         tcs.SetResult(true);
         return tcs;
     }
+    public WorkQueueSnapshot CaptureSnapshot()
+    {
+        var depth = Volatile.Read(ref _depth);
+        var busy = Math.Max(0, Volatile.Read(ref _busy));
+        return new WorkQueueSnapshot(depth, busy, MaxDepth);
+    }
+}
+
+public readonly record struct WorkQueueSnapshot(int Depth, int InProgress, int MaxDepth)
+{
+    public int Queued => Math.Max(0, Depth - InProgress);
 }

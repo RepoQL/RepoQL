@@ -2,14 +2,14 @@ using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts.Data;
-using RepoQL.Core;
+using RepoQL.Indexing.Hosting;
 using RepoQL.Data.DuckDB;
 using RepoQL.Metrics;
 
 namespace RepoQL.ConsoleApp.Host;
 
 internal sealed class InitialIndexingBarrier(
-    RepositoryIndexer indexer,
+    IIndexingCoordinator coordinator,
     IGraphStore store,
     Contracts.Embeddings.IEmbeddingProvider embeddingProvider,
     IDuckDBConnectionFactory connectionFactory,
@@ -28,7 +28,7 @@ internal sealed class InitialIndexingBarrier(
     {
         try
         {
-            await indexer.WaitForIdle(stoppingToken).ConfigureAwait(false);
+            await coordinator.WaitForIdleAsync(stoppingToken).ConfigureAwait(false);
             try
             {
                 if (store is DuckDbGraphStore duck)

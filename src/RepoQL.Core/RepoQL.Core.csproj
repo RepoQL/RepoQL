@@ -14,6 +14,7 @@
     <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
     <ProjectReference Include="..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
     <ProjectReference Include="..\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
+    <ProjectReference Include="..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Mermaid\RepoQL.Formats.Mermaid.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />

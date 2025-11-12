@@ -56,13 +56,14 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
-        <ProjectReference Include="..\RepoQL.Protocol\RepoQL.Protocol.csproj" />
-        <ProjectReference Include="..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
-        <ProjectReference Include="..\RepoQL.Core\RepoQL.Core.csproj" />
-        <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
-        <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
-    </ItemGroup>
+    <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\RepoQL.Protocol\RepoQL.Protocol.csproj" />
+    <ProjectReference Include="..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+    <ProjectReference Include="..\RepoQL.Core\RepoQL.Core.csproj" />
+    <ProjectReference Include="..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
+    <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
+    <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
+  </ItemGroup>
 
     
     

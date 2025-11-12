@@ -9,6 +9,11 @@
 - **Idle/post‑index orchestration** (pruner → writer delete → vector refresh → multi‑file analyzers).
 - **State and telemetry** so callers can observe `Started`, `ClassificationBusy`, `AllIdle`, etc.
 
+## Host & Coordinator
+- **RepoqlHost** runs inside the application’s `IHostedService` loop. On startup it can run a full scan across every mounted file system and then subscribe to change notifications so incremental edits flow straight into the engine.
+- **IndexingCoordinator** is the in-process façade over `IndexingEngine`. It understands reindex phases, exposes pipeline status (busy/queued/in-progress per stage), and translates `WaitForPipeline` / `WaitForIdle` calls into the engine’s state bits.
+- **CompositeFileSystem** replaces the legacy `MultiFileSystem` and lets us stitch together the primary repo plus any number of virtual mounts (e.g., `github://` references) without URI prefixes leaking into the rest of the stack.
+
 ## Pipeline at a Glance
 | Stage | Responsibility | Key Types |
 | --- | --- | --- |

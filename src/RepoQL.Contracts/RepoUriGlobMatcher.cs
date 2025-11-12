@@ -75,7 +75,8 @@ public static class RepoUriGlobMatcher
         return new UriInfo(
             Absolute: normalized,
             BasePrefix: basePrefix,
-            SchemePrefix: schemePrefix);
+            SchemePrefix: schemePrefix,
+            HasLeadingSlash: hasLeadingSlash);
     }
 
     private static PatternInfo NormalizePattern(string value, string defaultScheme, UriInfo uriInfo, bool ignoreCase)
@@ -90,13 +91,7 @@ public static class RepoUriGlobMatcher
         }
         else
         {
-            var prefix = uriInfo.BasePrefix;
-            if (string.IsNullOrEmpty(prefix))
-            {
-                prefix = uriInfo.Absolute.Contains("://", StringComparison.Ordinal)
-                    ? defaultScheme
-                    : string.Empty;
-            }
+            var prefix = GetPrefixForPattern(uriInfo, defaultScheme, normalized);
 
             candidate = string.IsNullOrEmpty(prefix)
                 ? normalized.TrimStart('/')
@@ -107,6 +102,41 @@ public static class RepoUriGlobMatcher
         if (ignoreCase)
             candidate = candidate.ToLowerInvariant();
         return new PatternInfo(candidate);
+    }
+
+    private static string GetPrefixForPattern(UriInfo uriInfo, string defaultScheme, string normalizedPattern)
+    {
+        if (normalizedPattern.Length > 0 && IsWildcard(normalizedPattern[0]))
+        {
+            return BuildSchemeOnlyPrefix(uriInfo, defaultScheme);
+        }
+
+        var prefix = uriInfo.BasePrefix;
+        if (!string.IsNullOrEmpty(prefix))
+            return prefix;
+
+        return uriInfo.Absolute.Contains("://", StringComparison.Ordinal)
+            ? defaultScheme
+            : string.Empty;
+    }
+
+    private static bool IsWildcard(char c) => c is '*' or '?' or '[';
+
+    private static string BuildSchemeOnlyPrefix(UriInfo uriInfo, string defaultScheme)
+    {
+        var schemePrefix = string.IsNullOrEmpty(uriInfo.SchemePrefix)
+            ? defaultScheme
+            : NormalizeDefaultScheme(uriInfo.SchemePrefix);
+
+        if (string.IsNullOrEmpty(schemePrefix))
+            return string.Empty;
+
+        if (!uriInfo.HasLeadingSlash)
+            return schemePrefix;
+
+        return CollapseSlashes(schemePrefix.EndsWith("/")
+            ? schemePrefix + "/"
+            : schemePrefix + "/");
     }
 
     private static string NormalizeDefaultScheme(string value)
@@ -333,7 +363,7 @@ public static class RepoUriGlobMatcher
 
     private readonly record struct GlobCacheKey(string Pattern, bool IgnoreCase);
 
-    private readonly record struct UriInfo(string Absolute, string BasePrefix, string SchemePrefix);
+    private readonly record struct UriInfo(string Absolute, string BasePrefix, string SchemePrefix, bool HasLeadingSlash);
 
     private readonly record struct PatternInfo(string Pattern);
 }

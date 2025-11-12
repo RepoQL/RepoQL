@@ -66,6 +66,7 @@ public partial class IndexingEngine
         SingleWriter = false
     });
     private readonly Task _idleProcessingTask;
+    private readonly Dictionary<IndexingState, int> _activeStageCounts = new();
     private long _lastReleasedEpoch = long.MinValue;
     private IArtifactPruner ArtifactPruner { get; }
     private IVectorIndexCoordinator VectorCoordinator { get; }
@@ -171,6 +172,18 @@ public partial class IndexingEngine
 
     public WorkQueue<IndexItem> AnalysisQueue { get; }
 
+    internal WorkQueueSnapshot GetHotPathQueueSnapshot() => IndexerQueue.CaptureSnapshot();
+
+    internal WorkQueueSnapshot GetAnalysisQueueSnapshot() => AnalysisQueue.CaptureSnapshot();
+
+    internal int GetActiveCount(IndexingState busyFlag)
+    {
+        lock (_stateLock)
+        {
+            return _activeStageCounts.GetValueOrDefault(busyFlag, 0);
+        }
+    }
+
     public long BeginNewEpoch()
     {
         return _epochTracker.BeginNewEpoch();
@@ -191,7 +204,7 @@ public partial class IndexingEngine
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (item.Options.HasFlag(IndexItemOptions.OnlyIfNotExcluded) && Filter.IncludeFile(item.Uri))
+            if (item.Options.HasFlag(IndexItemOptions.OnlyIfNotExcluded) && !Filter.IncludeFile(item.Uri))
             {
                 RecordResult(PipelineResult.Filtered);
                 return;
@@ -327,10 +340,7 @@ public partial class IndexingEngine
             Queue<IndexItem>? backlog = null;
             lock (_analysisLock)
             {
-                if (_pendingAnalysis.TryGetValue(epoch, out backlog))
-                {
-                    _pendingAnalysis.Remove(epoch);
-                }
+                _pendingAnalysis.Remove(epoch, out backlog);
             }
 
             if (backlog is null || backlog.Count == 0)
@@ -472,6 +482,7 @@ public partial class IndexingEngine
             var state = State;
             if (isBusy)
             {
+                IncrementActiveCount(busyFlag);
                 state &= ~idleFlag;
                 state |= busyFlag;
             }
@@ -479,6 +490,7 @@ public partial class IndexingEngine
             {
                 state &= ~busyFlag;
                 state |= idleFlag;
+                DecrementActiveCount(busyFlag);
             }
 
             if ((state & BusyMask) != 0)
@@ -502,6 +514,31 @@ public partial class IndexingEngine
 
         toSignal?.TrySetResult(true);
         handler?.Invoke(this, new IndexingStateChangedEventArgs(oldState, newState));
+    }
+
+    private void IncrementActiveCount(IndexingState busyFlag)
+    {
+        if (!_activeStageCounts.TryGetValue(busyFlag, out var current))
+        {
+            _activeStageCounts[busyFlag] = 1;
+            return;
+        }
+
+        _activeStageCounts[busyFlag] = current + 1;
+    }
+
+    private void DecrementActiveCount(IndexingState busyFlag)
+    {
+        if (!_activeStageCounts.TryGetValue(busyFlag, out var current))
+            return;
+
+        if (current <= 1)
+        {
+            _activeStageCounts.Remove(busyFlag);
+            return;
+        }
+
+        _activeStageCounts[busyFlag] = current - 1;
     }
 
     private sealed class EpochTracker

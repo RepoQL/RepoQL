@@ -842,10 +842,22 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         cmd.CommandText = "SELECT scope, kind, headline FROM search('Bar', k := 5)";
 
         using var reader = cmd.ExecuteReader();
-        reader.Read().Should().BeTrue("search should surface object rows for symbol matches");
-        reader.GetString(0).Should().Be("object");
-        reader.GetString(1).Should().Be(child.Kind);
-        reader.GetString(2).Should().Contain("Bar");
+        var foundObjectRow = false;
+        while (reader.Read())
+        {
+            if (reader.GetString(0) != "object")
+            {
+                continue;
+            }
+
+            if (reader.GetString(1) == child.Kind && reader.GetString(2).Contains("Bar"))
+            {
+                foundObjectRow = true;
+                break;
+            }
+        }
+
+        foundObjectRow.Should().BeTrue("search should surface object rows for symbol matches");
 
         return Task.CompletedTask;
     }

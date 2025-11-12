@@ -1,19 +1,18 @@
+using System.Linq;
 using Grpc.Health.V1;
 using Grpc.HealthCheck;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using RepoQL.Core;
+using RepoQL.Indexing.Hosting;
 
 namespace RepoQL.ConsoleApp.Host;
 
 internal sealed class PipelineHealthPublisher(
-    IRepositoryIndexer indexer,
+    IIndexingCoordinator coordinator,
     HealthServiceImpl health,
     ILogger<PipelineHealthPublisher>? logger = null) : BackgroundService
 {
-    private readonly IRepositoryIndexer _indexer = indexer;
-    private readonly HealthServiceImpl _health = health;
     private readonly ILogger<PipelineHealthPublisher> _logger = logger ?? NullLogger<PipelineHealthPublisher>.Instance;
     private readonly Dictionary<string, HealthCheckResponse.Types.ServingStatus> _lastStatus = new(StringComparer.Ordinal);
 
@@ -21,11 +20,11 @@ internal sealed class PipelineHealthPublisher(
     {
         try
         {
-            PublishSnapshot(_indexer.GetPipelineSnapshot());
+            PublishSnapshot(coordinator.GetPipelineStatus());
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
             {
-                PublishSnapshot(_indexer.GetPipelineSnapshot());
+                PublishSnapshot(coordinator.GetPipelineStatus());
             }
         }
         catch (OperationCanceledException)
@@ -37,14 +36,28 @@ internal sealed class PipelineHealthPublisher(
         }
     }
 
-    private void PublishSnapshot(PipelineSnapshot snapshot)
+    private void PublishSnapshot(PipelineStatusSnapshot snapshot)
     {
-        SetStatus("repoql.discovery", snapshot.Discovery.IsIdle);
-        SetStatus("repoql.parsing", snapshot.Parsing.IsIdle);
-        SetStatus("repoql.analysis", snapshot.Analysis.IsIdle);
+        var byStage = snapshot.Stages.ToDictionary(s => s.Stage, s => s);
+        SetStatus("repoql.discovery", IsStageIdle(byStage, CoordinatorPipelineStage.Discovery));
+        SetStatus("repoql.parsing", IsStageIdle(byStage, CoordinatorPipelineStage.Parsing));
+        SetStatus("repoql.analysis", IsStageIdle(byStage, CoordinatorPipelineStage.Analysis));
+        SetStatus("repoql.writer", IsStageIdle(byStage, CoordinatorPipelineStage.Writer));
         SetStatus("repoql.reindex", !snapshot.IsReindexing);
-        SetStatus("repoql.ready", snapshot.Ready);
+        var allIdle = byStage.Values.All(IsIdleStatus) && !snapshot.IsReindexing && !snapshot.WriterPending;
+        SetStatus("repoql.ready", allIdle);
     }
+
+    private static bool IsStageIdle(IReadOnlyDictionary<CoordinatorPipelineStage, PipelineStageStatusSnapshot> lookup, CoordinatorPipelineStage stage)
+        => !lookup.TryGetValue(stage, out var status) || IsIdleStatus(status);
+
+    private static bool IsIdleStatus(PipelineStageStatusSnapshot status)
+        => status is
+        {
+            Busy: false, 
+            Queued: 0, 
+            InProgress: 0
+        };
 
     private void SetStatus(string service, bool serving)
     {
@@ -52,6 +65,6 @@ internal sealed class PipelineHealthPublisher(
         if (_lastStatus.TryGetValue(service, out var current) && current == status)
             return;
         _lastStatus[service] = status;
-        _health.SetStatus(service, status);
+        health.SetStatus(service, status);
     }
 }
