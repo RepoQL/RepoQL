@@ -50,6 +50,10 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
                 { "item.media_type", item.RawArtifact.ProvisionalMediaType.Value?.ToString() }
             });
             cancellationToken.ThrowIfCancellationRequested();
+            if (Logger.IsEnabled(LogLevel.Trace))
+            {
+                Logger.LogTrace("[{Phase}] Starting processors for {Uri}", Name, item.Uri);
+            }
 
             if (_processors.Count == 0)
                 return PipelineResult.Success;
@@ -71,6 +75,10 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
         finally
         {
             ItemsInFlight.Add(-1);
+            if (Logger.IsEnabled(LogLevel.Trace))
+            {
+                Logger.LogTrace("[{Phase}] Completed processors for {Uri}", Name, item.Uri);
+            }
         }
     }
 
@@ -82,10 +90,33 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
         cancellationToken.ThrowIfCancellationRequested();
 
         var processor = _processors[index];
-        return processor.ProcessAsync(
-            item,
-            nextItem => InvokeProcessorAsync(index + 1, nextItem, cancellationToken),
-            cancellationToken);
+        var processorName = processor.GetType().Name;
+        if (Logger.IsEnabled(LogLevel.Trace))
+        {
+            Logger.LogTrace("[{Phase}] Executing {Processor} for {Uri}", Name, processorName, item.Uri);
+        }
+
+        async Task<(TResult? Result, PipelineResult PipelineStatus)> RunAsync()
+        {
+            var output = await processor.ProcessAsync(
+                item,
+                nextItem => InvokeProcessorAsync(index + 1, nextItem, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+
+            if (Logger.IsEnabled(LogLevel.Trace))
+            {
+                Logger.LogTrace(
+                    "[{Phase}] {Processor} finished for {Uri} (Status={Status})",
+                    Name,
+                    processorName,
+                    item.Uri,
+                    output.PipelineStatus);
+            }
+
+            return output;
+        }
+
+        return RunAsync();
     }
 
     private static IReadOnlyList<IAsyncPipeline<TInput, TResult>> CreateProcessorList(IEnumerable<IAsyncPipeline<TInput, TResult>> processors)

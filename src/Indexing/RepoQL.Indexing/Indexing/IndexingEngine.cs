@@ -43,6 +43,8 @@ public partial class IndexingEngine
     public SingleFileAnalysisPipeline SingleFileAnalyzer { get; }
     public MultiFileAnalysisPipeline MultiFileAnalyzer { get; }
     public IndexRebuildPipeline IndexRebuilder { get; }
+    private long _totalPrunedCount;
+    private long _lastPrunedCount;
 
     private IndexingEngineOptions Options { get; }
     private ILogger<IndexingEngine> Logger { get; }
@@ -348,6 +350,12 @@ public partial class IndexingEngine
 
             var pendingItems = backlog.ToArray();
             var pruningResult = await ArtifactPruner.PruneAsync(pendingItems, Shutdown.Token).ConfigureAwait(false);
+            var prunedCount = pruningResult.DeletedArtifacts.Count;
+            Interlocked.Exchange(ref _lastPrunedCount, prunedCount);
+            if (prunedCount > 0)
+            {
+                Interlocked.Add(ref _totalPrunedCount, prunedCount);
+            }
 
             if (pruningResult.DeletedArtifacts.Count > 0)
             {
@@ -514,6 +522,15 @@ public partial class IndexingEngine
 
         toSignal?.TrySetResult(true);
         handler?.Invoke(this, new IndexingStateChangedEventArgs(oldState, newState));
+    }
+
+    public readonly record struct PruningStatistics(long TotalPruned, long LastBatchPruned);
+
+    public PruningStatistics GetPruningStatistics()
+    {
+        return new PruningStatistics(
+            Interlocked.Read(ref _totalPrunedCount),
+            Interlocked.Read(ref _lastPrunedCount));
     }
 
     private void IncrementActiveCount(IndexingState busyFlag)
