@@ -1,5 +1,7 @@
 # RepoQL Indexing Process
 
+> **Note:** The former `RepositoryIndexer` host has been superseded by the `RepoqlHost` + `IndexingCoordinator` + `IndexingEngine` stack. References to `RepositoryIndexer` in this document describe the overall pipeline now implemented by those components.
+
 ## Overview
 
 The RepoQL indexing process transforms files from a repository into a queryable graph database. This document provides an in-depth explanation of how the indexing pipeline works, its stages, components, and optimization strategies.

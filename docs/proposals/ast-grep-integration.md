@@ -1,5 +1,7 @@
 # Proposal: Ast-grep Integration for RepoQL Enrichment
 
+> **Note:** At the time this was written the `RepositoryIndexer` host owned the enrichment pipeline. Those responsibilities now live in the `RepoqlHost` + `IndexingCoordinator` + `IndexingEngine` stack.
+
 ## Summary
 RepoQL should ingest ast-grep findings during enrichment so repositories can define structural linting rules that surface alongside existing annotations. We will execute ast-grep through the CLI (the recommended integration point) while auto-detecting repositories that already maintain `sgconfig.yml`. The design keeps RepoQL’s batch pipeline intact, allows future adoption of the ast-grep LSP or Rust APIs, and positions us to reuse the same infrastructure for other structural tools.
 

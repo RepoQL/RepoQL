@@ -3,32 +3,112 @@ using RepoQL.Contracts;
 
 namespace RepoQL.Indexing.Indexing.State;
 
+/// <summary>
+/// Contract for document catalog operations.
+/// </summary>
 public interface IDocumentCatalog
 {
+    /// <summary>
+    /// Hydrates catalog from storage. Safe to call multiple times (idempotent).
+    /// </summary>
     Task EnsureInitializedAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Determines if file needs indexing based on digest comparison.
+    /// </summary>
+    /// <returns>
+    /// <see cref="DocumentCatalogDecision.SkipUpToDate"/> if digest matches committed state,
+    /// <see cref="DocumentCatalogDecision.Reindex"/> if digest differs,
+    /// <see cref="DocumentCatalogDecision.Unknown"/> if file never indexed.
+    /// </returns>
     DocumentCatalogEvaluation Evaluate(RepoUri uri, string digestHex);
+
+    /// <summary>
+    /// Registers file as pending processing. Prevents duplicate work if same file
+    /// enqueued twice before commit completes.
+    /// </summary>
     void BeginProcessing(RepoUri uri, string digestHex);
+
+    /// <summary>
+    /// Clears pending state. Called when processing completes (success or error).
+    /// </summary>
     void CompleteProcessing(RepoUri uri);
+
+    /// <summary>
+    /// Updates catalog with committed entry. MUST only be called from OnCommitted callback
+    /// after database write succeeds. Clears pending state.
+    /// </summary>
     void ApplyUpsert(DocumentCatalogEntry entry);
+
+    /// <summary>
+    /// Removes entry from catalog. MUST only be called from OnCommitted callback
+    /// after database delete succeeds. Clears pending state.
+    /// </summary>
     void ApplyDelete(RepoUri uri);
 }
 
+/// <summary>
+/// Result of <see cref="IDocumentCatalog.Evaluate"/> operation.
+/// </summary>
 public readonly record struct DocumentCatalogEvaluation(
     DocumentCatalogDecision Decision,
     DocumentCatalogEntry? Existing);
 
+/// <summary>
+/// Three-state decision model for catalog evaluation.
+/// </summary>
 public enum DocumentCatalogDecision
 {
+    /// <summary>File never indexed before.</summary>
     Unknown,
+
+    /// <summary>Digest matches committed state - no work needed.</summary>
     SkipUpToDate,
+
+    /// <summary>Digest differs from committed state - reindex required.</summary>
     Reindex
 }
 
 /// <summary>
-/// In-memory index of committed documents. Hydrates from storage on demand, supports
-/// change detection for incremental indexing, and will be extended to persist snapshots
-/// once warm-start latency becomes a concern.
+/// In-memory index of committed documents. Enables incremental indexing through
+/// digest-based change detection.
 /// </summary>
+/// <remarks>
+/// <para><strong>Incremental Indexing</strong></para>
+/// <para>
+/// Stores digest (xxHash64) for each committed document. On next indexing pass,
+/// compares new digest with stored value. If match → skip. If differ → reindex.
+/// </para>
+///
+/// <para><strong>Pending Digests</strong></para>
+/// <para>
+/// Tracks files currently being processed via <see cref="BeginProcessing"/>.
+/// If same file enqueued twice with same digest before first completes,
+/// second <see cref="Evaluate"/> returns <see cref="DocumentCatalogDecision.SkipUpToDate"/>
+/// immediately (prevents duplicate work).
+/// </para>
+///
+/// <para><strong>Update Protocol</strong></para>
+/// <list type="number">
+/// <item><description>Call <see cref="Evaluate"/> to check if work needed</description></item>
+/// <item><description>If Reindex or Unknown, call <see cref="BeginProcessing"/></description></item>
+/// <item><description>Process item through pipeline</description></item>
+/// <item><description>In WriteOperation.OnCommitted callback, call <see cref="ApplyUpsert"/></description></item>
+/// </list>
+/// <para>
+/// This ensures catalog reflects committed state (not in-progress state).
+/// </para>
+///
+/// <para><strong>Thread Safety</strong></para>
+/// <para>
+/// Uses <see cref="ConcurrentDictionary{TKey,TValue}"/> for thread-safe reads and updates.
+/// </para>
+///
+/// <para><strong>Future: Persistence</strong></para>
+/// <para>
+/// Currently hydrates from database on startup. Future: Persist snapshots to disk for faster cold start.
+/// </para>
+/// </remarks>
 public sealed class DocumentCatalog(IDocumentCatalogDataSource dataSource) : IDocumentCatalog
 {
     private readonly IDocumentCatalogDataSource _dataSource = dataSource;

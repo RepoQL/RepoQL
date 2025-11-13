@@ -19,11 +19,13 @@ using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.Classification;
 using RepoQL.FileSystem.Embedded;
 using RepoQL.FileSystem.Physical;
+using RepoQL.Documentation;
 using RepoQL.Formats.DotNet;
 using RepoQL.Formats.GraphQL;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
 using RepoQL.Indexing.FileSystems;
+using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
 using RepoQL.Indexing.Indexing;
 using RepoQL.Indexing.Indexing.Commit;
@@ -72,14 +74,25 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IUriFilter>(_ => new RepoGitIgnoreFilter(resolvedRoot, [dbRelPath]));
         services.AddSingleton<IHasher, XxHasher>();
 
-        services.AddSingleton(sp =>
+        services.AddSingleton<DocumentationFileSystem>();
+        services.AddSingleton<CompositeFileSystemMount>(sp => new CompositeFileSystemMount
         {
-            var primary = CompositeFileSystemMount.CreatePrimary(sp.GetRequiredService<PhysicalFileSystem>(), "primary");
-            var mounts = sp.GetServices<CompositeFileSystemMount>()
-                .Where(m => !m.IsPrimary)
-                .ToArray();
-            return new CompositeFileSystem(primary, mounts);
+            Id = "docs",
+            FileSystem = sp.GetRequiredService<DocumentationFileSystem>(),
+            IncludeInEnumeration = true,
+            EnableWatching = false,
+            UriPredicate = uri => string.Equals(uri.Scheme, DocumentationFileSystem.Scheme, StringComparison.OrdinalIgnoreCase)
         });
+
+        services.AddSingleton<ICompositeFileSystemManager>(sp =>
+        {
+            var primary = sp.GetRequiredService<PhysicalFileSystem>();
+            var mounts = sp.GetServices<CompositeFileSystemMount>();
+            var managerLogger = sp.GetService<ILogger<CompositeFileSystemManager>>();
+            var compositeLogger = sp.GetService<ILogger<CompositeFileSystem>>();
+            return new CompositeFileSystemManager(primary, mounts, managerLogger, compositeLogger);
+        });
+        services.AddSingleton(sp => sp.GetRequiredService<ICompositeFileSystemManager>().FileSystem);
         services.AddSingleton<IMultiFileSystem>(sp => sp.GetRequiredService<CompositeFileSystem>());
 
         // DuckDB connection string uses the repo root + the repo-relative DB path
@@ -366,6 +379,9 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<IndexingEngine>(),
             sp.GetRequiredService<IDatabaseWriter>(),
             sp.GetService<ILogger<IndexingCoordinator>>()));
+
+        services.AddSingleton<IVirtualFileSystemImporter, GithubRepositoryImporter>();
+        services.AddSingleton<IFileSystemImportService, FileSystemImportService>();
         services.AddHostedService<RepoqlHost>();
 
         return services;
@@ -376,16 +392,31 @@ public static class RepoIndexerServiceCollectionExtensions
     /// </summary>
     /// <param name="services">Service collection.</param>
     /// <param name="assembly">Assembly containing embedded resources.</param>
-    public static IServiceCollection AddEmbedStore(this IServiceCollection services, Assembly assembly)
+    /// <param name="scheme">Optional custom scheme for the mount (defaults to <c>embed</c>).</param>
+    /// <param name="mountId">Optional mount identifier.</param>
+    /// <param name="includeInEnumeration">Whether to enumerate resources from this mount.</param>
+    /// <param name="enableWatching">Whether file watching should be enabled.</param>
+    public static IServiceCollection AddEmbedStore(
+        this IServiceCollection services,
+        Assembly assembly,
+        string? scheme = null,
+        string? mountId = null,
+        bool includeInEnumeration = true,
+        bool enableWatching = false)
     {
-        var store = new EmbeddedStore(assembly);
+        ArgumentNullException.ThrowIfNull(assembly);
+        var store = new EmbeddedStore(assembly, scheme);
         services.AddSingleton<IVirtualFileSystem>(store);
-        var mountId = $"embed:{assembly.GetName().Name}".ToLowerInvariant();
+        var resolvedId = string.IsNullOrWhiteSpace(mountId)
+            ? $"embed:{assembly.GetName().Name}".ToLowerInvariant()
+            : mountId;
         services.AddSingleton(new CompositeFileSystemMount
         {
-            Id = mountId,
+            Id = resolvedId,
             FileSystem = store,
-            IncludeInEnumeration = true
+            IncludeInEnumeration = includeInEnumeration,
+            EnableWatching = enableWatching,
+            UriPredicate = uri => string.Equals(uri.Scheme, store.Scheme, StringComparison.OrdinalIgnoreCase)
         });
         return services;
     }

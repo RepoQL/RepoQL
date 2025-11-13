@@ -8,9 +8,39 @@ using RepoQL.Indexing.Indexing.State;
 namespace RepoQL.Indexing.Indexing.Pipelines;
 
 /// <summary>
-/// A single flow object that accumulates state as it moves through the indexing pipeline.
-/// Only the active stage mutates its fields. Enables easier testing and observability.
+/// Flow object that accumulates state as it moves through the indexing pipeline.
+/// Represents a single file's journey from discovery to committed graph structure.
 /// </summary>
+/// <remarks>
+/// <para><strong>Flow Object Pattern</strong></para>
+/// <para>
+/// Unlike functional pipelines where immutable data passes between stages, IndexItem is
+/// mutable and carries all state forward. Each stage adds information:
+/// </para>
+/// <list type="bullet">
+/// <item><description>Classification: Sets <see cref="MediaType"/></description></item>
+/// <item><description>Parsing: Sets <see cref="Records"/> (graph structure)</description></item>
+/// <item><description>Analysis: Adds to <see cref="AnnotationsList"/> (lint warnings, etc.)</description></item>
+/// <item><description>Commit: Persists to database</description></item>
+/// </list>
+///
+/// <para><strong>Lifecycle</strong></para>
+/// <para>
+/// Created in <c>IndexingEngine.EnqueueItemAsync</c>, stamped with epoch number, flows through
+/// hot-path stages sequentially (within a single worker thread), then scheduled for idle processing.
+/// </para>
+///
+/// <para><strong>Property Bag</strong></para>
+/// <para>
+/// Implements <c>IDictionary&lt;string, object&gt;</c> for processors to attach custom data.
+/// Use <see cref="Get{T}"/> to retrieve typed values.
+/// </para>
+///
+/// <para><strong>Thread Safety</strong></para>
+/// <para>
+/// Not thread-safe. Single worker processes each item through all hot-path stages sequentially.
+/// </para>
+/// </remarks>
 [SuppressMessage("Naming", "CA1710:Identifiers should have correct suffix")]
 public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options) : IAnnotatedArtifact
 {

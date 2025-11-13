@@ -7,6 +7,35 @@ using RepoQL.Indexing.Extensions;
 
 namespace RepoQL.Indexing;
 
+/// <summary>
+/// Wraps <see cref="IFileInfo"/> with lazy digest computation and provisional media type.
+/// Represents a file discovered by <see cref="RepoqlHost"/> before classification.
+/// </summary>
+/// <remarks>
+/// <para><strong>Lazy Digest</strong></para>
+/// <para>
+/// <see cref="Digest"/> is <see cref="AsyncLazy{T}"/>. Content hash (xxHash64) computed
+/// only when accessed. Avoids hashing files that will be filtered out or skipped by catalog.
+/// </para>
+///
+/// <para><strong>Provisional Media Type</strong></para>
+/// <para>
+/// <see cref="ProvisionalMediaType"/> guessed from file extension before classification runs.
+/// Used as fallback if classifiers return null. Stored in <see cref="Lazy{T}"/> for efficient access.
+/// </para>
+///
+/// <para><strong>RepoUri</strong></para>
+/// <para>
+/// <see cref="Uri"/> computed from <see cref="FileSystem"/> and <paramref name="file"/> path.
+/// Represents canonical identifier for this file across the repository.
+/// </para>
+///
+/// <para><strong>Lifecycle</strong></para>
+/// <para>
+/// Created by <see cref="RepoqlHost"/> for each discovered file. Wrapped in <see cref="IndexItem"/>
+/// and flows through pipeline. Digest accessed during catalog check in <see cref="IndexingEngine.IndexItemAsync"/>.
+/// </para>
+/// </remarks>
 public class RawArtifact(IFileInfo file, IVirtualFileSystem sourceFileSystem) : IFileInfo
 {
     private static async ValueTask<byte[]> HashAsync(IFileInfo file, CancellationToken ct)

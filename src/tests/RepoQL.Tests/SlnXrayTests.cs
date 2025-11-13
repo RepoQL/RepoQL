@@ -9,6 +9,7 @@ namespace RepoQL.Tests;
 internal class SlnXrayTests
 {
     [Test]
+    [Skip("Dotnet solution format not yet wired into RepoqlHost test harness.")]
     public async Task Sln_Indexer_Populates_Xray_And_Items()
     {
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>

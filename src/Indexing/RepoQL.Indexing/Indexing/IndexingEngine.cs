@@ -18,14 +18,81 @@ using RepoQL.Indexing.Indexing.State;
 
 namespace RepoQL.Indexing.Indexing;
 
+/// <summary>
+/// Configuration options for <see cref="IndexingEngine"/>.
+/// </summary>
 public class IndexingEngineOptions
 {
+    /// <summary>
+    /// Number of concurrent workers for hot-path processing (Classification → Parsing → Analysis → Commit).
+    /// Default: <see cref="Environment.ProcessorCount"/>.
+    /// </summary>
     public int IndexingWorkers { get; init; } = Environment.ProcessorCount;
+
+    /// <summary>
+    /// Maximum capacity of the hot-path work queue. Backpressure applied when full.
+    /// Default: 10,000 items.
+    /// </summary>
     public int IndexingQueueSize {  get; init; } = 10_000;
+
+    /// <summary>
+    /// Number of concurrent workers for idle processing (Multi-file Analysis, Index Rebuild).
+    /// Default: <see cref="Environment.ProcessorCount"/>.
+    /// </summary>
     public int AnalysisWorkers { get; init; } = Environment.ProcessorCount;
+
+    /// <summary>
+    /// Maximum capacity of the idle-processing work queue. Larger than hot-path because
+    /// multi-file operations can spawn many items per batch.
+    /// Default: 100,000 items.
+    /// </summary>
     public int AnalysisQueueSize {  get; init; } = 100_000;
 }
 
+/// <summary>
+/// Core indexing pipeline orchestrator. Transforms repository files into queryable graph database
+/// through staged discovery: Classification → Parsing → Analysis → Commit.
+/// </summary>
+/// <remarks>
+/// <para><strong>Architecture Pattern: Flow Object</strong></para>
+/// <para>
+/// Each file is wrapped in an <see cref="IndexItem"/> that accumulates state through pipeline stages.
+/// Unlike functional pipelines with immutable transformations, the same object is mutated by each stage,
+/// making the entire journey visible for debugging and testing.
+/// </para>
+///
+/// <para><strong>Epoch-Based Batch Coordination</strong></para>
+/// <para>
+/// Files enqueued together receive the same epoch number. When the last item in an epoch completes
+/// and the hot path is idle, the <see cref="HotPathIdle"/> event fires, triggering batch post-processing
+/// (pruning, vector refresh, multi-file analysis).
+/// </para>
+///
+/// <para><strong>Threading Model</strong></para>
+/// <list type="bullet">
+/// <item><description>Hot path: Concurrent (ProcessorCount workers)</description></item>
+/// <item><description>Database writer: Serial (1 worker - DuckDB write safety)</description></item>
+/// <item><description>Idle processing: Concurrent (ProcessorCount workers)</description></item>
+/// </list>
+///
+/// <para><strong>State Observability</strong></para>
+/// <para>
+/// Fine-grained <see cref="IndexingState"/> flags track busy/idle per stage. External systems can
+/// wait for specific states via <see cref="WaitForAsync"/>. <see cref="StateChanged"/> event fires
+/// on every transition.
+/// </para>
+///
+/// <para><strong>Key Invariants</strong></para>
+/// <list type="number">
+/// <item><description>Database writer is ALWAYS single-threaded</description></item>
+/// <item><description>DocumentCatalog updates ONLY via OnCommitted callbacks</description></item>
+/// <item><description>Epochs are monotonically increasing (never reused)</description></item>
+/// <item><description>Pruner runs BEFORE vector refresh</description></item>
+/// <item><description>Analysis sees ONLY committed graph state</description></item>
+/// </list>
+///
+/// <para>See docs/ARCHITECTURE.md for design rationale and docs/JOURNEY.md for complete file flow example.</para>
+/// </remarks>
 public partial class IndexingEngine
 {
     private const string TelemetrySourceName = "RepoQL.Indexing";

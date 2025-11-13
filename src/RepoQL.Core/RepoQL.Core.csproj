@@ -21,6 +21,7 @@
     <ProjectReference Include="..\Formats\RepoQL.Formats.GraphQL\RepoQL.Formats.GraphQL.csproj" />
     <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
     <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
+    <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
   </ItemGroup>
 
   <ItemGroup>

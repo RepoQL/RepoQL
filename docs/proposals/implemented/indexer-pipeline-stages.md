@@ -1,5 +1,7 @@
 # Proposal: Accurate Pipeline Status and Readiness (Simple)
 
+> **Note:** `RepositoryIndexer` in this proposal refers to the legacy host. `RepoqlHost` + `IndexingCoordinator` now expose the readiness/stage information described here.
+
 ## Problem
 - `RepoQL.Core/RepositoryIndexer.cs:419` exposes `ClassificationQueueDepth` but returns the enrichment queue depth. Observers (CLI, health, tests) misread pipeline state, and the true classification backlog is hidden.
 - gRPC `ReindexAll` (`RepoQL.ConsoleApp/Host/RepoQlServiceImpl.cs`) streams these depths as “Completed” and does not await writes, so progress appears inconsistent and backpressure/errors are lost.

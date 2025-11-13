@@ -12,7 +12,6 @@ using OpenTelemetry.Trace;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Core;
-using RepoQL.Documentation;
 using RepoQL.Protocol;
 using Spectre.Console;
 using ConsoleAppFramework;
@@ -53,7 +52,6 @@ internal class HostCommands(IAnsiConsole console)
         });
         builder.WebHost.ConfigureKestrel(options => { GrpcServerHelper.ConfigureUnixSocket(options, repo); });
         builder.Services.AddRepoIndexer(repo);
-        builder.Services.AddEmbedStore(typeof(DocumentationMarker).Assembly);
         builder.Services.AddGrpc();
         builder.Services.AddSingleton<HostMetrics>();
         builder.Services.AddHostedService<IdleShutdownHostedService>();
@@ -98,4 +96,5 @@ internal class HostCommands(IAnsiConsole console)
 
         console.MarkupLine("[green]Repopulation complete[/]");
     }
+
 }

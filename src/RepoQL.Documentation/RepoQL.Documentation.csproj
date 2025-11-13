@@ -11,4 +11,8 @@
         <EmbeddedResource Include="**\*.md" />
     </ItemGroup>
     
+    <ItemGroup>
+        <ProjectReference Include="..\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
+    </ItemGroup>
+    
 </Project>

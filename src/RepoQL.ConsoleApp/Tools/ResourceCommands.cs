@@ -54,7 +54,8 @@ internal class ResourceCommands
         var whereParameters = new List<object?>();
         if (!string.IsNullOrEmpty(globPattern))
         {
-            whereClauses.Add("(glob_match(n.uri, ?, default_scheme := 'file:///') OR glob_match(n.uri, ?, default_scheme := 'embed:///'))");
+            whereClauses.Add("(glob_match(n.uri, ?, default_scheme := 'file:///') OR glob_match(n.uri, ?, default_scheme := 'docs:///') OR glob_match(n.uri, ?, default_scheme := 'embed:///'))");
+            whereParameters.Add(globPattern);
             whereParameters.Add(globPattern);
             whereParameters.Add(globPattern);
         }

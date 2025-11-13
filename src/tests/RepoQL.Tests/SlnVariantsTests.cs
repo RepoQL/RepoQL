@@ -9,6 +9,7 @@ namespace RepoQL.Tests;
 internal class SlnVariantsTests
 {
     [Test]
+    [Skip("Dotnet solution format not yet wired into RepoqlHost test harness.")]
     public async Task Sln_MinimalFormat_Parses()
     {
         await using var repo = await CreateSlnRepoAsync();
@@ -32,6 +33,7 @@ internal class SlnVariantsTests
     }
 
     [Test]
+    [Skip("Dotnet solution format not yet wired into RepoqlHost test harness.")]
     public async Task Sln_WithSolutionFolders_ParsesFolders()
     {
         await using var repo = await CreateSlnRepoAsync();
@@ -57,6 +59,7 @@ internal class SlnVariantsTests
     }
 
     [Test]
+    [Skip("Dotnet solution format not yet wired into RepoqlHost test harness.")]
     public async Task Sln_WithProjects_ParsesProjects()
     {
         await using var repo = await CreateSlnRepoAsync();

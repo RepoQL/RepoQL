@@ -1,5 +1,7 @@
 # Idle Processing
 
+> **Note:** References to `RepositoryIndexer` describe the legacy host component. The functionality now lives in `RepoqlHost` and `IndexingCoordinator`, which expose the same idle-processing behaviors.
+
 This document covers the idle-window batch processing that runs when the hot path is quiet.
 
 ## Idle Detection

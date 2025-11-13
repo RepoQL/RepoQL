@@ -11,6 +11,12 @@ namespace RepoQL.Indexing.FileSystems;
 /// <summary>
 /// Indexing-focused composite over multiple <see cref="IVirtualFileSystem"/> instances. Supports per-mount URI
 /// matching so that multiple stores may share the same scheme (e.g., multiple <c>github://</c> repos).
+/// <para>
+/// The type itself is intentionally stateful but dumb: it knows how to route URIs, enumerate files, and fan-out
+/// watchers. Mount lifecycle is coordinated by <see cref="ICompositeFileSystemManager"/>, which owns a single
+/// instance of this composite and calls into <see cref="AddOrUpdateMount"/> / <see cref="RemoveMount"/> when the
+/// application adds default mounts (repo root, docs://) or dynamic imports (e.g., github://&lt;repo&gt;).
+/// </para>
 /// </summary>
 public sealed class CompositeFileSystem : IMultiFileSystem
 {
@@ -43,14 +49,20 @@ public sealed class CompositeFileSystem : IMultiFileSystem
         }
     }
 
-    /// <summary>Adds or replaces a mount.</summary>
+    /// <summary>
+    /// Adds or replaces a mount. Called by the manager whenever the application wires in a new virtual filesystem
+    /// (docs, imports, embedded fixtures, etc.) so enumeration/watching immediately reflect the latest view.
+    /// </summary>
     public void AddOrUpdateMount(CompositeFileSystemMount mount)
     {
         ArgumentNullException.ThrowIfNull(mount);
         AddOrUpdateMountInternal(mount);
     }
 
-    /// <summary>Removes a mount by id. Primary mounts cannot be removed.</summary>
+    /// <summary>
+    /// Removes a mount by id. Primary mounts cannot be removed because the engine must always have a default
+    /// repository file system to fall back to.
+    /// </summary>
     public bool RemoveMount(string id)
     {
         if (string.IsNullOrWhiteSpace(id))
@@ -131,7 +143,13 @@ public sealed class CompositeFileSystem : IMultiFileSystem
                 _mountsById.Remove(mount.Id);
             }
 
-            var registration = new MountRegistration(mount.Id, mount.FileSystem, predicate, mount.IncludeInEnumeration, mount.IsPrimary);
+            var registration = new MountRegistration(
+                mount.Id,
+                mount.FileSystem,
+                predicate,
+                mount.IncludeInEnumeration,
+                mount.IsPrimary,
+                mount.EnableWatching);
             _mountsById[mount.Id] = registration;
 
             if (registration.IsPrimary)
@@ -148,6 +166,9 @@ public sealed class CompositeFileSystem : IMultiFileSystem
         }
     }
 
+    /// <summary>
+    /// Attempts to map the provided <see cref="RepoUri"/> to a mounted <see cref="IVirtualFileSystem"/>.
+    /// </summary>
     public bool TryResolve(RepoUri uri, [MaybeNullWhen(false)] out IVirtualFileSystem fileSystem)
     {
         ArgumentNullException.ThrowIfNull(uri);
@@ -181,16 +202,21 @@ public sealed class CompositeFileSystem : IMultiFileSystem
         }
     }
 
+    /// <summary>Immutable snapshot describing a registered mount.</summary>
     private sealed record MountRegistration(
         string Id,
         IVirtualFileSystem FileSystem,
         Func<RepoUri, bool> Matcher,
         bool IncludeInEnumeration,
-        bool IsPrimary)
+        bool IsPrimary,
+        bool EnableWatching)
     {
         public bool Matches(RepoUri uri) => Matcher(uri);
     }
 
+    /// <summary>
+    /// Fan-out watcher that subscribes to each mounted file system and forwards change notifications up to the host.
+    /// </summary>
     private sealed class CompositeWatcher : FileSystemWatcherBase
     {
         private readonly CompositeFileSystem _owner;
@@ -206,6 +232,9 @@ public sealed class CompositeFileSystem : IMultiFileSystem
             var mounts = _owner.GetMountSnapshot();
             foreach (var mount in mounts)
             {
+                if (!mount.EnableWatching)
+                    continue;
+
                 var watcher = mount.FileSystem.Watch();
                 var subscription = watcher.Subscribe(new Forwarder(this));
                 _subscriptions.Add((watcher, subscription));
@@ -238,6 +267,7 @@ public sealed class CompositeFileSystem : IMultiFileSystem
             _subscriptions.Clear();
         }
 
+        /// <summary>Simple observer bridge that relays mount-specific watcher events to the composite watcher.</summary>
         private sealed class Forwarder(CompositeWatcher owner) : IObserver<ResourceChange>
         {
             public void OnCompleted() { }

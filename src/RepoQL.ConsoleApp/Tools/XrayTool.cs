@@ -180,7 +180,8 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 		{
 			// Strip fragment from pattern for document filtering (fragments are used later in snippet())
 			var patternWithoutFragment = StripFragment(globPattern);
-			whereClauses.Add("(glob_match(n.uri, ?, default_scheme := 'file:///') OR glob_match(n.uri, ?, default_scheme := 'embed:///'))");
+			whereClauses.Add("(glob_match(n.uri, ?, default_scheme := 'file:///') OR glob_match(n.uri, ?, default_scheme := 'docs:///') OR glob_match(n.uri, ?, default_scheme := 'embed:///'))");
+			whereParameters.Add(patternWithoutFragment);
 			whereParameters.Add(patternWithoutFragment);
 			whereParameters.Add(patternWithoutFragment);
 		}

@@ -1,68 +1,220 @@
 # RepoQL.Indexing
 
-## Overview
-`RepoQL.Indexing` is the hot‑path service that turns raw repository artifacts into the graph, embeddings, and repo index rows that drive `search()` / `related()` queries. It owns:
+**Transform repository files into queryable graph database through staged discovery.**
 
-- **Work queues** for classifier / parser / analyzer stages (`WorkQueue<T>`).
-- **Document catalog** for incremental decisions (skip vs reindex).
-- **Committer** that writes records + annotations via the database writer contract.
-- **Idle/post‑index orchestration** (pruner → writer delete → vector refresh → multi‑file analyzers).
-- **State and telemetry** so callers can observe `Started`, `ClassificationBusy`, `AllIdle`, etc.
+This is the hot-path service that discovers what files are, materializes their structure, and orchestrates batch operations when the pipeline drains.
 
-## Host & Coordinator
-- **RepoqlHost** runs inside the application’s `IHostedService` loop. On startup it can run a full scan across every mounted file system and then subscribe to change notifications so incremental edits flow straight into the engine.
-- **IndexingCoordinator** is the in-process façade over `IndexingEngine`. It understands reindex phases, exposes pipeline status (busy/queued/in-progress per stage), and translates `WaitForPipeline` / `WaitForIdle` calls into the engine’s state bits.
-- **CompositeFileSystem** replaces the legacy `MultiFileSystem` and lets us stitch together the primary repo plus any number of virtual mounts (e.g., `github://` references) without URI prefixes leaking into the rest of the stack.
+---
 
-## Pipeline at a Glance
-| Stage | Responsibility | Key Types |
-| --- | --- | --- |
-| Classification | Determine `SemanticMediaType`, filter excluded files | `ClassificationPipeline`, `StageContext` |
-| Parsing | Produce `Records` (nodes/spans/edges) | `ParsingPipeline`, `Records` |
-| Single-file analysis | Emit annotations / enrich metadata | `SingleFileAnalysisPipeline`, `Annotation` |
-| Commit | Persist via `IIndexingCommitter` and `IDatabaseWriter` | `IndexingCommitter`, `WriteOperation` |
-| Idle dispatch | When hot path drains, run pruner/vector/multi-file | `_analysisEpochChannel`, `HotPathIdleEventArgs` |
+## Core Pattern
 
 ```mermaid
-flowchart LR
-    A["EnqueueItemAsync"] --> B{"Classifier"}
-    B --> C{"Parser"}
-    C --> D{"Single-file Analyzer"}
-    D --> E["Commit (writer + catalog)"]
-    E --> F["HotPathIdle"]
-    F --> G["Pruner → Delete → Vector → Multi-file"]
-    %% MEANING: Work flows through hot-path stages then, once idle, through post-index orchestration.
+graph LR
+    A["File Changed"] --> B["IndexItem"]
+    B --> C["Classification"]
+    C --> D["Parsing"]
+    D --> E["Analysis"]
+    E --> F["Commit"]
+    F --> G["Epoch Complete"]
+    G --> H["Idle Processing"]
+    H --> I["Queryable"]
+
+    style B fill:#e1f5ff
+    style G fill:#ffe1e1
+
+    %% MEANING: IndexItem is a flow object - it accumulates state through stages
+    %% instead of being transformed. When all items in a batch (epoch) complete,
+    %% idle processing runs once for the entire batch (prune/vector/multi-file).
 ```
 
-## Hot Path Mechanics
-1. `EnqueueItemAsync` stamps each `IndexItem` with an epoch counter and schedules it on the indexing queue.
-2. `StageContext.RunAsync` flips the corresponding busy/idle flags. When any busy flag is set, `IndexingState.Started` is also set.
-3. `IndexItemAsync` consults `IDocumentCatalog` → `DocumentCatalogDecision`. Skip returns early; reindex registers a pending digest and runs the pipelines.
-4. `IndexingCommitter` converts `IndexItem` into `WriteOperation` objects and waits for the `IDatabaseWriter` result. Failures bubble back to the stage (see `RepoQL.Indexing.Indexing.Commit`).
-5. Once all stage flags return to idle for a given epoch, `_epochTracker` fires `HotPathIdle`, which feeds `_analysisEpochChannel` for post-index work.
+### Capsule: **FlowObject** 📦 Discovery
+IndexItem accumulates state through stages. Not transformed, *discovered*.
 
-### Events & State
-- `StateChanged` raises every time a busy/idle bit flips. Wait for `IndexingState.Started` before assuming work is in flight.
-- `HotPathIdle` carries the epoch that has drained; listeners should call `EnqueueIdleEpoch(epoch)` and allow `ProcessIdleEpochsAsync` to run pruner/vector/multi-file.
+**Example**: `item.MediaType = null` → Classification → `item.MediaType = "text/markdown.doc"` → Parsing → `item.Records = {...}`
 
-## Post-Index Orchestration
-1. **Pruner** (`IArtifactPruner`) compares pending URIs with stored docs and returns stale `RepoUri`s.
-2. **Writer delete** issues `WriteOperationType.DeleteDocument` for each stale URI. The writer’s `OnCommitted` callback updates the catalog via `DocumentCatalog.ApplyDelete`.
-3. **Vector refresh** (`IVectorIndexCoordinator`) applies deletes first, then recomputes embeddings for the pending items.
-4. **Multi-file analyzer / index rebuild** receive the batch once vector work completes.
+**Why**: Entire journey visible. Debug one object. Processors see full context.
 
-See `docs/pipeline.md` for the detailed sequence and extension points.
+### Capsule: **EpochTracking** ⏳ Batch
+Files enqueued together share epoch number. Last completes + hot path idle → `HotPathIdle(epoch)` fires.
 
-## Testing References
-- Follow the [RepoQL.Testing Playbook](../../tests/RepoQL.Testing/README.md) for format harnesses, indexing contracts, DuckDb fixtures, and graph assertions.
-- Unit tests live in `src/Indexing/RepoQL.Indexing.Tests`. Key suites:
-  - `IndexingEngineTests` – stage transitions, catalog interactions, hot-path idempotency.
-  - `IndexingCommitterTests` – writer contracts.
-  - `PostProcessing/*Tests` – pruner/vector/idle orchestration.
-  - Format-specific suites (e.g., Markdown) consume the shared testing harnesses.
+**Why**: Batch operations efficient. Prune once. Vector refresh once. Multi-file analysis on complete set.
+
+### Capsule: **StageContext** 🎭 State
+Wraps processor with automatic busy/idle flag management. Set busy → run processor → clear busy, set idle (always, even on error).
+
+**Why**: Never forget state updates. Consistent telemetry. Safe error handling.
+
+---
+
+## Architecture
+
+```
+RepoqlHost (IHostedService)
+├─ Scans filesystem on startup
+├─ Watches for file changes
+└─ Feeds IndexingCoordinator
+
+IndexingCoordinator (Façade)
+├─ Orchestrates reindex operations
+├─ Provides pipeline status
+└─ Exposes WaitFor APIs
+
+IndexingEngine (Core)
+├─ IndexerQueue (hot path, concurrent)
+│   ├─ Classification Pipeline
+│   ├─ Parsing Pipeline
+│   ├─ Single-file Analysis Pipeline
+│   └─ Committer → DatabaseWriter (serial)
+├─ Epoch Tracker (batch coordination)
+└─ AnalysisQueue (idle processing, concurrent)
+    ├─ Pruner (find deleted)
+    ├─ Vector Coordinator (refresh embeddings)
+    ├─ Multi-file Analysis Pipeline
+    └─ Index Rebuild Pipeline
+```
+
+**Threading Model**:
+- **Hot path**: Concurrent (ProcessorCount workers) - parse multiple files in parallel
+- **Writer**: Serial (1 worker) - DuckDB connections aren't thread-safe for writes
+- **Idle processing**: Concurrent (ProcessorCount workers) - batch operations spawn many items
+
+---
+
+## Key Components
+
+### IndexingEngine (IndexingEngine.cs:29)
+Core pipeline orchestrator. Manages work queues, coordinates stages, tracks epochs, fires events.
+
+**State flags**: Fine-grained busy/idle per stage (`ClassificationBusy`, `ParsingIdle`, etc.)
+
+**Events**: `StateChanged`, `HotPathIdle`
+
+### IndexItem (IndexItem.cs:15)
+Flow object that accumulates state through pipeline. Acts as property bag for processors.
+
+**Lifecycle**: `RawArtifact` → `+MediaType` → `+Records` → `+Annotations` → Committed
+
+### DocumentCatalog (DocumentCatalog.cs:32)
+In-memory digest index for incremental indexing.
+
+**Decision**: `Evaluate(uri, digest)` → `SkipUpToDate` | `Reindex` | `Unknown`
+
+### StageContext (StageContext.cs:7)
+Stage wrapper with automatic state management.
+
+**Pattern**: `new StageContext(busyFlag, idleFlag, processor)` → `RunAsync(item)` handles all transitions
+
+### WorkQueue<T> (WorkQueue.cs:12)
+Bounded, deduplicated work queue with backpressure.
+
+**Deduplication**: Same item can't be enqueued twice while pending/in-flight
+
+---
+
+## Extension Points
+
+### Adding a Processor
+
+Implement `IAsyncPipeline<TIn, TOut>` and register in DI:
+
+```csharp
+// 1. Implement
+class MyClassifier : IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?> {
+    public Task<SemanticMediaType?> ProcessAsync(IDiscoveredArtifact artifact, CancellationToken ct) {
+        if (artifact.Name.EndsWith(".xyz"))
+            return Task.FromResult(SemanticMediaType.Parse("application/x-xyz"));
+        return Task.FromResult<SemanticMediaType?>(null);
+    }
+}
+
+// 2. Register
+services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, MyClassifier>();
+```
+
+**Convention**: Return null to skip. First processor to return non-null wins.
+
+**Stages**:
+- **Classification**: `IDiscoveredArtifact → SemanticMediaType?`
+- **Parsing**: `IClassifiedArtifact → Records?`
+- **Single-file Analysis**: `IAnnotatedArtifact → PipelineResult`
+- **Multi-file Analysis**: `IAnnotatedArtifact → PipelineResult`
+
+See [PROCESSOR_GUIDE.md](PROCESSOR_GUIDE.md) for detailed guidance.
+
+---
+
+## State Observability
+
+### IndexingState Flags
+
+```csharp
+[Flags]
+enum IndexingState {
+    // Busy flags
+    ClassificationBusy, ParsingBusy, SingleFileAnalysisBusy,
+    MultiFileAnalysisBusy, IndexRebuildBusy,
+
+    // Idle flags (mirrors)
+    ClassificationIdle, ParsingIdle, SingleFileAnalysisIdle,
+    MultiFileAnalysisIdle, IndexRebuildIdle,
+
+    // Composites
+    Started = any busy flag set,
+    AllIdle = all idle flags set
+}
+```
+
+### Waiting for States
+
+```csharp
+// Wait for specific stage
+await engine.WaitForAsync(IndexingState.ParsingIdle, ct);
+
+// Wait for complete idle
+await coordinator.WaitForIdleAsync(ct);
+
+// Get current status
+var status = coordinator.GetPipelineStatus();
+Console.WriteLine($"Parsing active: {status.Stages[1].IsActive}");
+Console.WriteLine($"Items queued: {status.Stages[1].QueuedCount}");
+```
+
+---
+
+## Invariants
+
+☑ **Writer ALWAYS single-threaded** - DuckDB write safety
+☑ **Catalog updates ONLY via OnCommitted** - Authoritative after commit
+☑ **Epochs monotonically increasing** - Never reused
+☑ **Pruner runs BEFORE vector refresh** - Don't embed deleted docs
+☑ **Analysis sees ONLY committed graph** - Consistent state
+
+Break any invariant → subtle bugs. Maintain all → system works.
+
+---
 
 ## Further Reading
-- [`docs/IndexingProcess.md`](../../../docs/IndexingProcess.md) – end-to-end walkthrough.
-- [`docs/knowledge/format-excellence.md`](../../../docs/knowledge/format-excellence.md) – expectations for x-ray outputs.
-- [`docs/knowledge/testing-guidelines.md`](../../../docs/knowledge/testing-guidelines.md) – RepoQL-wide testing philosophy.
-- [`src/Indexing/RepoQL.Indexing/docs/pipeline.md`](docs/pipeline.md) – extended explanation of stage contexts, state flags, and idle orchestration.
+
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - Design principles and insights that led to this architecture
+- **[docs/CONCEPTS.md](docs/CONCEPTS.md)** - Detailed capsules for all key concepts
+- **[docs/JOURNEY.md](docs/JOURNEY.md)** - Complete trace of one file through the system
+- **[docs/STATE-MACHINE.md](docs/STATE-MACHINE.md)** - Visual state diagrams with transitions
+- **[docs/pipeline.md](docs/pipeline.md)** - Technical reference for stage mechanics
+- **[PROCESSOR_GUIDE.md](PROCESSOR_GUIDE.md)** - How to add format processors
+- **[AGENT_RULES.md](AGENT_RULES.md)** - Testing discipline and conventions
+
+---
+
+## Migration Context
+
+This architecture replaced the monolithic `RepositoryIndexer` (RepoQL.Core, deleted).
+
+**Old problems**: 2000+ line god class, hard-coded pipeline, tangled state, difficult testing.
+
+**New solution**: Separated concerns (Host/Coordinator/Engine), composable pipelines, observable state, epoch-based batch coordination.
+
+See `plans/indexer-migration/` for migration history.
+
+---
+
+**Philosophy**: Files don't get transformed through a pipeline—they're *discovered*. The IndexItem becomes what it needs to be, revealing itself one stage at a time. When a batch completes, post-processing happens once for the entire generation of work. This pattern makes the system debuggable, testable, and efficient.

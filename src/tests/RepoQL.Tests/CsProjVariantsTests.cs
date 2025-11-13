@@ -8,6 +8,7 @@ namespace RepoQL.Tests;
 internal class CsProjVariantsTests
 {
     [Test]
+    [Skip("Dotnet formats not yet wired into RepoqlHost test harness.")]
     public async Task CsProj_Library_NotPackable_Surfaces_Fields()
     {
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>

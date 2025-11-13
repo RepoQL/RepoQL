@@ -14,12 +14,19 @@ public sealed class EmbeddedStore : IVirtualFileSystem
     private readonly Assembly _asm;
     private readonly EmbeddedFileProvider _fileProvider;
     private readonly Dictionary<string, string> _uriToRes;
+    private readonly string _scheme;
 
-    /// <summary>Create an embedded store for the specified assembly.</summary>
-    public EmbeddedStore(Assembly asm)
+    /// <summary>
+    /// Create an embedded store for the specified assembly. Optionally override the exposed URI scheme when the store
+    /// is mounted under a custom prefix (e.g., docs:// instead of embed://).
+    /// </summary>
+    public EmbeddedStore(Assembly asm, string? scheme = null)
     {
         _asm = asm ?? throw new ArgumentNullException(nameof(asm));
         _fileProvider = new EmbeddedFileProvider(asm);
+        _scheme = string.IsNullOrWhiteSpace(scheme)
+            ? "embed"
+            : scheme.Trim().ToLowerInvariant();
         var asmName = _asm.GetName().Name ?? "asm";
         _uriToRes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var full in _asm.GetManifestResourceNames())
@@ -30,7 +37,7 @@ public sealed class EmbeddedStore : IVirtualFileSystem
     }
 
     /// <inheritdoc />
-    public string Scheme => "embed";
+    public string Scheme => _scheme;
 
     /// <inheritdoc />
     public async IAsyncEnumerable<IFileInfo> EnumerateAsync([EnumeratorCancellation] CancellationToken ct)

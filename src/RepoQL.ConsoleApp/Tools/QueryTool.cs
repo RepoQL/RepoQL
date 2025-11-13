@@ -29,7 +29,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              - Assume all file types are supported
                                              - Every entity is represented by a repo URI e.g.
                                                `file:///repo/lib.cs#symbol=Foo.Bar&line=12,20`
-                                               `embed:///quickstart`
+                                               `docs:///quickstart`
                                              - Semantic mime type indicates both file type and contents e.g.
                                                `application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
                                              </CONTEXT>
@@ -99,7 +99,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              
                                              ```postgresql
                                              SELECT
-                                                   n.uri, /* e.g. embed:///querying-markdown.md*/
+                                                   n.uri, /* e.g. docs:///querying-markdown.md*/
                                                    a.headline, /* Querying Markdown with RepoQL — querying-markdown.md | markdown.doc | 5725 | 151 lines | lang: sql | topics: Core Schema Mapping, Markdown Views, Markdown-Specific UDFs & Macros*/
                                                    a.summary, /* Most important details of contents, format depends on mime, < 10 lines */
                                                    a.structure /* Expanded details of contents, format depends on mime, < 25 lines */
@@ -116,7 +116,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              SELECT a.text_content
                                                FROM node AS n
                                                JOIN artifact AS a ON n.artifact_id = a.id
-                                               WHERE n.uri = 'embed:///quickstart.md';
+                                             WHERE n.uri = 'docs:///quickstart.md';
                                              ```
                                              
                                              ### List all markdown docs in repo + headlines
@@ -190,7 +190,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                                _So that you know what you don't know_
                                              - [ ] List all markdown docs in repo + headlines
                                                *So that you know what repository docs are available to you. Vital to your success in completing future tasks*
-                                             - [ ] Read `embed:///quickstart.md`
+                                             - [ ] Read `docs:///quickstart.md`
                                                *Before attempting complex queries*
                                              
                                              </INSTRUCTION>

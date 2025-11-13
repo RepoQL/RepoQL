@@ -1,5 +1,7 @@
 # Proposal: Enhanced C# Type Summaries with Headlines and Structure
 
+> **Note:** Sections that reference `RepositoryIndexer` describe the legacy orchestrator. In the current architecture the equivalent types are `RepoqlHost`, `IndexingCoordinator`, and `IndexingEngine`.
+
 ## Summary
 
 Extend C# format support to generate per-type headline summaries and detailed structure outlines that include XML documentation comments. This enhancement transforms the `csharp_types` view from a metadata catalog into a rich, searchable API documentation source by exposing actual member names in headlines and incorporating doc comments into structure outlines.

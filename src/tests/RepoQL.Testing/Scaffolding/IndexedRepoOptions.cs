@@ -7,7 +7,8 @@ using RepoQL.Core.Analysis;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
-using RepoQL.Metrics;
+using RepoQL.Indexing.FileSystems;
+using RepoQL.Indexing.Indexing;
 
 namespace RepoQL.Testing.Scaffolding;
 
@@ -22,18 +23,19 @@ public sealed class IndexedRepoOptions
     public IUriFilter Filter { get; set; } = new NoOpUriFilter();
     public IDatabaseWriter? DatabaseWriter { get; set; }
     public IAnalyzerSettingsProvider? SettingsProvider { get; set; }
-    public ILogger<RepositoryIndexer>? Logger { get; set; }
+    public ILoggerFactory? LoggerFactory { get; set; }
     public string? RepositoryRoot { get; set; }
-    public Func<IndexingMetrics, DuckDbGraphStore>? StoreFactory { get; set; }
+    public string? DatabasePath { get; set; }
+    public bool DeleteDatabaseOnDispose { get; set; } = true;
+    public bool EnableWatching { get; set; }
+    public bool RunFullScanOnStartup { get; set; }
+    public IndexingEngineOptions? EngineOptions { get; set; }
     public Func<DuckDbGraphStore, IAnalysisResultWriter?>? CreateAnalysisWriter { get; set; } = store => new AnnotationResultWriter(store);
     public IList<FormatDescriptor> Formats { get; } = new List<FormatDescriptor>();
+    public IList<CompositeFileSystemMount> AdditionalMounts { get; } = new List<CompositeFileSystemMount>();
 
     public void AddFormat(FormatDescriptor descriptor)
         => Formats.Add(descriptor);
-
-    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope")]
-    internal DuckDbGraphStore CreateStore(IndexingMetrics metrics)
-        => StoreFactory?.Invoke(metrics) ?? new DuckDbGraphStore(":memory:", metrics);
 
     internal IFileClassifier ResolveClassifier()
     {

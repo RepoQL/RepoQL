@@ -22,7 +22,7 @@ internal class GlobMatchSqlTests
         using var store = new DuckDbGraphStore(":memory:");
         store.EnsureSchema();
 
-        var rows = store.RawQuery("SELECT glob_match('embed:///repo/docs/help.md', 'docs/**/*.md', default_scheme := 'embed:///') AS matched").ToList();
+        var rows = store.RawQuery("SELECT glob_match('docs:///repo/docs/help.md', 'docs/**/*.md', default_scheme := 'docs:///') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
     }

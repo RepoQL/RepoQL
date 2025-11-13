@@ -6,13 +6,18 @@ internal static class FileUriPathResolver
 {
     internal readonly record struct ResolvedPath(string RelativePath, string AbsolutePath);
 
-    public static ResolvedPath Resolve(string rootPath, RepoUri repoUri)
+    /// <summary>
+    /// Resolves a repository URI to both a relative path (for file providers) and an absolute on-disk path rooted at
+    /// <paramref name="rootPath"/>. The optional <paramref name="expectedScheme"/> parameter allows callers that
+    /// project alternative schemes (e.g., docs://, github://) to reuse the resolver while still enforcing the scheme.
+    /// </summary>
+    public static ResolvedPath Resolve(string rootPath, RepoUri repoUri, string expectedScheme = "file")
     {
         if (rootPath is null) throw new ArgumentNullException(nameof(rootPath));
         if (repoUri is null) throw new ArgumentNullException(nameof(repoUri));
 
-        if (!string.Equals(repoUri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("URI scheme must be 'file'.");
+        if (!string.Equals(repoUri.Scheme, expectedScheme, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"URI scheme must be '{expectedScheme}'.");
 
         var normalizedRoot = Path.GetFullPath(rootPath);
         var relativeSegment = repoUri.GetComponents(UriComponents.Path, UriFormat.Unescaped)
@@ -30,8 +35,9 @@ internal static class FileUriPathResolver
         return new ResolvedPath(relativeForProvider, absolutePath);
     }
 
-    public static string ToAbsolutePath(string rootPath, RepoUri repoUri)
-        => Resolve(rootPath, repoUri).AbsolutePath;
+    /// <summary>Convenience helper that returns only the absolute path component of <see cref="Resolve"/>.</summary>
+    public static string ToAbsolutePath(string rootPath, RepoUri repoUri, string expectedScheme = "file")
+        => Resolve(rootPath, repoUri, expectedScheme).AbsolutePath;
 
     private static string NormalizeRelativeForProvider(string relative)
     {

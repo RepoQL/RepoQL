@@ -8,21 +8,35 @@ using IFileSystemWatcher = RepoQL.FileSystem.Abstractions.IFileSystemWatcher;
 namespace RepoQL.FileSystem.Physical;
 
 /// <summary>
-/// A repository-backed content store with canonical <c>file:///rel/path</c> URIs.
-/// Maps to a concrete filesystem root given at construction.
+/// A repository-backed content store with canonical URIs. By default it emits <c>file:///rel/path</c> URIs but the
+/// constructor allows overriding scheme/authority/path prefixes so the same implementation can project directories as
+/// <c>docs:///...</c>, <c>github://owner/repo/... </c>, etc.
 /// </summary>
-/// <remarks>Create a repository store backed by <paramref name="rootPath"/></remarks>
-public sealed class PhysicalFileSystem(string rootPath) : IVirtualFileSystem
+/// <remarks>Create a repository store backed by <paramref name="rootPath"/>.</remarks>
+public sealed class PhysicalFileSystem(
+    string rootPath,
+    string? scheme = null,
+    string? uriPrefix = null,
+    string? authority = null) : IVirtualFileSystem
 {
     public string RootPath { get; } = Path.GetFullPath(rootPath);
     private readonly IFileProvider _fileSystem = new PhysicalFileProvider(rootPath);
+    private readonly string _scheme = string.IsNullOrWhiteSpace(scheme)
+        ? "file"
+        : scheme.Trim().ToLowerInvariant();
+    private readonly string? _uriPrefix = string.IsNullOrWhiteSpace(uriPrefix)
+        ? null
+        : uriPrefix.Trim('/').Replace('\\', '/');
+    private readonly string? _authority = string.IsNullOrWhiteSpace(authority)
+        ? null
+        : authority.Trim();
 
     /// <inheritdoc/>
-    public string Scheme => "file";
+    public string Scheme => _scheme;
 
     public IFileInfo GetFile(RepoUri uri)
     {
-        var resolved = FileUriPathResolver.Resolve(RootPath, uri);
+        var resolved = ResolveWithPrefix(uri);
         var relative = string.IsNullOrEmpty(resolved.RelativePath)
             ? "."
             : resolved.RelativePath;
@@ -35,7 +49,7 @@ public sealed class PhysicalFileSystem(string rootPath) : IVirtualFileSystem
 
     /// <summary>Convert file:// URI to absolute filesystem path.</summary>
     private string ToAbsolutePath(RepoUri repoUri)
-        => FileUriPathResolver.ToAbsolutePath(RootPath, repoUri);
+        => ResolveWithPrefix(repoUri).AbsolutePath;
 
     /// <summary>Convert absolute filesystem path under root to a file:// URI.</summary>
     public RepoUri ToRepoUri(string absolutePath)
@@ -44,7 +58,15 @@ public sealed class PhysicalFileSystem(string rootPath) : IVirtualFileSystem
         if (!full.StartsWith(RootPath, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Path not under repo root.");
         var rel = Path.GetRelativePath(RootPath, full).Replace('\\', '/');
-        return RepoUri.Parse($"{Scheme}:///{rel}");
+        var combined = string.IsNullOrEmpty(_uriPrefix)
+            ? rel
+            : string.IsNullOrEmpty(rel)
+                ? _uriPrefix
+                : $"{_uriPrefix}/{rel}";
+        var uri = string.IsNullOrEmpty(_authority)
+            ? $"{Scheme}:///{combined}"
+            : $"{Scheme}://{_authority}/{combined}";
+        return RepoUri.Parse(uri);
     }
 
     public RepoUri GetUri(IFileInfo file)
@@ -60,7 +82,7 @@ public sealed class PhysicalFileSystem(string rootPath) : IVirtualFileSystem
     public async IAsyncEnumerable<IFileInfo> EnumerateAsync([EnumeratorCancellation] CancellationToken ct)
     {
         // Ensure the root path exists and is a directory
-        if (!Directory.Exists(rootPath))
+        if (!Directory.Exists(RootPath))
         {
             yield break;
         }
@@ -73,7 +95,7 @@ public sealed class PhysicalFileSystem(string rootPath) : IVirtualFileSystem
         };
 
         // Enumerate all files recursively, excluding .git and .repoql directories
-        var files = Directory.EnumerateFiles(rootPath, "*", opts)
+        var files = Directory.EnumerateFiles(RootPath, "*", opts)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}") &&
                        !f.Contains($"{Path.DirectorySeparatorChar}.repoql{Path.DirectorySeparatorChar}"));
 
@@ -84,8 +106,6 @@ public sealed class PhysicalFileSystem(string rootPath) : IVirtualFileSystem
 
             // Get relative path from the repository root
             var relativePath = Path.GetRelativePath(RootPath, filePath).Replace('\\', '/');
-
-            // Create IFileInfo for the file
             var fileInfo = _fileSystem.GetFileInfo(relativePath);
 
             if (fileInfo.Exists)
@@ -101,4 +121,35 @@ public sealed class PhysicalFileSystem(string rootPath) : IVirtualFileSystem
 
     /// <inheritdoc/>
     public IFileSystemWatcher Watch() => new PhysicalFileSystemWatcher(this);
+
+    /// <summary>
+    /// Normalizes a <see cref="RepoUri"/> by stripping any synthetic authority/prefix before delegating to the core
+    /// resolver that enforces the repository root boundary.
+    /// </summary>
+    private FileUriPathResolver.ResolvedPath ResolveWithPrefix(RepoUri uri)
+    {
+        if (!string.Equals(uri.Scheme, Scheme, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"URI scheme must be '{Scheme}'.");
+
+        var relativeSegment = uri.GetComponents(UriComponents.Path, UriFormat.Unescaped)
+            .TrimStart('/');
+
+        if (!string.IsNullOrEmpty(_authority))
+        {
+            if (!string.Equals(uri.Authority, _authority, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"URI '{uri}' does not match authority '{_authority}'.");
+        }
+
+        if (!string.IsNullOrEmpty(_uriPrefix))
+        {
+            var prefix = _uriPrefix!;
+            if (!relativeSegment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"URI '{uri}' does not belong to mount prefix '{prefix}'.");
+
+            relativeSegment = relativeSegment[prefix.Length..].TrimStart('/');
+        }
+
+        var normalized = RepoUri.Parse($"{Scheme}:///{relativeSegment}");
+        return FileUriPathResolver.Resolve(RootPath, normalized, Scheme);
+    }
 }

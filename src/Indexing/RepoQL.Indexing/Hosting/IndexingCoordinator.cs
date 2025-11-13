@@ -14,6 +14,41 @@ using RepoQL.Indexing.Indexing.State;
 
 namespace RepoQL.Indexing.Hosting;
 
+/// <summary>
+/// High-level façade over <see cref="IndexingEngine"/>. Orchestrates reindex operations,
+/// provides pipeline status, and exposes user-facing wait APIs.
+/// </summary>
+/// <remarks>
+/// <para><strong>Architecture Layer: Orchestration</strong></para>
+/// <para>
+/// Sits between <see cref="RepoqlHost"/> (lifecycle) and <see cref="IndexingEngine"/> (execution).
+/// Translates high-level operations (like "reindex all files") into engine enqueue calls.
+/// </para>
+///
+/// <para><strong>Pipeline Status</strong></para>
+/// <para>
+/// Aggregates engine state into user-facing stages:
+/// </para>
+/// <list type="bullet">
+/// <item><description>Discovery: Classification stage</description></item>
+/// <item><description>Parsing: Parsing + Single-file Analysis stages</description></item>
+/// <item><description>Analysis: Multi-file Analysis + Index Rebuild stages</description></item>
+/// <item><description>Writer: Database writer status</description></item>
+/// </list>
+///
+/// <para><strong>Reindex Scopes</strong></para>
+/// <para>
+/// Tracks reindex operations with <see cref="ReindexScope"/>. While any reindex is active,
+/// <see cref="IsReindexing"/> returns true. This affects catalog behavior (skip digest checks
+/// during full reindex for performance).
+/// </para>
+///
+/// <para><strong>Wait Operations</strong></para>
+/// <para>
+/// <see cref="WaitForPipelineAsync"/> and <see cref="WaitForIdleAsync"/> delegate to engine's
+/// <see cref="IndexingEngine.WaitForAsync"/> with appropriate state flags.
+/// </para>
+/// </remarks>
 public sealed class IndexingCoordinator : IIndexingCoordinator
 {
     private static readonly CoordinatorPipelineStage[] DefaultStages =

@@ -1,5 +1,7 @@
 # Proposal: Centralize Document Persistence
 
+> **Note:** The persistence responsibilities once handled inside `RepositoryIndexer` now live in `IndexingEngine` and the database writer hosted by `RepoqlHost`. This proposal remains relevant even though the legacy type has been removed.
+
 ## Problem
 - Both the indexer and the writer re-implement “replace document” persistence. `src/RepoQL.Core/RepositoryIndexer.cs:74-155` performs artifact upserts, remaps child nodes, rewrites spans and edges, and replaces document content directly on the `IGraphStore`.
 - The hosted writer repeats the same work in `src/RepoQL.Data.DuckDB/SingleThreadedDatabaseWriter.cs:211-296`, adding front-matter enrichment and its own shape of node remapping. The two implementations already diverge (front-matter handling only exists in the writer path), which is a maintenance hazard.
@@ -11,4 +13,3 @@
 - Have both the indexer’s “direct write” fast path and the single-threaded writer call into that service; the writer would continue to own transactional ordering, while the indexer reuses the same persistence contract when bypassing the queue.
 - Keep the front-matter projection and any future normalization inside the persistence service so there is a single definition of how records are translated into the database representation.
 - With one shared implementation we reduce drift, make schema changes safer, and provide a clear extension point for future persistence policies (e.g., batched writes, alternative stores).
-

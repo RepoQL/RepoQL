@@ -5,9 +5,48 @@ using System.Threading.Channels;
 namespace RepoQL.Indexing;
 
 /// <summary>
-/// Bounded work queue that prevents the same item being enqueued when already pending or inflight.
-/// De-dupe is keyed by an optional equality comparer.
+/// Bounded, deduplicated work queue with concurrent workers and backpressure.
+/// Core primitive for hot-path and idle-processing pipelines.
 /// </summary>
+/// <typeparam name="T">Item type. Must be non-null and provide equality semantics for deduplication.</typeparam>
+/// <remarks>
+/// <para><strong>Deduplication</strong></para>
+/// <para>
+/// Maintains <c>_waitSet</c> (<see cref="ConcurrentDictionary{TKey,TValue}"/>) of items
+/// currently pending or in-flight. <see cref="EnqueueAsync"/> returns false if item already queued.
+/// </para>
+/// <code>
+/// await queue.EnqueueAsync(item); // Returns true
+/// await queue.EnqueueAsync(item); // Returns false (already pending)
+/// // ... item processes ...
+/// await queue.EnqueueAsync(item); // Returns true (processing complete)
+/// </code>
+///
+/// <para><strong>Backpressure</strong></para>
+/// <para>
+/// Uses <see cref="Channel{T}"/> with <see cref="BoundedChannelOptions.FullMode"/> = Wait.
+/// When capacity reached, <see cref="EnqueueAsync"/> blocks until space available.
+/// Prevents unbounded memory growth.
+/// </para>
+///
+/// <para><strong>Concurrent Workers</strong></para>
+/// <para>
+/// Configurable worker count (typically <see cref="Environment.ProcessorCount"/>).
+/// Each worker pulls from channel and calls <c>processItem</c> delegate.
+/// </para>
+///
+/// <para><strong>Idle Detection</strong></para>
+/// <para>
+/// <see cref="WhenIdleAsync"/> completes when queue drains (depth reaches zero).
+/// Returns new <see cref="Task"/> each time (not reusable - create fresh wait after each idle).
+/// </para>
+///
+/// <para><strong>Observability</strong></para>
+/// <para>
+/// Exposes <see cref="ObservableGauge{T}"/> metrics: <see cref="QueueDepth"/>,
+/// <see cref="QueueCapacity"/>, <see cref="WorkersActive"/>.
+/// </para>
+/// </remarks>
 #pragma warning disable CA1711
 public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
 #pragma warning restore CA1711

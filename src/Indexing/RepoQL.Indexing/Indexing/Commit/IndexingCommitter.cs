@@ -8,6 +8,54 @@ using RepoQL.Indexing.Indexing.State;
 
 namespace RepoQL.Indexing.Indexing.Commit;
 
+/// <summary>
+/// Converts <see cref="IndexItem"/> to <see cref="WriteOperation"/> and persists to database.
+/// Updates <see cref="IDocumentCatalog"/> via OnCommitted callback after write succeeds.
+/// </summary>
+/// <remarks>
+/// <para><strong>Validation</strong></para>
+/// <para>
+/// Before creating write operation, validates:
+/// </para>
+/// <list type="bullet">
+/// <item><description><see cref="IndexItem.Records"/> is not null</description></item>
+/// <item><description><see cref="IndexItem.DigestHex"/> is not null</description></item>
+/// <item><description><see cref="IndexItem.MediaType"/> is not null</description></item>
+/// <item><description>Records contain a document node</description></item>
+/// </list>
+/// <para>If validation fails, logs warning and returns early (no exception).</para>
+///
+/// <para><strong>Annotation Merging</strong></para>
+/// <para>
+/// Combines annotations from two sources:
+/// </para>
+/// <list type="number">
+/// <item><description><see cref="IndexItem.Records"/>.Annotations (from parsers)</description></item>
+/// <item><description><see cref="IndexItem.AnnotationsList"/> (from analyzers)</description></item>
+/// </list>
+/// <para>
+/// Both are written to database in single commit.
+/// </para>
+///
+/// <para><strong>OnCommitted Callback</strong></para>
+/// <para>
+/// Creates <see cref="WriteOperation.OnCommitted"/> callback that updates catalog ONLY if
+/// write succeeds. This ensures catalog reflects committed state (not in-progress state).
+/// </para>
+/// <code>
+/// OnCommitted: (_, result) => {
+///     if (result.Success)
+///         catalog.ApplyUpsert(new DocumentCatalogEntry(...));
+/// }
+/// </code>
+///
+/// <para><strong>Error Handling</strong></para>
+/// <para>
+/// If <see cref="IDatabaseWriter.EnqueueAndWaitAsync"/> returns <c>Success = false</c>,
+/// throws <see cref="InvalidOperationException"/>. This allows <see cref="IndexingEngine"/>
+/// to handle the error (typically log and continue, allowing retry).
+/// </para>
+/// </remarks>
 public sealed class IndexingCommitter(
     IDatabaseWriter writer,
     IDocumentCatalog catalog,

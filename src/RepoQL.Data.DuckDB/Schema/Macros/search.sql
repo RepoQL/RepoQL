@@ -1,3 +1,4 @@
+-- Primary search entry point combining lexical, fuzzy, and semantic scorers.
 CREATE OR REPLACE MACRO search(
     q,
     mode := 'auto',
@@ -10,6 +11,8 @@ CREATE OR REPLACE MACRO search(
     semantic_weight := 0.20
 ) AS TABLE (
 WITH base_params AS (
+    -- Normalize caller-provided parameters once so every downstream CTE
+    -- references stable scalars instead of macro parameters (avoids binder issues).
     SELECT
         coalesce(trim(q), '')                                    AS raw_query,
         lower(coalesce(mode, 'auto'))                            AS requested_mode,
@@ -17,8 +20,11 @@ WITH base_params AS (
         CAST(coalesce(max_cand, 5000) AS BIGINT)                 AS max_candidates,
         coalesce(bm25_weight, 0.45)                              AS bm25_w,
         coalesce(fuzzy_weight, 0.35)                             AS fuzzy_w,
-        coalesce(semantic_weight, 0.20)                          AS base_sem_w
+        coalesce(semantic_weight, 0.20)                          AS base_sem_w,
+        NULLIF(trim(uri_glob), '')                               AS uri_glob_filter,
+        NULLIF(trim(mime_glob), '')                              AS mime_glob_filter
 ),
+-- Classify the query so the engine can route to the best mix of scorers.
 classified AS (
     SELECT
         *,
@@ -35,6 +41,7 @@ classified AS (
         END                                                      AS route_mode
     FROM base_params
 ),
+-- Configure weighting + candidate limits based on the inferred route.
 config AS (
     SELECT
         *,
@@ -57,6 +64,7 @@ config AS (
         END                                                      AS dense_limit
     FROM classified
 ),
+-- Pre-filter repo_index with normalized URI/mime columns.
 filtered_source AS (
     SELECT
         ri.*,
@@ -67,16 +75,21 @@ filtered_source AS (
     FROM repo_index ri
 ),
 filtered AS (
-    SELECT *
-    FROM filtered_source
+    SELECT fs.*
+    FROM filtered_source fs
+         JOIN base_params bp_filter ON TRUE
     WHERE (
-            uri_glob IS NULL
-            OR repoql_glob_match(uri, uri_glob, TRUE, 'file:///') IS TRUE
-            OR repoql_glob_match(uri_local, uri_glob, TRUE, NULL) IS TRUE
+            bp_filter.uri_glob_filter IS NULL
+            OR repoql_glob_match(fs.uri, bp_filter.uri_glob_filter, TRUE, 'file:///') IS TRUE
+            OR repoql_glob_match(fs.uri_local, bp_filter.uri_glob_filter, TRUE, NULL) IS TRUE
         )
-      AND (mime_glob IS NULL OR repoql_glob_match(coalesce(mime, ''), mime_glob, TRUE, NULL) IS TRUE)
-      AND (uri_glob IS NULL OR scope = 'document')
+      AND (
+            bp_filter.mime_glob_filter IS NULL
+            OR repoql_glob_match(coalesce(fs.mime, ''), bp_filter.mime_glob_filter, TRUE, NULL) IS TRUE
+        )
+      AND (bp_filter.uri_glob_filter IS NULL OR fs.scope = 'document')
 ),
+-- Lexical scorer (BM25-ish heuristics + fuzzy subsequence score).
 score_source AS (
     SELECT
         ri.node_id,
@@ -94,7 +107,7 @@ score_source AS (
         match_score(cls.keywords_lc, ri.search_key)             AS fuzz
     FROM filtered ri
          CROSS JOIN classified cls
-         JOIN config cfg ON TRUE
+        JOIN config cfg ON TRUE
     WHERE cfg.keywords_empty = FALSE
 ),
 ranked_lex AS (
@@ -127,6 +140,7 @@ lex_rrf AS (
     SELECT node_id, 1.0 / (60 + lex_rank) AS rrf_lex
     FROM lex_ranked
 ),
+-- Dense scorer (OpenAI-style embedding similarity).
 semantic_seed AS (
     SELECT
         CASE
@@ -174,6 +188,7 @@ sem_rrf AS (
     SELECT node_id, 1.0 / (60 + sem_rank) AS rrf_sem
     FROM sem_top
 ),
+-- Union lexical + dense nodes; fall back to recency if both empty.
 union_nodes AS (
     SELECT node_id FROM normalized_lex
     UNION
@@ -216,6 +231,7 @@ lex_stats AS (
 sem_stats AS (
     SELECT COUNT(*) AS cnt FROM sem_norm
 )
+-- Project the final rows along with diagnostics describing the scoring route.
 SELECT
     ri.doc_id,
     ri.node_id,
@@ -236,60 +252,52 @@ SELECT
     coalesce(lx.fuzzn, 0)                 AS fuzzy_score,
     coalesce(sn.semn, 0)                  AS dense_score,
     coalesce(rlex.rrf_lex, 0) + coalesce(rsem.rrf_sem, 0) AS rrf,
-    (
-        combine(
-            coalesce(lx.bm25n, 0),
-            coalesce(lx.fuzzn, 0),
-            coalesce(sn.semn, 0),
-            wb := (SELECT bm25_w FROM config),
-            wf := (SELECT fuzzy_w FROM config),
-            ws := (SELECT effective_sem_weight FROM config)
-        )
+    combine(
+        coalesce(lx.bm25n, 0),
+        coalesce(lx.fuzzn, 0),
+        coalesce(sn.semn, 0),
+        wb := cfg.bm25_w,
+        wf := cfg.fuzzy_w,
+        ws := cfg.effective_sem_weight
     )                                                   AS score,
     CASE
-        WHEN (
-            combine(
-                coalesce(lx.bm25n, 0),
-                coalesce(lx.fuzzn, 0),
-                coalesce(sn.semn, 0),
-                wb := (SELECT bm25_w FROM config),
-                wf := (SELECT fuzzy_w FROM config),
-                ws := (SELECT effective_sem_weight FROM config)
-            )
-        ) >= 2 THEN 0.95
-        WHEN (
-            combine(
-                coalesce(lx.bm25n, 0),
-                coalesce(lx.fuzzn, 0),
-                coalesce(sn.semn, 0),
-                wb := (SELECT bm25_w FROM config),
-                wf := (SELECT fuzzy_w FROM config),
-                ws := (SELECT effective_sem_weight FROM config)
-            )
-        ) >= 1.2 THEN 0.8
-        WHEN (
-            combine(
-                coalesce(lx.bm25n, 0),
-                coalesce(lx.fuzzn, 0),
-                coalesce(sn.semn, 0),
-                wb := (SELECT bm25_w FROM config),
-                wf := (SELECT fuzzy_w FROM config),
-                ws := (SELECT effective_sem_weight FROM config)
-            )
-        ) >= 0.8 THEN 0.65
+        WHEN combine(
+                 coalesce(lx.bm25n, 0),
+                 coalesce(lx.fuzzn, 0),
+                 coalesce(sn.semn, 0),
+                 wb := cfg.bm25_w,
+                 wf := cfg.fuzzy_w,
+                 ws := cfg.effective_sem_weight
+             ) >= 2 THEN 0.95
+        WHEN combine(
+                 coalesce(lx.bm25n, 0),
+                 coalesce(lx.fuzzn, 0),
+                 coalesce(sn.semn, 0),
+                 wb := cfg.bm25_w,
+                 wf := cfg.fuzzy_w,
+                 ws := cfg.effective_sem_weight
+             ) >= 1.2 THEN 0.8
+        WHEN combine(
+                 coalesce(lx.bm25n, 0),
+                 coalesce(lx.fuzzn, 0),
+                 coalesce(sn.semn, 0),
+                 wb := cfg.bm25_w,
+                 wf := cfg.fuzzy_w,
+                 ws := cfg.effective_sem_weight
+             ) >= 0.8 THEN 0.65
         ELSE 0.4
     END                                                AS confidence,
     json_object(
-        'route', (SELECT route_mode FROM classified),
-        'uri_glob_applied', uri_glob IS NOT NULL,
-        'mime_glob_applied', mime_glob IS NOT NULL,
-        'keywords_empty', (SELECT keywords_empty FROM classified)
+        'route', cls.route_mode,
+        'uri_glob_applied', cls.uri_glob_filter IS NOT NULL,
+        'mime_glob_applied', cls.mime_glob_filter IS NOT NULL,
+        'keywords_empty', cls.keywords_empty
     )                                                  AS boosts_json,
     json_object(
-        'route', (SELECT route_mode FROM classified),
+        'route', cls.route_mode,
         'lex_candidates', (SELECT cnt FROM lex_stats),
         'dense_candidates', (SELECT cnt FROM sem_stats),
-        'requested_mode', (SELECT requested_mode FROM classified)
+        'requested_mode', cls.requested_mode
     )                                                  AS explain_json
 FROM final_nodes fn
          JOIN filtered ri ON ri.node_id = fn.fn_node_id
@@ -297,19 +305,22 @@ FROM final_nodes fn
          LEFT JOIN sem_norm sn ON sn.node_id = fn.fn_node_id
          LEFT JOIN lex_rrf rlex ON rlex.node_id = fn.fn_node_id
          LEFT JOIN sem_rrf rsem ON rsem.node_id = fn.fn_node_id
+         JOIN config cfg ON TRUE
+         JOIN classified cls ON TRUE
 ORDER BY
     CASE
-        WHEN uri_glob IS NOT NULL AND ri.scope = 'document' THEN 0
-        WHEN uri_glob IS NOT NULL THEN 1
-        WHEN uri_glob IS NULL
-             AND coalesce(ri.symbol_key, '') = (SELECT keywords_lc FROM classified)
-             AND (SELECT keywords_lc FROM classified) <> '' THEN -1
+        WHEN cls.uri_glob_filter IS NOT NULL AND ri.scope = 'document' THEN 0
+        WHEN cls.uri_glob_filter IS NOT NULL THEN 1
+        WHEN cls.uri_glob_filter IS NULL
+             AND coalesce(ri.symbol_key, '') = cls.keywords_lc
+             AND cls.keywords_lc <> '' THEN -1
         ELSE 0
     END,
     score DESC,
     length(ri.uri)
 );
 
+-- Lightweight "find related documents" helper that uses the same filtering approach.
 CREATE OR REPLACE MACRO related(
     seed_uri,
     k := 20,
@@ -317,32 +328,47 @@ CREATE OR REPLACE MACRO related(
     uri_glob := NULL,
     mime_glob := NULL
 ) AS TABLE (
-WITH seed AS (
+WITH base_params AS (
+    SELECT
+        coalesce(trim(seed_uri), '')                              AS seed,
+        CAST(coalesce(k, 20) AS BIGINT)                           AS result_k,
+        lower(coalesce(mode, 'mixed'))                            AS requested_mode,
+        NULLIF(trim(uri_glob), '')                                AS uri_glob_filter,
+        NULLIF(trim(mime_glob), '')                               AS mime_glob_filter
+),
+seed AS (
     SELECT *
     FROM repo_index
-    WHERE uri = seed_uri
+         JOIN base_params bp_seed ON TRUE
+    WHERE uri = bp_seed.seed
     LIMIT 1
 ),
 related_source AS (
     SELECT
-        *,
+        ri.*,
         CASE
-            WHEN uri IS NULL THEN NULL
-            ELSE regexp_replace(lower(uri), '^[^:]+://+', '')
+            WHEN ri.uri IS NULL THEN NULL
+            ELSE regexp_replace(lower(ri.uri), '^[^:]+://+', '')
         END AS uri_local
-    FROM repo_index
-    WHERE uri <> seed_uri
+    FROM repo_index ri
+         JOIN base_params bp_rs ON TRUE
+    WHERE ri.uri <> bp_rs.seed
 ),
 filtered AS (
-    SELECT *
-    FROM related_source
+    SELECT rs.*
+    FROM related_source rs
+         JOIN base_params bp_filter ON TRUE
     WHERE (
-            uri_glob IS NULL
-            OR repoql_glob_match(uri, uri_glob, TRUE, 'file:///') IS TRUE
-            OR repoql_glob_match(uri_local, uri_glob, TRUE, NULL) IS TRUE
+            bp_filter.uri_glob_filter IS NULL
+            OR repoql_glob_match(rs.uri, bp_filter.uri_glob_filter, TRUE, 'file:///') IS TRUE
+            OR repoql_glob_match(rs.uri_local, bp_filter.uri_glob_filter, TRUE, NULL) IS TRUE
         )
-      AND (mime_glob IS NULL OR repoql_glob_match(coalesce(mime, ''), mime_glob, TRUE, NULL) IS TRUE)
+      AND (
+            bp_filter.mime_glob_filter IS NULL
+            OR repoql_glob_match(coalesce(rs.mime, ''), bp_filter.mime_glob_filter, TRUE, NULL) IS TRUE
+        )
 ),
+-- Score candidate documents relative to the provided seed URI.
 scored AS (
     SELECT
         f.*,
@@ -356,12 +382,26 @@ scored AS (
     FROM filtered f
              JOIN seed ON TRUE
 ),
+-- Rank by blended semantic + lexical score for output + RRF.
 final AS (
     SELECT
         *,
         coalesce(sim_score, 0) * 0.7 + coalesce(bm25_score, 0) * 0.3 AS score,
+        ROW_NUMBER() OVER (
+            ORDER BY
+                coalesce(sim_score, 0) * 0.7 + coalesce(bm25_score, 0) * 0.3 DESC,
+                length(uri),
+                uri
+        ) AS rel_row,
         1.0 / (10 + ROW_NUMBER() OVER (ORDER BY coalesce(sim_score, 0) DESC, coalesce(bm25_score, 0) DESC, uri)) AS rrf
     FROM scored
+),
+-- Apply the caller's limit without using LIMIT expressions on macro params.
+limited AS (
+    SELECT f.*
+    FROM final f
+             JOIN base_params bp_limit ON TRUE
+    WHERE f.rel_row <= bp_limit.result_k
 )
 SELECT
     doc_id,
@@ -390,10 +430,10 @@ SELECT
         WHEN score >= 0.6 THEN 0.55
         ELSE 0.35
     END AS confidence,
-    json_object('mode', lower(coalesce(mode, 'mixed')), 'seed_uri', seed_uri) AS explain_json
-FROM final
+    json_object('mode', bp_out.requested_mode, 'seed_uri', bp_out.seed) AS explain_json
+FROM limited
+         JOIN base_params bp_out ON TRUE
 ORDER BY score DESC, length(uri)
-LIMIT CAST(coalesce(k, 20) AS BIGINT)
 );
 
 CREATE OR REPLACE MACRO file_search(
@@ -410,7 +450,7 @@ SELECT
     dense_score AS semn,
     score
 FROM search(
-        q := trim(concat_ws(' ', coalesce(keywords, ''), coalesce(question, ''))),
+        trim(concat_ws(' ', coalesce(keywords, ''), coalesce(question, ''))),
         mode := CASE
                   WHEN question IS NOT NULL AND length(trim(question)) > 0 THEN 'heavy'
                   ELSE 'auto'

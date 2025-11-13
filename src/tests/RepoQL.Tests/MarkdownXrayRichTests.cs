@@ -1,3 +1,4 @@
+using System;
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Testing.Scaffolding;
@@ -6,6 +7,8 @@ namespace RepoQL.Tests;
 
 internal class MarkdownXrayRichTests
 {
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(5);
+
     [Test]
     public async Task Markdown_Xray_Reports_Images_Tables_Frontmatter()
     {
@@ -25,7 +28,7 @@ internal class MarkdownXrayRichTests
 
         await repo.IndexAsync();
 
-        var doc = repo.Store.GetDocumentByUri(uri)!;
+        var doc = await repo.WaitForDocumentAsync(uri, DefaultTimeout) ?? throw new TimeoutException("Document was not indexed");
         var artifact = repo.Store.GetArtifact(doc.ArtifactId!.Value)!;
 
         artifact.Headline.Should().NotBeNullOrWhiteSpace();

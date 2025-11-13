@@ -31,6 +31,12 @@ public sealed record CompositeFileSystemMount
     public bool IsPrimary { get; init; }
 
     /// <summary>
+    /// Controls whether <see cref="CompositeFileSystem"/> subscribes to change notifications for this mount. Disable
+    /// for read-only sources (embedded docs, imported GitHub repos) to avoid unnecessary watchers.
+    /// </summary>
+    public bool EnableWatching { get; init; } = true;
+
+    /// <summary>
     /// Creates a mount that treats the provided file system as the default handler for its scheme.
     /// </summary>
     public static CompositeFileSystemMount CreatePrimary(IVirtualFileSystem fileSystem, string? id = null) =>
@@ -55,13 +61,15 @@ public sealed record CompositeFileSystemMount
     /// Optional leading path segment (without scheme/authority) that must be present (e.g. "owner/repo").
     /// </param>
     /// <param name="includeInEnumeration">Whether to enumerate files from this mount.</param>
+    /// <param name="enableWatching">Whether to subscribe to file watcher events for this mount.</param>
     public static CompositeFileSystemMount ForScheme(
         string id,
         IVirtualFileSystem fileSystem,
         string scheme,
         string? authority = null,
         string? pathPrefix = null,
-        bool includeInEnumeration = true)
+        bool includeInEnumeration = true,
+        bool enableWatching = true)
     {
         if (string.IsNullOrWhiteSpace(id))
             throw new ArgumentException("Mount id is required.", nameof(id));
@@ -80,6 +88,7 @@ public sealed record CompositeFileSystemMount
             Id = id,
             FileSystem = fileSystem,
             IncludeInEnumeration = includeInEnumeration,
+            EnableWatching = enableWatching,
             UriPredicate = uri =>
             {
                 if (!string.Equals(uri.Scheme, normalizedScheme, StringComparison.OrdinalIgnoreCase))
