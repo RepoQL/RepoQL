@@ -15,81 +15,12 @@ namespace RepoQL.ConsoleApp.Resources;
 /// </summary>
 internal sealed class RepoResourceService
 {
-    private const string DocumentResourceName = "document";
-    private const string SummaryResourceName = "summary";
     private const string SummaryUriPrefix = "summarize::";
-    private static readonly ResourceTemplate DocumentTemplate = new()
-    {
-        Name = DocumentResourceName,
-        Title = "RepoQL document",
-        Description = "Fetch repository files or embedded documents by RepoURI (file:///…, embed:///…). "
-                    + "Supports #line= and #char= fragments for slicing results.",
-        UriTemplate = "{+uri}",
-        MimeType = "text/plain; charset=utf-8"
-    };
-    private static readonly ResourceTemplate SummaryTemplate = new()
-    {
-        Name = SummaryResourceName,
-        Title = "RepoQL summary",
-        Description = "Returns a summary of the contents of a file including structure, key information and linting - use this first",
-        UriTemplate = $"{SummaryUriPrefix}{{+uri}}",
-        MimeType = "text/markdown; charset=utf-8"
-    };
-
     private readonly RepoQlClientProvider _clientProvider;
 
     public RepoResourceService(RepoQlClientProvider clientProvider)
     {
         _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
-    }
-
-    private const int DefaultPageSize = 25;
-
-    public ValueTask<ListResourceTemplatesResult> ListTemplatesAsync(
-        RequestContext<ListResourceTemplatesRequestParams> context,
-        CancellationToken cancellationToken)
-    {
-        var result = new ListResourceTemplatesResult
-        {
-            ResourceTemplates = new List<ResourceTemplate> { DocumentTemplate, SummaryTemplate }
-        };
-        return ValueTask.FromResult(result);
-    }
-
-    public async ValueTask<ListResourcesResult> ListResourcesAsync(
-        RequestContext<ListResourcesRequestParams> context,
-        CancellationToken cancellationToken)
-    {
-        if (context is null) throw new ArgumentNullException(nameof(context));
-
-        var offset = ParseCursor(context.Params.Cursor);
-        var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-        var (documents, hasMore) = await FetchDocumentSummariesAsync(client, offset, DefaultPageSize, cancellationToken)
-            .ConfigureAwait(false);
-
-        var resources = new List<Resource>(documents.Count);
-        foreach (var doc in documents)
-        {
-            var title = string.IsNullOrWhiteSpace(doc.Headline) ? doc.FileName : doc.Headline!;
-            var description = doc.Structure ?? doc.Summary ?? title;
-            var mimeType = doc.MimeType ?? "text/plain; charset=utf-8";
-
-            resources.Add(new Resource
-            {
-                Name = doc.FileName,
-                Title = title,
-                Uri = doc.OriginalUri,
-                Description = description,
-                MimeType = mimeType,
-                Size = doc.Size
-            });
-        }
-
-        return new ListResourcesResult
-        {
-            Resources = resources,
-            NextCursor = hasMore ? (offset + DefaultPageSize).ToString(CultureInfo.InvariantCulture) : null
-        };
     }
 
     public async ValueTask<ReadResourceResult> ReadResourceAsync(
@@ -347,144 +278,6 @@ internal sealed class RepoResourceService
         return results;
     }
 
-    private async Task<(List<DocumentSummary> Items, bool HasMore)> FetchDocumentSummariesAsync(
-        IRepoQlClient client,
-        int offset,
-        int pageSize,
-        CancellationToken cancellationToken)
-    {
-        const string Sql = """
-            SELECT n.uri,
-                   a.headline,
-                   a.summary,
-                   a.structure,
-                   a.media_type,
-                   a.byte_size
-            FROM node n
-            JOIN artifact a ON a.id = n.artifact_id
-            WHERE n.kind = 'document'
-            ORDER BY
-                CASE
-                    WHEN lower(n.uri) LIKE 'embed://%' THEN 0
-                    WHEN lower(n.uri) LIKE 'file:///readme%' THEN 1
-                    WHEN lower(n.uri) LIKE 'file:///docs/%' THEN 2
-                    ELSE 3
-                END,
-                lower(n.uri)
-            LIMIT ?
-            OFFSET ?
-            """;
-
-        var limit = pageSize + 1;
-        var response = await client.ExecuteRawQueryAsync(
-            Sql,
-            new object?[] { limit, offset },
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        if (response.Rows.Count == 0)
-        {
-            return (new List<DocumentSummary>(), false);
-        }
-
-        var items = new List<DocumentSummary>(Math.Min(pageSize, response.Rows.Count));
-        foreach (var row in response.Rows.Take(pageSize))
-        {
-            var values = row.Values;
-            if (values.Count == 0)
-            {
-                continue;
-            }
-
-            var uri = ExtractString(values[0]) ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(uri))
-            {
-                continue;
-            }
-
-            var headline = values.Count > 1 ? ExtractString(values[1]) : null;
-            var summary = values.Count > 2 ? ExtractString(values[2]) : null;
-            var structure = values.Count > 3 ? ExtractString(values[3]) : null;
-            var mediaType = values.Count > 4 ? ExtractString(values[4]) : null;
-            long? size = null;
-            if (values.Count > 5)
-            {
-                var sizeRaw = ExtractString(values[5]);
-                if (!string.IsNullOrWhiteSpace(sizeRaw) &&
-                    long.TryParse(sizeRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
-                {
-                    size = parsed;
-                }
-            }
-            items.Add(CreateDocumentSummary(uri, headline, summary, structure, mediaType, size));
-        }
-
-        return (items, response.Rows.Count > pageSize);
-    }
-
-    private static DocumentSummary CreateDocumentSummary(
-        string uri,
-        string? headline,
-        string? summary,
-        string? structure,
-        string? mediaType,
-        long? size)
-    {
-        var resourceUri = $"{SummaryUriPrefix}{uri}";
-        var cleanHeadline = CleanText(headline);
-        var cleanSummary = CleanText(summary);
-        var cleanStructure = CleanText(structure);
-        var mime = string.IsNullOrWhiteSpace(mediaType) ? null : mediaType;
-
-        return new DocumentSummary(
-            OriginalUri: uri,
-            FileName: ExtractFileName(uri),
-            Headline: cleanHeadline,
-            Summary: cleanSummary,
-            Structure: cleanStructure,
-            MimeType: mime,
-            Size: size,
-            ResourceUri: resourceUri);
-    }
-
-    private static string? CleanText(string? value)
-        => string.IsNullOrWhiteSpace(value)
-            ? null
-            : value.Replace("\r\n", "\n", StringComparison.Ordinal)
-                   .Replace('\r', '\n')
-                   .Trim();
-
-    private static string ExtractFileName(string uri)
-    {
-        if (string.IsNullOrWhiteSpace(uri))
-        {
-            return "resource";
-        }
-
-        var trimmed = uri.TrimEnd('/');
-        var lastSlash = trimmed.LastIndexOf('/');
-        if (lastSlash >= 0 && lastSlash < trimmed.Length - 1)
-        {
-            return trimmed[(lastSlash + 1)..];
-        }
-
-        return trimmed;
-    }
-
-    private static int ParseCursor(string? cursor)
-    {
-        if (string.IsNullOrWhiteSpace(cursor))
-        {
-            return 0;
-        }
-
-        if (int.TryParse(cursor, NumberStyles.Integer, CultureInfo.InvariantCulture, out var offset) && offset > 0)
-        {
-            return offset;
-        }
-
-        return 0;
-    }
-
     private static string BuildSummaryMarkdown(DocumentData document, IReadOnlyList<AnnotationRecord> annotations, RepoUri originalUri)
     {
         var sb = new StringBuilder();
@@ -598,13 +391,4 @@ internal sealed class RepoResourceService
         string? Data,
         DateTimeOffset? CreatedAt);
 
-    private sealed record DocumentSummary(
-        string OriginalUri,
-        string FileName,
-        string? Headline,
-        string? Summary,
-        string? Structure,
-        string? MimeType,
-        long? Size,
-        string ResourceUri);
 }
