@@ -156,13 +156,7 @@ internal class McpCommands
                 })
                 .WithStdioServerTransport()
                 .WithTools<QueryTool>()
-                .WithTools<XrayTool>()
-                .WithReadResourceHandler((ctx, ct) =>
-                {
-                    ArgumentNullException.ThrowIfNull(ctx.Services);
-                    var service = ctx.Services.GetRequiredService<RepoResourceService>();
-                    return service.ReadResourceAsync(ctx, ct);
-                });
+                .WithTools<XrayTool>();
 
         await builder.Build().RunAsync(cancel);
     }

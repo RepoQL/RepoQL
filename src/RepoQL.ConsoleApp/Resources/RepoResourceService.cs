@@ -3,7 +3,6 @@ using System.Text;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using ModelContextProtocol.Protocol;
-using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
@@ -21,24 +20,6 @@ internal sealed class RepoResourceService
     public RepoResourceService(RepoQlClientProvider clientProvider)
     {
         _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
-    }
-
-    public async ValueTask<ReadResourceResult> ReadResourceAsync(
-        RequestContext<ReadResourceRequestParams> context,
-        CancellationToken cancellationToken)
-    {
-        if (context is null) throw new ArgumentNullException(nameof(context));
-        var uriString = context.Params.Uri;
-        if (string.IsNullOrWhiteSpace(uriString))
-        {
-            throw new ArgumentException("Resource URI cannot be empty.", nameof(context));
-        }
-
-        var content = await FetchResourceContentAsync(uriString, cancellationToken).ConfigureAwait(false);
-        return new ReadResourceResult
-        {
-            Contents = new List<ResourceContents> { content }
-        };
     }
 
     public Task<TextResourceContents> FetchResourceAsync(string resourceUri, CancellationToken cancellationToken = default)
