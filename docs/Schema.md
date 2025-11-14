@@ -138,7 +138,7 @@ COMMENT ON COLUMN edge.composition_child_id IS 'Enforces single parent for compo
 
 ### `annotation`
 
-Out‑of‑band facts attached to a document, node, span, edge, or explicit URI.
+Out-of-band facts attached to a document, node, span, edge, or explicit URI.
 
 ```sql
 CREATE TABLE IF NOT EXISTS annotation (
@@ -174,11 +174,59 @@ CREATE INDEX IF NOT EXISTS annotation_target_span_id_index ON annotation(target_
 COMMENT ON TABLE annotation IS 'Out-of-band facts (lint, outline, metrics, hints) scoped to a document and optionally targeting a node, edge, span, or explicit URI.';
 ```
 
+### `document_search`
+
+Denormalized search surface for fast lexical/fuzzy queries. Each row mirrors one document node and is regenerated on every commit, so the table stays in lockstep with `node`.
+
+```sql
+CREATE TABLE IF NOT EXISTS document_search (
+  doc_id     UUID PRIMARY KEY,
+  uri        TEXT NOT NULL,
+  search_key TEXT NOT NULL,  -- lower-cased path + symbol tokens
+  basename   TEXT,
+  dirname    TEXT,
+  FOREIGN KEY (doc_id) REFERENCES node(id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS document_search_uri_idx   ON document_search(uri);
+CREATE INDEX        IF NOT EXISTS document_search_search_idx ON document_search(search_key);
+CREATE INDEX        IF NOT EXISTS document_search_basename_idx ON document_search(basename);
+CREATE INDEX        IF NOT EXISTS document_search_dirname_idx  ON document_search(dirname);
+```
+
+> **Lifecycle:** the indexing engine truncates/rewrites `document_search` inside the same transaction that updates the owning document. Foreign-key enforcement ensures no stale search rows linger after deletes or prunes.
+
+### `document_embedding`
+
+Vector store for semantic search (both document-level and object-level embeddings). Rows reference the owning document (`doc_id`) and the specific node (`node_id`) whose text produced the embedding.
+
+```sql
+CREATE TABLE IF NOT EXISTS document_embedding (
+  doc_id     UUID NOT NULL,
+  node_id    UUID NOT NULL,
+  uri        TEXT NOT NULL,
+  scope      TEXT NOT NULL CHECK (scope IN ('document', 'object')),
+  model      TEXT NOT NULL,
+  dim        INTEGER NOT NULL,
+  embedding  TEXT NOT NULL, -- JSON float array
+  updated_at TIMESTAMP NOT NULL,
+  PRIMARY KEY (doc_id, node_id),
+  FOREIGN KEY (doc_id)  REFERENCES node(id),
+  FOREIGN KEY (node_id) REFERENCES node(id)
+);
+
+CREATE INDEX IF NOT EXISTS document_embedding_scope_idx ON document_embedding(scope);
+CREATE INDEX IF NOT EXISTS document_embedding_uri_idx   ON document_embedding(uri);
+CREATE INDEX IF NOT EXISTS document_embedding_model_idx ON document_embedding(model);
+```
+
+> **Lifecycle:** the DuckDB writer updates these rows opportunistically (document scope) and during multi-file analysis (object scope). `DeleteSubtreeInternal` removes entries for both `doc_id` and `node_id` before deleting the corresponding nodes, preventing FK violations.
+
 ---
 
 ## Invariants
 
-* **Document uniqueness**: exactly one `node` per container URI (case‑insensitive).
+* **Document uniqueness**: exactly one `node` per container URI (case-insensitive).
 * **Composition single parent**: one composition parent per child (`edge_composition_single_parent_index`).
 * **Span ownership**: each span belongs to one document.
 * **Timestamps**: UTC.
@@ -616,14 +664,8 @@ CREATE OR REPLACE MACRO annotations_all(kinds, min_severity) AS TABLE (
 * **Open vocabularies** (`node.kind`, `edge.type`, `annotation.kind`): easy to extend; conventions over enums.
 * **Idempotent upserts** via `semantic_key` on `edge` and `annotation`.
 * **Partial spans allowed**: line‑only, byte‑only, or both.
-* **Annotations**: first‑class table for lint, outlines, and tool results, including targets that are **edges**.
+* **Annotations**: first-class table for lint, outlines, and tool results, including targets that are **edges**.
 
 ---
-
-## Evolution
-
-* Add parsers that emit: a document node (with `uri`), composition edges to items, and optional spans.
-* Contribute optional views per format; core schema remains stable.
-* Extend UDF set without migrations.
 
 This is the complete, current core.
