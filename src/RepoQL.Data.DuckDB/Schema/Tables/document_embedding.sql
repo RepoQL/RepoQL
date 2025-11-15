@@ -7,9 +7,7 @@ CREATE TABLE IF NOT EXISTS document_embedding (
     dim        INTEGER NOT NULL,
     embedding  VARCHAR NOT NULL, -- JSON float array
     updated_at TIMESTAMP NOT NULL,
-    PRIMARY KEY (doc_id, node_id),
-    FOREIGN KEY (doc_id) REFERENCES node(id),
-    FOREIGN KEY (node_id) REFERENCES node(id)
+    PRIMARY KEY (doc_id, node_id)
 );
 
 CREATE INDEX IF NOT EXISTS document_embedding_scope_idx ON document_embedding(scope);

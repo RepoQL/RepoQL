@@ -358,6 +358,100 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task DeleteNode_RemovesDerivedData()
+    {
+        using (var fkCheck = connection.CreateCommand())
+        {
+            fkCheck.CommandText = "SELECT COUNT(*) FROM duckdb_constraints() WHERE table_name = 'document_embedding' AND constraint_type = 'FOREIGN KEY';";
+            ((long)fkCheck.ExecuteScalar()!).Should().Be(0);
+        }
+
+        // Arrange
+        var uri = RepoUri.Parse("file:///repo/docs/standalone.md");
+        var document = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "document",
+            Uri = uri,
+            Props = new JsonObject(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        store.UpsertNode(document);
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "INSERT INTO document_search (doc_id, uri, search_key, basename, dirname) VALUES (?,?,?,?,?);";
+            AddParameters(cmd, document.Id, uri.ToString(), "standalone doc", "standalone.md", "/repo/docs");
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "INSERT INTO document_embedding (doc_id, node_id, uri, scope, model, dim, embedding, updated_at) VALUES (?,?,?,?,?,?,?,?);";
+            AddParameters(cmd, document.Id, document.Id, uri.ToString(), "document", "test-model", 2, "[0.1,0.9]", DateTimeOffset.UtcNow.UtcDateTime);
+            cmd.ExecuteNonQuery();
+        }
+
+        // Act
+        Exception? failure = null;
+        var deleted = false;
+        try
+        {
+            deleted = store.DeleteNode(document.Id);
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+        }
+
+        // Assert
+        if (failure is not null)
+        {
+            using var diag = connection.CreateCommand();
+            diag.CommandText = "SELECT COUNT(*) FROM document_search WHERE doc_id=?;";
+            AddParameters(diag, document.Id);
+            var searchRemaining = (long)diag.ExecuteScalar()!;
+
+            using var diag2 = connection.CreateCommand();
+            diag2.CommandText = "SELECT COUNT(*) FROM document_embedding WHERE doc_id=? OR node_id=?;";
+            AddParameters(diag2, document.Id, document.Id);
+            var embeddingRemaining = (long)diag2.ExecuteScalar()!;
+
+            using var diag3 = connection.CreateCommand();
+            diag3.CommandText = "SELECT kind, uri, container_uri_lowercase FROM node WHERE id=?;";
+            AddParameters(diag3, document.Id);
+            using var reader = diag3.ExecuteReader();
+            var kindInfo = reader.Read()
+                ? $"kind={reader.GetString(0)}, uri={reader.GetString(1)}, lower={reader.GetString(2)}"
+                : "(node missing)";
+
+            Assert.Fail($"DeleteNode failed: {failure.GetType().Name} {failure.Message}\n" +
+                        $"document_search rows: {searchRemaining}, document_embedding rows: {embeddingRemaining}\n" +
+                        $"node info: {kindInfo}");
+        }
+
+        deleted.Should().BeTrue();
+        store.GetNode(document.Id).Should().BeNull();
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COUNT(*) FROM document_search WHERE doc_id=?;";
+            AddParameters(cmd, document.Id);
+            ((long)cmd.ExecuteScalar()!).Should().Be(0);
+        }
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COUNT(*) FROM document_embedding WHERE doc_id=? OR node_id=?;";
+            AddParameters(cmd, document.Id, document.Id);
+            ((long)cmd.ExecuteScalar()!).Should().Be(0);
+        }
+
+        return Task.CompletedTask;
+    }
+
     // ========== Span Tests ==========
 
     [Test]
@@ -698,6 +792,99 @@ public sealed class DuckDbGraphStoreTests : IDisposable
             r.Should().ContainKey("cnt");
             r["cnt"].Should().Be(1L);
         });
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ReplaceDocumentContent_ClearsDerivedTables()
+    {
+        var docUri = RepoUri.Parse("file:///repo/docs/bootstrap.css");
+        var (doc, child, span) = InsertDocumentGraph(store, docUri);
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "INSERT INTO document_search (doc_id, uri, search_key, basename, dirname) VALUES (?,?,?,?,?);";
+            AddParameters(cmd, doc.Id, docUri.ToString(), "css bootstrap", "bootstrap.css", "/repo/docs");
+            cmd.ExecuteNonQuery();
+        }
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "INSERT INTO document_embedding (doc_id, node_id, uri, scope, model, dim, embedding, updated_at) VALUES (?,?,?,?,?,?,?,?);";
+            AddParameters(cmd, doc.Id, doc.Id, docUri.ToString(), "document", "test", 2, "[0.1,0.2]", DateTimeOffset.UtcNow.UtcDateTime);
+            cmd.ExecuteNonQuery();
+        }
+
+        store.ReplaceDocumentContent(doc.Id, Array.Empty<Node>(), Array.Empty<Span>(), Array.Empty<Edge>());
+
+        var newSpan = new Span
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = doc.Id,
+            StartByte = 0,
+            EndByte = span.EndByte,
+            StartLine = span.StartLine,
+            EndLine = span.EndLine
+        };
+
+        var newChild = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = child.Kind,
+            Uri = child.Uri,
+            SpanId = newSpan.Id,
+            Headline = child.Headline,
+            Structure = child.Structure,
+            Props = child.Props,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        store.ReplaceDocumentContent(doc.Id, new[] { newChild }, new[] { newSpan }, Array.Empty<Edge>());
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COUNT(*) FROM document_search WHERE doc_id=?;";
+            AddParameters(cmd, doc.Id);
+            var count = (long)cmd.ExecuteScalar()!;
+            count.Should().Be(0);
+        }
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COUNT(*) FROM document_embedding WHERE doc_id=?;";
+            AddParameters(cmd, doc.Id);
+            var count = (long)cmd.ExecuteScalar()!;
+            count.Should().Be(0);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    [Test]
+    public Task ReplaceDocumentContent_DoesNotDoubleDeleteDocumentEmbeddings()
+    {
+        var docUri = RepoUri.Parse("file:///repo/docs/site.css");
+        var (doc, child, _) = InsertDocumentGraph(store, docUri);
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "INSERT INTO document_embedding (doc_id, node_id, uri, scope, model, dim, embedding, updated_at) VALUES (?,?,?,?,?,?,?,?);";
+            AddParameters(cmd, doc.Id, child.Id, docUri.ToString(), "object", "test", 2, "[0.3,0.7]", DateTimeOffset.UtcNow.UtcDateTime);
+            cmd.ExecuteNonQuery();
+        }
+
+        Action act = () => store.ReplaceDocumentContent(doc.Id, Array.Empty<Node>(), Array.Empty<Span>(), Array.Empty<Edge>());
+        act.Should().NotThrow();
+
+        using (var cmd = connection.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COUNT(*) FROM document_embedding WHERE doc_id=?;";
+            AddParameters(cmd, doc.Id);
+            var count = (long)cmd.ExecuteScalar()!;
+            count.Should().Be(0);
+        }
+
         return Task.CompletedTask;
     }
 
@@ -1262,5 +1449,15 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         };
         store.UpsertEdge(edge);
         return edge;
+    }
+
+    private static void AddParameters(DuckDBCommand command, params object?[] values)
+    {
+        foreach (var value in values)
+        {
+            var parameter = command.CreateParameter();
+            parameter.Value = value ?? DBNull.Value;
+            command.Parameters.Add(parameter);
+        }
     }
 }

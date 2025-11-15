@@ -11,6 +11,7 @@ using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Core.Analysis;
 using RepoQL.Core.Analysis.EditorConfig;
+using RepoQL.Core.PlainText;
 using RepoQL.Core.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.Embeddings;
@@ -194,6 +195,7 @@ public static class RepoIndexerServiceCollectionExtensions
             resourceRoot: "RepoQL.Formats.DotNet.Templates");
 
         services.AddMarkdownFormat();
+        services.AddPlainTextFormat();
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjAnalyzer>();
@@ -328,7 +330,14 @@ public static class RepoIndexerServiceCollectionExtensions
 
         services.AddSingleton<IDocumentCatalogDataSource>(_ => NullDocumentCatalogDataSource.Instance);
         services.AddSingleton<IDocumentCatalog>(sp => new DocumentCatalog(sp.GetRequiredService<IDocumentCatalogDataSource>()));
-        services.AddSingleton<IArtifactPruner, StorageBackedArtifactPruner>();
+        services.AddSingleton<IArtifactPruner>(sp =>
+        {
+            var connectionFactory = sp.GetRequiredService<IDuckDBConnectionFactory>();
+            var logger = sp.GetService<ILogger<StorageBackedArtifactPruner>>();
+            var coordinatorLazy = new Lazy<IIndexingCoordinator>(() => sp.GetRequiredService<IIndexingCoordinator>());
+            Func<bool> isReindexing = () => coordinatorLazy.Value.IsReindexing;
+            return new StorageBackedArtifactPruner(connectionFactory, isReindexing, logger);
+        });
         services.AddSingleton<IVectorIndexCoordinator, VectorIndexCoordinator>();
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
             sp.GetRequiredService<IDatabaseWriter>(),

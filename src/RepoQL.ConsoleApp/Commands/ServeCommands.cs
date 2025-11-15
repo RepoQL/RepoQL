@@ -29,7 +29,12 @@ internal class HostCommands(IAnsiConsole console)
         builder.Host.UseConsoleLifetime();
         builder.Logging.ClearProviders();
         if (!implicitStart)
+        {
             builder.Logging.AddSimpleConsole(sc => sc.SingleLine = true);
+
+        }
+
+        builder.Logging.AddFilter((s, level) => !s.StartsWith("Microsoft.AspNetCore") && level >= LogLevel.Information);
         builder.Logging.AddOpenTelemetry();
         builder.Services.AddOpenTelemetry()
             .WithMetrics(m => m

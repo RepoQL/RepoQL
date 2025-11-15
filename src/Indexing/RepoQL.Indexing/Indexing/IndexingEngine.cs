@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
@@ -135,10 +136,19 @@ public partial class IndexingEngine
         SingleWriter = false
     });
     private readonly Task _idleProcessingTask;
+    private readonly ConcurrentDictionary<long, Activity> _epochActivities = new();
     private readonly Dictionary<IndexingState, int> _activeStageCounts = new();
     private long _lastReleasedEpoch = long.MinValue;
     private IArtifactPruner ArtifactPruner { get; }
     private IVectorIndexCoordinator VectorCoordinator { get; }
+
+    internal bool HasPendingAnalysis(long epoch)
+    {
+        lock (_analysisLock)
+        {
+            return _pendingAnalysis.TryGetValue(epoch, out var backlog) && backlog.Count > 0;
+        }
+    }
 
     public async Task EnqueueItemAsync(RawArtifact artifact, IndexItemOptions options = IndexItemOptions.Default, CancellationToken cancellationToken = default)
     {
@@ -255,7 +265,9 @@ public partial class IndexingEngine
 
     public long BeginNewEpoch()
     {
-        return _epochTracker.BeginNewEpoch();
+        var epoch = _epochTracker.BeginNewEpoch();
+        StartEpochActivity(epoch);
+        return epoch;
     }
 
     internal async Task IndexItemAsync(IndexItem item, CancellationToken cancellationToken = default)
@@ -369,6 +381,44 @@ public partial class IndexingEngine
         }
     }
 
+    private void StartEpochActivity(long epoch)
+    {
+        var activity = ActivitySource.StartActivity(ActivityKind.Internal, name: "Indexer.Epoch", tags: new TagList
+        {
+            { "index.epoch", epoch }
+        });
+
+        if (activity is null)
+            return;
+
+        if (!_epochActivities.TryAdd(epoch, activity))
+        {
+            activity.Dispose();
+        }
+    }
+
+    private void CompleteEpochActivity(long epoch, bool success, Exception? error = null)
+    {
+        if (!_epochActivities.TryRemove(epoch, out var activity) || activity is null)
+            return;
+
+        if (success)
+        {
+            activity.SetStatus(ActivityStatusCode.Ok);
+        }
+        else
+        {
+            activity.SetStatus(ActivityStatusCode.Error, error?.Message);
+            if (error is not null)
+            {
+                activity.AddTag("exception.type", error.GetType().FullName);
+                activity.AddTag("exception.message", error.Message);
+            }
+        }
+
+        activity.Dispose();
+    }
+
     private async Task ProcessIdleEpochsAsync()
     {
         var reader = _analysisEpochChannel.Reader;
@@ -404,6 +454,7 @@ public partial class IndexingEngine
 
     private async Task ReleaseAnalysisAsync(long epoch)
     {
+        Exception? failure = null;
         try
         {
             Queue<IndexItem>? backlog = null;
@@ -438,7 +489,12 @@ public partial class IndexingEngine
         }
         catch (Exception ex)
         {
+            failure = ex;
             Logger.LogError(ex, "Failed to dispatch analysis work for epoch {Epoch}", epoch);
+        }
+        finally
+        {
+            CompleteEpochActivity(epoch, failure is null, failure);
         }
     }
 

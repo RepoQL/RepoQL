@@ -548,6 +548,8 @@ namespace RepoQL.Data.DuckDB;
         ExecuteSqlResource("Tables/document_search.sql");
         ExecuteSqlResource("Macros/search.sql");
 
+        RemoveDocumentEmbeddingForeignKeysIfNeeded();
+
         foreach (var script in _formatSchemaScripts)
         {
             try
@@ -560,6 +562,23 @@ namespace RepoQL.Data.DuckDB;
             }
         }
 
+    }
+
+    private void RemoveDocumentEmbeddingForeignKeysIfNeeded()
+    {
+        const string detectionSql = "SELECT COUNT(*) FROM duckdb_constraints() WHERE table_name = 'document_embedding' AND constraint_type = 'FOREIGN KEY';";
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = detectionSql;
+        var count = (long)(cmd.ExecuteScalar() ?? 0L);
+        if (count == 0)
+            return;
+
+        _logger.LogInformation("Recreating document_embedding without foreign keys (found {Count} constraints).", count);
+        Execute("CREATE TABLE document_embedding__temp AS SELECT * FROM document_embedding;");
+        Execute("DROP TABLE document_embedding;");
+        ExecuteSqlResource("Tables/document_embedding.sql");
+        Execute("INSERT INTO document_embedding SELECT * FROM document_embedding__temp;");
+        Execute("DROP TABLE document_embedding__temp;");
     }
 
 
@@ -1073,6 +1092,8 @@ FROM (
             // Remove scoped edges and old spans for this document
             Execute("DELETE FROM edge WHERE scope_document_id=?;", tx, documentId);
             Execute("DELETE FROM span WHERE document_id=?;", tx, documentId);
+            Execute("DELETE FROM document_embedding WHERE doc_id=?;", tx, documentId);
+            Execute("DELETE FROM document_search WHERE doc_id=?;", tx, documentId);
 
             if (toDelete.Count > 0)
             {
@@ -1082,6 +1103,7 @@ FROM (
                 // Remove all edges touching those nodes
                 Execute($@"DELETE FROM edge WHERE source_node_id IN ({placeholders}) OR destination_node_id IN ({placeholders});",
                     tx, idParams.Concat(idParams).ToArray());
+                Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", tx, idParams);
                 // Remove nodes
                 Execute($"DELETE FROM node WHERE id IN ({placeholders});", tx, idParams);
             }
@@ -1324,6 +1346,12 @@ FROM (
         using var tx = _connection.BeginTransaction();
         try
         {
+            var existing = GetNode(id);
+            if (existing is null)
+            {
+                tx.Commit();
+                return false;
+            }
 
             if (!cascadeComposition)
             {
@@ -1336,18 +1364,16 @@ FROM (
                 if (r.Read())
                     throw new InvalidOperationException("Node has composition children; use cascade.");
             }
-            else
+
+            if (string.Equals(existing.Kind, "document", StringComparison.OrdinalIgnoreCase))
             {
-                DeleteSubtreeInternal(id, tx);
-                tx.Commit();
-                return true;
+                Execute("DELETE FROM document_embedding WHERE doc_id=?;", tx, id);
+                Execute("DELETE FROM document_search WHERE doc_id=?;", tx, id);
             }
 
-            Execute("DELETE FROM edge WHERE source_node_id=? OR destination_node_id=? OR scope_document_id=?;", tx, id, id, id);
-            var n = Execute("DELETE FROM node WHERE id=?;", tx, id);
-
+            var deleted = DeleteSubtreeInternal(id, tx);
             tx.Commit();
-            return n > 0;
+            return deleted > 0;
         }
         catch (Exception ex)
         {
@@ -1521,7 +1547,10 @@ FROM (
                   WHERE source_node_id IN ({placeholders}) 
                      OR destination_node_id IN ({placeholders})
                      OR scope_document_id IN ({placeholders})",
-                tx, nodeParams.Concat(nodeParams).Concat(nodeParams).ToArray());
+            tx, nodeParams.Concat(nodeParams).Concat(nodeParams).ToArray());
+        Execute($@"DELETE FROM document_embedding WHERE doc_id IN ({placeholders});", tx, nodeParams);
+        Execute($@"DELETE FROM document_embedding WHERE node_id IN ({placeholders});", tx, nodeParams);
+        Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", tx, nodeParams);
 
         // 2b. Then delete spans (they reference nodes)
         Execute($"DELETE FROM span WHERE document_id IN ({placeholders})", tx, nodeParams);

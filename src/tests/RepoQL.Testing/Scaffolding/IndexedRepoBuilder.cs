@@ -187,6 +187,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
 
             var artifactPruner = new StorageBackedArtifactPruner(
                 connectionFactory,
+                () => coordinator?.IsReindexing ?? false,
                 loggerFactory.CreateLogger<StorageBackedArtifactPruner>());
             var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
             var committer = new IndexingCommitter(
@@ -350,6 +351,17 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
 
         await EnqueueUrisAsync(_trackedUris.Values, skipUnchanged, cancellationToken).ConfigureAwait(false);
         await _coordinator.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
+        RefreshReadStore();
+    }
+
+    public async Task ReindexAsync(bool clear = false, CancellationToken cancellationToken = default)
+    {
+        await foreach (var _ in _coordinator
+                           .ReindexAsync(new ReindexRequestOptions(clear), cancellationToken)
+                           .ConfigureAwait(false))
+        {
+        }
+
         RefreshReadStore();
     }
 

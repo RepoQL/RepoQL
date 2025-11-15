@@ -15,30 +15,40 @@ public sealed class StorageBackedArtifactPruner : IArtifactPruner
 {
     private readonly IDuckDBConnectionFactory _connectionFactory;
     private readonly ILogger<StorageBackedArtifactPruner> _logger;
+    private readonly Func<bool> _isReindexingAccessor;
 
     public StorageBackedArtifactPruner(
         IDuckDBConnectionFactory connectionFactory,
         ILogger<StorageBackedArtifactPruner>? logger = null)
+        : this(connectionFactory, static () => false, logger)
+    {
+    }
+
+    public StorageBackedArtifactPruner(
+        IDuckDBConnectionFactory connectionFactory,
+        Func<bool> isReindexingAccessor,
+        ILogger<StorageBackedArtifactPruner>? logger = null)
     {
         _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
         _logger = logger ?? NullLogger<StorageBackedArtifactPruner>.Instance;
+        _isReindexingAccessor = isReindexingAccessor ?? throw new ArgumentNullException(nameof(isReindexingAccessor));
     }
 
     public async Task<PruningResult> PruneAsync(IReadOnlyCollection<IndexItem> pendingItems, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(pendingItems);
 
+        if (!_isReindexingAccessor())
+        {
+            _logger.LogDebug("Pruning skipped because no reindex operation is active.");
+            return PruningResult.None;
+        }
+
         // Build the set of URIs that were observed during the latest indexing sweep.
         var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var item in pendingItems)
         {
             live.Add(item.Uri.AbsoluteUri);
-        }
-
-        if (live.Count == 0)
-        {
-            _logger.LogDebug("Pruning skipped because no items were processed in the epoch.");
-            return PruningResult.None;
         }
 
         var stale = new List<RepoUri>();

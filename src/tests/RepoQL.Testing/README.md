@@ -138,7 +138,10 @@ public async Task Pruner_Detects_Stale_Document()
     store.SeedDocument("file:///repo/live.md");
     store.SeedDocument("file:///repo/stale.md");
 
-    var pruner = new StorageBackedArtifactPruner(new SingleConnectionFactory(store.Connection), NullLogger<StorageBackedArtifactPruner>.Instance);
+    var pruner = new StorageBackedArtifactPruner(
+        new SingleConnectionFactory(store.Connection),
+        () => false,
+        NullLogger<StorageBackedArtifactPruner>.Instance);
     var pending = new[] { IndexingTestItemBuilder.ForFile("file:///repo/live.md").WithContent("text").Build() };
 
     var result = await pruner.PruneAsync(pending, CancellationToken.None);

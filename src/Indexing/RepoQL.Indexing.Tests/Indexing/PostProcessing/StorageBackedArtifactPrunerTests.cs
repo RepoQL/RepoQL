@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Indexing.Indexing.PostProcessing;
+using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Testing.Indexing;
 
 namespace RepoQL.Indexing.Tests.Indexing.PostProcessing;
@@ -14,7 +15,10 @@ internal class StorageBackedArtifactPrunerTests
         using var store = DuckDbTestStore.CreateInMemory();
         store.SeedDocument("file:///repo/doc-a.md");
 
-        var pruner = new StorageBackedArtifactPruner(new SingleConnectionFactory(store.Connection), NullLogger<StorageBackedArtifactPruner>.Instance);
+        var pruner = new StorageBackedArtifactPruner(
+            new SingleConnectionFactory(store.Connection),
+            () => true,
+            NullLogger<StorageBackedArtifactPruner>.Instance);
         var pending = new[]
         {
             new IndexingTestItemBuilder()
@@ -35,7 +39,10 @@ internal class StorageBackedArtifactPrunerTests
         store.SeedDocument("file:///repo/doc-live.md");
         store.SeedDocument("file:///repo/doc-stale.md");
 
-        var pruner = new StorageBackedArtifactPruner(new SingleConnectionFactory(store.Connection), NullLogger<StorageBackedArtifactPruner>.Instance);
+        var pruner = new StorageBackedArtifactPruner(
+            new SingleConnectionFactory(store.Connection),
+            () => true,
+            NullLogger<StorageBackedArtifactPruner>.Instance);
         var pending = new[]
         {
             new IndexingTestItemBuilder()
@@ -46,5 +53,22 @@ internal class StorageBackedArtifactPrunerTests
 
         var result = await pruner.PruneAsync(pending, CancellationToken.None);
         result.DeletedArtifacts.Should().ContainSingle().Which.AbsoluteUri.Should().Be("file:///repo/doc-stale.md");
+    }
+
+    [Test]
+    [DisplayName("Skips pruning when reindexing is not active")]
+    public async Task Given_NotReindexing_When_PruneAsync_Then_ReturnsEmpty()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        store.SeedDocument("file:///repo/doc.md");
+
+        var pruner = new StorageBackedArtifactPruner(
+            new SingleConnectionFactory(store.Connection),
+            () => false,
+            NullLogger<StorageBackedArtifactPruner>.Instance);
+
+        var pending = Array.Empty<IndexItem>();
+        var result = await pruner.PruneAsync(pending, CancellationToken.None);
+        result.DeletedArtifacts.Should().BeEmpty();
     }
 }

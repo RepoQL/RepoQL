@@ -10,6 +10,8 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
         .Create("text", "plain")
         .WithKind("plain.document");
 
+    internal static SemanticMediaType PlainTextMediaType => PlainText;
+
     public bool Supports(SemanticMediaType mediaType)
     {
         ArgumentNullException.ThrowIfNull(mediaType);
