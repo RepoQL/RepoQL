@@ -1,4 +1,7 @@
-Type: {{ media_kind | default: media_base }}
-Size: {{ size_bytes | filesize }}{% if line_count %}, Lines: {{ line_count }}{% endif %}
-Sections: {{ headings_count | default: 0 }}, Code: {{ codeblocks_count | default: 0 }}, Links: {{ links_count | default: 0 }}{% if images_count or tables_count %}, Images: {{ images_count | default: 0 }}, Tables: {{ tables_count | default: 0 }}{% endif %}{% if frontmatter_keys %}
-Frontmatter: {{ frontmatter_keys | default: 0 }}{% endif %}
+{{ display_title }} | {{ document_type_label | default: media_kind | default: media_base }} | {{ size_bytes | filesize }}, {{ line_count | default: 0 }} ln
+{% if frontmatter_pairs and frontmatter_pairs.size > 0 %}
+Frontmatter: {% for pair in frontmatter_pairs %}{{ pair }}{% unless forloop.last %}; {% endunless %}{% endfor %}
+{% else %}
+Frontmatter: none
+{% endif %}
+Topics: {% if topics and topics.size > 0 %}{% for t in topics limit:8 %}{{ t }}{% unless forloop.last %}, {% endunless %}{% endfor %}{% else %}n/a{% endif %}

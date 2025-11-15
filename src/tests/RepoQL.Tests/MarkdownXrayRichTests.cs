@@ -38,5 +38,6 @@ internal class MarkdownXrayRichTests
         var hl = artifact.Headline!.ToLowerInvariant();
         hl.Should().Contain("#auth");
         hl.Should().Contain("#oauth");
+        artifact.Summary!.Should().Contain("layout: post");
     }
 }

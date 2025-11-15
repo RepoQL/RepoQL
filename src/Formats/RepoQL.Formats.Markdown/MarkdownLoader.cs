@@ -1,42 +1,37 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Threading;
 using Markdig;
-using Markdig.Extensions.Yaml;
 using Markdig.Extensions.Tables;
+using Markdig.Extensions.Yaml;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
+using RepoQL.Embeddings;
 using RepoQL.Templating;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
 namespace RepoQL.Formats.Markdown;
 
-public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = null) : IFormatLoader, IFormatMaterializer
+public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
 {
     internal const string StateMetadataKey = "markdown.state";
 
-    private ILogger<MarkdownLoader> Logger { get; } = logger ?? NullLogger<MarkdownLoader>.Instance;
+    private readonly ILogger<MarkdownLoader> _logger;
+    private readonly IEmbeddingProvider _embeddingProvider;
+    private readonly Lazy<float[]?> _genericHeadingCentroid;
 
     private static readonly SemanticMediaType MarkdownMediaType = SemanticMediaType
         .Create("text", "markdown")
         .WithKind("markdown.doc");
 
-    private readonly MarkdownPipeline _pipeline = new MarkdownPipelineBuilder()
-        .UsePreciseSourceLocation()
-        .UseYamlFrontMatter()
-        .UsePipeTables()
-        .UseGridTables()
-        .UseAutoLinks()
-        .UseTaskLists()
-        .UseEmphasisExtras()
-        .UseListExtras()
-        .UseDefinitionLists()
-        .UseMediaLinks()
-        .Build();
+    private readonly MarkdownPipeline _pipeline;
 
     private readonly LiquidTemplateRenderer _renderer = new(
         assembly: typeof(MarkdownLoader).Assembly,
@@ -44,6 +39,44 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
 
     private static readonly Lazy<string> MarkdownViewsSql = new(
         () => ReadEmbeddedResource("RepoQL.Formats.Markdown.Schema.markdown_views.sql"));
+
+    private static readonly string[] GenericHeadingSeeds =
+    [
+        "Overview", "Introduction", "Summary", "Conclusion", "Usage", "Examples", "References", "Appendix",
+        "FAQ", "Background", "Notes", "See Also"
+    ];
+
+    private static readonly (string Pattern, string Label)[] TitleTypePatterns =
+    [
+        ("proposal", "proposal"),
+        ("guide", "guide"),
+        ("tutorial", "guide"),
+        ("reference", "reference"),
+        ("api", "reference"),
+        ("checklist", "runbook"),
+        ("runbook", "runbook"),
+        ("architecture", "architecture"),
+        ("design", "architecture")
+    ];
+
+    public MarkdownLoader(ILogger<MarkdownLoader>? logger = null, IEmbeddingProvider? embeddingProvider = null)
+    {
+        _logger = logger ?? NullLogger<MarkdownLoader>.Instance;
+        _embeddingProvider = embeddingProvider ?? new HashedEmbeddingProvider();
+        _genericHeadingCentroid = new Lazy<float[]?>(ComputeGenericHeadingCentroid, LazyThreadSafetyMode.ExecutionAndPublication);
+        _pipeline = new MarkdownPipelineBuilder()
+            .UsePreciseSourceLocation()
+            .UseYamlFrontMatter()
+            .UsePipeTables()
+            .UseGridTables()
+            .UseAutoLinks()
+            .UseTaskLists()
+            .UseEmphasisExtras()
+            .UseListExtras()
+            .UseDefinitionLists()
+            .UseMediaLinks()
+            .Build();
+    }
 
     public bool Supports(SemanticMediaType mediaType)
     {
@@ -229,47 +262,9 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
                 .OrderByDescending(g => g.Count())
                 .ToDictionary(g => g.Key, g => g.Count());
 
-            var frontmatterKeys = 0;
-            string? title = null;
-            var topics = new List<string>();
+            var xrayMetadata = BuildXrayMetadata(state, fileName);
+
             string? topLang = null;
-            var tags = new List<string>();
-            try
-            {
-                if (state.Surface.DocumentProperties["frontmatter"] is JsonObject fm)
-                {
-                    frontmatterKeys = fm.Count;
-                    if (fm.TryGetPropertyValue("title", out var t) && t is not null)
-                    {
-                        title = t.ToString();
-                    }
-                    // Extract tags or keywords from frontmatter (array or comma-separated string)
-                    if (fm.TryGetPropertyValue("tags", out var tv) && tv is not null)
-                    {
-                        tags.AddRange(ExtractTags(tv));
-                    }
-                    else if (fm.TryGetPropertyValue("keywords", out var kv) && kv is not null)
-                    {
-                        tags.AddRange(ExtractTags(kv));
-                    }
-                }
-            }
-            catch { }
-
-            // Prefer frontmatter title, else first H1 heading
-            title ??= state.Surface.Headings.FirstOrDefault(h => h.Level == 1)?.Text;
-
-            // Topics: first few distinct H2/H3 headings
-            topics = state.Surface.Headings
-                .Where(h => h.Level >= 2)
-                .Select(h => h.Text?.Trim())
-                .Where(s => !string.IsNullOrWhiteSpace(s))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(3)
-                .OfType<string>()
-                .ToList();
-
-            // Top language: most frequent fenced code block language
             if (langCounts.Count > 0)
             {
                 topLang = langCounts
@@ -290,12 +285,18 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
                 ["links_count"] = state.Surface.Links.Count,
                 ["images_count"] = imagesCount,
                 ["tables_count"] = tablesCount,
-                ["frontmatter_keys"] = frontmatterKeys,
+                ["frontmatter_keys"] = xrayMetadata.FrontmatterPairs.Count,
                 ["code_lang_counts"] = langCounts,
-                ["title"] = title,
-                ["topics"] = topics,
+                ["title"] = xrayMetadata.Title,
+                ["display_title"] = xrayMetadata.DisplayTitle,
+                ["document_type_label"] = xrayMetadata.DocumentType,
+                ["topics"] = xrayMetadata.Topics,
                 ["top_lang"] = topLang,
-                ["tags"] = tags.Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToList(),
+                ["tags"] = xrayMetadata.TagsForHeadline,
+                ["tags_or_headings"] = xrayMetadata.TagsOrHeadings,
+                ["headline_uses_tags"] = xrayMetadata.TagsForHeadline.Count > 0,
+                ["important_headings"] = xrayMetadata.ImportantHeadings,
+                ["frontmatter_pairs"] = xrayMetadata.FrontmatterPairs,
                 ["headings"] = state.Surface.Headings.Select(h => new Dictionary<string, object?>
                 {
                     ["level"] = h.Level,
@@ -307,11 +308,11 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
             headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
             summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
             structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
-        }
-        catch
-        {
-            // ignore templating errors; x-ray is best-effort
-        }
+            }
+            catch
+            {
+                // ignore templating errors; x-ray is best-effort
+            }
 
         var artifact = new Artifact
         {
@@ -361,6 +362,8 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
                     ["text"] = heading.Text,
                     ["slug"] = heading.Slug
                 },
+                Headline = BuildHeadingHeadline(heading),
+                Structure = BuildHeadingStructure(heading),
                 CreatedAt = now,
                 UpdatedAt = now
             };
@@ -482,6 +485,324 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
             CreatedAt = timestamp
         };
 
+    private XrayMetadata BuildXrayMetadata(MarkdownDocumentState state, string fileName)
+    {
+        var frontmatter = GetFrontmatter(state.Surface.DocumentProperties);
+        var frontmatterPairs = BuildFrontmatterPairs(frontmatter);
+
+        string? title = null;
+        if (frontmatter?.TryGetPropertyValue("title", out var ft) == true && ft is not null)
+        {
+            title = ft.ToString();
+        }
+        title ??= state.Surface.Headings.FirstOrDefault(h => h.Level == 1)?.Text;
+        title ??= fileName;
+
+        var description = TryGetFrontmatterString(frontmatter, "description");
+        var displayTitle = !string.IsNullOrWhiteSpace(description)
+            ? description!.Trim()
+            : title;
+        if (string.IsNullOrWhiteSpace(displayTitle))
+        {
+            displayTitle = fileName;
+        }
+
+        var documentType = DetermineDocumentType(frontmatter, title, state.MediaType);
+
+        var tags = ExtractFrontmatterTags(frontmatter)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(t => t.Trim())
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Take(4)
+            .ToList();
+
+        var importantHeadings = SelectImportantHeadings(state.Surface.Headings, displayTitle);
+        var tagsOrHeadings = tags.Count > 0
+            ? tags
+            : importantHeadings.Take(8).ToList();
+
+        var topics = importantHeadings.Take(5).ToList();
+        if (topics.Count == 0)
+        {
+            topics = state.Surface.Headings
+                .Where(h => h.Level >= 2)
+                .Select(h => h.Text?.Trim())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(5)
+                .OfType<string>()
+                .ToList();
+        }
+
+        return new XrayMetadata(
+            Title: title,
+            DisplayTitle: displayTitle,
+            DocumentType: documentType,
+            TagsForHeadline: tags,
+            TagsOrHeadings: tagsOrHeadings,
+            ImportantHeadings: importantHeadings,
+            Topics: topics,
+            FrontmatterPairs: frontmatterPairs);
+    }
+
+    private static JsonObject? GetFrontmatter(JsonObject props)
+    {
+        try
+        {
+            if (props.TryGetPropertyValue("frontmatter", out var node) && node is JsonObject fm)
+            {
+                return fm;
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private static IReadOnlyList<string> BuildFrontmatterPairs(JsonObject? frontmatter)
+    {
+        if (frontmatter is null || frontmatter.Count == 0)
+            return Array.Empty<string>();
+
+        var pairs = new List<string>(frontmatter.Count);
+        foreach (var kv in frontmatter)
+        {
+            var rendered = RenderFrontmatterValue(kv.Value);
+            if (string.IsNullOrWhiteSpace(rendered))
+                continue;
+            pairs.Add($"{kv.Key}: {rendered}");
+        }
+
+        return pairs.Take(5).ToList();
+    }
+
+    private static string? RenderFrontmatterValue(JsonNode? node)
+    {
+        if (node is null) return null;
+        switch (node)
+        {
+            case JsonValue value:
+                return value.ToString();
+            case JsonArray array:
+                var items = array
+                    .Select(RenderFrontmatterValue)
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Take(5)
+                    .ToArray();
+                return items.Length == 0 ? null : string.Join(", ", items);
+            case JsonObject obj:
+                var pairs = obj.Select(kvp => $"{kvp.Key}: {RenderFrontmatterValue(kvp.Value)}")
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Take(3)
+                    .ToArray();
+                return pairs.Length == 0 ? null : string.Join("; ", pairs);
+            default:
+                return node.ToString();
+        }
+    }
+
+    private static string? TryGetFrontmatterString(JsonObject? frontmatter, string key)
+    {
+        if (frontmatter is null)
+            return null;
+        if (frontmatter.TryGetPropertyValue(key, out var value) && value is not null)
+        {
+            var text = value.ToString();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        return null;
+    }
+
+    private static string DetermineDocumentType(JsonObject? frontmatter, string? title, SemanticMediaType mediaType)
+    {
+        var fmType = TryGetFrontmatterString(frontmatter, "type");
+        if (!string.IsNullOrWhiteSpace(fmType))
+            return fmType!;
+
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            var normalized = title.ToLowerInvariant();
+            foreach (var (pattern, label) in TitleTypePatterns)
+            {
+                if (normalized.Contains(pattern))
+                    return label;
+            }
+        }
+
+        return mediaType.Kind ?? $"{mediaType.Type}/{mediaType.Subtype}";
+    }
+
+    private static List<string> ExtractFrontmatterTags(JsonObject? frontmatter)
+    {
+        var tags = new List<string>();
+        if (frontmatter is null)
+            return tags;
+
+        if (frontmatter.TryGetPropertyValue("tags", out var tv) && tv is not null)
+            tags.AddRange(ExtractTags(tv));
+        if (tags.Count == 0 && frontmatter.TryGetPropertyValue("keywords", out var kv) && kv is not null)
+            tags.AddRange(ExtractTags(kv));
+
+        return tags;
+    }
+
+    private IReadOnlyList<string> SelectImportantHeadings(IReadOnlyList<HeadingInfo> headings, string? queryText)
+    {
+        if (headings.Count == 0)
+            return Array.Empty<string>();
+
+        var queryVector = TryEmbed(queryText);
+        var genericCentroid = _genericHeadingCentroid.Value;
+        var ranked = new List<(string Text, double Score, int Ordinal)>();
+
+        for (var i = 0; i < headings.Count; i++)
+        {
+            var heading = headings[i];
+            if (heading.Level < 2)
+                continue;
+
+            var text = heading.Text?.Trim();
+            if (string.IsNullOrWhiteSpace(text))
+                continue;
+
+            var headingVector = TryEmbed(text);
+            if (headingVector is null)
+                continue;
+
+            var specificity = queryVector is not null ? CosineSimilarity(queryVector, headingVector) : 0;
+            var genericity = genericCentroid is not null ? CosineSimilarity(genericCentroid, headingVector) : 0;
+            var score = specificity - genericity;
+
+            ranked.Add((text, score, i));
+        }
+
+        if (ranked.Count == 0)
+            return Array.Empty<string>();
+
+        return ranked
+            .OrderByDescending(r => r.Score)
+            .ThenBy(r => r.Ordinal)
+            .Select(r => r.Text)
+            .Take(8)
+            .ToList();
+    }
+
+    private static string BuildHeadingHeadline(HeadingInfo heading)
+    {
+        var text = heading.Text;
+        var prefix = $"H{heading.Level}";
+        if (string.IsNullOrWhiteSpace(text))
+            return prefix;
+        return $"{prefix} · {text.Trim()}";
+    }
+
+    private static string BuildHeadingStructure(HeadingInfo heading)
+    {
+        var startLine = heading.Span.StartLine + 1;
+        var endLine = heading.Span.EndLine + 1;
+        var lineInfo = startLine == endLine
+            ? $"Line {startLine}"
+            : $"Lines {startLine}-{endLine}";
+
+        if (!string.IsNullOrWhiteSpace(heading.Slug))
+        {
+            return $"{lineInfo} | anchor #{heading.Slug}";
+        }
+
+        return lineInfo;
+    }
+
+    private float[]? TryEmbed(string? text)
+    {
+        if (_embeddingProvider is null || !_embeddingProvider.Enabled || string.IsNullOrWhiteSpace(text))
+            return null;
+
+        try
+        {
+            return _embeddingProvider
+                .EmbedAsync(text!)
+                .ConfigureAwait(false)
+                .GetAwaiter()
+                .GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to embed text for heading importance.");
+            return null;
+        }
+    }
+
+    private float[]? ComputeGenericHeadingCentroid()
+    {
+        if (_embeddingProvider is null || !_embeddingProvider.Enabled)
+            return null;
+
+        var vectors = new List<float[]>();
+        foreach (var seed in GenericHeadingSeeds)
+        {
+            var vec = TryEmbed(seed);
+            if (vec is not null)
+                vectors.Add(vec);
+        }
+
+        return vectors.Count == 0 ? null : AverageVectors(vectors);
+    }
+
+    private static float[] AverageVectors(IReadOnlyList<float[]> vectors)
+    {
+        var dimension = vectors[0].Length;
+        var result = new float[dimension];
+
+        foreach (var vector in vectors)
+        {
+            for (var i = 0; i < dimension; i++)
+            {
+                result[i] += vector[i];
+            }
+        }
+
+        for (var i = 0; i < dimension; i++)
+        {
+            result[i] /= vectors.Count;
+        }
+
+        return result;
+    }
+
+    private static double CosineSimilarity(IReadOnlyList<float> left, IReadOnlyList<float> right)
+    {
+        if (left.Count != right.Count)
+            return 0;
+
+        double dot = 0;
+        double leftNorm = 0;
+        double rightNorm = 0;
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            var l = left[i];
+            var r = right[i];
+            dot += l * r;
+            leftNorm += l * l;
+            rightNorm += r * r;
+        }
+
+        var denominator = Math.Sqrt(leftNorm) * Math.Sqrt(rightNorm);
+        if (denominator == 0)
+            return 0;
+
+        return dot / denominator;
+    }
+
+    private sealed record XrayMetadata(
+        string Title,
+        string DisplayTitle,
+        string DocumentType,
+        IReadOnlyList<string> TagsForHeadline,
+        IReadOnlyList<string> TagsOrHeadings,
+        IReadOnlyList<string> ImportantHeadings,
+        IReadOnlyList<string> Topics,
+        IReadOnlyList<string> FrontmatterPairs);
+
     private static Span ToSpan(DocumentModel document, DocumentSpan span, Guid documentId, Guid spanId)
         => new()
         {
@@ -515,7 +836,11 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
             if (string.IsNullOrWhiteSpace(yaml)) return false;
             var json = YamlToJson(yaml);
             if (json is not null) 
-                props["frontmatter"] = json;
+            {
+                var clone = JsonNode.Parse(json.ToJsonString());
+                if (clone is not null)
+                    props["frontmatter"] = clone;
+            }
             return true;
         }
         catch
@@ -532,7 +857,52 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
             .IgnoreUnmatchedProperties()
             .Build();
         var result = deserializer.Deserialize<object?>(yaml);
-        return ToJsonNode(result);
+        var json = ToJsonNode(result);
+        return NormalizeScalarNodes(json);
+    }
+
+    private static JsonNode? NormalizeScalarNodes(JsonNode? node)
+    {
+        switch (node)
+        {
+            case null:
+                return null;
+            case JsonObject obj:
+                foreach (var property in obj.ToList())
+                {
+                    var normalized = NormalizeScalarNodes(property.Value);
+                    if (!ReferenceEquals(property.Value, normalized))
+                    {
+                        obj[property.Key] = normalized;
+                    }
+                }
+                return obj;
+            case JsonArray array:
+                for (var i = 0; i < array.Count; i++)
+                {
+                    var original = array[i];
+                    var normalized = NormalizeScalarNodes(original);
+                    if (!ReferenceEquals(original, normalized))
+                    {
+                        array[i] = normalized;
+                    }
+                }
+                return array;
+            case JsonValue value:
+                if (value.TryGetValue<string>(out var str))
+                {
+                    if (bool.TryParse(str, out var boolValue))
+                        return JsonValue.Create(boolValue);
+                    if (long.TryParse(str, NumberStyles.Integer, CultureInfo.InvariantCulture, out var longValue))
+                        return JsonValue.Create(longValue);
+                    if (double.TryParse(str, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var doubleValue))
+                        return JsonValue.Create(doubleValue);
+                }
+
+                return value;
+            default:
+                return node;
+        }
     }
 
     private static JsonNode? ToJsonNode(object? obj)
@@ -567,7 +937,23 @@ public sealed partial class MarkdownLoader(ILogger<MarkdownLoader>? logger = nul
                 }
                 return strObj;
             default:
-                return JsonValue.Create(obj.ToString());
+                var text = obj?.ToString() ?? string.Empty;
+                if (bool.TryParse(text, out var boolValue))
+                {
+                    return JsonValue.Create(boolValue);
+                }
+
+                if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var longValue))
+                {
+                    return JsonValue.Create(longValue);
+                }
+
+                if (double.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var doubleValue))
+                {
+                    return JsonValue.Create(doubleValue);
+                }
+
+                return JsonValue.Create(text);
         }
     }
 

@@ -14,15 +14,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\RepoQL.Templating\RepoQL.Templating.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
     <EmbeddedResource Include="Templates\**\*.liquid" />
     <EmbeddedResource Include="Schema\**\*.sql" />
   </ItemGroup>
 
     <ItemGroup>
+      <ProjectReference Include="..\..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
+      <ProjectReference Include="..\..\RepoQL.Templating\RepoQL.Templating.csproj" />
       <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
       <ProjectReference Include="..\..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
     </ItemGroup>
