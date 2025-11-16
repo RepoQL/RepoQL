@@ -79,4 +79,19 @@ public interface IRepoQlClient : IAsyncDisposable
     /// </summary>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task<PipelineStatus> GetPipelineStatusAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Runs the hot-path pipeline for a single document without persisting results.
+    /// </summary>
+    /// <param name="uri">Repository URI (e.g., file:///docs/readme.md).</param>
+    /// <param name="content">Optional file content to preview instead of reading from disk.</param>
+    /// <param name="fileName">Optional file name override when uploading content.</param>
+    /// <param name="mediaTypeHint">Optional semantic media type hint.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<PreviewDocumentResponse> PreviewDocumentAsync(
+        string uri,
+        byte[]? content = null,
+        string? fileName = null,
+        string? mediaTypeHint = null,
+        CancellationToken cancellationToken = default);
 }

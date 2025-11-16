@@ -367,6 +367,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton(sp => new IndexRebuildPipeline(
             sp.GetServices<IAsyncPipeline<IAnnotatedArtifact, string>>(),
             sp.GetService<ILogger<IndexRebuildPipeline>>()));
+        services.AddSingleton<DocumentPreviewService>();
 
         services.AddSingleton(sp => new IndexingEngine(
             sp.GetRequiredService<IDatabaseWriter>(),

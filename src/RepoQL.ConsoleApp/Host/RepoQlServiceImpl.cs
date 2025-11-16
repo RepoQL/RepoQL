@@ -2,12 +2,17 @@ using System.Diagnostics;
 using System.Linq;
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Models;
 using RepoQL.Indexing.Hosting;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
@@ -20,8 +25,18 @@ public sealed class RepoQlServiceImpl(
     RepositoryConfiguration repoConfig,
     IInitialIndexingBarrier barrier,
     IIndexingCoordinator coordinator,
-    IDatabaseWriter writer) : Contracts.RepoQL.RepoQLBase
+    DocumentPreviewService previewService,
+    IDatabaseWriter writer,
+    IHostApplicationLifetime hostLifetime,
+    ILogger<RepoQlServiceImpl>? logger = null) : Contracts.RepoQL.RepoQLBase
 {
+    private readonly IHostApplicationLifetime _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
+    private readonly ILogger<RepoQlServiceImpl> _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
+    private readonly DocumentPreviewService _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
+    private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
     private static int GetEnvInt(string name, int dflt)
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
 
@@ -91,6 +106,27 @@ public sealed class RepoQlServiceImpl(
             ActiveClients = LeaseRegistry.Count,
             ShutdownAfterIdleSeconds = GetEnvInt("REPOQL_IDLE_GRACE_SECONDS", 45)
         };
+    }
+
+    public override Task<ShutdownHostResponse> ShutdownHost(ShutdownHostRequest request, ServerCallContext context)
+    {
+        var pid = Environment.ProcessId;
+        _logger.LogInformation("Shutdown requested by {Peer}; process id {Pid}", context.Peer, pid);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(200)).ConfigureAwait(false);
+            }
+            catch
+            {
+            }
+
+            _hostLifetime.StopApplication();
+        });
+
+        return Task.FromResult(new ShutdownHostResponse { ProcessId = pid });
     }
 
     public override async Task<GetDocumentSummariesResponse> GetDocumentSummaries(GetDocumentSummariesRequest request, ServerCallContext context)
@@ -175,6 +211,52 @@ public sealed class RepoQlServiceImpl(
         return resp;
     }
 
+    public override async Task<PreviewDocumentResponse> PreviewDocument(PreviewDocumentRequest request, ServerCallContext context)
+    {
+        await barrier.InitialScanCompleted.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(request.Uri))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "uri is required."));
+
+        var canonicalUri = CanonicalizeRepositoryUri(request.Uri, repoConfig.Path);
+        if (!RepoUri.TryParse(canonicalUri, out var repoUri))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "uri must be an absolute repository uri."));
+
+        var contentBytes = request.Content is { Length: > 0 } ? request.Content.ToByteArray() : null;
+        var previewRequest = new DocumentPreviewRequest(
+            repoUri!,
+            contentBytes,
+            string.IsNullOrWhiteSpace(request.FileName) ? null : request.FileName,
+            string.IsNullOrWhiteSpace(request.MediaTypeHint) ? null : request.MediaTypeHint);
+
+        var result = await _previewService.PreviewAsync(previewRequest, context.CancellationToken).ConfigureAwait(false);
+        var response = new PreviewDocumentResponse
+        {
+            Success = result.Success,
+            Error = result.Error ?? string.Empty,
+            MediaType = result.MediaType ?? string.Empty,
+            DigestHex = result.DigestHex ?? string.Empty
+        };
+
+        if (result.Records is not null)
+        {
+            response.Records = MapPreviewRecords(result.Records);
+        }
+
+        foreach (var stage in result.Stages)
+        {
+            response.Stages.Add(new PreviewStageTiming
+            {
+                Stage = stage.Stage,
+                DurationMs = (long)Math.Round(stage.Duration.TotalMilliseconds),
+                Status = stage.Status.ToString(),
+                Error = stage.Error ?? string.Empty
+            });
+        }
+
+        return response;
+    }
+
     private static string CanonicalizeRepositoryUri(string input, string repoRoot)
     {
         if (Uri.TryCreate(input, UriKind.Absolute, out var u) && u.Scheme.Equals("file", StringComparison.OrdinalIgnoreCase))
@@ -201,6 +283,103 @@ public sealed class RepoQlServiceImpl(
         return input;
     }
 
+    private static PreviewRecords MapPreviewRecords(Records records)
+    {
+        var proto = new PreviewRecords();
+
+        if (records.Artifacts is { Length: > 0 })
+        {
+            foreach (var artifact in records.Artifacts)
+            {
+                proto.Artifacts.Add(new PreviewArtifact
+                {
+                    Id = artifact.Id.ToString(),
+                    Digest = artifact.Digest ?? string.Empty,
+                    SizeBytes = artifact.Size,
+                    MediaType = artifact.MediaType?.ToString() ?? string.Empty,
+                    Headline = artifact.Headline ?? string.Empty,
+                    Summary = artifact.Summary ?? string.Empty,
+                    Structure = artifact.Structure ?? string.Empty,
+                    StoreUri = artifact.StoreUri?.ToString() ?? string.Empty
+                });
+            }
+        }
+
+        if (records.Nodes is { Length: > 0 })
+        {
+            foreach (var node in records.Nodes)
+            {
+                proto.Nodes.Add(new PreviewNode
+                {
+                    Id = node.Id.ToString(),
+                    Kind = node.Kind ?? string.Empty,
+                    Uri = node.Uri?.ToString() ?? string.Empty,
+                    ArtifactId = node.ArtifactId?.ToString() ?? string.Empty,
+                    SpanId = node.SpanId?.ToString() ?? string.Empty,
+                    Headline = node.Headline ?? string.Empty,
+                    Structure = node.Structure ?? string.Empty,
+                    PropsJson = JsonSerializer.Serialize(node.Props ?? new System.Text.Json.Nodes.JsonObject(), PreviewJsonOptions)
+                });
+            }
+        }
+
+        if (records.Spans is { Length: > 0 })
+        {
+            foreach (var span in records.Spans)
+            {
+                proto.Spans.Add(new PreviewSpan
+                {
+                    Id = span.Id.ToString(),
+                    DocumentId = span.DocumentId.ToString(),
+                    StartByte = span.StartByte ?? 0,
+                    EndByte = span.EndByte ?? 0,
+                    StartLine = span.StartLine ?? 0,
+                    EndLine = span.EndLine ?? 0,
+                    StartColumn = span.StartColumn ?? 0,
+                    EndColumn = span.EndColumn ?? 0
+                });
+            }
+        }
+
+        if (records.Edges is { Length: > 0 })
+        {
+            foreach (var edge in records.Edges)
+            {
+                proto.Edges.Add(new PreviewEdge
+                {
+                    Id = edge.Id.ToString(),
+                    Type = edge.Type ?? string.Empty,
+                    IsComposition = edge.IsComposition,
+                    Ordinal = edge.Ordinal ?? 0,
+                    ScopeDocumentId = edge.ScopeDocumentId?.ToString() ?? string.Empty,
+                    EdgeKey = edge.EdgeKey ?? string.Empty,
+                    SrcId = edge.SrcId.ToString(),
+                    DstId = edge.DstId.ToString(),
+                    SrcSpanId = edge.SrcSpanId?.ToString() ?? string.Empty,
+                    DstSpanId = edge.DstSpanId?.ToString() ?? string.Empty,
+                    PropsJson = JsonSerializer.Serialize(edge.Props ?? new System.Text.Json.Nodes.JsonObject(), PreviewJsonOptions)
+                });
+            }
+        }
+
+        if (records.Annotations is { Length: > 0 })
+        {
+            foreach (var annotation in records.Annotations)
+            {
+                proto.Annotations.Add(new PreviewAnnotation
+                {
+                    Kind = annotation.Kind ?? string.Empty,
+                    Severity = annotation.Severity ?? string.Empty,
+                    Source = annotation.Source ?? string.Empty,
+                    RuleId = annotation.RuleId ?? string.Empty,
+                    Message = annotation.Message ?? string.Empty
+                });
+            }
+        }
+
+        return proto;
+    }
+
     private static DateTime ParseRfc3339OrUtcNow(string s)
     {
         if (!string.IsNullOrWhiteSpace(s) && DateTime.TryParse(s, null, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var dt))
@@ -212,7 +391,7 @@ public sealed class RepoQlServiceImpl(
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "JSON serialization for dynamic data structures; fallback serialization")]
     private static string SerializeToJson(object obj)
     {
-        return JsonSerializer.Serialize(obj);
+        return JsonSerializer.Serialize(obj, PreviewJsonOptions);
     }
 
     private static Struct ParseStruct(string json)

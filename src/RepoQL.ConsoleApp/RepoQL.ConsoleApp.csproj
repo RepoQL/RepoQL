@@ -2,8 +2,7 @@
 
     <PropertyGroup>
         <Version>1.1.1</Version>
-        <TargetFramework>net9.0</TargetFramework>
-        <PublishTrimmed>false</PublishTrimmed>
+        <TargetFramework>net10.0</TargetFramework>
         <OutputType>Exe</OutputType>
         <InvariantGlobalization>true</InvariantGlobalization>
         <AssemblyName>repoql</AssemblyName>
@@ -13,13 +12,16 @@
         <PackageId>RepoQL.Tool</PackageId>
         <PackageOutputPath>$(ArtifactsDirectory)/packages</PackageOutputPath>
         <RollForward>Major</RollForward>
+        <PublishSingleFile>true</PublishSingleFile>
+       <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+        <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
         <PublishSelfContained>true</PublishSelfContained>
-        <PublishTrimmed>false</PublishTrimmed>
         <StripSymbols>true</StripSymbols>
         <IlcInvariantGlobalization>true</IlcInvariantGlobalization>
         <!-- keep symbols out of nupkg -->
         <DebugType>none</DebugType>
         <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+        <ApplicationIcon>..\..\repoql.ico</ApplicationIcon>
     </PropertyGroup>
 
     <!-- Platform-specific packs -->
@@ -27,7 +29,6 @@
         <TargetFramework>net10.0</TargetFramework>
         <PublishAot>true</PublishAot>
         <SelfContained>true</SelfContained>
-        <PublishTrimmed>true</PublishTrimmed>
         <StripSymbols>true</StripSymbols>
         <InvariantGlobalization>false</InvariantGlobalization>
         <IlcInvariantGlobalization>false</IlcInvariantGlobalization>
@@ -69,13 +70,19 @@
     
     <!-- Prefer a prebuilt zip committed once; otherwise embed individual model files -->
     <ItemGroup>
-        <EmbeddedResource Include="Resources\EmbeddingsModel.zip"
-                          LogicalName="Embeddings.Model.embeddings.zip"
-                          Condition="Exists('$(MSBuildThisFileDirectory)Resources\\EmbeddingsModel.zip')" />
+        <None Include="Resources\EmbeddingsModel.zip" LogicalName="Embeddings.Model.embeddings.zip" Condition="Exists('$(MSBuildThisFileDirectory)Resources\\EmbeddingsModel.zip')" />
     </ItemGroup>
 
     <ItemGroup>
         <EmbeddedResource Include="Templates\**\*.liquid" />
+        <None Remove="Resources\EmbeddingsModel.zip" />
+        <EmbeddedResource Include="Resources\EmbeddingsModel.zip" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Include="..\..\repoql.ico">
+        <Link>repoql.ico</Link>
+      </None>
     </ItemGroup>
 
 </Project>

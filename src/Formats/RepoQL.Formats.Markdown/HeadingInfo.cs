@@ -2,4 +2,11 @@
 
 namespace RepoQL.Formats.Markdown;
 
-internal sealed record HeadingInfo(Guid NodeId, Guid SpanId, int Level, string Text, string Slug, DocumentSpan Span);
+internal sealed record HeadingInfo(
+    Guid NodeId,
+    Guid SpanId,
+    int Level,
+    string Text,
+    string Slug,
+    DocumentSpan HeadingSpan,
+    DocumentSpan SectionSpan);

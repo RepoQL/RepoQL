@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -153,7 +154,7 @@ namespace RepoQL.Data.DuckDB;
                                      updated_at = excluded.updated_at;
                                  """;
                 AddParameters(up, item.DocId, item.NodeId, item.Uri, item.Scope, provider.Model, provider.Dimension, json);
-                up.ExecuteNonQuery();
+                ExecuteWithTupleDeleteRetry(() => up.ExecuteNonQuery());
 
                 if (item.Scope == DocumentEmbeddingScope) docSuccess++; else objSuccess++;
 
@@ -914,6 +915,50 @@ FROM (
         }
     }
 
+    private void DeleteEdgesForDocument(Guid documentId, IReadOnlyCollection<Guid> childNodeIds, IDbTransaction tx)
+    {
+        if (childNodeIds.Count == 0)
+        {
+            Execute("DELETE FROM edge WHERE scope_document_id=? OR source_node_id=? OR destination_node_id=?;",
+                tx, documentId, documentId, documentId);
+            return;
+        }
+
+        var nodes = new List<Guid>(childNodeIds.Count + 1) { documentId };
+        nodes.AddRange(childNodeIds);
+        var placeholders = string.Join(",", nodes.Select((_, i) => "?"));
+        var nodeParams = nodes.Cast<object>().ToArray();
+
+        var parameters = new object?[1 + nodeParams.Length * 2];
+        parameters[0] = documentId;
+        Array.Copy(nodeParams, 0, parameters, 1, nodeParams.Length);
+        Array.Copy(nodeParams, 0, parameters, 1 + nodeParams.Length, nodeParams.Length);
+
+        Execute($@"DELETE FROM edge
+                   WHERE scope_document_id=?
+                      OR source_node_id IN ({placeholders})
+                      OR destination_node_id IN ({placeholders});",
+            tx, parameters);
+    }
+
+    private void DeleteDocumentEmbeddings(Guid documentId, IReadOnlyCollection<Guid> childNodeIds, IDbTransaction tx)
+    {
+        if (childNodeIds.Count == 0)
+        {
+            ExecuteWithTupleDeleteRetry(() => Execute("DELETE FROM document_embedding WHERE doc_id=?;", tx, documentId));
+            return;
+        }
+
+        var docIds = new List<Guid>(childNodeIds.Count + 1) { documentId };
+        docIds.AddRange(childNodeIds);
+        var placeholders = string.Join(",", docIds.Select((_, i) => "?"));
+        var parameters = docIds.Cast<object?>().ToArray();
+
+        ExecuteWithTupleDeleteRetry(() => Execute($@"DELETE FROM document_embedding
+                   WHERE doc_id IN ({placeholders});",
+            tx, parameters));
+    }
+
     public void MoveDocumentUri(RepoUri oldUri, RepoUri newUri)
     {
         using var connectionLock = EnterConnectionScope();
@@ -1089,24 +1134,24 @@ FROM (
                 }
             }
 
-            // Remove scoped edges and old spans for this document
-            Execute("DELETE FROM edge WHERE scope_document_id=?;", tx, documentId);
+            // Remove old spans/search rows for this document root
             Execute("DELETE FROM span WHERE document_id=?;", tx, documentId);
-            Execute("DELETE FROM document_embedding WHERE doc_id=?;", tx, documentId);
             Execute("DELETE FROM document_search WHERE doc_id=?;", tx, documentId);
 
-            if (toDelete.Count > 0)
+            var childIds = toDelete.Count > 0 ? toDelete.ToList() : new List<Guid>();
+
+            if (childIds.Count > 0)
             {
-                var ids = toDelete.ToList();
-                var placeholders = string.Join(",", ids.Select((_, i) => "?"));
-                var idParams = ids.Cast<object>().ToArray();
-                // Remove all edges touching those nodes
-                Execute($@"DELETE FROM edge WHERE source_node_id IN ({placeholders}) OR destination_node_id IN ({placeholders});",
-                    tx, idParams.Concat(idParams).ToArray());
+                var placeholders = string.Join(",", childIds.Select((_, i) => "?"));
+                var idParams = childIds.Cast<object>().ToArray();
                 Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", tx, idParams);
+                Execute($@"DELETE FROM span WHERE document_id IN ({placeholders});", tx, idParams);
                 // Remove nodes
                 Execute($"DELETE FROM node WHERE id IN ({placeholders});", tx, idParams);
             }
+
+            DeleteEdgesForDocument(documentId, childIds, tx);
+            DeleteDocumentEmbeddings(documentId, childIds, tx);
 
             // Insert children
             foreach (var n in children)
@@ -1931,6 +1976,27 @@ FROM (
         {
             RecordException(activity, ex);
             throw;
+        }
+    }
+
+    private static bool IsTupleDeleteConflict(Exception ex)
+        => ex is DuckDBException dex &&
+           dex.Message?.IndexOf("Conflict on tuple deletion", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static void ExecuteWithTupleDeleteRetry(Action action, int maxAttempts = 5)
+    {
+        var attempt = 0;
+        while (true)
+        {
+            try
+            {
+                action();
+                return;
+            }
+            catch (DuckDBException ex) when (IsTupleDeleteConflict(ex) && ++attempt < maxAttempts)
+            {
+                Thread.Sleep(10);
+            }
         }
     }
 

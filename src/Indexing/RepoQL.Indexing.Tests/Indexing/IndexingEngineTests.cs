@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using AwesomeAssertions;
 using FakeItEasy;
 using RepoQL.Contracts;
@@ -114,6 +115,73 @@ public class IndexingEngineTests
         pendingDigest.Should().Be(evaluatedDigest);
         item.DigestHex.Should().Be(evaluatedDigest);
         item.ExistingEntry.Should().Be(existing);
+    }
+
+    [Test]
+    [DisplayName("Dedup comparer rejects identical URI with same options")]
+    public async Task Given_SameUriAndOptions_When_EnqueuedTwice_Then_SecondIsRejected()
+    {
+        var context = IndexingEngineTestFactory.Create();
+        var item = IndexingTestItemFactory.Builder()
+            .WithOptions(IndexItemOptions.Default)
+            .Build();
+
+        var first = await context.Engine.EnqueueIndexItemAsync(item, CancellationToken.None);
+        first.Should().BeTrue();
+
+        var duplicate = await context.Engine.EnqueueIndexItemAsync(item, CancellationToken.None);
+        duplicate.Should().BeFalse();
+    }
+
+    [Test]
+    [DisplayName("Dedup comparer allows identical URI when options differ")]
+    public async Task Given_SameUriDifferentOptions_When_EnqueuedTwice_Then_BothAccepted()
+    {
+        var context = IndexingEngineTestFactory.Create();
+        var baseBuilder = IndexingTestItemFactory.Builder().WithUri("file:///repo/doc.md");
+
+        var staleItem = baseBuilder.WithOptions(IndexItemOptions.Default).Build();
+        var forceItem = IndexingTestItemFactory.Builder()
+            .WithUri("file:///repo/doc.md")
+            .WithOptions(IndexItemOptions.Always)
+            .Build();
+
+        var first = await context.Engine.EnqueueIndexItemAsync(staleItem, CancellationToken.None);
+        first.Should().BeTrue();
+
+        var second = await context.Engine.EnqueueIndexItemAsync(forceItem, CancellationToken.None);
+        second.Should().BeTrue();
+    }
+
+    [Test]
+    [DisplayName("Does not leak epochs when duplicate enqueue is rejected")]
+    public async Task Given_SameItemEnqueuedTwice_When_SecondIsDeduped_Then_EpochsRemainBalanced()
+    {
+        var pause = new TaskCompletionSource<PipelineResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var classifier = A.Fake<ClassificationPipeline>();
+        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Returns(pause.Task);
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithClassifier(classifier);
+        });
+
+        var item = IndexingTestItemFactory.Builder()
+            .WithOptions(IndexItemOptions.Always)
+            .Build();
+
+        var firstEnqueue = await context.Engine.EnqueueIndexItemAsync(item, CancellationToken.None);
+        firstEnqueue.Should().BeTrue("initial enqueue should succeed");
+
+        var duplicateEnqueue = await context.Engine.EnqueueIndexItemAsync(item, CancellationToken.None);
+        duplicateEnqueue.Should().BeFalse("duplicate enqueue should be rejected by the queue");
+
+        pause.TrySetResult(PipelineResult.Success);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var waited = await context.Engine.WaitForAsync(IndexingState.AllIdle, cts.Token);
+        waited.Should().BeTrue("engine should return to AllIdle once the only item finishes");
     }
 
     [Test]

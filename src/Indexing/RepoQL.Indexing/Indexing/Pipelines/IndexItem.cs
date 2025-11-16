@@ -40,6 +40,11 @@ namespace RepoQL.Indexing.Indexing.Pipelines;
 /// <para>
 /// Not thread-safe. Single worker processes each item through all hot-path stages sequentially.
 /// </para>
+/// <para><strong>Equality</strong></para>
+/// <para>
+/// Index items intentionally do not override equality; deduplication is handled by
+/// <see cref="Indexing.IndexingEngine.IndexItemComparer"/> so queue behavior is explicit.
+/// </para>
 /// </remarks>
 [SuppressMessage("Naming", "CA1710:Identifiers should have correct suffix")]
 public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options) : IAnnotatedArtifact

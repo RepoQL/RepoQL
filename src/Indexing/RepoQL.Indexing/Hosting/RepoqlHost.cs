@@ -1,7 +1,9 @@
+using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using RepoQL.Contracts;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Indexing.FileSystems;
@@ -17,11 +19,15 @@ public sealed class RepoqlHost : BackgroundService
 {
     private readonly CompositeFileSystem _fileSystem;
     private readonly Func<RawArtifact, IndexItemOptions, CancellationToken, Task> _enqueue;
+    private readonly IAsyncDisposable? _engineLifetime;
     private readonly RepoqlHostOptions _options;
     private readonly ILogger<RepoqlHost> _logger;
 
     private IFileSystemWatcher? _watcher;
     private IDisposable? _watcherSubscription;
+    private Channel<RawArtifact>? _watcherChannel;
+    private Task? _watcherPump;
+    private volatile bool _isStopping;
 
     public RepoqlHost(
         CompositeFileSystem fileSystem,
@@ -34,6 +40,7 @@ public sealed class RepoqlHost : BackgroundService
             options,
             logger)
     {
+        _engineLifetime = engine;
     }
 
     internal RepoqlHost(
@@ -59,10 +66,22 @@ public sealed class RepoqlHost : BackgroundService
         {
             await StartWatcherAsync(stoppingToken).ConfigureAwait(false);
         }
+
+        // Keep the background service alive until the host is asked to stop.
+        try
+        {
+            await Task.Delay(Timeout.Infinite, stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // expected when stopping
+        }
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
+        _isStopping = true;
+
         if (_watcherSubscription is not null)
         {
             _watcherSubscription.Dispose();
@@ -84,7 +103,14 @@ public sealed class RepoqlHost : BackgroundService
             _watcher = null;
         }
 
+        await StopWatcherPumpAsync().ConfigureAwait(false);
+
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
+
+        if (_engineLifetime is not null)
+        {
+            await _engineLifetime.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     private async Task EnqueueFullScanAsync(CancellationToken cancellationToken)
@@ -108,10 +134,88 @@ public sealed class RepoqlHost : BackgroundService
 
     private async Task StartWatcherAsync(CancellationToken cancellationToken)
     {
+        var capacity = _options.WatcherQueueCapacity <= 0 ? 10_000 : _options.WatcherQueueCapacity;
+        _watcherChannel = Channel.CreateBounded<RawArtifact>(new BoundedChannelOptions(capacity)
+        {
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+            SingleWriter = false
+        });
+        _watcherPump = Task.Run(() => PumpWatcherQueueAsync(_watcherChannel.Reader, cancellationToken), CancellationToken.None);
+
         _watcher = _fileSystem.WatchAll();
         _watcherSubscription = _watcher.Subscribe(new WatcherObserver(this));
-        await _watcher.StartAsync(cancellationToken).ConfigureAwait(false);
+            await _watcher.StartAsync(cancellationToken).ConfigureAwait(false);
         _logger.LogInformation("RepoqlHost change watcher started for all mounted file systems.");
+    }
+
+    private void EnqueueWatcherArtifact(RawArtifact artifact, RepoUri uri)
+    {
+        var channel = _watcherChannel;
+        if (channel is null)
+            return;
+
+        if (!channel.Writer.TryWrite(artifact) && !_isStopping)
+        {
+            _logger.LogWarning("Watcher queue is full; dropping change for {Uri}", uri);
+        }
+    }
+
+    private async Task PumpWatcherQueueAsync(ChannelReader<RawArtifact> reader, CancellationToken stoppingToken)
+    {
+        try
+        {
+            while (await reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
+            {
+                while (reader.TryRead(out var artifact))
+                {
+                    try
+                    {
+                        await _enqueue(artifact, _options.DefaultIndexItemOptions, stoppingToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Watcher pump failed to enqueue {Uri}", artifact.Uri);
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // shutting down
+        }
+    }
+
+    private async Task StopWatcherPumpAsync()
+    {
+        var channel = _watcherChannel;
+        _watcherChannel = null;
+        if (channel is not null)
+        {
+            channel.Writer.TryComplete();
+        }
+
+        var pump = _watcherPump;
+        if (pump is not null)
+        {
+            try
+            {
+                await pump.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // ignore, stopping
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Watcher pump stopped with error.");
+            }
+        }
+        _watcherPump = null;
     }
 
     private sealed class WatcherObserver : IObserver<ResourceChange>
@@ -145,7 +249,7 @@ public sealed class RepoqlHost : BackgroundService
             }
 
             var artifact = new RawArtifact(value.File, store);
-            _ = _host._enqueue(artifact, _host._options.DefaultIndexItemOptions, CancellationToken.None);
+            _host.EnqueueWatcherArtifact(artifact, value.CurrentUri);
         }
     }
 }

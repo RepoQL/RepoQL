@@ -1,7 +1,7 @@
 {{ display_title }} | {{ document_type_label | default: media_kind | default: media_base }} | {{ size_bytes | filesize }}, {{ line_count | default: 0 }} ln
-{% if frontmatter_pairs and frontmatter_pairs.size > 0 %}
+{%- if frontmatter_pairs and frontmatter_pairs.size > 0 -%}
 Frontmatter: {% for pair in frontmatter_pairs %}{{ pair }}{% unless forloop.last %}; {% endunless %}{% endfor %}
-{% else %}
+{%- else -%}
 Frontmatter: none
-{% endif %}
+{%- endif %}
 Topics: {% if topics and topics.size > 0 %}{% for t in topics limit:8 %}{{ t }}{% unless forloop.last %}, {% endunless %}{% endfor %}{% else %}n/a{% endif %}

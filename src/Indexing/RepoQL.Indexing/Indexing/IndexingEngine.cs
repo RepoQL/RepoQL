@@ -94,7 +94,7 @@ public class IndexingEngineOptions
 ///
 /// <para>See docs/ARCHITECTURE.md for design rationale and docs/JOURNEY.md for complete file flow example.</para>
 /// </remarks>
-public partial class IndexingEngine
+public partial class IndexingEngine : IAsyncDisposable
 {
     private const string TelemetrySourceName = "RepoQL.Indexing";
     internal static readonly ActivitySource ActivitySource = new(TelemetrySourceName);
@@ -137,7 +137,8 @@ public partial class IndexingEngine
     });
     private readonly Task _idleProcessingTask;
     private readonly ConcurrentDictionary<long, Activity> _epochActivities = new();
-    private readonly Dictionary<IndexingState, int> _activeStageCounts = new();
+    private readonly Dictionary<IndexingState, StageCounter> _stageCounters = new();
+    private bool _disposed;
     private long _lastReleasedEpoch = long.MinValue;
     private IArtifactPruner ArtifactPruner { get; }
     private IVectorIndexCoordinator VectorCoordinator { get; }
@@ -153,16 +154,31 @@ public partial class IndexingEngine
     public async Task EnqueueItemAsync(RawArtifact artifact, IndexItemOptions options = IndexItemOptions.Default, CancellationToken cancellationToken = default)
     {
         var indexItem = new IndexItem(artifact, options);
+        await EnqueueIndexItemAsync(indexItem, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal async ValueTask<bool> EnqueueIndexItemAsync(IndexItem indexItem, CancellationToken cancellationToken = default)
+    {
         var epoch = _epochTracker.CurrentEpoch;
         indexItem.SetEpoch(epoch);
-        _epochTracker.Increment(epoch);
+
+        var incremented = false;
         try
         {
-            await IndexerQueue.EnqueueAsync(indexItem, cancellationToken);
+            var enqueued = await IndexerQueue.EnqueueAsync(indexItem, cancellationToken).ConfigureAwait(false);
+            if (!enqueued)
+                return false;
+
+            _epochTracker.Increment(epoch);
+            incremented = true;
+            return true;
         }
         catch
         {
-            _epochTracker.Decrement(indexItem.Epoch);
+            if (incremented)
+            {
+                _epochTracker.Decrement(indexItem.Epoch);
+            }
             throw;
         }
     }
@@ -207,7 +223,7 @@ public partial class IndexingEngine
             async (item, c) =>
             {
                 await IndexItemAsync(item, c);
-            }, Shutdown.Token);
+            }, Shutdown.Token, meter: null, comparer: new IndexItemComparer());
         AnalysisQueue = new WorkQueue<IndexItem>(
             "AnalysisQueue",
             Options.AnalysisQueueSize,
@@ -215,7 +231,7 @@ public partial class IndexingEngine
             async (item, c) =>
             {
                 await AnalyzeItemAsync(item, c);
-            }, Shutdown.Token);
+            }, Shutdown.Token, meter: null, comparer: new IndexItemComparer());
 
         _classificationStage = new StageContext(
             IndexingState.ClassificationBusy,
@@ -240,6 +256,16 @@ public partial class IndexingEngine
         HotPathIdle += OnHotPathIdle;
         Shutdown.Token.Register(() => _analysisEpochChannel.Writer.TryComplete());
         _idleProcessingTask = Task.Run(ProcessIdleEpochsAsync);
+
+        RegisterStageCounter(IndexingState.ClassificationBusy, IndexingState.ClassificationIdle);
+        RegisterStageCounter(IndexingState.ParsingBusy, IndexingState.ParsingIdle);
+        RegisterStageCounter(IndexingState.SingleFileAnalysisBusy, IndexingState.SingleFileAnalysisIdle);
+        RegisterStageCounter(IndexingState.MultiFileAnalysisBusy, IndexingState.MultiFileAnalysisIdle);
+        RegisterStageCounter(IndexingState.IndexRebuildBusy, IndexingState.IndexRebuildIdle);
+        lock (_stateLock)
+        {
+            State = ComputeStateFromCounters();
+        }
     }
 
     public event EventHandler<IndexingStateChangedEventArgs>? StateChanged;
@@ -259,8 +285,52 @@ public partial class IndexingEngine
     {
         lock (_stateLock)
         {
-            return _activeStageCounts.GetValueOrDefault(busyFlag, 0);
+            return _stageCounters.TryGetValue(busyFlag, out var counter)
+                ? counter.ActiveCount
+                : 0;
         }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+
+        try
+        {
+            Shutdown.Cancel();
+        }
+        catch { }
+
+        try
+        {
+            _analysisEpochChannel.Writer.TryComplete();
+        }
+        catch { }
+
+        try
+        {
+            await IndexerQueue.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }
+
+        try
+        {
+            await AnalysisQueue.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }
+
+        if (_idleProcessingTask is not null)
+        {
+            try
+            {
+                await _idleProcessingTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { }
+        }
+
+        Shutdown.Dispose();
     }
 
     public long BeginNewEpoch()
@@ -272,22 +342,13 @@ public partial class IndexingEngine
 
     internal async Task IndexItemAsync(IndexItem item, CancellationToken cancellationToken = default)
     {
-        // ReSharper disable once ExplicitCallerInfoArgument
-        using var activity = ActivitySource.StartActivity(ActivityKind.Internal, name: "Index", tags: new TagList
-        {
-            { "item.name", item.Name },
-            { "item.uri", item.Uri.ToString() },
-            { "item.media_type", item.MediaType },
-            { "item.last_modified", item.LastModified.ToString() },
-            { "item.provisional_media_type", item.RawArtifact.ProvisionalMediaType }
-        });
         var catalogRegistered = false;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (item.Options.HasFlag(IndexItemOptions.OnlyIfNotExcluded) && !Filter.IncludeFile(item.Uri))
             {
-                RecordResult(PipelineResult.Filtered);
+                RecordResult(item.Epoch, PipelineResult.Filtered);
                 return;
             }
             await DocumentCatalog.EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
@@ -297,13 +358,13 @@ public partial class IndexingEngine
 
             var evaluation = DocumentCatalog.Evaluate(item.Uri, digestHex);
             item.ExistingEntry = evaluation.Existing;
-            Activity.Current?.AddTag("index.catalog.decision", evaluation.Decision.ToString());
+            AddEpochTag(item.Epoch, "index.catalog.decision", evaluation.Decision.ToString());
 
             if (item.Options.HasFlag(IndexItemOptions.OnlyIfStale) &&
                 evaluation.Decision == DocumentCatalogDecision.SkipUpToDate)
             {
-                Activity.Current?.AddTag("index.catalog", "skip_up_to_date");
-                RecordResult(PipelineResult.Filtered);
+                AddEpochTag(item.Epoch, "index.catalog", "skip_up_to_date");
+                RecordResult(item.Epoch, PipelineResult.Filtered);
                 return;
             }
 
@@ -313,7 +374,7 @@ public partial class IndexingEngine
                 catalogRegistered = true;
 
                 var result = await ApplyIndexerPipeline(item, cancellationToken);
-                RecordResult(result);
+                RecordResult(item.Epoch, result);
                 if (result != PipelineResult.Success)
                     return;
                 await Committer.CommitAsync(item, cancellationToken).ConfigureAwait(false);
@@ -343,12 +404,12 @@ public partial class IndexingEngine
             if (epochBecameIdle && State == IndexingState.AllIdle)
                 HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
         }
-        Activity.Current?.AddTag("result", "Success");
+        AddEpochTag(item.Epoch, "index.result", "Success");
     }
 
-    private static void RecordResult(PipelineResult result)
+    private void RecordResult(long epoch, PipelineResult result)
     {
-        Activity.Current?.AddTag("index.result", result);
+        AddEpochTag(epoch, "index.pipeline_result", result.ToString());
     }
 
     private void ScheduleAnalysis(IndexItem item)
@@ -417,6 +478,17 @@ public partial class IndexingEngine
         }
 
         activity.Dispose();
+    }
+
+    private void AddEpochTag(long epoch, string key, object? value)
+    {
+        if (epoch < 0)
+            return;
+
+        if (_epochActivities.TryGetValue(epoch, out var activity) && activity is not null)
+        {
+            activity.AddTag(key, value);
+        }
     }
 
     private async Task ProcessIdleEpochsAsync()
@@ -554,14 +626,6 @@ public partial class IndexingEngine
 
     internal async Task AnalyzeItemAsync(IndexItem item, CancellationToken cancellationToken)
     {
-        // ReSharper disable once ExplicitCallerInfoArgument
-        using var activity = ActivitySource.StartActivity(ActivityKind.Internal, name: "Analyze", tags: new TagList
-        {
-            { "item.name", item.Name },
-            { "item.uri", item.Uri.ToString() },
-            { "item.media_type", item.MediaType },
-            { "item.last_modified", item.LastModified.ToString() }
-        });
         try
         {
             var multiFileTask = _multiFileStage.RunAsync(item, cancellationToken, UpdateStateFlags);
@@ -579,7 +643,7 @@ public partial class IndexingEngine
             LogUriFailedDuringAnalysis(Logger, ex, item.Uri);
             return;
         }
-        Activity.Current?.AddTag("result", "Success");
+        AddEpochTag(item.Epoch, "analysis.result", "Success");
     }
     
     public IndexingState State { get; private set; } = IndexingState.AllIdle;
@@ -610,29 +674,19 @@ public partial class IndexingEngine
         lock (_stateLock)
         {
             oldState = State;
-            var state = State;
-            if (isBusy)
+            if (!_stageCounters.TryGetValue(busyFlag, out var counter))
             {
-                IncrementActiveCount(busyFlag);
-                state &= ~idleFlag;
-                state |= busyFlag;
-            }
-            else
-            {
-                state &= ~busyFlag;
-                state |= idleFlag;
-                DecrementActiveCount(busyFlag);
+                counter = new StageCounter(busyFlag, idleFlag);
+                _stageCounters[busyFlag] = counter;
             }
 
-            if ((state & BusyMask) != 0)
+            counter.ActiveCount += isBusy ? 1 : -1;
+            if (counter.ActiveCount < 0)
             {
-                state |= IndexingState.Started;
-            }
-            else
-            {
-                state &= ~IndexingState.Started;
+                counter.ActiveCount = 0;
             }
 
+            var state = ComputeStateFromCounters();
             if (state == State)
                 return;
 
@@ -656,29 +710,80 @@ public partial class IndexingEngine
             Interlocked.Read(ref _lastPrunedCount));
     }
 
-    private void IncrementActiveCount(IndexingState busyFlag)
+    private void RegisterStageCounter(IndexingState busyFlag, IndexingState idleFlag)
     {
-        if (!_activeStageCounts.TryGetValue(busyFlag, out var current))
-        {
-            _activeStageCounts[busyFlag] = 1;
+        if (_stageCounters.ContainsKey(busyFlag))
             return;
-        }
-
-        _activeStageCounts[busyFlag] = current + 1;
+        _stageCounters[busyFlag] = new StageCounter(busyFlag, idleFlag);
     }
 
-    private void DecrementActiveCount(IndexingState busyFlag)
+    private IndexingState ComputeStateFromCounters()
     {
-        if (!_activeStageCounts.TryGetValue(busyFlag, out var current))
-            return;
-
-        if (current <= 1)
+        IndexingState state = 0;
+        if (_stageCounters.Count == 0)
         {
-            _activeStageCounts.Remove(busyFlag);
-            return;
+            return IndexingState.AllIdle;
         }
 
-        _activeStageCounts[busyFlag] = current - 1;
+        foreach (var counter in _stageCounters.Values)
+        {
+            if (counter.ActiveCount > 0)
+            {
+                state |= counter.BusyFlag;
+            }
+            else
+            {
+                state |= counter.IdleFlag;
+            }
+        }
+
+        if (state == 0)
+        {
+            state = IndexingState.AllIdle;
+        }
+
+        if ((state & BusyMask) != 0)
+        {
+            state |= IndexingState.Started;
+        }
+        else
+        {
+            state &= ~IndexingState.Started;
+        }
+
+        return state;
+    }
+
+    private sealed class StageCounter
+    {
+        public StageCounter(IndexingState busyFlag, IndexingState idleFlag)
+        {
+            BusyFlag = busyFlag;
+            IdleFlag = idleFlag;
+        }
+
+        public IndexingState BusyFlag { get; }
+        public IndexingState IdleFlag { get; }
+        public int ActiveCount;
+    }
+
+    private sealed class IndexItemComparer : IEqualityComparer<IndexItem>
+    {
+        public bool Equals(IndexItem? x, IndexItem? y)
+        {
+            if (ReferenceEquals(x, y))
+                return true;
+            if (x is null || y is null)
+                return false;
+            return x.Uri == y.Uri && x.Options == y.Options;
+        }
+
+        public int GetHashCode(IndexItem obj)
+        {
+            if (obj is null)
+                return 0;
+            return HashCode.Combine(obj.Uri, obj.Options);
+        }
     }
 
     private sealed class EpochTracker

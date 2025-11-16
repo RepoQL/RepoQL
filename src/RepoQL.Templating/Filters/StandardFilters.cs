@@ -1,6 +1,8 @@
 using System.Globalization;
 using Fluid;
 using Fluid.Values;
+using Humanizer;
+using Humanizer.Bytes;
 
 namespace RepoQL.Templating.Filters;
 
@@ -13,6 +15,7 @@ public static class StandardFilters
         filters.AddFilter("filesize", FileSize);
         filters.AddFilter("time_ago", TimeAgo);
         filters.AddFilter("pluralize", Pluralize);
+        filters.AddFilter("quantity", Quantity);
         filters.AddFilter("abbr", Abbreviate);
         filters.AddFilter("normalize_newlines", NormalizeNewlines);
         filters.AddFilter("is_multiline", IsMultiline);
@@ -23,9 +26,21 @@ public static class StandardFilters
     // {{ bytes | filesize }} -> "1.23 MB"
     private static ValueTask<FluidValue> FileSize(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
-        var bytes = (long)input.ToNumberValue();
-        var s = FormatBytes(bytes);
-        return new ValueTask<FluidValue>(new StringValue(s));
+        var number = input.ToNumberValue();
+        var bytes = Convert.ToDouble(number, CultureInfo.InvariantCulture);
+        var byteSize = ByteSize.FromBytes(Math.Max(0, bytes));
+
+        var formatArg = args.At(0);
+        var format = formatArg.IsNil() ? null : formatArg.ToStringValue();
+        if (string.IsNullOrWhiteSpace(format))
+            format = null;
+
+        var culture = ctx.Options.CultureInfo ?? CultureInfo.InvariantCulture;
+        var rendered = format is null
+            ? byteSize.ToString(culture)
+            : byteSize.ToString(format, culture);
+
+        return new ValueTask<FluidValue>(new StringValue(rendered));
     }
 
     // {{ date | time_ago }}
@@ -88,17 +103,26 @@ public static class StandardFilters
         return new ValueTask<FluidValue>(new StringValue(s));
     }
 
-    private static string FormatBytes(long bytes)
+    // {{ count | quantity: "file" }} -> "1 file" / "2 files"
+    private static ValueTask<FluidValue> Quantity(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
-        const long KB = 1024;
-        const long MB = KB * 1024;
-        const long GB = MB * 1024;
-        const long TB = GB * 1024;
-        if (bytes >= TB) return ($"{bytes / (double)TB:0.##} TB");
-        if (bytes >= GB) return ($"{bytes / (double)GB:0.##} GB");
-        if (bytes >= MB) return ($"{bytes / (double)MB:0.##} MB");
-        if (bytes >= KB) return ($"{bytes / (double)KB:0.##} KB");
-        return ($"{bytes} B");
+        var noun = args.At(0).ToStringValue();
+        if (string.IsNullOrWhiteSpace(noun))
+            return new ValueTask<FluidValue>(StringValue.Empty);
+
+        var formatArg = args.At(1).ToStringValue();
+        var format = ShowQuantityAs.Numeric;
+        if (!string.IsNullOrWhiteSpace(formatArg) &&
+            Enum.TryParse<ShowQuantityAs>(formatArg, ignoreCase: true, out var parsed))
+        {
+            format = parsed;
+        }
+
+        var countValue = input.ToNumberValue();
+        var count = (long)Math.Round((double)countValue, MidpointRounding.AwayFromZero);
+        var provider = ctx.Options.CultureInfo ?? CultureInfo.InvariantCulture;
+        var display = FormatQuantity(count, noun, format, provider);
+        return new ValueTask<FluidValue>(new StringValue(display));
     }
 
     // {{ 16000 | abbr }} -> "16k" ; optional decimals: {{ 1234000 | abbr: 1 }} -> "1.2M"
@@ -153,6 +177,17 @@ public static class StandardFilters
 
         var fmt = decimals <= 0 ? "0" : $"0.{new string('#', decimals)}";
         return scaled.ToString(fmt, System.Globalization.CultureInfo.InvariantCulture) + suffix;
+    }
+
+    private static string FormatQuantity(long count, string noun, ShowQuantityAs format, CultureInfo provider)
+    {
+        var numberText = format == ShowQuantityAs.Words
+            ? count.ToWords(provider)
+            : count.ToString(provider);
+
+        var word = count == 1 ? noun : noun.Pluralize();
+
+        return $"{numberText} {word}";
     }
 
     // normalize_newlines: CRLF/CR -> LF (tabs preserved)

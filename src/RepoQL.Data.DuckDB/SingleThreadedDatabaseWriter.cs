@@ -44,6 +44,7 @@ public sealed class SingleThreadedDatabaseWriter(
     private bool _isDisposed;
 
     private const int MaxQueueDepth = 1000;
+    private const int MaxWriteAttempts = 3;
     private static readonly ActivitySource Activity = new("RepoQL.Indexing");
 
     private sealed class QueueItem
@@ -157,48 +158,71 @@ public sealed class SingleThreadedDatabaseWriter(
             ],
             links: null);
         CommitResult result;
-        try
+        Exception? failure = null;
+        var attempt = 1;
+        while (true)
         {
-            switch (op.Type)
+            try
             {
-                case WriteOperationType.ReplaceDocument:
-                    await ApplyReplaceDocumentAsync(op).ConfigureAwait(false);
-                    break;
-                case WriteOperationType.UpsertAnnotations:
-                    ApplyUpsertAnnotations(op);
-                    break;
-                case WriteOperationType.DeleteDocument:
-                    ApplyDeleteDocument(op);
-                    break;
-                case WriteOperationType.Barrier:
-                    // no-op
-                    break;
-                default:
-                    throw new NotSupportedException($"Unsupported op: {op.Type}");
+                await ExecuteOperationAsync(op).ConfigureAwait(false);
+                Interlocked.Increment(ref _processed);
+                failure = null;
+                break;
             }
-            Interlocked.Increment(ref _processed);
+            catch (DuckDBException dex)
+            {
+                if (IsRecoverableDuckDbError(dex) && attempt < MaxWriteAttempts)
+                {
+                    if (_logger.IsEnabled(LogLevel.Warning))
+                    {
+                        _logger.LogWarning(dex,
+                            "DuckDB write attempt {Attempt}/{Max} failed for {Uri}; retrying",
+                            attempt,
+                            MaxWriteAttempts,
+                            op.Uri);
+                    }
+                    attempt++;
+                    continue;
+                }
+
+                failure = dex;
+                break;
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+                break;
+            }
+        }
+
+        if (failure is null)
+        {
             result = new CommitResult { Success = true };
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogError(ex, "Failed processing write operation {OpId} for {Uri}", op.Id, op.Uri);
+            if (_logger.IsEnabled(LogLevel.Error))
+            {
+                _logger.LogError(failure, "Failed processing write operation {OpId} for {Uri}", op.Id, op.Uri);
+            }
             try
             {
                 if (writeActivity is not null)
                 {
                     var tags = new ActivityTagsCollection
                     {
-                        {"exception.type", ex.GetType().FullName},
-                        {"exception.message", ex.Message},
-                        {"exception.stacktrace", ex.ToString()}
+                        {"exception.type", failure.GetType().FullName},
+                        {"exception.message", failure.Message},
+                        {"exception.stacktrace", failure.ToString()}
                     };
                     writeActivity.AddEvent(new ActivityEvent("exception", default, tags));
                     writeActivity.SetTag("otel.status_code", "ERROR");
-                    writeActivity.SetTag("otel.status_description", ex.Message);
+                    writeActivity.SetTag("otel.status_description", failure.Message);
                 }
             }
             catch { }
-            result = new CommitResult { Success = false, Error = ex };
+
+            result = new CommitResult { Success = false, Error = failure };
         }
 
         item.Completion?.TrySetResult(result);
@@ -216,7 +240,10 @@ public sealed class SingleThreadedDatabaseWriter(
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "OnCommitted callback failed for {OpId}", op.Id);
+                if (_logger.IsEnabled(LogLevel.Error))
+                {
+                    _logger.LogError(ex, "OnCommitted callback failed for {OpId}", op.Id);
+                }
             }
         });
     }
@@ -379,6 +406,33 @@ public sealed class SingleThreadedDatabaseWriter(
     {
         if (_store is null) throw new InvalidOperationException("Writer not started");
         _store.DeleteDocumentByUri(op.Uri);
+    }
+
+    private Task ExecuteOperationAsync(WriteOperation op)
+    {
+        return op.Type switch
+        {
+            WriteOperationType.ReplaceDocument => ApplyReplaceDocumentAsync(op),
+            WriteOperationType.UpsertAnnotations => ExecuteSynchronously(() => ApplyUpsertAnnotations(op)),
+            WriteOperationType.DeleteDocument => ExecuteSynchronously(() => ApplyDeleteDocument(op)),
+            WriteOperationType.Barrier => Task.CompletedTask,
+            _ => throw new NotSupportedException($"Unsupported op: {op.Type}")
+        };
+    }
+
+    private static Task ExecuteSynchronously(Action action)
+    {
+        action();
+        return Task.CompletedTask;
+    }
+
+    private static bool IsRecoverableDuckDbError(DuckDBException ex)
+    {
+        var message = ex.Message;
+        if (string.IsNullOrWhiteSpace(message))
+            return false;
+        return message.Contains("Conflict on tuple deletion", StringComparison.OrdinalIgnoreCase)
+               || message.Contains("Current transaction is aborted", StringComparison.OrdinalIgnoreCase);
     }
 
     private static System.Text.Json.Nodes.JsonObject? EnrichDocPropsWithFrontmatter(System.Text.Json.Nodes.JsonObject? original)

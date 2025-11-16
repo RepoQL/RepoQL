@@ -35,14 +35,6 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
     
     public virtual async Task<PipelineResult> ProcessItemAsync(TInput item, CancellationToken cancellationToken)
     {
-        using var activity = IndexingEngine.ActivitySource.StartActivity(ActivityKind.Internal, name: $"Indexer.{Name}", tags: new TagList
-        {
-            { "phase", Name },
-            { "item.name", item.Name },
-            { "item.uri", item.Uri.ToString() },
-            { "item.last_modified", item.LastModified.ToString() },
-            { "item.provisional_media_type", item.RawArtifact.ProvisionalMediaType }
-        });
         try
         {
             ItemsInFlight.Add(1, new TagList()

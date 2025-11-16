@@ -36,6 +36,12 @@ service RepoQL {
 
   // Retrieve the current pipeline status without blocking.
   rpc GetPipelineStatus(GetPipelineStatusRequest) returns (GetPipelineStatusResponse);
+
+  // Instruct the host process to shut down gracefully.
+  rpc ShutdownHost(ShutdownHostRequest) returns (ShutdownHostResponse);
+
+  // Run the hot-path pipeline for a single document without persisting results.
+  rpc PreviewDocument(PreviewDocumentRequest) returns (PreviewDocumentResponse);
 }
 
 // ----- Raw query -----
@@ -254,4 +260,105 @@ message StageStatus {
   bool busy = 2;
   uint32 queued = 3;
   uint32 in_progress = 4;
+}
+
+message ShutdownHostRequest {
+  // Reserved for future force flags.
+}
+
+message ShutdownHostResponse {
+  // Process id of the host that initiated shutdown.
+  int32 process_id = 1;
+}
+
+// ----- Format preview -----
+
+message PreviewDocumentRequest {
+  // Repository URI of the document to preview (e.g., file:///docs/readme.md).
+  string uri = 1;
+  // Optional file name override when uploading content.
+  string file_name = 2;
+  // Optional semantic media type hint (e.g., markdown.doc).
+  string media_type_hint = 3;
+  // Optional content to preview instead of reading from the repository.
+  bytes content = 4;
+}
+
+message PreviewStageTiming {
+  string stage = 1;
+  int64 duration_ms = 2;
+  string status = 3;
+  string error = 4;
+}
+
+message PreviewArtifact {
+  string id = 1;
+  string digest = 2;
+  int64 size_bytes = 3;
+  string media_type = 4;
+  string headline = 5;
+  string summary = 6;
+  string structure = 7;
+  string store_uri = 8;
+}
+
+message PreviewNode {
+  string id = 1;
+  string kind = 2;
+  string uri = 3;
+  string artifact_id = 4;
+  string span_id = 5;
+  string headline = 6;
+  string structure = 7;
+  string props_json = 8;
+}
+
+message PreviewSpan {
+  string id = 1;
+  string document_id = 2;
+  int64 start_byte = 3;
+  int64 end_byte = 4;
+  int32 start_line = 5;
+  int32 end_line = 6;
+  int32 start_column = 7;
+  int32 end_column = 8;
+}
+
+message PreviewEdge {
+  string id = 1;
+  string type = 2;
+  bool is_composition = 3;
+  int32 ordinal = 4;
+  string scope_document_id = 5;
+  string edge_key = 6;
+  string src_id = 7;
+  string dst_id = 8;
+  string src_span_id = 9;
+  string dst_span_id = 10;
+  string props_json = 11;
+}
+
+message PreviewAnnotation {
+  string kind = 1;
+  string severity = 2;
+  string source = 3;
+  string rule_id = 4;
+  string message = 5;
+}
+
+message PreviewRecords {
+  repeated PreviewArtifact artifacts = 1;
+  repeated PreviewNode nodes = 2;
+  repeated PreviewSpan spans = 3;
+  repeated PreviewEdge edges = 4;
+  repeated PreviewAnnotation annotations = 5;
+}
+
+message PreviewDocumentResponse {
+  bool success = 1;
+  string error = 2;
+  string media_type = 3;
+  string digest_hex = 4;
+  PreviewRecords records = 5;
+  repeated PreviewStageTiming stages = 6;
 }

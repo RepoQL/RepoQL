@@ -1,5 +1,8 @@
+using System.IO;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
+using System.Threading;
+using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
@@ -18,17 +21,38 @@ namespace RepoQL.Protocol;
 /// </remarks>
 public sealed class RepoQlClient : IRepoQlClient
 {
-    public GrpcChannel Channel { get; }
-    private readonly Contracts.RepoQL.RepoQLClient _client;
+    private enum ConnectionMode
+    {
+        ExternalChannel,
+        Managed
+    }
+
+    private readonly ConnectionMode _mode;
+    private readonly string? _repoPath;
+    private readonly string? _configuredSocketPath;
+    private readonly SemaphoreSlim _connectLock = new(1, 1);
+    private GrpcChannel? _channel;
+    private Contracts.RepoQL.RepoQLClient? _client;
     private readonly TimeSpan? _defaultTimeout;
-    private readonly CancellationTokenSource _leaseCts = new();
+    private CancellationTokenSource? _leaseCts;
     private AsyncClientStreamingCall<ClientLeaseBeat, ClientLeaseSummary>? _leaseCall;
+
+    public GrpcChannel Channel => _channel ?? throw new InvalidOperationException("RepoQL client is not connected.");
 
     private RepoQlClient(GrpcChannel channel, TimeSpan? defaultTimeout)
     {
-        Channel = channel;
+        _mode = ConnectionMode.ExternalChannel;
+        _channel = channel;
         _client = new Contracts.RepoQL.RepoQLClient(channel);
         _defaultTimeout = defaultTimeout;
+    }
+
+    private RepoQlClient(RepoQlClientOptions options, string repoPath, string? socketPath)
+    {
+        _mode = ConnectionMode.Managed;
+        _repoPath = repoPath;
+        _configuredSocketPath = socketPath;
+        _defaultTimeout = options.DefaultTimeout;
     }
 
     /// <summary>
@@ -45,43 +69,143 @@ public sealed class RepoQlClient : IRepoQlClient
     public static async Task<RepoQlClient> CreateAsync(RepoQlClientOptions? options = null, CancellationToken cancellationToken = default)
     {
         options ??= new RepoQlClientOptions();
-
-        var socketPath = options.SocketPath;
         var repoPath = RepoLocator.FindRepoRoot(options.RepositoryPath);
+
+        var client = new RepoQlClient(options, repoPath, options.SocketPath);
+        await client.EnsureConnectedAsync(forceReconnect: true, cancellationToken).ConfigureAwait(false);
+        return client;
+    }
+
+    private async Task EnsureConnectedAsync(bool forceReconnect, CancellationToken cancellationToken)
+    {
+        if (_mode == ConnectionMode.ExternalChannel)
+        {
+            if (_client == null)
+                throw new InvalidOperationException("RepoQL client was not initialized with a channel.");
+            return;
+        }
+
+        if (!forceReconnect && _client != null)
+            return;
+
+        await _connectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (!forceReconnect && _client != null)
+                return;
+
+            DisposeChannel();
+            await ConnectManagedAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _connectLock.Release();
+        }
+    }
+
+    private async Task ConnectManagedAsync(CancellationToken cancellationToken)
+    {
+        if (_mode != ConnectionMode.Managed)
+            throw new InvalidOperationException("Managed connection is not enabled for this client.");
+
+        var repoPath = _repoPath ?? throw new InvalidOperationException("Repository path is not configured.");
+
+        var socketPath = _configuredSocketPath;
         if (string.IsNullOrWhiteSpace(socketPath))
             socketPath = ResolveSocketPath(repoPath);
 
-        // Ensure server is up (autostart if enabled)
-        var finalSocketPath = await EnsureServerRunning(socketPath!, repoPath, TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_START_TIMEOUT_MS", 30000)), cancellationToken);
+        var finalSocketPath = await EnsureServerRunning(
+            socketPath!,
+            repoPath,
+            TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_START_TIMEOUT_MS", 30000)),
+            cancellationToken).ConfigureAwait(false);
 
         var handler = new SocketsHttpHandler
         {
             ConnectCallback = async (_, ct) =>
             {
-                var s = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.Unix, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Unspecified);
-                await s.ConnectAsync(new System.Net.Sockets.UnixDomainSocketEndPoint(finalSocketPath), ct).ConfigureAwait(false);
+                var s = new System.Net.Sockets.Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                await s.ConnectAsync(new UnixDomainSocketEndPoint(finalSocketPath), ct).ConfigureAwait(false);
                 try { s.SendBufferSize = 64 * 1024; } catch { }
                 try { s.ReceiveBufferSize = 64 * 1024; } catch { }
-                return new System.Net.Sockets.NetworkStream(s, ownsSocket: true);
+                return new NetworkStream(s, ownsSocket: true);
             },
-            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             MaxConnectionsPerServer = 10,
             KeepAlivePingDelay = TimeSpan.FromSeconds(60),
             KeepAlivePingTimeout = TimeSpan.FromSeconds(30),
             EnableMultipleHttp2Connections = true
         };
 
-        var channel = GrpcChannel.ForAddress("http://unix", new GrpcChannelOptions
+        _channel = GrpcChannel.ForAddress("http://unix", new GrpcChannelOptions
         {
             HttpHandler = handler,
-            Credentials = ChannelCredentials.Insecure // plaintext over UDS
+            Credentials = ChannelCredentials.Insecure
         });
 
-        var client = new RepoQlClient(channel, options.DefaultTimeout);
-        // Establish required client lease before returning (no backwards-compat fallbacks)
-        client.EstablishLeaseOrThrow(repoPath, TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_LEASE_START_TIMEOUT_MS", 5000)));
-        return client;
+        _client = new Contracts.RepoQL.RepoQLClient(_channel);
+        _leaseCts = new CancellationTokenSource();
+        EstablishLeaseOrThrow(repoPath, TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_LEASE_START_TIMEOUT_MS", 5000)));
+    }
+
+    private void DisposeChannel()
+    {
+        var leaseCts = Interlocked.Exchange(ref _leaseCts, null);
+        if (leaseCts != null)
+        {
+            try { leaseCts.Cancel(); }
+            catch { }
+            leaseCts.Dispose();
+        }
+
+        _leaseCall = null;
+
+        var channel = Interlocked.Exchange(ref _channel, null);
+        channel?.Dispose();
+        _client = null;
+    }
+
+    private async Task<T> InvokeWithReconnectAsync<T>(Func<Contracts.RepoQL.RepoQLClient, CancellationToken, Task<T>> call, CancellationToken cancellationToken)
+    {
+        var maxAttempts = _mode == ConnectionMode.Managed ? 2 : 1;
+        Exception? last = null;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            await EnsureConnectedAsync(forceReconnect: attempt > 0, cancellationToken).ConfigureAwait(false);
+            var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
+
+            try
+            {
+                return await call(client, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (attempt == 0 && _mode == ConnectionMode.Managed && ShouldAttemptReconnect(ex))
+            {
+                last = ex;
+                DisposeChannel();
+            }
+        }
+
+        throw last ?? new InvalidOperationException("RepoQL client operation failed.");
+    }
+
+    private static bool ShouldAttemptReconnect(Exception ex)
+        => ex switch
+        {
+            RpcException rpc when rpc.StatusCode is StatusCode.Unavailable or StatusCode.Internal => true,
+            IOException => true,
+            SocketException => true,
+            InvalidOperationException ioe when ioe.Message?.Contains("HTTP/2", StringComparison.OrdinalIgnoreCase) == true &&
+                                               ioe.Message?.Contains("not established", StringComparison.OrdinalIgnoreCase) == true => true,
+            ObjectDisposedException => true,
+            _ => false
+        };
+
+    private DateTime? ComputeDeadline(TimeSpan? overrideTimeout = null)
+    {
+        var effective = overrideTimeout ?? _defaultTimeout;
+        return effective.HasValue ? DateTime.UtcNow + effective.Value : (DateTime?)null;
     }
 
     private static async Task<string> EnsureServerRunning(string socketPath, string repoPath, TimeSpan timeout, CancellationToken cancellationToken = default)
@@ -204,8 +328,12 @@ public sealed class RepoQlClient : IRepoQlClient
 
     private void EstablishLeaseOrThrow(string repoPath, TimeSpan timeout)
     {
-        var leaseClient = new Contracts.RepoQL.RepoQLClient(Channel);
-        _leaseCall = leaseClient.HoldClientLease(cancellationToken: _leaseCts.Token);
+        if (_leaseCts is null)
+            throw new InvalidOperationException("Lease token source is not initialized.");
+        var channel = _channel ?? throw new InvalidOperationException("RepoQL client channel is not established.");
+        var leaseClient = new Contracts.RepoQL.RepoQLClient(channel);
+        var leaseCall = leaseClient.HoldClientLease(cancellationToken: _leaseCts.Token);
+        _leaseCall = leaseCall;
 
         var clientId = Guid.NewGuid().ToString();
         var pid = Environment.ProcessId;
@@ -214,7 +342,7 @@ public sealed class RepoQlClient : IRepoQlClient
         var startedAt = DateTime.UtcNow.ToString("O");
 
         // Send first beat and ensure it succeeds within timeout
-        var firstBeat = _leaseCall.RequestStream.WriteAsync(new ClientLeaseBeat
+        var firstBeat = leaseCall.RequestStream.WriteAsync(new ClientLeaseBeat
         {
             ClientId = clientId,
             Pid = pid,
@@ -236,7 +364,7 @@ public sealed class RepoQlClient : IRepoQlClient
             while (!_leaseCts.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(10), _leaseCts.Token).ConfigureAwait(false);
-                await _leaseCall!.RequestStream.WriteAsync(new ClientLeaseBeat
+                await leaseCall.RequestStream.WriteAsync(new ClientLeaseBeat
                 {
                     ClientId = clientId,
                     Pid = pid,
@@ -251,23 +379,17 @@ public sealed class RepoQlClient : IRepoQlClient
     }
 
     /// <inheritdoc />
-    public async Task<RawQueryResponse> ExecuteRawQueryAsync(
+    public Task<RawQueryResponse> ExecuteRawQueryAsync(
         string sql,
         IEnumerable<object?>? parameters = null,
         int? rowLimit = null,
         CancellationToken cancellationToken = default)
-    {
-        var req = new RawQueryRequest
+        => InvokeWithReconnectAsync(async (client, ct) =>
         {
-            Sql = sql,
-            Limit = rowLimit.GetValueOrDefault(0)
-        };
-        foreach (var p in parameters ?? [])
-            req.Parameters.Add(ToValue(p));
-
-        var deadline = _defaultTimeout.HasValue ? DateTime.UtcNow + _defaultTimeout.Value : (DateTime?)null;
-        return await _client.ExecuteRawQueryAsync(req, deadline: deadline, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
-    }
+            var req = BuildRawQueryRequest(sql, parameters, rowLimit);
+            var deadline = ComputeDeadline();
+            return await client.ExecuteRawQueryAsync(req, deadline: deadline, cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+        }, cancellationToken);
 
     /// <inheritdoc />
     public async IAsyncEnumerable<RawQueryRow> ExecuteRawQueryStreamAsync(
@@ -276,24 +398,52 @@ public sealed class RepoQlClient : IRepoQlClient
         int? rowLimit = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var req = new RawQueryRequest
+        var attempt = 0;
+        while (true)
         {
-            Sql = sql,
-            Limit = rowLimit.GetValueOrDefault(0)
-        };
-        foreach (var p in parameters ?? [])
-            req.Parameters.Add(ToValue(p));
+            await EnsureConnectedAsync(forceReconnect: attempt > 0, cancellationToken).ConfigureAwait(false);
+            var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
+            var req = BuildRawQueryRequest(sql, parameters, rowLimit);
+            var deadline = ComputeDeadline();
+            using var call = client.ExecuteRawQueryStream(req, deadline: deadline, cancellationToken: cancellationToken);
+            var emitted = false;
+            Exception? failure = null;
 
-        var deadline = _defaultTimeout.HasValue ? DateTime.UtcNow + _defaultTimeout.Value : (DateTime?)null;
-        using var call = _client.ExecuteRawQueryStream(req, deadline: deadline, cancellationToken: cancellationToken);
-        while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
-        {
-            yield return call.ResponseStream.Current;
+            while (true)
+            {
+                bool moved;
+                try
+                {
+                    moved = await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                    break;
+                }
+
+                if (!moved)
+                {
+                    yield break;
+                }
+
+                emitted = true;
+                yield return call.ResponseStream.Current;
+            }
+
+            if (failure != null && !emitted && attempt == 0 && _mode == ConnectionMode.Managed && ShouldAttemptReconnect(failure))
+            {
+                DisposeChannel();
+                attempt++;
+                continue;
+            }
+
+            throw failure ?? new InvalidOperationException("RepoQL stream failed unexpectedly.");
         }
     }
 
     /// <inheritdoc />
-    public async Task<GetDocumentSummariesResponse> GetDocumentSummariesAsync(
+    public Task<GetDocumentSummariesResponse> GetDocumentSummariesAsync(
         IEnumerable<string> documentUris,
         IEnumerable<string>? annotationKinds = null,
         string? minimumSeverity = null,
@@ -301,30 +451,16 @@ public sealed class RepoQlClient : IRepoQlClient
         bool includeMessage = true,
         bool includeResolvedTargetUri = false,
         CancellationToken cancellationToken = default)
-    {
-        var req = new GetDocumentSummariesRequest
+        => InvokeWithReconnectAsync(async (client, ct) =>
         {
-            MinSeverity = minimumSeverity ?? string.Empty,
-            IncludeData = includeData,
-            IncludeMessage = includeMessage,
-            IncludeResolvedTargetUri = includeResolvedTargetUri
-        };
-        foreach (var u in documentUris) if (!string.IsNullOrWhiteSpace(u)) req.Uris.Add(u);
-        if (annotationKinds != null) foreach (var k in annotationKinds) if (!string.IsNullOrWhiteSpace(k)) req.Kinds.Add(k);
-
-        var deadline = _defaultTimeout.HasValue ? DateTime.UtcNow + _defaultTimeout.Value : (DateTime?)null;
-        return await _client.GetDocumentSummariesAsync(req, deadline: deadline, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
-    }
+            var req = BuildSummariesRequest(documentUris, annotationKinds, minimumSeverity, includeData, includeMessage, includeResolvedTargetUri);
+            var deadline = ComputeDeadline();
+            return await client.GetDocumentSummariesAsync(req, deadline: deadline, cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+        }, cancellationToken);
 
     public ValueTask DisposeAsync()
     {
-        try { _leaseCts.Cancel(); }
-        catch
-        {
-            // ignored
-        }
-
-        Channel.Dispose();
+        DisposeChannel();
         return ValueTask.CompletedTask;
     }
 
@@ -366,6 +502,48 @@ public sealed class RepoQlClient : IRepoQlClient
         }
     }
 
+    private static RawQueryRequest BuildRawQueryRequest(string sql, IEnumerable<object?>? parameters, int? rowLimit)
+    {
+        var req = new RawQueryRequest
+        {
+            Sql = sql,
+            Limit = rowLimit.GetValueOrDefault(0)
+        };
+        foreach (var p in parameters ?? [])
+            req.Parameters.Add(ToValue(p));
+        return req;
+    }
+
+    private static GetDocumentSummariesRequest BuildSummariesRequest(
+        IEnumerable<string> documentUris,
+        IEnumerable<string>? annotationKinds,
+        string? minimumSeverity,
+        bool includeData,
+        bool includeMessage,
+        bool includeResolvedTargetUri)
+    {
+        var req = new GetDocumentSummariesRequest
+        {
+            MinSeverity = minimumSeverity ?? string.Empty,
+            IncludeData = includeData,
+            IncludeMessage = includeMessage,
+            IncludeResolvedTargetUri = includeResolvedTargetUri
+        };
+
+        foreach (var u in documentUris)
+            if (!string.IsNullOrWhiteSpace(u))
+                req.Uris.Add(u);
+
+        if (annotationKinds != null)
+        {
+            foreach (var k in annotationKinds)
+                if (!string.IsNullOrWhiteSpace(k))
+                    req.Kinds.Add(k);
+        }
+
+        return req;
+    }
+
     private static Value ToValue(object? o)
     {
         return o switch
@@ -393,34 +571,96 @@ public sealed class RepoQlClient : IRepoQlClient
     }
 
 
-    public async IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, TimeSpan? timeout = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public async IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, TimeSpan? timeout = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var deadline = DateTime.UtcNow + (timeout ?? _defaultTimeout);
-        var call = _client.ReindexAll(new ReindexRequest { Clear = clear }, deadline: deadline, cancellationToken: cancellationToken);
-        while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
+        var attempt = 0;
+        while (true)
         {
-            yield return call.ResponseStream.Current;
+            await EnsureConnectedAsync(forceReconnect: attempt > 0, cancellationToken).ConfigureAwait(false);
+            var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
+            var deadline = ComputeDeadline(timeout);
+            using var call = client.ReindexAll(new ReindexRequest { Clear = clear }, deadline: deadline, cancellationToken: cancellationToken);
+            var emitted = false;
+            Exception? failure = null;
+
+            while (true)
+            {
+                bool moved;
+                try
+                {
+                    moved = await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                    break;
+                }
+
+                if (!moved)
+                {
+                    yield break;
+                }
+
+                emitted = true;
+                yield return call.ResponseStream.Current;
+            }
+
+            if (failure != null && !emitted && attempt == 0 && _mode == ConnectionMode.Managed && ShouldAttemptReconnect(failure))
+            {
+                DisposeChannel();
+                attempt++;
+                continue;
+            }
+
+            throw failure ?? new InvalidOperationException("RepoQL stream failed unexpectedly.");
         }
     }
 
-    public async Task<ProtoPipelineStatus> WaitForPipelineAsync(
+    public Task<ProtoPipelineStatus> WaitForPipelineAsync(
         IEnumerable<ProtoPipelineStage>? stages = null,
         bool waitAll = true,
         CancellationToken cancellationToken = default)
-    {
-        var request = new WaitForPipelineRequest { WaitAll = waitAll };
-        if (stages is not null)
-            request.Stages.AddRange(stages);
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            var request = new WaitForPipelineRequest { WaitAll = waitAll };
+            if (stages is not null)
+                request.Stages.AddRange(stages);
 
-        var deadline = _defaultTimeout.HasValue ? DateTime.UtcNow + _defaultTimeout.Value : (DateTime?)null;
-        var response = await _client.WaitForPipelineAsync(request, deadline: deadline, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
-        return response.Status ?? new ProtoPipelineStatus();
-    }
+            var response = await client.WaitForPipelineAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            return response.Status ?? new ProtoPipelineStatus();
+        }, cancellationToken);
 
-    public async Task<ProtoPipelineStatus> GetPipelineStatusAsync(CancellationToken cancellationToken = default)
-    {
-        var deadline = _defaultTimeout.HasValue ? DateTime.UtcNow + _defaultTimeout.Value : (DateTime?)null;
-        var response = await _client.GetPipelineStatusAsync(new GetPipelineStatusRequest(), deadline: deadline, cancellationToken: cancellationToken).ResponseAsync.ConfigureAwait(false);
-        return response.Status ?? new ProtoPipelineStatus();
-    }
+    public Task<ProtoPipelineStatus> GetPipelineStatusAsync(CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            var response = await client.GetPipelineStatusAsync(new GetPipelineStatusRequest(), deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            return response.Status ?? new ProtoPipelineStatus();
+        }, cancellationToken);
+
+    public Task<PreviewDocumentResponse> PreviewDocumentAsync(
+        string uri,
+        byte[]? content = null,
+        string? fileName = null,
+        string? mediaTypeHint = null,
+        CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(uri))
+                throw new ArgumentException("uri is required", nameof(uri));
+
+            var request = new PreviewDocumentRequest
+            {
+                Uri = uri
+            };
+
+            if (!string.IsNullOrWhiteSpace(fileName))
+                request.FileName = fileName;
+            if (!string.IsNullOrWhiteSpace(mediaTypeHint))
+                request.MediaTypeHint = mediaTypeHint;
+            if (content is { Length: > 0 })
+                request.Content = ByteString.CopyFrom(content);
+
+            var response = await client.PreviewDocumentAsync(request, cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            return response;
+        }, cancellationToken);
 }

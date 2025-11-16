@@ -46,7 +46,7 @@ internal sealed class RepoQlClientProvider : IAsyncDisposable
         try
         {
             var client = await _clientTask.Value.ConfigureAwait(false);
-            await client.DisposeAsync().ConfigureAwait(false);
+            var _ = client.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {

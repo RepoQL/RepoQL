@@ -12,4 +12,7 @@ public sealed class RepoqlHostOptions
 
     /// <summary>Indexing options used for any artifacts queued by the host.</summary>
     public IndexItemOptions DefaultIndexItemOptions { get; set; } = IndexItemOptions.Default;
+
+    /// <summary>Maximum number of pending watcher events before dropping the oldest.</summary>
+    public int WatcherQueueCapacity { get; set; } = 10_000;
 }

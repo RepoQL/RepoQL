@@ -888,6 +888,128 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         return Task.CompletedTask;
     }
 
+    [Test]
+    public Task ReplaceDocumentContent_RemovesEdgesAndEmbeddingsForDocumentAndChildren()
+    {
+        var docUri = RepoUri.Parse("file:///repo/docs/complex.md");
+        var (doc, firstChild, span) = InsertDocumentGraph(store, docUri);
+
+        var secondSpan = new Span
+        {
+            Id = Guid.NewGuid(),
+            DocumentId = doc.Id,
+            StartByte = 0,
+            EndByte = span.EndByte,
+            StartLine = span.StartLine,
+            EndLine = span.EndLine
+        };
+        store.InsertSpan(secondSpan);
+
+        var secondChild = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "cs_method",
+            Uri = null,
+            SpanId = secondSpan.Id,
+            Headline = "void Baz()",
+            Structure = "Method Baz body",
+            Props = new JsonObject(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        store.UpsertNode(secondChild);
+
+        // Composition edges
+        store.UpsertEdge(new Edge
+        {
+            Id = Guid.NewGuid(),
+            SrcId = doc.Id,
+            DstId = firstChild.Id,
+            Type = "HAS_PART",
+            IsComposition = true,
+            Ordinal = 0,
+            ScopeDocumentId = doc.Id,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        store.UpsertEdge(new Edge
+        {
+            Id = Guid.NewGuid(),
+            SrcId = doc.Id,
+            DstId = secondChild.Id,
+            Type = "HAS_PART",
+            IsComposition = true,
+            Ordinal = 1,
+            ScopeDocumentId = doc.Id,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        // Non-composition edges referencing both document and children
+        store.UpsertEdge(new Edge
+        {
+            Id = Guid.NewGuid(),
+            SrcId = firstChild.Id,
+            DstId = secondChild.Id,
+            Type = "references",
+            IsComposition = false,
+            ScopeDocumentId = doc.Id,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        store.UpsertEdge(new Edge
+        {
+            Id = Guid.NewGuid(),
+            SrcId = secondChild.Id,
+            DstId = doc.Id,
+            Type = "references",
+            IsComposition = false,
+            ScopeDocumentId = doc.Id,
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+
+        var child1Uri = docUri.ToString() + "#child-1";
+        var child2Uri = docUri.ToString() + "#child-2";
+
+        void InsertEmbedding(Guid nodeId, string uri)
+        {
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "INSERT INTO document_embedding (doc_id, node_id, uri, scope, model, dim, embedding, updated_at) VALUES (?,?,?,?,?,?,?,?);";
+            AddParameters(cmd, doc.Id, nodeId, uri, nodeId == doc.Id ? "document" : "object", "test", 2, "[0.1,0.2]", DateTimeOffset.UtcNow.UtcDateTime);
+            cmd.ExecuteNonQuery();
+        }
+
+        InsertEmbedding(doc.Id, docUri.ToString());
+        InsertEmbedding(firstChild.Id, child1Uri);
+        InsertEmbedding(secondChild.Id, child2Uri);
+
+        void InsertSearch(Guid targetId, string uri)
+        {
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "INSERT INTO document_search (doc_id, uri, search_key, basename, dirname) VALUES (?,?,?,?,?);";
+            AddParameters(cmd, targetId, uri, "keywords", "complex.md", "/repo/docs");
+            cmd.ExecuteNonQuery();
+        }
+
+        InsertSearch(doc.Id, docUri.ToString());
+        InsertSearch(firstChild.Id, child1Uri);
+        InsertSearch(secondChild.Id, child2Uri);
+
+        Action act = () => store.ReplaceDocumentContent(doc.Id, Array.Empty<Node>(), Array.Empty<Span>(), Array.Empty<Edge>());
+        act.Should().NotThrow();
+
+        long Count(string table)
+        {
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM {table};";
+            return (long)cmd.ExecuteScalar()!;
+        }
+
+        Count("edge").Should().Be(0);
+        Count("document_embedding").Should().Be(0);
+        Count("document_search").Should().Be(0);
+        Count("span").Should().Be(0);
+
+        return Task.CompletedTask;
+    }
+
     // ========== Embedding Tests ==========
 
     [Test]

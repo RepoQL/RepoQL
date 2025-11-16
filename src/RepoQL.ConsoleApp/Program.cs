@@ -35,10 +35,6 @@ builder.Logging.ClearProviders();
 builder.Logging.AddOpenTelemetry();
 builder.Services.AddRepoQlConsoleServices(ShouldPrewarmClient(args));
 builder.Services.AddOpenTelemetry()
-    .WithMetrics(m => m
-        .AddMeter("RepoQL.*")
-        .AddAspNetCoreInstrumentation()
-        .AddRuntimeInstrumentation())
     .WithTracing(t => t
         .AddSource("RepoQL.*")
         .AddAspNetCoreInstrumentation())

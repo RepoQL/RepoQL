@@ -6,32 +6,7 @@ Visual representation of state transitions with concrete conditions.
 
 ## State Flags
 
-```csharp
-[Flags]
-enum IndexingState {
-    // Busy flags (work in progress)
-    ClassificationBusy = 1 << 0,
-    ParsingBusy = 1 << 1,
-    SingleFileAnalysisBusy = 1 << 2,
-    MultiFileAnalysisBusy = 1 << 3,
-    IndexRebuildBusy = 1 << 4,
-
-    // Idle flags (stage completed)
-    ClassificationIdle = 1 << 5,
-    ParsingIdle = 1 << 6,
-    SingleFileAnalysisIdle = 1 << 7,
-    MultiFileAnalysisIdle = 1 << 8,
-    IndexRebuildIdle = 1 << 9,
-
-    // Composite flags (computed)
-    Started = ClassificationBusy | ParsingBusy | SingleFileAnalysisBusy |
-              MultiFileAnalysisBusy | IndexRebuildBusy,
-    AllIdle = ClassificationIdle | ParsingIdle | SingleFileAnalysisIdle |
-              MultiFileAnalysisIdle | IndexRebuildIdle
-}
-```
-
-**Note**: Busy and Idle are mutually exclusive per stage. A stage is either busy or idle, never both.
+State is derived from per-stage counters captured in `IndexingEngine`. Each stage registers a `(busyFlag, idleFlag)` pair and the engine computes `IndexingState` based on whether the counter is greater than zero. Busy and idle are mutually exclusive per stage.
 
 ---
 
@@ -184,24 +159,6 @@ public static async Task<PipelineResult> RunAsync(
 
 ### UpdateState Implementation
 
-```csharp
-private void UpdateState(IndexingState busyFlag, IndexingState idleFlag, bool entering) {
-    lock (_stateLock) {
-        if (entering) {
-            // Set busy, clear idle
-            State |= busyFlag;
-            State &= ~idleFlag;
-            State |= IndexingState.Started;  // At least one busy
-            _activeStageCounts[busyFlag] = (_activeStageCounts.GetValueOrDefault(busyFlag) + 1);
-        } else {
-            // Clear busy, set idle
-            _activeStageCounts[busyFlag] = (_activeStageCounts.GetValueOrDefault(busyFlag) - 1);
-            if (_activeStageCounts[busyFlag] == 0) {
-                State &= ~busyFlag;
-                State |= idleFlag;
-            }
-
-            // Check if all stages idle
             if ((State & BusyMask) == 0) {
                 State &= ~IndexingState.Started;
             }

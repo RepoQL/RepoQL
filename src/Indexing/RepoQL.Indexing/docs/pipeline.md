@@ -3,22 +3,11 @@
 This document expands on `RepoQL.Indexing` internals so future maintainers can reason about stage transitions, state bits, and extension points without spelunking through the entire project.
 
 ## 1. Stage Contexts
-Each pipeline stage is wrapped by `StageContext`, which accepts:
-
-```csharp
-new StageContext(
-    busyFlag: IndexingState.ParsingBusy,
-    idleFlag: IndexingState.ParsingIdle,
-    processor: (item, ct) => Parser.ProcessItemAsync(item, ct));
-```
-
-- When `RunAsync` starts, the stage’s busy flag is OR’d into `IndexingEngine.State` and the idle flag is cleared.
-- When the stage completes (success, filtered, or error), the busy flag is cleared and the idle flag set.
-- Any stage entering busy will also set `IndexingState.Started`. `Started` is cleared only when all busy flags are zero (full hot path idle).
+Each pipeline stage is wrapped by `StageContext`, which accepts `(busyFlag, idleFlag, processor)` and records transitions through the central `UpdateStateFlags` helper. Rather than treating flags as mutable booleans, the engine keeps a counter per stage and recomputes `IndexingState` from those counters. Busy is set whenever the counter is > 0; idle otherwise; `Started` is set whenever any counter is busy.
 
 **Guidance**
 - Only wrap long-lived, deterministic operations (classification, parsing, single-file analysis, multi-file analysis, index rebuild). Short operations (e.g., catalog lookups) should not toggle stage flags.
-- When adding a new stage, register both busy and idle flags in `IndexingState` and extend `PipelineInvocationPlan` so tests can assert the expected behavior.
+- When adding a new stage, register the `(busyFlag, idleFlag)` pair via `RegisterStageCounter` so counters remain consistent and tests (see `PipelineInvocationPlan`) can assert behavior.
 
 ## 2. Catalog + Commit Interplay
 
@@ -31,6 +20,13 @@ new StageContext(
 - Never swallow writer errors in enter/exit hooks. Let the exception propagate so telemetry captures the failure.
 - `ApplyUpsert` should always clear pending state (`_pendingDigests`). If you introduce new catalog metadata, keep the same pattern: register before work, clear after commit.
 
+## 3. Host Watcher + Backpressure
+
+- `RepoqlHost` runs a bounded `Channel<RawArtifact>` for watcher events. The default capacity is `RepoqlHostOptions.WatcherQueueCapacity` (10k) and is configurable per deployment.
+- File system events call `TryWrite`; when the channel is full the host logs `Watcher queue is full; dropping change for {Uri}` so drops are visible during bursts.
+- A single pump task drains the channel and awaits `_enqueue` so backpressure propagates to the watcher; `_enqueue` failures are logged and the pump honors shutdown tokens.
+- `StopAsync` sets `_isStopping`, completes the channel writer, awaits the pump, stops the watcher subscription, and (when the host owns the engine) awaits `IndexingEngine.DisposeAsync()` for deterministic teardown.
+
 ## 3. Idle / Epoch Mechanics
 
 ### 3.1 Epoch Tracker
@@ -39,10 +35,7 @@ new StageContext(
 
 ### 3.2 Idle Queue
 - `HotPathIdle` handlers should call `EnqueueIdleEpoch(epoch)` which writes to `_analysisEpochChannel`.
-- `ProcessIdleEpochsAsync` is a single consumer that:
-  1. Pulls the next epoch.
-  2. Calls `ReleaseAnalysisAsync(epoch)` (pruner → writer delete → vector → analysis queue).
-  3. Updates `_lastReleasedEpoch` to prevent duplicate work.
+- `ProcessIdleEpochsAsync` is now a single consumer *plus* bounded channel readers on `WorkQueue<T>`. Shutdown cancels the token, completes the channel, and awaits the pump task to ensure deterministic teardown.
 
 **Guidance**
 - Keep idle handlers idempotent. If `HotPathIdle` fires twice for the same epoch (e.g., due to overlapping listeners), the channel handler will skip duplicates via `_lastReleasedEpoch`.
@@ -54,7 +47,7 @@ new StageContext(
 | --- | --- | --- |
 | 1. Prune | `IArtifactPruner` | Works on the batch of pending `IndexItem`s. Should be fast; avoid hitting disk per file. |
 | 2. Delete stale docs | `DeleteStaleDocumentsAsync` | Writes `WriteOperationType.DeleteDocument`. `OnCommitted` updates catalog. |
-| 3. Vector refresh | `IVectorIndexCoordinator` | Always apply deletes before inserts/updates. Pair with `DuckDbVectorIndexRefresher` tests. |
+| 3. Vector refresh | `IVectorIndexCoordinator` | Always apply deletes before inserts/updates. `document_embedding` table no longer uses FK constraints; deletes must proactively clear rows. |
 | 4. Multi-file analysis | `MultiFileAnalysisPipeline` | Runs in parallel with `IndexRebuildPipeline`; keep processors side-effect free. |
 
 **Guidance**
@@ -76,7 +69,7 @@ new StageContext(
 - Assert catalog behavior with `CatalogInvocationPlan`.
 - Assert pipeline activity with `PipelineInvocationPlan`.
 - For idle/post-index tests, gate the parser stage and coordinate via `TaskCompletionSource` *only* when the exact sequence matters.
-- For DuckDB-dependent tests, use `DuckDbTestStore` (no file system) and assert via `GraphAssertionHarness`.
+- For DuckDB-dependent tests, use `DuckDbTestStore` (no file system) and assert via `GraphAssertionHarness`. Be mindful of the current schema (e.g., no FK constraints on `document_embedding` or `document_search`). Tests should verify the delete path clears derived tables explicitly.
 
 ## 7. Extension Points
 - **New single-file analyzers**: extend `SingleFileAnalysisPipeline` constructor, register processors in DI, add harness tests.

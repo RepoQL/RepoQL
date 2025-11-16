@@ -9,7 +9,7 @@ namespace RepoQL.Tests;
 internal sealed class HeadingImportanceTests
 {
     [Test]
-    public async Task HashedEmbeddingProvider_PrefersSpecificHeadings()
+    public async Task u()
     {
         var provider = new HashedEmbeddingProvider();
         var query = "How do I rotate authentication tokens safely for a production API?";

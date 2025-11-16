@@ -128,6 +128,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
         var markdigDoc = Markdig.Markdown.Parse(text, _pipeline);
 
         var lineMap = new TextLineMap(text);
+        var pendingHeadings = new List<PendingHeading>();
         var headings = new List<HeadingInfo>();
         var links = new List<LinkInfo>();
         var blocks = new List<CodeBlockInfo>();
@@ -155,7 +156,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
                         var span = ToDocumentSpan(lineMap, heading.Span);
                         var spanId = Guid.NewGuid();
                         var nodeId = Guid.NewGuid();
-                        headings.Add(new HeadingInfo(nodeId, spanId, heading.Level, headingText, slug, span));
+                        pendingHeadings.Add(new PendingHeading(nodeId, spanId, heading.Level, headingText, slug, span));
                         headingBySlug[slug] = nodeId;
                     }
                     break;
@@ -190,6 +191,27 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
                         span));
                     break;
                 }
+            }
+        }
+
+        if (pendingHeadings.Count > 0)
+        {
+            for (var i = 0; i < pendingHeadings.Count; i++)
+            {
+                var current = pendingHeadings[i];
+                var sectionEnd = i + 1 < pendingHeadings.Count
+                    ? pendingHeadings[i + 1].HeadingSpan.StartChar
+                    : lineMap.TextLength;
+                sectionEnd = Math.Max(sectionEnd, current.HeadingSpan.StartChar);
+                var sectionSpan = lineMap.GetSpan(current.HeadingSpan.StartChar, sectionEnd);
+                headings.Add(new HeadingInfo(
+                    current.NodeId,
+                    current.SpanId,
+                    current.Level,
+                    current.Text,
+                    current.Slug,
+                    current.HeadingSpan,
+                    sectionSpan));
             }
         }
 
@@ -348,7 +370,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
 
         foreach (var heading in state.Surface.Headings)
         {
-            var span = ToSpan(document, heading.Span, docNode.Id, heading.SpanId);
+            var span = ToSpan(document, heading.SectionSpan, docNode.Id, heading.SpanId);
             spans.Add(span);
 
             var node = new Node
@@ -697,8 +719,8 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
 
     private static string BuildHeadingStructure(HeadingInfo heading)
     {
-        var startLine = heading.Span.StartLine + 1;
-        var endLine = heading.Span.EndLine + 1;
+        var startLine = heading.SectionSpan.StartLine + 1;
+        var endLine = heading.SectionSpan.EndLine + 1;
         var lineInfo = startLine == endLine
             ? $"Line {startLine}"
             : $"Lines {startLine}-{endLine}";
@@ -827,6 +849,14 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
         end = Math.Min(end, map.TextLength);
         return map.GetSpan(start, end);
     }
+
+    private sealed record PendingHeading(
+        Guid NodeId,
+        Guid SpanId,
+        int Level,
+        string Text,
+        string Slug,
+        DocumentSpan HeadingSpan);
 
     private static bool TryLoadFrontMatter(string text, YamlFrontMatterBlock block, JsonObject props)
     {
