@@ -151,67 +151,38 @@ jobs:
     needs: [version-check, native]
     if: needs.version-check.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [ linux-x64, win-x64, win-arm64, osx-arm64 ]
     env:
       RELEASE_VERSION: ${{ needs.version-check.outputs['current-version'] }}
       CLOUDFLARE_R2_BUCKET: ${{ vars.CLOUDFLARE_R2_BUCKET }}
-      AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
-      - name: Download published binaries
-        uses: actions/download-artifact@v4
-        with:
-          pattern: repoql-*
-          path: artifacts/publish
-          merge-multiple: true
-      - name: Upload binaries to Cloudflare R2
+      - name: Ensure bucket configured
         shell: bash
         run: |
           set -euo pipefail
-
           if [[ -z "${CLOUDFLARE_R2_BUCKET:-}" ]]; then
             echo "Repository variable CLOUDFLARE_R2_BUCKET must be set to the destination bucket name." >&2
             exit 1
           fi
-          if [[ -z "${AWS_ACCESS_KEY_ID:-}" || -z "${AWS_SECRET_ACCESS_KEY:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-            echo "Cloudflare R2 credentials must be provided via secrets CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY, and CLOUDFLARE_ACCOUNT_ID." >&2
-            exit 1
-          fi
-
-          export AWS_DEFAULT_REGION=auto
-          export AWS_ENDPOINT_URL_S3="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
-
-          if ! command -v aws >/dev/null 2>&1; then
-            pip install --user awscli
-            export PATH="$HOME/.local/bin:$PATH"
-          fi
-
-          upload_root="artifacts/publish"
-          if [[ ! -d "$upload_root" ]]; then
-            echo "No artifacts downloaded from previous job." >&2
-            exit 1
-          fi
-
           version="${RELEASE_VERSION:-latest}"
-          echo "Uploading binaries for version $version to bucket ${CLOUDFLARE_R2_BUCKET}"
-
-          shopt -s nullglob
-          for dir in "$upload_root"/repoql-*; do
-            [[ -d "$dir" ]] || continue
-            rid="$(basename "$dir")"
-            rid="${rid#repoql-}"
-
-            binary_file="$(find "$dir" -maxdepth 1 -type f | head -n1)"
-            if [[ -z "$binary_file" ]]; then
-              echo "No binary file found in $dir; skipping." >&2
-              continue
-            fi
-
-            dest_name="$(basename "$binary_file")"
-            dest_uri="s3://${CLOUDFLARE_R2_BUCKET}/${version}/${rid}/${dest_name}"
-            echo "Uploading $binary_file -> $dest_uri"
-            aws s3 cp "$binary_file" "$dest_uri" --only-show-errors
-          done
+          echo "RESOLVED_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Download repoql-${{ matrix.rid }} artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: repoql-${{ matrix.rid }}
+          path: artifacts/publish/${{ matrix.rid }}
+      - name: Upload binary to Cloudflare R2
+        uses: ryand56/r2-upload-action@v2
+        with:
+          r2-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ vars.CLOUDFLARE_R2_BUCKET }}
+          source-dir: artifacts/publish/${{ matrix.rid }}
+          destination-dir: ${{ format('{0}/{1}', env.RESOLVED_VERSION, matrix.rid) }}
 
   skip-notice:
     needs: version-check
