@@ -74,34 +74,8 @@ jobs:
             echo "RepoQL.ConsoleApp version unchanged ($current_version)."
           fi
 
-  root:
-    needs: version-check
-    if: needs.version-check.outputs.publish == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-          include-prerelease: true
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-      - name: Restore
-        run: dotnet restore
-      - name: Pack root tool
-        run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -o artifacts/tool/root -p:RuntimeIdentifiers=
-      - name: Publish root packages to GitHub Packages
-        run: dotnet nuget push artifacts/tool/root/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
-
   native:
-    needs: [version-check, root]
+    needs: version-check
     if: needs.version-check.outputs.publish == 'true'
     strategy:
       fail-fast: false
@@ -111,8 +85,9 @@ jobs:
           - { os: windows-latest, rid: win-x64 }
           - { os: windows-latest, rid: win-arm64 }
           - { os: macos-14, rid: osx-arm64 }
-          - { os: ubuntu-latest, rid: any }
     runs-on: ${{ matrix.os }}
+    env:
+      PUBLISH_ROOT: ${{ github.workspace }}/artifacts/publish
     steps:
       - uses: actions/checkout@v4
         with:
@@ -130,11 +105,113 @@ jobs:
             ${{ runner.os }}-nuget-
       - name: Restore
         run: dotnet restore
-      - name: Pack ${{ matrix.rid }} tool
-        run: dotnet pack src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj -c Release -r ${{ matrix.rid }} -o ./artifacts/tool/${{ matrix.rid }}
-      - name: Publish ${{ matrix.rid }} package to GitHub Packages
+      - name: Publish ${{ matrix.rid }} binary
         shell: bash
-        run: dotnet nuget push ./artifacts/tool/${{ matrix.rid }}/*.nupkg --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --api-key "${{ secrets.GITHUB_TOKEN }}" --skip-duplicate
+        env:
+          RID: ${{ matrix.rid }}
+        run: |
+          set -euo pipefail
+
+          publish_dir="${PUBLISH_ROOT}/${RID}"
+          rm -rf "$publish_dir"
+
+          dotnet publish src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj \
+            -c Release \
+            -r "$RID" \
+            -o "$publish_dir" \
+            -p:PublishAot=true \
+            -p:PublishSingleFile=true \
+            -p:SelfContained=true \
+            --nologo
+
+          binary_name="repoql"
+          if [[ "$RID" == win-* ]]; then
+            binary_name="repoql.exe"
+          fi
+
+          binary_path="$publish_dir/$binary_name"
+          if [[ ! -f "$binary_path" ]]; then
+            echo "Expected binary $binary_name not found under $publish_dir" >&2
+            ls -al "$publish_dir"
+            exit 1
+          fi
+
+          echo "Published binary: $binary_path"
+          {
+            echo "REPOQL_BINARY_PATH=$binary_path"
+            echo "REPOQL_BINARY_NAME=$binary_name"
+          } >> "$GITHUB_ENV"
+      - name: Upload ${{ matrix.rid }} binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repoql-${{ matrix.rid }}
+          path: ${{ env.REPOQL_BINARY_PATH }}
+
+  publish-r2:
+    needs: [version-check, native]
+    if: needs.version-check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_VERSION: ${{ needs.version-check.outputs['current-version'] }}
+      CLOUDFLARE_R2_BUCKET: ${{ vars.CLOUDFLARE_R2_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Download published binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: repoql-*
+          path: artifacts/publish
+          merge-multiple: true
+      - name: Upload binaries to Cloudflare R2
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${CLOUDFLARE_R2_BUCKET:-}" ]]; then
+            echo "Repository variable CLOUDFLARE_R2_BUCKET must be set to the destination bucket name." >&2
+            exit 1
+          fi
+          if [[ -z "${AWS_ACCESS_KEY_ID:-}" || -z "${AWS_SECRET_ACCESS_KEY:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
+            echo "Cloudflare R2 credentials must be provided via secrets CLOUDFLARE_R2_ACCESS_KEY_ID, CLOUDFLARE_R2_SECRET_ACCESS_KEY, and CLOUDFLARE_ACCOUNT_ID." >&2
+            exit 1
+          fi
+
+          export AWS_DEFAULT_REGION=auto
+          export AWS_ENDPOINT_URL_S3="https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          if ! command -v aws >/dev/null 2>&1; then
+            pip install --user awscli
+            export PATH="$HOME/.local/bin:$PATH"
+          fi
+
+          upload_root="artifacts/publish"
+          if [[ ! -d "$upload_root" ]]; then
+            echo "No artifacts downloaded from previous job." >&2
+            exit 1
+          fi
+
+          version="${RELEASE_VERSION:-latest}"
+          echo "Uploading binaries for version $version to bucket ${CLOUDFLARE_R2_BUCKET}"
+
+          shopt -s nullglob
+          for dir in "$upload_root"/repoql-*; do
+            [[ -d "$dir" ]] || continue
+            rid="$(basename "$dir")"
+            rid="${rid#repoql-}"
+
+            binary_file="$(find "$dir" -maxdepth 1 -type f | head -n1)"
+            if [[ -z "$binary_file" ]]; then
+              echo "No binary file found in $dir; skipping." >&2
+              continue
+            fi
+
+            dest_name="$(basename "$binary_file")"
+            dest_uri="s3://${CLOUDFLARE_R2_BUCKET}/${version}/${rid}/${dest_name}"
+            echo "Uploading $binary_file -> $dest_uri"
+            aws s3 cp "$binary_file" "$dest_uri" --only-show-errors
+          done
 
   skip-notice:
     needs: version-check

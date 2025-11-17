@@ -22,19 +22,24 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     }
 
     private const string SummarizeInstructions = """
-                                                 Scan repository efficiently: pre-indexed summaries of structure + linting. Filters: glob, media type, semantic search.
+                                                 Scan repository efficiently: pre-indexed summaries + linting. Filters: glob, media type, semantic search.
+                                                 Returns file OR object snippets.
 
-                                                 headline: Scan files at scale. One line per file: name + key symbols + linting badges. Use for inventory, documentation discovery, finding files.
-                                                 summary: Understand structure of 5-20 files. Outline (headings/classes/methods) + linting details. Architecture without reading code.
-                                                 snippet: Review 1-3 files deeply. Full source + inline linting. Last step before Read.
+                                                 headline: Scan files at scale. One line per file: name + symbols + linting badges.
+                                                 summary: Understand key structure of files. Outline (headings/classes/methods), key features + linting.
+                                                 snippet: Full source + inline linting for files OR specific objects (functions/classes/headings).
+
+                                                 Object snippets (get code for specific function/class):
+                                                 1. Query: search('ProcessRequest', k := 10) WHERE scope = 'object'  [returns URIs with #symbol=...&line=...]
+                                                 2. Xray: detail=snippet, pattern=<URI from step 1>  [shows just that function/class]
 
                                                  Examples:
-                                                 "Show all markdown docs" → headline, pattern:**/*.md
-                                                 "What authentication code exists?" → headline, question:"authentication"
-                                                 "Understand API structure" → summary, pattern:**/api/**/*.cs
-                                                 "Review UserService.cs structure" → summary, pattern:**/UserService.cs
-                                                 "Show code of ProcessRequest method" → snippet, pattern:file:///src/Handler.cs#symbol=ProcessRequest
-                                                 "Read Installation heading from README" → snippet, pattern:file:///README.md#symbol=Installation
+                                                 detail=headline, pattern=**/*.md - list all markdown
+                                                 detail=headline, keywords=auth, question=authentication - find auth files
+                                                 detail=summary, pattern=**/UserService.cs - file structure
+                                                 detail=snippet, pattern=file:///Handler.cs#symbol=ProcessRequest&line=42,67 - show method
+                                                 detail=snippet, pattern=file:///README.md#line=10,20 - show lines
+                                                 detail=snippet, pattern=**/*.md, question=how do end users authenticate?, limit=15 - get 15 most relevant documentation snippets
 
                                                  Flow: headline → summary → snippet → Read. Use xray for breadth, Read for depth.
                                                  """;

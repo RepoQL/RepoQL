@@ -1,3 +1,4 @@
+using System.Collections;
 using System.IO;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
@@ -275,12 +276,23 @@ public sealed class RepoQlClient : IRepoQlClient
     {
         var implicitEnv = new Dictionary<string, string?>
         {
-            ["REPOQL_IMPLICIT"] = "1"
+            ["REPOQL_IMPLICIT"] = "1",
         };
-        
+
+        foreach (var env in Environment.GetEnvironmentVariables().OfType<DictionaryEntry>().Where(kvp =>
+                         kvp.Key is string key && key.StartsWith("REPOQL_", StringComparison.OrdinalIgnoreCase))
+                     .Select(kvp => new
+                     {
+                         Key = (string)kvp.Key,
+                         Value = kvp.Value?.ToString()
+                     }))
+        {
+            implicitEnv.Add(env.Key, env.Value);
+        }
+
         var baseDir = AppContext.BaseDirectory;
         var args = new List<string> { "serve", "--repository", repoPath, "--implicit-start" };
-        StartProcess(BuildExecutableCandidates(Path.Join(baseDir, "repoql")).FirstOrDefault(File.Exists) ?? "repoql" ,args, implicitEnv);
+        StartProcess(BuildExecutableCandidates(Path.Join(baseDir, "repoql")).FirstOrDefault(File.Exists) ?? "repoql", repoPath, args, implicitEnv);
     }
 
     private static IEnumerable<string> BuildExecutableCandidates(string basePath)
@@ -291,7 +303,7 @@ public sealed class RepoQlClient : IRepoQlClient
         yield return basePath;           // self-contained
     }
 
-    private static void StartProcess(string exePathOrCommand, IEnumerable<string> args, IDictionary<string, string?> env)
+    private static void StartProcess(string exePathOrCommand, string workingDirectory, IEnumerable<string> args, IDictionary<string, string?> env)
     {
         string fileName;
         string arguments;
@@ -312,6 +324,7 @@ public sealed class RepoQlClient : IRepoQlClient
             Arguments = arguments,
             UseShellExecute = false,
             CreateNoWindow = true,
+            WorkingDirectory = workingDirectory,
             RedirectStandardOutput = false,
             RedirectStandardError = true
         };

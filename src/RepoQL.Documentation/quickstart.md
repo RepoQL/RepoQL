@@ -129,36 +129,55 @@ to see how it maps back to the base schema.
 
 ## Search
 
-Search = lexical + semantic. One name. Two knobs.
+Search = lexical + semantic. Two macros. Documents OR objects.
 
-- `file_search(keywords, question := NULL, k := 50, max_cand := 5000)` → `doc_id, uri, bm25n, fuzzn, semn, score`
+### File Search (documents only)
 
-Use `keywords` for literal fragments (paths, symbols) and `question` for natural-language description. Leave either blank when not needed—the macro handles defaults.
+- `file_search(keywords, question := NULL, k := 50)` → `doc_id, uri, bm25n, fuzzn, semn, score`
 
 ```sql
 -- Top files by intent (question only)
 SELECT uri, score, semn
 FROM file_search('', question := 'Where do we render mermaid diagram classes?', k := 10);
 
--- Semantics-first view mixing literals + question
+-- Combining literals + question
 SELECT uri, semn, score
 FROM file_search('embedding runtime', question := 'Why does the embedding runtime broadcast error?', k := 20)
 ORDER BY semn DESC NULLS LAST;
 
--- Filter by file type/location
-WITH r AS (
-  SELECT doc_id, uri, score FROM file_search('frontmatter docs', question := NULL, k := 50)
-)
-SELECT r.uri, r.score
-FROM r JOIN document_search ds USING (doc_id)
-WHERE lower(ds.basename) LIKE '%.md' AND lower(ds.dirname) LIKE '%/docs%';
-
--- Filter paths directly via glob_match
+-- Path filter via glob_match
 SELECT uri, score
 FROM file_search('markdown', question := 'Where is onboarding documented?', k := 10)
 WHERE glob_match(uri, 'docs/**/*.md');
 ```
-More info in embed:///advanced-search.md
+
+### Object Search (functions, classes, symbols)
+
+- `search(q, mode := 'auto', k := 50, uri_glob, mime_glob)` → `uri, symbol, scope, kind, score`
+
+Scope: `'document'` = whole files, `'object'` = functions/classes/headings/etc.
+
+```sql
+-- Find specific functions/classes
+SELECT uri, symbol, kind, line_start, line_end, score
+FROM search('authentication ValidateToken', k := 10)
+WHERE scope = 'object'
+ORDER BY score DESC;
+
+-- Mixed: documents + objects
+SELECT uri, scope, symbol, kind, score
+FROM search('error handling', k := 30)
+ORDER BY score DESC;
+
+-- Exact symbol match
+SELECT uri, symbol, bm25_score
+FROM search('ProcessRequest', k := 5)
+WHERE scope = 'object' AND symbol = 'ProcessRequest';
+```
+
+Object URIs include fragments: `file:///lib.cs#symbol=Foo.Bar&line=12,20`
+
+More in docs:///advanced-search.md
 
 ## Quick Start
 

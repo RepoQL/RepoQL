@@ -60,37 +60,26 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              </SCHEMA>
                                              
                                              <ESSENTIAL_MACROS>
-                                             -- Inventory: what files exist?
-                                             SELECT * FROM xray_documents()  -- file_name, media_kind, byte_size, kinds_summary
-                                             
-                                             -- Explore: what's IN a file? (without reading it)
-                                             SELECT * FROM xray_items('md_heading,cs_class', 10)  -- kind, label, uri (with #line=)
-                                             
-                                             -- Preview: show me lines around a location
-                                             SELECT * FROM snippet('file:///path#line=42', 3)  -- context lines before/after
-                                             
-                                             -- Search: find files by intent (lexical + semantic)
-                                             -- CRITICAL: 'question' is a named parameter, use question := syntax
-                                             SELECT uri, score FROM file_search('auth token', question := 'How do we refresh JWTs?', k := 10)
-                                             SELECT uri, score FROM file_search('DuckDB', question := NULL, k := 5)  -- keywords only
-                                             SELECT uri, score, semn FROM file_search('', question := 'How does X work?', k := 5)  -- semantic only
+                                             SELECT * FROM xray_documents()  -- inventory
+                                             SELECT * FROM snippet('file:///path#line=42', 3)  -- preview
 
-                                             -- Path filters: glob_match(uri, 'docs/**/*.md') -> boolean
-                                             SELECT uri, score FROM file_search('markdown', question := 'Where is onboarding documented?', k := 10)
-                                             WHERE glob_match(uri, 'docs/**/*.md')
-                                             
-                                             -- Diagnostics: what's broken/flagged?
-                                             SELECT * FROM annotations WHERE severity = 'error'
-                                             SELECT * FROM annotations_for('file:///path', 'lint', 'warning')
+                                             -- Files: file_search(keywords, question := ..., k)
+                                             SELECT uri, score FROM file_search('auth', question := 'How refresh JWTs?', k := 10)
+
+                                             -- Objects (functions/classes/headings): search(q, k) WHERE scope='object'
+                                             SELECT uri, symbol, kind, line_start FROM search('ProcessRequest', k := 10) WHERE scope = 'object'
+                                             SELECT uri, scope, symbol FROM search('error handling', k := 30)  -- mixed
+
+                                             SELECT * FROM annotations WHERE severity = 'error'  -- diagnostics
                                              </ESSENTIAL_MACROS>
-                                             
-                                             The documentation for RepoQL can be read by querying - consider obtaining it to be the tutorial.
+
+                                             Docs at docs:///quickstart.md, docs:///advanced-search.md
 
                                              <SEARCH_TIPS>
-                                             file_search() returns: score (final), semn (semantic), bm25n (exact), fuzzn (typo tolerance)
-                                             - If semn is NULL → embeddings not ready yet (check: SELECT COUNT(*) FROM document_embedding)
-                                             - Keywords-only: Fast, exact matches. Question-only: Conceptual discovery. Combined: Best of both.
-                                             - Use WHERE glob_match(uri, 'pattern') to filter by path after search
+                                             file_search(keywords, question, k) → documents. search(q, k) → documents + objects
+                                             - scope='document': files. scope='object': functions/classes/headings (URIs have #symbol=Foo&line=N)
+                                             - Symbol exact match: 4.0 BM25. Objects get 5% boost.
+                                             - dense_score NULL → embeddings loading (check: SELECT COUNT(*) FROM document_embedding)
                                              </SEARCH_TIPS>
                                              
                                              ## Examples
@@ -180,7 +169,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                                | column -t -s $'\t'
                                              ```
                                              
-                                             TL;DR: Use xray_documents() to see what exists, file_search(keywords, question) to find things, snippet() to preview, and artifact.headline/summary/structure to understand files without reading them. Everything else is just SQL JOINs on the graph.
+                                             TL;DR: xray_documents() for inventory, file_search() for documents, search() WHERE scope='object' for functions/classes, snippet() for preview. Read docs:///quickstart.md first.
                                                
                                              <INSTRUCTION>
                                              

@@ -74,15 +74,16 @@ internal class McpCommands
                                            ```
                                            
                                            Capsule: **IntentSearch** 🔍 Discovery
-                                           file_search(keywords, question) blends lexical + fuzzy + semantic—use keywords for literals, question for intent.
-                                           
+                                           file_search() for files, search() WHERE scope='object' for functions/classes/headings.
+
                                            **Example**
-                                           
+
                                            ```sql
-                                           -- Natural language intent query
-                                           SELECT uri, score, semn
-                                           FROM file_search('auth token refresh', 'How do we rotate JWT secrets?', k := 10)
-                                           ORDER BY semn DESC NULLS LAST
+                                           -- Files
+                                           SELECT uri, score FROM file_search('auth', question := 'How rotate JWTs?', k := 10)
+
+                                           -- Objects (functions/classes/headings/etc)
+                                           SELECT uri, symbol, line_start FROM search('ProcessRequest', k := 10) WHERE scope = 'object'
                                            ```
                                            
                                            Capsule: **SQLCompose** 🔗 Power
@@ -126,11 +127,10 @@ internal class McpCommands
                                            ```
                                            
                                            **☑ RepoQL Non-Negotiables**
-                                           ☑ Use artifact.headline, artifact.summary, artifact.structure for inventory, file_search(keywords, question) for discovery
-                                           ☑ Set k parameter to limit breadth (k := 10, k := 50)
-                                           ☑ Query duckdb_views() to discover available views
+                                           ☑ xray for inventory, file_search() for files, search() WHERE scope='object' for functions/classes
+                                           ☑ Set k to limit results (k := 10, k := 50)
                                            ☑ Compose with JOINs—search → structure → insight
-                                           ☑ Map territory with queries BEFORE reading files
+                                           ☑ Map territory BEFORE reading files
                                            
                                            ## Tool Selection: The Decision Process
                                            
