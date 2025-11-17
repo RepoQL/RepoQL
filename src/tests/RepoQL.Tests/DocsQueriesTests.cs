@@ -6,6 +6,7 @@ using RepoQL.Core;
 using RepoQL.Testing.Scaffolding;
 using RepoQL.FileSystem.Embedded;
 using RepoQL.Indexing.FileSystems;
+using RepoQL.Documentation;
 
 namespace RepoQL.Tests;
 
@@ -14,8 +15,8 @@ internal class DocsQueriesTests
     [Test]
     public async Task EmbeddedDocs_AreQueryable_ViaQuickstartPatterns()
     {
-        var asm = typeof(Documentation.DocumentationMarker).Assembly;
-        var embedStore = new EmbeddedStore(asm);
+        var asm = typeof(DocumentationMarker).Assembly;
+        var docsStore = new EmbeddedStore(asm, DocumentationFileSystem.Scheme);
 
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>
         {
@@ -26,8 +27,8 @@ internal class DocsQueriesTests
             options.AdditionalMounts.Add(
                 CompositeFileSystemMount.ForScheme(
                     id: "embedded-docs",
-                    fileSystem: embedStore,
-                    scheme: embedStore.Scheme,
+                    fileSystem: docsStore,
+                    scheme: docsStore.Scheme,
                     includeInEnumeration: true));
         });
 
@@ -43,7 +44,7 @@ internal class DocsQueriesTests
                    properties->>'description'           AS description
               FROM node
              WHERE kind='document'
-               AND lower(uri) LIKE 'embed://%'
+               AND lower(uri) LIKE 'docs://%'
              ORDER BY lower(file_name)
             """).ToArray();
 
@@ -59,7 +60,7 @@ internal class DocsQueriesTests
               FROM node n
               JOIN artifact a ON a.id = n.artifact_id
              WHERE n.kind='document'
-               AND lower(n.uri) LIKE 'embed://%'
+               AND lower(n.uri) LIKE 'docs://%'
                AND lower(a.media_type) LIKE '%text/markdown%'
             """);
         markdownDocs.Should().NotBeEmpty("at least one embedded doc should be markdown");
