@@ -370,7 +370,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
 
         foreach (var heading in state.Surface.Headings)
         {
-            var span = ToSpan(document, heading.SectionSpan, docNode.Id, heading.SpanId);
+            var span = ToSpan(document, heading.HeadingSpan, docNode.Id, heading.SpanId);
             spans.Add(span);
 
             var node = new Node
@@ -719,8 +719,8 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
 
     private static string BuildHeadingStructure(HeadingInfo heading)
     {
-        var startLine = heading.SectionSpan.StartLine + 1;
-        var endLine = heading.SectionSpan.EndLine + 1;
+        var startLine = heading.SectionSpan.StartLine;
+        var endLine = heading.SectionSpan.EndLine;
         var lineInfo = startLine == endLine
             ? $"Line {startLine}"
             : $"Lines {startLine}-{endLine}";
