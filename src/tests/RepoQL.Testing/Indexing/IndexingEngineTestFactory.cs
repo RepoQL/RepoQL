@@ -167,7 +167,7 @@ public sealed class IndexingEngineTestBuilder
         var filter = _filter ?? A.Fake<IUriFilter>();
         if (_filter is null)
         {
-            A.CallTo(() => filter.IncludeFile(A<RepoUri>._)).Returns(false);
+            A.CallTo(() => filter.IncludeFile(A<RepoUri>._)).Returns(true);
         }
 
         var catalog = _catalog ?? new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
