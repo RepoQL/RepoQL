@@ -29,7 +29,7 @@ public sealed class RepoQlClient : IRepoQlClient
     }
 
     private readonly ConnectionMode _mode;
-    private readonly string? _repoPath;
+    private readonly RepoDirectoryAccessor? _repoDirectory;
     private readonly string? _configuredSocketPath;
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     private GrpcChannel? _channel;
@@ -51,7 +51,7 @@ public sealed class RepoQlClient : IRepoQlClient
     private RepoQlClient(RepoQlClientOptions options, string repoPath, string? socketPath)
     {
         _mode = ConnectionMode.Managed;
-        _repoPath = repoPath;
+        _repoDirectory = new RepoDirectoryAccessor(repoPath);
         _configuredSocketPath = socketPath;
         _defaultTimeout = options.DefaultTimeout;
     }
@@ -109,15 +109,15 @@ public sealed class RepoQlClient : IRepoQlClient
         if (_mode != ConnectionMode.Managed)
             throw new InvalidOperationException("Managed connection is not enabled for this client.");
 
-        var repoPath = _repoPath ?? throw new InvalidOperationException("Repository path is not configured.");
-
-        var socketPath = _configuredSocketPath;
-        if (string.IsNullOrWhiteSpace(socketPath))
-            socketPath = ResolveSocketPath(repoPath);
-
+        var repoDirectory = _repoDirectory ?? throw new InvalidOperationException("Repository path is not configured.");
+        var allowReResolve = string.IsNullOrWhiteSpace(_configuredSocketPath);
+        var socketPath = allowReResolve
+            ? repoDirectory.ResolveSocketPath()
+            : _configuredSocketPath!;
         var finalSocketPath = await EnsureServerRunning(
-            socketPath!,
-            repoPath,
+            repoDirectory,
+            socketPath,
+            allowReResolve,
             TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_START_TIMEOUT_MS", 30000)),
             cancellationToken).ConfigureAwait(false);
 
@@ -147,7 +147,7 @@ public sealed class RepoQlClient : IRepoQlClient
 
         _client = new Contracts.RepoQL.RepoQLClient(_channel);
         _leaseCts = new CancellationTokenSource();
-        EstablishLeaseOrThrow(repoPath, TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_LEASE_START_TIMEOUT_MS", 5000)));
+        EstablishLeaseOrThrow(repoDirectory.RepoRoot, TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_LEASE_START_TIMEOUT_MS", 5000)));
     }
 
     private void DisposeChannel()
@@ -209,37 +209,34 @@ public sealed class RepoQlClient : IRepoQlClient
         return effective.HasValue ? DateTime.UtcNow + effective.Value : (DateTime?)null;
     }
 
-    private static async Task<string> EnsureServerRunning(string socketPath, string repoPath, TimeSpan timeout, CancellationToken cancellationToken = default)
+    private static async Task<string> EnsureServerRunning(
+        RepoDirectoryAccessor repoDirectory,
+        string initialSocketPath,
+        bool allowReResolve,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default)
     {
-        var s = await ConnectAsync(socketPath, cancellationToken);
-        if (s != null)
-        {
-            var ok = HealthServing(s);
-            try { s.Dispose(); } catch { }
-            if (ok) return socketPath;
-        }
+        if (await TryHealthCheckAsync(initialSocketPath, cancellationToken))
+            return initialSocketPath;
 
-        if (!AutostartEnabled())
-            throw new InvalidOperationException($"RepoQL host is not running, and autostart is disabled. Expected socket at {socketPath}");
-
-        LaunchHost(repoPath);
+        LaunchHost(repoDirectory.RepoRoot);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        var currentSocketPath = initialSocketPath;
         while (sw.Elapsed < timeout)
         {
-            // Re-resolve socket path each iteration to pick up mapping file written by the host (WSL scenario)
-            try { socketPath = ResolveSocketPath(repoPath); } catch { /* ignore and keep prior */ }
-
-            var socket = await ConnectAsync(socketPath, cancellationToken);
-            if (socket != null && HealthServing(socket))
+            if (allowReResolve)
             {
-                try { socket.Dispose(); } catch { }
-                return socketPath;
+                try { currentSocketPath = repoDirectory.ResolveSocketPath(); } catch { }
             }
-            try { socket?.Dispose(); } catch { }
-            await Task.Delay(TimeSpan.FromSeconds(0.1), cancellationToken);
+
+            if (await TryHealthCheckAsync(currentSocketPath, cancellationToken))
+                return currentSocketPath;
+
+            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
         }
-        throw new TimeoutException($"RepoQL host did not become ready within {timeout.TotalMilliseconds} ms (socket: {socketPath})");
+
+        throw new TimeoutException($"RepoQL host did not become ready within {timeout.TotalMilliseconds} ms (socket: {currentSocketPath})");
     }
 
     private static async Task<Socket?> ConnectAsync(string socketPath, CancellationToken cancellationToken)
@@ -251,6 +248,22 @@ public sealed class RepoQlClient : IRepoQlClient
             return s;
         }
         catch { return null; }
+    }
+
+    private static async Task<bool> TryHealthCheckAsync(string socketPath, CancellationToken cancellationToken)
+    {
+        var socket = await ConnectAsync(socketPath, cancellationToken).ConfigureAwait(false);
+        if (socket is null)
+            return false;
+
+        try
+        {
+            return HealthServing(socket);
+        }
+        finally
+        {
+            try { socket.Dispose(); } catch { }
+        }
     }
 
     private static bool HealthServing(Socket socket)
@@ -332,9 +345,6 @@ public sealed class RepoQlClient : IRepoQlClient
         try { System.Diagnostics.Process.Start(psi); }
         catch (Exception ex) { throw new InvalidOperationException($"Failed to launch RepoQL host using '{exePathOrCommand}'. Set REPOQL_HOST_PATH to override.", ex); }
     }
-
-    private static bool AutostartEnabled()
-        => !string.Equals(Environment.GetEnvironmentVariable("REPOQL_AUTOSTART"), "0", StringComparison.Ordinal);
 
     private static int EnvironmentTimeout(string name, int dflt) =>
         int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
@@ -474,45 +484,8 @@ public sealed class RepoQlClient : IRepoQlClient
     public ValueTask DisposeAsync()
     {
         DisposeChannel();
+        _repoDirectory?.Dispose();
         return ValueTask.CompletedTask;
-    }
-
-    /// <summary>
-    /// Resolves the Unix Domain Socket path for RepoQL communication.
-    /// </summary>
-    /// <param name="repositoryPath">The repository root path</param>
-    /// <returns>The socket path to use for gRPC communication</returns>
-    /// <remarks>
-    /// Socket resolution follows this priority:
-    /// 1. If .repoql/socket.path exists, use the path it contains (WSL/cross-boundary scenario)
-    /// 2. Otherwise use .repoql/repoql.sock (standard local socket)
-    /// 
-    /// The socket.path file is a WSL-specific workaround where Windows hosts create sockets
-    /// in temp directories (/tmp/repoql/...) that need to be discoverable from WSL clients.
-    /// </remarks>
-    private static string ResolveSocketPath(string repositoryPath)
-    {
-        var repoPath = Path.GetFullPath(repositoryPath);
-        var repoqlDir = Path.Combine(repoPath, ".repoql");
-
-        // Check for socket mapping file (used in WSL/Windows cross-boundary scenarios)
-        var mapFile = Path.Combine(repoqlDir, "socket.path");
-        var socket = Path.Combine(repoqlDir, "repoql.sock");
-        if (File.Exists(socket) || !File.Exists(mapFile))
-            return socket;
-
-        try
-        {
-            var mapped = File.ReadAllText(mapFile).Trim();
-            return !string.IsNullOrWhiteSpace(mapped) 
-                ? mapped 
-                : socket;
-        }
-        catch
-        {
-            // Default: use local socket in .repoql directory
-            return socket;
-        }
     }
 
     private static RawQueryRequest BuildRawQueryRequest(string sql, IEnumerable<object?>? parameters, int? rowLimit)

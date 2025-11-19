@@ -15,6 +15,7 @@
       <PackageReference Include="Grpc.HealthCheck" Version="2.62.0" />
       <PackageReference Include="Grpc.Tools" Version="2.62.0" PrivateAssets="All" />
       <PackageReference Include="Google.Protobuf" Version="3.26.1" />
+      <PackageReference Include="Microsoft.Extensions.FileProviders.Physical" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>
