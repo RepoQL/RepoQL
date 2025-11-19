@@ -5,6 +5,7 @@ using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Tools;
 using RepoQL.ConsoleApp.Resources;
 using ConsoleAppFramework;
+using RepoQL.ConsoleApp.Logging;
 
 namespace RepoQL.ConsoleApp.Commands;
 
@@ -157,6 +158,8 @@ internal class McpCommands
                 .WithStdioServerTransport()
                 .WithTools<QueryTool>()
                 .WithTools<XrayTool>();
+
+        builder.Services.AddHostedService<McpLoggingHostedService>();
 
         await builder.Build().RunAsync(cancel);
     }
