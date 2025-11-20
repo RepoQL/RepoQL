@@ -1470,9 +1470,9 @@ internal class InstallCommand(IAnsiConsole console)
                         args.Add($"REPOQL_CWD={workingDir}");
                     }
 
+                    args.Add("repoql"); // name
                     args.Add(GetRepoqlCommand()); // command
                     args.Add("mcp");    // command argument
-                    args.Add("repoql"); // name
                     return args;
                 },
                 BuildRemoveArguments: () => new[] { "mcp", "remove", "repoql" }),
@@ -1717,6 +1717,10 @@ internal class InstallCommand(IAnsiConsole console)
             return false;
 
         var name = Path.GetFileNameWithoutExtension(path);
+        // Ignore test hosts that include "RepoQL" in their name (e.g., RepoQL.Cli.Tests)
+        if (name.Contains("test", StringComparison.OrdinalIgnoreCase))
+            return false;
+
         return name.Contains("repoql", StringComparison.OrdinalIgnoreCase);
     }
 
