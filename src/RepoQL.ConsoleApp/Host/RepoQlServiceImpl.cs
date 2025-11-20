@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
+using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
@@ -25,6 +26,7 @@ public sealed class RepoQlServiceImpl(
     RepositoryConfiguration repoConfig,
     IInitialIndexingBarrier barrier,
     IIndexingCoordinator coordinator,
+    IFileSystemImportService importService,
     DocumentPreviewService previewService,
     IDatabaseWriter writer,
     IHostApplicationLifetime hostLifetime,
@@ -517,6 +519,39 @@ public sealed class RepoQlServiceImpl(
         return new WaitForPipelineResponse { Status = ToProtoStatus(snapshot) };
     }
 
+    public override async Task<ImportResponse> ImportRepository(ImportRequest request, ServerCallContext context)
+    {
+        await barrier.InitialScanCompleted.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+
+        if (string.IsNullOrWhiteSpace(request.Uri))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "uri is required."));
+
+        if (!RepoUri.TryParse(request.Uri, out var repoUri))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid Repo URI '{request.Uri}'."));
+
+        try
+        {
+            await importService.ImportAsync(repoUri!, context.CancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
+        }
+        catch (Exception ex)
+        {
+            throw new RpcException(new Status(StatusCode.Internal, ex.Message));
+        }
+
+        var waitStages = ResolveImportStages(request);
+        if (waitStages.Count > 0)
+        {
+            await coordinator.WaitForPipelineAsync(waitStages, waitAll: true, context.CancellationToken).ConfigureAwait(false);
+        }
+
+        var snapshot = coordinator.GetPipelineStatus();
+        return new ImportResponse { Status = ToProtoStatus(snapshot) };
+    }
+
     public override Task<GetPipelineStatusResponse> GetPipelineStatus(GetPipelineStatusRequest request, ServerCallContext context)
     {
         var snapshot = coordinator.GetPipelineStatus();
@@ -567,9 +602,9 @@ public sealed class RepoQlServiceImpl(
             Stage = stage.Stage switch
             {
                 CoordinatorPipelineStage.Discovery => ProtoPipelineStage.Discovery,
-                CoordinatorPipelineStage.Parsing => ProtoPipelineStage.Parsing,
+                CoordinatorPipelineStage.Parsing => ProtoPipelineStage.Indexing,
                 CoordinatorPipelineStage.Analysis => ProtoPipelineStage.Analysis,
-                CoordinatorPipelineStage.Writer => ProtoPipelineStage.Writer,
+                CoordinatorPipelineStage.Writer => ProtoPipelineStage.SemanticIndexing,
                 _ => ProtoPipelineStage.Unspecified
             },
             Busy = stage.Busy,
@@ -577,13 +612,24 @@ public sealed class RepoQlServiceImpl(
             InProgress = (uint)Math.Max(0, stage.InProgress)
         };
 
+    private static IReadOnlyCollection<CoordinatorPipelineStage> ResolveImportStages(ImportRequest request)
+    {
+        if (!request.HasWaitStage)
+            return new[] { CoordinatorPipelineStage.Analysis };
+
+        if (request.WaitStage == ProtoPipelineStage.Unspecified)
+            return Array.Empty<CoordinatorPipelineStage>();
+
+        return new[] { MapStage(request.WaitStage) };
+    }
+
     private static CoordinatorPipelineStage MapStage(ProtoPipelineStage stage)
         => stage switch
         {
             ProtoPipelineStage.Discovery => CoordinatorPipelineStage.Discovery,
-            ProtoPipelineStage.Parsing => CoordinatorPipelineStage.Parsing,
+            ProtoPipelineStage.Indexing => CoordinatorPipelineStage.Parsing,
             ProtoPipelineStage.Analysis => CoordinatorPipelineStage.Analysis,
-            ProtoPipelineStage.Writer => CoordinatorPipelineStage.Writer,
+            ProtoPipelineStage.SemanticIndexing => CoordinatorPipelineStage.Writer,
             _ => CoordinatorPipelineStage.Discovery
         };
 }

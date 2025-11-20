@@ -37,6 +37,11 @@ public sealed record CompositeFileSystemMount
     public bool EnableWatching { get; init; } = true;
 
     /// <summary>
+    /// Controls whether analyzers should run for files served by this mount. Disable for imported read-only sources.
+    /// </summary>
+    public bool EnableAnalysis { get; init; } = true;
+
+    /// <summary>
     /// Creates a mount that treats the provided file system as the default handler for its scheme.
     /// </summary>
     public static CompositeFileSystemMount CreatePrimary(IVirtualFileSystem fileSystem, string? id = null) =>
@@ -45,6 +50,7 @@ public sealed record CompositeFileSystemMount
             Id = id ?? "primary",
             FileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem)),
             IsPrimary = true,
+            EnableAnalysis = true,
             UriPredicate = uri => string.Equals(uri.Scheme, fileSystem.Scheme, StringComparison.OrdinalIgnoreCase)
         };
 
@@ -69,7 +75,8 @@ public sealed record CompositeFileSystemMount
         string? authority = null,
         string? pathPrefix = null,
         bool includeInEnumeration = true,
-        bool enableWatching = true)
+        bool enableWatching = true,
+        bool enableAnalysis = true)
     {
         if (string.IsNullOrWhiteSpace(id))
             throw new ArgumentException("Mount id is required.", nameof(id));
@@ -89,6 +96,7 @@ public sealed record CompositeFileSystemMount
             FileSystem = fileSystem,
             IncludeInEnumeration = includeInEnumeration,
             EnableWatching = enableWatching,
+            EnableAnalysis = enableAnalysis,
             UriPredicate = uri =>
             {
                 if (!string.Equals(uri.Scheme, normalizedScheme, StringComparison.OrdinalIgnoreCase))

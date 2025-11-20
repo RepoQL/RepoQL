@@ -71,6 +71,7 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     ///   The RepoUri that uniquely identifies this artifact
     /// </summary>
     public RepoUri Uri => rawArtifact.Uri;
+    public bool IsReadOnly => rawArtifact.IsReadOnly;
     
     /// <summary>
     ///     Resolved semantic media type (should be populated after classification)
@@ -150,8 +151,6 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     }
 
     public int Count => _dictionaryImplementation.Count;
-
-    public bool IsReadOnly => _dictionaryImplementation.IsReadOnly;
 
     public void Add(string key, object value)
     {

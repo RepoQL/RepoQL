@@ -98,7 +98,8 @@ public sealed class CompositeFileSystem : IMultiFileSystem
                     yield break;
 
                 var uri = mount.FileSystem.GetUri(file);
-                yield return new EnumeratedResource(file, uri);
+                var decorated = DecorateFile(file, mount);
+                yield return new EnumeratedResource(decorated, uri);
             }
         }
     }
@@ -107,14 +108,34 @@ public sealed class CompositeFileSystem : IMultiFileSystem
     public IFileInfo GetFile(RepoUri uri)
     {
         ArgumentNullException.ThrowIfNull(uri);
-        if (!TryResolve(uri, out var store))
-            throw new NotSupportedException($"No mounted file system can handle URI '{uri}'.");
+        lock (_gate)
+        {
+            foreach (var mount in _orderedMounts)
+            {
+                if (!mount.Matches(uri))
+                    continue;
 
-        return store.GetFile(uri);
+                var file = mount.FileSystem.GetFile(uri);
+                return DecorateFile(file, mount);
+            }
+        }
+
+        throw new NotSupportedException($"No mounted file system can handle URI '{uri}'.");
     }
 
     /// <inheritdoc />
     public IFileSystemWatcher WatchAll() => new CompositeWatcher(this);
+
+    private IFileInfo DecorateFile(IFileInfo file, MountRegistration mount)
+    {
+        if (mount.EnableAnalysis)
+            return file;
+
+        if (file is IFileAnalysisMetadata meta && meta.IsReadOnly)
+            return file;
+
+        return new MountAnnotatedFileInfo(file, isReadOnly: true);
+    }
 
     private void AddOrUpdateMountInternal(CompositeFileSystemMount mount)
     {
@@ -149,7 +170,8 @@ public sealed class CompositeFileSystem : IMultiFileSystem
                 predicate,
                 mount.IncludeInEnumeration,
                 mount.IsPrimary,
-                mount.EnableWatching);
+                mount.EnableWatching,
+                mount.EnableAnalysis);
             _mountsById[mount.Id] = registration;
 
             if (registration.IsPrimary)
@@ -209,7 +231,8 @@ public sealed class CompositeFileSystem : IMultiFileSystem
         Func<RepoUri, bool> Matcher,
         bool IncludeInEnumeration,
         bool IsPrimary,
-        bool EnableWatching)
+        bool EnableWatching,
+        bool EnableAnalysis)
     {
         public bool Matches(RepoUri uri) => Matcher(uri);
     }
@@ -236,7 +259,7 @@ public sealed class CompositeFileSystem : IMultiFileSystem
                     continue;
 
                 var watcher = mount.FileSystem.Watch();
-                var subscription = watcher.Subscribe(new Forwarder(this));
+                var subscription = watcher.Subscribe(new Forwarder(this, mount));
                 _subscriptions.Add((watcher, subscription));
                 await watcher.StartAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -268,7 +291,7 @@ public sealed class CompositeFileSystem : IMultiFileSystem
         }
 
         /// <summary>Simple observer bridge that relays mount-specific watcher events to the composite watcher.</summary>
-        private sealed class Forwarder(CompositeWatcher owner) : IObserver<ResourceChange>
+        private sealed class Forwarder(CompositeWatcher owner, MountRegistration mount) : IObserver<ResourceChange>
         {
             public void OnCompleted() { }
 
@@ -279,8 +302,30 @@ public sealed class CompositeFileSystem : IMultiFileSystem
 
             public void OnNext(ResourceChange value)
             {
-                owner.SafeRaiseChange(value.Kind, value.File, value.CurrentUri, value.PreviousUri);
+                var decorated = owner._owner.DecorateFile(value.File, mount);
+                owner.SafeRaiseChange(value.Kind, decorated, value.CurrentUri, value.PreviousUri);
             }
         }
+    }
+
+    private sealed class MountAnnotatedFileInfo : IFileInfo, IFileAnalysisMetadata
+    {
+        private readonly IFileInfo _inner;
+
+        public MountAnnotatedFileInfo(IFileInfo inner, bool isReadOnly)
+        {
+            _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+            IsReadOnly = isReadOnly;
+        }
+
+        public bool IsReadOnly { get; }
+
+        public Stream CreateReadStream() => _inner.CreateReadStream();
+        public bool Exists => _inner.Exists;
+        public long Length => _inner.Length;
+        public string? PhysicalPath => _inner.PhysicalPath;
+        public string Name => _inner.Name;
+        public DateTimeOffset LastModified => _inner.LastModified;
+        public bool IsDirectory => _inner.IsDirectory;
     }
 }

@@ -388,7 +388,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<CompositeFileSystem>(),
             sp.GetRequiredService<IndexingEngine>(),
             sp.GetRequiredService<IDatabaseWriter>(),
-            sp.GetService<ILogger<IndexingCoordinator>>()));
+            sp.GetService<ILogger<IndexingCoordinator>>(),
+            sp.GetRequiredService<ICompositeFileSystemManager>()));
 
         services.AddSingleton<IVirtualFileSystemImporter, GithubRepositoryImporter>();
         services.AddSingleton<IFileSystemImportService, FileSystemImportService>();

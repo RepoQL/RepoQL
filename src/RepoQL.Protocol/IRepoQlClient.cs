@@ -66,12 +66,27 @@ public interface IRepoQlClient : IAsyncDisposable
     /// <summary>
     /// Wait for one or more pipeline stages to become idle and return the resulting status snapshot.
     /// </summary>
-    /// <param name="stages">Stages to wait on. When <c>null</c> or empty, defaults to discovery, parsing, and analysis.</param>
+    /// <param name="stages">Stages to wait on. When <c>null</c> or empty, defaults to discovery, indexing, and analysis.</param>
     /// <param name="waitAll">When true, waits for all specified stages; otherwise waits for any one to become idle.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task<PipelineStatus> WaitForPipelineAsync(
         IEnumerable<PipelineStage>? stages = null,
         bool waitAll = true,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Import an external repository (e.g., github://owner/repo) and wait until selected stages are idle.
+    /// </summary>
+    /// <param name="uri">Repository URI understood by an importer.</param>
+    /// <param name="waitStage">
+    ///     Stage to wait for after enqueueing imported files. When <c>null</c>, defaults to <see cref="PipelineStage.Analysis"/>.
+    ///     Pass <see cref="PipelineStage.Indexing"/> when you only need parsing to finish, <see cref="PipelineStage.SemanticIndexing"/> to
+    ///     wait for semantic index flushes, or <see cref="PipelineStage.Unspecified"/> to return immediately without blocking.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<PipelineStatus> ImportRepositoryAsync(
+        string uri,
+        PipelineStage? waitStage = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

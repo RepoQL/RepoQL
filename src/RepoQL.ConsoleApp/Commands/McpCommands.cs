@@ -157,7 +157,8 @@ internal class McpCommands
                 })
                 .WithStdioServerTransport()
                 .WithTools<QueryTool>()
-                .WithTools<XrayTool>();
+                .WithTools<XrayTool>()
+                .WithTools<ImportTool>();
 
         builder.Services.AddHostedService<McpLoggingHostedService>();
 

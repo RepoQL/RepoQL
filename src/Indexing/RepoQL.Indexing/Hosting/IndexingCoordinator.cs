@@ -60,6 +60,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
 
     private static readonly TimeSpan StatusPollInterval = TimeSpan.FromMilliseconds(250);
     private readonly CompositeFileSystem _fileSystem;
+    private readonly ICompositeFileSystemManager? _mountManager;
     private readonly IndexingEngine _engine;
     private readonly IDatabaseWriter _writer;
     private readonly ILogger<IndexingCoordinator> _logger;
@@ -69,12 +70,20 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         CompositeFileSystem fileSystem,
         IndexingEngine engine,
         IDatabaseWriter writer,
-        ILogger<IndexingCoordinator>? logger = null)
+        ILogger<IndexingCoordinator>? logger = null,
+        ICompositeFileSystemManager? mountManager = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
         _writer = writer ?? throw new ArgumentNullException(nameof(writer));
         _logger = logger ?? NullLogger<IndexingCoordinator>.Instance;
+        _mountManager = mountManager;
+
+        // Subscribe to mount changes for automatic indexing of new mounts
+        if (_mountManager is not null)
+        {
+            _mountManager.MountsChanged += OnMountChanged;
+        }
     }
 
     public bool IsReindexing => Volatile.Read(ref _reindexScopes) > 0;
@@ -689,6 +698,92 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
 
         activity.Dispose();
+    }
+
+    /// <summary>
+    /// Handles mount addition/update events by automatically indexing files from the new mount.
+    /// </summary>
+    private void OnMountChanged(object? sender, CompositeFileSystemMountChangedEventArgs e)
+    {
+        // Only process Added or Updated mounts (skip Removed for now)
+        if (e.Kind != MountChangeKind.Added && e.Kind != MountChangeKind.Updated)
+            return;
+
+        // Skip primary mounts - they're handled by the initial scan in RepoqlHost
+        if (e.Mount.IsPrimary)
+            return;
+
+        _logger.LogInformation(
+            "Mount {Kind}: {MountId} (scheme={Scheme}) - starting indexing",
+            e.Kind,
+            e.Mount.Id,
+            e.Mount.FileSystem.Scheme);
+
+        // Index the mount in the background to avoid blocking the caller
+        _ = Task.Run(() => IndexMountAsync(e.Mount, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// Enumerates and indexes all files from a specific mount using incremental indexing.
+    /// </summary>
+    private async Task IndexMountAsync(CompositeFileSystemMount mount, CancellationToken cancellationToken)
+    {
+        var sw = Stopwatch.StartNew();
+        var enqueued = 0;
+        var skipped = 0;
+
+        try
+        {
+            _logger.LogInformation("Enumerating files from mount {MountId}", mount.Id);
+
+            // Enumerate directly from the mount's filesystem
+            await foreach (var file in mount.FileSystem.EnumerateAsync(cancellationToken).ConfigureAwait(false))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (!file.Exists)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                var uri = mount.FileSystem.GetUri(file);
+
+                // Check if the file should be indexed (respects filters like .gitignore)
+                if (!_engine.Filter.IncludeFile(uri))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                // Enqueue with Default options for incremental indexing
+                // (OnlyIfStale | OnlyIfNotExcluded) - will skip unchanged files
+                var artifact = new RawArtifact(file, mount.FileSystem);
+                await _engine.EnqueueItemAsync(artifact, IndexItemOptions.Default, cancellationToken).ConfigureAwait(false);
+                enqueued++;
+
+                if (enqueued % 100 == 0)
+                {
+                    _logger.LogDebug("Mount {MountId}: enqueued {Count} files so far", mount.Id, enqueued);
+                }
+            }
+
+            sw.Stop();
+            _logger.LogInformation(
+                "Mount {MountId} indexing completed: {Enqueued} files enqueued, {Skipped} skipped in {Duration:F1}s",
+                mount.Id,
+                enqueued,
+                skipped,
+                sw.Elapsed.TotalSeconds);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Mount {MountId} indexing was cancelled after {Duration:F1}s", mount.Id, sw.Elapsed.TotalSeconds);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to index mount {MountId} after {Duration:F1}s", mount.Id, sw.Elapsed.TotalSeconds);
+        }
     }
 
     private sealed class ReindexScope : IDisposable

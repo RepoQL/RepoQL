@@ -118,7 +118,7 @@ public sealed class RepoQlClient : IRepoQlClient
             repoDirectory,
             socketPath,
             allowReResolve,
-            TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_START_TIMEOUT_MS", 30000)),
+            TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_START_TIMEOUT_MS", 120_000)),
             cancellationToken).ConfigureAwait(false);
 
         var handler = new SocketsHttpHandler
@@ -613,6 +613,27 @@ public sealed class RepoQlClient : IRepoQlClient
                 request.Stages.AddRange(stages);
 
             var response = await client.WaitForPipelineAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            return response.Status ?? new ProtoPipelineStatus();
+        }, cancellationToken);
+
+    public Task<ProtoPipelineStatus> ImportRepositoryAsync(
+        string uri,
+        ProtoPipelineStage? waitStage = null,
+        CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(uri))
+                throw new ArgumentException("uri is required", nameof(uri));
+
+            var request = new ImportRequest
+            {
+                Uri = uri.Trim()
+            };
+
+            if (waitStage.HasValue)
+                request.WaitStage = waitStage.Value;
+
+            var response = await client.ImportRepositoryAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
             return response.Status ?? new ProtoPipelineStatus();
         }, cancellationToken);
 

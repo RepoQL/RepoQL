@@ -34,6 +34,9 @@ service RepoQL {
   // Wait for selected pipeline stages to become idle. Returns once the condition is met.
   rpc WaitForPipeline(WaitForPipelineRequest) returns (WaitForPipelineResponse);
 
+  // Import an external repository (e.g., github://owner/repo). Returns after waiting for pipeline stages.
+  rpc ImportRepository(ImportRequest) returns (ImportResponse);
+
   // Retrieve the current pipeline status without blocking.
   rpc GetPipelineStatus(GetPipelineStatusRequest) returns (GetPipelineStatusResponse);
 
@@ -226,19 +229,30 @@ enum ReindexPhase {
 enum PipelineStage {
   PIPELINE_STAGE_UNSPECIFIED = 0;
   PIPELINE_STAGE_DISCOVERY = 1;
-  PIPELINE_STAGE_PARSING = 2;
-  PIPELINE_STAGE_ANALYSIS = 3;
-  PIPELINE_STAGE_WRITER = 4;
+  PIPELINE_STAGE_INDEXING = 2;
+  PIPELINE_STAGE_SEMANTIC_INDEXING = 3;
+  PIPELINE_STAGE_ANALYSIS = 4;
 }
 
 message WaitForPipelineRequest {
-  // Stages to wait on. When empty, defaults to discovery+parsing+analysis.
+  // Stages to wait on. When empty, defaults to discovery+indexing+analysis.
   repeated PipelineStage stages = 1;
   // When true, wait for all selected stages to become idle. When false, waits for any.
   bool wait_all = 2;
 }
 
 message WaitForPipelineResponse {
+  PipelineStatus status = 1;
+}
+
+message ImportRequest {
+  // Repository URI to import (e.g., github://owner/repo@ref).
+  string uri = 1;
+  // Stage to wait for after enqueueing imported artifacts. When omitted the server waits for analysis.
+  optional PipelineStage wait_stage = 2;
+}
+
+message ImportResponse {
   PipelineStatus status = 1;
 }
 

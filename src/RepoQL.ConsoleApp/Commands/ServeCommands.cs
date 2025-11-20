@@ -35,6 +35,7 @@ internal class HostCommands(IAnsiConsole console)
         if (!implicitStart)
         {
             await TryShutdownExistingHostAsync(repo, CancellationToken.None).ConfigureAwait(false);
+            await WaitForRepositoryAvailabilityAsync(repo, TimeSpan.FromSeconds(45), CancellationToken.None).ConfigureAwait(false);
         }
         var builder = WebApplication.CreateSlimBuilder([]);
         builder.Host.UseConsoleLifetime();
@@ -204,6 +205,51 @@ internal class HostCommands(IAnsiConsole console)
         {
             return false;
         }
+    }
+
+    private static async Task WaitForRepositoryAvailabilityAsync(string repo, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var repoqlDir = RepoLocator.EnsureRepoqlDirectory(repo);
+        var dbPath = Path.Combine(repoqlDir, "index.duckdb");
+        var sw = Stopwatch.StartNew();
+
+        while (sw.Elapsed < timeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (IsDatabaseUnlocked(dbPath))
+            {
+                return;
+            }
+
+            await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new TimeoutException($"RepoQL index at {dbPath} is still locked by another process after {timeout.TotalSeconds:F0}s.");
+    }
+
+    private static bool IsDatabaseUnlocked(string dbPath)
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
+            using var stream = new FileStream(dbPath, FileMode.OpenOrCreate, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return true;
+        }
+        catch (IOException ex) when (IsSharingViolation(ex))
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSharingViolation(IOException ex)
+    {
+        const int ErrorSharingViolation = unchecked((int)0x80070020);
+        const int ErrorLockViolation = unchecked((int)0x80070021);
+        return ex.HResult == ErrorSharingViolation || ex.HResult == ErrorLockViolation;
     }
 
 }

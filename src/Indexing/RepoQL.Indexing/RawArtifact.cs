@@ -59,4 +59,6 @@ public class RawArtifact(IFileInfo file, IVirtualFileSystem sourceFileSystem) : 
     public string Name => file.Name;
     public DateTimeOffset LastModified => file.LastModified;
     public bool IsDirectory =>  file.IsDirectory;
+
+    public bool IsReadOnly { get; } = file is IFileAnalysisMetadata meta && meta.IsReadOnly;
 }

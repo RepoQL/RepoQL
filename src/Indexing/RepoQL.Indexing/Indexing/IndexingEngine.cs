@@ -414,6 +414,11 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private void ScheduleAnalysis(IndexItem item)
     {
+        if (item.IsReadOnly)
+        {
+            AddEpochTag(item.Epoch, "analysis.skip", "read_only_idle");
+            return;
+        }
         if (item.Epoch < 0)
             return;
 
@@ -621,6 +626,11 @@ public partial class IndexingEngine : IAsyncDisposable
         pipelineResult = await _parsingStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
         if (pipelineResult != PipelineResult.Success)
             return pipelineResult;
+        if (item.IsReadOnly)
+        {
+            AddEpochTag(item.Epoch, "analysis.skip", "read_only_single");
+            return PipelineResult.Success;
+        }
         return await _singleFileStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
     }
 

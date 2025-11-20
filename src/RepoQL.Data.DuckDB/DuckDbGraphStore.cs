@@ -1,5 +1,6 @@
 using System.Data;
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -475,6 +476,49 @@ namespace RepoQL.Data.DuckDB;
             RepositoryUserDefinedFunctions.RegisterAll(connection, _metrics, embeddingProvider);
     }
 
+    private static DuckDBConnection OpenConnectionWithRecovery(string filePath, ILogger logger)
+    {
+        var connection = new DuckDBConnection($"Data Source={filePath}");
+        try
+        {
+            connection.Open();
+            return connection;
+        }
+        catch (DuckDBException ex) when (TryRecoverInvalidDatabaseFile(filePath, logger, ex))
+        {
+            connection.Dispose();
+            var retry = new DuckDBConnection($"Data Source={filePath}");
+            retry.Open();
+            return retry;
+        }
+    }
+
+    private static bool TryRecoverInvalidDatabaseFile(string filePath, ILogger logger, DuckDBException ex)
+    {
+        try
+        {
+            if (!File.Exists(filePath))
+                return false;
+
+            var fileInfo = new FileInfo(filePath);
+            var looksEmpty = fileInfo.Length == 0;
+            if (!looksEmpty && !LooksLikeInvalidDatabase(ex))
+                return false;
+
+            logger.LogWarning(ex, "Resetting invalid DuckDB database at {DbPath} and retrying initialization.", filePath);
+            File.Delete(filePath);
+            return true;
+        }
+        catch (Exception cleanupError)
+        {
+            logger.LogWarning(cleanupError, "Failed to reset invalid DuckDB database at {DbPath}.", filePath);
+            return false;
+        }
+    }
+
+    private static bool LooksLikeInvalidDatabase(DuckDBException ex)
+        => ex.Message?.IndexOf("not a valid DuckDB database file", StringComparison.OrdinalIgnoreCase) >= 0;
+
     /// <summary>
     ///     Opens a DuckDB database from a file path. Optionally enables extensions and registers UDFs.
     /// </summary>
@@ -494,10 +538,9 @@ namespace RepoQL.Data.DuckDB;
         Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null,
         IEnumerable<FormatSqlScript>? formatSchemaScripts = null)
     {
-        _connection = new DuckDBConnection($"Data Source={filePath}");
-        _connection.Open();
-        _ownsConnection = true;
         _logger = logger ?? NullLogger<DuckDbGraphStore>.Instance;
+        _connection = OpenConnectionWithRecovery(filePath, _logger);
+        _ownsConnection = true;
         _metrics = metrics ?? new IndexingMetrics();
         _formatSchemaScripts = formatSchemaScripts?.ToArray() ?? Array.Empty<FormatSqlScript>();
         _databaseLabel = TryExtractDbNameSafe(_connection.ConnectionString);

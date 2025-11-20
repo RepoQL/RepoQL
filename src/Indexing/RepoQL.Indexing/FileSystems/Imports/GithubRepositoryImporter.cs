@@ -1,4 +1,8 @@
+using System.ComponentModel;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.FileSystem.Physical;
@@ -12,6 +16,11 @@ namespace RepoQL.Indexing.FileSystems.Imports;
 public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
 {
     private static readonly string ImportsRoot = Path.Combine(".repoql", "imports", "github");
+    private const string GhExecutableName = "gh";
+    private static readonly object GhCheckLock = new();
+    private static bool _ghChecked;
+    private static bool _ghAvailable;
+
     private readonly PhysicalFileSystem _primary;
     private readonly ILogger<GithubRepositoryImporter> _logger;
 
@@ -43,7 +52,10 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         ArgumentNullException.ThrowIfNull(source);
 
         var spec = ParseSource(source);
-        var targetRoot = Path.Combine(_primary.RootPath, ImportsRoot, spec.Owner, spec.Repository);
+        var repoFolderName = string.IsNullOrWhiteSpace(spec.Ref)
+            ? spec.Repository
+            : $"{spec.Repository}@{SanitizeForPath(spec.Ref)}";
+        var targetRoot = Path.Combine(_primary.RootPath, ImportsRoot, spec.Owner, repoFolderName);
         Directory.CreateDirectory(Path.GetDirectoryName(targetRoot)!);
 
         await CloneOrUpdateAsync(spec, targetRoot, cancellationToken).ConfigureAwait(false);
@@ -54,7 +66,8 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             uriPrefix: spec.Repository,
             authority: spec.Owner);
 
-        var mountId = $"github:{spec.Owner}/{spec.Repository}";
+        var refSuffix = string.IsNullOrWhiteSpace(spec.Ref) ? string.Empty : $"@{spec.Ref}";
+        var mountId = $"github:{spec.Owner}/{spec.Repository}{refSuffix}";
         return CompositeFileSystemMount.ForScheme(
             mountId,
             fs,
@@ -62,52 +75,66 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             authority: spec.Owner,
             pathPrefix: spec.Repository,
             includeInEnumeration: true,
-            enableWatching: false);
+            enableWatching: false,
+            enableAnalysis: false);
     }
 
     /// <summary>
-    /// Ensures <paramref name="spec"/> is present on disk. Performs a shallow clone when missing and fetch/pull when a
-    /// previous clone exists.
+    /// Ensures <paramref name="spec"/> is present on disk. Clones via GitHub CLI when missing and uses repo sync for updates.
     /// </summary>
     private async Task CloneOrUpdateAsync(RepositorySpec spec, string targetRoot, CancellationToken ct)
     {
+        EnsureGhAvailable();
+
         if (!Directory.Exists(targetRoot) || !Directory.EnumerateFileSystemEntries(targetRoot).Any())
         {
-            await RunGitAsync([
+            var args = new List<string>
+            {
+                "repo",
                 "clone",
-                "--depth", "1",
-                spec.CloneUrl,
-                targetRoot
-            ], _primary.RootPath, ct).ConfigureAwait(false);
+                $"{spec.Owner}/{spec.Repository}"
+            };
 
             if (!string.IsNullOrWhiteSpace(spec.Ref))
             {
-                await RunGitAsync(["-C", targetRoot, "checkout", spec.Ref!], _primary.RootPath, ct).ConfigureAwait(false);
+                args.Add("--branch");
+                args.Add(spec.Ref!);
             }
+
+            args.Add(targetRoot);
+            args.Add("--");
+            args.Add("--depth");
+            args.Add("1");
+            await RunGhAsync(args, _primary.RootPath, ct).ConfigureAwait(false);
             return;
         }
 
-        await RunGitAsync(["-C", targetRoot, "fetch", "--all"], _primary.RootPath, ct).ConfigureAwait(false);
+        // Use gh repo sync from within the target directory
+        var syncArgs = new List<string>
+        {
+            "repo",
+            "sync",
+            "--source",
+            $"{spec.Owner}/{spec.Repository}",
+            "--force"
+        };
         if (!string.IsNullOrWhiteSpace(spec.Ref))
         {
-            await RunGitAsync(["-C", targetRoot, "checkout", spec.Ref!], _primary.RootPath, ct).ConfigureAwait(false);
-            await RunGitAsync(["-C", targetRoot, "reset", "--hard", spec.Ref!], _primary.RootPath, ct).ConfigureAwait(false);
+            syncArgs.Add("--branch");
+            syncArgs.Add(spec.Ref!);
         }
-        else
-        {
-            await RunGitAsync(["-C", targetRoot, "pull", "--ff-only"], _primary.RootPath, ct).ConfigureAwait(false);
-        }
+        await RunGhAsync(syncArgs, targetRoot, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Executes a git command and surfaces stdout/stderr for diagnostics.</summary>
-    private async Task RunGitAsync(
+    /// <summary>Executes a GitHub CLI command and surfaces stdout/stderr for diagnostics.</summary>
+    private async Task RunGhAsync(
         IReadOnlyList<string> arguments,
         string workingDirectory,
         CancellationToken cancellationToken)
     {
         var startInfo = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = GhExecutableName,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             WorkingDirectory = workingDirectory
@@ -122,9 +149,9 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         process.Exited += (_, _) => tcs.TrySetResult(true);
 
-        _logger.LogInformation("Running git {Args}", string.Join(' ', arguments));
+        _logger.LogInformation("Running gh {Args}", string.Join(' ', arguments));
         if (!process.Start())
-            throw new InvalidOperationException("Failed to start git process.");
+            throw new InvalidOperationException("Failed to start GitHub CLI (gh).");
 
         using var registration = cancellationToken.Register(() =>
         {
@@ -139,7 +166,7 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
 
         if (process.ExitCode != 0)
         {
-            throw new InvalidOperationException($"git exited with {process.ExitCode}: {stderr}");
+            throw new InvalidOperationException($"GitHub CLI (gh) exited with {process.ExitCode}: {stderr}");
         }
 
         if (!string.IsNullOrWhiteSpace(stdout))
@@ -165,9 +192,11 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
 
             if (segments.Length == 0)
                 throw new InvalidOperationException("Repository segment missing from github:// URI.");
-            var repo = segments[0];
+            var repoSegment = segments[0];
+            var referenceFromPath = ExtractRefFromSegment(ref repoSegment);
             var reference = GetQueryParameter(uri, "ref");
-            return new RepositorySpec(owner, repo, reference);
+            reference ??= referenceFromPath;
+            return new RepositorySpec(owner, repoSegment, reference);
         }
 
         if (string.Equals(uri.Authority, "github.com", StringComparison.OrdinalIgnoreCase))
@@ -176,9 +205,11 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             if (segments.Length < 2)
                 throw new InvalidOperationException("GitHub URL must include owner and repository.");
             var owner = segments[0];
-            var repo = segments[1];
+            var repoSegment = segments[1];
+            var referenceFromPath = ExtractRefFromSegment(ref repoSegment);
             var reference = GetQueryParameter(uri, "ref");
-            return new RepositorySpec(owner, repo, reference);
+            reference ??= referenceFromPath;
+            return new RepositorySpec(owner, repoSegment, reference);
         }
 
         throw new InvalidOperationException($"Unsupported GitHub URI '{uri}'.");
@@ -211,5 +242,77 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         }
 
         return null;
+    }
+
+    private static string? ExtractRefFromSegment([NotNull] ref string segment)
+    {
+        var atIndex = segment.IndexOf('@');
+        if (atIndex < 0)
+            return null;
+
+        var reference = segment[(atIndex + 1)..];
+        segment = segment[..atIndex];
+        return reference.Length == 0 ? null : reference;
+    }
+
+    private static string SanitizeForPath(string value)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var builder = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            builder.Append(invalid.Contains(ch) ? '_' : ch);
+        }
+        return builder.ToString();
+    }
+
+    private static void EnsureGhAvailable()
+    {
+        if (_ghChecked)
+        {
+            if (!_ghAvailable)
+                throw new InvalidOperationException("GitHub CLI (gh) is required for imports but was not found. Install it from https://cli.github.com/ and ensure it is on PATH.");
+            return;
+        }
+
+        lock (GhCheckLock)
+        {
+            if (_ghChecked)
+            {
+                if (!_ghAvailable)
+                    throw new InvalidOperationException("GitHub CLI (gh) is required for imports but was not found. Install it from https://cli.github.com/ and ensure it is on PATH.");
+                return;
+            }
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = GhExecutableName,
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true
+                };
+                psi.ArgumentList.Add("--version");
+                using var process = Process.Start(psi);
+                if (process is null)
+                    throw new InvalidOperationException("Failed to start GitHub CLI (gh).");
+                process.WaitForExit();
+                if (process.ExitCode != 0)
+                {
+                    var stderr = process.StandardError.ReadToEnd();
+                    throw new InvalidOperationException($"GitHub CLI (gh) invocation failed: {stderr}");
+                }
+                _ghAvailable = true;
+            }
+            catch (Exception ex) when (ex is Win32Exception or FileNotFoundException)
+            {
+                _ghAvailable = false;
+                throw new InvalidOperationException("GitHub CLI (gh) is required for imports but was not found. Install it from https://cli.github.com/ and ensure it is on PATH.", ex);
+            }
+            finally
+            {
+                _ghChecked = true;
+            }
+        }
     }
 }

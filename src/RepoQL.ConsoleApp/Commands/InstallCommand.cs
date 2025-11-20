@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -12,6 +13,10 @@ namespace RepoQL.ConsoleApp.Commands;
 internal class InstallCommand(IAnsiConsole console)
 {
     private readonly Dictionary<string, ConfigStatus> configStatusCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly string[] DefaultServerPropertyPriority = new[] { "mcpServers", "servers" };
+    private static readonly string[] CopilotServerPropertyPriority = new[] { "servers", "mcpServers" };
+    private static readonly string[] KnownServerPropertyNames = new[] { "mcpServers", "servers" };
+    private static readonly Lazy<string> RepoqlCommandLazy = new(ResolveRepoqlCommand);
     /// <summary>
     /// Install RepoQL as an MCP server for AI agents (Claude, Codex)
     /// </summary>
@@ -31,19 +36,17 @@ internal class InstallCommand(IAnsiConsole console)
             console.MarkupLine("You can manually add RepoQL to your agent's MCP configuration:");
             console.WriteLine();
             console.MarkupLine("[dim]{[/]");
+            var repoqlCommandDisplay = EscapeMarkup(GetRepoqlCommand());
             console.MarkupLine("[dim]  \"mcpServers\": {[/]");
             console.MarkupLine("[dim]    \"repoql\": {[/]");
             console.MarkupLine("[dim]      \"type\": \"stdio\",[/]");
-            console.MarkupLine("[dim]      \"command\": \"repoql\",[/]");
-            console.MarkupLine("[dim]      \"args\": [\"mcp\"],[/]");
-            console.MarkupLine("[dim]      \"env\": {[/]");
-            console.MarkupLine("[dim]        \"REPOQL_CWD\": \"/path/to/your/repo\"[/]");
-            console.MarkupLine("[dim]      }[/]");
+            console.MarkupLine($"[dim]      \"command\": \"{repoqlCommandDisplay}\",[/]");
+            console.MarkupLine("[dim]      \"args\": [\"mcp\"][/]");
             console.MarkupLine("[dim]    }[/]");
             console.MarkupLine("[dim]  }[/]");
             console.MarkupLine("[dim]}[/]");
             console.WriteLine();
-            console.MarkupLine("[dim]Note: For Codex/Claude CLI, use \"{{workspace}}\" as the REPOQL_CWD value.[/]");
+            console.MarkupLine("[dim]Tip: RepoQL indexes whichever repository the agent runs in unless you override REPOQL_CWD (required for Claude Desktop).[/]");
             return;
         }
 
@@ -53,10 +56,13 @@ internal class InstallCommand(IAnsiConsole console)
         var labeledEntries = agentEntries
             .Select(entry =>
             {
-                var summary = entry.Agents.Count == 1
+                var choiceLabel = entry.Agents.Count == 1
                     ? $"{entry.Label} ({DescribeAgentLocation(entry.Agents[0])})"
-                    : $"{entry.Label} ({string.Join(", ", entry.Agents.Select(GetCopilotDisplayName))})";
-                return new { Entry = entry, Label = summary, Summary = summary };
+                    : entry.Label;
+                var summary = entry.Agents.Count == 1
+                    ? DescribeAgentLocation(entry.Agents[0])
+                    : string.Join(", ", entry.Agents.Select(GetCopilotDisplayName));
+                return new { Entry = entry, ChoiceLabel = choiceLabel, Summary = summary };
             })
             .ToList();
 
@@ -65,10 +71,12 @@ internal class InstallCommand(IAnsiConsole console)
             console.MarkupLine($"  • [cyan]{EscapeMarkup(labeled.Entry.Label)}[/] - {EscapeMarkup(labeled.Summary)}");
         }
         console.WriteLine();
+        console.MarkupLine("[dim]Default behavior: RepoQL indexes the repository that each agent is already working in. Specify a path only when the agent cannot provide one (e.g., Claude Desktop).[/]");
+        console.WriteLine();
 
         // Interactive selection menu
         var choices = labeledEntries
-            .Select(a => a.Label)
+            .Select(a => a.ChoiceLabel)
             .Concat(["Install for all detected agents", "Cancel"])
             .ToList();
 
@@ -92,7 +100,7 @@ internal class InstallCommand(IAnsiConsole console)
         }
         else
         {
-            var selectedEntry = labeledEntries.First(a => a.Label == selection).Entry;
+            var selectedEntry = labeledEntries.First(a => a.ChoiceLabel == selection).Entry;
             var selectedAgent = SelectAgentFromEntry(selectedEntry);
             agentsToUpdate = selectedAgent is null ? [] : [selectedAgent];
         }
@@ -634,14 +642,81 @@ internal class InstallCommand(IAnsiConsole console)
 
     private static string GetCopilotDisplayName(AgentInfo agent)
     {
-        const string prefix = "GitHub Copilot ";
-        return agent.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+        const string prefix = "GitHub Copilot";
+        var name = agent.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
             ? agent.Name.Substring(prefix.Length)
             : agent.Name;
+
+        var trimmed = name.Trim();
+        if (trimmed.StartsWith("(") && trimmed.EndsWith(")") && trimmed.Length > 2)
+        {
+            trimmed = trimmed.Substring(1, trimmed.Length - 2).Trim();
+        }
+
+        trimmed = trimmed.TrimStart('-', '–', ':').Trim();
+        return string.IsNullOrEmpty(trimmed) ? agent.Name : trimmed;
     }
 
     private static string EscapeMarkup(string? value) =>
         value is null ? string.Empty : Markup.Escape(value);
+
+    private static async Task<JsonObject> LoadOrCreateConfigAsync(string path, CancellationToken cancel)
+    {
+        if (File.Exists(path))
+        {
+            var json = await File.ReadAllTextAsync(path, cancel).ConfigureAwait(false);
+            if (JsonNode.Parse(json) is JsonObject existing)
+            {
+                return existing;
+            }
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        return new JsonObject();
+    }
+
+    private static IReadOnlyList<string> GetServerPropertyPriority(AgentType type) =>
+        type is AgentType.GitHubCopilotVSCode or AgentType.GitHubCopilotVisualStudio
+            ? CopilotServerPropertyPriority
+            : DefaultServerPropertyPriority;
+
+    private static IEnumerable<string> GetServerPropertySearchOrder(AgentType type) =>
+        GetServerPropertyPriority(type)
+            .Concat(KnownServerPropertyNames)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+    private static JsonObject GetOrCreateServerCollection(JsonObject config, string propertyName)
+    {
+        if (config.TryGetPropertyValue(propertyName, out var node) && node is JsonObject existing)
+        {
+            return existing;
+        }
+
+        var created = new JsonObject();
+        config[propertyName] = created;
+        return created;
+    }
+
+    private static RepoqlLocation? FindRepoqlLocation(JsonObject config, IEnumerable<string> propertyNames)
+    {
+        foreach (var property in propertyNames)
+        {
+            if (!config.TryGetPropertyValue(property, out var node) || node is not JsonObject servers)
+                continue;
+
+            if (servers.TryGetPropertyValue("repoql", out var definition) && definition is not null)
+            {
+                return new RepoqlLocation(property, servers);
+            }
+        }
+
+        return null;
+    }
 
     private ConfigStatus GetConfigStatus(string path)
     {
@@ -673,8 +748,11 @@ internal class InstallCommand(IAnsiConsole console)
         try
         {
             var json = File.ReadAllText(path);
-            var node = JsonNode.Parse(json);
-            return node?["mcpServers"]?["repoql"] is not null;
+            if (JsonNode.Parse(json) is JsonObject obj)
+            {
+                return FindRepoqlLocation(obj, KnownServerPropertyNames) is not null;
+            }
+            return false;
         }
         catch
         {
@@ -840,33 +918,30 @@ internal class InstallCommand(IAnsiConsole console)
             var json = await File.ReadAllTextAsync(configPath).ConfigureAwait(false);
             var doc = JsonDocument.Parse(json);
 
-            if (doc.RootElement.TryGetProperty("mcpServers", out var servers))
+            foreach (var server in EnumerateJsonServerDefinitions(doc.RootElement))
             {
-                foreach (var server in servers.EnumerateObject())
+                if (string.Equals(server.Name, "repoql", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (server.Value.TryGetProperty("command", out var cmd))
                 {
-                    if (string.Equals(server.Name, "repoql", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    if (server.Value.TryGetProperty("command", out var cmd))
-                    {
-                        var command = cmd.ValueKind == JsonValueKind.String ? cmd.GetString() : null;
-                        if (TryClassifyAgent(command, out var agentFromCommand))
-                            return agentFromCommand;
-                    }
-
-                    if (server.Value.TryGetProperty("args", out var args) && args.ValueKind == JsonValueKind.Array)
-                    {
-                        var joined = string.Join(' ',
-                            args.EnumerateArray()
-                                .Select(a => a.ValueKind == JsonValueKind.String ? a.GetString() : null)
-                                .Where(s => !string.IsNullOrWhiteSpace(s))!);
-                        if (TryClassifyAgent(joined, out var agentFromArgs))
-                            return agentFromArgs;
-                    }
-
-                    if (TryClassifyAgent(server.Name, out var agentFromName))
-                        return agentFromName;
+                    var command = cmd.ValueKind == JsonValueKind.String ? cmd.GetString() : null;
+                    if (TryClassifyAgent(command, out var agentFromCommand))
+                        return agentFromCommand;
                 }
+
+                if (server.Value.TryGetProperty("args", out var args) && args.ValueKind == JsonValueKind.Array)
+                {
+                    var joined = string.Join(' ',
+                        args.EnumerateArray()
+                            .Select(a => a.ValueKind == JsonValueKind.String ? a.GetString() : null)
+                            .Where(s => !string.IsNullOrWhiteSpace(s))!);
+                    if (TryClassifyAgent(joined, out var agentFromArgs))
+                        return agentFromArgs;
+                }
+
+                if (TryClassifyAgent(server.Name, out var agentFromName))
+                    return agentFromName;
             }
 
             if (TryClassifyAgent(configPath, out var agentFromPath))
@@ -877,6 +952,20 @@ internal class InstallCommand(IAnsiConsole console)
         }
 
         return null;
+    }
+
+    private static IEnumerable<JsonProperty> EnumerateJsonServerDefinitions(JsonElement root)
+    {
+        foreach (var property in KnownServerPropertyNames)
+        {
+            if (!root.TryGetProperty(property, out var servers) || servers.ValueKind != JsonValueKind.Object)
+                continue;
+
+            foreach (var server in servers.EnumerateObject())
+            {
+                yield return server;
+            }
+        }
     }
 
     private static bool IsVsCodeConfigPath(string normalizedPath, string fileName) =>
@@ -1070,10 +1159,23 @@ internal class InstallCommand(IAnsiConsole console)
     private IReadOnlyList<AgentTargetOption> BuildCliTargetOptions(AgentInfo agent)
     {
         var list = new List<AgentTargetOption>();
+
+        list.Add(CreateTargetOption(
+            agent,
+            FormatScopeLabel("Use agent working directory (recommended)", agent.ConfigPath),
+            agent.ConfigPath,
+            null,
+            true));
+
         var repoPath = TryGetCurrentRepositoryPath();
         if (!string.IsNullOrWhiteSpace(repoPath))
         {
-            list.Add(CreateTargetOption(agent, FormatScopeLabel($"Current repository ({repoPath})", agent.ConfigPath), agent.ConfigPath, repoPath, true));
+            list.Add(CreateTargetOption(
+                agent,
+                FormatScopeLabel($"Use current directory ({repoPath})", agent.ConfigPath),
+                agent.ConfigPath,
+                repoPath,
+                true));
         }
 
         list.Add(new AgentTargetOption("Enter custom path...", () =>
@@ -1089,13 +1191,6 @@ internal class InstallCommand(IAnsiConsole console)
 
             return new AgentInstallContext(agent, $"Custom path ({path})", agent.ConfigPath, path, true);
         }));
-
-        if (agent.Type == AgentType.Codex)
-        {
-            list.Add(CreateTargetOption(agent, FormatScopeLabel("Use Codex workspace variable ({workspace})", agent.ConfigPath), agent.ConfigPath, "{workspace}", true));
-        }
-
-        list.Add(CreateTargetOption(agent, FormatScopeLabel("No specific working directory", agent.ConfigPath), agent.ConfigPath, null, true));
         return list;
     }
 
@@ -1206,7 +1301,7 @@ internal class InstallCommand(IAnsiConsole console)
             var cliResult = await InstallUsingCliAsync(agent, cliDefinition, workingDir, cancel).ConfigureAwait(false);
             if (cliResult is { Success: true })
             {
-                console.MarkupLine($"[green]  ✓ Installed to {safeAgentName} [{safeScopeLabel}][/]");
+                console.MarkupLine($"[green]  ✓ Installed to {safeAgentName} ({safeScopeLabel})[/]");
                 if (!string.IsNullOrEmpty(workingDir))
                 {
                     console.MarkupLine($"[dim]    Working directory: {EscapeMarkup(workingDir)}[/]");
@@ -1220,18 +1315,18 @@ internal class InstallCommand(IAnsiConsole console)
 
             if (agent.Type == AgentType.Codex)
             {
-                console.MarkupLine($"[red]  ✗ Failed to install to {safeAgentName} [{safeScopeLabel}]: {EscapeMarkup(message.Trim())}[/]");
+                console.MarkupLine($"[red]  ✗ Failed to install to {safeAgentName} ({safeScopeLabel}): {EscapeMarkup(message.Trim())}[/]");
                 console.MarkupLine("[dim]  Ensure the Codex CLI is installed and on PATH, then retry.[/]");
                 return;
             }
 
-            console.MarkupLine($"[yellow]  CLI install for {safeAgentName} [{safeScopeLabel}] failed: {EscapeMarkup(message.Trim())}[/]");
+            console.MarkupLine($"[yellow]  CLI install for {safeAgentName} ({safeScopeLabel}) failed: {EscapeMarkup(message.Trim())}[/]");
             console.MarkupLine("[dim]  Falling back to updating the configuration file directly.[/]");
         }
 
         if (string.IsNullOrWhiteSpace(configPath))
         {
-            console.MarkupLine($"[yellow]  Skipping configuration update for {safeAgentName} [{safeScopeLabel}]: configuration path is unknown.[/]");
+            console.MarkupLine($"[yellow]  Skipping configuration update for {safeAgentName} ({safeScopeLabel}): configuration path is unknown.[/]");
             return;
         }
 
@@ -1265,71 +1360,70 @@ internal class InstallCommand(IAnsiConsole console)
         var safeAgentName = EscapeMarkup(agent.Name);
         var safeScopeLabel = EscapeMarkup(context.ScopeLabel);
 
+        JsonObject config;
+        try
+        {
+            config = await LoadOrCreateConfigAsync(resolvedConfigPath, cancel).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            console.MarkupLine($"[red]  ✗ Failed to read configuration for {safeAgentName}: {EscapeMarkup(ex.Message)}[/]");
+            return;
+        }
+
+        var propertyPriority = GetServerPropertyPriority(agent.Type);
+        var searchOrder = GetServerPropertySearchOrder(agent.Type);
+        var targetProperty = propertyPriority[0];
+        var serversNode = GetOrCreateServerCollection(config, targetProperty);
+        var existingLocation = FindRepoqlLocation(config, searchOrder);
+
+        if (existingLocation is not null)
+        {
+            console.MarkupLine($"[yellow]  RepoQL is already configured in {safeAgentName}[/]");
+
+            var shouldUpdate = console.Confirm(
+                $"  Update the existing RepoQL configuration in {agent.Name}?",
+                defaultValue: true);
+
+            if (!shouldUpdate)
+            {
+                console.MarkupLine("[dim]  Skipped.[/]");
+                return;
+            }
+        }
+
+        var repoqlConfig = new JsonObject
+        {
+            ["type"] = "stdio",
+            ["command"] = GetRepoqlCommand(),
+            ["args"] = new JsonArray("mcp")
+        };
+
+        if (!string.IsNullOrEmpty(workingDir))
+        {
+            repoqlConfig["env"] = new JsonObject
+            {
+                ["REPOQL_CWD"] = workingDir
+            };
+        }
+
+        if (agent.Type is AgentType.ClaudeDesktop or AgentType.ClaudeCode)
+        {
+            repoqlConfig["allowedTools"] = new JsonArray("query", "xray");
+        }
+
+        if (existingLocation is not null && !ReferenceEquals(existingLocation.Parent, serversNode))
+        {
+            existingLocation.Parent.Remove("repoql");
+        }
+
+        serversNode["repoql"] = repoqlConfig;
+
         await console.Status()
             .StartAsync($"Installing to {EscapeMarkup(agent.Name)} ({safeScopeLabel})...", async _ =>
             {
                 try
                 {
-                    JsonNode config;
-                    if (File.Exists(resolvedConfigPath))
-                    {
-                        var json = await File.ReadAllTextAsync(resolvedConfigPath, cancel).ConfigureAwait(false);
-                        config = JsonNode.Parse(json) ?? new JsonObject();
-                    }
-                    else
-                    {
-                        config = new JsonObject();
-                        var directory = Path.GetDirectoryName(resolvedConfigPath);
-                        if (!string.IsNullOrEmpty(directory))
-                        {
-                            Directory.CreateDirectory(directory);
-                        }
-                    }
-
-                    if (config["mcpServers"] is null)
-                    {
-                        config["mcpServers"] = new JsonObject();
-                    }
-
-                    var mcpServers = config["mcpServers"]!.AsObject();
-
-                    if (mcpServers.ContainsKey("repoql"))
-                    {
-                        console.MarkupLine($"[yellow]  RepoQL is already configured in {safeAgentName}[/]");
-
-                        var shouldUpdate = console.Confirm(
-                            $"  Update the existing RepoQL configuration in {agent.Name}?",
-                            defaultValue: true);
-
-                        if (!shouldUpdate)
-                        {
-                            console.MarkupLine("[dim]  Skipped.[/]");
-                            return;
-                        }
-                    }
-
-                    var repoqlConfig = new JsonObject
-                    {
-                        ["type"] = "stdio",
-                        ["command"] = "repoql",
-                        ["args"] = new JsonArray("mcp")
-                    };
-
-                    if (!string.IsNullOrEmpty(workingDir))
-                    {
-                        repoqlConfig["env"] = new JsonObject
-                        {
-                            ["REPOQL_CWD"] = workingDir
-                        };
-                    }
-
-                    if (agent.Type == AgentType.ClaudeDesktop)
-                    {
-                        repoqlConfig["allowedTools"] = new JsonArray("query", "xray");
-                    }
-
-                    mcpServers["repoql"] = repoqlConfig;
-
                     var options = new JsonSerializerOptions
                     {
                         WriteIndented = true
@@ -1337,7 +1431,7 @@ internal class InstallCommand(IAnsiConsole console)
                     var updatedJson = config.ToJsonString(options);
                     await File.WriteAllTextAsync(resolvedConfigPath, updatedJson, cancel).ConfigureAwait(false);
 
-                    console.MarkupLine($"[green]  ✓ Installed to {safeAgentName} [{safeScopeLabel}][/]");
+                    console.MarkupLine($"[green]  ✓ Installed to {safeAgentName} ({safeScopeLabel})[/]");
                     if (!string.IsNullOrEmpty(workingDir))
                     {
                         console.MarkupLine($"[dim]    Working directory: {EscapeMarkup(workingDir)}[/]");
@@ -1376,7 +1470,7 @@ internal class InstallCommand(IAnsiConsole console)
                         args.Add($"REPOQL_CWD={workingDir}");
                     }
 
-                    args.Add("repoql"); // command
+                    args.Add(GetRepoqlCommand()); // command
                     args.Add("mcp");    // command argument
                     args.Add("repoql"); // name
                     return args;
@@ -1403,9 +1497,9 @@ internal class InstallCommand(IAnsiConsole console)
                         args.Add($"REPOQL_CWD={workingDir}");
                     }
 
-                    args.Add("repoql");
+                    args.Add("repoql"); // server name
                     args.Add("--");
-                    args.Add("repoql");
+                    args.Add(GetRepoqlCommand());
                     args.Add("mcp");
                     return args;
                 },
@@ -1427,7 +1521,7 @@ internal class InstallCommand(IAnsiConsole console)
         var payload = new JsonObject
         {
             ["name"] = "repoql",
-            ["command"] = "repoql",
+            ["command"] = GetRepoqlCommand(),
             ["args"] = new JsonArray("mcp")
         };
 
@@ -1596,6 +1690,113 @@ internal class InstallCommand(IAnsiConsole console)
             .Distinct(StringComparer.OrdinalIgnoreCase);
     }
 
+    private static string ResolveRepoqlCommand()
+    {
+        var processPath = Environment.ProcessPath;
+        if (LooksLikeRepoqlExecutable(processPath))
+            return processPath!;
+
+        var located = LocateExecutable("repoql");
+        if (!string.IsNullOrEmpty(located))
+            return located;
+
+        foreach (var candidate in EnumerateRepoqlExecutableCandidates())
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return "repoql";
+    }
+
+    private static bool LooksLikeRepoqlExecutable(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return false;
+        if (!File.Exists(path))
+            return false;
+
+        var name = Path.GetFileNameWithoutExtension(path);
+        return name.Contains("repoql", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IEnumerable<string> EnumerateRepoqlExecutableCandidates()
+    {
+        foreach (var dir in GetRepoqlSearchDirectories())
+        {
+            foreach (var name in GetRepoqlExecutableNames())
+            {
+                yield return Path.Combine(dir, name);
+            }
+        }
+    }
+
+    private static IEnumerable<string> GetRepoqlSearchDirectories()
+    {
+        var current = Environment.CurrentDirectory;
+        var rawDirectories = new[]
+        {
+            SafeGetDirectory(Environment.ProcessPath),
+            AppContext.BaseDirectory,
+            SafeGetDirectory(typeof(InstallCommand).Assembly.Location),
+            current,
+            Path.Combine(current, "artifacts", "publish", "RepoQL.ConsoleApp"),
+            Path.Combine(current, "artifacts", "publish", "RepoQL.ConsoleApp", "release"),
+            Path.Combine(current, "artifacts", "publish", "RepoQL.ConsoleApp", "debug")
+        };
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dir in rawDirectories)
+        {
+            if (string.IsNullOrWhiteSpace(dir))
+                continue;
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(dir);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (Directory.Exists(fullPath) && seen.Add(fullPath))
+                yield return fullPath;
+        }
+    }
+
+    private static string? SafeGetDirectory(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        try
+        {
+            var dir = Path.GetDirectoryName(path);
+            return string.IsNullOrWhiteSpace(dir) ? null : dir;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static IEnumerable<string> GetRepoqlExecutableNames()
+    {
+        yield return "repoql";
+        yield return "RepoQL";
+        yield return "RepoQL.ConsoleApp";
+
+        if (OperatingSystem.IsWindows())
+        {
+            yield return "repoql.exe";
+            yield return "RepoQL.exe";
+            yield return "RepoQL.ConsoleApp.exe";
+            yield return "repoql.cmd";
+        }
+    }
+
     private static bool HasExecutableExtension(string? extension, string[] executableExtensions)
     {
         if (!OperatingSystem.IsWindows())
@@ -1614,12 +1815,11 @@ internal class InstallCommand(IAnsiConsole console)
 
     private sealed record CliCommandResult(bool Success, int ExitCode, string StandardOutput, string StandardError, string? ErrorMessage);
 
-    private string? GetDefaultWorkingDirectory(AgentType agentType) =>
-        agentType switch
-        {
-            AgentType.Codex => "{workspace}",
-            _ => null
-        };
+    private static string GetRepoqlCommand() => RepoqlCommandLazy.Value;
+
+    private string? GetDefaultWorkingDirectory(AgentType agentType) => null;
+
+    private sealed record RepoqlLocation(string PropertyName, JsonObject Parent);
 
     private record AgentInfo
     {

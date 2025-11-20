@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <Version>1.1.5</Version>
+        <Version>1.1.6</Version>
         <TargetFramework>net10.0</TargetFramework>
         <OutputType>Exe</OutputType>
         <InvariantGlobalization>true</InvariantGlobalization>
@@ -70,13 +70,11 @@
     
     <!-- Prefer a prebuilt zip committed once; otherwise embed individual model files -->
     <ItemGroup>
-        <None Include="Resources\EmbeddingsModel.zip" LogicalName="Embeddings.Model.embeddings.zip" Condition="Exists('$(MSBuildThisFileDirectory)Resources\\EmbeddingsModel.zip')" />
+        <EmbeddedResource Include="Resources\EmbeddingsModel.zip" LogicalName="Embeddings.Model.embeddings.zip" Condition="Exists('$(MSBuildThisFileDirectory)Resources\\EmbeddingsModel.zip')" />
     </ItemGroup>
 
     <ItemGroup>
         <EmbeddedResource Include="Templates\**\*.liquid" />
-        <None Remove="Resources\EmbeddingsModel.zip" />
-        <EmbeddedResource Include="Resources\EmbeddingsModel.zip" />
     </ItemGroup>
 
     <ItemGroup>

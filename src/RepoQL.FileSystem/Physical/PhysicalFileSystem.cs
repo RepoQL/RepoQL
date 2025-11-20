@@ -94,10 +94,8 @@ public sealed class PhysicalFileSystem(
             AttributesToSkip = FileAttributes.Hidden | FileAttributes.System
         };
 
-        // Enumerate all files recursively, excluding .git and .repoql directories
-        var files = Directory.EnumerateFiles(RootPath, "*", opts)
-            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}") &&
-                       !f.Contains($"{Path.DirectorySeparatorChar}.repoql{Path.DirectorySeparatorChar}"));
+        // Enumerate all files recursively
+        var files = Directory.EnumerateFiles(RootPath, "*", opts);
 
         foreach (var filePath in files)
         {
@@ -106,6 +104,11 @@ public sealed class PhysicalFileSystem(
 
             // Get relative path from the repository root
             var relativePath = Path.GetRelativePath(RootPath, filePath).Replace('\\', '/');
+
+            // Exclude files within .git and .repoql directories (check relative path only)
+            if (relativePath.Contains("/.git/") || relativePath.StartsWith(".git/") ||
+                relativePath.Contains("/.repoql/") || relativePath.StartsWith(".repoql/"))
+                continue;
             var fileInfo = _fileSystem.GetFileInfo(relativePath);
 
             if (fileInfo.Exists)

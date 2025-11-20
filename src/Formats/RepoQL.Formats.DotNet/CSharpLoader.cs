@@ -809,7 +809,11 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
         };
 
         return assemblies
-            .Select(a => MetadataReference.CreateFromFile(a.Location))
+            .Select(a => a.Location)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            // Some framework assemblies resolve to an empty path when running from single-file/self-contained publishes.
+            // Skip those instead of letting Roslyn throw ArgumentException for an empty metadata path.
+            .Select(path => MetadataReference.CreateFromFile(path))
             .GroupBy(r => (r as PortableExecutableReference)?.FilePath ?? string.Empty)
             .Select(g => g.First())
             .ToArray();
