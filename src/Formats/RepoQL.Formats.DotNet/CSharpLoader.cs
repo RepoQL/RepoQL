@@ -40,9 +40,11 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
     /// </summary>
     public const string StateMetadataKey = "csharp.state";
 
-    private static readonly SemanticMediaType CSharpMediaType = SemanticMediaType
+    public const string MediaKind = "code.csharp";
+
+    internal static readonly SemanticMediaType CSharpMediaType = SemanticMediaType
         .Create("text", "plain")
-        .WithKind("code.csharp");
+        .WithKind(MediaKind);
 
     private static readonly CSharpParseOptions ParseOptions = new(
         languageVersion: LanguageVersion.Preview,

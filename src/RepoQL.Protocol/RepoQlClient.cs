@@ -303,9 +303,20 @@ public sealed class RepoQlClient : IRepoQlClient
             implicitEnv.Add(env.Key, env.Value);
         }
 
-        var baseDir = AppContext.BaseDirectory;
         var args = new List<string> { "serve", "--repository", repoPath, "--implicit-start" };
-        StartProcess(BuildExecutableCandidates(Path.Join(baseDir, "repoql")).FirstOrDefault(File.Exists) ?? "repoql", repoPath, args, implicitEnv);
+        var currentExe = Environment.ProcessPath;
+        string launchTarget;
+        if (!string.IsNullOrWhiteSpace(currentExe) && File.Exists(currentExe))
+        {
+            launchTarget = currentExe!;
+        }
+        else
+        {
+            var baseDir = AppContext.BaseDirectory;
+            launchTarget = BuildExecutableCandidates(Path.Join(baseDir, "repoql")).FirstOrDefault(File.Exists) ?? "repoql";
+        }
+
+        StartProcess(launchTarget, repoPath, args, implicitEnv);
     }
 
     private static IEnumerable<string> BuildExecutableCandidates(string basePath)

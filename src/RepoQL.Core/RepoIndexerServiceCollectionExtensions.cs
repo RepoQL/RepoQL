@@ -344,6 +344,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<IDocumentCatalog>(),
             sp.GetService<ILogger<IndexingCommitter>>()));
 
+        services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, CSharpClassifier>();
+        services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CSharpParser>();
         services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, MarkdownClassifier>();
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, MarkdownParser>();
         services.AddSingleton<IAsyncPipeline<IParsedArtifact, Annotation[]>>(sp =>
