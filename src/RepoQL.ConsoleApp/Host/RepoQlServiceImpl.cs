@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Linq;
 using System.Globalization;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Google.Protobuf;
@@ -21,26 +22,50 @@ using ProtoStageStatus = RepoQL.Contracts.StageStatus;
 
 namespace RepoQL.ConsoleApp.Host;
 
-public sealed class RepoQlServiceImpl(
-    IGraphStore store,
-    RepositoryConfiguration repoConfig,
-    IInitialIndexingBarrier barrier,
-    IIndexingCoordinator coordinator,
-    IFileSystemImportService importService,
-    DocumentPreviewService previewService,
-    IDatabaseWriter writer,
-    IHostApplicationLifetime hostLifetime,
-    ILogger<RepoQlServiceImpl>? logger = null) : Contracts.RepoQL.RepoQLBase
+public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 {
-    private readonly IHostApplicationLifetime _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
-    private readonly ILogger<RepoQlServiceImpl> _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
-    private readonly DocumentPreviewService _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
+    private readonly IGraphStore store;
+    private readonly RepositoryConfiguration repoConfig;
+    private readonly IInitialIndexingBarrier barrier;
+    private readonly IIndexingCoordinator coordinator;
+    private readonly IFileSystemImportService importService;
+    private readonly DocumentPreviewService _previewService;
+    private readonly IDatabaseWriter writer;
+    private readonly IHostApplicationLifetime _hostLifetime;
+    private readonly ILogger<RepoQlServiceImpl> _logger;
+    private readonly Task _versionCheckTask;
+    private readonly string _currentVersion;
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
     {
         TypeInfoResolver = new DefaultJsonTypeInfoResolver()
     };
     private static int GetEnvInt(string name, int dflt)
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
+
+    public RepoQlServiceImpl(
+        IGraphStore store,
+        RepositoryConfiguration repoConfig,
+        IInitialIndexingBarrier barrier,
+        IIndexingCoordinator coordinator,
+        IFileSystemImportService importService,
+        DocumentPreviewService previewService,
+        IDatabaseWriter writer,
+        IHostApplicationLifetime hostLifetime,
+        ILogger<RepoQlServiceImpl>? logger = null)
+    {
+        this.store = store ?? throw new ArgumentNullException(nameof(store));
+        this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
+        this.barrier = barrier ?? throw new ArgumentNullException(nameof(barrier));
+        this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+        this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
+        _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
+        this.writer = writer ?? throw new ArgumentNullException(nameof(writer));
+        _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
+        _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
+
+        _currentVersion = GetCurrentVersion();
+        _versionCheckTask = Task.Run(() => EnsureVersionMetadataAsync(_hostLifetime.ApplicationStopping));
+    }
 
     public override async Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
     {
@@ -632,4 +657,80 @@ public sealed class RepoQlServiceImpl(
             ProtoPipelineStage.SemanticIndexing => CoordinatorPipelineStage.Writer,
             _ => CoordinatorPipelineStage.Discovery
         };
+
+    internal Task EnsureVersionMetadataAsync(CancellationToken cancellationToken)
+        => EnsureVersionMetadataAsync(store, coordinator, writer, _currentVersion, _logger, cancellationToken);
+
+    internal static async Task EnsureVersionMetadataAsync(
+        IGraphStore store,
+        IIndexingCoordinator coordinator,
+        IDatabaseWriter writer,
+        string currentVersion,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var existingRow = store.RawQuery("SELECT value FROM repo_metadata WHERE key=? LIMIT 1", "repoql.version").FirstOrDefault();
+            var storedVersion = existingRow != null && existingRow.TryGetValue("value", out var val) ? val?.ToString() : null;
+
+            if (string.Equals(storedVersion, currentVersion, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (storedVersion is null)
+            {
+                UpsertVersionMetadata(store, currentVersion);
+                return;
+            }
+
+            logger.LogInformation("RepoQL version changed from {OldVersion} to {NewVersion}; triggering reindex.", storedVersion, currentVersion);
+
+            await foreach (var _ in coordinator.ReindexAsync(new ReindexRequestOptions(false), cancellationToken).ConfigureAwait(false))
+            {
+                // Intentionally exhaust the stream to completion.
+            }
+            await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+            UpsertVersionMetadata(store, currentVersion);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to ensure repo metadata version.");
+        }
+    }
+
+    private static string GetCurrentVersion()
+    {
+        var asm = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+        var version = asm?.GetName().Version?.ToString();
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            version = asm?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        }
+
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            throw new InvalidOperationException("RepoQL version could not be determined from the assembly. Ensure a version is stamped during single-file publishing.");
+        }
+
+        return version!;
+    }
+
+    internal static void UpsertVersionMetadata(IGraphStore store, string version)
+    {
+        // Uses INSERT ... ON CONFLICT to remain compatible with RawQuery's reader-based execution.
+        store.RawQuery(
+            "CREATE TABLE IF NOT EXISTS repo_metadata( key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );")
+            .FirstOrDefault();
+
+        store.RawQuery(
+            "INSERT INTO repo_metadata(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=now()",
+            "repoql.version",
+            version).FirstOrDefault();
+    }
 }

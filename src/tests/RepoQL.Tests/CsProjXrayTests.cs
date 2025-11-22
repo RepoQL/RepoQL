@@ -1,10 +1,11 @@
 using System.Diagnostics;
 using AwesomeAssertions;
-using RepoQL.Contracts;
 using Microsoft.Extensions.Logging;
+using RepoQL.Contracts;
 using RepoQL.Core;
 using RepoQL.Formats.DotNet;
 using RepoQL.Testing.Scaffolding;
+using CorePipelineStage = RepoQL.Core.PipelineStage;
 
 namespace RepoQL.Tests;
 
@@ -77,7 +78,7 @@ internal class CsProjXrayTests
         docProps["output_type"]!.ToString()!.ToLowerInvariant().Should().Be("exe");
         docProps["pack"]!.ToString()!.ToLowerInvariant().Should().BeOneOf("true", "yes");
 
-        await repo.WaitForStagesIdleAsync(PipelineStage.Analysis, CancellationToken.None);
+        await repo.WaitForStagesIdleAsync(CorePipelineStage.Analysis, CancellationToken.None);
 
         var sw = Stopwatch.StartNew();
         IReadOnlyDictionary<string, object?>[] ann;

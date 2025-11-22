@@ -577,6 +577,7 @@ namespace RepoQL.Data.DuckDB;
         ExecuteSqlResource("Macros/json_extract_string_array.sql");
         ExecuteSqlResource("Tables/annotation.sql");
         ExecuteSqlResource("Views/annotations.sql");
+        Execute("CREATE TABLE IF NOT EXISTS repo_metadata(\r\n                    key TEXT PRIMARY KEY,\r\n                    value TEXT,\r\n                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\r\n                );");
         ExecuteSqlResource("Macros/annotations_for.sql");
         ExecuteSqlResource("Macros/annotations_all.sql");
         ExecuteSqlResource("Macros/glob_match.sql");

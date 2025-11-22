@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using System.Threading.Channels;
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Hosting;
@@ -15,7 +16,8 @@ namespace RepoQL.Data.DuckDB;
 public sealed class SingleThreadedDatabaseWriter(
     IDuckDBConnectionFactory connectionFactory,
     IndexingMetrics? metrics = null,
-    ILogger<SingleThreadedDatabaseWriter>? logger = null)
+    ILogger<SingleThreadedDatabaseWriter>? logger = null,
+    IFormatRegistry? formatRegistry = null)
     : IDatabaseWriter, IHostedService
 {
     private readonly Channel<QueueItem> _channel = Channel.CreateBounded<QueueItem>(new BoundedChannelOptions(MaxQueueDepth)
@@ -32,6 +34,7 @@ public sealed class SingleThreadedDatabaseWriter(
 
     private readonly ILogger<SingleThreadedDatabaseWriter> _logger =
         logger ?? NullLogger<SingleThreadedDatabaseWriter>.Instance;
+    private readonly IFormatRegistry? _formatRegistry = formatRegistry;
     private readonly CancellationTokenSource _stopping = new();
     private Task? _writerTask;
 
@@ -96,8 +99,11 @@ public sealed class SingleThreadedDatabaseWriter(
     {
         // Initialize connection and store once
         _writeConnection = _connectionFactory.CreateConnection();
-        // Writer does not need UDFs; avoid duplicate registration conflicts
-        _store = new DuckDbGraphStore(_writeConnection, _metrics);
+        var formatScripts = _formatRegistry?.Formats
+            .SelectMany(f => f.Loader.GetSchemaScripts())
+            .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
+            .ToArray();
+        _store = new DuckDbGraphStore(_writeConnection, _metrics, formatSchemaScripts: formatScripts);
         _store.EnsureSchema();
 
         _writerTask = Task.Run(WriterLoop, cancellationToken);

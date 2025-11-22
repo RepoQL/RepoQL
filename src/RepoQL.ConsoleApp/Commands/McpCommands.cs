@@ -3,7 +3,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Tools;
-using RepoQL.ConsoleApp.Resources;
 using ConsoleAppFramework;
 using RepoQL.ConsoleApp.Logging;
 

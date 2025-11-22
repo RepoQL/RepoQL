@@ -2,10 +2,9 @@
   "mcpServers": {
     "memory": {
       "type": "stdio",
-      "command": "npx",
+      "command": "artifacts\\publish\\repoql.exe",
       "args": [
-        "-y",
-        "@buger/probe-mcp"
+        "mcp"
       ]
     },
     "engineer": {

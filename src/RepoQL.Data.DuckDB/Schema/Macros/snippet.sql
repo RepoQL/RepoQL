@@ -89,20 +89,20 @@ WITH base AS (
                  (SELECT column_for_byte_offset(text_content, c2) FROM doc, char_rng)
              ) AS fc2
      ),
-     raw_text AS (
-         SELECT
-             CASE WHEN text_content IS NOT NULL THEN text_content
-                  ELSE COALESCE(binary_preview(storage_uri, 4096), '')
-                 END AS content
-         FROM doc
-     ),
-     lines AS (
-         SELECT
-                 ROW_NUMBER() OVER () AS ln,
-                 value AS line
-         FROM raw_text,
-              UNNEST(string_split(content, CHR(10))) AS t(value)
-     ),
+    raw_text AS (
+        SELECT
+            CASE WHEN text_content IS NOT NULL THEN text_content
+                 ELSE COALESCE(binary_preview(storage_uri, 4096), '')
+                END AS content
+        FROM doc
+    ),
+    lines AS (
+        SELECT
+                ord::INTEGER AS ln,
+                value AS line
+         FROM raw_text
+              CROSS JOIN UNNEST(string_split(content, CHR(10))) WITH ORDINALITY AS t(value, ord)
+    ),
      win AS (
          SELECT
              -- If no fragment specified (frag is NULL or empty), show entire file

@@ -195,7 +195,6 @@ public static class RepoIndexerServiceCollectionExtensions
             resourceRoot: "RepoQL.Formats.DotNet.Templates");
 
         services.AddMarkdownFormat();
-        services.AddPlainTextFormat();
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjAnalyzer>();
@@ -353,6 +352,8 @@ public static class RepoIndexerServiceCollectionExtensions
                 sp.GetRequiredService<MarkdownAnalyzer>(),
                 sp.GetRequiredService<Func<AnalyzerContext>>(),
                 sp.GetService<ILogger<MarkdownAnalysisProcessor>>()));
+        // Catch-all parser should run last in the parsing pipeline
+        services.AddPlainTextFormat();
 
         services.AddSingleton(sp => new ClassificationPipeline(
             sp.GetServices<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>>(),

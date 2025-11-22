@@ -57,6 +57,15 @@ score_source AS (
     SELECT
         ri.node_id,
         ri.doc_id,
+        inp.keywords_empty AS lex_keywords_empty,
+        concat_ws(' ',
+            coalesce(ri.search_key, ''),
+            coalesce(ri.basename, ''),
+            coalesce(ri.body, ''),
+            coalesce(ri.headline, ''),
+            coalesce(ri.structure, ''),
+            coalesce(ri.symbol, '')
+        ) AS text_target,
         -- Symbol + path heuristics act like lightweight BM25 surrogates
         CASE
             WHEN inp.keywords_empty THEN 0.0
@@ -66,15 +75,28 @@ score_source AS (
               OR lower(regexp_replace(COALESCE(ri.basename, ''), '\\.[^.]*$', '')) = inp.keywords_lc THEN 3.0
             WHEN position(inp.keywords_lc IN lower(COALESCE(ri.basename, ''))) > 0 THEN 2.0
             WHEN position(inp.keywords_lc IN ri.search_key) > 0 THEN 1.0
-            ELSE 0.0
-        END AS bm25,
+            WHEN position(inp.keywords_lc IN lower(COALESCE(ri.body, ''))) > 0 THEN 0.5
+            ELSE NULL
+        END AS bm25_heur,
+        match_score(inp.keywords_lc, text_target) AS bm25_fallback,
+        (SELECT MAX(match_score(trim(t.value), text_target))
+            FROM UNNEST(str_split(inp.keywords_lc, ' ')) AS t(value)
+            WHERE length(trim(t.value)) > 0) AS bm25_tokens,
         match_score(inp.keywords_lc, ri.search_key) AS fuzz
     FROM repo_base ri
              CROSS JOIN inputs inp
     WHERE inp.keywords_empty = FALSE
 ),
 ranked_lex AS (
-    SELECT node_id, doc_id, bm25, fuzz
+    SELECT
+        node_id,
+        doc_id,
+        COALESCE(
+            bm25_heur,
+            bm25_fallback,
+            bm25_tokens,
+            CASE WHEN lex_keywords_empty THEN 0 ELSE 0.05 END) AS bm25,
+        fuzz
     FROM score_source
     ORDER BY coalesce(bm25, 0) DESC, fuzz DESC
     LIMIT CAST(max_cand AS BIGINT)

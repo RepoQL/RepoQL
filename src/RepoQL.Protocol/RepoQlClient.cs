@@ -7,6 +7,8 @@ using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
@@ -37,42 +39,50 @@ public sealed class RepoQlClient : IRepoQlClient
     private readonly TimeSpan? _defaultTimeout;
     private CancellationTokenSource? _leaseCts;
     private AsyncClientStreamingCall<ClientLeaseBeat, ClientLeaseSummary>? _leaseCall;
+    private readonly ILogger<RepoQlClient> _logger;
 
     public GrpcChannel Channel => _channel ?? throw new InvalidOperationException("RepoQL client is not connected.");
 
-    private RepoQlClient(GrpcChannel channel, TimeSpan? defaultTimeout)
+    private RepoQlClient(GrpcChannel channel, TimeSpan? defaultTimeout, ILogger<RepoQlClient>? logger = null)
     {
         _mode = ConnectionMode.ExternalChannel;
         _channel = channel;
         _client = new Contracts.RepoQL.RepoQLClient(channel);
         _defaultTimeout = defaultTimeout;
+        _logger = logger ?? NullLogger<RepoQlClient>.Instance;
     }
 
-    private RepoQlClient(RepoQlClientOptions options, string repoPath, string? socketPath)
+    private RepoQlClient(RepoQlClientOptions options, string repoPath, string? socketPath, ILogger<RepoQlClient>? logger = null)
     {
         _mode = ConnectionMode.Managed;
         _repoDirectory = new RepoDirectoryAccessor(repoPath);
         _configuredSocketPath = socketPath;
         _defaultTimeout = options.DefaultTimeout;
+        _logger = logger ?? NullLogger<RepoQlClient>.Instance;
     }
 
     /// <summary>
     /// Create a client from an existing <see cref="GrpcChannel"/> (useful for in-memory tests with TestServer).
     /// </summary>
-    public static RepoQlClient FromChannel(GrpcChannel channel, TimeSpan? defaultTimeout = null)
-        => new RepoQlClient(channel, defaultTimeout);
+    public static RepoQlClient FromChannel(GrpcChannel channel, TimeSpan? defaultTimeout = null, ILogger<RepoQlClient>? logger = null)
+        => new RepoQlClient(channel, defaultTimeout, logger);
 
     /// <summary>
     /// Create a client connected to the repository's RepoQL server over a Unix domain socket.
     /// </summary>
     /// <param name="options">Optional configuration for socket discovery and default timeouts.</param>
     /// <param name="cancellationToken"></param>
-    public static async Task<RepoQlClient> CreateAsync(RepoQlClientOptions? options = null, CancellationToken cancellationToken = default)
+    public static async Task<RepoQlClient> CreateAsync(RepoQlClientOptions? options = null, ILogger<RepoQlClient>? logger = null, CancellationToken cancellationToken = default)
     {
         options ??= new RepoQlClientOptions();
         var repoPath = RepoLocator.FindRepoRoot(options.RepositoryPath);
 
-        var client = new RepoQlClient(options, repoPath, options.SocketPath);
+        logger ??= NullLogger<RepoQlClient>.Instance;
+        logger.LogInformation("RepoQlClient: creating managed connection (repoRoot='{RepoRoot}', socketOverride='{SocketOverride}').",
+            repoPath,
+            options.SocketPath ?? "<null>");
+
+        var client = new RepoQlClient(options, repoPath, options.SocketPath, logger);
         await client.EnsureConnectedAsync(forceReconnect: true, cancellationToken).ConfigureAwait(false);
         return client;
     }
@@ -114,6 +124,10 @@ public sealed class RepoQlClient : IRepoQlClient
         var socketPath = allowReResolve
             ? repoDirectory.ResolveSocketPath()
             : _configuredSocketPath!;
+        _logger.LogInformation("RepoQlClient: connect (repoRoot='{RepoRoot}', initialSocket='{SocketPath}', allowReResolve={AllowReResolve}).",
+            repoDirectory.RepoRoot,
+            socketPath,
+            allowReResolve);
         var finalSocketPath = await EnsureServerRunning(
             repoDirectory,
             socketPath,
@@ -183,6 +197,7 @@ public sealed class RepoQlClient : IRepoQlClient
             }
             catch (Exception ex) when (attempt == 0 && _mode == ConnectionMode.Managed && ShouldAttemptReconnect(ex))
             {
+                _logger.LogWarning(ex, "RepoQlClient: first attempt failed; disposing channel and retrying.");
                 last = ex;
                 DisposeChannel();
             }
@@ -209,17 +224,28 @@ public sealed class RepoQlClient : IRepoQlClient
         return effective.HasValue ? DateTime.UtcNow + effective.Value : (DateTime?)null;
     }
 
-    private static async Task<string> EnsureServerRunning(
+    private async Task<string> EnsureServerRunning(
         RepoDirectoryAccessor repoDirectory,
         string initialSocketPath,
         bool allowReResolve,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
-        if (await TryHealthCheckAsync(initialSocketPath, cancellationToken))
-            return initialSocketPath;
+        _logger.LogInformation(
+            "RepoQlClient: ensure server running (repoRoot='{RepoRoot}', initialSocket='{Socket}', allowReResolve={Allow}, timeoutMs={Timeout}).",
+            repoDirectory.RepoRoot,
+            initialSocketPath,
+            allowReResolve,
+            timeout.TotalMilliseconds);
 
-        LaunchHost(repoDirectory.RepoRoot);
+        if (await TryHealthCheckAsync(initialSocketPath, cancellationToken))
+        {
+            _logger.LogInformation("RepoQlClient: existing host healthy on '{Socket}'.", initialSocketPath);
+            return initialSocketPath;
+        }
+
+        _logger.LogInformation("RepoQlClient: launching host for repoRoot='{RepoRoot}'.", repoDirectory.RepoRoot);
+        LaunchHost(repoDirectory.RepoRoot, _logger);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var currentSocketPath = initialSocketPath;
@@ -231,11 +257,21 @@ public sealed class RepoQlClient : IRepoQlClient
             }
 
             if (await TryHealthCheckAsync(currentSocketPath, cancellationToken))
+            {
+                _logger.LogInformation(
+                    "RepoQlClient: host healthy on '{Socket}' after {Elapsed} ms.",
+                    currentSocketPath,
+                    sw.Elapsed.TotalMilliseconds);
                 return currentSocketPath;
+            }
 
             await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
         }
 
+        _logger.LogError(
+            "RepoQlClient: host did not become ready within {Timeout} ms (lastSocket='{Socket}').",
+            timeout.TotalMilliseconds,
+            currentSocketPath);
         throw new TimeoutException($"RepoQL host did not become ready within {timeout.TotalMilliseconds} ms (socket: {currentSocketPath})");
     }
 
@@ -285,7 +321,7 @@ public sealed class RepoQlClient : IRepoQlClient
         }
     }
 
-    private static void LaunchHost(string repoPath)
+    private static void LaunchHost(string repoPath, ILogger logger)
     {
         var implicitEnv = new Dictionary<string, string?>
         {
@@ -303,7 +339,7 @@ public sealed class RepoQlClient : IRepoQlClient
             implicitEnv.Add(env.Key, env.Value);
         }
 
-        var args = new List<string> { "serve", "--repository", repoPath, "--implicit-start" };
+        var args = new List<string> { "serve", "--implicit-start" };
         var currentExe = Environment.ProcessPath;
         string launchTarget;
         if (!string.IsNullOrWhiteSpace(currentExe) && File.Exists(currentExe))
@@ -316,6 +352,10 @@ public sealed class RepoQlClient : IRepoQlClient
             launchTarget = BuildExecutableCandidates(Path.Join(baseDir, "repoql")).FirstOrDefault(File.Exists) ?? "repoql";
         }
 
+        logger.LogInformation("RepoQlClient: launching host '{Exe}' for repo '{RepoPath}' with args '{Args}'.",
+            launchTarget,
+            repoPath,
+            string.Join(' ', args));
         StartProcess(launchTarget, repoPath, args, implicitEnv);
     }
 
@@ -365,6 +405,9 @@ public sealed class RepoQlClient : IRepoQlClient
         if (_leaseCts is null)
             throw new InvalidOperationException("Lease token source is not initialized.");
         var channel = _channel ?? throw new InvalidOperationException("RepoQL client channel is not established.");
+        _logger.LogInformation("RepoQlClient: establishing lease for repo '{RepoPath}' (timeoutMs={Timeout}).",
+            repoPath,
+            timeout.TotalMilliseconds);
         var leaseClient = new Contracts.RepoQL.RepoQLClient(channel);
         var leaseCall = leaseClient.HoldClientLease(cancellationToken: _leaseCts.Token);
         _leaseCall = leaseCall;

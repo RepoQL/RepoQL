@@ -19,7 +19,10 @@ public class UnstructuredFormatter : IResultFormatter
         var rows = result.Rows;
 
         if (rows.Count == 0)
-            return new[] { "<Empty>" };
+            return new[]
+            {
+                "0 rows returned (query ran successfully)."
+            };
 
         var displayCount = Math.Min(rows.Count, maxRows);
         var total = totalRowCount ?? rows.Count;

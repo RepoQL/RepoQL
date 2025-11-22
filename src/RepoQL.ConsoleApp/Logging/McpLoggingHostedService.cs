@@ -8,9 +8,9 @@ namespace RepoQL.ConsoleApp.Logging;
 /// Forwards <see cref="ILogger"/> events to connected MCP clients by
 /// registering the MCP-provided logger provider alongside the existing sinks.
 /// </summary>
-internal sealed class McpLoggingHostedService(IMcpServer server, ILoggerFactory loggerFactory) : IHostedService, IDisposable
+internal sealed class McpLoggingHostedService(McpServer server, ILoggerFactory loggerFactory) : IHostedService, IDisposable
 {
-    private readonly IMcpServer _server = server ?? throw new ArgumentNullException(nameof(server));
+    private readonly McpServer _server = server ?? throw new ArgumentNullException(nameof(server));
     private readonly ILoggerFactory _loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
     private ILoggerProvider? _provider;
 

@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -28,6 +29,11 @@ public sealed class RepoqlHost : BackgroundService
     private Channel<RawArtifact>? _watcherChannel;
     private Task? _watcherPump;
     private volatile bool _isStopping;
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastWriteByUri = new(StringComparer.OrdinalIgnoreCase);
+    private readonly PeriodicTimer _dirtyTimer = new(TimeSpan.FromSeconds(1));
+    private Task? _dirtyScanLoop;
+    private volatile bool _dirty;
+    private int _activeEnqueue;
 
     public RepoqlHost(
         CompositeFileSystem fileSystem,
@@ -66,6 +72,8 @@ public sealed class RepoqlHost : BackgroundService
         {
             await StartWatcherAsync(stoppingToken).ConfigureAwait(false);
         }
+
+        _dirtyScanLoop = Task.Run(() => DirtyScanLoopAsync(stoppingToken), CancellationToken.None);
 
         // Keep the background service alive until the host is asked to stop.
         try
@@ -171,7 +179,7 @@ public sealed class RepoqlHost : BackgroundService
                 {
                     try
                     {
-                        await _enqueue(artifact, _options.DefaultIndexItemOptions, stoppingToken).ConfigureAwait(false);
+                        await EnqueueWithTrackingAsync(artifact, stoppingToken).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                     {
@@ -216,6 +224,18 @@ public sealed class RepoqlHost : BackgroundService
             }
         }
         _watcherPump = null;
+
+        _dirtyTimer.Dispose();
+        if (_dirtyScanLoop is not null)
+        {
+            try
+            {
+                await _dirtyScanLoop.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
     }
 
     private sealed class WatcherObserver : IObserver<ResourceChange>
@@ -231,7 +251,14 @@ public sealed class RepoqlHost : BackgroundService
 
         public void OnError(Exception error)
         {
-            _host._logger.LogError(error, "File system watcher reported an error.");
+            if (error is InternalBufferOverflowException)
+            {
+                _host.MarkDirtyFromWatcher();
+            }
+            else
+            {
+                _host._logger.LogError(error, "File system watcher reported an error.");
+            }
         }
 
         public void OnNext(ResourceChange value)
@@ -250,6 +277,85 @@ public sealed class RepoqlHost : BackgroundService
 
             var artifact = new RawArtifact(value.File, store);
             _host.EnqueueWatcherArtifact(artifact, value.CurrentUri);
+            _host.UpdateLastWrite(value.CurrentUri, value.File.LastModified);
+        }
+    }
+
+    private void MarkDirtyFromWatcher()
+    {
+        Volatile.Write(ref _dirty, true);
+        _logger.LogInformation("File system watcher overflow detected; scheduling dirty scan.");
+    }
+
+    private void UpdateLastWrite(RepoUri uri, DateTimeOffset lastModified)
+    {
+        _lastWriteByUri[uri.AbsoluteUri] = lastModified;
+    }
+
+    private bool IsIndexerBusy() => Volatile.Read(ref _activeEnqueue) > 0;
+
+    private async Task DirtyScanLoopAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            while (await _dirtyTimer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+            {
+                if (!_options.EnableWatching)
+                    continue;
+
+                if (!Volatile.Read(ref _dirty))
+                    continue;
+
+                if (IsIndexerBusy())
+                    continue;
+
+                Volatile.Write(ref _dirty, false);
+                await RunDirtyScanAsync(stoppingToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task RunDirtyScanAsync(CancellationToken cancellationToken)
+    {
+        var enqueued = 0;
+        await foreach (var resource in _fileSystem.EnumerateAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!resource.File.Exists)
+                continue;
+
+            if (!_fileSystem.TryResolve(resource.Uri, out var store))
+                continue;
+
+            var lastModified = resource.File.LastModified;
+            var key = resource.Uri.AbsoluteUri;
+
+            if (_lastWriteByUri.TryGetValue(key, out var previous) && lastModified <= previous)
+            {
+                continue;
+            }
+
+            var artifact = new RawArtifact(resource.File, store);
+            await EnqueueWithTrackingAsync(artifact, cancellationToken).ConfigureAwait(false);
+            UpdateLastWrite(resource.Uri, lastModified);
+            enqueued++;
+        }
+
+        _logger.LogDebug("Dirty scan completed. Enqueued {Count} artifacts.", enqueued);
+    }
+
+    private async Task EnqueueWithTrackingAsync(RawArtifact artifact, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _activeEnqueue);
+        try
+        {
+            await _enqueue(artifact, _options.DefaultIndexItemOptions, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeEnqueue);
         }
     }
 }
