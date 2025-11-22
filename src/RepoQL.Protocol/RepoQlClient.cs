@@ -39,7 +39,7 @@ public sealed class RepoQlClient : IRepoQlClient
     private readonly TimeSpan? _defaultTimeout;
     private CancellationTokenSource? _leaseCts;
     private AsyncClientStreamingCall<ClientLeaseBeat, ClientLeaseSummary>? _leaseCall;
-    private readonly ILogger<RepoQlClient> _logger;
+    private readonly ILogger _logger;
 
     public GrpcChannel Channel => _channel ?? throw new InvalidOperationException("RepoQL client is not connected.");
 
@@ -52,13 +52,13 @@ public sealed class RepoQlClient : IRepoQlClient
         _logger = logger ?? NullLogger<RepoQlClient>.Instance;
     }
 
-    private RepoQlClient(RepoQlClientOptions options, string repoPath, string? socketPath, ILogger<RepoQlClient>? logger = null)
+    private RepoQlClient(RepoQlClientOptions options, string repoPath, string? socketPath, ILogger? logger = null)
     {
         _mode = ConnectionMode.Managed;
         _repoDirectory = new RepoDirectoryAccessor(repoPath);
         _configuredSocketPath = socketPath;
         _defaultTimeout = options.DefaultTimeout;
-        _logger = logger ?? NullLogger<RepoQlClient>.Instance;
+        _logger = logger ?? NullLogger.Instance;
     }
 
     /// <summary>
@@ -72,12 +72,15 @@ public sealed class RepoQlClient : IRepoQlClient
     /// </summary>
     /// <param name="options">Optional configuration for socket discovery and default timeouts.</param>
     /// <param name="cancellationToken"></param>
-    public static async Task<RepoQlClient> CreateAsync(RepoQlClientOptions? options = null, ILogger<RepoQlClient>? logger = null, CancellationToken cancellationToken = default)
+    public static async Task<IRepoQlClient> CreateAsync(RepoQlClientOptions? options = null, ILogger? logger = null, CancellationToken cancellationToken = default)
     {
         options ??= new RepoQlClientOptions();
-        var repoPath = RepoLocator.FindRepoRoot(options.RepositoryPath);
+        if (!RepoLocator.TryFindRepoRoot(options.RepositoryPath, out var repoPath, out var searchedFrom))
+        {
+            throw new RepoRootNotFoundException(searchedFrom ?? Directory.GetCurrentDirectory());
+        }
 
-        logger ??= NullLogger<RepoQlClient>.Instance;
+        logger ??= NullLogger.Instance;
         logger.LogInformation("RepoQlClient: creating managed connection (repoRoot='{RepoRoot}', socketOverride='{SocketOverride}').",
             repoPath,
             options.SocketPath ?? "<null>");

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Helpers;
@@ -28,6 +29,11 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider)
     {
         if (string.IsNullOrWhiteSpace(uri))
             throw new ArgumentException("uri is required", nameof(uri));
+
+        if (TrySetWorkingDirectoryFromPrimaryUri(uri))
+        {
+            // Repo root provided explicitly; proceed to connect and import.
+        }
 
         var parsedStage = ParseWaitStage(waitFor);
         PipelineStage? stageFilter = parsedStage;
@@ -113,5 +119,30 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider)
 
         // Default: return as-is
         return uri;
+    }
+
+    private bool TrySetWorkingDirectoryFromPrimaryUri(string uri)
+    {
+        const string Prefix = "primary://";
+        if (!uri.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var pathPart = uri.Substring(Prefix.Length).Trim();
+        pathPart = pathPart.TrimStart('/'); // tolerate primary:///C:/repo
+        if (string.IsNullOrWhiteSpace(pathPart))
+        {
+            throw new ArgumentException("primary:// URI must include a filesystem path", nameof(uri));
+        }
+
+        var fullPath = Path.GetFullPath(pathPart);
+        if (!Directory.Exists(fullPath))
+        {
+            throw new DirectoryNotFoundException($"The path '{fullPath}' does not exist. Provide a valid repository root path.");
+        }
+
+        _clientProvider.SetWorkingDirectory(fullPath);
+        return true;
     }
 }

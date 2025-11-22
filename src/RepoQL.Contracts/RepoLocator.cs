@@ -15,26 +15,49 @@ public static class RepoLocator
     /// </summary>
     public static string FindRepoRoot(string? startPath = null)
     {
-        var dir = new DirectoryInfo(Path.GetFullPath(string.IsNullOrWhiteSpace(startPath)
+        if (TryFindRepoRoot(startPath, out var root, out var _, allowFallback: true))
+        {
+            return root!;
+        }
+
+        // Fallback: this should never happen because allowFallback returns the last directory
+        return Path.GetFullPath(string.IsNullOrWhiteSpace(startPath)
             ? Directory.GetCurrentDirectory()
-            : startPath));
+            : startPath);
+    }
+
+    /// <summary>
+    ///     Attempt to find a repository root starting at <paramref name="startPath" />.
+    ///     Returns true and sets <paramref name="repoRoot" /> when a marker is found; otherwise false.
+    ///     When <paramref name="allowFallback" /> is true, <paramref name="repoRoot" /> is populated with the last
+    ///     directory visited (drive root) even when no marker is found.
+    /// </summary>
+    public static bool TryFindRepoRoot(string? startPath, out string? repoRoot, out string? searchedFrom, bool allowFallback = false)
+    {
+        var start = Path.GetFullPath(string.IsNullOrWhiteSpace(startPath)
+            ? Directory.GetCurrentDirectory()
+            : startPath);
+
+        var dir = new DirectoryInfo(start);
+        searchedFrom = dir.FullName;
         var last = dir;
+
         while (dir != null)
         {
-            // marker: .git folder or file (worktrees) or .repoql folder
             if (Directory.Exists(Path.Combine(dir.FullName, ".git")) ||
                 File.Exists(Path.Combine(dir.FullName, ".git")) ||
                 Directory.Exists(Path.Combine(dir.FullName, ".repoql")))
             {
-                return dir.FullName;
+                repoRoot = dir.FullName;
+                return true;
             }
 
             last = dir;
             dir = dir.Parent;
         }
 
-        // no marker; return the topmost directory we reached (usually drive root)
-        return last.FullName;
+        repoRoot = allowFallback ? last.FullName : null;
+        return false;
     }
 
     /// <summary>

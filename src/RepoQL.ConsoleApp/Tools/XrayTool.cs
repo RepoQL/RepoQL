@@ -40,9 +40,10 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
                                                  detail=snippet, pattern=file:///Handler.cs#symbol=ProcessRequest&line=42,67 - show method
                                                  detail=snippet, pattern=file:///README.md#line=10,20 - show lines
                                                  detail=snippet, pattern=**/*.md, question=how do end users authenticate?, limit=15 - get 15 most relevant documentation snippets
+                                                 detail=snippet, pattern=**/*Service.cs#symbol=Authenticate - focus on a symbol across globbed files
 
                                                  Flow: headline → summary → snippet → Read. Use xray for breadth, Read for depth.
-                                                 """;
+                                                 """; 
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "xray"), Description(SummarizeInstructions)]
     
@@ -57,7 +58,8 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     {
         var detailKind = ParseDetail(detail);
         var effectiveLimit = limit > 0 ? limit : GetDefaultLimit(detailKind);
-        var globPattern = NormalizeGlobPattern(pattern);
+        var (containerPattern, fragment) = SplitGlobAndFragment(pattern);
+        var globPattern = NormalizeGlobPattern(containerPattern);
         var typePattern = NormalizeTypePattern(type);
 
         var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
@@ -94,14 +96,7 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
                     await FormatDefaultAsync(builder, client, row, cancellationToken).ConfigureAwait(false);
                     break;
                 case SummaryDetail.Snippet:
-                    // For snippet with a specific URI that has a fragment, use the original pattern
-                    var uriForSnippet = row.Uri;
-                    if (!string.IsNullOrEmpty(globPattern) && !globPattern.Contains('*') &&
-                        Uri.TryCreate(globPattern, UriKind.Absolute, out var patternUri) && !string.IsNullOrEmpty(patternUri.Fragment))
-                    {
-                        // Pattern is a specific URI with a fragment - use it instead of the DB URI
-                        uriForSnippet = globPattern;
-                    }
+                    var uriForSnippet = AppendFragment(row.Uri, fragment);
                     await FormatSnippetAsync(builder, client, row, uriForSnippet, cancellationToken).ConfigureAwait(false);
                     break;
             }
@@ -137,22 +132,36 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 	private static string? NormalizeGlobPattern(string? glob) =>
 		string.IsNullOrWhiteSpace(glob) ? null : glob.Trim();
 
-	private static string StripFragment(string pattern)
-	{
-		// Only strip fragment if it looks like a URI (not a glob pattern with wildcards)
-		if (pattern.Contains('*'))
-		{
-			return pattern; // It's a glob pattern, don't touch it
-		}
+    internal static (string? ContainerPattern, string? Fragment) SplitGlobAndFragment(string? pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+        {
+            return (null, null);
+        }
 
-		// Try to parse as URI and strip fragment using Uri functionality
-		if (Uri.TryCreate(pattern, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Fragment))
-		{
-			return uri.GetLeftPart(UriPartial.Query);
-		}
+        var trimmed = pattern.Trim();
+        var hashIndex = trimmed.IndexOf('#');
+        if (hashIndex < 0)
+        {
+            return (trimmed, null);
+        }
 
-		return pattern;
-	}
+        var container = trimmed[..hashIndex].Trim();
+        var fragmentPart = trimmed[(hashIndex + 1)..].Trim();
+        var fragment = string.IsNullOrEmpty(fragmentPart) ? "#" : $"#{fragmentPart}";
+
+        return (string.IsNullOrWhiteSpace(container) ? null : container, fragment);
+    }
+
+    internal static string AppendFragment(string uri, string? fragment)
+    {
+        if (string.IsNullOrWhiteSpace(fragment))
+        {
+            return uri;
+        }
+
+        return uri.Contains('#', StringComparison.Ordinal) ? uri : $"{uri}{fragment}";
+    }
 
     private static string? NormalizeTypePattern(string? type)
     {
@@ -183,12 +192,10 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 		var whereParameters = new List<object?>();
 		if (!string.IsNullOrEmpty(globPattern))
 		{
-			// Strip fragment from pattern for document filtering (fragments are used later in snippet())
-			var patternWithoutFragment = StripFragment(globPattern);
 			whereClauses.Add("(glob_match(n.uri, ?, default_scheme := 'file:///') OR glob_match(n.uri, ?, default_scheme := 'docs:///') OR glob_match(n.uri, ?, default_scheme := 'embed:///'))");
-			whereParameters.Add(patternWithoutFragment);
-			whereParameters.Add(patternWithoutFragment);
-			whereParameters.Add(patternWithoutFragment);
+			whereParameters.Add(globPattern);
+			whereParameters.Add(globPattern);
+			whereParameters.Add(globPattern);
 		}
 
 		if (!string.IsNullOrWhiteSpace(typePattern))
