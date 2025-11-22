@@ -220,7 +220,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
             var span = ToDocumentSpan(lineMap, link.Span);
             var spanId = Guid.NewGuid();
             var nodeId = Guid.NewGuid();
-            links.Add(new LinkInfo(nodeId, spanId, link.Url ?? string.Empty, link.Title ?? string.Empty, InlineText(link), span));
+            links.Add(new LinkInfo(nodeId, spanId, link.Url ?? string.Empty, link.Title ?? string.Empty, InlineText(link), span, link.IsImage));
         }
         var imagesCount = markdigDoc.Descendants<LinkInline>().Count(l => l.IsImage);
         var tablesCount = markdigDoc.Descendants<Table>().Count();

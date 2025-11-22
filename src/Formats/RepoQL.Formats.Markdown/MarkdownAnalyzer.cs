@@ -28,11 +28,15 @@ public sealed class MarkdownAnalyzer : IFormatAnalyzer, IAnnotationSourceProvide
             yield break;
 
         var localSlugs = new HashSet<string>(state.Surface.Headings.Select(h => h.Slug), StringComparer.OrdinalIgnoreCase);
+        var targetCache = new Dictionary<string, DocumentModel?>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var link in state.Surface.Links)
         {
             if (cancellationToken.IsCancellationRequested)
                 yield break;
+
+            if (link.IsImage)
+                continue;
 
             var href = link.Href?.Trim();
             if (string.IsNullOrEmpty(href))
@@ -55,7 +59,13 @@ public sealed class MarkdownAnalyzer : IFormatAnalyzer, IAnnotationSourceProvide
                 continue;
             }
 
-            var targetDoc = await context.Workspace.LoadAsync(targetContainer, cancellationToken).ConfigureAwait(false);
+            var key = targetContainer.AbsoluteUri;
+            if (!targetCache.TryGetValue(key, out var targetDoc))
+            {
+                targetDoc = await context.Workspace.LoadAsync(targetContainer, cancellationToken).ConfigureAwait(false);
+                targetCache[key] = targetDoc;
+            }
+
             if (targetDoc is null)
             {
                 yield return BuildResult(document, link, ruleSettings.Severity, $"Target document '{targetContainer.AbsolutePath}' not found");
@@ -63,6 +73,9 @@ public sealed class MarkdownAnalyzer : IFormatAnalyzer, IAnnotationSourceProvide
             }
 
             if (string.IsNullOrEmpty(anchor))
+                continue;
+
+            if (!string.Equals(targetDoc.MediaType.Kind, "markdown.doc", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var targetState = targetDoc.GetMetadataOrDefault<MarkdownDocumentState>(MarkdownLoader.StateMetadataKey);
