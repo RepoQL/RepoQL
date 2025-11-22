@@ -87,7 +87,6 @@ filtered AS (
             bp_filter.mime_glob_filter IS NULL
             OR repoql_glob_match(coalesce(fs.mime, ''), bp_filter.mime_glob_filter, TRUE, NULL) IS TRUE
         )
-      AND (bp_filter.uri_glob_filter IS NULL OR fs.scope = 'document')
 ),
 -- Lexical scorer (BM25-ish heuristics + fuzzy subsequence score).
 score_source AS (
@@ -239,112 +238,117 @@ combined_nodes AS (
     WHERE NOT EXISTS (SELECT 1 FROM union_nodes)
 ),
 final_nodes AS (
-    SELECT node_id AS fn_node_id
-    FROM (
-        SELECT
-            node_id,
-            ROW_NUMBER() OVER (ORDER BY node_id) AS final_row
-        FROM (
-            SELECT DISTINCT node_id
-            FROM combined_nodes
-        )
-    ) final
-         JOIN base_params bp ON TRUE
-    WHERE final_row <= bp.result_k
+    SELECT DISTINCT node_id AS fn_node_id
+    FROM combined_nodes
 ),
 lex_stats AS (
     SELECT COUNT(*) AS cnt FROM normalized_lex
 ),
 sem_stats AS (
     SELECT COUNT(*) AS cnt FROM sem_norm
-)
--- Project the final rows along with diagnostics describing the scoring route.
-SELECT
-    ri.doc_id,
-    ri.node_id,
-    ri.uri,
-    ri.path,
-    ri.scope,
-    ri.kind,
-    ri.symbol,
-    ri.lang,
-    ri.mime,
-    ri.headline,
-    ri.structure,
-    substr(coalesce(ri.body, ''), 1, 640) AS snippet,
-    ri.line_start,
-    ri.line_end,
-    ri.digest,
-    coalesce(lx.bm25n, 0)                 AS bm25_score,
-    coalesce(lx.fuzzn, 0)                 AS fuzzy_score,
-    coalesce(sn.semn, 0)                  AS dense_score,
-    coalesce(rlex.rrf_lex, 0) + coalesce(rsem.rrf_sem, 0) AS rrf,
-    combine(
-        coalesce(lx.bm25n, 0),
-        coalesce(lx.fuzzn, 0),
-        coalesce(sn.semn, 0),
-        wb := cfg.bm25_w,
-        wf := cfg.fuzzy_w,
-        ws := cfg.effective_sem_weight
-    )                                                   AS score,
-    CASE
-        WHEN combine(
-                 coalesce(lx.bm25n, 0),
-                 coalesce(lx.fuzzn, 0),
-                 coalesce(sn.semn, 0),
-                 wb := cfg.bm25_w,
-                 wf := cfg.fuzzy_w,
-                 ws := cfg.effective_sem_weight
-             ) >= 2 THEN 0.95
-        WHEN combine(
-                 coalesce(lx.bm25n, 0),
-                 coalesce(lx.fuzzn, 0),
-                 coalesce(sn.semn, 0),
-                 wb := cfg.bm25_w,
-                 wf := cfg.fuzzy_w,
-                 ws := cfg.effective_sem_weight
-             ) >= 1.2 THEN 0.8
-        WHEN combine(
-                 coalesce(lx.bm25n, 0),
-                 coalesce(lx.fuzzn, 0),
-                 coalesce(sn.semn, 0),
-                 wb := cfg.bm25_w,
-                 wf := cfg.fuzzy_w,
-                 ws := cfg.effective_sem_weight
-             ) >= 0.8 THEN 0.65
-        ELSE 0.4
-    END                                                AS confidence,
-    json_object(
-        'route', cls.route_mode,
-        'uri_glob_applied', cls.uri_glob_filter IS NOT NULL,
-        'mime_glob_applied', cls.mime_glob_filter IS NOT NULL,
-        'keywords_empty', cls.keywords_empty
-    )                                                  AS boosts_json,
-    json_object(
-        'route', cls.route_mode,
-        'lex_candidates', (SELECT cnt FROM lex_stats),
-        'dense_candidates', (SELECT cnt FROM sem_stats),
-        'requested_mode', cls.requested_mode
-    )                                                  AS explain_json
-FROM final_nodes fn
-         JOIN filtered ri ON ri.node_id = fn.fn_node_id
-         LEFT JOIN normalized_lex lx ON lx.node_id = fn.fn_node_id
-         LEFT JOIN sem_norm sn ON sn.node_id = fn.fn_node_id
-         LEFT JOIN lex_rrf rlex ON rlex.node_id = fn.fn_node_id
-         LEFT JOIN sem_rrf rsem ON rsem.node_id = fn.fn_node_id
-         JOIN config cfg ON TRUE
+),
+scored AS (
+    SELECT
+        ri.doc_id,
+        ri.node_id,
+        ri.uri,
+        ri.path,
+        ri.scope,
+        ri.kind,
+        ri.symbol,
+        ri.lang,
+        ri.mime,
+        ri.headline,
+        ri.structure,
+        substr(coalesce(ri.body, ''), 1, 640) AS snippet,
+        ri.line_start,
+        ri.line_end,
+        ri.digest,
+        coalesce(lx.bm25n, 0)                 AS bm25_score,
+        coalesce(lx.fuzzn, 0)                 AS fuzzy_score,
+        coalesce(sn.semn, 0)                  AS dense_score,
+        coalesce(rlex.rrf_lex, 0) + coalesce(rsem.rrf_sem, 0) AS rrf,
+        combine(
+            coalesce(lx.bm25n, 0),
+            coalesce(lx.fuzzn, 0),
+            coalesce(sn.semn, 0),
+            wb := cfg.bm25_w,
+            wf := cfg.fuzzy_w,
+            ws := cfg.effective_sem_weight
+        ) AS score
+    FROM final_nodes fn
+             JOIN filtered ri ON ri.node_id = fn.fn_node_id
+             LEFT JOIN normalized_lex lx ON lx.node_id = fn.fn_node_id
+             LEFT JOIN (
+                 SELECT node_id, MAX(semn) AS semn
+                 FROM sem_norm
+                 GROUP BY node_id
+             ) sn ON sn.node_id = fn.fn_node_id
+             LEFT JOIN lex_rrf rlex ON rlex.node_id = fn.fn_node_id
+             LEFT JOIN sem_rrf rsem ON rsem.node_id = fn.fn_node_id
+             JOIN config cfg ON TRUE
+             JOIN classified cls ON TRUE
+), doc_sem AS (
+    SELECT doc_id, MAX(dense_score) AS doc_semn
+    FROM scored
+    GROUP BY doc_id
+), best_per_doc AS (
+    SELECT *
+    FROM (
+        SELECT s.*,
+               ROW_NUMBER() OVER (
+                   PARTITION BY s.doc_id
+                   ORDER BY s.score DESC, s.dense_score DESC, s.bm25_score DESC
+               ) AS rn
+        FROM scored s
+    ) t
+    WHERE rn = 1
+), final_with_conf AS (
+    SELECT
+        b.*,
+        coalesce(ds.doc_semn, b.dense_score) AS doc_semn,
+        CASE
+            WHEN b.score >= 2 THEN 0.95
+            WHEN b.score >= 1.2 THEN 0.8
+            WHEN b.score >= 0.8 THEN 0.65
+            ELSE 0.4
+        END AS confidence,
+        cls.route_mode,
+        cls.uri_glob_filter,
+        cls.mime_glob_filter,
+        cls.keywords_empty,
+        cls.keywords_lc,
+        cls.requested_mode,
+        json_object(
+            'route', cls.route_mode,
+            'uri_glob_applied', cls.uri_glob_filter IS NOT NULL,
+            'mime_glob_applied', cls.mime_glob_filter IS NOT NULL,
+            'keywords_empty', cls.keywords_empty
+        ) AS boosts_json,
+        json_object(
+            'route', cls.route_mode,
+            'lex_candidates', (SELECT cnt FROM lex_stats),
+            'dense_candidates', (SELECT cnt FROM sem_stats),
+            'requested_mode', cls.requested_mode
+        ) AS explain_json
+    FROM best_per_doc b
+         LEFT JOIN doc_sem ds ON ds.doc_id = b.doc_id
          JOIN classified cls ON TRUE
+)
+SELECT *
+FROM final_with_conf
 ORDER BY
     CASE
-        WHEN cls.uri_glob_filter IS NOT NULL AND ri.scope = 'document' THEN 0
-        WHEN cls.uri_glob_filter IS NOT NULL THEN 1
-        WHEN cls.uri_glob_filter IS NULL
-             AND coalesce(ri.symbol_key, '') = cls.keywords_lc
-             AND cls.keywords_lc <> '' THEN -1
+        WHEN uri_glob_filter IS NOT NULL AND scope = 'document' THEN 0
+        WHEN uri_glob_filter IS NOT NULL THEN 1
+        WHEN uri_glob_filter IS NULL
+             AND coalesce(symbol, '') = coalesce(keywords_lc, '')
+             AND coalesce(keywords_lc, '') <> '' THEN -1
         ELSE 0
     END,
     score DESC,
-    length(ri.uri)
+    length(uri)
+LIMIT (SELECT result_k FROM base_params)
 );
 
 -- Lightweight "find related documents" helper that uses the same filtering approach.
@@ -483,6 +487,9 @@ FROM search(
                   ELSE 'auto'
                 END,
         k := k,
-        max_cand := max_cand
+        max_cand := max_cand,
+        bm25_weight := 0.20,
+        fuzzy_weight := 0.00,
+        semantic_weight := 0.80
     )
 );
