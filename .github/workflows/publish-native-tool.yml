@@ -100,7 +100,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          key: ${{ runner.os }}-nuget-${{ hashFiles('global.json', 'src/**/*.csproj', 'Directory.Packages.props') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
       - name: Restore
@@ -183,9 +183,12 @@ jobs:
 
   skip-notice:
     needs: version-check
+    # Only emit skip notice for automated triggers; always run when manually queued (workflow_dispatch).
     if: >
-      needs.version-check.result == 'success' && needs.version-check.outputs.publish != 'true' ||
-      needs.version-check.result == 'skipped'
+      github.event_name != 'workflow_dispatch' && (
+        (needs.version-check.result == 'success' && needs.version-check.outputs.publish != 'true') ||
+        needs.version-check.result == 'skipped'
+      )
     runs-on: ubuntu-latest
     steps:
       - name: Publish skipped
