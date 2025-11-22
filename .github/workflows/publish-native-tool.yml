@@ -119,9 +119,6 @@ jobs:
             -c Release \
             -r "$RID" \
             -o "$publish_dir" \
-            -p:PublishAot=true \
-            -p:PublishSingleFile=true \
-            -p:SelfContained=true \
             --nologo
 
           binary_name="repoql"

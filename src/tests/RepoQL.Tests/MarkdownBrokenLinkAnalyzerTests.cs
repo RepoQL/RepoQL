@@ -92,6 +92,89 @@ internal class MarkdownBrokenLinkAnalyzerTests
         results[0].Message.Should().Contain("other.md");
     }
 
+    [Test]
+    public async Task Analyzer_Ignores_Image_Links()
+    {
+        const string content = "# Heading\n\n![logo](assets/logo.png)\n";
+        var uri = RepoUri.Parse("file:///repo/doc.md");
+
+        using var store = new DuckDbGraphStore(":memory:");
+        store.EnsureSchema();
+
+        var markdownLoader = new MarkdownLoader();
+        var markdownAnalyzer = new MarkdownAnalyzer();
+        var plainLoader = new PlainTextLoader();
+        var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
+        var registry = new FormatRegistry([
+            new FormatDescriptor(SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"), markdownLoader, markdownAnalyzer, markdownLoader,
+                ["markdown"]),
+            new FormatDescriptor(SemanticMediaType.Create("text", "plain").WithKind("plain.document"), plainLoader, plainAnalyzer, plainLoader)
+        ]);
+        var documents = new Dictionary<string, DocumentModel>(StringComparer.OrdinalIgnoreCase);
+
+        var document = await IndexMarkdownAsync(store, markdownLoader, uri, content);
+        documents[uri.AbsoluteUri.ToLowerInvariant()] = document;
+
+        var workspace = new DictionaryWorkspace(documents, registry);
+
+        var context = new AnalyzerContext(new AnalyzerSettings(new Dictionary<string, AnalyzerRuleSettings>
+        {
+            ["markdown/broken-link"] = new() { RuleId = "markdown/broken-link", Severity = AnalysisSeverity.Warning }
+        }), "/repo", registry, workspace);
+
+        var results = new List<AnalysisResult>();
+        await foreach (var result in markdownAnalyzer.AnalyzeAsync(document, context, CancellationToken.None))
+            results.Add(result);
+
+        results.Should().BeEmpty();
+    }
+
+    [Test]
+    public async Task Analyzer_Skips_Anchor_Check_For_NonMarkdown_Target()
+    {
+        const string source = "# Source\n\nSee [asset](assets/diagram.png#section).\n";
+
+        var sourceUri = RepoUri.Parse("file:///repo/source.md");
+        var assetUri = RepoUri.Parse("file:///repo/assets/diagram.png");
+
+        using var store = new DuckDbGraphStore(":memory:");
+        store.EnsureSchema();
+
+        var markdownLoader = new MarkdownLoader();
+        var markdownAnalyzer = new MarkdownAnalyzer();
+        var plainLoader = new PlainTextLoader();
+        var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
+        var registry = new FormatRegistry([
+            new FormatDescriptor(SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"), markdownLoader, markdownAnalyzer, markdownLoader,
+                ["markdown"]),
+            new FormatDescriptor(SemanticMediaType.Create("text", "plain").WithKind("plain.document"), plainLoader, plainAnalyzer, plainLoader),
+            new FormatDescriptor(SemanticMediaType.Create("application", "octet-stream").WithKind("binary"), plainLoader, plainAnalyzer, plainLoader,
+                ["bin"])
+        ]);
+        var documents = new Dictionary<string, DocumentModel>(StringComparer.OrdinalIgnoreCase);
+
+        var sourceDoc = await IndexMarkdownAsync(store, markdownLoader, sourceUri, source);
+        documents[sourceUri.AbsoluteUri.ToLowerInvariant()] = sourceDoc;
+
+        var assetDoc = new DocumentModel(assetUri,
+            SemanticMediaType.Create("application", "octet-stream").WithKind("binary"),
+            "binary");
+        documents[assetUri.AbsoluteUri.ToLowerInvariant()] = assetDoc;
+
+        var workspace = new DictionaryWorkspace(documents, registry);
+
+        var context = new AnalyzerContext(new AnalyzerSettings(new Dictionary<string, AnalyzerRuleSettings>
+        {
+            ["markdown/broken-link"] = new() { RuleId = "markdown/broken-link", Severity = AnalysisSeverity.Warning }
+        }), "/repo", registry, workspace);
+
+        var results = new List<AnalysisResult>();
+        await foreach (var result in markdownAnalyzer.AnalyzeAsync(sourceDoc, context, CancellationToken.None))
+            results.Add(result);
+
+        results.Should().BeEmpty();
+    }
+
     private static async Task<DocumentModel> IndexMarkdownAsync(DuckDbGraphStore store, MarkdownLoader loader, RepoUri uri, string content)
     {
         var fileName = Path.GetFileName(uri.AbsolutePath);

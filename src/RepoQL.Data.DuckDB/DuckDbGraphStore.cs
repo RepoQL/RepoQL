@@ -478,6 +478,8 @@ namespace RepoQL.Data.DuckDB;
 
     private static DuckDBConnection OpenConnectionWithRecovery(string filePath, ILogger logger)
     {
+        DeleteWalIfExists(filePath, logger);
+
         var connection = new DuckDBConnection($"Data Source={filePath}");
         try
         {
@@ -490,6 +492,23 @@ namespace RepoQL.Data.DuckDB;
             var retry = new DuckDBConnection($"Data Source={filePath}");
             retry.Open();
             return retry;
+        }
+    }
+
+    private static void DeleteWalIfExists(string filePath, ILogger logger)
+    {
+        var walPath = filePath + ".wal";
+        try
+        {
+            if (!File.Exists(walPath))
+                return;
+
+            File.Delete(walPath);
+            logger.LogDebug("Deleted stale DuckDB WAL file at {WalPath}", walPath);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to delete DuckDB WAL file at {WalPath}", walPath);
         }
     }
 

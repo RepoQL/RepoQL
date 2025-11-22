@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <Version>1.1.10</Version>
+        <Version>1.1.11</Version>
         <TargetFramework>net10.0</TargetFramework>
         <OutputType>Exe</OutputType>
         <AssemblyName>repoql</AssemblyName>
@@ -16,6 +16,8 @@
         <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
         <StripSymbols>true</StripSymbols>
         <InvariantGlobalization>false</InvariantGlobalization>
+        <!-- Keep trimming enabled but manually preserve native duckdb below -->
+        <PublishTrimmed>true</PublishTrimmed>
         <!-- keep symbols out of nupkg -->
         <DebugType>none</DebugType>
         <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
@@ -31,7 +33,7 @@
         <PrivateAssets>all</PrivateAssets>
         <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       </PackageReference>
-      <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1" />
+      <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1" GeneratePathProperty="true" />
       <PackageReference Include="JetBrains.Annotations" Version="2025.2.1" />
       <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.19.2" PrivateAssets="all" GeneratePathProperty="true">
         <IncludeAssets>build;native</IncludeAssets>
@@ -50,6 +52,45 @@
         <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
         <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
         <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.12.0" />
+    </ItemGroup>
+
+    <!-- Ensure duckdb native library is always copied alongside trimmed single-file publishes -->
+    <ItemGroup Condition="'$(RuntimeIdentifier)' != ''">
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-x64\native\duckdb.dll"
+                 Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-x64\native\duckdb.dll')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>duckdb.dll</Link>
+        </Content>
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-arm64\native\duckdb.dll"
+                 Condition="'$(RuntimeIdentifier)' == 'win-arm64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-arm64\native\duckdb.dll')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>duckdb.dll</Link>
+        </Content>
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\osx\native\libduckdb.dylib"
+                 Condition="('$(RuntimeIdentifier)' == 'osx-arm64' or '$(RuntimeIdentifier)' == 'osx-x64') and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\osx\native\libduckdb.dylib')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>libduckdb.dylib</Link>
+        </Content>
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-x64\native\libduckdb.so"
+                 Condition="'$(RuntimeIdentifier)' == 'linux-x64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-x64\native\libduckdb.so')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>libduckdb.so</Link>
+        </Content>
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-arm64\native\libduckdb.so"
+                 Condition="'$(RuntimeIdentifier)' == 'linux-arm64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-arm64\native\libduckdb.so')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>libduckdb.so</Link>
+        </Content>
     </ItemGroup>
 
     <ItemGroup>
