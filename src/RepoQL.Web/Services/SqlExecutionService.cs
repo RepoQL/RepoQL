@@ -7,7 +7,7 @@ namespace RepoQL.Web.Services;
 /// <summary>
 /// Executes SQL against the RepoQL host and shapes responses for UI consumption.
 /// </summary>
-public sealed class SqlExecutionService
+internal sealed class SqlExecutionService
 {
     private readonly RepoQlConnectionManager _connectionManager;
     private readonly ILogger<SqlExecutionService> _logger;
@@ -24,9 +24,12 @@ public sealed class SqlExecutionService
             throw new ArgumentException("SQL text cannot be empty.", nameof(sql));
 
         var client = await _connectionManager.GetClientAsync(cancellationToken).ConfigureAwait(false);
-        _logger.LogDebug("Executing SQL (limit: {Limit})", rowLimit);
+        if (_logger.IsEnabled(LogLevel.Debug))
+        {
+            _logger.LogDebug("Executing SQL (limit: {Limit})", rowLimit);
+        }
 
-        RawQueryResponse response = await client.ExecuteRawQueryAsync(sql, rowLimit: rowLimit, cancellationToken: cancellationToken).ConfigureAwait(false);
+        var response = await client.ExecuteRawQueryAsync(sql, rowLimit: rowLimit, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         var columns = response.Columns.Select(c => c.Name ?? string.Empty).ToArray();
         var rows = response.Rows

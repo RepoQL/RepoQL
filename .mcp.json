@@ -1,20 +1,15 @@
 {
   "mcpServers": {
-    "memory": {
+    "repoql": {
       "type": "stdio",
       "command": "artifacts\\publish\\repoql.exe",
       "args": [
         "mcp"
       ]
     },
-    "engineer": {
-      "type": "stdio",
-      "command": "codex",
-      "args": [
-        "mcp",
-        "-c 'sandbox_permissions=[\"workspace-write\"]'",
-        "-c 'shell_environment_policy.inherit=all'"
-      ]
+    "aspire-dashboard": {
+      "type": "http",
+      "url": "http://localhost:15011/mcp"
     }
   }
 }

@@ -292,25 +292,14 @@ scored AS (
     SELECT doc_id, MAX(dense_score) AS doc_semn
     FROM scored
     GROUP BY doc_id
-), best_per_doc AS (
-    SELECT *
-    FROM (
-        SELECT s.*,
-               ROW_NUMBER() OVER (
-                   PARTITION BY s.doc_id
-                   ORDER BY s.score DESC, s.dense_score DESC, s.bm25_score DESC
-               ) AS rn
-        FROM scored s
-    ) t
-    WHERE rn = 1
 ), final_with_conf AS (
     SELECT
-        b.*,
-        coalesce(ds.doc_semn, b.dense_score) AS doc_semn,
+        s.*,
+        coalesce(ds.doc_semn, s.dense_score) AS doc_semn,
         CASE
-            WHEN b.score >= 2 THEN 0.95
-            WHEN b.score >= 1.2 THEN 0.8
-            WHEN b.score >= 0.8 THEN 0.65
+            WHEN s.score >= 2 THEN 0.95
+            WHEN s.score >= 1.2 THEN 0.8
+            WHEN s.score >= 0.8 THEN 0.65
             ELSE 0.4
         END AS confidence,
         cls.route_mode,
@@ -331,8 +320,8 @@ scored AS (
             'dense_candidates', (SELECT cnt FROM sem_stats),
             'requested_mode', cls.requested_mode
         ) AS explain_json
-    FROM best_per_doc b
-         LEFT JOIN doc_sem ds ON ds.doc_id = b.doc_id
+    FROM scored s
+         LEFT JOIN doc_sem ds ON ds.doc_id = s.doc_id
          JOIN classified cls ON TRUE
 )
 SELECT *

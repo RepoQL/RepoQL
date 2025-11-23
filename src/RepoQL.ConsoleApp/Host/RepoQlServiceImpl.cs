@@ -685,15 +685,64 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 return;
             }
 
-            logger.LogInformation("RepoQL version changed from {OldVersion} to {NewVersion}; triggering reindex.", storedVersion, currentVersion);
+            logger.LogInformation("RepoQL version changed from {OldVersion} to {NewVersion}; dropping all tables and recreating schema.", storedVersion, currentVersion);
 
-            await foreach (var _ in coordinator.ReindexAsync(new ReindexRequestOptions(false), cancellationToken).ConfigureAwait(false))
+            // Instead of reindexing with existing embeddings (which causes the semaphore bottleneck),
+            // drop all tables and views, then recreate the schema. This is faster and avoids the VectorIndexCoordinator blocking issue.
+            try
             {
-                // Intentionally exhaust the stream to completion.
-            }
-            await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+                // Get list of all views (drop first to avoid dependency issues)
+                var views = store.RawQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'VIEW'").ToList();
 
-            UpsertVersionMetadata(store, currentVersion);
+                logger.LogInformation("Dropping {Count} views", views.Count);
+
+                foreach (var view in views)
+                {
+                    if (view.TryGetValue("table_name", out var viewName))
+                    {
+                        var name = viewName?.ToString();
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            store.RawQuery($"DROP VIEW IF EXISTS {name} CASCADE").FirstOrDefault();
+                            logger.LogDebug("Dropped view: {ViewName}", name);
+                        }
+                    }
+                }
+
+                // Get list of all base tables
+                var tables = store.RawQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'BASE TABLE'").ToList();
+
+                logger.LogInformation("Dropping {Count} tables", tables.Count);
+
+                // Drop all tables
+                foreach (var table in tables)
+                {
+                    if (table.TryGetValue("table_name", out var tableName))
+                    {
+                        var name = tableName?.ToString();
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            store.RawQuery($"DROP TABLE IF EXISTS {name} CASCADE").FirstOrDefault();
+                            logger.LogDebug("Dropped table: {TableName}", name);
+                        }
+                    }
+                }
+
+                logger.LogInformation("All tables and views dropped. Recreating schema.");
+
+                // Recreate the complete database schema
+                store.EnsureSchema();
+
+                // Set the version metadata
+                UpsertVersionMetadata(store, currentVersion);
+
+                logger.LogInformation("Schema recreated with version {NewVersion}. Reindex will happen via normal startup scan.", currentVersion);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to drop and recreate schema during version upgrade");
+                throw;
+            }
         }
         catch (OperationCanceledException)
         {

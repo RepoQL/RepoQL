@@ -51,12 +51,29 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
             if (intraOp is { } io and > 0) so.IntraOpNumThreads = io;
             if (interOp is { } eo and > 0) so.InterOpNumThreads = eo;
 
-            try { so.AppendExecutionProvider_CUDA(); }
-            catch { try { so.AppendExecutionProvider_DML(); } catch { /* CPU */ } }
+            var provider = "CPU";
+            try
+            {
+                so.AppendExecutionProvider_CUDA();
+                provider = "CUDA";
+            }
+            catch
+            {
+                try
+                {
+                    so.AppendExecutionProvider_DML();
+                    provider = "DML";
+                }
+                catch
+                {
+                    provider = "CPU";
+                }
+            }
 
             _session = new InferenceSession(modelFull, so);
+            _logger.LogInformation("ONNX session created for model {Model} using provider: {Provider}", Model, provider);
+
             Model = Path.GetFileNameWithoutExtension(modelFull);
-            _logger.LogInformation("ONNX session created for model {Model}", Model);
 
             // Discover inputs by convention
             foreach (var kv in _session.InputMetadata)

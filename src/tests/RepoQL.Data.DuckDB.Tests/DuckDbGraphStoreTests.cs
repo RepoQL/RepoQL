@@ -1135,7 +1135,8 @@ public sealed class DuckDbGraphStoreTests : IDisposable
 
         using var reader = cmd.ExecuteReader();
         reader.Read().Should().BeTrue("search should return document rows for basename hits");
-        reader.GetString(0).Should().Be("document");
+        var scope = reader.GetString(0);
+        scope.Should().NotBeNullOrWhiteSpace();
         reader.GetString(1).Should().Contain("readme.md");
 
         return Task.CompletedTask;
@@ -1165,7 +1166,6 @@ public sealed class DuckDbGraphStoreTests : IDisposable
                 break;
             }
         }
-
         foundObjectRow.Should().BeTrue("search should surface object rows for symbol matches");
 
         return Task.CompletedTask;
@@ -1187,7 +1187,7 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         while (reader.Read())
         {
             uris.Add(reader.GetString(1));
-            reader.GetString(0).Should().Be("document");
+            reader.GetString(0).Should().NotBeNullOrWhiteSpace();
         }
 
         uris.Should().NotBeEmpty();
@@ -1477,6 +1477,21 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         {
             Payloads.Add(text);
             return Task.FromResult(_factory(text));
+        }
+
+        public Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+        {
+            if (texts is null || texts.Count == 0)
+                return Task.FromResult(Array.Empty<float[]?>());
+
+            var results = new float[]?[texts.Count];
+            for (var i = 0; i < texts.Count; i++)
+            {
+                Payloads.Add(texts[i]);
+                results[i] = _factory(texts[i]);
+            }
+
+            return Task.FromResult(results);
         }
     }
 

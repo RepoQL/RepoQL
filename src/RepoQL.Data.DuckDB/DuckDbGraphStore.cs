@@ -28,7 +28,7 @@ namespace RepoQL.Data.DuckDB;
         private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
         private readonly object _annotationGate = new();
         private readonly object _connectionLock = new();
-        private const int DefaultEmbeddingBatchSize = 8;
+        private const int DefaultEmbeddingBatchSize = 32;
         private const int MaxDocumentPayloadChars = int.MaxValue;
         private const int MaxObjectPayloadChars = 6000;
         private const int MaxSnippetBytes = 4096;
@@ -103,18 +103,43 @@ namespace RepoQL.Data.DuckDB;
         var objSuccess = 0;
         var docSkipped = 0;
         var objSkipped = 0;
+        _logger.LogInformation("Embedding refresh starting for {Count} items (batch={BatchSize}, model={Model}, dim={Dim})",
+            workItems.Count, batchSize, provider.Model, provider.Dimension);
 
         for (var ofs = 0; ofs < workItems.Count; ofs += batchSize)
         {
-            using var tx = _connection.BeginTransaction();
             var sliceLength = Math.Min(batchSize, workItems.Count - ofs);
+            var payloads = new string[sliceLength];
+            var sliceItems = new EmbeddingWorkItem[sliceLength];
             for (var i = 0; i < sliceLength; i++)
             {
-                var item = workItems[ofs + i];
-                ct.ThrowIfCancellationRequested();
-                var t0 = Stopwatch.StartNew();
-                var vec = provider.EmbedAsync(item.Payload, ct).GetAwaiter().GetResult();
-                t0.Stop();
+                sliceItems[i] = workItems[ofs + i];
+                payloads[i] = sliceItems[i].Payload;
+            }
+
+            ct.ThrowIfCancellationRequested();
+
+            float[]?[] vectors;
+            var batchTimer = Stopwatch.StartNew();
+            try
+            {
+                vectors = provider.EmbedBatchAsync(payloads, ct).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                batchTimer.Stop();
+                _logger.LogWarning(ex, "Embedding batch failed (size={BatchSize}, model={Model})", sliceLength, provider.Model);
+                vectors = Array.Empty<float[]?>();
+            }
+            batchTimer.Stop();
+
+            var perItemMs = sliceLength == 0 ? 0 : batchTimer.Elapsed.TotalMilliseconds / sliceLength;
+
+            using var tx = _connection.BeginTransaction();
+            for (var i = 0; i < sliceLength; i++)
+            {
+                var item = sliceItems[i];
+                var vec = (vectors != null && i < vectors.Length) ? vectors[i] : null;
 
                 if (vec is null)
                 {
@@ -135,7 +160,7 @@ namespace RepoQL.Data.DuckDB;
                         { "status", "error" }
                     };
                     _metrics.EmbedRequests.Add(1, errorTags);
-                    _metrics.EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, errorTags);
+                    _metrics.EmbedDuration.Record(perItemMs, errorTags);
                     continue;
                 }
 
@@ -168,7 +193,7 @@ namespace RepoQL.Data.DuckDB;
                     { "status", "ok" }
                 };
                 _metrics.EmbedRequests.Add(1, okTags);
-                _metrics.EmbedDuration.Record(t0.Elapsed.TotalMilliseconds, okTags);
+                _metrics.EmbedDuration.Record(perItemMs, okTags);
             }
             tx.Commit();
         }

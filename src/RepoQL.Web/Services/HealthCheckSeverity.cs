@@ -1,6 +1,6 @@
 ﻿namespace RepoQL.Web.Services;
 
-public enum HealthCheckSeverity
+internal enum HealthCheckSeverity
 {
     Success,
     Warning,

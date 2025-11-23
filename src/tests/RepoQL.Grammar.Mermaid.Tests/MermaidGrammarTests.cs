@@ -32,7 +32,9 @@ public class MermaidGrammarTests
 
         doc.DiagramKind.Should().Be("sequenceDiagram");
         doc.Statements.OfType<SeqParticipant>().Any(p => p.Name == "Alice").Should().BeTrue();
-        doc.Statements.OfType<SeqMessage>().Any(m => m.From == "Alice" && m.To == "Bob" && m.Text.Contains("hello")).Should().BeTrue();
+        doc.Statements.OfType<SeqMessage>()
+            .Any(m => m.From == "Alice" && m.To == "Bob" && m.Text.Contains("hello", StringComparison.OrdinalIgnoreCase))
+            .Should().BeTrue();
         return Task.CompletedTask;
     }
 

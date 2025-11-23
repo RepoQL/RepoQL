@@ -1,30 +1,27 @@
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using RepoQL.Contracts;
 
 namespace RepoQL.Web.Services;
 
-public sealed record FormatPreviewRequest(
+internal sealed record FormatPreviewRequest(
     string Uri,
     byte[]? Content,
     string? FileName,
     string? MediaTypeHint);
 
-public sealed record FormatPreviewStage(string Stage, string Status, double DurationMs, string? Error);
+internal sealed record FormatPreviewStage(string Stage, string Status, double DurationMs, string? Error);
 
-public sealed record FormatPreviewArtifact(string Id, string Digest, long SizeBytes, string MediaType, string Headline, string Summary, string Structure);
+internal sealed record FormatPreviewArtifact(string Id, string Digest, long SizeBytes, string MediaType, string Headline, string Summary, string Structure);
 
-public sealed record FormatPreviewNode(string Id, string Kind, string Uri, string Headline, string Structure);
+internal sealed record FormatPreviewNode(string Id, string Kind, string Uri, string Headline, string Structure);
 
-public sealed record FormatPreviewAnnotation(string Kind, string Severity, string Source, string Message);
+internal sealed record FormatPreviewAnnotation(string Kind, string Severity, string Source, string Message);
 
-public sealed record FormatPreviewRecords(
+internal sealed record FormatPreviewRecords(
     IReadOnlyList<FormatPreviewArtifact> Artifacts,
     IReadOnlyList<FormatPreviewNode> Nodes,
     IReadOnlyList<FormatPreviewAnnotation> Annotations);
 
-public sealed record FormatPreviewResult(
+internal sealed record FormatPreviewResult(
     bool Success,
     string? Error,
     string MediaType,
@@ -81,7 +78,7 @@ public sealed record FormatPreviewResult(
     }
 }
 
-public sealed class FormatPreviewService
+internal sealed class FormatPreviewService
 {
     private readonly RepoQlConnectionManager _connectionManager;
     private readonly ILogger<FormatPreviewService> _logger;
@@ -98,7 +95,11 @@ public sealed class FormatPreviewService
             throw new ArgumentException("Repository URI is required.", nameof(request));
 
         var client = await _connectionManager.GetClientAsync(cancellationToken).ConfigureAwait(false);
-        _logger.LogDebug("Previewing {Uri} (uploaded={Uploaded})", request.Uri, request.Content is { Length: > 0 });
+        var hasUpload = request.Content is { Length: > 0 };
+        if (_logger.IsEnabled(LogLevel.Debug))
+        {
+            _logger.LogDebug("Previewing {Uri} (uploaded={Uploaded})", request.Uri, hasUpload);
+        }
         var response = await client.PreviewDocumentAsync(
             uri: request.Uri,
             content: request.Content,

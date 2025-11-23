@@ -1,6 +1,6 @@
 ﻿namespace RepoQL.Web.Services;
 
-public sealed record NodeKindStat(
+internal sealed record NodeKindStat(
     string Kind,
     long Count,
     double Percentage,

@@ -31,13 +31,13 @@
         HostStatusStore.SnapshotChanged += OnHostStatusChanged;
     }
 
-    private void OnConnectionStateChanged(RepoQlConnectionManager.ConnectionState state)
+    private void OnConnectionStateChanged(object? sender, RepoQlConnectionManager.ConnectionState state)
     {
         _connectionState = state;
         _ = InvokeAsync(StateHasChanged);
     }
 
-    private void OnHostStatusChanged(HostStatusSnapshot snapshot)
+    private void OnHostStatusChanged(object? sender, HostStatusSnapshot snapshot)
     {
         _hostStatus = snapshot;
         _ = InvokeAsync(StateHasChanged);

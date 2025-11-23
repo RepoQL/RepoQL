@@ -1,6 +1,6 @@
 ﻿namespace RepoQL.Web.Services;
 
-public sealed record StatsOverview(
+internal sealed record StatsOverview(
     long TotalFiles,
     long TotalNodes,
     long TotalEdges,

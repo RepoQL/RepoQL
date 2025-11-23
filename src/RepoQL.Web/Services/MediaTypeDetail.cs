@@ -1,6 +1,6 @@
 ﻿namespace RepoQL.Web.Services;
 
-public sealed record MediaTypeDetail(
+internal sealed record MediaTypeDetail(
     string MediaLabel,
     long FileCount,
     long WithHeadline,

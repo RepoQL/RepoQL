@@ -1,6 +1,6 @@
 ﻿namespace RepoQL.Web.Services;
 
-public sealed record DocumentItem(
+internal sealed record DocumentItem(
     string Kind,
     string Label,
     string ItemUri);

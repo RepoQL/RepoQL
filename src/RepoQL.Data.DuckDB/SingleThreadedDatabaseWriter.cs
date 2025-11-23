@@ -47,6 +47,7 @@ public sealed class SingleThreadedDatabaseWriter(
     private bool _isDisposed;
 
     private const int MaxQueueDepth = 1000;
+    private const int MaxBatchSize = 32;
     private const int MaxWriteAttempts = 3;
     private static readonly ActivitySource Activity = new("RepoQL.Indexing");
 
@@ -130,9 +131,25 @@ public sealed class SingleThreadedDatabaseWriter(
         {
             while (await _channel.Reader.WaitToReadAsync(_stopping.Token).ConfigureAwait(false))
             {
-                while (_channel.Reader.TryRead(out var item))
+                var batch = new List<QueueItem>(MaxBatchSize);
+                while (_channel.Reader.TryRead(out var item) && batch.Count < MaxBatchSize)
                 {
-                    await ProcessOneAsync(item).ConfigureAwait(false);
+                    batch.Add(item);
+                }
+
+                if (batch.Count == 0)
+                {
+                    continue;
+                }
+
+                if (await TryProcessBatchAsync(batch).ConfigureAwait(false))
+                {
+                    continue;
+                }
+
+                foreach (var qi in batch)
+                {
+                    await ProcessOneAsync(qi).ConfigureAwait(false);
                 }
             }
         }
@@ -233,7 +250,9 @@ public sealed class SingleThreadedDatabaseWriter(
 
         item.Completion?.TrySetResult(result);
         FireOnCommitted(op, result);
-    void FireOnCommitted(WriteOperation op, CommitResult result)
+    }
+
+    private void FireOnCommitted(WriteOperation op, CommitResult result)
     {
         if (op.OnCommitted is null)
             return;
@@ -254,6 +273,45 @@ public sealed class SingleThreadedDatabaseWriter(
         });
     }
 
+    private async Task<bool> TryProcessBatchAsync(List<QueueItem> batch)
+    {
+        if (batch.Count == 0)
+            return true;
+
+        if (batch.Count == 1)
+        {
+            await ProcessOneAsync(batch[0]).ConfigureAwait(false);
+            return true;
+        }
+
+        try
+        {
+            _writeConnection ??= _connectionFactory.CreateConnection();
+            if (_writeConnection.State != System.Data.ConnectionState.Open)
+            {
+                await _writeConnection.OpenAsync(_stopping.Token).ConfigureAwait(false);
+            }
+
+            await using var tx = await _writeConnection.BeginTransactionAsync(_stopping.Token).ConfigureAwait(false);
+            foreach (var item in batch)
+            {
+                await ExecuteOperationAsync(item.Operation).ConfigureAwait(false);
+                Interlocked.Increment(ref _processed);
+            }
+            await tx.CommitAsync(_stopping.Token).ConfigureAwait(false);
+
+            foreach (var item in batch)
+            {
+                item.Completion?.TrySetResult(new CommitResult { Success = true });
+                FireOnCommitted(item.Operation, new CommitResult { Success = true });
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private Task ApplyReplaceDocumentAsync(WriteOperation op)

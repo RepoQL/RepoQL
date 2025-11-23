@@ -54,6 +54,20 @@ public sealed class HashedEmbeddingProvider : IEmbeddingProvider
         static bool IsTokenChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '-';
     }
 
+    public async Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+    {
+        if (texts is null || texts.Count == 0)
+            return Array.Empty<float[]?>();
+
+        var results = new float[]?[texts.Count];
+        for (var i = 0; i < texts.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            results[i] = await EmbedAsync(texts[i], cancellationToken).ConfigureAwait(false);
+        }
+        return results;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static uint Hash64Lower(ReadOnlySpan<char> s)
     {

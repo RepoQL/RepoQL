@@ -6,7 +6,7 @@ namespace RepoQL.Web.Services;
 /// <summary>
 /// Provides typed accessors over RepoQL macros used by the explorer view.
 /// </summary>
-public sealed class DocumentExplorerService
+internal sealed class DocumentExplorerService
 {
     private const string DocumentQuery = """
 WITH docs AS (
@@ -67,8 +67,8 @@ LIMIT 250
         }
         else
         {
-            sql = DocumentQuery.Replace("{FILTER}", "WHERE lower(file_name) LIKE ? OR lower(document_uri) LIKE ?", StringComparison.Ordinal);
-            var pattern = $"%{searchText.Trim().ToLowerInvariant()}%";
+            sql = DocumentQuery.Replace("{FILTER}", "WHERE upper(file_name) LIKE ? OR upper(document_uri) LIKE ?", StringComparison.Ordinal);
+            var pattern = $"%{searchText.Trim().ToUpperInvariant()}%";
             parameters = new object?[] { pattern, pattern };
         }
 

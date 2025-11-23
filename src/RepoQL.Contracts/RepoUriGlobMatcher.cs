@@ -25,7 +25,7 @@ public static class RepoUriGlobMatcher
 
         var normalizedDefaultScheme = NormalizeDefaultScheme(defaultScheme ?? DefaultScheme);
         if (ignoreCase)
-            normalizedDefaultScheme = normalizedDefaultScheme.ToLowerInvariant();
+            normalizedDefaultScheme = normalizedDefaultScheme.ToUpperInvariant();
 
         var uriInfo = NormalizeUri(uri, ignoreCase);
         var patternInfo = NormalizePattern(pattern, normalizedDefaultScheme, uriInfo, ignoreCase);
@@ -48,7 +48,7 @@ public static class RepoUriGlobMatcher
         var trimmed = value.Trim();
         var normalized = CollapseSlashes(trimmed.Replace('\\', '/'));
         if (ignoreCase)
-            normalized = normalized.ToLowerInvariant();
+            normalized = normalized.ToUpperInvariant();
 
         var schemeIndex = normalized.IndexOf("://", StringComparison.Ordinal);
         var schemePrefix = schemeIndex >= 0 ? normalized[..(schemeIndex + 3)] : string.Empty;
@@ -100,7 +100,7 @@ public static class RepoUriGlobMatcher
 
         candidate = CollapseSlashes(candidate);
         if (ignoreCase)
-            candidate = candidate.ToLowerInvariant();
+            candidate = candidate.ToUpperInvariant();
         return new PatternInfo(candidate);
     }
 
@@ -134,7 +134,7 @@ public static class RepoUriGlobMatcher
         if (!uriInfo.HasLeadingSlash)
             return schemePrefix;
 
-        return CollapseSlashes(schemePrefix.EndsWith("/")
+        return CollapseSlashes(schemePrefix.EndsWith("/", StringComparison.Ordinal)
             ? schemePrefix + "/"
             : schemePrefix + "/");
     }

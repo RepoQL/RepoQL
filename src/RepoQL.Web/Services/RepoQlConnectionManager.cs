@@ -5,7 +5,7 @@ namespace RepoQL.Web.Services;
 /// <summary>
 /// Provides a shared RepoQL client instance and tracks connection state for UI consumers.
 /// </summary>
-public sealed class RepoQlConnectionManager : IAsyncDisposable
+internal sealed class RepoQlConnectionManager : IAsyncDisposable
 {
     private readonly ILogger<RepoQlConnectionManager> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -19,7 +19,7 @@ public sealed class RepoQlConnectionManager : IAsyncDisposable
         _state = ConnectionState.Create(false, "Not connected");
     }
 
-    public event Action<ConnectionState>? StateChanged;
+    public event EventHandler<ConnectionState>? StateChanged;
 
     public ConnectionState State
     {
@@ -104,10 +104,10 @@ public sealed class RepoQlConnectionManager : IAsyncDisposable
             _state = state with { UpdatedAt = DateTimeOffset.UtcNow };
             snapshot = _state;
         }
-        StateChanged?.Invoke(snapshot);
+        StateChanged?.Invoke(this, snapshot);
     }
 
-    public sealed record ConnectionState(bool IsConnected, string Description, DateTimeOffset UpdatedAt)
+    internal sealed record ConnectionState(bool IsConnected, string Description, DateTimeOffset UpdatedAt)
     {
         public static ConnectionState Create(bool isConnected, string description)
             => new(isConnected, description, DateTimeOffset.UtcNow);

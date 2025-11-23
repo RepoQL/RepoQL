@@ -3,7 +3,7 @@ namespace RepoQL.Web.Services;
 /// <summary>
 /// Periodically pings the RepoQL host to report availability.
 /// </summary>
-public sealed class HostStatusService : BackgroundService
+internal sealed class HostStatusService : BackgroundService
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(5);
     private readonly RepoQlConnectionManager _connectionManager;

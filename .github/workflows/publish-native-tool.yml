@@ -76,7 +76,8 @@ jobs:
 
   native:
     needs: version-check
-    if: needs.version-check.outputs.publish == 'true'
+    # Always run on manual trigger; otherwise require a version bump.
+    if: github.event_name == 'workflow_dispatch' || needs.version-check.outputs.publish == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -146,7 +147,8 @@ jobs:
 
   publish-r2:
     needs: [version-check, native]
-    if: needs.version-check.outputs.publish == 'true'
+    # Always run on manual trigger; otherwise require a version bump.
+    if: github.event_name == 'workflow_dispatch' || needs.version-check.outputs.publish == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

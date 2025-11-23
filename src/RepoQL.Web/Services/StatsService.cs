@@ -7,7 +7,7 @@ namespace RepoQL.Web.Services;
 /// <summary>
 /// Provides repository statistics for verification and overview dashboards.
 /// </summary>
-public sealed class StatsService
+internal sealed class StatsService
 {
     private readonly RepoQlConnectionManager _connectionManager;
 
