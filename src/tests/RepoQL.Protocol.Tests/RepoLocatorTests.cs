@@ -26,8 +26,13 @@ public class RepoLocatorTests
     {
         public TempDir()
         {
-            var root = System.IO.Path.GetPathRoot(System.IO.Path.GetTempPath()) ?? System.IO.Path.GetPathRoot(Environment.CurrentDirectory) ?? ".";
-            Path = System.IO.Path.Combine(root, $"repoql-protocol-tests-{Guid.NewGuid()}");
+            var basePath = System.IO.Path.GetTempPath();
+            if (string.IsNullOrWhiteSpace(basePath))
+            {
+                basePath = Environment.CurrentDirectory;
+            }
+
+            Path = System.IO.Path.Combine(basePath, $"repoql-protocol-tests-{Guid.NewGuid():N}");
             Directory.CreateDirectory(Path);
         }
 
