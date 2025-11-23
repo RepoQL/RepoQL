@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <Version>1.2.1</Version>
+        <Version>1.2.2</Version>
         <TargetFramework>net10.0</TargetFramework>
         <OutputType>Exe</OutputType>
         <AssemblyName>repoql</AssemblyName>
@@ -36,7 +36,6 @@
       <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1" GeneratePathProperty="true" />
       <PackageReference Include="JetBrains.Annotations" Version="2025.2.1" />
       <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.19.2" GeneratePathProperty="true" />
-      <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.19.2" PrivateAssets="all" GeneratePathProperty="true" />
       <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
         <PackageReference Include="Spectre.Console" Version="0.50.0" />
         <PackageReference Include="ModelContextProtocol" Version="0.4.0-preview.3" />
@@ -105,26 +104,11 @@
     
     
     <!-- Prefer a prebuilt zip committed once; otherwise embed individual model files -->
-    <ItemGroup>
-        <EmbeddedResource Include="Resources\EmbeddingsModel.zip" LogicalName="Embeddings.Model.embeddings.zip" Condition="Exists('$(MSBuildThisFileDirectory)Resources\\EmbeddingsModel.zip')" />
-    </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\EmbeddingsModel.zip" LogicalName="Embeddings.Model.embeddings.zip" Condition="Exists('$(MSBuildThisFileDirectory)Resources\\EmbeddingsModel.zip')" />
+  </ItemGroup>
 
-    <!-- Ensure DirectML runtime is copied for local builds on Windows even without an explicit RID. -->
-    <ItemGroup Condition="'$(OS)' == 'Windows_NT'">
-        <Content Include="$(PkgMicrosoft_ML_OnnxRuntime_DirectML)\runtimes\win-x64\native\onnxruntime.dll" Condition="Exists('$(PkgMicrosoft_ML_OnnxRuntime_DirectML)\runtimes\win-x64\native\onnxruntime.dll')">
-            <Pack>false</Pack>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-            <Link>runtimes\win-x64\native\onnxruntime.dll</Link>
-        </Content>
-        <Content Include="$(PkgMicrosoft_ML_OnnxRuntime_DirectML)\runtimes\win-arm64\native\onnxruntime.dll" Condition="Exists('$(PkgMicrosoft_ML_OnnxRuntime_DirectML)\runtimes\win-arm64\native\onnxruntime.dll')">
-            <Pack>false</Pack>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-            <Link>runtimes\win-arm64\native\onnxruntime.dll</Link>
-        </Content>
-    </ItemGroup>
-
+    <!-- Include platform native onnxruntime binaries for non-Windows self-contained publishes. -->
     <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64'">
         <Content Include="$(PkgMicrosoft_ML_OnnxRuntime)\runtimes\osx-arm64\native\libonnxruntime.dylib" Condition="Exists('$(PkgMicrosoft_ML_OnnxRuntime)\runtimes\osx-arm64\native\libonnxruntime.dylib')">
             <Pack>false</Pack>
@@ -152,24 +136,6 @@
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
             <Link>libonnxruntime_providers_shared.dylib</Link>
-        </Content>
-    </ItemGroup>
-
-    <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-        <Content Include="$(PkgMicrosoft_ML_OnnxRuntime_DirectML)\runtimes\win-x64\native\onnxruntime.dll" Condition="Exists('$(PkgMicrosoft_ML_OnnxRuntime_DirectML)\runtimes\win-x64\native\onnxruntime.dll')">
-            <Pack>false</Pack>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-            <Link>onnxruntime.dll</Link>
-        </Content>
-    </ItemGroup>
-
-    <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-arm64'">
-        <Content Include="$(PkgMicrosoft_ML_OnnxRuntime_DirectML)\runtimes\win-arm64\native\onnxruntime.dll" Condition="Exists('$(PkgMicrosoft_ML_OnnxRuntime_DirectML)\runtimes\win-arm64\native\onnxruntime.dll')">
-            <Pack>false</Pack>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-            <Link>onnxruntime.dll</Link>
         </Content>
     </ItemGroup>
 
