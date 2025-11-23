@@ -4,11 +4,11 @@
         <TargetFramework>net8.0</TargetFramework>
     </PropertyGroup>
 
-    <ItemGroup>
-        <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1"/>
-        <PackageReference Include="Ignore" Version="0.2.1"/>
-        <PackageReference Include="System.IO.Hashing" Version="9.0.3"/>
-    </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1"/>
+    <PackageReference Include="Ignore" Version="0.2.1"/>
+    <PackageReference Include="System.IO.Hashing" Version="9.0.3"/>
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
@@ -25,7 +25,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.19.2" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="0.22.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.5" />
   </ItemGroup>

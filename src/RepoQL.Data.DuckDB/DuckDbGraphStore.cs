@@ -28,7 +28,8 @@ namespace RepoQL.Data.DuckDB;
         private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
         private readonly object _annotationGate = new();
         private readonly object _connectionLock = new();
-        private const int DefaultEmbeddingBatchSize = 32;
+        // Conservative default to avoid DirectML OOM/crash on large batches.
+        private const int DefaultEmbeddingBatchSize = 128;
         private const int MaxDocumentPayloadChars = int.MaxValue;
         private const int MaxObjectPayloadChars = 6000;
         private const int MaxSnippetBytes = 4096;
@@ -98,6 +99,18 @@ namespace RepoQL.Data.DuckDB;
             batchSize = bs;
         }
 
+        if (provider is RepoQL.Embeddings.OnnxEmbeddingProvider onnx)
+        {
+            // DirectML and CoreML have shown instability with very large batches; cap them conservatively.
+            var providerName = onnx.Provider?.ToUpperInvariant() ?? "CPU";
+
+            if ((providerName == "DML" || providerName == "COREML") && batchSize > 160)
+            {
+                _logger.LogWarning("Capping embedding batch size from {Requested} to 160 for provider {Provider}", batchSize, providerName);
+                batchSize = 160;
+            }
+        }
+
         var sw = Stopwatch.StartNew();
         var docSuccess = 0;
         var objSuccess = 0;
@@ -135,6 +148,7 @@ namespace RepoQL.Data.DuckDB;
 
             var perItemMs = sliceLength == 0 ? 0 : batchTimer.Elapsed.TotalMilliseconds / sliceLength;
 
+            var dbTimer = Stopwatch.StartNew();
             using var tx = _connection.BeginTransaction();
             for (var i = 0; i < sliceLength; i++)
             {
@@ -196,6 +210,13 @@ namespace RepoQL.Data.DuckDB;
                 _metrics.EmbedDuration.Record(perItemMs, okTags);
             }
             tx.Commit();
+            dbTimer.Stop();
+
+            _logger.LogInformation("Batch processing: size={BatchSize}, embedding={EmbedMs:F1}ms ({EmbedPerItem:F1}ms/item), database={DbMs:F1}ms ({DbPerItem:F1}ms/item), total={TotalMs:F1}ms",
+                sliceLength,
+                batchTimer.Elapsed.TotalMilliseconds, perItemMs,
+                dbTimer.Elapsed.TotalMilliseconds, dbTimer.Elapsed.TotalMilliseconds / sliceLength,
+                batchTimer.Elapsed.TotalMilliseconds + dbTimer.Elapsed.TotalMilliseconds);
         }
 
         sw.Stop();

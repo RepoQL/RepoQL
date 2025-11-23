@@ -26,6 +26,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 
     public string Model { get; private set; } = "bge-small-en-v1.5";
     public int Dimension { get; private set; } = 384; // will be corrected from graph on first run
+    public string Provider { get; private set; } = "CPU";
     public bool Enabled => !_disposed && _session is not null && _tokenizer is not null;
 
     public OnnxEmbeddingProvider(string modelPath, ILogger<OnnxEmbeddingProvider>? logger = null, int? maxTokens = null, int? intraOp = null, int? interOp = null)
@@ -44,33 +45,21 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
             _tokenizer = WordPieceTokenizer.LoadFromTokenizerJson(File.ReadAllText(tokenizerJson));
             _logger.LogInformation("Loaded tokenizer: lowercase={Lowercase} vocab={Vocab}", _tokenizer.Lowercase, _tokenizer.VocabSize);
 
-            var so = new SessionOptions
+            using var so = new SessionOptions
             {
                 GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+                // Default to quiet logs to avoid noisy provider-assignment warnings.
+                LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+                LogVerbosityLevel = 0,
             };
+
             if (intraOp is { } io and > 0) so.IntraOpNumThreads = io;
             if (interOp is { } eo and > 0) so.InterOpNumThreads = eo;
 
-            var provider = "CPU";
-            try
-            {
-                so.AppendExecutionProvider_CUDA();
-                provider = "CUDA";
-            }
-            catch
-            {
-                try
-                {
-                    so.AppendExecutionProvider_DML();
-                    provider = "DML";
-                }
-                catch
-                {
-                    provider = "CPU";
-                }
-            }
+            var provider = ConfigureExecutionProvider(so);
 
             _session = new InferenceSession(modelFull, so);
+            Provider = provider;
             _logger.LogInformation("ONNX session created for model {Model} using provider: {Provider}", Model, provider);
 
             Model = Path.GetFileNameWithoutExtension(modelFull);
@@ -161,19 +150,23 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     {
         if (!Enabled || texts is null || texts.Count == 0) return [];
         var batch = texts.Count;
+        var totalTimer = System.Diagnostics.Stopwatch.StartNew();
 
         // Tokenize
+        var tokenizeTimer = System.Diagnostics.Stopwatch.StartNew();
         var encs = new EncodingResult[batch];
         for (var i = 0; i < batch; i++)
         {
             encs[i] = _tokenizer!.Encode(texts[i], _maxSeqLen);
         }
+        tokenizeTimer.Stop();
 
         // Autodetect input dtype
         var idsType = _session!.InputMetadata[_inputIdsName].ElementType;
         var useInt32 = idsType == typeof(int) || idsType == typeof(Int32);
 
         // Flattened [B,T]
+        var tensorPrepTimer = System.Diagnostics.Stopwatch.StartNew();
         var shape = new[] { batch, _maxSeqLen };
 
         if (useInt32)
@@ -191,13 +184,25 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                 }
                 var n0 = NamedOnnxValue.CreateFromTensor(_inputIdsName, new DenseTensor<int>(ids, shape));
                 var n1 = NamedOnnxValue.CreateFromTensor(_attnMaskName, new DenseTensor<int>(mask, shape));
+                tensorPrepTimer.Stop();
+
+                float[]?[] result;
                 if (!string.IsNullOrEmpty(_tokenTypeName))
                 {
                     var tt = new int[batch * _maxSeqLen]; // zeros
                     var n2 = NamedOnnxValue.CreateFromTensor(_tokenTypeName!, new DenseTensor<int>(tt, shape));
-                    return await RunAndPostprocessBatchAsync(new[] { n0, n1, n2 }, batch, cancellationToken).ConfigureAwait(false);
+                    result = await RunAndPostprocessBatchAsync(new[] { n0, n1, n2 }, batch, cancellationToken).ConfigureAwait(false);
                 }
-                return await RunAndPostprocessBatchAsync(new[] { n0, n1 }, batch, cancellationToken).ConfigureAwait(false);
+                else
+                {
+                    result = await RunAndPostprocessBatchAsync(new[] { n0, n1 }, batch, cancellationToken).ConfigureAwait(false);
+                }
+
+                totalTimer.Stop();
+                _logger.LogInformation("Batch embedding: size={BatchSize}, tokenize={TokenizeMs:F1}ms, tensorPrep={TensorPrepMs:F1}ms, total={TotalMs:F1}ms, perItem={PerItemMs:F1}ms",
+                    batch, tokenizeTimer.Elapsed.TotalMilliseconds, tensorPrepTimer.Elapsed.TotalMilliseconds,
+                    totalTimer.Elapsed.TotalMilliseconds, totalTimer.Elapsed.TotalMilliseconds / batch);
+                return result;
             }
             finally
             {
@@ -220,13 +225,25 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                 }
                 var n0 = NamedOnnxValue.CreateFromTensor(_inputIdsName, new DenseTensor<long>(ids, shape));
                 var n1 = NamedOnnxValue.CreateFromTensor(_attnMaskName, new DenseTensor<long>(mask, shape));
+                tensorPrepTimer.Stop();
+
+                float[]?[] result;
                 if (!string.IsNullOrEmpty(_tokenTypeName))
                 {
                     var tt = new long[batch * _maxSeqLen]; // zeros
                     var n2 = NamedOnnxValue.CreateFromTensor(_tokenTypeName!, new DenseTensor<long>(tt, shape));
-                    return await RunAndPostprocessBatchAsync(new[] { n0, n1, n2 }, batch, cancellationToken).ConfigureAwait(false);
+                    result = await RunAndPostprocessBatchAsync(new[] { n0, n1, n2 }, batch, cancellationToken).ConfigureAwait(false);
                 }
-                return await RunAndPostprocessBatchAsync(new[] { n0, n1 }, batch, cancellationToken).ConfigureAwait(false);
+                else
+                {
+                    result = await RunAndPostprocessBatchAsync(new[] { n0, n1 }, batch, cancellationToken).ConfigureAwait(false);
+                }
+
+                totalTimer.Stop();
+                _logger.LogInformation("Batch embedding: size={BatchSize}, tokenize={TokenizeMs:F1}ms, tensorPrep={TensorPrepMs:F1}ms, total={TotalMs:F1}ms, perItem={PerItemMs:F1}ms",
+                    batch, tokenizeTimer.Elapsed.TotalMilliseconds, tensorPrepTimer.Elapsed.TotalMilliseconds,
+                    totalTimer.Elapsed.TotalMilliseconds, totalTimer.Elapsed.TotalMilliseconds / batch);
+                return result;
             }
             finally
             {
@@ -300,7 +317,11 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     {
         try
         {
+            var inferenceTimer = System.Diagnostics.Stopwatch.StartNew();
             using var results = await Task.Run(() => _session!.Run(inputs), ct).ConfigureAwait(false);
+            inferenceTimer.Stop();
+
+            var postprocessTimer = System.Diagnostics.Stopwatch.StartNew();
             var outVal = results.First(v => v.Name == _outputName);
 
             if (outVal.Value is DenseTensor<float> t)
@@ -322,6 +343,9 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                         L2NormalizeInPlace(vec);
                         arr[b] = vec;
                     }
+                    postprocessTimer.Stop();
+                    _logger.LogDebug("ONNX batch timing: inference={InferenceMs:F1}ms, postprocess={PostprocessMs:F1}ms",
+                        inferenceTimer.Elapsed.TotalMilliseconds, postprocessTimer.Elapsed.TotalMilliseconds);
                     return arr!;
                 }
                 else if (t.Rank == 2) // [B,H]
@@ -340,15 +364,20 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                         L2NormalizeInPlace(vec);
                         arr[b] = vec;
                     }
+                    postprocessTimer.Stop();
+                    _logger.LogDebug("ONNX batch timing: inference={InferenceMs:F1}ms, postprocess={PostprocessMs:F1}ms",
+                        inferenceTimer.Elapsed.TotalMilliseconds, postprocessTimer.Elapsed.TotalMilliseconds);
                     return arr!;
                 }
                 else
                 {
+                    postprocessTimer.Stop();
                     _logger.LogWarning("Unexpected output rank {Rank}", t.Rank);
                     return Enumerable.Range(0, batch).Select(_ => (float[]?)null).ToArray();
                 }
             }
 
+            postprocessTimer.Stop();
             _logger.LogWarning("Unexpected output type {Type}", outVal.Value?.GetType().FullName ?? "<null>");
             return Enumerable.Range(0, batch).Select(_ => (float[]?)null).ToArray();
         }
@@ -357,6 +386,106 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         {
             _logger.LogWarning(ex, "Batch embedding inference failed");
             return Enumerable.Range(0, batch).Select(_ => (float[]?)null).ToArray();
+        }
+    }
+
+    private string ConfigureExecutionProvider(SessionOptions so)
+    {
+        var envOverride = Environment.GetEnvironmentVariable("REPOQL_ORT_PROVIDER")?.Trim().ToUpperInvariant();
+        if (!string.IsNullOrEmpty(envOverride))
+        {
+            if (envOverride == "CPU")
+            {
+                // Explicit CPU override: skip GPU probing entirely.
+                _logger.LogInformation("Using CPU execution provider (REPOQL_ORT_PROVIDER={Provider})", envOverride);
+                return "CPU";
+            }
+
+            _logger.LogInformation("Attempting to use {Provider} execution provider (REPOQL_ORT_PROVIDER={Provider})", envOverride, envOverride);
+            if (TryAppendProvider(so, envOverride, out var error))
+            {
+                _logger.LogInformation("Successfully configured {Provider} execution provider", envOverride);
+                return envOverride;
+            }
+
+            _logger.LogWarning("Failed to configure {Provider} execution provider: {Error}. Falling back to CPU.", envOverride, error);
+            // Unknown/unsupported override: honor the request by sticking to CPU.
+            return envOverride;
+        }
+
+        _logger.LogInformation("Probing for available GPU execution providers...");
+
+        if (OperatingSystem.IsMacOS())
+        {
+            _logger.LogInformation("Attempting CoreML execution provider (macOS)");
+            if (TryAppendProvider(so, "COREML", out var error))
+            {
+                _logger.LogInformation("Successfully configured CoreML execution provider");
+                return "COREML";
+            }
+            _logger.LogInformation("CoreML execution provider not available: {Error}", error);
+        }
+
+        if (OperatingSystem.IsWindows())
+        {
+            _logger.LogInformation("Attempting DirectML execution provider (Windows)");
+            if (TryAppendProvider(so, "DML", out var dmlError))
+            {
+                _logger.LogInformation("Successfully configured DirectML execution provider");
+                return "DML";
+            }
+            _logger.LogInformation("DirectML execution provider not available: {Error}", dmlError);
+
+            _logger.LogInformation("Attempting CUDA execution provider (Windows)");
+            if (TryAppendProvider(so, "CUDA", out var error))
+            {
+                _logger.LogInformation("Successfully configured CUDA execution provider");
+                return "CUDA";
+            }
+            _logger.LogInformation("CUDA execution provider not available: {Error}", error);
+        }
+        else
+        {
+            _logger.LogInformation("Attempting CUDA execution provider (Linux/Unix)");
+            if (TryAppendProvider(so, "CUDA", out var error))
+            {
+                _logger.LogInformation("Successfully configured CUDA execution provider");
+                return "CUDA";
+            }
+            _logger.LogInformation("CUDA execution provider not available: {Error}", error);
+        }
+
+        _logger.LogInformation("No GPU execution providers available, using CPU");
+        return "CPU";
+    }
+
+    private bool TryAppendProvider(SessionOptions so, string provider, out string? error)
+    {
+        try
+        {
+            switch (provider)
+            {
+                case "CUDA":
+                    so.AppendExecutionProvider_CUDA();
+                    error = null;
+                    return true;
+                case "DML":
+                    so.AppendExecutionProvider_DML();
+                    error = null;
+                    return true;
+                case "COREML":
+                    so.AppendExecutionProvider_CoreML(CoreMLFlags.COREML_FLAG_USE_NONE);
+                    error = null;
+                    return true;
+                default:
+                    error = $"Unknown provider: {provider}";
+                    return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
         }
     }
 

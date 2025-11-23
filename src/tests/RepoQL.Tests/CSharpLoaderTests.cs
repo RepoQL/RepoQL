@@ -415,7 +415,7 @@ public class Foo
         var projectDir = CreateTempProject(new Dictionary<string, string>
         {
             ["Foo.cs"] = "namespace Demo; public class Foo { }"
-        }, analyzers: new[] { analyzerPath });
+        }, analyzers: [analyzerPath]);
 
         try
         {
@@ -446,7 +446,7 @@ public class Foo
         var projectDir = CreateTempProject(new Dictionary<string, string>
         {
             ["Foo.cs"] = "namespace Demo; public class Foo { }"
-        }, analyzers: new[] { analyzerPath });
+        }, analyzers: [analyzerPath]);
 
         var editorConfig = """
 root = true
@@ -455,7 +455,7 @@ root = true
 dotnet_diagnostic.AN0001.severity = none
 """
 ;
-        File.WriteAllText(Path.Combine(projectDir, ".editorconfig"), editorConfig);
+        await File.WriteAllTextAsync(Path.Combine(projectDir, ".editorconfig"), editorConfig, token);
 
         try
         {
@@ -480,13 +480,13 @@ dotnet_diagnostic.AN0001.severity = none
     }
 
     [Test]
-    public async Task Analyzer_Emits_Generated_Diagnostics(CancellationToken token)
+    public async Task Analyzer_Emits_Generated_Diagnostics(CancellationToken _)
     {
         var generatorPath = CreateGeneratorAssembly();
         var projectDir = CreateTempProject(new Dictionary<string, string>
         {
             ["Foo.cs"] = "namespace Demo; public partial class Foo { }"
-        }, analyzers: new[] { generatorPath });
+        }, analyzers: [generatorPath]);
 
         try
         {
@@ -512,7 +512,7 @@ dotnet_diagnostic.AN0001.severity = none
     }
 
     [Test]
-    public async Task UsesSymbolEdges_CrossFile_Targets(CancellationToken token)
+    public async Task UsesSymbolEdges_CrossFile_Targets(CancellationToken _)
     {
         var projectDir = CreateTempProject(new Dictionary<string, string>
         {
@@ -621,7 +621,7 @@ dotnet_diagnostic.AN0001.severity = none
                 public partial class Foo { }
                 """
             },
-            analyzers: new[] { generatorPath });
+            analyzers: [generatorPath]);
 
         try
         {
@@ -659,7 +659,7 @@ dotnet_diagnostic.AN0001.severity = none
                 ["Foo.cs"] = "namespace Demo; public partial class Foo { }",
                 ["Bar.cs"] = "namespace Demo; public partial class Foo { public int FromBar => 1; }"
             },
-            analyzers: new[] { generatorPath });
+            analyzers: [generatorPath]);
 
         try
         {
@@ -740,7 +740,7 @@ public sealed class DemoGenerator : ISourceGenerator
 
         var compilation = CSharpCompilation.Create(
             "DemoSourceGenerator",
-            new[] { syntaxTree },
+            [syntaxTree],
             references.ToArray(),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
@@ -825,7 +825,7 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
 
         var compilation = CSharpCompilation.Create(
             "DemoAnalyzer",
-            new[] { syntaxTree },
+            [syntaxTree],
             references.ToArray(),
             new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
 
@@ -859,8 +859,7 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
         var plainLoader = new PlainTextLoader();
         var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
 
-        var registry = new FormatRegistry(new[]
-        {
+        var registry = new FormatRegistry([
             new FormatDescriptor(
                 SemanticMediaType.Create("text", "plain").WithKind("code.csharp"),
                 csharpLoader,
@@ -872,7 +871,7 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
                 plainLoader,
                 plainAnalyzer,
                 plainLoader)
-        });
+        ]);
 
         var documents = new Dictionary<string, DocumentModel>(StringComparer.OrdinalIgnoreCase)
         {
@@ -893,7 +892,7 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
 
         public Task<IReadOnlyList<EmbeddedFragment>> DiscoverEmbedsAsync(DocumentModel document, CancellationToken cancellationToken = default)
         {
-            return Task.FromResult<IReadOnlyList<EmbeddedFragment>>(Array.Empty<EmbeddedFragment>());
+            return Task.FromResult<IReadOnlyList<EmbeddedFragment>>([]);
         }
     }
 

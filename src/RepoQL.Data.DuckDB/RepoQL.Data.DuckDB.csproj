@@ -16,6 +16,7 @@
 
     <ItemGroup>
       <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+      <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
     </ItemGroup>
 
 </Project>
