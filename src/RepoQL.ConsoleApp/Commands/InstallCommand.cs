@@ -665,7 +665,18 @@ internal class InstallCommand(IAnsiConsole console)
         if (File.Exists(path))
         {
             var json = await File.ReadAllTextAsync(path, cancel).ConfigureAwait(false);
-            if (JsonNode.Parse(json) is JsonObject existing)
+
+            var nodeOptions = new JsonNodeOptions
+            {
+                PropertyNameCaseInsensitive = true
+            };
+            var documentOptions = new JsonDocumentOptions
+            {
+                CommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true
+            };
+
+            if (JsonNode.Parse(json, nodeOptions, documentOptions) is JsonObject existing)
             {
                 return existing;
             }
