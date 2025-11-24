@@ -12,6 +12,7 @@ using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
 using RepoQL.Metrics;
+using System.Diagnostics.Metrics;
 
 namespace RepoQL.Data.DuckDB;
 
@@ -116,6 +117,10 @@ namespace RepoQL.Data.DuckDB;
         var objSuccess = 0;
         var docSkipped = 0;
         var objSkipped = 0;
+        double embedMsTotal = 0;
+        double dbMsTotal = 0;
+        var batches = 0;
+        var totalItems = 0;
         _logger.LogInformation("Embedding refresh starting for {Count} items (batch={BatchSize}, model={Model}, dim={Dim})",
             workItems.Count, batchSize, provider.Model, provider.Dimension);
 
@@ -145,6 +150,16 @@ namespace RepoQL.Data.DuckDB;
                 vectors = Array.Empty<float[]?>();
             }
             batchTimer.Stop();
+            batches++;
+            totalItems += sliceLength;
+            embedMsTotal += batchTimer.Elapsed.TotalMilliseconds;
+            _metrics.EmbeddingBatchSize.Record(sliceLength);
+            _metrics.EmbeddingPhaseDuration.Record(batchTimer.Elapsed.TotalMilliseconds, new TagList
+            {
+                { "phase", "embed" },
+                { "batch_size", sliceLength },
+                { "model", provider.Model }
+            });
 
             var perItemMs = sliceLength == 0 ? 0 : batchTimer.Elapsed.TotalMilliseconds / sliceLength;
 
@@ -211,6 +226,13 @@ namespace RepoQL.Data.DuckDB;
             }
             tx.Commit();
             dbTimer.Stop();
+            dbMsTotal += dbTimer.Elapsed.TotalMilliseconds;
+            _metrics.EmbeddingPhaseDuration.Record(dbTimer.Elapsed.TotalMilliseconds, new TagList
+            {
+                { "phase", "db" },
+                { "batch_size", sliceLength },
+                { "model", provider.Model }
+            });
 
             _logger.LogInformation("Batch processing: size={BatchSize}, embedding={EmbedMs:F1}ms ({EmbedPerItem:F1}ms/item), database={DbMs:F1}ms ({DbPerItem:F1}ms/item), total={TotalMs:F1}ms",
                 sliceLength,
@@ -220,15 +242,29 @@ namespace RepoQL.Data.DuckDB;
         }
 
         sw.Stop();
+        var totalMs = sw.Elapsed.TotalMilliseconds;
+        var embedPct = totalMs <= 0 ? 0 : (embedMsTotal / totalMs) * 100;
+        var dbPct = totalMs <= 0 ? 0 : (dbMsTotal / totalMs) * 100;
+        var throughput = totalItems == 0 ? 0 : totalItems / Math.Max(0.001, totalMs / 1000d);
+        _metrics.EmbeddingPhaseDuration.Record(embedMsTotal, new TagList { { "phase", "embed_total" }, { "model", provider.Model } });
+        _metrics.EmbeddingPhaseDuration.Record(dbMsTotal, new TagList { { "phase", "db_total" }, { "model", provider.Model } });
+
         _logger.LogInformation(
-            "Embeddings refreshed: docs={DocRows}, objects={ObjectRows}, skipped_docs={SkippedDocs}, skipped_objects={SkippedObjects}, model={Model}, dim={Dim}, ms={Duration}",
+            "Embeddings refreshed: docs={DocRows}, objects={ObjectRows}, skipped_docs={SkippedDocs}, skipped_objects={SkippedObjects}, model={Model}, dim={Dim}, batches={Batches}, items={Items}, embed_ms={EmbedMs:F1} ({EmbedPct:F1}%), db_ms={DbMs:F1} ({DbPct:F1}%), total_ms={TotalMs:F1}, throughput={Throughput:F1}/s",
             docSuccess,
             objSuccess,
             docSkipped,
             objSkipped,
             provider.Model,
             provider.Dimension,
-            (long)sw.Elapsed.TotalMilliseconds);
+            batches,
+            totalItems,
+            embedMsTotal,
+            embedPct,
+            dbMsTotal,
+            dbPct,
+            totalMs,
+            throughput);
     }
 
     private Dictionary<Guid, DocumentEmbeddingRow> LoadDocumentEmbeddingSources()

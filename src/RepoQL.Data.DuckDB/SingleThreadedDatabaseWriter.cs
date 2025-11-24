@@ -10,6 +10,8 @@ using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
 using RepoQL.Metrics;
+using System.Data;
+using System.Diagnostics.Metrics;
 
 namespace RepoQL.Data.DuckDB;
 
@@ -55,20 +57,21 @@ public sealed class SingleThreadedDatabaseWriter(
     {
         public required WriteOperation Operation { get; init; }
         public TaskCompletionSource<CommitResult>? Completion { get; init; }
+        public long EnqueuedTimestamp { get; init; }
     }
 
     public int QueueCapacity => MaxQueueDepth;
 
     public ValueTask EnqueueAsync(WriteOperation operation, CancellationToken ct = default)
     {
-        var item = new QueueItem { Operation = operation };
+        var item = new QueueItem { Operation = operation, EnqueuedTimestamp = Stopwatch.GetTimestamp() };
         return _channel.Writer.WriteAsync(item, ct);
     }
 
     public async ValueTask<CommitResult> EnqueueAndWaitAsync(WriteOperation operation, CancellationToken ct = default)
     {
         var tcs = new TaskCompletionSource<CommitResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var item = new QueueItem { Operation = operation, Completion = tcs };
+        var item = new QueueItem { Operation = operation, Completion = tcs, EnqueuedTimestamp = Stopwatch.GetTimestamp() };
         await _channel.Writer.WriteAsync(item, ct).ConfigureAwait(false);
         return await tcs.Task.ConfigureAwait(false);
     }
@@ -106,6 +109,14 @@ public sealed class SingleThreadedDatabaseWriter(
             .ToArray();
         _store = new DuckDbGraphStore(_writeConnection, _metrics, formatSchemaScripts: formatScripts);
         _store.EnsureSchema();
+
+        _metrics.SetQueueDepthCallback(() => _channel.Reader.Count);
+        _metrics.SetQueueCapacityCallback(() => MaxQueueDepth);
+        _metrics.SetDbConnectionsActiveCallback(() =>
+        {
+            var conn = _writeConnection;
+            return conn is { State: ConnectionState.Open } ? 1 : 0;
+        });
 
         _writerTask = Task.Run(WriterLoop, cancellationToken);
         await Task.CompletedTask;
@@ -166,6 +177,7 @@ public sealed class SingleThreadedDatabaseWriter(
     private async Task ProcessOneAsync(QueueItem item)
     {
         var op = item.Operation;
+        RecordQueueWait(item, "single", 1);
         // Create a span for the database write, parented to upstream step to continue the distributed trace
         using var writeActivity = Activity.StartActivity(
             "repoql.db.write",
@@ -187,8 +199,19 @@ public sealed class SingleThreadedDatabaseWriter(
         {
             try
             {
+                var sw = Stopwatch.StartNew();
                 await ExecuteOperationAsync(op).ConfigureAwait(false);
+                sw.Stop();
                 Interlocked.Increment(ref _processed);
+                _metrics.RecordDbWriteDuration(sw.Elapsed.TotalMilliseconds, op.Type.ToString());
+                _metrics.DbBatchDuration.Record(sw.Elapsed.TotalMilliseconds, new TagList
+                {
+                    { "mode", "single" },
+                    { "batch_size", 1 },
+                    { "operation", op.Type.ToString() }
+                });
+                _metrics.DbBatchSize.Record(1, new TagList { { "mode", "single" }, { "operation", op.Type.ToString() } });
+                _metrics.RecordTransaction("success");
                 failure = null;
                 break;
             }
@@ -246,10 +269,22 @@ public sealed class SingleThreadedDatabaseWriter(
             catch { }
 
             result = new CommitResult { Success = false, Error = failure };
+            _metrics.RecordTransaction("error");
         }
 
         item.Completion?.TrySetResult(result);
         FireOnCommitted(op, result);
+    }
+
+    private void RecordQueueWait(QueueItem item, string mode, int batchSize)
+    {
+        var waitMs = Stopwatch.GetElapsedTime(item.EnqueuedTimestamp).TotalMilliseconds;
+        _metrics.QueueWaitTime.Record(waitMs, new TagList
+        {
+            { "operation", item.Operation.Type.ToString() },
+            { "mode", mode },
+            { "batch_size", batchSize }
+        });
     }
 
     private void FireOnCommitted(WriteOperation op, CommitResult result)
@@ -286,12 +321,17 @@ public sealed class SingleThreadedDatabaseWriter(
 
         try
         {
+            foreach (var qi in batch)
+            {
+                RecordQueueWait(qi, "batch", batch.Count);
+            }
             _writeConnection ??= _connectionFactory.CreateConnection();
             if (_writeConnection.State != System.Data.ConnectionState.Open)
             {
                 await _writeConnection.OpenAsync(_stopping.Token).ConfigureAwait(false);
             }
 
+            var batchSw = Stopwatch.StartNew();
             await using var tx = await _writeConnection.BeginTransactionAsync(_stopping.Token).ConfigureAwait(false);
             foreach (var item in batch)
             {
@@ -299,6 +339,20 @@ public sealed class SingleThreadedDatabaseWriter(
                 Interlocked.Increment(ref _processed);
             }
             await tx.CommitAsync(_stopping.Token).ConfigureAwait(false);
+            batchSw.Stop();
+
+            _metrics.DbBatchDuration.Record(batchSw.Elapsed.TotalMilliseconds, new TagList
+            {
+                { "mode", "batch" },
+                { "batch_size", batch.Count }
+            });
+            _metrics.DbBatchSize.Record(batch.Count, new TagList { { "mode", "batch" } });
+            var perItemMs = batch.Count == 0 ? 0 : batchSw.Elapsed.TotalMilliseconds / batch.Count;
+            foreach (var item in batch)
+            {
+                _metrics.RecordDbWriteDuration(perItemMs, item.Operation.Type.ToString());
+                _metrics.RecordTransaction("success");
+            }
 
             foreach (var item in batch)
             {

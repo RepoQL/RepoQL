@@ -385,7 +385,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<IArtifactPruner>(),
             sp.GetRequiredService<IVectorIndexCoordinator>(),
             sp.GetService<IOptions<IndexingEngineOptions>>()?.Value,
-            sp.GetService<ILogger<IndexingEngine>>()));
+            sp.GetService<ILogger<IndexingEngine>>(),
+            sp.GetRequiredService<IndexingMetrics>()));
 
         services.AddSingleton<IIndexingCoordinator>(sp => new IndexingCoordinator(
             sp.GetRequiredService<CompositeFileSystem>(),

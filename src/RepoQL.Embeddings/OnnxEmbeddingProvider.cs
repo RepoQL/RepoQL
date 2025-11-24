@@ -391,26 +391,30 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 
     private string ConfigureExecutionProvider(SessionOptions so)
     {
-        var envOverride = Environment.GetEnvironmentVariable("REPOQL_ORT_PROVIDER")?.Trim().ToUpperInvariant();
+        var envOverrideRaw = Environment.GetEnvironmentVariable("REPOQL_ORT_PROVIDER");
+        var envOverride = envOverrideRaw?.Trim();
         if (!string.IsNullOrEmpty(envOverride))
         {
-            if (envOverride == "CPU")
+            var normalized = envOverride.ToUpperInvariant();
+
+            // Providers that do not require explicit registration (CPU, defaults, etc.) should still
+            // short-circuit GPU probing when requested.
+            if (normalized is "CPU" or "CPUEXECUTIONPROVIDER" or "CPU_ONLY")
             {
-                // Explicit CPU override: skip GPU probing entirely.
                 _logger.LogInformation("Using CPU execution provider (REPOQL_ORT_PROVIDER={Provider})", envOverride);
                 return "CPU";
             }
 
-            _logger.LogInformation("Attempting to use {Provider} execution provider (REPOQL_ORT_PROVIDER={Provider})", envOverride, envOverride);
-            if (TryAppendProvider(so, envOverride, out var error))
+            _logger.LogInformation("Attempting to use {Provider} execution provider (REPOQL_ORT_PROVIDER={Provider})", normalized, envOverride);
+            if (TryAppendProvider(so, normalized, out var error))
             {
-                _logger.LogInformation("Successfully configured {Provider} execution provider", envOverride);
-                return envOverride;
+                _logger.LogInformation("Successfully configured {Provider} execution provider", normalized);
+                return normalized;
             }
 
-            _logger.LogWarning("Failed to configure {Provider} execution provider: {Error}. Falling back to CPU.", envOverride, error);
-            // Unknown/unsupported override: honor the request by sticking to CPU.
-            return envOverride;
+            _logger.LogWarning("Failed to configure {Provider} execution provider: {Error}. Honoring override by staying on CPU.", envOverride, error);
+            // Unknown/unsupported override: do not probe GPU; fall back to CPU per explicit request.
+            return "CPU";
         }
 
         _logger.LogInformation("Probing for available GPU execution providers...");

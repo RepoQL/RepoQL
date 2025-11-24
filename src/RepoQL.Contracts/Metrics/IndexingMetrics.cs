@@ -35,11 +35,17 @@ public sealed class IndexingMetrics : IDisposable
     public Histogram<long> FileSize { get; }
     public Histogram<int> NodesPerDocument { get; }
     public Histogram<double> QueueWaitTime { get; }
+    public Histogram<double> StageDuration { get; }
+    public Histogram<double> HotPathDuration { get; }
+    public Histogram<double> DbBatchDuration { get; }
+    public Histogram<int> DbBatchSize { get; }
 
     // Embedding metrics
     public Counter<long> EmbedRequests { get; }
     public Counter<long> EmbedErrors { get; }
     public Histogram<double> EmbedDuration { get; }
+    public Histogram<double> EmbeddingPhaseDuration { get; }
+    public Histogram<int> EmbeddingBatchSize { get; }
 
     // Gauge metrics (using ObservableGauge)
     public ObservableGauge<int> QueueDepth { get; }
@@ -170,6 +176,26 @@ public sealed class IndexingMetrics : IDisposable
             unit: "ms",
             description: "Database write time per document in milliseconds");
 
+        StageDuration = _meter.CreateHistogram<double>(
+            "repoql.stage.duration",
+            unit: "ms",
+            description: "Per-stage duration with stage tags");
+
+        HotPathDuration = _meter.CreateHistogram<double>(
+            "repoql.hotpath.duration",
+            unit: "ms",
+            description: "End-to-end hot-path duration per item");
+
+        DbBatchDuration = _meter.CreateHistogram<double>(
+            "repoql.db.batch.duration",
+            unit: "ms",
+            description: "Database batch transaction duration");
+
+        DbBatchSize = _meter.CreateHistogram<int>(
+            "repoql.db.batch.size",
+            unit: "ops",
+            description: "Operations per database batch transaction");
+
         FileSize = _meter.CreateHistogram<long>(
             "repoql.file.size",
             unit: "bytes",
@@ -203,6 +229,16 @@ public sealed class IndexingMetrics : IDisposable
             unit: "ms",
             description: "Embedding computation duration"
         );
+
+        EmbeddingPhaseDuration = _meter.CreateHistogram<double>(
+            "repoql.embed.phase.duration",
+            unit: "ms",
+            description: "Embedding phase durations (tokenize, tensor_prep, inference, postprocess, db, total)");
+
+        EmbeddingBatchSize = _meter.CreateHistogram<int>(
+            "repoql.embed.batch.size",
+            unit: "items",
+            description: "Embedding batch sizes");
 
         // Initialize observable gauge metrics
         QueueDepth = _meter.CreateObservableGauge(

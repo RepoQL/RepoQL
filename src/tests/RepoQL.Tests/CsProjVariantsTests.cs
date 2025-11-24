@@ -25,7 +25,7 @@ internal class CsProjVariantsTests
         var csproj = """
         <Project Sdk="Microsoft.NET.Sdk">
           <PropertyGroup>
-            <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
+            <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
             <OutputType>Library</OutputType>
             <IsPackable>false</IsPackable>
           </PropertyGroup>

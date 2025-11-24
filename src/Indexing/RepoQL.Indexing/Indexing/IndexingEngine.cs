@@ -16,6 +16,7 @@ using RepoQL.Indexing.Indexing.Pipelines.Analysis;
 using RepoQL.Indexing.Indexing.Pipelines.Classification;
 using RepoQL.Indexing.Indexing.Pipelines.Parsing;
 using RepoQL.Indexing.Indexing.State;
+using RepoQL.Metrics;
 
 namespace RepoQL.Indexing.Indexing;
 
@@ -116,6 +117,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private IndexingEngineOptions Options { get; }
     private ILogger<IndexingEngine> Logger { get; }
+    private IndexingMetrics? Metrics { get; }
     private CancellationTokenSource Shutdown { get; } = new();
     private IDocumentCatalog DocumentCatalog { get; }
     private IIndexingCommitter Committer { get; }
@@ -198,7 +200,8 @@ public partial class IndexingEngine : IAsyncDisposable
         IArtifactPruner? artifactPruner = null,
         IVectorIndexCoordinator? vectorCoordinator = null,
         IndexingEngineOptions? options = null,
-        ILogger<IndexingEngine>? logger = null)
+        ILogger<IndexingEngine>? logger = null,
+        IndexingMetrics? metrics = null)
     {
         Writer =  databaseWriter;
         Filter = filter ?? new RepoGitIgnoreFilter(".");
@@ -216,6 +219,7 @@ public partial class IndexingEngine : IAsyncDisposable
         VectorCoordinator = vectorCoordinator ?? NullVectorIndexCoordinator.Instance;
         Options = options ??  new IndexingEngineOptions();
         Logger = logger ?? NullLogger<IndexingEngine>.Instance;
+        Metrics = metrics;
         IndexerQueue = new WorkQueue<IndexItem>(
             "IndexingQueue",
             Options.IndexingQueueSize,
@@ -342,6 +346,12 @@ public partial class IndexingEngine : IAsyncDisposable
 
     internal async Task IndexItemAsync(IndexItem item, CancellationToken cancellationToken = default)
     {
+        var overallTimer = Stopwatch.StartNew();
+        var status = "unknown";
+        var mime = item.MediaType?.ToString()
+                   ?? item.RawArtifact.ProvisionalMediaType.Value?.ToString()
+                   ?? "unknown";
+        var fileSize = item.RawArtifact.Length;
         var catalogRegistered = false;
         try
         {
@@ -349,6 +359,7 @@ public partial class IndexingEngine : IAsyncDisposable
             if (item.Options.HasFlag(IndexItemOptions.OnlyIfNotExcluded) && !Filter.IncludeFile(item.Uri))
             {
                 RecordResult(item.Epoch, PipelineResult.Filtered);
+                status = "filtered";
                 return;
             }
             await DocumentCatalog.EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
@@ -365,6 +376,7 @@ public partial class IndexingEngine : IAsyncDisposable
             {
                 AddEpochTag(item.Epoch, "index.catalog", "skip_up_to_date");
                 RecordResult(item.Epoch, PipelineResult.Filtered);
+                status = "skipped_up_to_date";
                 return;
             }
 
@@ -374,10 +386,17 @@ public partial class IndexingEngine : IAsyncDisposable
                 catalogRegistered = true;
 
                 var result = await ApplyIndexerPipeline(item, cancellationToken);
+                mime = item.MediaType?.ToString() ?? mime;
+                status = result.ToString();
                 RecordResult(item.Epoch, result);
                 if (result != PipelineResult.Success)
                     return;
+                var commitTimer = Stopwatch.StartNew();
                 await Committer.CommitAsync(item, cancellationToken).ConfigureAwait(false);
+                commitTimer.Stop();
+                RecordStageDuration("commit", commitTimer.Elapsed.TotalMilliseconds, PipelineResult.Success, item);
+                Metrics?.StageIndex.Add(1);
+                status = "success";
                 ScheduleAnalysis(item);
                 // NOTE: Once WriteOperation dispatch is in place, hook DocumentCatalog.ApplyUpsert/Delete
                 //       through the writer's OnCommitted callback to keep the cache authoritative.
@@ -390,26 +409,47 @@ public partial class IndexingEngine : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
+            status = "cancelled";
             LogIndexingCancelledForItem(Logger, item.Name);
             return;
         }
         catch (Exception ex)
         {
+            status = "error";
             LogUriFailedDuringIndexing(Logger, ex, item.Uri);
             return;
         }
         finally
         {
+            overallTimer.Stop();
+            Metrics?.HotPathDuration.Record(overallTimer.Elapsed.TotalMilliseconds, new TagList
+            {
+                { "status", status },
+                { "mime", mime },
+                { "read_only", item.IsReadOnly }
+            });
+            Metrics?.RecordFileProcessed(mime, status, fileSize, overallTimer.Elapsed.TotalMilliseconds);
+            AddEpochTag(item.Epoch, "index.result", status);
             var epochBecameIdle = _epochTracker.Decrement(item.Epoch);
             if (epochBecameIdle && State == IndexingState.AllIdle)
                 HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
         }
-        AddEpochTag(item.Epoch, "index.result", "Success");
     }
 
     private void RecordResult(long epoch, PipelineResult result)
     {
         AddEpochTag(epoch, "index.pipeline_result", result.ToString());
+    }
+
+    private void RecordStageDuration(string stage, double durationMs, PipelineResult result, IndexItem item)
+    {
+        Metrics?.StageDuration.Record(durationMs, new TagList
+        {
+            { "stage", stage },
+            { "status", result.ToString() },
+            { "mime", item.MediaType?.ToString() ?? item.RawArtifact.ProvisionalMediaType.Value?.ToString() ?? "unknown" },
+            { "read_only", item.IsReadOnly }
+        });
     }
 
     private void ScheduleAnalysis(IndexItem item)
@@ -620,18 +660,37 @@ public partial class IndexingEngine : IAsyncDisposable
 
     internal async Task<PipelineResult> ApplyIndexerPipeline(IndexItem item, CancellationToken cancellationToken)
     {
+        var classifyTimer = Stopwatch.StartNew();
         var pipelineResult = await _classificationStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
+        classifyTimer.Stop();
+        RecordStageDuration("classification", classifyTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
         if (pipelineResult != PipelineResult.Success)
             return  pipelineResult;
+        Metrics?.StageDiscover.Add(1);
+
+        var parseTimer = Stopwatch.StartNew();
         pipelineResult = await _parsingStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
+        parseTimer.Stop();
+        RecordStageDuration("parse", parseTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
         if (pipelineResult != PipelineResult.Success)
             return pipelineResult;
+        Metrics?.StageParse.Add(1);
+
         if (item.IsReadOnly)
         {
             AddEpochTag(item.Epoch, "analysis.skip", "read_only_single");
             return PipelineResult.Success;
         }
-        return await _singleFileStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
+
+        var analysisTimer = Stopwatch.StartNew();
+        pipelineResult = await _singleFileStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
+        analysisTimer.Stop();
+        RecordStageDuration("single_file_analysis", analysisTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
+        if (pipelineResult == PipelineResult.Success)
+        {
+            Metrics?.StageEnrich.Add(1);
+        }
+        return pipelineResult;
     }
 
     internal async Task AnalyzeItemAsync(IndexItem item, CancellationToken cancellationToken)
