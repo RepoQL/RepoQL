@@ -118,6 +118,18 @@ public sealed class SingleThreadedDatabaseWriter(
             return conn is { State: ConnectionState.Open } ? 1 : 0;
         });
 
+        // Register database total callbacks
+        _metrics.RegisterDatabaseCallbacks(
+            documentsTotal: () => _store?.DocumentsTotal ?? 0,
+            nodesTotal: () => _store?.NodesTotal ?? 0,
+            edgesTotal: () => _store?.EdgesTotal ?? 0,
+            annotationsTotal: () => _store?.AnnotationsTotal ?? 0,
+            embeddingsTotal: () => _store?.EmbeddingsTotal ?? 0
+        );
+
+        // Trigger initial count refresh
+        _ = Task.Run(() => _store?.RefreshCountsAsync());
+
         _writerTask = Task.Run(WriterLoop, cancellationToken);
         await Task.CompletedTask;
     }
@@ -204,14 +216,12 @@ public sealed class SingleThreadedDatabaseWriter(
                 sw.Stop();
                 Interlocked.Increment(ref _processed);
                 _metrics.RecordDbWriteDuration(sw.Elapsed.TotalMilliseconds, op.Type.ToString());
-                _metrics.DbBatchDuration.Record(sw.Elapsed.TotalMilliseconds, new TagList
+                _metrics.TransactionsCommitted.Add(1, new TagList
                 {
-                    { "mode", "single" },
-                    { "batch_size", 1 },
-                    { "operation", op.Type.ToString() }
+                    { "operation_type", op.Type.ToString() },
+                    { "mode", "single" }
                 });
-                _metrics.DbBatchSize.Record(1, new TagList { { "mode", "single" }, { "operation", op.Type.ToString() } });
-                _metrics.RecordTransaction("success");
+                _store?.NotifyCommit();
                 failure = null;
                 break;
             }
@@ -269,7 +279,11 @@ public sealed class SingleThreadedDatabaseWriter(
             catch { }
 
             result = new CommitResult { Success = false, Error = failure };
-            _metrics.RecordTransaction("error");
+            _metrics.TransactionsFailed.Add(1, new TagList
+            {
+                { "operation_type", op.Type.ToString() },
+                { "error_type", failure.GetType().Name }
+            });
         }
 
         item.Completion?.TrySetResult(result);
@@ -341,18 +355,34 @@ public sealed class SingleThreadedDatabaseWriter(
             await tx.CommitAsync(_stopping.Token).ConfigureAwait(false);
             batchSw.Stop();
 
-            _metrics.DbBatchDuration.Record(batchSw.Elapsed.TotalMilliseconds, new TagList
+            _metrics.BatchDuration.Record(batchSw.Elapsed.TotalMilliseconds, new TagList
             {
-                { "mode", "batch" },
-                { "batch_size", batch.Count }
+                { "batch_size", batch.Count.ToString() }
             });
-            _metrics.DbBatchSize.Record(batch.Count, new TagList { { "mode", "batch" } });
+
+            // Determine batch size bucket
+            var batchSizeBucket = batch.Count switch
+            {
+                <= 10 => "1-10",
+                <= 32 => "11-32",
+                _ => "33-64"
+            };
+            _metrics.BatchesCommitted.Add(1, new TagList { { "batch_size_bucket", batchSizeBucket } });
+
+            _metrics.TransactionsCommitted.Add(1, new TagList
+            {
+                { "operation_type", "Batch" },
+                { "mode", "batch" }
+            });
+
             var perItemMs = batch.Count == 0 ? 0 : batchSw.Elapsed.TotalMilliseconds / batch.Count;
             foreach (var item in batch)
             {
                 _metrics.RecordDbWriteDuration(perItemMs, item.Operation.Type.ToString());
-                _metrics.RecordTransaction("success");
             }
+
+            // Notify store for count refresh
+            _store?.NotifyCommit();
 
             foreach (var item in batch)
             {
@@ -384,6 +414,11 @@ public sealed class SingleThreadedDatabaseWriter(
         // 2) Upsert document by URI; refresh subtree
         var docRec = records.Nodes.FirstOrDefault(n => string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase))
                     ?? throw new InvalidOperationException("Parser did not produce a document node.");
+
+        // Check if document exists to determine create vs update
+        var existingDoc = _store.GetDocumentByUri(op.Uri);
+        var isUpdate = existingDoc is not null;
+
         var docArtifactId = docRec.ArtifactId is { } da && artifactIdMap.TryGetValue(da, out var newDa) ? newDa : docRec.ArtifactId;
         var docNode = new Node
         {
@@ -459,6 +494,23 @@ public sealed class SingleThreadedDatabaseWriter(
 
         // 6) Document outline annotation removed: x-ray summaries live on artifact fields now.
 
+        // 7) Record document lifecycle and graph extraction metrics
+        var mimeType = records.Artifacts.FirstOrDefault()?.MediaType.ToString() ?? "unknown";
+        if (isUpdate)
+        {
+            _metrics.DocumentsUpdated.Add(1, new TagList { { "mime_type", mimeType } });
+        }
+        else
+        {
+            _metrics.DocumentsCreated.Add(1, new TagList { { "mime_type", mimeType } });
+        }
+
+        // Record graph extraction metrics
+        var nodeCount = 1 + childNodes.Count; // doc node + children
+        _metrics.NodesExtracted.Add(nodeCount, new TagList { { "mime_type", mimeType } });
+        _metrics.EdgesExtracted.Add(edges.Length, new TagList { { "mime_type", mimeType } });
+        _metrics.SpansExtracted.Add(spans.Length, new TagList { { "mime_type", mimeType } });
+
         return Task.CompletedTask;
     }
 
@@ -517,6 +569,12 @@ public sealed class SingleThreadedDatabaseWriter(
             {
                 _store.UpsertAnnotation(annotation);
             }
+
+            // Record annotation metrics
+            if (newForDocument.Count > 0)
+            {
+                _metrics.AnnotationsUpserted.Add(newForDocument.Count, new TagList { { "operation", "upsert" } });
+            }
         }
     }
 
@@ -524,6 +582,7 @@ public sealed class SingleThreadedDatabaseWriter(
     {
         if (_store is null) throw new InvalidOperationException("Writer not started");
         _store.DeleteDocumentByUri(op.Uri);
+        _metrics.DocumentsDeleted.Add(1);
     }
 
     private Task ExecuteOperationAsync(WriteOperation op)

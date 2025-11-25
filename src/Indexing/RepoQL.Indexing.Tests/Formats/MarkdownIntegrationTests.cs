@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using AwesomeAssertions;
 using RepoQL.Formats.Markdown;
 using RepoQL.Testing.Formats;

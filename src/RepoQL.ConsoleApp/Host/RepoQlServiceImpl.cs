@@ -135,16 +135,21 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         };
     }
 
-    public override Task<ShutdownHostResponse> ShutdownHost(ShutdownHostRequest request, ServerCallContext context)
+    public override async Task<ShutdownHostResponse> ShutdownHost(ShutdownHostRequest request, ServerCallContext context)
     {
         var pid = Environment.ProcessId;
         _logger.LogInformation("Shutdown requested by {Peer}; process id {Pid}", context.Peer, pid);
 
+        var response = new ShutdownHostResponse { ProcessId = pid };
+
+        // Ensure response is sent before initiating shutdown
+        // This prevents the gRPC connection from closing before the response is transmitted
         _ = Task.Run(async () =>
         {
             try
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(200)).ConfigureAwait(false);
+                // Wait for response to be transmitted (gRPC flushes on method return)
+                await Task.Delay(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
             }
             catch
             {
@@ -153,7 +158,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             _hostLifetime.StopApplication();
         });
 
-        return Task.FromResult(new ShutdownHostResponse { ProcessId = pid });
+        return response;
     }
 
     public override async Task<GetDocumentSummariesResponse> GetDocumentSummaries(GetDocumentSummariesRequest request, ServerCallContext context)

@@ -25,6 +25,7 @@ using RepoQL.Formats.DotNet;
 using RepoQL.Formats.GraphQL;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
+using RepoQL.Formats.TypeScript;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
@@ -195,6 +196,7 @@ public static class RepoIndexerServiceCollectionExtensions
             resourceRoot: "RepoQL.Formats.DotNet.Templates");
 
         services.AddMarkdownFormat();
+        services.AddTypeScriptFormat();
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjAnalyzer>();

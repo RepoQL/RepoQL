@@ -1,5 +1,3 @@
-using System.Threading;
-using System.Threading.Tasks;
 using AwesomeAssertions;
 
 namespace RepoQL.Indexing.Tests.Indexing;

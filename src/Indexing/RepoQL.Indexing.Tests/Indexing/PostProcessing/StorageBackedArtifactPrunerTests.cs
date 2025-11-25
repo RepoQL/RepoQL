@@ -1,7 +1,7 @@
 using AwesomeAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
-using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Indexing.Indexing.Pipelines;
+using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Testing.Indexing;
 
 namespace RepoQL.Indexing.Tests.Indexing.PostProcessing;

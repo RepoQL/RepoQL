@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics;
 using System.IO;
@@ -31,6 +32,114 @@ namespace RepoQL.Data.DuckDB;
         private readonly object _connectionLock = new();
         // Conservative default to avoid DirectML OOM/crash on large batches.
         private const int DefaultEmbeddingBatchSize = 128;
+
+        #region Cached Database Counts
+
+        private readonly ConcurrentDictionary<string, long> _cachedCounts = new();
+        private DateTime _lastCountRefresh = DateTime.MinValue;
+        private int _commitsSinceRefresh = 0;
+        private readonly SemaphoreSlim _refreshLock = new(1, 1);
+        private const int RefreshCommitThreshold = 50;
+        private static readonly TimeSpan RefreshTimeThreshold = TimeSpan.FromSeconds(5);
+        private static readonly TimeSpan CacheTTL = TimeSpan.FromSeconds(10);
+
+        /// <summary>
+        /// Total documents in the database.
+        /// </summary>
+        public long DocumentsTotal => GetCachedCount("documents");
+
+        /// <summary>
+        /// Total nodes in the database.
+        /// </summary>
+        public long NodesTotal => GetCachedCount("nodes");
+
+        /// <summary>
+        /// Total edges in the database.
+        /// </summary>
+        public long EdgesTotal => GetCachedCount("edges");
+
+        /// <summary>
+        /// Total annotations in the database.
+        /// </summary>
+        public long AnnotationsTotal => GetCachedCount("annotations");
+
+        /// <summary>
+        /// Total embeddings in the database.
+        /// </summary>
+        public long EmbeddingsTotal => GetCachedCount("embeddings");
+
+        private long GetCachedCount(string key)
+        {
+            var age = DateTime.UtcNow - _lastCountRefresh;
+            if (age > CacheTTL)
+            {
+                // Trigger refresh but return cached value (don't block)
+                _ = Task.Run(RefreshCountsAsync);
+            }
+            return _cachedCounts.GetValueOrDefault(key, 0);
+        }
+
+        /// <summary>
+        /// Refreshes all cached database counts.
+        /// </summary>
+        public async Task RefreshCountsAsync()
+        {
+            if (!await _refreshLock.WaitAsync(0))
+                return; // Already refreshing
+
+            try
+            {
+                using var connectionLock = EnterConnectionScope();
+                await using var cmd = _connection.CreateCommand();
+
+                cmd.CommandText = "SELECT COUNT(*) FROM node WHERE kind='document'";
+                _cachedCounts["documents"] = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+                cmd.CommandText = "SELECT COUNT(*) FROM node";
+                _cachedCounts["nodes"] = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+                cmd.CommandText = "SELECT COUNT(*) FROM edge";
+                _cachedCounts["edges"] = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+                cmd.CommandText = "SELECT COUNT(*) FROM annotation";
+                _cachedCounts["annotations"] = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+                cmd.CommandText = "SELECT COUNT(*) FROM document_embedding";
+                _cachedCounts["embeddings"] = Convert.ToInt64(await cmd.ExecuteScalarAsync());
+
+                _lastCountRefresh = DateTime.UtcNow;
+            }
+            catch
+            {
+                // Ignore errors, keep stale values
+            }
+            finally
+            {
+                _refreshLock.Release();
+            }
+        }
+
+        /// <summary>
+        /// Notifies the store that a commit occurred, potentially triggering a count refresh.
+        /// </summary>
+        public void NotifyCommit()
+        {
+            Interlocked.Increment(ref _commitsSinceRefresh);
+            var timeSinceRefresh = DateTime.UtcNow - _lastCountRefresh;
+
+            if (_commitsSinceRefresh >= RefreshCommitThreshold || timeSinceRefresh >= RefreshTimeThreshold)
+            {
+                Interlocked.Exchange(ref _commitsSinceRefresh, 0);
+                _ = Task.Run(RefreshCountsAsync); // Fire and forget
+            }
+        }
+
+        /// <summary>
+        /// Forces an immediate refresh of cached counts.
+        /// </summary>
+        public async Task RefreshCountsNowAsync() => await RefreshCountsAsync();
+
+        #endregion
         private const int MaxDocumentPayloadChars = int.MaxValue;
         private const int MaxObjectPayloadChars = 6000;
         private const int MaxSnippetBytes = 4096;
@@ -77,7 +186,8 @@ namespace RepoQL.Data.DuckDB;
     }
 
     /// <summary>
-    ///     Recompute embeddings for all documents using the provided local embedding provider.
+    ///     Incrementally refreshes document embeddings using the provided local embedding provider.
+    ///     Only re-embeds documents where node.updated_at is newer than the existing embedding.
     ///     Upserts rows into document_embedding with both document and object scopes.
     /// </summary>
     public void RefreshDocumentEmbeddings(Contracts.Embeddings.IEmbeddingProvider provider, CancellationToken ct = default)
@@ -86,9 +196,20 @@ namespace RepoQL.Data.DuckDB;
         if (provider is null || !provider.Enabled)
             return;
 
+        // Count total documents for incremental efficiency logging
+        var totalDocuments = CountTotalDocuments();
+
         var documents = LoadDocumentEmbeddingSources();
+        var docsSkippedAsUpToDate = totalDocuments - documents.Count;
+
         if (documents.Count == 0)
+        {
+            _logger.LogInformation("Embedding refresh: all {Total} documents up-to-date, nothing to embed", totalDocuments);
             return;
+        }
+
+        _logger.LogInformation("Embedding refresh: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
+            documents.Count, totalDocuments, docsSkippedAsUpToDate);
 
         var workItems = BuildEmbeddingWorkItems(documents);
         if (workItems.Count == 0)
@@ -267,9 +388,19 @@ namespace RepoQL.Data.DuckDB;
             throughput);
     }
 
+    private int CountTotalDocuments()
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM node WHERE kind = 'document'";
+        return Convert.ToInt32(cmd.ExecuteScalar() ?? 0);
+    }
+
     private Dictionary<Guid, DocumentEmbeddingRow> LoadDocumentEmbeddingSources()
     {
         using var cmd = _connection.CreateCommand();
+        // Only load documents that need embedding refresh:
+        // - No existing document-scope embedding (de.doc_id IS NULL)
+        // - OR embedding is older than last document update (de.updated_at < n.updated_at)
         cmd.CommandText = """
                           SELECT n.id,
                                  n.uri,
@@ -279,8 +410,11 @@ namespace RepoQL.Data.DuckDB;
                                  a.structure
                           FROM node n
                                    JOIN artifact a ON a.id = n.artifact_id
+                                   LEFT JOIN document_embedding de
+                                        ON de.doc_id = n.id AND de.scope = 'document'
                           WHERE n.kind = 'document'
-                            AND a.text_content IS NOT NULL;
+                            AND a.text_content IS NOT NULL
+                            AND (de.doc_id IS NULL OR de.updated_at < n.updated_at);
                           """;
         using var activity = StartDbActivity(cmd.CommandText);
         using var reader = cmd.ExecuteReader();
@@ -305,10 +439,15 @@ namespace RepoQL.Data.DuckDB;
         return documents;
     }
 
-    private List<NodeEmbeddingRow> LoadNodeEmbeddingRows()
+    private List<NodeEmbeddingRow> LoadNodeEmbeddingRows(IReadOnlyCollection<Guid> documentIds)
     {
+        if (documentIds.Count == 0)
+            return [];
+
         using var cmd = _connection.CreateCommand();
-        cmd.CommandText = """
+        // Filter to only load child nodes from documents that need embedding refresh
+        var placeholders = string.Join(", ", documentIds.Select((_, i) => $"?"));
+        cmd.CommandText = $"""
                           SELECT child.id,
                                  child.kind,
                                  child.uri,
@@ -320,8 +459,16 @@ namespace RepoQL.Data.DuckDB;
                                  span.end_byte
                           FROM node child
                                    JOIN span ON span.id = child.span_id
-                          WHERE child.kind <> 'document';
+                          WHERE child.kind <> 'document'
+                            AND span.document_id IN ({placeholders});
                           """;
+        foreach (var docId in documentIds)
+        {
+            var param = cmd.CreateParameter();
+            param.Value = docId;
+            cmd.Parameters.Add(param);
+        }
+
         using var activity = StartDbActivity(cmd.CommandText);
         using var reader = cmd.ExecuteReader();
 
@@ -355,10 +502,11 @@ namespace RepoQL.Data.DuckDB;
             }
         }
 
-        foreach (var node in LoadNodeEmbeddingRows())
+        // Only load child nodes from documents that need refresh (filtered in SQL)
+        foreach (var node in LoadNodeEmbeddingRows(documents.Keys.ToList()))
         {
             if (!documents.TryGetValue(node.DocumentId, out var doc))
-                continue;
+                continue; // Shouldn't happen with SQL filter, but keep for safety
 
             var payload = BuildObjectEmbeddingText(node, doc);
             if (string.IsNullOrWhiteSpace(payload))

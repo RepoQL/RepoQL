@@ -1,21 +1,16 @@
-using System;
-using System.Threading;
 using AwesomeAssertions;
 using FakeItEasy;
 using RepoQL.Contracts;
-using RepoQL.Contracts.Models;
 using RepoQL.Contracts.Data;
 using RepoQL.Indexing.Indexing;
 using RepoQL.Indexing.Indexing.Commit;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.Pipelines.Analysis;
 using RepoQL.Indexing.Indexing.Pipelines.Classification;
-using RepoQL.Indexing.Indexing.Pipelines.Parsing;
 using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Indexing.Indexing.State;
 using RepoQL.Testing;
 using RepoQL.Testing.Indexing;
-using RepoQL.Testing.Logging;
 
 namespace RepoQL.Indexing.Tests.Indexing;
 
@@ -440,7 +435,7 @@ public class IndexingEngineTests
     [DisplayName("Raises HotPathIdle when pending work drains")]
     public async Task Given_WorkCompletes_When_Idle_Then_HotPathIdleFires()
     {
-        var engine = CreateEngineForIdleTests();
+        await using var engine = CreateEngineForIdleTests();
         var artifact = CreateRawArtifact("file:///repo/hot1.md");
 
         var idleTask = engine.AwaitHotPathIdleAsync();
@@ -454,7 +449,7 @@ public class IndexingEngineTests
     public async Task Given_WorkPending_When_WaitingForIdle_Then_EventDelays()
     {
         var gate = NewTaskCompletionSource<bool>();
-        var engine = CreateEngineForIdleTests(gate);
+        await using var engine = CreateEngineForIdleTests(gate);
         var artifact1 = CreateRawArtifact("file:///repo/pending-a.md");
         var artifact2 = CreateRawArtifact("file:///repo/pending-b.md");
 
@@ -474,7 +469,7 @@ public class IndexingEngineTests
     [DisplayName("HotPathIdle reports the epoch that drained")]
     public async Task Given_NewEpoch_When_WorkCompletes_Then_ReportsEpoch()
     {
-        var engine = CreateEngineForIdleTests();
+        await using var engine = CreateEngineForIdleTests();
 
         var firstIdle = engine.AwaitHotPathIdleAsync();
 
@@ -531,7 +526,7 @@ public class IndexingEngineTests
             });
 
         var analysisSignal = NewTaskCompletionSource<bool>();
-        var engine = CreateEngineForAnalysisTests(
+        await using var engine = CreateEngineForAnalysisTests(
             parsingGate: null,
             multiFileSignal: analysisSignal,
             pruner: pruner,
@@ -566,12 +561,12 @@ public class IndexingEngineTests
         A.CallTo(() => vector.ApplyAsync(A<IndexItem>._, A<CancellationToken>._))
             .ReturnsLazily(async _ =>
             {
-                await deleteApplied.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                await deleteApplied.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
                 vectorApplied.TrySetResult(true);
             });
 
         var analysisSignal = NewTaskCompletionSource<bool>();
-        var engine = CreateEngineForAnalysisTests(
+        await using var engine = CreateEngineForAnalysisTests(
             parsingGate: null,
             multiFileSignal: analysisSignal,
             pruner: pruner,
@@ -603,7 +598,7 @@ public class IndexingEngineTests
 
         var vector = NullVectorIndexCoordinator.Instance;
         var analysisSignal = NewTaskCompletionSource<bool>();
-        var engine = CreateEngineForAnalysisTests(
+        await using var engine = CreateEngineForAnalysisTests(
             parsingGate: null,
             multiFileSignal: analysisSignal,
             pruner: pruner,

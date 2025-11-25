@@ -1,0 +1,10 @@
+{
+  "name": "@repoql/ts-parser",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Syntax-only TypeScript/JavaScript parser for RepoQL format support",
+  "license": "MIT",
+  "dependencies": {
+    "typescript": "^5.6.3"
+  }
+}

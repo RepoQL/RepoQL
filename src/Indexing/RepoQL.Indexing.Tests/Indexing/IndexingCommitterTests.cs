@@ -8,7 +8,6 @@ using RepoQL.Indexing.Indexing.Commit;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.State;
 using RepoQL.Testing.Indexing;
-using TUnit.Core;
 
 namespace RepoQL.Indexing.Tests.Indexing;
 

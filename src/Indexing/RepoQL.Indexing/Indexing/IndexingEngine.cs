@@ -270,6 +270,45 @@ public partial class IndexingEngine : IAsyncDisposable
         {
             State = ComputeStateFromCounters();
         }
+
+        // Register observable gauge callbacks for metrics
+        RegisterMetricsCallbacks();
+    }
+
+    /// <summary>
+    /// Registers observable gauge callbacks with the metrics system.
+    /// </summary>
+    private void RegisterMetricsCallbacks()
+    {
+        if (Metrics is null)
+            return;
+
+        // Register queue callbacks
+        Metrics.RegisterQueueCallbacks(
+            indexerDepth: () => IndexerQueue.Depth,
+            analysisDepth: () => AnalysisQueue.Depth,
+            writerDepth: () => Writer?.GetStatus().PendingCount ?? 0,
+            indexerCapacity: () => IndexerQueue.MaxDepth,
+            analysisCapacity: () => AnalysisQueue.MaxDepth,
+            writerCapacity: () => Writer?.QueueCapacity ?? 0,
+            indexerWorkers: () => GetActiveCount(IndexingState.ClassificationBusy) +
+                                  GetActiveCount(IndexingState.ParsingBusy) +
+                                  GetActiveCount(IndexingState.SingleFileAnalysisBusy),
+            analysisWorkers: () => GetActiveCount(IndexingState.MultiFileAnalysisBusy) +
+                                   GetActiveCount(IndexingState.IndexRebuildBusy)
+        );
+
+        // Register catalog callbacks
+        Metrics.RegisterCatalogCallbacks(
+            entryCount: () => DocumentCatalog.EntryCount,
+            pendingCount: () => DocumentCatalog.PendingDigestCount
+        );
+
+        // Register epoch callbacks
+        Metrics.RegisterEpochCallbacks(
+            currentEpoch: () => _epochTracker.CurrentEpoch,
+            pendingItems: () => _epochTracker.CurrentPendingItems
+        );
     }
 
     public event EventHandler<IndexingStateChangedEventArgs>? StateChanged;
@@ -348,20 +387,37 @@ public partial class IndexingEngine : IAsyncDisposable
     {
         var overallTimer = Stopwatch.StartNew();
         var status = "unknown";
+        var currentStage = "enqueue";
         var mime = item.MediaType?.ToString()
                    ?? item.RawArtifact.ProvisionalMediaType.Value?.ToString()
                    ?? "unknown";
         var fileSize = item.RawArtifact.Length;
         var catalogRegistered = false;
+
+        // Record file enqueued
+        Metrics?.FilesEnqueued.Add(1, new TagList
+        {
+            { "mime_type", mime },
+            { "read_only", item.IsReadOnly.ToString().ToLowerInvariant() }
+        });
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            currentStage = "filter";
             if (item.Options.HasFlag(IndexItemOptions.OnlyIfNotExcluded) && !Filter.IncludeFile(item.Uri))
             {
                 RecordResult(item.Epoch, PipelineResult.Filtered);
                 status = "filtered";
+                Metrics?.FilesFiltered.Add(1, new TagList
+                {
+                    { "reason", "gitignore" },
+                    { "mime_type", mime }
+                });
                 return;
             }
+
+            currentStage = "catalog_init";
             await DocumentCatalog.EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
             var digestBytes = await item.RawArtifact.Digest.WithCancellation(cancellationToken).ConfigureAwait(false);
             var digestHex = Convert.ToHexString(digestBytes);
@@ -377,6 +433,11 @@ public partial class IndexingEngine : IAsyncDisposable
                 AddEpochTag(item.Epoch, "index.catalog", "skip_up_to_date");
                 RecordResult(item.Epoch, PipelineResult.Filtered);
                 status = "skipped_up_to_date";
+                Metrics?.FilesSkipped.Add(1, new TagList
+                {
+                    { "reason", "up_to_date" },
+                    { "mime_type", mime }
+                });
                 return;
             }
 
@@ -385,17 +446,27 @@ public partial class IndexingEngine : IAsyncDisposable
                 DocumentCatalog.BeginProcessing(item.Uri, digestHex);
                 catalogRegistered = true;
 
+                currentStage = "pipeline";
                 var result = await ApplyIndexerPipeline(item, cancellationToken);
                 mime = item.MediaType?.ToString() ?? mime;
                 status = result.ToString();
                 RecordResult(item.Epoch, result);
                 if (result != PipelineResult.Success)
                     return;
+
+                currentStage = "commit";
                 var commitTimer = Stopwatch.StartNew();
                 await Committer.CommitAsync(item, cancellationToken).ConfigureAwait(false);
                 commitTimer.Stop();
                 RecordStageDuration("commit", commitTimer.Elapsed.TotalMilliseconds, PipelineResult.Success, item);
-                Metrics?.StageIndex.Add(1);
+
+                // Record successful indexing
+                Metrics?.FilesIndexed.Add(1, new TagList
+                {
+                    { "mime_type", mime },
+                    { "status", "success" }
+                });
+
                 status = "success";
                 ScheduleAnalysis(item);
                 // NOTE: Once WriteOperation dispatch is in place, hook DocumentCatalog.ApplyUpsert/Delete
@@ -416,6 +487,12 @@ public partial class IndexingEngine : IAsyncDisposable
         catch (Exception ex)
         {
             status = "error";
+            Metrics?.FilesErrored.Add(1, new TagList
+            {
+                { "mime_type", mime },
+                { "error_type", TruncateErrorType(ex.GetType().Name) },
+                { "stage", currentStage }
+            });
             LogUriFailedDuringIndexing(Logger, ex, item.Uri);
             return;
         }
@@ -425,8 +502,8 @@ public partial class IndexingEngine : IAsyncDisposable
             Metrics?.HotPathDuration.Record(overallTimer.Elapsed.TotalMilliseconds, new TagList
             {
                 { "status", status },
-                { "mime", mime },
-                { "read_only", item.IsReadOnly }
+                { "mime_type", mime },
+                { "read_only", item.IsReadOnly.ToString().ToLowerInvariant() }
             });
             Metrics?.RecordFileProcessed(mime, status, fileSize, overallTimer.Elapsed.TotalMilliseconds);
             AddEpochTag(item.Epoch, "index.result", status);
@@ -434,6 +511,24 @@ public partial class IndexingEngine : IAsyncDisposable
             if (epochBecameIdle && State == IndexingState.AllIdle)
                 HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
         }
+    }
+
+    /// <summary>
+    /// Truncates error type names to known categories to limit metric cardinality.
+    /// </summary>
+    private static string TruncateErrorType(string errorType)
+    {
+        var knownErrors = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "IOException", "UnauthorizedAccessException", "FileNotFoundException",
+            "DirectoryNotFoundException", "DuckDBException", "ArgumentException",
+            "ArgumentNullException", "InvalidOperationException", "TimeoutException",
+            "OperationCanceledException", "TaskCanceledException", "OutOfMemoryException",
+            "NullReferenceException", "IndexOutOfRangeException", "FormatException",
+            "JsonException", "XmlException", "NotSupportedException", "NotImplementedException",
+            "ObjectDisposedException"
+        };
+        return knownErrors.Contains(errorType) ? errorType : "other";
     }
 
     private void RecordResult(long epoch, PipelineResult result)
@@ -476,6 +571,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private void OnHotPathIdle(object? sender, HotPathIdleEventArgs args)
     {
+        Metrics?.IdleCycles.Add(1);
         EnqueueIdleEpoch(args.Epoch);
     }
 
@@ -571,6 +667,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private async Task ReleaseAnalysisAsync(long epoch)
     {
+        var epochTimer = Stopwatch.StartNew();
         Exception? failure = null;
         try
         {
@@ -584,13 +681,22 @@ public partial class IndexingEngine : IAsyncDisposable
                 return;
 
             var pendingItems = backlog.ToArray();
+
+            // Prune phase
+            var pruneTimer = Stopwatch.StartNew();
             var pruningResult = await ArtifactPruner.PruneAsync(pendingItems, Shutdown.Token).ConfigureAwait(false);
+            pruneTimer.Stop();
             var prunedCount = pruningResult.DeletedArtifacts.Count;
             Interlocked.Exchange(ref _lastPrunedCount, prunedCount);
             if (prunedCount > 0)
             {
                 Interlocked.Add(ref _totalPrunedCount, prunedCount);
+                Metrics?.FilesPruned.Add(prunedCount);
             }
+            Metrics?.IdlePhaseDuration.Record(pruneTimer.Elapsed.TotalMilliseconds, new TagList
+            {
+                { "phase", "prune" }
+            });
 
             if (pruningResult.DeletedArtifacts.Count > 0)
             {
@@ -598,11 +704,29 @@ public partial class IndexingEngine : IAsyncDisposable
                 await VectorCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
             }
 
+            // Vector refresh phase
+            var vectorTimer = Stopwatch.StartNew();
             foreach (var item in pendingItems)
             {
                 await VectorCoordinator.ApplyAsync(item, Shutdown.Token).ConfigureAwait(false);
+            }
+            vectorTimer.Stop();
+            Metrics?.IdlePhaseDuration.Record(vectorTimer.Elapsed.TotalMilliseconds, new TagList
+            {
+                { "phase", "vector_refresh" }
+            });
+
+            // Multi-file analysis enqueue phase
+            var analysisEnqueueTimer = Stopwatch.StartNew();
+            foreach (var item in pendingItems)
+            {
                 await AnalysisQueue.EnqueueAsync(item, Shutdown.Token).ConfigureAwait(false);
             }
+            analysisEnqueueTimer.Stop();
+            Metrics?.IdlePhaseDuration.Record(analysisEnqueueTimer.Elapsed.TotalMilliseconds, new TagList
+            {
+                { "phase", "multi_file_analysis" }
+            });
         }
         catch (Exception ex)
         {
@@ -611,6 +735,20 @@ public partial class IndexingEngine : IAsyncDisposable
         }
         finally
         {
+            epochTimer.Stop();
+
+            // Record epoch metrics
+            var epochSize = _epochTracker.GetEpochTotalItems(epoch);
+            if (epochSize > 0)
+            {
+                Metrics?.EpochSize.Record(epochSize);
+                Metrics?.EpochDuration.Record(epochTimer.Elapsed.TotalMilliseconds);
+                Metrics?.EpochsCompleted.Add(1);
+            }
+
+            // Clear peak tracking to prevent memory leaks
+            _epochTracker.ClearEpochPeak(epoch);
+
             CompleteEpochActivity(epoch, failure is null, failure);
         }
     }
@@ -660,21 +798,36 @@ public partial class IndexingEngine : IAsyncDisposable
 
     internal async Task<PipelineResult> ApplyIndexerPipeline(IndexItem item, CancellationToken cancellationToken)
     {
+        var mime = item.MediaType?.ToString()
+                   ?? item.RawArtifact.ProvisionalMediaType.Value?.ToString()
+                   ?? "unknown";
+
+        // Classification stage
         var classifyTimer = Stopwatch.StartNew();
         var pipelineResult = await _classificationStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
         classifyTimer.Stop();
+        mime = item.MediaType?.ToString() ?? mime; // Update mime after classification
         RecordStageDuration("classification", classifyTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
+        Metrics?.FilesClassified.Add(1, new TagList
+        {
+            { "mime_type", mime },
+            { "result", pipelineResult.ToString() }
+        });
         if (pipelineResult != PipelineResult.Success)
-            return  pipelineResult;
-        Metrics?.StageDiscover.Add(1);
+            return pipelineResult;
 
+        // Parsing stage
         var parseTimer = Stopwatch.StartNew();
         pipelineResult = await _parsingStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
         parseTimer.Stop();
-        RecordStageDuration("parse", parseTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
+        RecordStageDuration("parsing", parseTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
+        Metrics?.FilesParsed.Add(1, new TagList
+        {
+            { "mime_type", mime },
+            { "result", pipelineResult.ToString() }
+        });
         if (pipelineResult != PipelineResult.Success)
             return pipelineResult;
-        Metrics?.StageParse.Add(1);
 
         if (item.IsReadOnly)
         {
@@ -682,14 +835,17 @@ public partial class IndexingEngine : IAsyncDisposable
             return PipelineResult.Success;
         }
 
+        // Single-file analysis stage
         var analysisTimer = Stopwatch.StartNew();
         pipelineResult = await _singleFileStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
         analysisTimer.Stop();
         RecordStageDuration("single_file_analysis", analysisTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
-        if (pipelineResult == PipelineResult.Success)
+        Metrics?.FilesEnriched.Add(1, new TagList
         {
-            Metrics?.StageEnrich.Add(1);
-        }
+            { "mime_type", mime },
+            { "result", pipelineResult.ToString() }
+        });
+
         return pipelineResult;
     }
 
@@ -859,9 +1015,25 @@ public partial class IndexingEngine : IAsyncDisposable
     {
         private long _currentEpoch;
         private readonly Dictionary<long, int> _pendingByEpoch = new();
+        private readonly Dictionary<long, int> _peakByEpoch = new();
         private readonly object _lock = new();
 
         public long CurrentEpoch => Interlocked.Read(ref _currentEpoch);
+
+        /// <summary>
+        /// Gets the number of pending items in the current epoch.
+        /// </summary>
+        public int CurrentPendingItems
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    var epoch = Interlocked.Read(ref _currentEpoch);
+                    return _pendingByEpoch.TryGetValue(epoch, out var count) ? count : 0;
+                }
+            }
+        }
 
         public long BeginNewEpoch() => Interlocked.Increment(ref _currentEpoch);
 
@@ -871,7 +1043,15 @@ public partial class IndexingEngine : IAsyncDisposable
             lock (_lock)
             {
                 _pendingByEpoch.TryGetValue(epoch, out var count);
-                _pendingByEpoch[epoch] = count + 1;
+                var newCount = count + 1;
+                _pendingByEpoch[epoch] = newCount;
+
+                // Track peak for this epoch
+                _peakByEpoch.TryGetValue(epoch, out var peak);
+                if (newCount > peak)
+                {
+                    _peakByEpoch[epoch] = newCount;
+                }
             }
         }
 
@@ -891,6 +1071,29 @@ public partial class IndexingEngine : IAsyncDisposable
 
                 _pendingByEpoch[epoch] = count - 1;
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Gets the total items that were processed in an epoch (peak count).
+        /// </summary>
+        public int GetEpochTotalItems(long epoch)
+        {
+            lock (_lock)
+            {
+                return _peakByEpoch.TryGetValue(epoch, out var peak) ? peak : 0;
+            }
+        }
+
+        /// <summary>
+        /// Clears peak tracking for completed epochs to prevent memory leaks.
+        /// Call after epoch metrics are recorded.
+        /// </summary>
+        public void ClearEpochPeak(long epoch)
+        {
+            lock (_lock)
+            {
+                _peakByEpoch.Remove(epoch);
             }
         }
     }

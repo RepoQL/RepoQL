@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
@@ -19,6 +19,7 @@
     <ProjectReference Include="..\Formats\RepoQL.Formats.Mermaid\RepoQL.Formats.Mermaid.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.GraphQL\RepoQL.Formats.GraphQL.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.TypeScript\RepoQL.Formats.TypeScript.csproj" />
     <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
     <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
     <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />

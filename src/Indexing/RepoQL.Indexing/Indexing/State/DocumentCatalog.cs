@@ -45,6 +45,16 @@ public interface IDocumentCatalog
     /// after database delete succeeds. Clears pending state.
     /// </summary>
     void ApplyDelete(RepoUri uri);
+
+    /// <summary>
+    /// Total committed entries in the catalog.
+    /// </summary>
+    int EntryCount { get; }
+
+    /// <summary>
+    /// Files currently being processed (pending digest computations).
+    /// </summary>
+    int PendingDigestCount { get; }
 }
 
 /// <summary>
@@ -116,6 +126,12 @@ public sealed class DocumentCatalog(IDocumentCatalogDataSource dataSource) : IDo
     private readonly ConcurrentDictionary<string, string> _pendingDigests = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _initializationGate = new(1, 1);
     private Task? _initialization;
+
+    /// <inheritdoc />
+    public int EntryCount => _entries.Count;
+
+    /// <inheritdoc />
+    public int PendingDigestCount => _pendingDigests.Count;
 
     public async Task EnsureInitializedAsync(CancellationToken cancellationToken)
     {
