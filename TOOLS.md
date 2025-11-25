@@ -236,14 +236,14 @@ ORDER BY h.score DESC, mh.start_line
 ```
 
 Capsule: **SelfDocumenting** 📚 Meta
-Documentation lives IN the database as embed:// URIs—query to learn.
+Documentation lives IN the database as docs:// URIs—query to learn.
 
 **Example**
 ```sql
 -- Read embedded docs
 SELECT text_content FROM artifact a
 JOIN node n ON n.artifact_id = a.id
-WHERE n.uri = 'embed:///quickstart.md'
+WHERE n.uri = 'docs:///quickstart.md'
 ```
 
 Capsule: **ProgressiveSemantics** ⏳ Async

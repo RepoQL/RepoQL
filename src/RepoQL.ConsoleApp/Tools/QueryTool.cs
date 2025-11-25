@@ -95,7 +95,7 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                                FROM node AS n /* node = file contents, usually 1:1 with artifact */
                                                JOIN artifact AS a ON n.artifact_id = a.id /* artifact = node container (usually file) */
                                                WHERE n.kind = 'document' 
-                                                 AND n.uri LIKE 'embed://%' /* docs are embedded, repo files usually file:/// */
+                                                 AND n.uri LIKE 'docs://%' /* docs are embedded, repo files usually file:/// */
                                                ORDER BY LOWER(n.uri);
                                              ```
                                              

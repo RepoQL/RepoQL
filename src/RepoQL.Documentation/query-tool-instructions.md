@@ -18,7 +18,7 @@ Treat the entities and structures contained inside repo files as a database to q
 - Assume all file types are supported
 - Every entity is represented by a repo URI e.g.
   `file:///repo/lib.cs#symbol=Foo.Bar&line=12,20`
-  `embed:///quickstart`
+  `docs:///quickstart`
 - Semantic mime type indicates both file type and contents e.g.
   `application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
 </CONTEXT>
@@ -77,14 +77,14 @@ file_search(keywords, question, k) → documents. search(q, k) → documents + o
 
 ```postgresql
 SELECT
-      n.uri, /* e.g. embed:///querying-markdown.md*/
+      n.uri, /* e.g. docs:///querying-markdown.md*/
       a.headline, /* Querying Markdown with RepoQL — querying-markdown.md | markdown.doc | 5725 | 151 lines | lang: sql | topics: Core Schema Mapping, Markdown Views, Markdown-Specific UDFs & Macros*/
       a.summary, /* Most important details of contents, format depends on mime, < 10 lines */
       a.structure /* Expanded details of contents, format depends on mime, < 25 lines */
   FROM node AS n /* node = file contents, usually 1:1 with artifact */
   JOIN artifact AS a ON n.artifact_id = a.id /* artifact = node container (usually file) */
   WHERE n.kind = 'document' 
-    AND n.uri LIKE 'embed://%' /* docs are embedded, repo files usually file:/// */
+    AND n.uri LIKE 'docs://%' /* docs are embedded, repo files usually file:/// */
   ORDER BY LOWER(n.uri);
 ```
 
@@ -94,7 +94,7 @@ SELECT
 SELECT a.text_content
   FROM node AS n
   JOIN artifact AS a ON n.artifact_id = a.id
-  WHERE n.uri = 'embed:///quickstart.md';
+  WHERE n.uri = 'docs:///quickstart.md';
 ```
 
 ### List all markdown docs in repo + headlines
@@ -167,7 +167,7 @@ repoql query "WITH gql_headings AS (SELECT heading_uri, document_uri, text FROM 
   _So that you know what you don't know_
 - [ ] List all markdown docs in repo + headlines
   *So that you know what repository docs are available to you. Vital to your success in completing future tasks*
-- [ ] Read `embed:///quickstart.md`
+- [ ] Read `docs:///quickstart.md`
   *Before attempting complex queries*
 
 </INSTRUCTION>

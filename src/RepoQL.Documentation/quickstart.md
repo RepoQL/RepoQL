@@ -187,7 +187,7 @@ Use this SQL to catalog the embedded RepoQL docs:
   WITH docs AS (
       SELECT id, uri, artifact_id
       FROM node
-      WHERE kind = 'document' AND uri LIKE 'embed:/%'
+      WHERE kind = 'document' AND uri LIKE 'docs:/%'
     ),
     parts AS (
       SELECT e.source_node_id AS doc_id,
@@ -206,7 +206,7 @@ Use this SQL to catalog the embedded RepoQL docs:
     )
     SELECT
       d.uri AS document_uri,
-      replace(d.uri, 'embed:///', '') AS repo_path,
+      replace(d.uri, 'docs:///', '') AS repo_path,
       repository_uri_file_name(d.uri) AS file_name,
       media_type_base(a.media_type) AS media_base,
       media_type_kind(a.media_type) AS media_kind,

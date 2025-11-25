@@ -52,7 +52,7 @@ internal class McpCommands
                                            - Assume all file types are supported
                                            - Every entity is represented by a repo URI e.g.
                                              `file:///repo/lib.cs#symbol=Foo.Bar&line=12,20`
-                                             `embed:///quickstart`
+                                             `docs:///quickstart`
                                            - Semantic mime type indicates both file type and contents e.g.
                                              `application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
                                            </CONTEXT>
@@ -103,7 +103,7 @@ internal class McpCommands
                                            ```
                                            
                                            Capsule: **SelfDocumenting** 📚 Meta
-                                           Documentation lives IN the database as embed:// URIs—query to learn.
+                                           Documentation lives IN the database as docs:// URIs—query to learn.
                                            
                                            **Example**
                                            
@@ -111,7 +111,7 @@ internal class McpCommands
                                            -- Read embedded docs
                                            SELECT text_content FROM artifact a
                                            JOIN node n ON n.artifact_id = a.id
-                                           WHERE n.uri = 'embed:///quickstart.md'
+                                           WHERE n.uri = 'docs:///quickstart.md'
                                            ```
                                            
                                            Capsule: **ProgressiveSemantics** ⏳ Async
