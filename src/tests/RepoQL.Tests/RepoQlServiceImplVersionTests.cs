@@ -10,6 +10,7 @@ using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts.Data;
 using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Hosting;
+using RepoQL.Testing.Logging;
 
 namespace RepoQL.Tests;
 
@@ -42,7 +43,7 @@ internal class RepoQlServiceImplVersionTests
     }
 
     [Test]
-    public async Task EnsureVersionMetadata_ReindexesAndUpdatesWhenChanged()
+    public async Task EnsureVersionMetadata_DropsAndRecreatesSchemaWhenChanged()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.duckdb");
         using (var store = new DuckDbGraphStore(dbPath, enableExtensions: false, registerUdfs: true, logger: NullLogger<DuckDbGraphStore>.Instance))
@@ -53,13 +54,14 @@ internal class RepoQlServiceImplVersionTests
             var coordinator = new FakeCoordinator();
             var writer = new FakeWriter();
 
-            await RepoQlServiceImpl.EnsureVersionMetadataAsync(store, coordinator, writer, "new-version", NullLogger<RepoQlServiceImpl>.Instance, CancellationToken.None);
+            await RepoQlServiceImpl.EnsureVersionMetadataAsync(store, coordinator, writer, "new-version", TestLogging.CreateLogger<RepoQlServiceImpl>(), CancellationToken.None);
 
             var row = store.RawQuery("SELECT value FROM repo_metadata WHERE key=?", "repoql.version").FirstOrDefault();
             row.Should().NotBeNull();
             row!["value"].Should().Be("new-version");
-            coordinator.ReindexCalls.Should().Be(1);
-            writer.FlushCalls.Should().Be(1);
+            // Reindex no longer called directly - schema is dropped/recreated and reindex happens via normal startup scan
+            coordinator.ReindexCalls.Should().Be(0);
+            writer.FlushCalls.Should().Be(0);
         }
 
         if (File.Exists(dbPath))

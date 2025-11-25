@@ -709,21 +709,39 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     }
                 }
 
-                // Get list of all base tables
-                var tables = store.RawQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'BASE TABLE'").ToList();
+                // Drop tables in dependency order (children before parents to avoid FK constraint errors)
+                // DuckDB doesn't fully support CASCADE for foreign key dependencies
+                var dropOrder = new[]
+                {
+                    "annotation",       // depends on node, span
+                    "edge",             // depends on node
+                    "span",             // depends on node
+                    "node_embedding",   // depends on node
+                    "document_embedding", // depends on artifact
+                    "node",             // depends on artifact
+                    "artifact",         // no dependencies
+                    "repo_metadata"     // no dependencies
+                };
 
-                logger.LogInformation("Dropping {Count} tables", tables.Count);
+                logger.LogInformation("Dropping tables in dependency order");
 
-                // Drop all tables
-                foreach (var table in tables)
+                foreach (var tableName in dropOrder)
+                {
+                    store.RawQuery($"DROP TABLE IF EXISTS \"{tableName}\" CASCADE").FirstOrDefault();
+                    logger.LogDebug("Dropped table: {TableName}", tableName);
+                }
+
+                // Drop any remaining tables not in the explicit list
+                var remainingTables = store.RawQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'BASE TABLE'").ToList();
+                foreach (var table in remainingTables)
                 {
                     if (table.TryGetValue("table_name", out var tableName))
                     {
                         var name = tableName?.ToString();
                         if (!string.IsNullOrEmpty(name))
                         {
-                            store.RawQuery($"DROP TABLE IF EXISTS {name} CASCADE").FirstOrDefault();
-                            logger.LogDebug("Dropped table: {TableName}", name);
+                            store.RawQuery($"DROP TABLE IF EXISTS \"{name}\" CASCADE").FirstOrDefault();
+                            logger.LogDebug("Dropped remaining table: {TableName}", name);
                         }
                     }
                 }
