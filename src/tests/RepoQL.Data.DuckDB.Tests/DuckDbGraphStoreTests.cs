@@ -1013,8 +1013,9 @@ public sealed class DuckDbGraphStoreTests : IDisposable
     // ========== Embedding Tests ==========
 
     [Test]
-    public Task RefreshDocumentEmbeddings_WritesDocumentAndObjectScopes()
+    public Task RefreshDocumentEmbeddings_WritesDocumentScopeOnly()
     {
+        // Object embeddings are now generated JIT during search, not at index time
         using var metrics = new IndexingMetrics();
         using var testConnection = new DuckDBConnection("Data Source=:memory:");
         testConnection.Open();
@@ -1022,15 +1023,15 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         testStore.EnsureSchema();
 
         var docUri = RepoUri.Parse("file:///repo/src/Foo.cs");
-        var (document, child, _) = InsertDocumentGraph(testStore, docUri);
+        var (document, _, _) = InsertDocumentGraph(testStore, docUri);
 
         var provider = new TestEmbeddingProvider(text => new[] { text.Length, 1f, 2f });
         testStore.RefreshDocumentEmbeddings(provider);
 
-        provider.Payloads.Should().HaveCount(2);
+        provider.Payloads.Should().HaveCount(1);
 
         var rows = ReadEmbeddingRows(testConnection);
-        rows.Should().HaveCount(2);
+        rows.Should().HaveCount(1);
 
         var docRow = rows.Single(r => r.Scope == "document");
         docRow.DocId.Should().Be(document.Id);
@@ -1038,13 +1039,6 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         docRow.Uri.Should().Be(docUri.ToString());
         docRow.Vector.Length.Should().Be(3);
         docRow.Vector[0].Should().Be(provider.Payloads[0].Length);
-
-        var objectRow = rows.Single(r => r.Scope == "object");
-        objectRow.DocId.Should().Be(document.Id);
-        objectRow.NodeId.Should().Be(child.Id);
-        objectRow.Uri.Should().Contain("#node/cs_function/");
-        objectRow.Vector.Length.Should().Be(3);
-        objectRow.Vector[0].Should().Be(provider.Payloads[1].Length);
 
         return Task.CompletedTask;
     }
@@ -1111,7 +1105,8 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         reader.GetString(2).Should().Be("object");
         reader.GetString(3).Should().Be(child.Headline);
         reader.GetString(4).Should().Be(child.Structure);
-        reader.GetString(5).Should().Contain(child.Structure);
+        // Body now contains actual code content extracted from artifact, not child.Structure
+        reader.GetString(5).Should().Contain("void Bar()");
         reader.GetString(6).Should().Be("docs.code");
         reader.GetString(7).Should().Be("text/markdown");
         reader.GetString(8).Should().NotBeNullOrEmpty();
@@ -1218,28 +1213,8 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         return Task.CompletedTask;
     }
 
-    [Test]
-    public Task RefreshDocumentEmbeddings_UsesNodeProvidedUriWhenAvailable()
-    {
-        using var metrics = new IndexingMetrics();
-        using var testConnection = new DuckDBConnection("Data Source=:memory:");
-        testConnection.Open();
-        using var testStore = new DuckDbGraphStore(testConnection, metrics);
-        testStore.EnsureSchema();
-
-        var docUri = RepoUri.Parse("file:///repo/src/Foo.cs");
-        var childUri = RepoUri.Parse($"repoql://symbol/{Guid.NewGuid():N}");
-        var (_, child, _) = InsertDocumentGraph(testStore, docUri, childUri);
-
-        var provider = new TestEmbeddingProvider(_ => new[] { 1f, 2f, 3f });
-        testStore.RefreshDocumentEmbeddings(provider);
-
-        var rows = ReadEmbeddingRows(testConnection);
-        var objectRow = rows.Single(r => r.Scope == "object" && r.NodeId == child.Id);
-        objectRow.Uri.Should().Be(childUri.ToString());
-
-        return Task.CompletedTask;
-    }
+    // Test RefreshDocumentEmbeddings_UsesNodeProvidedUriWhenAvailable was removed:
+    // Object embeddings are now generated JIT during search, not at index time.
 
     // ========== EntitiesByUri Tests ==========
 

@@ -29,35 +29,34 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     }
 
     private const string SummarizeInstructions = """
-                                                 Scan repository efficiently: pre-indexed summaries + linting. Search files, objects (functions/classes/methods), or both.
+                                                 Find and preview repository content. Search files, objects (functions/classes/methods/headings/etc), or both.
 
-                                                 scope: file (documents only), object (symbols/functions/classes), both (default - unified search)
-                                                 detail: headline (one-line scan), summary (structure/outline), snippet (full source)
-                                                 keywords: exact symbol/term matches to boost (e.g. "RefreshAsync", "IService")
-                                                 question: natural language question for semantic search (e.g. "How does authentication work?")
-                                                 pattern: glob to narrow file scope (e.g. "**/*.cs", "**/tests/**")
-                                                 type: media type filter (e.g. "*csharp*", "*markdown*")
+                                                 <KillerFeatures>
+                                                 - Inventory what exists with the least tokens possible so you can make informed decisions (detail = headline)
+                                                 - Find what you are looking for with extremely effective search tools and token efficient responses (with configurable level of detail)
+                                                 - Get saliant information you need from large files without reading them (e.g. detail=summary on sln file lists all projects)
+                                                 </KillerFeatures>
 
-                                                 Examples:
-                                                 detail=headline, keywords=RefreshAsync - find symbol by exact name
-                                                 detail=headline, scope=object, keywords=IEmbeddingProvider, question=Where are embeddings generated? - boost IEmbeddingProvider matches in semantic search
-                                                 detail=headline, scope=file, pattern=**/docs/**, question=How do I configure the indexer? - search docs for setup guidance
-                                                 detail=summary, pattern=**/UserService.cs - understand file structure before reading
-                                                 detail=snippet, scope=object, pattern=**/*.cs, keywords=BuildWorkItems, limit=3 - show code for specific methods
-
-                                                 Flow: headline → summary → snippet → Read. Use xray for breadth, Read for depth.
+                                                 <Examples>
+                                                 detail=headline, scope=object, keywords=RefreshAsync → find method by name
+                                                 detail=snippet, scope=object, keywords=IService → show interface code
+                                                 detail=summary, scope=file, question=How does caching work? → find relevant docs
+                                                 detail=summary, pattern=**/UserService.cs → understand file before reading
+                                                 </Examples>
+                                                 
+                                                 Flow: headline → summary → snippet / Read tool for full content.
                                                  """; 
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "xray"), Description(SummarizeInstructions)]
     
     public async Task<string> SummarizeAsync(
-        [Description("Git-style glob pattern for RepoURIs (default **/*).")] string? pattern = null,
-        [Description("Optional wildcard pattern for media type, e.g. *csharp*.")] string? type = null,
-        [Description("Literal filename or symbol filters passed to search.")] string? keywords = null,
-        [Description("Optional natural-language question for semantic search.")] string? question = null,
-        [Description("Detail level: headline, summary, snippet.")] string? detail = null,
-        [Description("Search scope: file (documents), object (functions/classes), both (default).")] string? scope = null,
-        [Description("Maximum results to return. Uses detail-specific defaults when not provided.")] int limit = 0,
+        [Description("Glob to filter by path. Examples: \"**/*.cs\", \"**/tests/**\", \"**/docs/*\".")] string? pattern = null,
+        [Description("Media type filter (rarely needed). Example: \"*csharp*\". Prefer pattern instead.")] string? type = null,
+        [Description("Literal term to find - boosts exact matches. Examples: \"RefreshAsync\", \"IEmbeddingProvider\".")] string? keywords = null,
+        [Description("Natural language for semantic search. Example: \"How does authentication work?\".")] string? question = null,
+        [Description("Required. Output detail: headline (one-line inventory), summary (structure), snippet (code).")] string? detail = null,
+        [Description("Search scope: file (documents), object (functions/classes/symbols), both (default).")] string? scope = null,
+        [Description("Max results. Defaults: headline=1000, summary=100, snippet=10.")] int limit = 0,
         CancellationToken cancellationToken = default)
     {
         var detailKind = ParseDetail(detail);
