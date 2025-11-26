@@ -21,26 +21,29 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         Snippet
     }
 
+    public enum SearchScope
+    {
+        File,
+        Object,
+        Both
+    }
+
     private const string SummarizeInstructions = """
-                                                 Scan repository efficiently: pre-indexed summaries + linting. Filters: glob, media type, semantic search.
-                                                 Returns file OR object snippets.
+                                                 Scan repository efficiently: pre-indexed summaries + linting. Search files, objects (functions/classes/methods), or both.
 
-                                                 headline: Scan files at scale. One line per file: name + symbols + linting badges.
-                                                 summary: Understand key structure of files. Outline (headings/classes/methods), key features + linting.
-                                                 snippet: Full source + inline linting for files OR specific objects (functions/classes/headings).
-
-                                                 Object snippets (get code for specific function/class):
-                                                 1. Query: search('ProcessRequest', k := 10) WHERE scope = 'object'  [returns URIs with #symbol=...&line=...]
-                                                 2. Xray: detail=snippet, pattern=<URI from step 1>  [shows just that function/class]
+                                                 scope: file (documents only), object (symbols/functions/classes), both (default - unified search)
+                                                 detail: headline (one-line scan), summary (structure/outline), snippet (full source)
+                                                 keywords: exact symbol/term matches to boost (e.g. "RefreshAsync", "IService")
+                                                 question: natural language question for semantic search (e.g. "How does authentication work?")
+                                                 pattern: glob to narrow file scope (e.g. "**/*.cs", "**/tests/**")
+                                                 type: media type filter (e.g. "*csharp*", "*markdown*")
 
                                                  Examples:
-                                                 detail=headline, pattern=**/*.md - list all markdown
-                                                 detail=headline, keywords=auth, question=authentication - find auth files
-                                                 detail=summary, pattern=**/UserService.cs - file structure
-                                                 detail=snippet, pattern=file:///Handler.cs#symbol=ProcessRequest&line=42,67 - show method
-                                                 detail=snippet, pattern=file:///README.md#line=10,20 - show lines
-                                                 detail=snippet, pattern=**/*.md, question=how do end users authenticate?, limit=15 - get 15 most relevant documentation snippets
-                                                 detail=snippet, pattern=**/*Service.cs#symbol=Authenticate - focus on a symbol across globbed files
+                                                 detail=headline, keywords=RefreshAsync - find symbol by exact name
+                                                 detail=headline, scope=object, keywords=IEmbeddingProvider, question=Where are embeddings generated? - boost IEmbeddingProvider matches in semantic search
+                                                 detail=headline, scope=file, pattern=**/docs/**, question=How do I configure the indexer? - search docs for setup guidance
+                                                 detail=summary, pattern=**/UserService.cs - understand file structure before reading
+                                                 detail=snippet, scope=object, pattern=**/*.cs, keywords=BuildWorkItems, limit=3 - show code for specific methods
 
                                                  Flow: headline → summary → snippet → Read. Use xray for breadth, Read for depth.
                                                  """; 
@@ -50,43 +53,63 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     public async Task<string> SummarizeAsync(
         [Description("Git-style glob pattern for RepoURIs (default **/*).")] string? pattern = null,
         [Description("Optional wildcard pattern for media type, e.g. *csharp*.")] string? type = null,
-        [Description("Literal filename or symbol filters passed to file_search keywords.")] string? keywords = null,
-        [Description("Optional natural-language question passed to file_search.")] string? question = null,
+        [Description("Literal filename or symbol filters passed to search.")] string? keywords = null,
+        [Description("Optional natural-language question for semantic search.")] string? question = null,
         [Description("Detail level: headline, summary, snippet.")] string? detail = null,
+        [Description("Search scope: file (documents), object (functions/classes), both (default).")] string? scope = null,
         [Description("Maximum results to return. Uses detail-specific defaults when not provided.")] int limit = 0,
         CancellationToken cancellationToken = default)
     {
         var detailKind = ParseDetail(detail);
+        var searchScope = ParseScope(scope);
         var effectiveLimit = limit > 0 ? limit : GetDefaultLimit(detailKind);
         var (containerPattern, fragment) = SplitGlobAndFragment(pattern);
         var globPattern = NormalizeGlobPattern(containerPattern);
         var typePattern = NormalizeTypePattern(type);
 
         var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-        var rows = await QueryDocumentsAsync(client, globPattern, typePattern, keywords, question, effectiveLimit, cancellationToken).ConfigureAwait(false);
 
-        if (rows.Count == 0)
+        // Query based on scope
+        var documentRows = new List<DocumentRow>();
+        var objectRows = new List<ObjectRow>();
+
+        if (searchScope == SearchScope.File || searchScope == SearchScope.Both)
         {
-            return "No documents matched the supplied filters.";
+            var docLimit = searchScope == SearchScope.Both ? effectiveLimit / 2 : effectiveLimit;
+            documentRows = await QueryDocumentsAsync(client, globPattern, typePattern, keywords, question, Math.Max(docLimit, 1), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (searchScope == SearchScope.Object || searchScope == SearchScope.Both)
+        {
+            var objLimit = searchScope == SearchScope.Both ? effectiveLimit / 2 : effectiveLimit;
+            objectRows = await QueryObjectsAsync(client, globPattern, typePattern, keywords, question, Math.Max(objLimit, 1), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (documentRows.Count == 0 && objectRows.Count == 0)
+        {
+            return searchScope switch
+            {
+                SearchScope.File => "No files matched the supplied filters.",
+                SearchScope.Object => "No objects matched the supplied filters. Tip: Provide keywords or question for object search.",
+                _ => "No results matched the supplied filters."
+            };
         }
 
         var builder = new StringBuilder();
-        for (var i = 0; i < rows.Count; i++)
-        {
-            if (i > 0)
-            {
-                // For headline mode, just use newline; for summary/snippet use separator
-                if (detailKind == SummaryDetail.Headline)
-                {
-                    builder.AppendLine();
-                }
-                else
-                {
-                    builder.AppendLine("---");
-                }
-            }
+        var isFirst = true;
 
-            var row = rows[i];
+        // Format document rows
+        foreach (var row in documentRows)
+        {
+            if (!isFirst)
+            {
+                if (detailKind == SummaryDetail.Headline)
+                    builder.AppendLine();
+                else
+                    builder.AppendLine("---");
+            }
+            isFirst = false;
+
             switch (detailKind)
             {
                 case SummaryDetail.Headline:
@@ -98,6 +121,32 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
                 case SummaryDetail.Snippet:
                     var uriForSnippet = AppendFragment(row.Uri, fragment);
                     await FormatSnippetAsync(builder, client, row, uriForSnippet, cancellationToken).ConfigureAwait(false);
+                    break;
+            }
+        }
+
+        // Format object rows
+        foreach (var row in objectRows)
+        {
+            if (!isFirst)
+            {
+                if (detailKind == SummaryDetail.Headline)
+                    builder.AppendLine();
+                else
+                    builder.AppendLine("---");
+            }
+            isFirst = false;
+
+            switch (detailKind)
+            {
+                case SummaryDetail.Headline:
+                    FormatObjectHeadline(builder, row);
+                    break;
+                case SummaryDetail.Summary:
+                    FormatObjectSummary(builder, row);
+                    break;
+                case SummaryDetail.Snippet:
+                    FormatObjectSnippet(builder, row);
                     break;
             }
         }
@@ -118,6 +167,22 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
             "summary" => SummaryDetail.Summary,
             "snippet" => SummaryDetail.Snippet,
             _ => throw new ArgumentException("Detail must be one of: headline, summary, default, snippet.", nameof(detail))
+        };
+    }
+
+    private static SearchScope ParseScope(string? scope)
+    {
+        if (string.IsNullOrWhiteSpace(scope))
+        {
+            return SearchScope.Both; // Default to both
+        }
+
+        return scope.Trim().ToLowerInvariant() switch
+        {
+            "file" or "files" or "document" or "documents" => SearchScope.File,
+            "object" or "objects" or "symbol" or "symbols" => SearchScope.Object,
+            "both" or "all" => SearchScope.Both,
+            _ => throw new ArgumentException("Scope must be one of: file, object, both.", nameof(scope))
         };
     }
 
@@ -335,6 +400,121 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         return list;
     }
 
+    private async Task<List<ObjectRow>> QueryObjectsAsync(
+        IRepoQlClient client,
+        string? globPattern,
+        string? typePattern,
+        string? keywords,
+        string? question,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        // Build query text from keywords and/or question
+        var queryParts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(keywords))
+        {
+            queryParts.Add(keywords.Trim());
+        }
+        if (!string.IsNullOrWhiteSpace(question))
+        {
+            queryParts.Add(question.Trim());
+        }
+
+        var queryText = queryParts.Count > 0 ? string.Join(" ", queryParts) : string.Empty;
+
+        // If no search terms provided, we can't use object_search meaningfully
+        if (string.IsNullOrWhiteSpace(queryText))
+        {
+            return new List<ObjectRow>();
+        }
+
+        // Build the object_search query with optional filters
+        // Note: All parameters interpolated directly due to issues with ? placeholders in macro calls
+        var escapedQuery = queryText.Replace("'", "''");
+        var escapedGlob = globPattern?.Replace("'", "''");
+        var escapedType = typePattern?.Replace("'", "''");
+
+        var sql = $"""
+            SELECT
+                uri,
+                symbol,
+                kind,
+                headline,
+                structure,
+                snippet,
+                line_start,
+                line_end,
+                lang,
+                score
+            FROM object_search('{escapedQuery}', k := {limit}{(escapedGlob != null ? $", uri_glob := '{escapedGlob}'" : "")}{(escapedType != null ? $", mime_glob := '{escapedType}'" : "")})
+            ORDER BY score DESC
+            """;
+
+        var response = await client.ExecuteRawQueryAsync(sql, null, null, cancellationToken).ConfigureAwait(false);
+        var list = new List<ObjectRow>(response.Rows.Count);
+
+        foreach (var row in response.Rows)
+        {
+            var values = row.Values;
+            if (values.Count == 0) continue;
+
+            var uri = ExtractString(values[0]) ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(uri)) continue;
+
+            string? symbol = values.Count > 1 ? ExtractString(values[1]) : null;
+            string? kind = values.Count > 2 ? ExtractString(values[2]) : null;
+            string? headline = values.Count > 3 ? ExtractString(values[3]) : null;
+            string? structure = values.Count > 4 ? ExtractString(values[4]) : null;
+            string? snippet = values.Count > 5 ? ExtractString(values[5]) : null;
+
+            int? lineStart = null;
+            if (values.Count > 6)
+            {
+                var lineStr = ExtractString(values[6]);
+                if (!string.IsNullOrWhiteSpace(lineStr) && int.TryParse(lineStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    lineStart = parsed;
+                }
+            }
+
+            int? lineEnd = null;
+            if (values.Count > 7)
+            {
+                var lineStr = ExtractString(values[7]);
+                if (!string.IsNullOrWhiteSpace(lineStr) && int.TryParse(lineStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+                {
+                    lineEnd = parsed;
+                }
+            }
+
+            string? lang = values.Count > 8 ? ExtractString(values[8]) : null;
+
+            double? score = null;
+            if (values.Count > 9)
+            {
+                var scoreString = ExtractString(values[9]);
+                if (!string.IsNullOrWhiteSpace(scoreString) && double.TryParse(scoreString, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsedScore))
+                {
+                    score = parsedScore;
+                }
+            }
+
+            list.Add(new ObjectRow(
+                Uri: uri,
+                Symbol: symbol,
+                Kind: kind,
+                Headline: headline,
+                Structure: structure,
+                Snippet: snippet,
+                LineStart: lineStart,
+                LineEnd: lineEnd,
+                Lang: lang,
+                Score: score));
+        }
+
+        return list;
+    }
+
     private async Task FormatHeadlineAsync(StringBuilder builder, IRepoQlClient client, DocumentRow row, CancellationToken cancellationToken)
     {
         // Fetch annotation counts
@@ -411,6 +591,92 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
 
         var annotations = await FetchAnnotationsAsync(client, row.Uri, cancellationToken).ConfigureAwait(false);
         builder.AppendLine(FormatAnnotations(annotations));
+    }
+
+    // Object formatting methods
+    private static void FormatObjectHeadline(StringBuilder builder, ObjectRow row)
+    {
+        // Format: [kind] symbol (lines N-M) - headline
+        // e.g., [csharp.member] BuildEmbeddingWorkItems (lines 493-508) - builds work items for embedding
+        var kindBadge = !string.IsNullOrWhiteSpace(row.Kind) ? $"[{row.Kind}] " : "";
+        var symbol = !string.IsNullOrWhiteSpace(row.Symbol) ? row.Symbol : "(anonymous)";
+        var lineInfo = row.LineStart.HasValue
+            ? row.LineEnd.HasValue && row.LineEnd != row.LineStart
+                ? $" (lines {row.LineStart}-{row.LineEnd})"
+                : $" (line {row.LineStart})"
+            : "";
+
+        builder.Append(kindBadge);
+        builder.Append(symbol);
+        builder.Append(lineInfo);
+
+        if (!string.IsNullOrWhiteSpace(row.Headline) && row.Headline != row.Symbol)
+        {
+            builder.Append(" - ");
+            builder.Append(row.Headline.Trim());
+        }
+
+        builder.Append(" → ");
+        builder.Append(row.Uri);
+    }
+
+    private static void FormatObjectSummary(StringBuilder builder, ObjectRow row)
+    {
+        // Format: uri with symbol and line info, plus structure
+        var symbol = !string.IsNullOrWhiteSpace(row.Symbol) ? row.Symbol : "(anonymous)";
+        var kind = !string.IsNullOrWhiteSpace(row.Kind) ? row.Kind : "object";
+
+        builder.AppendLine($"{row.Uri}");
+        builder.AppendLine($"{kind}: {symbol}");
+
+        if (row.LineStart.HasValue)
+        {
+            var lineRange = row.LineEnd.HasValue && row.LineEnd != row.LineStart
+                ? $"lines {row.LineStart}-{row.LineEnd}"
+                : $"line {row.LineStart}";
+            builder.AppendLine($"Location: {lineRange}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(row.Structure))
+        {
+            builder.AppendLine("Structure:");
+            builder.AppendLine(row.Structure.TrimEnd());
+        }
+        else if (!string.IsNullOrWhiteSpace(row.Headline))
+        {
+            builder.AppendLine(row.Headline.Trim());
+        }
+    }
+
+    private static void FormatObjectSnippet(StringBuilder builder, ObjectRow row)
+    {
+        // Format: uri, metadata, and code snippet
+        var symbol = !string.IsNullOrWhiteSpace(row.Symbol) ? row.Symbol : "(anonymous)";
+        var kind = !string.IsNullOrWhiteSpace(row.Kind) ? row.Kind : "object";
+
+        builder.AppendLine($"{row.Uri}");
+        builder.AppendLine($"{kind}: {symbol}");
+
+        if (row.LineStart.HasValue)
+        {
+            var lineRange = row.LineEnd.HasValue && row.LineEnd != row.LineStart
+                ? $"lines {row.LineStart}-{row.LineEnd}"
+                : $"line {row.LineStart}";
+            builder.AppendLine($"Location: {lineRange}");
+        }
+
+        var lang = !string.IsNullOrWhiteSpace(row.Lang) ? row.Lang : "text";
+        if (!string.IsNullOrWhiteSpace(row.Snippet))
+        {
+            builder.AppendLine($"```{lang}");
+            builder.AppendLine(row.Snippet.TrimEnd());
+            builder.AppendLine("```");
+        }
+        else if (!string.IsNullOrWhiteSpace(row.Structure))
+        {
+            builder.AppendLine("Structure:");
+            builder.AppendLine(row.Structure.TrimEnd());
+        }
     }
 
     private static string ExtractFileName(string uri)
@@ -637,6 +903,18 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         string? Structure,
         string? MediaType,
         long? Size,
+        double? Score);
+
+    private sealed record ObjectRow(
+        string Uri,
+        string? Symbol,
+        string? Kind,
+        string? Headline,
+        string? Structure,
+        string? Snippet,
+        int? LineStart,
+        int? LineEnd,
+        string? Lang,
         double? Score);
 
     private sealed record AnnotationRow(

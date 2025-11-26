@@ -13,6 +13,7 @@
         <RollForward>Major</RollForward>
         <PublishSingleFile>true</PublishSingleFile>
         <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+        <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
         <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
         <StripSymbols>true</StripSymbols>
         <InvariantGlobalization>false</InvariantGlobalization>

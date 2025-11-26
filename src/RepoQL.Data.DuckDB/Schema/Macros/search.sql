@@ -571,8 +571,9 @@ query_embedding AS (
         (SELECT query_text FROM params)
     ) AS qvec
 ),
--- Phase 2: Get objects from candidate files with embedding text
-candidate_objects AS (
+-- Phase 2: Get objects from candidate files, pre-scored by lexical match
+-- Limit to top candidates BEFORE expensive embedding step
+candidate_objects_raw AS (
     SELECT
         ri.doc_id,
         ri.node_id,
@@ -595,7 +596,16 @@ candidate_objects AS (
         -- Headline text for high-value matching (symbol name, signature)
         coalesce(ri.symbol, ri.headline, '') AS headline_text,
         -- Body text for full content matching
-        coalesce(NULLIF(ri.body, ''), ri.structure, '') AS body_text
+        coalesce(NULLIF(ri.body, ''), ri.structure, '') AS body_text,
+        -- Pre-score by lexical match to prioritize before embedding
+        CASE
+            WHEN lower(coalesce(ri.symbol, '')) = lower((SELECT query_text FROM params)) THEN 100
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(ri.symbol, ''))) > 0 THEN 80
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(ri.headline, ''))) > 0 THEN 60
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(ri.structure, ''))) > 0 THEN 40
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(ri.body, ''))) > 0 THEN 20
+            ELSE cf.file_score * 10
+        END AS lexical_priority
     FROM repo_index ri
     JOIN candidate_files cf ON ri.doc_id = cf.doc_id
     JOIN params p ON TRUE
@@ -604,6 +614,12 @@ candidate_objects AS (
            OR repoql_glob_match(ri.uri, p.uri_filter, TRUE, 'file:///') IS TRUE)
       AND (p.mime_filter IS NULL
            OR repoql_glob_match(coalesce(ri.mime, ''), p.mime_filter, TRUE, NULL) IS TRUE)
+),
+-- Limit candidates to top 100 by lexical priority before expensive JIT embedding
+candidate_objects AS (
+    SELECT * FROM candidate_objects_raw
+    ORDER BY lexical_priority DESC, file_score DESC
+    LIMIT 100
 ),
 -- Embed headline and body separately, compute weighted similarity
 scored_objects AS (
