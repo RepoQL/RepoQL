@@ -492,6 +492,8 @@ namespace RepoQL.Data.DuckDB;
 
     private List<EmbeddingWorkItem> BuildEmbeddingWorkItems(IReadOnlyDictionary<Guid, DocumentEmbeddingRow> documents)
     {
+        // Only build document-level embeddings at index time.
+        // Object-level embeddings are generated just-in-time during search.
         var work = new List<EmbeddingWorkItem>(documents.Count);
         foreach (var doc in documents.Values)
         {
@@ -500,20 +502,6 @@ namespace RepoQL.Data.DuckDB;
             {
                 work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, doc.Uri, DocumentEmbeddingScope, payload));
             }
-        }
-
-        // Only load child nodes from documents that need refresh (filtered in SQL)
-        foreach (var node in LoadNodeEmbeddingRows(documents.Keys.ToList()))
-        {
-            if (!documents.TryGetValue(node.DocumentId, out var doc))
-                continue; // Shouldn't happen with SQL filter, but keep for safety
-
-            var payload = BuildObjectEmbeddingText(node, doc);
-            if (string.IsNullOrWhiteSpace(payload))
-                continue;
-
-            var uri = SynthesizeNodeUri(doc.Uri, node);
-            work.Add(new EmbeddingWorkItem(doc.Id, node.NodeId, uri, ObjectEmbeddingScope, payload));
         }
 
         return work;
@@ -987,20 +975,32 @@ namespace RepoQL.Data.DuckDB;
                 Execute("DELETE FROM document_search;");
                 inserted = Execute(@"
 INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
-SELECT
-    base.id,
-    base.uri,
-    lower(base.normalized_uri) AS search_key,
-    COALESCE(regexp_extract(base.normalized_uri, '([^/]+)$', 1), base.normalized_uri) AS basename,
-    regexp_extract(base.normalized_uri, '^(.*)/[^/]*$', 1) AS dirname
-FROM (
+WITH base AS (
     SELECT
         n.id,
         n.uri,
-        REPLACE(n.uri, CHR(92), '/') AS normalized_uri
+        REPLACE(n.uri, CHR(92), '/') AS normalized_uri,
+        n.updated_at
     FROM node n
     WHERE n.kind = 'document' AND n.uri IS NOT NULL
-) AS base;
+),
+dedup AS (
+    SELECT
+        id,
+        uri,
+        normalized_uri,
+        COALESCE(updated_at, CURRENT_TIMESTAMP) AS updated_at,
+        ROW_NUMBER() OVER (PARTITION BY lower(normalized_uri) ORDER BY updated_at DESC, id) AS rk
+    FROM base
+)
+SELECT
+    id,
+    uri,
+    lower(normalized_uri) AS search_key,
+    COALESCE(regexp_extract(normalized_uri, '([^/]+)$', 1), normalized_uri) AS basename,
+    regexp_extract(normalized_uri, '^(.*)/[^/]*$', 1) AS dirname
+FROM dedup
+WHERE rk = 1;
 ", tx);
                 tx.Commit();
             }

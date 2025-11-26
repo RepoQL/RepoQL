@@ -482,3 +482,226 @@ FROM search(
         semantic_weight := 0.80
     )
 );
+
+-- Two-phase object search with just-in-time embeddings.
+-- Phase 1: Find candidate files using file_search (pre-computed file embeddings)
+-- Phase 2: Embed objects within those files on-demand and rank by similarity
+CREATE OR REPLACE MACRO object_search(
+    q,
+    k := 20,
+    file_candidates := 10,
+    uri_glob := NULL,
+    mime_glob := NULL
+) AS TABLE (
+WITH params AS (
+    SELECT
+        coalesce(trim(q), '')                      AS query_text,
+        CAST(coalesce(k, 20) AS BIGINT)            AS result_k,
+        CAST(coalesce(file_candidates, 10) AS BIGINT) AS file_k,
+        NULLIF(trim(uri_glob), '')                 AS uri_filter,
+        NULLIF(trim(mime_glob), '')                AS mime_filter
+),
+-- Phase 1a: Find candidate files using file_search with file-level embeddings
+semantic_files AS (
+    SELECT doc_id, uri AS file_uri, score AS file_score
+    FROM file_search(
+        (SELECT query_text FROM params),
+        question := (SELECT query_text FROM params),
+        k := (SELECT file_k FROM params)
+    )
+),
+-- Phase 1b: Include files containing matching symbol/headline/structure (lexical fallback)
+-- Priority: headline > structure > body (headline has highest value info)
+symbol_match_files AS (
+    SELECT DISTINCT
+        ri.doc_id,
+        (SELECT uri FROM node WHERE id = ri.doc_id) AS file_uri,
+        CASE
+            -- Exact symbol match is highest
+            WHEN lower(ri.symbol) = lower((SELECT query_text FROM params)) THEN 1.0
+            -- Symbol substring
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(ri.symbol, ''))) > 0 THEN 0.9
+            -- Headline substring (symbol name, signature)
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(ri.headline, ''))) > 0 THEN 0.7
+            -- Structure substring (outline, key features)
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(ri.structure, ''))) > 0 THEN 0.5
+            ELSE 0.0
+        END AS file_score
+    FROM repo_index ri
+    JOIN params p ON TRUE
+    WHERE ri.scope = 'object'
+      AND (lower(ri.symbol) = lower(p.query_text)
+           OR position(lower(p.query_text) IN lower(coalesce(ri.symbol, ''))) > 0
+           OR position(lower(p.query_text) IN lower(coalesce(ri.headline, ''))) > 0
+           OR position(lower(p.query_text) IN lower(coalesce(ri.structure, ''))) > 0)
+),
+-- Phase 1c: Include files where query keywords appear in object body (broader fallback)
+-- Lowest priority - full content search
+body_keyword_files AS (
+    SELECT DISTINCT
+        ri.doc_id,
+        (SELECT uri FROM node WHERE id = ri.doc_id) AS file_uri,
+        0.3 AS file_score
+    FROM repo_index ri
+    JOIN params p ON TRUE
+    WHERE ri.scope = 'object'
+      AND length(p.query_text) >= 3
+      -- Only search body if not already matched by symbol/headline/structure
+      AND position(lower(p.query_text) IN lower(coalesce(ri.symbol, ''))) = 0
+      AND position(lower(p.query_text) IN lower(coalesce(ri.headline, ''))) = 0
+      AND position(lower(p.query_text) IN lower(coalesce(ri.structure, ''))) = 0
+      AND position(lower(p.query_text) IN lower(coalesce(ri.body, ''))) > 0
+),
+-- Combine semantic, symbol-matched, and body-keyword files (take higher score if duplicate)
+candidate_files AS (
+    SELECT doc_id, file_uri, MAX(file_score) AS file_score
+    FROM (
+        SELECT * FROM semantic_files
+        UNION ALL
+        SELECT * FROM symbol_match_files
+        UNION ALL
+        SELECT * FROM body_keyword_files
+    )
+    GROUP BY doc_id, file_uri
+),
+-- Embed the query once for object comparison
+query_embedding AS (
+    SELECT embed_text_json(
+        'Represent this sentence for searching relevant passages: ' ||
+        (SELECT query_text FROM params)
+    ) AS qvec
+),
+-- Phase 2: Get objects from candidate files with embedding text
+candidate_objects AS (
+    SELECT
+        ri.doc_id,
+        ri.node_id,
+        ri.uri,
+        ri.path,
+        ri.kind,
+        ri.symbol,
+        ri.headline,
+        ri.structure,
+        ri.body,
+        ri.line_start,
+        ri.line_end,
+        ri.lang,
+        ri.mime,
+        ri.mtime,
+        ri.digest,
+        ri.basename,
+        cf.file_uri,
+        cf.file_score,
+        -- Headline text for high-value matching (symbol name, signature)
+        coalesce(ri.symbol, ri.headline, '') AS headline_text,
+        -- Body text for full content matching
+        coalesce(NULLIF(ri.body, ''), ri.structure, '') AS body_text
+    FROM repo_index ri
+    JOIN candidate_files cf ON ri.doc_id = cf.doc_id
+    JOIN params p ON TRUE
+    WHERE ri.scope = 'object'
+      AND (p.uri_filter IS NULL
+           OR repoql_glob_match(ri.uri, p.uri_filter, TRUE, 'file:///') IS TRUE)
+      AND (p.mime_filter IS NULL
+           OR repoql_glob_match(coalesce(ri.mime, ''), p.mime_filter, TRUE, NULL) IS TRUE)
+),
+-- Embed headline and body separately, compute weighted similarity
+scored_objects AS (
+    SELECT
+        co.*,
+        -- Embed headline (high-value, short text)
+        embed_text_json(co.headline_text || ' ' || co.kind) AS headline_embedding,
+        -- Embed body (full content, capped)
+        embed_text_json(substr(co.body_text, 1, 6000)) AS body_embedding,
+        qe.qvec
+    FROM candidate_objects co
+    CROSS JOIN query_embedding qe
+    WHERE length(co.headline_text) > 0 OR length(co.body_text) > 0
+),
+-- Compute similarity scores with lexical heuristics (matching search() approach)
+with_scores AS (
+    SELECT
+        so.doc_id,
+        so.node_id,
+        so.uri,
+        so.path,
+        so.kind,
+        so.symbol,
+        so.headline,
+        so.structure,
+        substr(so.body, 1, 640) AS snippet,
+        so.line_start,
+        so.line_end,
+        so.lang,
+        so.mime,
+        so.mtime,
+        so.digest,
+        so.file_uri,
+        so.file_score,
+        -- Separate semantic scores for headline vs body
+        cosine_similarity_json(so.qvec, so.headline_embedding) AS headline_semantic,
+        cosine_similarity_json(so.qvec, so.body_embedding) AS body_semantic,
+        -- Combined semantic: headline weighted 60%, body 40%
+        (cosine_similarity_json(so.qvec, so.headline_embedding) * 0.6 +
+         cosine_similarity_json(so.qvec, so.body_embedding) * 0.4) AS semantic_score,
+        match_score(lower((SELECT query_text FROM params)), lower(coalesce(so.symbol, ''))) AS fuzzy_score,
+        -- BM25-like lexical heuristics: symbol > headline > structure > body
+        CASE
+            WHEN lower(coalesce(so.symbol, '')) = lower((SELECT query_text FROM params)) THEN 4.0
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(so.symbol, ''))) > 0 THEN 3.2
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(so.headline, ''))) > 0 THEN 2.0
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(so.structure, ''))) > 0 THEN 1.5
+            WHEN position(lower((SELECT query_text FROM params)) IN lower(coalesce(so.body_text, ''))) > 0 THEN 1.0
+            ELSE 0.0
+        END AS bm25_score
+    FROM scored_objects so
+),
+-- Combine scores using weighted blend (similar to search() macro)
+final_scored AS (
+    SELECT
+        *,
+        -- Combined score: 45% BM25, 35% fuzzy, 20% semantic (lexical-heavy like search())
+        -- But boost semantic when BM25 is low (no exact matches)
+        CASE
+            WHEN bm25_score >= 3.0 THEN
+                (bm25_score / 4.0 * 0.50) + (LEAST(fuzzy_score / 4.0, 1.0) * 0.30) + (semantic_score * 0.20)
+            ELSE
+                (bm25_score / 4.0 * 0.20) + (LEAST(fuzzy_score / 4.0, 1.0) * 0.20) + (semantic_score * 0.60)
+        END + (file_score * 0.05) AS score,
+        CASE
+            WHEN bm25_score >= 4.0 THEN 0.98
+            WHEN bm25_score >= 3.0 THEN 0.90
+            WHEN semantic_score >= 0.8 THEN 0.85
+            WHEN semantic_score >= 0.6 THEN 0.70
+            WHEN semantic_score >= 0.4 THEN 0.55
+            ELSE 0.35
+        END AS confidence
+    FROM with_scores
+)
+SELECT
+    doc_id,
+    node_id,
+    uri,
+    path,
+    'object' AS scope,
+    kind,
+    symbol,
+    lang,
+    mime,
+    headline,
+    structure,
+    snippet,
+    line_start,
+    line_end,
+    digest,
+    bm25_score,
+    fuzzy_score,
+    headline_semantic,
+    body_semantic,
+    semantic_score AS dense_score,
+    score,
+    confidence
+FROM final_scored
+ORDER BY score DESC, length(uri)
+LIMIT (SELECT result_k FROM params)
+);

@@ -46,7 +46,39 @@ internal class SearchProjectionTests
         try { File.Delete(dbPath); } catch { }
     }
 
+    [Test]
+    public async Task RefreshSearchProjection_DeduplicatesDuplicateDocumentUris()
+    {
+        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-search-dupe-{Guid.NewGuid():N}.duckdb");
+        await using var writer = new SingleThreadedDatabaseWriter(new DuckDBConnectionFactory($"Data Source={dbPath}"));
+        await writer.StartAsync(CancellationToken.None);
+
+        var uri = RepoUri.Parse("file:///src/dup.md");
+        var first = CreateWrite(uri, "first body", updatedAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        var second = CreateWrite(uri, "second body", updatedAt: DateTimeOffset.UtcNow);
+
+        await writer.EnqueueAndWaitAsync(first);
+        await writer.EnqueueAndWaitAsync(second);
+        await writer.FlushAsync();
+
+        using var store = new DuckDbGraphStore(dbPath);
+        store.EnsureSchema();
+        store.RefreshSearchProjection(incrementalRefresh: false);
+
+        var rows = store.RawQuery("SELECT doc_id, uri FROM document_search WHERE uri=?", uri.AbsoluteUri).ToList();
+        rows.Should().HaveCount(1, "duplicate URIs should be deduped into a single search row");
+
+        var projectedDocId = Guid.Parse(rows[0]["doc_id"]!.ToString()!);
+        projectedDocId.Should().Be(second.ParsedData.Nodes[0].Id, "newest document should win deduplication");
+
+        await writer.StopAsync(CancellationToken.None);
+        try { File.Delete(dbPath); } catch { }
+    }
+
     private static WriteOperation CreateWrite(RepoUri uri, string text)
+        => CreateWrite(uri, text, DateTimeOffset.UtcNow);
+
+    private static WriteOperation CreateWrite(RepoUri uri, string text, DateTimeOffset updatedAt)
     {
         var artifactId = Guid.NewGuid();
         var docId = Guid.NewGuid();
@@ -68,7 +100,7 @@ internal class SearchProjectionTests
             ArtifactId = artifactId,
             Props = new System.Text.Json.Nodes.JsonObject(),
             CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
+            UpdatedAt = updatedAt
         };
 
         return new WriteOperation

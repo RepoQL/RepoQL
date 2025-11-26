@@ -329,7 +329,9 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<InMemoryMetricsSink>(_ => new InMemoryMetricsSink("RepoQL.Indexing"));
         services.AddSingleton<InMemoryRateProvider>(sp => new InMemoryRateProvider(sp.GetRequiredService<InMemoryMetricsSink>()));
 
-        services.AddSingleton<IDocumentCatalogDataSource>(_ => NullDocumentCatalogDataSource.Instance);
+        services.AddSingleton<IDocumentCatalogDataSource>(sp => new DuckDbDocumentCatalogDataSource(
+            sp.GetRequiredService<IDuckDBConnectionFactory>(),
+            sp.GetService<ILogger<DuckDbDocumentCatalogDataSource>>()));
         services.AddSingleton<IDocumentCatalog>(sp => new DocumentCatalog(sp.GetRequiredService<IDocumentCatalogDataSource>()));
         services.AddSingleton<IArtifactPruner>(sp =>
         {

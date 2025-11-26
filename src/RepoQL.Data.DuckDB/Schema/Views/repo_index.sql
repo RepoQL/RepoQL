@@ -80,14 +80,33 @@ object_rows AS (
             repository_uri_file_name(doc.uri)
         ) AS headline,
         NULLIF(child.structure, '') AS structure,
+        -- Extract actual code content from document using line numbers, fallback to metadata
         NULLIF(
             trim(
-                concat_ws(
-                    '\n\n',
-                    NULLIF(child.headline, ''),
-                    NULLIF(child.structure, ''),
-                    json_extract_string(child.properties, '$.summary'),
-                    json_extract_string(child.properties, '$.docstring')
+                COALESCE(
+                    -- Primary: extract code lines from document (no caps - accuracy > speed)
+                    CASE
+                        WHEN art.text_content IS NOT NULL
+                             AND span.start_line IS NOT NULL
+                             AND span.end_line IS NOT NULL
+                        THEN array_to_string(
+                            list_slice(
+                                string_split(art.text_content, chr(10)),
+                                span.start_line,
+                                span.end_line
+                            ),
+                            chr(10)
+                        )
+                        ELSE NULL
+                    END,
+                    -- Fallback: use metadata if code extraction not available
+                    concat_ws(
+                        E'\n\n',
+                        NULLIF(child.headline, ''),
+                        NULLIF(child.structure, ''),
+                        json_extract_string(child.properties, '$.summary'),
+                        json_extract_string(child.properties, '$.docstring')
+                    )
                 )
             ),
             ''

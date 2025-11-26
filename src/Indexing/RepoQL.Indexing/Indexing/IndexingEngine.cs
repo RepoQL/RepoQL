@@ -573,6 +573,8 @@ public partial class IndexingEngine : IAsyncDisposable
     {
         Metrics?.IdleCycles.Add(1);
         EnqueueIdleEpoch(args.Epoch);
+        // Start a fresh epoch so subsequent work participates in idle post-processing again.
+        _epochTracker.BeginNewEpoch();
     }
 
     internal void EnqueueIdleEpoch(long epoch)

@@ -36,12 +36,16 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
         }
 
+        // Create a logger for DuckDbGraphStore from our logger factory
+        var graphStoreLogger = _logger as ILogger<DuckDbGraphStore>
+            ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<DuckDbGraphStore>.Instance;
+
         using (var store = new DuckDbGraphStore(
                    connection,
                    metrics: null,
                    enableExtensions: false,
                    registerUdfs: false,
-                   logger: NullLogger<DuckDbGraphStore>.Instance,
+                   logger: graphStoreLogger,
                    embeddingProvider: _embeddingProvider))
         {
             store.RefreshDocumentEmbeddings(_embeddingProvider, cancellationToken);

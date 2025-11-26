@@ -582,6 +582,54 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [DisplayName("New work after idle runs in a new epoch so vectors refresh again")]
+    public async Task Given_SubsequentWork_When_PreviousEpochCompleted_Then_VectorRefreshesAgain(CancellationToken token)
+    {
+        var firstVector = NewTaskCompletionSource<bool>();
+        var secondVector = NewTaskCompletionSource<bool>();
+        var observedEpochs = new List<long>();
+
+        var vector = A.Fake<IVectorIndexCoordinator>();
+        A.CallTo(() => vector.ApplyAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                var epoch = call.GetArgument<IndexItem>(0)!.Epoch;
+                lock (observedEpochs)
+                {
+                    observedEpochs.Add(epoch);
+                    if (observedEpochs.Count == 1)
+                    {
+                        firstVector.TrySetResult(true);
+                    }
+                    else if (observedEpochs.Count == 2)
+                    {
+                        secondVector.TrySetResult(true);
+                    }
+                }
+
+                return Task.CompletedTask;
+            });
+
+        var analysisSignal = NewTaskCompletionSource<bool>();
+        await using var engine = CreateEngineForAnalysisTests(
+            parsingGate: null,
+            multiFileSignal: analysisSignal,
+            vectorCoordinator: vector);
+
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/vector-epoch-a.md"), IndexItemOptions.Default, token);
+        await firstVector.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+        await engine.AnalysisQueue.WhenIdleAsync().WaitAsync(token);
+
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/vector-epoch-b.md"), IndexItemOptions.Default, token);
+        await secondVector.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+        await engine.AnalysisQueue.WhenIdleAsync().WaitAsync(token);
+
+        observedEpochs.Should().HaveCount(2);
+        observedEpochs[1].Should().BeGreaterThan(observedEpochs[0]);
+    }
+
+    [Test]
+    [Timeout(15_000)]
     [DisplayName("Pruning deletes are issued through the database writer")]
     public async Task Given_StaleDocuments_When_PrunerFindsThem_Then_DeleteOperationSentToWriter(CancellationToken token)
     {

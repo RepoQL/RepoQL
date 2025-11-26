@@ -19,7 +19,7 @@ This document explains how Markdown files are modeled in the RepoQL graph and ho
 - **Edges**:
   - Composition: `HAS_PART` from document → child (`is_composition=true`, `ordinal` set for file order).
   - Reference: `REFERS_TO` from `md_link` → target `md_heading` for intra‑document `#anchor` links (slug match).
-- **Spans**:
+- **Spans**: 
   - For headings, code blocks, and links, a `span` is created and assigned to the node (`node.span_id`).
   - Span fields include lines and columns (1‑based) and byte range (UTF‑8), enabling snippets and precise locations.
 
