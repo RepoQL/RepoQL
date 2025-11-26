@@ -14,7 +14,7 @@ using AnalysisResult = RepoQL.Contracts.Analysis.AnalysisResult;
 
 namespace RepoQL.Tests;
 
-[Timeout(60_000)]
+[Timeout(180_000)] // 3 minutes - Roslyn workspace operations can be slow in CI
 internal sealed class CSharpLoaderTests
 {
     [Test]

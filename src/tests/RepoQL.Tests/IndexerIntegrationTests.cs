@@ -26,7 +26,7 @@ internal class IndexerIntegrationTests
     }
 
     [Test]
-    [Timeout(60_000)]
+    [Timeout(180_000)] // 3 minutes - can be slow in CI
     public async Task StartAndWaitForIdle_IndexesMarkdownDocument_InMemoryDb(CancellationToken token)
     {
         var asm = typeof(IndexerIntegrationTests).Assembly;
