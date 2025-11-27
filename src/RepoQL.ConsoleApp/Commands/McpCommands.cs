@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.ConsoleApp.Helpers;
+using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Tools;
 using ConsoleAppFramework;
 using RepoQL.ConsoleApp.Logging;
@@ -26,6 +27,7 @@ internal class McpCommands
             });
 
             builder.Services.AddRepoQlConsoleServices();
+            builder.Services.AddSingleton<RepoResourceService>();
 
             builder.Services
                 .AddMcpServer(s =>
@@ -41,9 +43,10 @@ internal class McpCommands
                                            </CONCEPT>
 
                                            <PURPOSE>
-                                           - Find structures in files with semantic search, avoid reading files you don't need to
+                                           - Find things reliably when you don't know exact keywords
+                                           - Scan structures in files with semantic search, avoid reading files you don't need to
                                            - Understand contents of files without token waste (Structure, relationships, dependencies, technologies)
-                                           - See linting errors across many file types (annotations)
+                                           - See linting across many file types (annotations)
                                            - Understand "what uses this?" and "What links to this?" and "What breaks if I change this?"
                                            </PURPOSE>
 
@@ -157,7 +160,19 @@ internal class McpCommands
                 .WithStdioServerTransport()
                 .WithTools<QueryTool>()
                 .WithTools<XrayTool>()
-                .WithTools<ImportTool>();
+                .WithTools<ImportTool>()
+                .WithListResourceTemplatesHandler((ctx, ct) =>
+                {
+                    ArgumentNullException.ThrowIfNull(ctx.Services);
+                    var service = ctx.Services.GetRequiredService<RepoResourceService>();
+                    return service.ListTemplatesAsync(ctx, ct);
+                })
+                .WithReadResourceHandler((ctx, ct) =>
+                {
+                    ArgumentNullException.ThrowIfNull(ctx.Services);
+                    var service = ctx.Services.GetRequiredService<RepoResourceService>();
+                    return service.ReadResourceAsync(ctx, ct);
+                });
 
         builder.Services.AddHostedService<McpLoggingHostedService>();
 

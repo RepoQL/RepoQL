@@ -12,7 +12,7 @@ using RepoQL.ConsoleApp.Helpers;
 using ConsoleAppFramework;
 
 // Defaults to 80 :(
-AnsiConsole.Profile.Width = 300;
+AnsiConsole.Profile.Width = 600;
 
 var explicitWorkingDirectory = Environment.GetEnvironmentVariable("REPOQL_CWD");
 if (!string.IsNullOrWhiteSpace(explicitWorkingDirectory) &&

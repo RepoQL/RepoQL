@@ -1,8 +1,7 @@
 using System.Globalization;
-using System.Text;
-using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
@@ -14,7 +13,16 @@ namespace RepoQL.ConsoleApp.Resources;
 /// </summary>
 internal sealed class RepoResourceService
 {
-    private const string SummaryUriPrefix = "summarize::";
+    private static readonly ResourceTemplate DocumentTemplate = new()
+    {
+        Name = "document",
+        Title = "RepoQL document",
+        Description = "Fetch repository content by RepoURI (file:///…, docs:///…, github://…). "
+                    + "Supports #line= and #char= fragments for slicing, and glob patterns (e.g., file:///src/**/*.cs) to read multiple files.",
+        UriTemplate = "{+uri}",
+        MimeType = "text/plain; charset=utf-8"
+    };
+
     private readonly RepoQlClientProvider _clientProvider;
 
     public RepoResourceService(RepoQlClientProvider clientProvider)
@@ -22,16 +30,108 @@ internal sealed class RepoResourceService
         _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
     }
 
+    /// <summary>
+    /// MCP handler: List available resource templates.
+    /// </summary>
+    public ValueTask<ListResourceTemplatesResult> ListTemplatesAsync(
+        RequestContext<ListResourceTemplatesRequestParams> context,
+        CancellationToken cancellationToken)
+    {
+        var result = new ListResourceTemplatesResult
+        {
+            ResourceTemplates = [DocumentTemplate]
+        };
+        return ValueTask.FromResult(result);
+    }
+
+    /// <summary>
+    /// MCP handler: Read a resource by URI or glob pattern.
+    /// </summary>
+    public async ValueTask<ReadResourceResult> ReadResourceAsync(
+        RequestContext<ReadResourceRequestParams> context,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var uriString = context.Params?.Uri;
+        if (string.IsNullOrWhiteSpace(uriString))
+        {
+            throw new ArgumentException("Resource URI cannot be empty.", nameof(context));
+        }
+
+        // Check if this is a glob pattern
+        if (IsGlobPattern(uriString))
+        {
+            var contents = await FetchGlobContentsAsync(uriString, cancellationToken).ConfigureAwait(false);
+            return new ReadResourceResult { Contents = contents };
+        }
+
+        var content = await FetchResourceContentAsync(uriString, cancellationToken).ConfigureAwait(false);
+        return new ReadResourceResult
+        {
+            Contents = [content]
+        };
+    }
+
+    private static bool IsGlobPattern(string uri)
+    {
+        return uri.Contains('*') || uri.Contains('?');
+    }
+
+    private async Task<List<ResourceContents>> FetchGlobContentsAsync(string globUri, CancellationToken cancellationToken)
+    {
+        var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
+
+        // Query for matching documents using glob_match
+        const string sql = """
+            SELECT n.uri, a.text_content
+            FROM node n
+            JOIN artifact a ON a.id = n.artifact_id
+            WHERE n.kind = 'document'
+              AND (glob_match(n.uri, ?, default_scheme := 'file:///')
+                   OR glob_match(n.uri, ?, default_scheme := 'docs:///'))
+            ORDER BY n.uri
+            LIMIT 50
+            """;
+
+        var response = await client.ExecuteRawQueryAsync(sql, [globUri, globUri], cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        var contents = new List<ResourceContents>(response.Rows.Count);
+        foreach (var row in response.Rows)
+        {
+            var uri = row.Values.Count > 0 ? ExtractString(row.Values[0]) : null;
+            var text = row.Values.Count > 1 ? ExtractString(row.Values[1]) : null;
+
+            if (string.IsNullOrEmpty(uri)) continue;
+
+            contents.Add(new TextResourceContents
+            {
+                Uri = uri,
+                MimeType = "text/plain; charset=utf-8",
+                Text = text ?? "(empty or binary file)"
+            });
+        }
+
+        if (contents.Count == 0)
+        {
+            contents.Add(new TextResourceContents
+            {
+                Uri = globUri,
+                MimeType = "text/plain; charset=utf-8",
+                Text = $"No files matched pattern: {globUri}"
+            });
+        }
+
+        return contents;
+    }
+
     public Task<TextResourceContents> FetchResourceAsync(string resourceUri, CancellationToken cancellationToken = default)
         => FetchResourceContentAsync(resourceUri, cancellationToken);
 
     private async Task<TextResourceContents> FetchResourceContentAsync(string uriString, CancellationToken cancellationToken)
     {
-        var view = ResolveView(uriString, out var rawUri);
-
-        if (!RepoUri.TryParse(rawUri, out var repoUri))
+        if (!RepoUri.TryParse(uriString, out var repoUri))
         {
-            throw new ArgumentException($"Invalid RepoURI: {rawUri}", nameof(uriString));
+            throw new ArgumentException($"Invalid RepoURI: {uriString}", nameof(uriString));
         }
 
         var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
@@ -41,11 +141,7 @@ internal sealed class RepoResourceService
             throw new FileNotFoundException($"No artifact found for RepoURI '{repoUri.AbsoluteUri}'.");
         }
 
-        return view switch
-        {
-            ResourceView.Summary => await BuildSummaryResourceAsync(client, document, repoUri, uriString, cancellationToken).ConfigureAwait(false),
-            _ => BuildDocumentResource(document, repoUri, uriString)
-        };
+        return BuildDocumentResource(document, repoUri, uriString);
     }
 
     private static TextResourceContents BuildDocumentResource(DocumentData document, RepoUri repoUri, string requestedUri)
@@ -62,23 +158,6 @@ internal sealed class RepoResourceService
             Uri = requestedUri,
             MimeType = string.IsNullOrWhiteSpace(document.MediaType) ? "text/plain; charset=utf-8" : document.MediaType,
             Text = sliced
-        };
-    }
-
-    private async Task<TextResourceContents> BuildSummaryResourceAsync(
-        IRepoQlClient client,
-        DocumentData document,
-        RepoUri repoUri,
-        string requestedUri,
-        CancellationToken cancellationToken)
-    {
-        var annotations = await FetchAnnotationsAsync(client, document.CanonicalUri, cancellationToken).ConfigureAwait(false);
-        var markdown = BuildSummaryMarkdown(document, annotations, repoUri);
-        return new TextResourceContents
-        {
-            Uri = requestedUri,
-            MimeType = "text/markdown; charset=utf-8",
-            Text = markdown
         };
     }
 
@@ -124,18 +203,6 @@ internal sealed class RepoResourceService
         return string.Join(Environment.NewLine, lines[(startLine - 1)..endLine]);
     }
 
-    private static ResourceView ResolveView(string uriString, out string rawUri)
-    {
-        if (uriString.StartsWith(SummaryUriPrefix, StringComparison.OrdinalIgnoreCase))
-        {
-            rawUri = uriString.Substring(SummaryUriPrefix.Length);
-            return ResourceView.Summary;
-        }
-
-        rawUri = uriString;
-        return ResourceView.Document;
-    }
-
     private static string? ExtractString(Value value)
     {
         return value.KindCase switch
@@ -143,20 +210,6 @@ internal sealed class RepoResourceService
             Value.KindOneofCase.StringValue => value.StringValue,
             Value.KindOneofCase.NumberValue => value.NumberValue.ToString(CultureInfo.InvariantCulture),
             Value.KindOneofCase.BoolValue => value.BoolValue ? "true" : "false",
-            _ => null
-        };
-    }
-
-    private static string? FormatValue(Value value)
-    {
-        return value.KindCase switch
-        {
-            Value.KindOneofCase.StringValue => value.StringValue,
-            Value.KindOneofCase.NumberValue => value.NumberValue.ToString(CultureInfo.InvariantCulture),
-            Value.KindOneofCase.BoolValue => value.BoolValue ? "true" : "false",
-            Value.KindOneofCase.StructValue => JsonFormatter.Default.Format(value.StructValue),
-            Value.KindOneofCase.ListValue => JsonFormatter.Default.Format(value.ListValue),
-            Value.KindOneofCase.NullValue => null,
             _ => null
         };
     }
@@ -200,144 +253,6 @@ internal sealed class RepoResourceService
         return null;
     }
 
-    private static async Task<IReadOnlyList<AnnotationRecord>> FetchAnnotationsAsync(IRepoQlClient client, string canonicalUri, CancellationToken cancellationToken)
-    {
-        const string Sql = """
-            SELECT kind,
-                   severity,
-                   source,
-                   rule_id,
-                   message,
-                   resolved_target_uri,
-                   data,
-                   created_at
-            FROM annotations_for(?, NULL, NULL)
-            LIMIT 20
-            """;
-
-        RawQueryResponse response;
-        try
-        {
-            response = await client.ExecuteRawQueryAsync(Sql, new object?[] { canonicalUri }, cancellationToken: cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            return Array.Empty<AnnotationRecord>();
-        }
-        if (response.Rows.Count == 0)
-        {
-            return Array.Empty<AnnotationRecord>();
-        }
-
-        var results = new List<AnnotationRecord>(response.Rows.Count);
-        foreach (var row in response.Rows)
-        {
-            var values = row.Values;
-            string GetValue(int index) => index < values.Count ? ExtractString(values[index]) ?? string.Empty : string.Empty;
-            string? GetOptional(int index) => index < values.Count ? ExtractString(values[index]) : null;
-            string? GetFormatted(int index) => index < values.Count ? FormatValue(values[index]) : null;
-
-            DateTimeOffset? createdAt = null;
-            var createdRaw = GetOptional(7);
-            if (!string.IsNullOrWhiteSpace(createdRaw) && DateTimeOffset.TryParse(createdRaw, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
-            {
-                createdAt = parsed;
-            }
-
-            results.Add(new AnnotationRecord(
-                Kind: GetValue(0),
-                Severity: GetValue(1),
-                Source: GetValue(2),
-                RuleId: GetOptional(3),
-                Message: GetValue(4),
-                ResolvedTargetUri: GetOptional(5),
-                Data: GetFormatted(6),
-                CreatedAt: createdAt
-            ));
-        }
-
-        return results;
-    }
-
-    private static string BuildSummaryMarkdown(DocumentData document, IReadOnlyList<AnnotationRecord> annotations, RepoUri originalUri)
-    {
-        var sb = new StringBuilder();
-        var headline = string.IsNullOrWhiteSpace(document.Headline) ? "(no headline stored)" : document.Headline!.Trim();
-        sb.AppendLine("# ").AppendLine(headline).AppendLine();
-
-        sb.AppendLine("## Summary");
-        if (string.IsNullOrWhiteSpace(document.Summary))
-        {
-            sb.AppendLine("Not available.");
-        }
-        else
-        {
-            sb.AppendLine(document.Summary.Trim());
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("## Structure");
-        if (string.IsNullOrWhiteSpace(document.Structure))
-        {
-            sb.AppendLine("Not available.");
-        }
-        else
-        {
-            sb.AppendLine("```");
-            sb.AppendLine(document.Structure.TrimEnd());
-            sb.AppendLine("```");
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("## Metadata");
-        sb.AppendLine($"- RepoURI: `{document.CanonicalUri}`");
-        if (!string.Equals(document.CanonicalUri, originalUri.AbsoluteUri, StringComparison.Ordinal))
-        {
-            sb.AppendLine($"- Requested URI: `{originalUri.AbsoluteUri}`");
-        }
-        if (!string.IsNullOrWhiteSpace(document.MediaType))
-        {
-            sb.AppendLine($"- Media type: `{document.MediaType}`");
-        }
-        sb.AppendLine();
-
-        sb.AppendLine("## Annotations (top 20)");
-        if (annotations.Count == 0)
-        {
-            sb.AppendLine("No annotations found for this document.");
-        }
-        else
-        {
-            foreach (var annotation in annotations)
-            {
-                var severity = string.IsNullOrWhiteSpace(annotation.Severity) ? "unknown" : annotation.Severity;
-                var kind = string.IsNullOrWhiteSpace(annotation.Kind) ? "annotation" : annotation.Kind;
-                var source = string.IsNullOrWhiteSpace(annotation.Source) ? "unknown source" : annotation.Source;
-                var rule = string.IsNullOrWhiteSpace(annotation.RuleId) ? string.Empty : $" / {annotation.RuleId}";
-                sb.AppendLine($"- **[{severity}]** `{kind}` — {annotation.Message}");
-                sb.AppendLine($"  - Source: {source}{rule}");
-                if (!string.IsNullOrWhiteSpace(annotation.ResolvedTargetUri))
-                {
-                    sb.AppendLine($"  - Target: `{annotation.ResolvedTargetUri}`");
-                }
-                if (!string.IsNullOrWhiteSpace(annotation.Data) && annotation.Data!.Length < 400)
-                {
-                    sb.AppendLine($"  - Data: {annotation.Data}");
-                }
-                else if (!string.IsNullOrWhiteSpace(annotation.Data))
-                {
-                    sb.AppendLine("  - Data: (omitted – payload too large to display inline)");
-                }
-                if (annotation.CreatedAt is { } created)
-                {
-                    sb.AppendLine($"  - Created: {created:yyyy-MM-dd HH:mm:ss K}");
-                }
-            }
-        }
-
-        return sb.ToString();
-    }
-
     private static IEnumerable<string> EnumerateLookupUris(RepoUri repoUri)
     {
         yield return repoUri.AbsoluteUri;
@@ -345,12 +260,6 @@ internal sealed class RepoResourceService
         {
             yield return repoUri.Container.AbsoluteUri;
         }
-    }
-
-    private enum ResourceView
-    {
-        Document,
-        Summary
     }
 
     private sealed record DocumentData(
@@ -361,15 +270,4 @@ internal sealed class RepoResourceService
         string? Summary,
         string? Structure,
         string? ArtifactId);
-
-    private sealed record AnnotationRecord(
-        string Kind,
-        string Severity,
-        string Source,
-        string? RuleId,
-        string Message,
-        string? ResolvedTargetUri,
-        string? Data,
-        DateTimeOffset? CreatedAt);
-
 }

@@ -77,6 +77,7 @@ internal class HostCommands(IAnsiConsole console)
         builder.Services.AddSingleton<InitialIndexingBarrier>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<InitialIndexingBarrier>());
         builder.Services.AddSingleton<IInitialIndexingBarrier>(sp => sp.GetRequiredService<InitialIndexingBarrier>());
+        builder.Services.AddSingleton<IQueryBarrier, QueryBarrier>();
         builder.Services.AddHostedService<PipelineHealthPublisher>();
 
         var app = builder.Build();

@@ -1,222 +1,277 @@
-## Repo URIs
+# RepoQL Essentials
 
-All elements are identified by special URIs defined as follows:
+## Foundation
 
-```ABNF
-repo-uri  = container [ "#" fragment ]
-  container = absolute-uri-without-fragment
-  fragment  = json-pointer / params / range / anchor
+Five tables. Everything addressable by URI. Pre-computed summaries save tokens.
 
-  json-pointer = "/" *( pchar / "/" )
-  params       = param *( "&" param )
-  param        = key [ "=" value ]
-  key          = 1*( ALPHA / DIGIT / "_" / "-" )
-  value        = *pchar
-  range        = "line=" number [ "," number ]
-               / "char=" number [ "," number ]
-  anchor       = 1*( unreserved / pct-encoded / "." / "-" / "_" )
-  number       = 1*DIGIT
+| Table | Purpose |
+|-------|---------|
+| `artifact` | Content: text_content, digest, **headline/summary/structure** |
+| `node` | Entities: documents, functions, classes, headings |
+| `edge` | Relationships: CALLS, IMPORTS, REFERS_TO, composition |
+| `span` | Locations: line/byte ranges within documents |
+| `annotation` | Facts: lint errors, metrics, analysis results |
 
-  pchar        = unreserved / pct-encoded / sub-delims / ":" / "@"
-  pct-encoded  = "%" HEXDIG HEXDIG
-  unreserved   = ALPHA / DIGIT / "-" / "." / "_" / "~"
-  sub-delims   = "!" / "$" / "&" / "'" / "(" / ")" / "*" / "+" / "," / ";" / "="
+**URI fragments address precisely:**
+`file:///src/auth.cs#line=42,50` | `file:///lib.cs#symbol=Foo.Bar` | `file:///api.yaml#/paths/users`
+
+---
+
+## Capsule: XRayFirst
+
+**Invariant**
+Use xray tool for browsing; use query tool only for composition or aggregation.
+
+**Example**
 ```
-
-  - container may be file:///…, https://…, or jar:file:///a.zip!/b.txt; it has no fragment.
-  - Fragment precedence: try json-pointer; else params; else range only when the fragment is exactly line=… or char=…; otherwise anchor.
-  - Reserved keys inside params: symbol, line, char; others are opaque.
-  - line is 1-based inclusive; char is 0-based half-open.
-
-  **Examples**
-
-  - file:///repo/README.md#line=40,55
-  - file:///repo/lib.cs#symbol=Foo.Bar&line=12,20
-  - file:///api/openapi.yaml#/components/schemas/User
-  - jar:file:///artifacts/logs.zip!/trace.txt#line=1,200
-  - file:///repo/README.md#installation
-  - https://example.com/repo#section=intro&page=1
-
-## Semantic Content Type
-
-The content of files is stored as a mime-inspired content type format
-
-```ABNF
-semtype = type "/" subtype [ "+" suffix ] *( ";" param )
-  param   = OWS key [ "=" token-or-quoted ]
-  key     = lowercase token
-
-  reserved params:
-    kind=<token>        ; representation identifier (e.g. markdown.doc, openapi.spec, playwright.trace)
-    profile="<uri>"     ; profile URI (RFC 6906)
-    schema="<uri>"      ; schema/IDL URI
-    version=<token>     ; representation version
-    charset=<token>     ; text encoding (standard MIME)
+xray(detail="headline", pattern="**/auth/**")
+xray(detail="summary", keywords="authentication")
+xray(detail="snippet", question="Where is login handled?", limit=5)
 ```
+//BOUNDARY: Drop to query tool only when you need JOIN, GROUP BY, regex, or LATERAL.
 
-  Normalize by lowercasing type/subtype/suffix/keys and sorting params by key. Unknown params must round-trip.
+**Depth**
+- `detail="headline"`: one-line scan (fastest, broadest)
+- `detail="summary"`: structure overview
+- `detail="snippet"`: actual code
+- `scope="object"`: functions/classes; `scope="file"`: documents only
+- NotThis: SQL for basic exploration
+- SeeAlso: `SearchPhases`
 
-  ### Semantics
+---
 
-  - type/subtype[+suffix] spells the wire format; kind names the payload’s role in RepoQL’s graph.
-  - profile and schema anchor meaning; version marks contract changes; charset applies only to text. Other parameters remain opaque.
+## Capsule: SearchPhases
 
-  ### Examples
+**Invariant**
+Discovery uses xray tool; homing uses xray+keywords; extraction uses query+regex.
 
-- text/markdown;kind=markdown.doc
-- application/json;kind=config.app;version=2.0;profile="https://schemas.example.com/app-config-v2"
-- text/typescript;charset=utf-8;kind=ts.module;schema="https://specs.deno.land/module.schema.json" 
-- application/vnd.api+json;kind=api.response;profile="https://jsonapi.org/profiles/etag";version=1.1;tenant=blue
-- application/ld+json;kind=metadata.structured;profile="https://schema.org/Person";schema="https://json-ld.org/schemas/person.json"
-- application/wasm;kind=wasm.module;version=1.0
-- text/x-python;kind=py.test;profile="https://docs.pytest.org/test-module"
-- application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3
-- video/mp4;kind=media.presentation
-- application/sql;kind=migration.up;version=20240115
-- text/x-diff;kind=patch.unified
-- application/gzip;kind=archive.compressed
-- text/calendar;charset=utf-8;kind=ical.event;profile="https://tools.ietf.org/html/rfc5545"
-- application/json;kind=api.spec;profile="https://example.com/spec";version=1.0   ; normalized example
+**Example**
+```
+-- 1. DISCOVER: what exists? (xray tool)
+xray(detail="headline", question="Where is telemetry tracked?")
 
-## Schema
-
-### Core Schema
-
-  - artifact(id,digest,byte_size,media_type,text_content,storage_uri) — unique blob per content hash.
-  - node(id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,created_at,updated_at) — every document or extracted entity.
-  - span(id,document_id,start_byte,end_byte,start_line,start_column,end_line,end_column) — location of text ranges.
-  - edge(id,source_node_id,destination_node_id,type,is_composition,ordinal,scope_document_id,semantic_key,source_span_id,destination_span_id,composition_child_id,properties,created_at) — graph relations.
-  - annotation(id,semantic_key,kind,severity,source,rule_id,message,data,scope_document_id,target_node_id,target_edge_id,target_span_id,target_uri,created_at,expires_at) — lint-style facts.
-  - annotations view — adds resolved_target_uri, severity rank, joins back to document URIs.
-
- ### Table Macros
-
-  - snippet(uri, context_lines) — rows: line_number, text, is_focus, optional focus columns, language, document/resolved URIs.
-  - entities_by_uri(uri) — rows linking a repo URI to document/edge/span IDs and fragments.
-  - annotations_for(uri, kinds, min_severity) — subset of annotations view for one document.
-  - annotations_all(kinds, min_severity) — global filter over annotations view.
-
- ### Scalar UDF Families
-
-  - repository_uri_* — manipulate RepoQL URIs (container, fragment, join, line_start, line_end, json_pointer, anchor, file_name, etc.).
-
-  - media_type_* — parse/augment semantic media types (base, kind, version, with_parameter).
-
-  - Snippet helpers — binary_preview, line_for_byte_offset, column_for_byte_offset, fragment_from_line_range, fragment_from_char_range, language_from_media_type_or_uri.
-
-    
-
-    ### Views
-
-    Different artifact types often expose higher-level views layered on the core tables so you can query them using domain terms. 
-
-    For example, when a markdown file is parsed you might see a view like
-      markdown_headings(document_uri, heading_uri, level, text, slug, start_line, end_line, start_column, end_column) derived from node/edge/span, or for OpenAPI specs a openapi_endpoints(method, path, operation_id) view projected from JSON-pointer nodes. File formats such as Playwright traces can add their own views (e.g. playwright_trace_events). 
-
-These views are discoverable at runtime—run something like:
+-- 2. HOME IN: narrow to specifics (xray tool)
+xray(detail="snippet", keywords="TrackEvent", scope="object")
+```
 ```sql
-SELECT table_name
-FROM information_schema.tables
-WHERE table_type = 'VIEW';
+-- 3. EXTRACT: get all instances (query tool)
+SELECT uri, regexp_extract_all(text_content, 'TrackEvent\([''"](\w+)[''"]', 1) AS events
+FROM artifact a JOIN node n ON n.artifact_id = a.id
+WHERE n.kind = 'document' AND regexp_matches(text_content, 'TrackEvent\(');
 ```
 
-Then inspect the view definition with 
+**Depth**
+- Discovery: xray with question (semantic) or pattern (structural)
+- Homing: xray with keywords + scope filters
+- Extraction: query tool with SQL + regex (only phase requiring SQL)
+- NotThis: jumping straight to SQL before using xray
+
+---
+
+## Capsule: Composition
+
+**Invariant**
+LATERAL joins expand each result row with context or related data in one query.
+
+**Example**
+```sql
+-- Search + code context
+SELECT f.uri, s.line_number, s.text
+FROM file_search('auth', k := 5) f,
+     LATERAL snippet(f.uri, 2) s
+WHERE s.is_focus;
+```
+
+**Depth**
+- `LATERAL` = for each row, invoke function with that row's values
+- Compose: search -> snippet, search -> annotation, node -> edges
+- NotThis: fetch results then loop in application code
+
+---
+
+## Capsule: RegexExtraction
+
+**Invariant**
+One query extracts all pattern instances across the codebase once the pattern is known.
+
+**Example**
+```sql
+-- Every TODO
+SELECT n.uri, regexp_extract_all(a.text_content, 'TODO:\s*(.+)', 1) AS todos
+FROM node n JOIN artifact a ON n.artifact_id = a.id
+WHERE n.kind = 'document' AND regexp_matches(a.text_content, 'TODO:');
+
+-- Frequency per file
+SELECT n.uri, length(regexp_extract_all(a.text_content, 'console\.log', 0)) AS count
+FROM node n JOIN artifact a ON n.artifact_id = a.id
+WHERE n.kind = 'document' AND count > 0
+ORDER BY count DESC;
+```
+
+**Depth**
+- `regexp_extract_all(text, pattern, group)` -> list of matches
+- `regexp_matches(text, pattern)` -> boolean filter
+- Group 0 = full match; 1+ = captures
+- NotThis: looping over files in application code
+
+---
+
+## Capsule: GraphTraversal
+
+**Invariant**
+Edges encode relationships; query them instead of parsing code.
+
+**Example**
+```sql
+-- What calls this function?
+SELECT src.uri, src.properties->>'$.symbol' AS caller
+FROM edge e
+JOIN node src ON e.source_node_id = src.id
+JOIN node tgt ON e.destination_node_id = tgt.id
+WHERE tgt.uri LIKE '%#symbol=ProcessRequest%' AND e.type = 'CALLS';
+
+-- Document structure
+SELECT child.kind, child.properties->>'$.name'
+FROM node doc
+JOIN edge e ON e.source_node_id = doc.id AND e.is_composition
+JOIN node child ON e.destination_node_id = child.id
+WHERE doc.uri = 'file:///src/api.cs';
+```
+
+**Depth**
+- `edge.type`: CALLS, IMPORTS, REFERS_TO, INHERITS
+- `edge.is_composition`: parent contains child
+- NotThis: parsing source to find call sites
+
+---
+
+## Capsule: AnnotationQuery
+
+**Invariant**
+Annotations are pre-computed facts; query them instead of re-analyzing.
+
+**Example**
+```sql
+-- All errors
+SELECT resolved_target_uri, rule_id, message
+FROM annotations WHERE severity = 'error';
+
+-- Per-file counts using FILTER
+SELECT n.uri,
+       count(*) FILTER (WHERE severity = 'error') AS errors,
+       count(*) FILTER (WHERE severity = 'warning') AS warnings
+FROM node n JOIN annotation a ON a.scope_document_id = n.id
+GROUP BY n.uri HAVING errors > 0;
+```
+
+**Depth**
+- Kinds: lint, metric, diagnostic
+- `annotations` view = joined with URIs; `annotation` table = raw
+- NotThis: re-running analysis on content
+
+---
+
+## Capsule: ViewDiscovery
+
+**Invariant**
+Format-specific views project the graph into domain terms; discover at runtime.
+
+**Example**
+```sql
+-- Available views
+SELECT table_name FROM information_schema.tables WHERE table_type = 'VIEW';
+
+-- Domain queries
+SELECT document_uri, level, text FROM markdown_headings WHERE level <= 2;
+SELECT namespace, name FROM csharp_types WHERE kind = 'class';
+```
+
+**Depth**
+- Views from parsers: markdown_headings, csharp_types, csharp_members
+- Inspect: `SELECT sql FROM duckdb_views() WHERE view_name = '...'`
+- NotThis: manual node/edge/span joins when a view exists
+
+---
+
+## DuckDB Patterns
+
+| Pattern | Effect |
+|---------|--------|
+| `regexp_extract_all(t, p, n)` | All matches as list |
+| `regexp_matches(t, p)` | Boolean filter |
+| `FROM x, LATERAL fn(x.col)` | Expand rows |
+| `count(*) FILTER (WHERE c)` | Conditional count |
+| `QUALIFY row_number() OVER(...) <= n` | Top-N per group |
+| `list_transform(l, lambda x: ...)` | Map over list |
+| `col->>'$.key'` | JSON extract as text |
+| `GROUP BY ALL` | Auto-group non-aggregates |
+| `SELECT * EXCLUDE (col)` | All except column |
+
+---
+
+## Kitchen Sink Query
+
+One query demonstrating all patterns - starts with semantic search, then extracts:
 
 ```sql
-SELECT sql FROM duckdb_views() WHERE table_name = 'markdown_headings'; 
-```
-to see how it maps back to the base schema.
-
-## Search
-
-Search = lexical + semantic. Two macros. Documents OR objects.
-
-### File Search (documents only)
-
-- `file_search(keywords, question := NULL, k := 50)` → `doc_id, uri, bm25n, fuzzn, semn, score`
-
-```sql
--- Top files by intent (question only)
-SELECT uri, score, semn
-FROM file_search('', question := 'Where do we render mermaid diagram classes?', k := 10);
-
--- Combining literals + question
-SELECT uri, semn, score
-FROM file_search('embedding runtime', question := 'Why does the embedding runtime broadcast error?', k := 20)
-ORDER BY semn DESC NULLS LAST;
-
--- Path filter via glob_match
-SELECT uri, score
-FROM file_search('markdown', question := 'Where is onboarding documented?', k := 10)
-WHERE glob_match(uri, 'docs/**/*.md');
-```
-
-### Object Search (functions, classes, symbols)
-
-- `search(q, mode := 'auto', k := 50, uri_glob, mime_glob)` → `uri, symbol, scope, kind, score`
-
-Scope: `'document'` = whole files, `'object'` = functions/classes/headings/etc.
-
-```sql
--- Find specific functions/classes
-SELECT uri, symbol, kind, line_start, line_end, score
-FROM search('authentication ValidateToken', k := 10)
-WHERE scope = 'object'
-ORDER BY score DESC;
-
--- Mixed: documents + objects
-SELECT uri, scope, symbol, kind, score
-FROM search('error handling', k := 30)
-ORDER BY score DESC;
-
--- Exact symbol match
-SELECT uri, symbol, bm25_score
-FROM search('ProcessRequest', k := 5)
-WHERE scope = 'object' AND symbol = 'ProcessRequest';
+WITH candidates AS (
+  -- SEMANTIC SEARCH: find relevant files first
+  SELECT uri, doc_id, score AS search_score
+  FROM file_search('error handling', question := 'Where are errors handled?', k := 20)
+),
+extracted AS (
+  -- REGEX EXTRACTION + JSON on candidates only
+  SELECT
+    c.uri,
+    c.search_score,
+    n.id AS node_id,
+    n.properties->>'$.language' AS lang,
+    regexp_extract_all(a.text_content, '(TODO|FIXME|HACK):\s*(.+)', 0) AS raw_tasks,
+    length(regexp_extract_all(a.text_content, 'TODO|FIXME|HACK', 0)) AS task_count
+  FROM candidates c
+  JOIN node n ON n.id = c.doc_id
+  JOIN artifact a ON n.artifact_id = a.id
+  WHERE regexp_matches(a.text_content, 'TODO|FIXME|HACK')
+),
+with_annotations AS (
+  -- FILTER + GROUP BY ALL + QUALIFY
+  SELECT
+    e.uri, e.search_score, e.lang, e.task_count, e.raw_tasks,
+    count(ann.id) FILTER (WHERE ann.severity = 'error') AS errors,
+    count(ann.id) FILTER (WHERE ann.severity = 'warning') AS warnings,
+    count(ed.id) FILTER (WHERE ed.type = 'CALLS') AS outgoing_calls
+  FROM extracted e
+  LEFT JOIN annotation ann ON ann.scope_document_id = e.node_id
+  LEFT JOIN edge ed ON ed.source_node_id = e.node_id
+  GROUP BY ALL
+  QUALIFY row_number() OVER (ORDER BY task_count DESC) <= 10
+),
+with_context AS (
+  -- LATERAL composition with snippet
+  SELECT wa.*, s.line_number, s.text AS context
+  FROM with_annotations wa,
+       LATERAL snippet(wa.uri, 1) s
+  WHERE s.text ~ 'TODO|FIXME|HACK'
+)
+SELECT
+  * EXCLUDE (raw_tasks, context),  -- EXCLUDE verbose columns
+  list_transform(raw_tasks, lambda t: t[1] || ': ' || left(t[2], 40)) AS tasks,  -- lambda
+  context AS sample_line
+FROM with_context
+ORDER BY search_score DESC, task_count DESC, line_number
+LIMIT 20;
 ```
 
-Object URIs include fragments: `file:///lib.cs#symbol=Foo.Bar&line=12,20`
+Uses: `file_search`, `regexp_extract_all`, `regexp_matches`, `LATERAL snippet`, `FILTER`, `QUALIFY`, `GROUP BY ALL`, `EXCLUDE`, `list_transform`, `->>'$.key'`, edges, annotations.
 
-More in docs:///advanced-search.md
+---
 
-## Quick Start
+## Checklist
 
-Use this SQL to catalog the embedded RepoQL docs:
-
-  ```sql
-  WITH docs AS (
-      SELECT id, uri, artifact_id
-      FROM node
-      WHERE kind = 'document' AND uri LIKE 'docs:/%'
-    ),
-    parts AS (
-      SELECT e.source_node_id AS doc_id,
-             c.kind,
-             COUNT(*) AS item_count
-      FROM edge e
-      JOIN node c ON c.id = e.destination_node_id
-      WHERE e.is_composition
-      GROUP BY e.source_node_id, c.kind
-    ),
-    kind_summary AS (
-      SELECT doc_id,
-             string_agg(kind || ':' || CAST(item_count AS TEXT), ' ') AS contents
-      FROM parts
-      GROUP BY doc_id
-    )
-    SELECT
-      d.uri AS document_uri,
-      replace(d.uri, 'docs:///', '') AS repo_path,
-      repository_uri_file_name(d.uri) AS file_name,
-      media_type_base(a.media_type) AS media_base,
-      media_type_kind(a.media_type) AS media_kind,
-      a.byte_size,
-      COALESCE(k.contents, '') AS entity_counts
-    FROM docs d
-    LEFT JOIN artifact a ON a.id = d.artifact_id
-    LEFT JOIN kind_summary k ON k.doc_id = d.id
-    ORDER BY file_name;
-  ```
-
-Most entities in the repository will originate in a file:// node
-
+- [ ] Use xray tool before query tool
+- [ ] Phases: discover (xray) -> home (xray+keywords) -> extract (query+regex)
+- [ ] SQL only for: regex, JOIN, GROUP BY, LATERAL composition
+- [ ] Compose with LATERAL; avoid app-side loops
+- [ ] Query edges for relationships, not code parsing
+- [ ] Query annotations for pre-computed facts
+- [ ] Check for domain views before manual joins

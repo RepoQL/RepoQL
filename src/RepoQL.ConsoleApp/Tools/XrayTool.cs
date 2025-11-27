@@ -59,29 +59,69 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         [Description("Max results. Defaults: headline=1000, summary=100, snippet=10.")] int limit = 0,
         CancellationToken cancellationToken = default)
     {
-        var detailKind = ParseDetail(detail);
-        var searchScope = ParseScope(scope);
+        SummaryDetail detailKind;
+        SearchScope searchScope;
+
+        try
+        {
+            detailKind = ParseDetail(detail);
+            searchScope = ParseScope(scope);
+        }
+        catch (ArgumentException ex)
+        {
+            return $"Parameter error: {ex.Message}";
+        }
+
         var effectiveLimit = limit > 0 ? limit : GetDefaultLimit(detailKind);
         var (containerPattern, fragment) = SplitGlobAndFragment(pattern);
         var globPattern = NormalizeGlobPattern(containerPattern);
         var typePattern = NormalizeTypePattern(type);
 
-        var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
+        IRepoQlClient client;
+        try
+        {
+            client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return FormatError("Failed to connect to RepoQL server", ex, pattern, keywords, question, detail, scope);
+        }
 
         // Query based on scope
         var documentRows = new List<DocumentRow>();
         var objectRows = new List<ObjectRow>();
+        var errors = new List<string>();
 
         if (searchScope == SearchScope.File || searchScope == SearchScope.Both)
         {
             var docLimit = searchScope == SearchScope.Both ? effectiveLimit / 2 : effectiveLimit;
-            documentRows = await QueryDocumentsAsync(client, globPattern, typePattern, keywords, question, Math.Max(docLimit, 1), cancellationToken).ConfigureAwait(false);
+            try
+            {
+                documentRows = await QueryDocumentsAsync(client, globPattern, typePattern, keywords, question, Math.Max(docLimit, 1), cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Document search failed: {ExtractErrorMessage(ex)}");
+            }
         }
 
         if (searchScope == SearchScope.Object || searchScope == SearchScope.Both)
         {
             var objLimit = searchScope == SearchScope.Both ? effectiveLimit / 2 : effectiveLimit;
-            objectRows = await QueryObjectsAsync(client, globPattern, typePattern, keywords, question, Math.Max(objLimit, 1), cancellationToken).ConfigureAwait(false);
+            try
+            {
+                objectRows = await QueryObjectsAsync(client, globPattern, typePattern, keywords, question, Math.Max(objLimit, 1), cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"Object search failed: {ExtractErrorMessage(ex)}");
+            }
+        }
+
+        // If all queries failed, return error details
+        if (errors.Count > 0 && documentRows.Count == 0 && objectRows.Count == 0)
+        {
+            return FormatError("Search failed", errors, pattern, keywords, question, detail, scope);
         }
 
         if (documentRows.Count == 0 && objectRows.Count == 0)
@@ -748,9 +788,21 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
         {
             response = await client.ExecuteRawQueryAsync(sql, new object?[] { uri }, null, cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception ex)
         {
-            return new List<AnnotationRow>();
+            // Return a synthetic annotation indicating the failure - annotations are supplementary,
+            // so we don't fail the whole operation but inform the caller something went wrong
+            return
+            [
+                new AnnotationRow(
+                    Severity: "warning",
+                    Source: "xray",
+                    RuleId: "annotation-fetch-failed",
+                    Message: $"Could not load annotations: {ExtractErrorMessage(ex)}",
+                    TargetUri: uri,
+                    StartLine: null,
+                    EndLine: null)
+            ];
         }
 
         var annotations = new List<AnnotationRow>(response.Rows.Count);
@@ -894,6 +946,76 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
             Value.KindOneofCase.StringValue => bool.TryParse(value.StringValue, out var parsed) && parsed,
             _ => false
         };
+
+    /// <summary>
+    /// Extracts a meaningful error message from an exception, handling nested gRPC exceptions.
+    /// </summary>
+    private static string ExtractErrorMessage(Exception ex)
+    {
+        // Unwrap RpcException to get the actual error message
+        if (ex is Grpc.Core.RpcException rpcEx)
+        {
+            var detail = rpcEx.Status.Detail;
+            if (!string.IsNullOrWhiteSpace(detail))
+                return detail;
+        }
+
+        // Check for inner exceptions (common with gRPC/network errors)
+        if (ex.InnerException is not null)
+        {
+            var inner = ExtractErrorMessage(ex.InnerException);
+            if (!string.IsNullOrWhiteSpace(inner) && inner != ex.Message)
+                return $"{ex.Message} -> {inner}";
+        }
+
+        return ex.Message;
+    }
+
+    /// <summary>
+    /// Formats an error message with context about the failed operation.
+    /// </summary>
+    private static string FormatError(string operation, Exception ex, string? pattern, string? keywords, string? question, string? detail, string? scope)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"Error: {operation}");
+        builder.AppendLine($"Details: {ExtractErrorMessage(ex)}");
+        AppendQueryContext(builder, pattern, keywords, question, detail, scope);
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Formats an error message with multiple error details.
+    /// </summary>
+    private static string FormatError(string operation, IReadOnlyList<string> errors, string? pattern, string? keywords, string? question, string? detail, string? scope)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"Error: {operation}");
+        foreach (var error in errors)
+        {
+            builder.AppendLine($"  - {error}");
+        }
+        AppendQueryContext(builder, pattern, keywords, question, detail, scope);
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Appends query context to help diagnose issues.
+    /// </summary>
+    private static void AppendQueryContext(StringBuilder builder, string? pattern, string? keywords, string? question, string? detail, string? scope)
+    {
+        builder.AppendLine();
+        builder.AppendLine("Query context:");
+        if (!string.IsNullOrWhiteSpace(pattern))
+            builder.AppendLine($"  pattern: {pattern}");
+        if (!string.IsNullOrWhiteSpace(keywords))
+            builder.AppendLine($"  keywords: {keywords}");
+        if (!string.IsNullOrWhiteSpace(question))
+            builder.AppendLine($"  question: {question}");
+        if (!string.IsNullOrWhiteSpace(detail))
+            builder.AppendLine($"  detail: {detail}");
+        if (!string.IsNullOrWhiteSpace(scope))
+            builder.AppendLine($"  scope: {scope}");
+    }
 
     private sealed record DocumentRow(
         string Uri,

@@ -27,6 +27,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly IGraphStore store;
     private readonly RepositoryConfiguration repoConfig;
     private readonly IInitialIndexingBarrier barrier;
+    private readonly IQueryBarrier queryBarrier;
     private readonly IIndexingCoordinator coordinator;
     private readonly IFileSystemImportService importService;
     private readonly DocumentPreviewService _previewService;
@@ -44,6 +45,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         IGraphStore store,
         RepositoryConfiguration repoConfig,
         IInitialIndexingBarrier barrier,
+        IQueryBarrier queryBarrier,
         IIndexingCoordinator coordinator,
         IFileSystemImportService importService,
         DocumentPreviewService previewService,
@@ -54,6 +56,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
         this.barrier = barrier ?? throw new ArgumentNullException(nameof(barrier));
+        this.queryBarrier = queryBarrier ?? throw new ArgumentNullException(nameof(queryBarrier));
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
         _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
@@ -65,7 +68,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     public override async Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
     {
-        await barrier.InitialScanCompleted.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+        // Use intelligent query barrier that waits for appropriate indexing stages
+        // based on query characteristics (hot path for all, semantic index for search queries)
+        await queryBarrier.WaitForQueryReadyAsync(request.Sql, context.CancellationToken).ConfigureAwait(false);
         var resp = new RawQueryResponse();
         try
         {
