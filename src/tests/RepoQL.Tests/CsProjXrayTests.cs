@@ -14,7 +14,7 @@ internal class CsProjXrayTests
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 
     [Test]
-    [Skip("Dotnet formats not yet wired into RepoqlHost test harness.")]
+    [Skip("CsProj analyzer annotations not being produced - analysis pipeline issue")]
     public async Task CsProj_Indexer_Populates_Xray_And_Items()
     {
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>

@@ -352,7 +352,7 @@ Browse directory → LS
 ☑ Exact text→Grep, semantic meaning→file_search(keywords, question)
 ☑ Verify files exist before Write
 ☑ Use specialized tools over Bash commands
-
+☑ Use dotnet run not dotnet test for test runs
 ## Remember
 
 Tools are extensions of consciousness, not replacements for thinking. Use them to amplify understanding, not bypass it.

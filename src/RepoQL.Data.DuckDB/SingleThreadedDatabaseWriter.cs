@@ -17,6 +17,7 @@ namespace RepoQL.Data.DuckDB;
 
 public sealed class SingleThreadedDatabaseWriter(
     IDuckDBConnectionFactory connectionFactory,
+    IDuckDbGraphStoreFactory graphStoreFactory,
     IndexingMetrics? metrics = null,
     ILogger<SingleThreadedDatabaseWriter>? logger = null,
     IFormatRegistry? formatRegistry = null)
@@ -29,6 +30,7 @@ public sealed class SingleThreadedDatabaseWriter(
         FullMode = BoundedChannelFullMode.Wait
     });
     private readonly IDuckDBConnectionFactory _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
+    private readonly IDuckDbGraphStoreFactory _graphStoreFactory = graphStoreFactory ?? throw new ArgumentNullException(nameof(graphStoreFactory));
 
     [SuppressMessage("Usage", "CA2213:Disposable fields should be disposed",
         Justification = "Metrics lifetime is managed by the DI container.")]
@@ -107,7 +109,7 @@ public sealed class SingleThreadedDatabaseWriter(
             .SelectMany(f => f.Loader.GetSchemaScripts())
             .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
             .ToArray();
-        _store = new DuckDbGraphStore(_writeConnection, _metrics, formatSchemaScripts: formatScripts);
+        _store = _graphStoreFactory.Create(_writeConnection, formatScripts);
         _store.EnsureSchema();
 
         _metrics.SetQueueDepthCallback(() => _channel.Reader.Count);

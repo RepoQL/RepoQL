@@ -176,8 +176,13 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
             }
             else
             {
+                var graphStoreFactory = new DuckDbGraphStoreFactory(
+                    metrics,
+                    embeddingProvider: null,
+                    loggerFactory.CreateLogger<DuckDbGraphStore>());
                 singleWriter = new SingleThreadedDatabaseWriter(
                     connectionFactory,
+                    graphStoreFactory,
                     metrics,
                     loggerFactory.CreateLogger<SingleThreadedDatabaseWriter>());
                 await singleWriter.StartAsync(cancellationToken).ConfigureAwait(false);

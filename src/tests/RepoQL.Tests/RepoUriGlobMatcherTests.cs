@@ -64,7 +64,7 @@ internal class RepoUriGlobMatcherTests
     }
 
     [Test]
-    [Skip("escaping doesnt work yet")]   
+    [Skip("Glob escaping not yet implemented")]
     public void EscapedWildcardTreatedLiterally()
     {
         RepoUriGlobMatcher.IsMatch("file:///repo/docs/notes*.md", @"docs/notes\*.md").Should().BeTrue();

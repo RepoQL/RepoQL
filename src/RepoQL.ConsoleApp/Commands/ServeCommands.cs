@@ -22,6 +22,7 @@ using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
 using Spectre.Console;
 using ConsoleAppFramework;
+using Microsoft.Extensions.Configuration;
 
 namespace RepoQL.ConsoleApp.Commands;
 
@@ -38,6 +39,7 @@ internal class HostCommands(IAnsiConsole console)
             await WaitForRepositoryAvailabilityAsync(repo, TimeSpan.FromSeconds(45), CancellationToken.None).ConfigureAwait(false);
         }
         var builder = WebApplication.CreateSlimBuilder([]);
+        builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
         builder.Host.UseConsoleLifetime();
         builder.Logging.ClearProviders();
         if (!implicitStart)
@@ -46,7 +48,7 @@ internal class HostCommands(IAnsiConsole console)
 
         }
 
-        builder.Logging.AddFilter((s, level) => !s.StartsWith("Microsoft.AspNetCore") && level >= LogLevel.Information);
+        builder.Logging.AddFilter((s, level) => s != null && !s.StartsWith("Microsoft", StringComparison.OrdinalIgnoreCase) && !s.StartsWith("System", StringComparison.OrdinalIgnoreCase) || level >= LogLevel.Information);
         builder.Logging.AddOpenTelemetry();
         builder.Services.AddOpenTelemetry()
             .WithMetrics(m => m
@@ -151,7 +153,13 @@ internal class HostCommands(IAnsiConsole console)
             if (response.ProcessId > 0)
             {
                 console.MarkupLine($"[yellow]Detected existing RepoQL host (PID {response.ProcessId}); requesting shutdown...[/]");
-                await WaitForProcessExitAsync(response.ProcessId, TimeSpan.FromSeconds(30), cancellationToken).ConfigureAwait(false);
+                var exited = await WaitForProcessExitAsync(response.ProcessId, TimeSpan.FromSeconds(60), cancellationToken).ConfigureAwait(false);
+                if (!exited)
+                {
+                    console.MarkupLine($"[red]Process {response.ProcessId} did not exit gracefully; force killing...[/]");
+                    ForceKillProcess(response.ProcessId, console);
+                    await Task.Delay(1000, cancellationToken).ConfigureAwait(false); // Give OS time to release resources
+                }
             }
         }
         catch (RpcException ex) when (ex.StatusCode == Grpc.Core.StatusCode.Unavailable)
@@ -166,14 +174,9 @@ internal class HostCommands(IAnsiConsole console)
         {
             // stale mapping file
         }
-        catch (TimeoutException ex)
-        {
-            console.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
-            throw;
-        }
     }
 
-    private static async Task WaitForProcessExitAsync(int pid, TimeSpan timeout, CancellationToken cancellationToken)
+    private static async Task<bool> WaitForProcessExitAsync(int pid, TimeSpan timeout, CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
         while (sw.Elapsed < timeout)
@@ -181,13 +184,34 @@ internal class HostCommands(IAnsiConsole console)
             cancellationToken.ThrowIfCancellationRequested();
             if (!IsProcessRunning(pid))
             {
-                return;
+                return true;
             }
 
             await Task.Delay(500, cancellationToken).ConfigureAwait(false);
         }
 
-        throw new TimeoutException($"Process {pid} did not exit within {timeout.TotalSeconds:F0}s.");
+        return false;
+    }
+
+    private static void ForceKillProcess(int pid, IAnsiConsole console)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            process.Kill(entireProcessTree: true);
+        }
+        catch (ArgumentException)
+        {
+            // Process already exited - that's fine
+        }
+        catch (InvalidOperationException ex)
+        {
+            console.MarkupLine($"[red]Failed to kill process {pid}: {Markup.Escape(ex.Message)}[/]");
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            console.MarkupLine($"[red]Failed to kill process {pid}: {Markup.Escape(ex.Message)}[/]");
+        }
     }
 
     private static bool IsProcessRunning(int pid)

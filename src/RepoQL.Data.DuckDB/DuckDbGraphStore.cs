@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Data;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -30,8 +31,8 @@ namespace RepoQL.Data.DuckDB;
         private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
         private readonly object _annotationGate = new();
         private readonly object _connectionLock = new();
-        // Conservative default to avoid DirectML OOM/crash on large batches.
-        private const int DefaultEmbeddingBatchSize = 128;
+        // Default batch size for int8 quantized model (uses ~4x less memory than float32)
+        private const int DefaultEmbeddingBatchSize = 256;
 
         #region Cached Database Counts
 
@@ -140,11 +141,22 @@ namespace RepoQL.Data.DuckDB;
         public async Task RefreshCountsNowAsync() => await RefreshCountsAsync();
 
         #endregion
+
+        // Schema version - bump this when schema changes require dropping all tables.
+        // Uses the same key as the app version tracking (repoql.version).
+        private const string SchemaVersionKey = "repoql.version";
+
+        // Chunking constants: BGE model has 512 token limit (~2000 chars for code).
+        // Small files get a single embedding; large files are chunked with overlap.
+        private const int ChunkSizeChars = 1500;          // Target chunk size (~375 tokens)
+        private const int ChunkOverlapChars = 300;        // 20% overlap for context continuity
+        private const int SmallFileThresholdChars = 2000; // Files under this size = single embedding
+        private const int LargeFileThresholdBytes = 250 * 1024; // 250KB - files above this use structure-only embedding
+
         private const int MaxDocumentPayloadChars = int.MaxValue;
         private const int MaxObjectPayloadChars = 6000;
         private const int MaxSnippetBytes = 4096;
         private const string DocumentEmbeddingScope = "document";
-        private const string ObjectEmbeddingScope = "object";
         private static readonly JsonSerializerOptions CompactJsonOptions = new() { WriteIndented = false };
 
         private readonly struct ConnectionScope : IDisposable
@@ -204,11 +216,11 @@ namespace RepoQL.Data.DuckDB;
 
         if (documents.Count == 0)
         {
-            _logger.LogInformation("Embedding refresh: all {Total} documents up-to-date, nothing to embed", totalDocuments);
+            _logger.LogInformation("Semantic indexing complete: all {Total} documents up-to-date", totalDocuments);
             return;
         }
 
-        _logger.LogInformation("Embedding refresh: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
+        _logger.LogDebug("Semantic indexing: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
             documents.Count, totalDocuments, docsSkippedAsUpToDate);
 
         var workItems = BuildEmbeddingWorkItems(documents);
@@ -223,13 +235,19 @@ namespace RepoQL.Data.DuckDB;
 
         if (provider is RepoQL.Embeddings.OnnxEmbeddingProvider onnx)
         {
-            // DirectML and CoreML have shown instability with very large batches; cap them conservatively.
             var providerName = onnx.Provider?.ToUpperInvariant() ?? "CPU";
 
-            if ((providerName == "DML" || providerName == "COREML") && batchSize > 160)
+            // CoreML on Apple Silicon - int8 model allows larger batches than float32
+            if (providerName == "COREML" && batchSize > 256)
             {
-                _logger.LogWarning("Capping embedding batch size from {Requested} to 160 for provider {Provider}", batchSize, providerName);
-                batchSize = 160;
+                _logger.LogWarning("Capping embedding batch size from {Requested} to 256 for CoreML", batchSize);
+                batchSize = 256;
+            }
+            // DirectML - int8 model allows larger batches
+            else if (providerName == "DML" && batchSize > 256)
+            {
+                _logger.LogWarning("Capping embedding batch size from {Requested} to 256 for DirectML", batchSize);
+                batchSize = 256;
             }
         }
 
@@ -242,8 +260,11 @@ namespace RepoQL.Data.DuckDB;
         double dbMsTotal = 0;
         var batches = 0;
         var totalItems = 0;
-        _logger.LogInformation("Embedding refresh starting for {Count} items (batch={BatchSize}, model={Model}, dim={Dim})",
-            workItems.Count, batchSize, provider.Model, provider.Dimension);
+        var uniqueDocs = workItems.Select(w => w.DocId).Distinct().Count();
+        var totalChunks = workItems.Count;
+        var chunkedDocs = workItems.Where(w => w.ChunkIndex > 0).Select(w => w.DocId).Distinct().Count();
+        _logger.LogInformation("Semantic indexing: {Docs} documents ({Chunks} chunks, {Chunked} chunked)...",
+            uniqueDocs, totalChunks, chunkedDocs);
 
         for (var ofs = 0; ofs < workItems.Count; ofs += batchSize)
         {
@@ -318,18 +339,20 @@ namespace RepoQL.Data.DuckDB;
                 using var up = _connection.CreateCommand();
                 up.Transaction = tx;
                 up.CommandText = """
-                                 INSERT INTO document_embedding(doc_id, node_id, uri, scope, model, dim, embedding, updated_at)
-                                 VALUES (?,?,?,?,?,?,?, CURRENT_TIMESTAMP)
-                                 ON CONFLICT (doc_id, node_id)
+                                 INSERT INTO document_embedding(doc_id, node_id, chunk_index, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
+                                 VALUES (?,?,?,?,?,?,?,?,?,?, CURRENT_TIMESTAMP)
+                                 ON CONFLICT (doc_id, node_id, chunk_index)
                                  DO UPDATE SET
                                      uri = excluded.uri,
                                      scope = excluded.scope,
                                      model = excluded.model,
                                      dim = excluded.dim,
                                      embedding = excluded.embedding,
+                                     start_byte = excluded.start_byte,
+                                     end_byte = excluded.end_byte,
                                      updated_at = excluded.updated_at;
                                  """;
-                AddParameters(up, item.DocId, item.NodeId, item.Uri, item.Scope, provider.Model, provider.Dimension, json);
+                AddParameters(up, item.DocId, item.NodeId, item.ChunkIndex, item.Uri, item.Scope, provider.Model, provider.Dimension, json, item.StartByte, item.EndByte);
                 ExecuteWithTupleDeleteRetry(() => up.ExecuteNonQuery());
 
                 if (item.Scope == DocumentEmbeddingScope) docSuccess++; else objSuccess++;
@@ -370,8 +393,8 @@ namespace RepoQL.Data.DuckDB;
         _metrics.EmbeddingPhaseDuration.Record(embedMsTotal, new TagList { { "phase", "embed_total" }, { "model", provider.Model } });
         _metrics.EmbeddingPhaseDuration.Record(dbMsTotal, new TagList { { "phase", "db_total" }, { "model", provider.Model } });
 
-        _logger.LogInformation(
-            "Embeddings refreshed: docs={DocRows}, objects={ObjectRows}, skipped_docs={SkippedDocs}, skipped_objects={SkippedObjects}, model={Model}, dim={Dim}, batches={Batches}, items={Items}, embed_ms={EmbedMs:F1} ({EmbedPct:F1}%), db_ms={DbMs:F1} ({DbPct:F1}%), total_ms={TotalMs:F1}, throughput={Throughput:F1}/s",
+        _logger.LogDebug(
+            "Embeddings detail: docs={DocRows}, objects={ObjectRows}, skipped_docs={SkippedDocs}, skipped_objects={SkippedObjects}, model={Model}, dim={Dim}, batches={Batches}, items={Items}, embed_ms={EmbedMs:F1} ({EmbedPct:F1}%), db_ms={DbMs:F1} ({DbPct:F1}%), total_ms={TotalMs:F1}, throughput={Throughput:F1}/s",
             docSuccess,
             objSuccess,
             docSkipped,
@@ -386,6 +409,14 @@ namespace RepoQL.Data.DuckDB;
             dbPct,
             totalMs,
             throughput);
+
+        // User-friendly summary
+        _logger.LogInformation(
+            "Semantic indexing complete: {Count} documents embedded in {Seconds:F1}s ({Throughput:F0}/s, model={Model})",
+            docSuccess,
+            totalMs / 1000.0,
+            throughput,
+            provider.Model);
     }
 
     private int CountTotalDocuments()
@@ -401,6 +432,7 @@ namespace RepoQL.Data.DuckDB;
         // Only load documents that need embedding refresh:
         // - No existing document-scope embedding (de.doc_id IS NULL)
         // - OR embedding is older than last document update (de.updated_at < n.updated_at)
+        // Only embed text-based content - exclude binary formats (image/*, audio/*, video/*, etc.)
         cmd.CommandText = """
                           SELECT n.id,
                                  n.uri,
@@ -414,7 +446,21 @@ namespace RepoQL.Data.DuckDB;
                                         ON de.doc_id = n.id AND de.scope = 'document'
                           WHERE n.kind = 'document'
                             AND a.text_content IS NOT NULL
-                            AND (de.doc_id IS NULL OR de.updated_at < n.updated_at);
+                            AND (de.doc_id IS NULL OR de.updated_at < n.updated_at)
+                            AND (a.media_type LIKE 'text/%'
+                                 OR a.media_type LIKE 'application/json%'
+                                 OR a.media_type LIKE 'application/xml%'
+                                 OR a.media_type LIKE 'application/%yaml%'
+                                 OR a.media_type LIKE 'application/javascript%'
+                                 OR a.media_type LIKE 'application/typescript%'
+                                 OR a.media_type LIKE 'application/%sql%'
+                                 OR a.media_type LIKE 'application/graphql%'
+                                 OR a.media_type LIKE 'application/toml%'
+                                 OR a.media_type LIKE 'application/x-sh%'
+                                 OR a.media_type LIKE 'application/x-python%'
+                                 OR a.media_type LIKE 'application/x-ruby%'
+                                 OR a.media_type LIKE 'application/x-perl%'
+                                 OR a.media_type LIKE 'application/x-php%');
                           """;
         using var activity = StartDbActivity(cmd.CommandText);
         using var reader = cmd.ExecuteReader();
@@ -494,17 +540,100 @@ namespace RepoQL.Data.DuckDB;
     {
         // Only build document-level embeddings at index time.
         // Object-level embeddings are generated just-in-time during search.
-        var work = new List<EmbeddingWorkItem>(documents.Count);
+        // Small files get a single embedding; large files are chunked with overlap.
+        // Very large files (>250KB) use structure-only embedding to save cost.
+        var work = new List<EmbeddingWorkItem>(documents.Count * 2); // Estimate 2x for chunking
+
         foreach (var doc in documents.Values)
         {
-            var payload = BuildDocumentEmbeddingText(doc);
-            if (!string.IsNullOrWhiteSpace(payload))
+            var byteSize = doc.Utf8Bytes?.Length ?? 0;
+            var textLength = doc.Text?.Length ?? 0;
+
+            if (byteSize > LargeFileThresholdBytes)
             {
-                work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, doc.Uri, DocumentEmbeddingScope, payload));
+                // Very large file: use structure-only embedding (or headline+summary if no structure)
+                var payload = BuildStructureOnlyEmbeddingText(doc);
+                if (!string.IsNullOrWhiteSpace(payload))
+                {
+                    work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, 0, doc.Uri, DocumentEmbeddingScope, payload, null, null));
+                }
+            }
+            else if (textLength <= SmallFileThresholdChars)
+            {
+                // Small file: single embedding covering entire content
+                var payload = BuildDocumentEmbeddingText(doc);
+                if (!string.IsNullOrWhiteSpace(payload))
+                {
+                    work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, 0, doc.Uri, DocumentEmbeddingScope, payload, null, null));
+                }
+            }
+            else
+            {
+                // Medium file: split into overlapping chunks
+                var chunks = ChunkText(doc.Text!, ChunkSizeChars, ChunkOverlapChars);
+                var preamble = BuildPreamble(doc); // headline + summary for context
+
+                for (var i = 0; i < chunks.Count; i++)
+                {
+                    var (chunkText, startChar, endChar) = chunks[i];
+                    // Prepend preamble to each chunk for semantic context
+                    var payload = string.IsNullOrWhiteSpace(preamble)
+                        ? chunkText
+                        : $"{preamble}\n\n{chunkText}";
+
+                    if (!string.IsNullOrWhiteSpace(payload))
+                    {
+                        // Convert char positions to byte positions for the source text
+                        var startByte = Encoding.UTF8.GetByteCount(doc.Text!.AsSpan(0, startChar));
+                        var endByte = Encoding.UTF8.GetByteCount(doc.Text!.AsSpan(0, endChar));
+                        work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, i, doc.Uri, DocumentEmbeddingScope, payload, startByte, endByte));
+                    }
+                }
             }
         }
 
         return work;
+    }
+
+    private static string BuildStructureOnlyEmbeddingText(DocumentEmbeddingRow doc)
+    {
+        // For very large files, use headline + structure (they contain different data)
+        var parts = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(doc.Headline))
+            parts.Add(doc.Headline);
+        if (!string.IsNullOrWhiteSpace(doc.Structure))
+            parts.Add(doc.Structure);
+        return string.Join("\n\n", parts);
+    }
+
+    private static string BuildPreamble(DocumentEmbeddingRow doc)
+    {
+        // Build a short preamble from x-ray fields for context in each chunk
+        var parts = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(doc.Headline))
+            parts.Add(doc.Headline);
+        if (!string.IsNullOrWhiteSpace(doc.Summary))
+            parts.Add(doc.Summary);
+        return string.Join("\n", parts);
+    }
+
+    private static List<(string Text, int StartChar, int EndChar)> ChunkText(string text, int chunkSize, int overlap)
+    {
+        var chunks = new List<(string, int, int)>();
+        var stride = chunkSize - overlap;
+        if (stride <= 0) stride = chunkSize; // Fallback if overlap >= size
+
+        for (var start = 0; start < text.Length; start += stride)
+        {
+            var end = Math.Min(start + chunkSize, text.Length);
+            chunks.Add((text[start..end], start, end));
+
+            // If we've reached the end, stop
+            if (end >= text.Length)
+                break;
+        }
+
+        return chunks;
     }
 
     private static string BuildDocumentEmbeddingText(DocumentEmbeddingRow doc)
@@ -642,9 +771,12 @@ namespace RepoQL.Data.DuckDB;
     private readonly record struct EmbeddingWorkItem(
         Guid DocId,
         Guid NodeId,
+        int ChunkIndex,
         string Uri,
         string Scope,
-        string Payload);
+        string Payload,
+        long? StartByte,
+        long? EndByte);
 
     private static string SerializeFloatArray(float[] vec)
     {
@@ -806,6 +938,11 @@ namespace RepoQL.Data.DuckDB;
     public void EnsureSchema()
     {
         using var connectionLock = EnterConnectionScope();
+
+        // Check schema version FIRST - if mismatched, drop everything and start fresh.
+        // This must happen before any SQL that references new columns.
+        CheckSchemaVersionAndResetIfNeeded();
+
         ExecuteSqlResource("Tables/artifact.sql");
         ExecuteSqlResource("Tables/node.sql");
         ExecuteSqlResource("Tables/span.sql");
@@ -830,8 +967,6 @@ namespace RepoQL.Data.DuckDB;
         ExecuteSqlResource("Tables/document_search.sql");
         ExecuteSqlResource("Macros/search.sql");
 
-        RemoveDocumentEmbeddingForeignKeysIfNeeded();
-
         foreach (var script in _formatSchemaScripts)
         {
             try
@@ -846,21 +981,126 @@ namespace RepoQL.Data.DuckDB;
 
     }
 
-    private void RemoveDocumentEmbeddingForeignKeysIfNeeded()
+    private void CheckSchemaVersionAndResetIfNeeded()
     {
-        const string detectionSql = "SELECT COUNT(*) FROM duckdb_constraints() WHERE table_name = 'document_embedding' AND constraint_type = 'FOREIGN KEY';";
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = detectionSql;
-        var count = (long)(cmd.ExecuteScalar() ?? 0L);
-        if (count == 0)
-            return;
+        var currentVersion = GetCurrentAppVersion();
+        _logger.LogDebug("Checking schema version (current: {Version})...", currentVersion);
 
-        _logger.LogInformation("Recreating document_embedding without foreign keys (found {Count} constraints).", count);
-        Execute("CREATE TABLE document_embedding__temp AS SELECT * FROM document_embedding;");
-        Execute("DROP TABLE document_embedding;");
-        ExecuteSqlResource("Tables/document_embedding.sql");
-        Execute("INSERT INTO document_embedding SELECT * FROM document_embedding__temp;");
-        Execute("DROP TABLE document_embedding__temp;");
+        // Ensure repo_metadata table exists first (needed to check/store version)
+        Execute("""
+            CREATE TABLE IF NOT EXISTS repo_metadata(
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """);
+
+        // Check stored version
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = $"SELECT value FROM repo_metadata WHERE key = '{SchemaVersionKey}' LIMIT 1;";
+        var storedVersion = cmd.ExecuteScalar()?.ToString();
+        _logger.LogDebug("Stored schema version: {StoredVersion}", storedVersion ?? "(none)");
+
+        if (storedVersion == currentVersion)
+            return; // Up to date
+
+        // Check if any tables exist (to distinguish fresh DB from old unversioned DB)
+        using var tableCheck = _connection.CreateCommand();
+        tableCheck.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'BASE TABLE' AND table_name != 'repo_metadata';";
+        var existingTableCount = Convert.ToInt64(tableCheck.ExecuteScalar() ?? 0L);
+
+        if (storedVersion is not null)
+        {
+            _logger.LogInformation(
+                "RepoQL version changed from {OldVersion} to {NewVersion}; dropping all tables and recreating schema.",
+                storedVersion, currentVersion);
+            DropAllTablesAndViews();
+            _logger.LogInformation("Tables dropped. Proceeding with schema creation.");
+        }
+        else if (existingTableCount > 0)
+        {
+            // Old database without version tracking - needs migration
+            _logger.LogInformation(
+                "Found {TableCount} existing tables without version key; dropping all and recreating with version {Version}.",
+                existingTableCount, currentVersion);
+            DropAllTablesAndViews();
+            _logger.LogInformation("Tables dropped. Proceeding with schema creation.");
+        }
+        else
+        {
+            _logger.LogInformation("Fresh database; initializing schema version to {Version}", currentVersion);
+        }
+
+        // Store the new version
+        Execute($"""
+            INSERT INTO repo_metadata(key, value, updated_at) VALUES ('{SchemaVersionKey}', ?, now())
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = now();
+            """, currentVersion);
+    }
+
+    private static string GetCurrentAppVersion()
+    {
+        var asm = System.Reflection.Assembly.GetEntryAssembly() ?? System.Reflection.Assembly.GetExecutingAssembly();
+        var version = asm.GetName().Version?.ToString();
+        if (string.IsNullOrWhiteSpace(version))
+        {
+            version = asm.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        }
+        return version ?? "unknown";
+    }
+
+    private void DropAllTablesAndViews()
+    {
+        // Drop all views first (they depend on tables)
+        using var viewCmd = _connection.CreateCommand();
+        viewCmd.CommandText = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'VIEW';";
+        using var viewReader = viewCmd.ExecuteReader();
+        var views = new List<string>();
+        while (viewReader.Read())
+            views.Add(viewReader.GetString(0));
+        viewReader.Close();
+
+        foreach (var view in views)
+        {
+            TryExec($"DROP VIEW IF EXISTS \"{view}\" CASCADE;");
+            _logger.LogDebug("Dropped view: {ViewName}", view);
+        }
+
+        // Drop tables in dependency order
+        var dropOrder = new[]
+        {
+            "annotation",
+            "edge",
+            "span",
+            "document_embedding",
+            "document_search",
+            "node",
+            "artifact"
+            // repo_metadata is kept - it stores the version
+        };
+
+        foreach (var table in dropOrder)
+        {
+            TryExec($"DROP TABLE IF EXISTS \"{table}\" CASCADE;");
+            _logger.LogDebug("Dropped table: {TableName}", table);
+        }
+
+        // Drop any remaining tables (except repo_metadata)
+        using var tableCmd = _connection.CreateCommand();
+        tableCmd.CommandText = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'BASE TABLE' AND table_name != 'repo_metadata';";
+        using var tableReader = tableCmd.ExecuteReader();
+        var remaining = new List<string>();
+        while (tableReader.Read())
+            remaining.Add(tableReader.GetString(0));
+        tableReader.Close();
+
+        foreach (var table in remaining)
+        {
+            TryExec($"DROP TABLE IF EXISTS \"{table}\" CASCADE;");
+            _logger.LogDebug("Dropped remaining table: {TableName}", table);
+        }
+
+        _logger.LogInformation("All tables and views dropped. Recreating schema.");
     }
 
 

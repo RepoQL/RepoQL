@@ -12,7 +12,7 @@ Local, queryable knowledge graph for repositories. Indexes files into DuckDB wit
 
 1. **Single-writer architecture**: ALL DuckDB writes MUST go through `SingleThreadedDatabaseWriter`. Parallel writes = database corruption.
 2. **Core schema frozen**: Five tables (`artifact`, `node`, `edge`, `span`, `annotation`) never change. Extend via views/macros/UDFs only.
-3. **TUnit, not xUnit**: Tests use `[Test]` not `[Fact]`, `[Arguments]` not `[InlineData]`. Wrong attributes = tests silently not discovered.
+3. **TUnit, not xUnit**: Tests use `[Test]` not `[Fact]`, `[Arguments]` not `[InlineData]`. **You can't use dotnet test** - read the guidance. Wrong attributes = tests silently not discovered. 
 4. **AwesomeAssertions, not FluentAssertions**: Same API (`using AwesomeAssertions;`), different package. FluentAssertions has license restrictions.
 
 ## Build and Test

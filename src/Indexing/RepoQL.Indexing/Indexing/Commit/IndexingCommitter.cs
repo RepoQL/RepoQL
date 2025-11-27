@@ -72,7 +72,7 @@ public sealed class IndexingCommitter(
 
         if (item.Records is null)
         {
-            _logger.LogDebug("Skipping commit for {Uri} because no records were produced.", item.Uri);
+            _logger.LogWarning("Skipping commit for {Uri} because no records were produced.", item.Uri);
             return;
         }
 

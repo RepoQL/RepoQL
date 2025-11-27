@@ -35,7 +35,7 @@ WITH document_rows AS (
         art.digest
     FROM node doc
              LEFT JOIN artifact art ON art.id = doc.artifact_id
-             LEFT JOIN document_embedding de ON de.node_id = doc.id
+             LEFT JOIN document_embedding de ON de.node_id = doc.id AND de.chunk_index = 0
     WHERE doc.kind = 'document'
 ),
 object_rows AS (

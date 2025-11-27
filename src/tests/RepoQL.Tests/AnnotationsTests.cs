@@ -87,7 +87,8 @@ internal class AnnotationsTests
         try
         {
             var factory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-            await using var dbWriter = new SingleThreadedDatabaseWriter(factory);
+            var graphStoreFactory = new DuckDbGraphStoreFactory();
+            await using var dbWriter = new SingleThreadedDatabaseWriter(factory, graphStoreFactory);
             await dbWriter.StartAsync(CancellationToken.None);
 
             using var store = new DuckDbGraphStore(dbPath);

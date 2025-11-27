@@ -33,8 +33,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly IDatabaseWriter writer;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly ILogger<RepoQlServiceImpl> _logger;
-    private readonly Task _versionCheckTask;
-    private readonly string _currentVersion;
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
     {
         TypeInfoResolver = new DefaultJsonTypeInfoResolver()
@@ -62,9 +60,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         this.writer = writer ?? throw new ArgumentNullException(nameof(writer));
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
-
-        _currentVersion = GetCurrentVersion();
-        _versionCheckTask = Task.Run(() => EnsureVersionMetadataAsync(_hostLifetime.ApplicationStopping));
+        // Note: Schema version checking is now handled by DuckDbGraphStore.EnsureSchema()
     }
 
     public override async Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
@@ -663,146 +659,4 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             _ => CoordinatorPipelineStage.Discovery
         };
 
-    internal Task EnsureVersionMetadataAsync(CancellationToken cancellationToken)
-        => EnsureVersionMetadataAsync(store, coordinator, writer, _currentVersion, _logger, cancellationToken);
-
-    internal static async Task EnsureVersionMetadataAsync(
-        IGraphStore store,
-        IIndexingCoordinator coordinator,
-        IDatabaseWriter writer,
-        string currentVersion,
-        ILogger logger,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var existingRow = store.RawQuery("SELECT value FROM repo_metadata WHERE key=? LIMIT 1", "repoql.version").FirstOrDefault();
-            var storedVersion = existingRow != null && existingRow.TryGetValue("value", out var val) ? val?.ToString() : null;
-
-            if (string.Equals(storedVersion, currentVersion, StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            if (storedVersion is null)
-            {
-                UpsertVersionMetadata(store, currentVersion);
-                return;
-            }
-
-            logger.LogInformation("RepoQL version changed from {OldVersion} to {NewVersion}; dropping all tables and recreating schema.", storedVersion, currentVersion);
-
-            // Instead of reindexing with existing embeddings (which causes the semaphore bottleneck),
-            // drop all tables and views, then recreate the schema. This is faster and avoids the VectorIndexCoordinator blocking issue.
-            try
-            {
-                // Get list of all views (drop first to avoid dependency issues)
-                var views = store.RawQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'VIEW'").ToList();
-
-                logger.LogInformation("Dropping {Count} views", views.Count);
-
-                foreach (var view in views)
-                {
-                    if (view.TryGetValue("table_name", out var viewName))
-                    {
-                        var name = viewName?.ToString();
-                        if (!string.IsNullOrEmpty(name))
-                        {
-                            store.RawQuery($"DROP VIEW IF EXISTS {name} CASCADE").FirstOrDefault();
-                            logger.LogDebug("Dropped view: {ViewName}", name);
-                        }
-                    }
-                }
-
-                // Drop tables in dependency order (children before parents to avoid FK constraint errors)
-                // DuckDB doesn't fully support CASCADE for foreign key dependencies
-                var dropOrder = new[]
-                {
-                    "annotation",       // depends on node, span
-                    "edge",             // depends on node
-                    "span",             // depends on node
-                    "node_embedding",   // depends on node
-                    "document_embedding", // depends on artifact
-                    "node",             // depends on artifact
-                    "artifact",         // no dependencies
-                    "repo_metadata"     // no dependencies
-                };
-
-                logger.LogInformation("Dropping tables in dependency order");
-
-                foreach (var tableName in dropOrder)
-                {
-                    store.RawQuery($"DROP TABLE IF EXISTS \"{tableName}\" CASCADE").FirstOrDefault();
-                    logger.LogDebug("Dropped table: {TableName}", tableName);
-                }
-
-                // Drop any remaining tables not in the explicit list
-                var remainingTables = store.RawQuery("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main' AND table_type = 'BASE TABLE'").ToList();
-                foreach (var table in remainingTables)
-                {
-                    if (table.TryGetValue("table_name", out var tableName))
-                    {
-                        var name = tableName?.ToString();
-                        if (!string.IsNullOrEmpty(name))
-                        {
-                            store.RawQuery($"DROP TABLE IF EXISTS \"{name}\" CASCADE").FirstOrDefault();
-                            logger.LogDebug("Dropped remaining table: {TableName}", name);
-                        }
-                    }
-                }
-
-                logger.LogInformation("All tables and views dropped. Recreating schema.");
-
-                // Recreate the complete database schema
-                store.EnsureSchema();
-
-                // Set the version metadata
-                UpsertVersionMetadata(store, currentVersion);
-
-                logger.LogInformation("Schema recreated with version {NewVersion}. Reindex will happen via normal startup scan.", currentVersion);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to drop and recreate schema during version upgrade");
-                throw;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to ensure repo metadata version.");
-        }
-    }
-
-    private static string GetCurrentVersion()
-    {
-        var asm = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
-        var version = asm?.GetName().Version?.ToString();
-        if (string.IsNullOrWhiteSpace(version))
-        {
-            version = asm?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-        }
-
-        if (string.IsNullOrWhiteSpace(version))
-        {
-            throw new InvalidOperationException("RepoQL version could not be determined from the assembly. Ensure a version is stamped during single-file publishing.");
-        }
-
-        return version!;
-    }
-
-    internal static void UpsertVersionMetadata(IGraphStore store, string version)
-    {
-        // Uses INSERT ... ON CONFLICT to remain compatible with RawQuery's reader-based execution.
-        store.RawQuery(
-            "CREATE TABLE IF NOT EXISTS repo_metadata( key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );")
-            .FirstOrDefault();
-
-        store.RawQuery(
-            "INSERT INTO repo_metadata(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=now()",
-            "repoql.version",
-            version).FirstOrDefault();
-    }
 }

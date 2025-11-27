@@ -57,7 +57,7 @@ public class SnippetMacroTests : IDisposable
     }
 
     [Test]
-    [Skip("Default mime detection is not working - can't see why")]
+    [Skip("language_from_media_type_or_uri extension fallback not working - returns NULL for unknown extensions")]
     public void LanguageFromMediaTypeOrUri_FallsBackToExtension()
     {
         using var cmd = _connection.CreateCommand();

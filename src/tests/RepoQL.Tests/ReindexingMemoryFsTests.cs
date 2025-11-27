@@ -13,8 +13,8 @@ internal class ReindexingMemoryFsTests
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 
     [Test]
-    [Skip("Flaky")]
-    public async Task Reindex_UpdatesExistingDocument_AndReplacesSubtree()
+    [Timeout(60_000)]
+    public async Task Reindex_UpdatesExistingDocument_AndReplacesSubtree(CancellationToken cancellationToken)
     {
         await using var repo = await CreateRepoAsync();
 

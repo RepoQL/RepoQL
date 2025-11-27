@@ -107,6 +107,9 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddOptions<IndexingEngineOptions>();
         services.AddOptions<RepoqlHostOptions>();
 
+        // Graph store factory - creates DuckDbGraphStore instances with proper DI
+        services.AddSingleton<IDuckDbGraphStoreFactory, DuckDbGraphStoreFactory>();
+
         // Single-writer for all write operations
         services.AddSingleton<IDatabaseWriter, SingleThreadedDatabaseWriter>();
         services.AddHostedService(sp => (SingleThreadedDatabaseWriter)sp.GetRequiredService<IDatabaseWriter>());
@@ -135,7 +138,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 log?.LogWarning("Embedding provider: ONNX failed to initialize from explicit path {Path}; falling back", onnxPath);
             }
 
-            // Otherwise, attempt to load the shipped model placed by RepoQL project: Embeddings/Model/embedding_model.onnx
+            // Load the shipped model: Embeddings/Model/embedding_model.onnx (quantized int8)
             // If not present, extract from embedded resources in the entry assembly on first run.
             try
             {
@@ -157,7 +160,7 @@ public static class RepoIndexerServiceCollectionExtensions
 
                 if (File.Exists(shipped))
                 {
-                    log?.LogInformation("Embedding provider: using shipped model at {Path}", shipped);
+                    log?.LogInformation("Embedding provider: using model at {Path}", shipped);
                     var onnx = new OnnxEmbeddingProvider(shipped, sp.GetService<ILogger<OnnxEmbeddingProvider>>()!, maxTokens);
                     if (onnx.Enabled) return onnx;
                     onnx.Dispose();

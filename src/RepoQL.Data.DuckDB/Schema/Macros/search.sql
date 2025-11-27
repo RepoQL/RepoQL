@@ -167,6 +167,7 @@ lex_rrf AS (
     FROM lex_ranked
 ),
 -- Dense scorer (OpenAI-style embedding similarity).
+-- Scores ALL chunks per document and aggregates to MAX for multi-chunk documents.
 semantic_seed AS (
     SELECT
         CASE
@@ -182,13 +183,32 @@ qv AS (
     FROM semantic_seed
     WHERE query_text IS NOT NULL
 ),
+-- Score all chunks (not just chunk_index=0) to find best match within each document
+sem_all_chunks AS (
+    SELECT
+        de.doc_id,
+        de.node_id,
+        de.chunk_index,
+        de.start_byte,
+        de.end_byte,
+        cosine_similarity_json(qv.qjson, de.embedding) AS chunk_sem
+    FROM qv
+             JOIN document_embedding de ON de.embedding IS NOT NULL
+             JOIN filtered ri ON ri.node_id = de.node_id
+    WHERE de.scope = 'document'
+),
+-- Aggregate to best chunk per document (MAX semantic score)
 sem_scored AS (
     SELECT
-        ri.node_id,
-        ri.doc_id,
-        cosine_similarity_json(qv.qjson, ri.embedding) AS sem
-    FROM qv
-             JOIN filtered ri ON ri.embedding IS NOT NULL
+        node_id,
+        doc_id,
+        MAX(chunk_sem) AS sem,
+        -- Keep track of which chunk had the best match for proximity scoring
+        (ARRAY_AGG(chunk_index ORDER BY chunk_sem DESC))[1] AS best_chunk_index,
+        (ARRAY_AGG(start_byte ORDER BY chunk_sem DESC))[1] AS best_chunk_start,
+        (ARRAY_AGG(end_byte ORDER BY chunk_sem DESC))[1] AS best_chunk_end
+    FROM sem_all_chunks
+    GROUP BY node_id, doc_id
 ),
 sem_top AS (
     SELECT node_id, doc_id, sem, sem_rank

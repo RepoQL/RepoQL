@@ -6,7 +6,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsAspireHost>true</IsAspireHost>
-    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
     <UserSecretsId>262cdc7c-4509-4bad-ade1-3d4cc013a93e</UserSecretsId>
   </PropertyGroup>
 

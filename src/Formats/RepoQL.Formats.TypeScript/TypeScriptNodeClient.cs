@@ -12,9 +12,8 @@ public sealed class TypeScriptNodeClient : IAsyncDisposable, IDisposable
     private readonly ILogger<TypeScriptNodeClient> _logger;
     private readonly SemaphoreSlim _mutex = new(1, 1);
 
-    private static readonly JsonSerializerOptions SerializerOptions = new()
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
-        TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
         PropertyNameCaseInsensitive = true
     };
 
@@ -111,7 +110,7 @@ public sealed class TypeScriptNodeClient : IAsyncDisposable, IDisposable
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to deserialize TypeScript parser response.");
+                _logger.LogWarning(ex, "Failed to deserialize TypeScript parser response: {Response}", line);
             }
 
             if (response?.Ok == true && response.Result is not null)

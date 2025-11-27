@@ -3,7 +3,11 @@
   "profiles": {
       "host": {
         "commandName": "Project",
-        "commandLineArgs": "serve"
+        "commandLineArgs": "serve",
+          "environmentVariables": {
+                "ASPNETCORE_ENVIRONMENT": "Development",
+                "Logging__LogLevel__Default": "Debug"
+          }
       },
       "xray": {
           "commandName": "Project",

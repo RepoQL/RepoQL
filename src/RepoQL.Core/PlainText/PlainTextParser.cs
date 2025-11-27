@@ -29,7 +29,7 @@ internal sealed class PlainTextParser(PlainTextLoader loader, ILogger<PlainTextP
             {
                 File = item,
                 RepoUri = item.Uri,
-                MediaType = PlainTextLoader.PlainTextMediaType
+                MediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value ?? PlainTextLoader.PlainTextMediaType
             };
 
             var documentModel = await _loader.LoadAsync(discovered, token).ConfigureAwait(false);
@@ -46,13 +46,8 @@ internal sealed class PlainTextParser(PlainTextLoader loader, ILogger<PlainTextP
         }
     }
 
-    private static bool ShouldProcess(IClassifiedArtifact artifact)
-    {
-        var mediaType = artifact.MediaType ?? artifact.RawArtifact.ProvisionalMediaType.Value;
-        if (mediaType is null)
-            return false;
-
-        // Only handle textual content; let binary formats fall through.
-        return string.Equals(mediaType.Type, "text", StringComparison.OrdinalIgnoreCase);
-    }
+    /// <summary>
+    /// Fallback parser accepts everything - this ensures all files are indexed for discoverability.
+    /// </summary>
+    private static bool ShouldProcess(IClassifiedArtifact artifact) => true;
 }

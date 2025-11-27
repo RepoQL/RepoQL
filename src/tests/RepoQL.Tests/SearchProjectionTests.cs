@@ -16,7 +16,9 @@ internal class SearchProjectionTests
     public async Task WriterRefreshesDocumentSearchAutomatically()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-search-{Guid.NewGuid():N}.duckdb");
-        await using var writer = new SingleThreadedDatabaseWriter(new DuckDBConnectionFactory($"Data Source={dbPath}"));
+        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
+        var graphStoreFactory = new DuckDbGraphStoreFactory();
+        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
         await writer.StartAsync(CancellationToken.None);
 
         var docUri = RepoUri.Parse("file:///docs/sample.md");
@@ -52,7 +54,9 @@ internal class SearchProjectionTests
         // Test that when a document is updated (same URI), the search projection reflects the update.
         // Note: Unique index on container_uri_lowercase prevents duplicate URIs, so upsert updates in place.
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-search-update-{Guid.NewGuid():N}.duckdb");
-        await using var writer = new SingleThreadedDatabaseWriter(new DuckDBConnectionFactory($"Data Source={dbPath}"));
+        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
+        var graphStoreFactory = new DuckDbGraphStoreFactory();
+        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
         await writer.StartAsync(CancellationToken.None);
 
         var uri = RepoUri.Parse("file:///src/doc.md");

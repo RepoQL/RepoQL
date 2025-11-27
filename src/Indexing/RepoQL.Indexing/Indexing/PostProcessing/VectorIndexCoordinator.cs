@@ -67,7 +67,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
     private async Task RefreshEmbeddingsAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Refreshing document embeddings to keep vector index current.");
+        _logger.LogDebug("Vector index refresh triggered");
         await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
     }
 
