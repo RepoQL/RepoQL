@@ -1,7 +1,7 @@
-{{ display_title }} | {{ document_type_label | default: media_kind | default: media_base }} | {{ size_bytes | filesize }}, {{ line_count | default: 0 }} ln
 {%- if frontmatter_pairs and frontmatter_pairs.size > 0 -%}
-Frontmatter: {% for pair in frontmatter_pairs %}{{ pair }}{% unless forloop.last %}; {% endunless %}{% endfor %}
-{%- else -%}
-Frontmatter: none
-{%- endif %}
-Topics: {% if topics and topics.size > 0 %}{% for t in topics limit:8 %}{{ t }}{% unless forloop.last %}, {% endunless %}{% endfor %}{% else %}n/a{% endif %}
+{% for pair in frontmatter_pairs %}{{ pair }}{% unless forloop.last %}; {% endunless %}{% endfor %}
+{% endif -%}
+{%- if important_headings and important_headings.size > 0 -%}
+Topics: {% for t in important_headings limit:5 %}{{ t }}{% unless forloop.last %}, {% endunless %}{% endfor %}
+{% endif -%}
+Stats: h:{{ headings_count | default: 0 }}{% if codeblocks_count and codeblocks_count > 0 %} code:{{ codeblocks_count }}{% if top_lang %} ({{ top_lang }}){% endif %}{% endif %}{% if links_count and links_count > 0 %} links:{{ links_count }}{% endif %}{% if tables_count and tables_count > 0 %} tables:{{ tables_count }}{% endif %}{% if images_count and images_count > 0 %} img:{{ images_count }}{% endif %}

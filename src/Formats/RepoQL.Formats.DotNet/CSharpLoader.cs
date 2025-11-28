@@ -670,10 +670,17 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
     private static string BuildSummary(CSharpDocumentSurface surface)
     {
         var sb = new StringBuilder();
-        sb.AppendLine($"Namespaces: {surface.Namespaces.Count}");
-        sb.AppendLine($"Types: {surface.Types.Count}");
-        sb.AppendLine($"Members: {surface.Members.Count}");
 
+        // Compact counts on single line
+        var publicCount = surface.Types.Count(t => string.Equals(t.Accessibility, CSharpValues.Public, StringComparison.OrdinalIgnoreCase));
+        var asyncCount = surface.Members.Count(m => m.IsAsync);
+        sb.Append($"ns:{surface.Namespaces.Count} types:{surface.Types.Count}");
+        if (publicCount > 0) sb.Append($" pub:{publicCount}");
+        sb.Append($" members:{surface.Members.Count}");
+        if (asyncCount > 0) sb.Append($" async:{asyncCount}");
+        sb.AppendLine();
+
+        // Public types - short names only (FQN visible in structure)
         var topTypes = surface.Types
             .Where(t => string.Equals(t.Accessibility, CSharpValues.Public, StringComparison.OrdinalIgnoreCase))
             .OrderBy(t => t.QualifiedName)
@@ -682,23 +689,14 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
 
         if (topTypes.Length > 0)
         {
-            sb.AppendLine("Public types:");
+            sb.AppendLine("Public API:");
             foreach (var type in topTypes)
             {
                 var inheritance = !string.IsNullOrWhiteSpace(type.BaseType)
                     ? $" : {type.BaseType}"
                     : (type.Interfaces.Count > 0 ? $" : {string.Join(", ", type.Interfaces)}" : string.Empty);
-                sb.AppendLine($"- {type.Kind} {type.QualifiedName}{inheritance}");
-            }
-        }
-
-        var asyncMembers = surface.Members.Where(m => m.IsAsync).Take(CSharpLoaderConstants.MaxAsyncMembersInSummary).ToArray();
-        if (asyncMembers.Length > 0)
-        {
-            sb.AppendLine("Async members:");
-            foreach (var member in asyncMembers)
-            {
-                sb.AppendLine($"- {member.DeclaringTypeDisplay}.{member.Name}");
+                // Use short name - namespace shown in structure
+                sb.AppendLine($"  {type.Kind} {type.Name}{inheritance}");
             }
         }
 
@@ -707,33 +705,68 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
 
     private static string BuildStructure(CSharpDocumentSurface surface)
     {
+        // Symbolic notation: + public, # protected, ~ internal, - private
+        // Types: +ClassName : Base, Interfaces
+        // Members: +Method(params) → ReturnType, +Property → Type, -_field
         var sb = new StringBuilder();
         var membersByType = surface.Members
             .GroupBy(m => m.DeclaringTypeId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        static char AccessibilitySymbol(string? accessibility) => accessibility?.ToLowerInvariant() switch
+        {
+            "public" => '+',
+            "protected" => '#',
+            "internal" => '~',
+            "private" => '-',
+            "protected internal" => '#',
+            "private protected" => '-',
+            _ => ' '
+        };
+
         void AppendType(CSharpTypeInfo type, string indent)
         {
+            var symbol = AccessibilitySymbol(type.Accessibility);
             var inheritance = !string.IsNullOrWhiteSpace(type.BaseType)
                 ? $" : {type.BaseType}"
                 : (type.Interfaces.Count > 0 ? $" : {string.Join(", ", type.Interfaces)}" : string.Empty);
-            sb.AppendLine($"{indent}{type.Accessibility} {type.Kind} {type.Name}{inheritance}");
+            sb.AppendLine($"{indent}{symbol}{type.Kind} {type.Name}{inheritance}");
 
             if (membersByType.TryGetValue(type.NodeId, out var members))
             {
                 foreach (var member in members.Take(CSharpLoaderConstants.MaxMembersInStructure))
                 {
-                    var parameterText = member.Parameters.Count == 0
-                        ? string.Empty
-                        : $"({string.Join(", ", member.Parameters.Select(p => $"{p.Type} {p.Name}"))})";
-                    sb.AppendLine($"{indent}  {member.Accessibility} {member.Kind} {member.Name}{parameterText}");
+                    var memberSymbol = AccessibilitySymbol(member.Accessibility);
+                    var returnPart = !string.IsNullOrWhiteSpace(member.ReturnType) && member.ReturnType != "void"
+                        ? $" → {member.ReturnType}"
+                        : string.Empty;
+
+                    if (string.Equals(member.Kind, "method", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(member.Kind, "constructor", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var paramText = member.Parameters.Count == 0
+                            ? "()"
+                            : $"({string.Join(", ", member.Parameters.Select(p => p.Type))})";
+                        sb.AppendLine($"{indent}  {memberSymbol}{member.Name}{paramText}{returnPart}");
+                    }
+                    else if (string.Equals(member.Kind, "property", StringComparison.OrdinalIgnoreCase))
+                    {
+                        sb.AppendLine($"{indent}  {memberSymbol}{member.Name}{returnPart}");
+                    }
+                    else // field, event, etc.
+                    {
+                        var typePart = !string.IsNullOrWhiteSpace(member.ReturnType)
+                            ? $" : {member.ReturnType}"
+                            : string.Empty;
+                        sb.AppendLine($"{indent}  {memberSymbol}{member.Name}{typePart}");
+                    }
                 }
             }
         }
 
         foreach (var ns in surface.Namespaces.Take(CSharpLoaderConstants.MaxNamespacesInStructure))
         {
-            sb.AppendLine($"namespace {ns.QualifiedName}");
+            sb.AppendLine(ns.QualifiedName);
             foreach (var type in surface.Types.Where(t => t.NamespaceNodeId == ns.NodeId && t.ParentTypeId is null).Take(CSharpLoaderConstants.MaxTypesPerNamespaceInStructure))
             {
                 AppendType(type, "  ");
@@ -743,7 +776,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
         var globalTypes = surface.Types.Where(t => t.NamespaceNodeId is null && t.ParentTypeId is null).Take(CSharpLoaderConstants.MaxGlobalTypesInStructure).ToArray();
         if (globalTypes.Length > 0)
         {
-            sb.AppendLine("global namespace");
+            sb.AppendLine("<global>");
             foreach (var type in globalTypes)
             {
                 AppendType(type, "  ");

@@ -135,6 +135,13 @@ internal sealed class RepoResourceService
         }
 
         var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
+
+        // Symbol URIs without explicit line ranges use snippet macro for resolution
+        if (repoUri.Loc.Symbol is not null && repoUri.Loc.Line is null)
+        {
+            return await FetchSymbolContentAsync(client, uriString, cancellationToken).ConfigureAwait(false);
+        }
+
         var document = await FetchDocumentDataAsync(client, repoUri, cancellationToken).ConfigureAwait(false);
         if (document is null)
         {
@@ -142,6 +149,41 @@ internal sealed class RepoResourceService
         }
 
         return BuildDocumentResource(document, repoUri, uriString);
+    }
+
+    private async Task<TextResourceContents> FetchSymbolContentAsync(
+        IRepoQlClient client, string uri, CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT text, resolved_uri, language
+            FROM snippet(?, 5)
+            ORDER BY line_number
+            """;
+
+        var response = await client.ExecuteRawQueryAsync(sql, [uri], cancellationToken: cancellationToken).ConfigureAwait(false);
+
+        if (response.Rows.Count == 0)
+        {
+            throw new FileNotFoundException($"Symbol not found: {uri}");
+        }
+
+        // Concatenate all lines from snippet result
+        var text = string.Join("\n", response.Rows
+            .Select(r => ExtractString(r.Values[0]) ?? "")
+            .ToList());
+
+        var resolvedUri = ExtractString(response.Rows[0].Values[1]) ?? uri;
+        var language = ExtractString(response.Rows[0].Values[2]);
+        var mimeType = !string.IsNullOrEmpty(language)
+            ? $"text/plain; charset=utf-8; lang={language}"
+            : "text/plain; charset=utf-8";
+
+        return new TextResourceContents
+        {
+            Uri = resolvedUri,
+            MimeType = mimeType,
+            Text = text
+        };
     }
 
     private static TextResourceContents BuildDocumentResource(DocumentData document, RepoUri repoUri, string requestedUri)

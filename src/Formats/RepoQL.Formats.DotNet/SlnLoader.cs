@@ -16,7 +16,7 @@ public sealed class SlnLoader(ITemplateRenderer? renderer = null) : IFormatLoade
 
     private static readonly SemanticMediaType SlnType = SemanticMediaType
         .Create("text", "plain")
-        .WithKind("dotnet.sln");
+        .WithKind("project.dotnet-sln");
 
     private readonly ITemplateRenderer _renderer = renderer ?? new LiquidTemplateRenderer(
         assembly: typeof(SlnLoader).Assembly,
@@ -55,7 +55,7 @@ public sealed class SlnLoader(ITemplateRenderer? renderer = null) : IFormatLoade
             artifact.MediaType = SlnType;
             return Task.FromResult(true);
         }
-        return Task.FromResult(artifact.MediaType is not null && string.Equals(artifact.MediaType.Kind, "dotnet.sln", StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(artifact.MediaType is not null && string.Equals(artifact.MediaType.Kind, "project.dotnet-sln", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <inheritdoc />
