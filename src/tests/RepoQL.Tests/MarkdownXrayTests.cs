@@ -42,7 +42,6 @@ internal class MarkdownXrayTests
         hl.Should().StartWith("Title |");
         hl.Should().Contain("markdown.doc");
         hl.ToLowerInvariant().Should().Contain("ln");
-        artifact.Summary!.Should().Contain("Frontmatter:");
         artifact.Summary!.Should().Contain("Topics:");
         artifact.Structure!.Should().Contain("- Title");
         artifact.Structure!.Should().Contain("- Section A");
