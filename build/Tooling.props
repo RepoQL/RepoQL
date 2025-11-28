@@ -32,6 +32,9 @@
         <ArtifactsPath Condition="'$(ArtifactsPath)' == ''">$(RepositoryRoot)artifacts/</ArtifactsPath>
         <VSTestResultsDirectory>$(ArtifactsPath)/testresults/$(Configuration.ToLowerInvariant())</VSTestResultsDirectory>
         <StripSymbols Condition="'$(Configuration)' == 'Release'">true</StripSymbols>
+        <IsAotCompatible>true</IsAotCompatible>
+        <PublishTrimmed>true</PublishTrimmed>
+        <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
     </PropertyGroup>
 
 </Project>

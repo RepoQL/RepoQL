@@ -20,8 +20,6 @@
         <AnalysisModeStyle>Minimum</AnalysisModeStyle>
         <!-- The version of the code analysis ruleset to use - preview means all rules as soon as they are released for evaluation -->
         <AnalysisLevel>preview</AnalysisLevel>
-        <IsAotCompatible>true</IsAotCompatible>
-        <PublishTrimmed>true</PublishTrimmed>
     </PropertyGroup>
 
 </Project>
