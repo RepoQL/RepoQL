@@ -834,6 +834,7 @@ namespace RepoQL.Data.DuckDB;
         try
         {
             connection.Open();
+            ConfigureConnectionSettings(connection);
             return connection;
         }
         catch (DuckDBException ex) when (TryRecoverInvalidDatabaseFile(filePath, logger, ex))
@@ -841,8 +842,32 @@ namespace RepoQL.Data.DuckDB;
             connection.Dispose();
             var retry = new DuckDBConnection($"Data Source={filePath}");
             retry.Open();
+            ConfigureConnectionSettings(retry);
             return retry;
         }
+    }
+
+    private static void ConfigureConnectionSettings(DuckDBConnection connection)
+    {
+        static void Exec(DuckDBConnection conn, string sql)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            cmd.ExecuteNonQuery();
+        }
+
+        var limit = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT") ?? "2GB";
+        Exec(connection, $"SET memory_limit='{limit}';");
+        Exec(connection, "SET enable_object_cache=false;");
+        Exec(connection, "SET preserve_insertion_order=false;");
+
+        var threads = Environment.GetEnvironmentVariable("DUCKDB_THREADS") ?? "1";
+        Exec(connection, $"SET threads={threads};");
+
+        var tempDirEnv = Environment.GetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY") ?? ".repoql/index.duckdb.tmp";
+        var tempDirPath = Path.GetFullPath(tempDirEnv).Replace("\\", "/");
+        Directory.CreateDirectory(tempDirPath);
+        Exec(connection, $"SET temp_directory='{tempDirPath}';");
     }
 
     private static void DeleteWalIfExists(string filePath, ILogger logger)
@@ -1731,9 +1756,15 @@ WHERE rk = 1;
                 }
             }
 
-            // Insert edges
+            // Insert edges (dedupe composition edges to avoid unique constraint on composition_child_id)
+            var compositionSeen = new HashSet<Guid>();
             foreach (var e in edges)
             {
+                if (e.IsComposition)
+                {
+                    if (!compositionSeen.Add(e.DstId))
+                        continue; // skip duplicate HAS_PART for same child
+                }
                 using var ins = _connection.CreateCommand();
                 ins.Transaction = tx;
                 ins.CommandText = @"INSERT INTO edge
