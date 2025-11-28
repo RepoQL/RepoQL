@@ -136,19 +136,34 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
 
         foreach (var stage in targets)
         {
+            // Each stage must wait for all upstream stages to complete.
+            // Pipeline order: Discovery -> Parsing -> Analysis -> Writer
             switch (stage)
             {
                 case CoordinatorPipelineStage.Discovery:
                     waits.Add(_engine.WaitForAsync(IndexingState.ClassificationIdle, cancellationToken).AsTask());
                     break;
                 case CoordinatorPipelineStage.Parsing:
-                    waits.Add(_engine.WaitForAsync(IndexingState.ParsingIdle | IndexingState.SingleFileAnalysisIdle, cancellationToken).AsTask());
+                    // Must wait for Discovery + Parsing stages
+                    waits.Add(_engine.WaitForAsync(
+                        IndexingState.ClassificationIdle |
+                        IndexingState.ParsingIdle |
+                        IndexingState.SingleFileAnalysisIdle,
+                        cancellationToken).AsTask());
                     break;
                 case CoordinatorPipelineStage.Analysis:
-                    waits.Add(_engine.WaitForAsync(IndexingState.MultiFileAnalysisIdle | IndexingState.IndexRebuildIdle, cancellationToken).AsTask());
+                    // Must wait for Discovery + Parsing + Analysis stages
+                    waits.Add(_engine.WaitForAsync(
+                        IndexingState.ClassificationIdle |
+                        IndexingState.ParsingIdle |
+                        IndexingState.SingleFileAnalysisIdle |
+                        IndexingState.MultiFileAnalysisIdle |
+                        IndexingState.IndexRebuildIdle,
+                        cancellationToken).AsTask());
                     break;
                 case CoordinatorPipelineStage.Writer:
-                    waits.Add(WaitForWriterIdleAsync(cancellationToken));
+                    // Must wait for all stages + writer
+                    waits.Add(WaitForAllIncludingWriterAsync(cancellationToken));
                     break;
             }
         }
@@ -164,6 +179,21 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         {
             await Task.WhenAny(waits).ConfigureAwait(false);
         }
+    }
+
+    private async Task WaitForAllIncludingWriterAsync(CancellationToken cancellationToken)
+    {
+        // Wait for all pipeline stages first
+        await _engine.WaitForAsync(
+            IndexingState.ClassificationIdle |
+            IndexingState.ParsingIdle |
+            IndexingState.SingleFileAnalysisIdle |
+            IndexingState.MultiFileAnalysisIdle |
+            IndexingState.IndexRebuildIdle,
+            cancellationToken).AsTask().ConfigureAwait(false);
+
+        // Then wait for writer to flush
+        await WaitForWriterIdleAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public Task WaitForIdleAsync(CancellationToken cancellationToken)
