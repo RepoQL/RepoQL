@@ -63,8 +63,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
         CompositeFileSystem composite,
         DuckDbGraphStore store,
         MetricsIndexingMetrics metrics,
-        FormatRegistry formatRegistry,
-        AnalysisWorkspace workspace,
+        FormatRegistry? formatRegistry,
         IndexingEngine engine,
         IndexingCoordinator coordinator,
         RepoqlHost host,
@@ -83,7 +82,6 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
         _store = store;
         Metrics = metrics;
         FormatRegistry = formatRegistry;
-        Workspace = workspace;
         Engine = engine;
         _coordinator = coordinator;
         _host = host;
@@ -102,9 +100,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
 
     public DuckDbGraphStore Store => _store;
 
-    public FormatRegistry FormatRegistry { get; }
-
-    public AnalysisWorkspace Workspace { get; }
+    public FormatRegistry? FormatRegistry { get; }
 
     public IndexingEngine Engine { get; }
 
@@ -123,8 +119,9 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
         var options = new IndexedRepoOptions();
         configure?.Invoke(options);
 
-        if (options.Formats.Count == 0)
-            throw new InvalidOperationException("IndexedRepoOptions must register at least one format descriptor.");
+        // Require at least one format source (modern parsers or legacy descriptors)
+        if (options.Formats.Count == 0 && options.Parsers.Count == 0)
+            throw new InvalidOperationException("IndexedRepoOptions must register at least one parser or format descriptor.");
 
         var hasher = options.ResolveHasher();
         var classifier = options.ResolveClassifier();
@@ -133,8 +130,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
             CompositeFileSystemMount.CreatePrimary(fileSystem),
             options.AdditionalMounts);
         var metrics = new MetricsIndexingMetrics();
-        var formatRegistry = new FormatRegistry(options.Formats);
-        var workspace = new AnalysisWorkspace(composite, classifier, hasher, formatRegistry);
+        var formatRegistry = options.Formats.Count > 0 ? new FormatRegistry(options.Formats) : null;
         var loggerFactory = options.LoggerFactory ?? NullLoggerFactory.Instance;
         var repositoryRoot = string.IsNullOrWhiteSpace(options.RepositoryRoot)
             ? Directory.GetCurrentDirectory()
@@ -153,10 +149,14 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
 
         try
         {
-            var formatScripts = formatRegistry.Formats
-                .Select(f => f.Loader)
-                .OfType<IFormatSchemaProvider>()
+            // Collect format scripts from both modern schema providers and legacy loaders
+            var formatScripts = options.SchemaProviders
                 .SelectMany(p => p.GetSchemaScripts())
+                .Concat(
+                    (formatRegistry?.Formats ?? Enumerable.Empty<FormatDescriptor>())
+                        .Select(f => f.Loader)
+                        .OfType<IFormatSchemaProvider>()
+                        .SelectMany(p => p.GetSchemaScripts()))
                 .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
                 .ToList();
 
@@ -209,23 +209,30 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 },
                 loggerFactory.CreateLogger<ClassificationPipeline>());
 
+            // Build parsing pipeline: modern parsers first, then legacy FormatRegistryParser
+            var parsingProcessors = new List<IAsyncPipeline<IClassifiedArtifact, Records?>>();
+            parsingProcessors.AddRange(options.Parsers);
+            if (formatRegistry is not null)
+            {
+                parsingProcessors.Add(new FormatRegistryParser(formatRegistry, loggerFactory.CreateLogger<FormatRegistryParser>()));
+            }
             var parsingPipeline = new ParsingPipeline(
-                new[]
-                {
-                    new FormatRegistryParser(formatRegistry, loggerFactory.CreateLogger<FormatRegistryParser>())
-                },
+                parsingProcessors,
                 loggerFactory.CreateLogger<ParsingPipeline>());
 
+            // Build analysis pipeline: modern analyzers first, then legacy FormatRegistryAnalyzer
+            var analysisProcessors = new List<IAsyncPipeline<IParsedArtifact, Annotation[]>>();
+            analysisProcessors.AddRange(options.SingleFileAnalyzers);
+            if (formatRegistry is not null)
+            {
+                analysisProcessors.Add(new FormatRegistryAnalyzer(
+                    formatRegistry,
+                    options.SettingsProvider,
+                    repositoryRoot,
+                    loggerFactory.CreateLogger<FormatRegistryAnalyzer>()));
+            }
             var singleFilePipeline = new SingleFileAnalysisPipeline(
-                new[]
-                {
-                    new FormatRegistryAnalyzer(
-                        formatRegistry,
-                        workspace,
-                        options.SettingsProvider,
-                        repositoryRoot,
-                        loggerFactory.CreateLogger<FormatRegistryAnalyzer>())
-                },
+                analysisProcessors,
                 loggerFactory.CreateLogger<SingleFileAnalysisPipeline>());
 
             var multiFilePipeline = new MultiFileAnalysisPipeline(
@@ -276,7 +283,6 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 store,
                 metrics,
                 formatRegistry,
-                workspace,
                 engine,
                 coordinator,
                 host,
@@ -634,20 +640,17 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
     private sealed class FormatRegistryAnalyzer : IAsyncPipeline<IParsedArtifact, Annotation[]>
     {
         private readonly IFormatRegistry _registry;
-        private readonly IAnalysisWorkspace _workspace;
         private readonly IAnalyzerSettingsProvider? _settingsProvider;
         private readonly string _repositoryRoot;
         private readonly ILogger<FormatRegistryAnalyzer> _logger;
 
         public FormatRegistryAnalyzer(
             IFormatRegistry registry,
-            IAnalysisWorkspace workspace,
             IAnalyzerSettingsProvider? settingsProvider,
             string repositoryRoot,
             ILogger<FormatRegistryAnalyzer>? logger)
         {
             _registry = registry ?? throw new ArgumentNullException(nameof(registry));
-            _workspace = workspace ?? throw new ArgumentNullException(nameof(workspace));
             _settingsProvider = settingsProvider;
             _repositoryRoot = repositoryRoot ?? Directory.GetCurrentDirectory();
             _logger = logger ?? NullLogger<FormatRegistryAnalyzer>.Instance;
@@ -693,7 +696,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
             {
                 var settings = _settingsProvider?.Resolve(item.Uri.AbsoluteUri, media, documentNode)
                     ?? new AnalyzerSettings();
-                var context = new AnalyzerContext(settings, _repositoryRoot, _registry, _workspace);
+                var context = new AnalyzerContext(settings, _repositoryRoot);
                 var annotations = new List<Annotation>();
 
                 await foreach (var result in descriptor.Analyzer.AnalyzeAsync(document, context, token).ConfigureAwait(false))

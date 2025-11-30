@@ -14,14 +14,7 @@ internal class ConcurrencyBugTest
 {
     private static void ConfigureFormats(IndexedRepoOptions options)
     {
-        var markdownLoader = new Formats.Markdown.MarkdownLoader();
-        var markdownAnalyzer = new Formats.Markdown.MarkdownAnalyzer();
-        options.AddFormat(new FormatDescriptor(
-            SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"),
-            markdownLoader,
-            markdownAnalyzer,
-            markdownLoader,
-            ["md", "markdown"]));
+        options.AddMarkdownFormat();
     }
 
     [Test]

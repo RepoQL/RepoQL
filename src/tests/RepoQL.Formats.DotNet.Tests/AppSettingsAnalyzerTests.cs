@@ -287,26 +287,8 @@ internal class AppSettingsAnalyzerTests
         configure?.Invoke(rules);
 
         var settings = new AnalyzerSettings(rules);
-        var formatRegistry = new FormatRegistry(Array.Empty<FormatDescriptor>());
 
-        return new AnalyzerContext(
-            settings,
-            repositoryPath: "C:\\test",
-            formatRegistry: formatRegistry,
-            workspace: new TestWorkspace());
-    }
-
-    private class TestWorkspace : IAnalysisWorkspace
-    {
-        public Task<DocumentModel?> LoadAsync(RepoUri uri, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult<DocumentModel?>(null);
-        }
-
-        public Task<IReadOnlyList<EmbeddedFragment>> DiscoverEmbedsAsync(DocumentModel document, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult<IReadOnlyList<EmbeddedFragment>>(Array.Empty<EmbeddedFragment>());
-        }
+        return new AnalyzerContext(settings, "C:\\test");
     }
 
     private static void Cleanup(string tempPath)

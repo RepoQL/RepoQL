@@ -25,6 +25,7 @@ public static class MarkdownServiceCollectionExtensions
         });
 
         services.AddIndexingProcessor<MarkdownClassifier>();
+        services.AddIndexingProcessor<MarkdownParser>();
 
         return services;
     }

@@ -1,6 +1,4 @@
 using AwesomeAssertions;
-using RepoQL.Contracts;
-using RepoQL.Formats.DotNet;
 using RepoQL.Testing.Scaffolding;
 
 namespace RepoQL.Tests;
@@ -13,12 +11,7 @@ internal class CsProjVariantsTests
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>
         {
             options.MeterName = "RepoQL.Tests.CsProjVar";
-            options.AddFormat(new FormatDescriptor(
-                SemanticMediaType.Create("application", "xml").WithKind("dotnet.csproj"),
-                new CsProjLoader(),
-                new CsProjAnalyzer(),
-                new CsProjLoader(),
-                ["csproj"]));
+            options.AddCsProjFormat();
         });
 
         var csproj = """

@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using RepoQL.Contracts;
 using RepoQL.Testing.Scaffolding;
 
 namespace RepoQL.Tests;
@@ -13,12 +12,7 @@ internal class MermaidXrayTests
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>
         {
             options.MeterName = "RepoQL.Tests.Xray";
-            options.AddFormat(new FormatDescriptor(
-                SemanticMediaType.Create("text", "mermaid").WithKind("mermaid.doc"),
-                new Formats.Mermaid.MermaidLoader(),
-                new Formats.Mermaid.MermaidAnalyzer(),
-                new Formats.Mermaid.MermaidLoader(),
-                ["mermaid", "mmd"]));
+            options.AddMermaidFormat();
         });
 
         var mmd = "flowchart TD\nA[Start] --> B{Check}\nB -->|Yes| C[OK]\nB -->|No| D[Fail]\n";

@@ -1,9 +1,6 @@
 using System.Diagnostics;
 using AwesomeAssertions;
 using Microsoft.Extensions.Logging;
-using RepoQL.Contracts;
-using RepoQL.Core;
-using RepoQL.Formats.DotNet;
 using RepoQL.Testing.Scaffolding;
 using CorePipelineStage = RepoQL.Core.PipelineStage;
 
@@ -28,12 +25,7 @@ internal class CsProjXrayTests
                     o.TimestampFormat = "HH:mm:ss ";
                 }).SetMinimumLevel(LogLevel.Debug);
             });
-            options.AddFormat(new FormatDescriptor(
-                SemanticMediaType.Create("application", "xml").WithKind("dotnet.csproj"),
-                new CsProjLoader(),
-                new CsProjAnalyzer(),
-                new CsProjLoader(),
-                ["csproj"]));
+            options.AddCsProjFormat();
         });
 
         var csproj = """

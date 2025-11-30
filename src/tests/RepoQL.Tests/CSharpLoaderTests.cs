@@ -873,27 +873,7 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
                 plainLoader)
         ]);
 
-        var documents = new Dictionary<string, DocumentModel>(StringComparer.OrdinalIgnoreCase)
-        {
-            [documentKey] = document
-        };
-
-        var workspace = new DictionaryWorkspace(documents);
-        return new AnalyzerContext(settings ?? new AnalyzerSettings(), "/repo", registry, workspace);
-    }
-
-    private sealed class DictionaryWorkspace(IReadOnlyDictionary<string, DocumentModel> documents) : IAnalysisWorkspace
-    {
-        public Task<DocumentModel?> LoadAsync(RepoUri uri, CancellationToken cancellationToken = default)
-        {
-            documents.TryGetValue(uri.AbsoluteUri.ToLowerInvariant(), out var doc);
-            return Task.FromResult<DocumentModel?>(doc);
-        }
-
-        public Task<IReadOnlyList<EmbeddedFragment>> DiscoverEmbedsAsync(DocumentModel document, CancellationToken cancellationToken = default)
-        {
-            return Task.FromResult<IReadOnlyList<EmbeddedFragment>>([]);
-        }
+        return new AnalyzerContext(settings ?? new AnalyzerSettings(), "/repo");
     }
 
     private static string CreateTempProject(IDictionary<string, string> sourceFiles, IEnumerable<string>? analyzers = null)

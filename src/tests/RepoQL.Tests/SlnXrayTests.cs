@@ -1,7 +1,4 @@
 using AwesomeAssertions;
-using RepoQL.Contracts;
-using RepoQL.Core;
-using RepoQL.Formats.DotNet;
 using RepoQL.Testing.Scaffolding;
 
 namespace RepoQL.Tests;
@@ -14,12 +11,7 @@ internal class SlnXrayTests
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>
         {
             options.MeterName = "RepoQL.Tests.Sln";
-            options.AddFormat(new FormatDescriptor(
-                SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"),
-                new SlnLoader(),
-                new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln")),
-                new SlnLoader(),
-                ["sln"]));
+            options.AddSlnFormat();
         });
 
         var sln = """

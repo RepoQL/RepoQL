@@ -184,12 +184,8 @@ public static class RepoIndexerServiceCollectionExtensions
 
         services.AddSingleton<IAnalysisResultWriter, AnnotationResultWriter>();
         services.AddSingleton<IAnalyzerSettingsProvider>(_ => new EditorConfigSettingsProvider(resolvedRoot));
-        services.AddSingleton<Func<AnalyzerContext>>(sp =>
-        {
-            var workspace = sp.GetRequiredService<IAnalysisWorkspace>();
-            var registry = sp.GetRequiredService<IFormatRegistry>();
-            return () => new AnalyzerContext(new AnalyzerSettings(), resolvedRoot, registry, workspace);
-        });
+        services.AddSingleton<Func<AnalyzerContext>>(_ =>
+            () => new AnalyzerContext(new AnalyzerSettings(), resolvedRoot));
 
         // Templating for x-ray summaries (embedded defaults)
         services.AddLiquidTemplatingFromEmbedded(
@@ -318,12 +314,6 @@ public static class RepoIndexerServiceCollectionExtensions
             return new FormatRegistry(descriptors);
         });
 
-        services.AddSingleton<IAnalysisWorkspace>(sp => new AnalysisWorkspace(
-            sp.GetRequiredService<IMultiFileSystem>(),
-            sp.GetRequiredService<IFileClassifier>(),
-            sp.GetRequiredService<IHasher>(),
-            sp.GetRequiredService<IFormatRegistry>()));
-
         // Register metrics
         services.AddSingleton<IndexingMetrics>();
 
@@ -364,6 +354,7 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetService<ILogger<IndexingCommitter>>()));
 
         services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, CSharpClassifier>();
+        services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CSharpParser>();
         services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, MarkdownClassifier>();
         // Catch-all parser should run last in the parsing pipeline
         services.AddPlainTextFormat();

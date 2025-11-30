@@ -18,12 +18,7 @@ internal class MarkdownXrayTests
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>
         {
             options.MeterName = "RepoQL.Tests.Xray";
-            options.AddFormat(new FormatDescriptor(
-                SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"),
-                new Formats.Markdown.MarkdownLoader(),
-                new Formats.Markdown.MarkdownAnalyzer(),
-                new Formats.Markdown.MarkdownLoader(),
-                ["md", "markdown"]));
+            options.AddMarkdownFormat();
         });
 
         var md = "# Title\n\n## Section A\nText.\n\n```csharp\n// code\n```\n\n[link](#section-a)\n";

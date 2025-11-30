@@ -1,6 +1,5 @@
 using System;
 using AwesomeAssertions;
-using RepoQL.Contracts;
 using RepoQL.Testing.Scaffolding;
 
 namespace RepoQL.Tests;
@@ -15,12 +14,7 @@ internal class MarkdownXrayRichTests
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>
         {
             options.MeterName = "RepoQL.Tests.Xray";
-            options.AddFormat(new FormatDescriptor(
-                SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"),
-                new Formats.Markdown.MarkdownLoader(),
-                new Formats.Markdown.MarkdownAnalyzer(),
-                new Formats.Markdown.MarkdownLoader(),
-                ["md", "markdown"]));
+            options.AddMarkdownFormat();
         });
 
         var md = "---\nlayout: post\ntitle: Sample\ntags: [auth, oauth]\n---\n\n# Title\n\n![img](path.png)\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";

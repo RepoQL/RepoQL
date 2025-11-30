@@ -1,7 +1,4 @@
 using AwesomeAssertions;
-using RepoQL.Contracts;
-using RepoQL.Core;
-using RepoQL.Formats.DotNet;
 using RepoQL.Testing.Scaffolding;
 
 namespace RepoQL.Tests;
@@ -85,11 +82,6 @@ internal class SlnVariantsTests
         => IndexedRepoBuilder.CreateAsync(options =>
         {
             options.MeterName = "RepoQL.Tests.SlnVar";
-            options.AddFormat(new FormatDescriptor(
-                SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln"),
-                new SlnLoader(),
-                new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("dotnet.sln")),
-                new SlnLoader(),
-                ["sln"]));
+            options.AddSlnFormat();
         });
 }

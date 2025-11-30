@@ -1,10 +1,7 @@
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
-using RepoQL.Core;
 using RepoQL.FileSystem.Abstractions;
-using RepoQL.Formats.Markdown;
-using RepoQL.Formats.Mermaid;
 using RepoQL.Testing.Scaffolding;
 using RepoQL.FileSystem.Embedded;
 using RepoQL.Indexing.FileSystems;
@@ -88,32 +85,7 @@ internal class IndexerIntegrationTests
 
     private static void ConfigureFormats(IndexedRepoOptions options)
     {
-        var markdownLoader = new MarkdownLoader();
-        var markdownAnalyzer = new MarkdownAnalyzer();
-        var mermaidLoader = new MermaidLoader();
-        var mermaidAnalyzer = new MermaidAnalyzer();
-        var plainLoader = new PlainTextLoader();
-        var plainAnalyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
-
-        options.AddFormat(new FormatDescriptor(
-            SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc"),
-            markdownLoader,
-            markdownAnalyzer,
-            markdownLoader,
-            ["markdown", "md"]));
-
-        options.AddFormat(new FormatDescriptor(
-            SemanticMediaType.Create("text", "mermaid").WithKind("mermaid.doc"),
-            mermaidLoader,
-            mermaidAnalyzer,
-            mermaidLoader,
-            ["mermaid", "mmd"]));
-
-        options.AddFormat(new FormatDescriptor(
-            SemanticMediaType.Create("text", "plain").WithKind("plain.document"),
-            plainLoader,
-            plainAnalyzer,
-            plainLoader,
-            ["txt", "text"]));
+        options.AddMarkdownFormat();
+        options.AddMermaidFormat();
     }
 }

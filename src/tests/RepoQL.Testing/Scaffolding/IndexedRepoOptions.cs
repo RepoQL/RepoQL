@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Models;
 using RepoQL.Core;
 using RepoQL.Core.Analysis;
 using RepoQL.Data.DuckDB;
@@ -9,6 +10,9 @@ using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.Indexing;
+using RepoQL.Indexing.Indexing.Pipelines;
+using RepoQL.Indexing.Indexing.Pipelines.Classification;
+using RepoQL.Indexing.Indexing.Pipelines.Parsing;
 
 namespace RepoQL.Testing.Scaffolding;
 
@@ -34,8 +38,40 @@ public sealed class IndexedRepoOptions
     public IList<FormatDescriptor> Formats { get; } = new List<FormatDescriptor>();
     public IList<CompositeFileSystemMount> AdditionalMounts { get; } = new List<CompositeFileSystemMount>();
 
+    /// <summary>
+    /// Modern pipeline-based parsers. These are used instead of FormatDescriptor.Loader/Materializer.
+    /// </summary>
+    public IList<IAsyncPipeline<IClassifiedArtifact, Records?>> Parsers { get; } = new List<IAsyncPipeline<IClassifiedArtifact, Records?>>();
+
+    /// <summary>
+    /// Modern pipeline-based single-file analyzers.
+    /// </summary>
+    public IList<IAsyncPipeline<IParsedArtifact, Annotation[]>> SingleFileAnalyzers { get; } = new List<IAsyncPipeline<IParsedArtifact, Annotation[]>>();
+
+    /// <summary>
+    /// Schema providers for SQL view registration.
+    /// </summary>
+    public IList<IFormatSchemaProvider> SchemaProviders { get; } = new List<IFormatSchemaProvider>();
+
+    /// <summary>
+    /// Media type to file extension mappings for classification.
+    /// </summary>
+    public IDictionary<string, SemanticMediaType> ExtensionMappings { get; } = new Dictionary<string, SemanticMediaType>(StringComparer.OrdinalIgnoreCase);
+
     public void AddFormat(FormatDescriptor descriptor)
         => Formats.Add(descriptor);
+
+    public void AddParser(IAsyncPipeline<IClassifiedArtifact, Records?> parser)
+        => Parsers.Add(parser);
+
+    public void AddAnalyzer(IAsyncPipeline<IParsedArtifact, Annotation[]> analyzer)
+        => SingleFileAnalyzers.Add(analyzer);
+
+    public void AddSchemaProvider(IFormatSchemaProvider provider)
+        => SchemaProviders.Add(provider);
+
+    public void MapExtension(string extension, SemanticMediaType mediaType)
+        => ExtensionMappings[extension.TrimStart('.')] = mediaType;
 
     internal IFileClassifier ResolveClassifier()
     {
@@ -43,6 +79,14 @@ public sealed class IndexedRepoOptions
             return Classifier;
 
         var byLabel = new Dictionary<string, SemanticMediaType>(StringComparer.OrdinalIgnoreCase);
+
+        // Add modern extension mappings first
+        foreach (var (ext, mediaType) in ExtensionMappings)
+        {
+            byLabel.TryAdd(ext.TrimStart('.'), mediaType);
+        }
+
+        // Add legacy FormatDescriptor labels
         foreach (var descriptor in Formats)
         {
             foreach (var label in descriptor.Labels)
