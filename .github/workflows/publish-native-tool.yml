@@ -166,7 +166,7 @@ jobs:
         with:
           name: repoql-${{ matrix.rid }}
           path: artifacts/publish/${{ matrix.rid }}
-      - name: Upload binary to Cloudflare R2
+      - name: Upload binary to Cloudflare R2 (versioned)
         uses: ryand56/r2-upload-action@latest
         with:
           r2-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -175,6 +175,15 @@ jobs:
           r2-bucket: ${{ vars.CLOUDFLARE_R2_BUCKET }}
           source-dir: artifacts/publish/${{ matrix.rid }}
           destination-dir: ${{ format('{0}/{1}', env.RESOLVED_VERSION, matrix.rid) }}
+      - name: Upload binary to Cloudflare R2 (latest)
+        uses: ryand56/r2-upload-action@latest
+        with:
+          r2-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ vars.CLOUDFLARE_R2_BUCKET }}
+          source-dir: artifacts/publish/${{ matrix.rid }}
+          destination-dir: ${{ format('latest/{0}', matrix.rid) }}
 
   skip-notice:
     needs: version-check
