@@ -10,6 +10,7 @@ public static class TypeScriptServiceCollectionExtensions
     {
         services.AddSingleton<TypeScriptNodeClient>();
         services.AddSingleton<TypeScriptLoader>();
+        services.AddSingleton<IFormatSchemaProvider>(sp => sp.GetRequiredService<TypeScriptLoader>());
         services.AddSingleton<TypeScriptAnalyzer>();
 
         services.AddSingleton<FormatDescriptor>(sp =>

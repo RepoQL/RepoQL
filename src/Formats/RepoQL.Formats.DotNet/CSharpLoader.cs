@@ -33,7 +33,7 @@ namespace RepoQL.Formats.DotNet;
 /// - Source generator outputs (when project context available)
 /// </para>
 /// </remarks>
-public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer
+public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSchemaProvider
 {
     /// <summary>
     /// Metadata key for storing C# document state in DocumentModel metadata.

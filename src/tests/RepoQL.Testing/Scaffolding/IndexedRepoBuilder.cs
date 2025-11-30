@@ -154,7 +154,9 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
         try
         {
             var formatScripts = formatRegistry.Formats
-                .SelectMany(f => f.Loader.GetSchemaScripts())
+                .Select(f => f.Loader)
+                .OfType<IFormatSchemaProvider>()
+                .SelectMany(p => p.GetSchemaScripts())
                 .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
                 .ToList();
 

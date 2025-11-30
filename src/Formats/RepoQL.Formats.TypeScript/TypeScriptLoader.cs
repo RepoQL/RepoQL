@@ -7,7 +7,7 @@ using RepoQL.Contracts.Models;
 
 namespace RepoQL.Formats.TypeScript;
 
-public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer
+public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IFormatSchemaProvider
 {
     internal const string StateMetadataKey = "typescript.state";
 

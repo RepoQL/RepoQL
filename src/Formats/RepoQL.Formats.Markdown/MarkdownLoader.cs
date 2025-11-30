@@ -19,7 +19,7 @@ using YamlDotNet.Serialization.NamingConventions;
 
 namespace RepoQL.Formats.Markdown;
 
-public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer
+public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer, IFormatSchemaProvider
 {
     internal const string StateMetadataKey = "markdown.state";
 

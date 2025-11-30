@@ -9,6 +9,7 @@ public static class MarkdownServiceCollectionExtensions
     public static IServiceCollection AddMarkdownFormat(this IServiceCollection services)
     {
         services.AddSingleton<MarkdownLoader>();
+        services.AddSingleton<IFormatSchemaProvider>(sp => sp.GetRequiredService<MarkdownLoader>());
         services.AddSingleton<MarkdownAnalyzer>();
 
         services.AddSingleton<FormatDescriptor>(sp =>

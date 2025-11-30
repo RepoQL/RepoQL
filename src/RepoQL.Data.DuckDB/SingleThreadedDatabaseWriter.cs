@@ -20,7 +20,7 @@ public sealed class SingleThreadedDatabaseWriter(
     IDuckDbGraphStoreFactory graphStoreFactory,
     IndexingMetrics? metrics = null,
     ILogger<SingleThreadedDatabaseWriter>? logger = null,
-    IFormatRegistry? formatRegistry = null)
+    IEnumerable<IFormatSchemaProvider>? schemaProviders = null)
     : IDatabaseWriter, IHostedService
 {
     private readonly Channel<QueueItem> _channel = Channel.CreateBounded<QueueItem>(new BoundedChannelOptions(MaxQueueDepth)
@@ -38,7 +38,7 @@ public sealed class SingleThreadedDatabaseWriter(
 
     private readonly ILogger<SingleThreadedDatabaseWriter> _logger =
         logger ?? NullLogger<SingleThreadedDatabaseWriter>.Instance;
-    private readonly IFormatRegistry? _formatRegistry = formatRegistry;
+    private readonly IEnumerable<IFormatSchemaProvider> _schemaProviders = schemaProviders ?? [];
     private readonly CancellationTokenSource _stopping = new();
     private Task? _writerTask;
 
@@ -105,8 +105,8 @@ public sealed class SingleThreadedDatabaseWriter(
     {
         // Initialize connection and store once
         _writeConnection = _connectionFactory.CreateConnection();
-        var formatScripts = _formatRegistry?.Formats
-            .SelectMany(f => f.Loader.GetSchemaScripts())
+        var formatScripts = _schemaProviders
+            .SelectMany(p => p.GetSchemaScripts())
             .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
             .ToArray();
         _store = _graphStoreFactory.Create(_writeConnection, formatScripts);

@@ -214,6 +214,7 @@ public static class RepoIndexerServiceCollectionExtensions
             var logger = sp.GetService<ILogger<CSharpLoader>>();
             return new CSharpLoader(host, configuration, logger);
         });
+        services.AddSingleton<IFormatSchemaProvider>(sp => sp.GetRequiredService<CSharpLoader>());
         services.AddSingleton<CSharpAnalyzer>();
         services.AddSingleton<PlainTextLoader>();
         services.AddSingleton<GraphQLLoader>();
@@ -328,9 +329,8 @@ public static class RepoIndexerServiceCollectionExtensions
 
         services.AddSingleton<IGraphStore>(sp =>
         {
-            var formatRegistry = sp.GetRequiredService<IFormatRegistry>();
-            var scripts = formatRegistry.Formats
-                .SelectMany(f => f.Loader.GetSchemaScripts())
+            var scripts = sp.GetServices<IFormatSchemaProvider>()
+                .SelectMany(p => p.GetSchemaScripts())
                 .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
                 .ToList();
 
