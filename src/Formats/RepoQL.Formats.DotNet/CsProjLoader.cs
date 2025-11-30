@@ -17,7 +17,7 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
 
     private static readonly SemanticMediaType CsProjType = SemanticMediaType
         .Create("application", "xml")
-        .WithKind("project.csharp");
+        .WithKind("dotnet.csproj");
 
     private readonly ITemplateRenderer _renderer = new LiquidTemplateRenderer(
         assembly: typeof(CsProjLoader).Assembly,
@@ -42,7 +42,7 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
             artifact.MediaType = CsProjType;
             return Task.FromResult(true);
         }
-        return Task.FromResult(artifact.MediaType is not null && string.Equals(artifact.MediaType.Kind, "project.csharp", StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(artifact.MediaType is not null && string.Equals(artifact.MediaType.Kind, "dotnet.csproj", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <inheritdoc />

@@ -3,7 +3,7 @@ using DotNext.Threading;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 using RepoQL.FileSystem.Abstractions;
-using RepoQL.Indexing.Extensions;
+using RepoQL.FileSystem.Classification;
 
 namespace RepoQL.Indexing;
 

@@ -14,7 +14,7 @@ internal class CsProjXrayTests
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(10);
 
     [Test]
-    [Skip("CsProj analyzer annotations not being produced - analysis pipeline issue")]
+    [Skip("IndexedRepoBuilder test harness doesn't invoke format analyzers - FormatRegistryAnalyzer not wired into analysis pipeline")]
     public async Task CsProj_Indexer_Populates_Xray_And_Items()
     {
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>
@@ -29,7 +29,7 @@ internal class CsProjXrayTests
                 }).SetMinimumLevel(LogLevel.Debug);
             });
             options.AddFormat(new FormatDescriptor(
-                SemanticMediaType.Create("text", "xml").WithKind("dotnet.csproj"),
+                SemanticMediaType.Create("application", "xml").WithKind("dotnet.csproj"),
                 new CsProjLoader(),
                 new CsProjAnalyzer(),
                 new CsProjLoader(),

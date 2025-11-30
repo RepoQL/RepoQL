@@ -1,0 +1,15 @@
+{%- for table in tables -%}
+TABLE {{ table.name }}
+{%- for col in table.columns %}
+  {{ col.name }}{% if col.type %} {{ col.type }}{% endif %}
+{%- endfor %}
+{% endfor -%}
+{%- for view in views -%}
+VIEW {{ view.name }}{% if view.source_tables.size > 0 %} → {% for src in view.source_tables %}{{ src }}{% unless forloop.last %}, {% endunless %}{% endfor %}{% endif %}
+{% endfor -%}
+{%- for func in functions -%}
+{{ func.type }} {{ func.name }}({% for p in func.params %}{{ p.name }}{% if p.type %} {{ p.type }}{% endif %}{% if p.default %} = {{ p.default }}{% endif %}{% unless forloop.last %}, {% endunless %}{% endfor %}){% if func.return_type %} → {{ func.return_type }}{% endif %}
+{% endfor -%}
+{%- for idx in indexes -%}
+{% if idx.is_unique %}UNIQUE {% endif %}INDEX {{ idx.name }} ON {{ idx.on_table }}({% for c in idx.columns %}{{ c }}{% unless forloop.last %}, {% endunless %}{% endfor %})
+{% endfor -%}

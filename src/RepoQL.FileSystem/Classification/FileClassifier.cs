@@ -23,7 +23,8 @@ public class FileClassifier : IFileClassifier
 
     public SemanticMediaType GetMediaType(IFileInfo fileInfo)
     {
-        if (MediaTypeMappings.TryGetMappedMediaType(fileInfo, out var mapped))
+        var mapped = fileInfo.GuessMediaTypeFromNamingConvention();
+        if (mapped is not null)
             return mapped;
 
         using var stream = fileInfo.CreateReadStream();

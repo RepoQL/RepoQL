@@ -8,14 +8,13 @@ namespace RepoQL.Tests;
 internal class CsProjVariantsTests
 {
     [Test]
-    [Skip("Dotnet formats not yet wired into RepoqlHost test harness.")]
     public async Task CsProj_Library_NotPackable_Surfaces_Fields()
     {
         await using var repo = await IndexedRepoBuilder.CreateAsync(options =>
         {
             options.MeterName = "RepoQL.Tests.CsProjVar";
             options.AddFormat(new FormatDescriptor(
-                SemanticMediaType.Create("text", "xml").WithKind("dotnet.csproj"),
+                SemanticMediaType.Create("application", "xml").WithKind("dotnet.csproj"),
                 new CsProjLoader(),
                 new CsProjAnalyzer(),
                 new CsProjLoader(),
@@ -43,6 +42,7 @@ internal class CsProjVariantsTests
         artifact.Summary.Should().Contain("OutputType: Library");
         artifact.Summary.Should().Contain("Pack: No");
         artifact.Structure.Should().Contain("TargetFrameworks:");
-        artifact.Structure.Should().Contain("net9.0");
+        artifact.Structure.Should().Contain("net8.0");
+        artifact.Structure.Should().Contain("net10.0");
     }
 }

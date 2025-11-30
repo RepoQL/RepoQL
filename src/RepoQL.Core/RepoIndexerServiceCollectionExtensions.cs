@@ -26,6 +26,7 @@ using RepoQL.Formats.GraphQL;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
 using RepoQL.Formats.TypeScript;
+using RepoQL.Formats.Sql;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
@@ -220,6 +221,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<CsProjLoader>(sp => new CsProjLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<AppSettingsLoader>(sp => new AppSettingsLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<AppSettingsAnalyzer>();
+        services.AddSingleton<SqlLoader>();
 
         services.AddSingleton<FormatDescriptor>(sp =>
         {
@@ -289,6 +291,17 @@ public static class RepoIndexerServiceCollectionExtensions
         });
         services.AddSingleton<FormatDescriptor>(sp =>
         {
+            var loader = sp.GetRequiredService<SqlLoader>();
+            var analyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("query.sql"));
+            return new FormatDescriptor(
+                SemanticMediaType.Create("text", "plain").WithKind("query.sql"),
+                loader,
+                analyzer,
+                loader,
+                new[] { "sql" });
+        });
+        services.AddSingleton<FormatDescriptor>(sp =>
+        {
             var loader = sp.GetRequiredService<PlainTextLoader>();
             var analyzer = new NullAnalyzer(SemanticMediaType.Create("text", "plain").WithKind("plain.document"));
             return new FormatDescriptor(
@@ -351,14 +364,7 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetService<ILogger<IndexingCommitter>>()));
 
         services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, CSharpClassifier>();
-        services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CSharpParser>();
         services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, MarkdownClassifier>();
-        services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, MarkdownParser>();
-        services.AddSingleton<IAsyncPipeline<IParsedArtifact, Annotation[]>>(sp =>
-            new MarkdownAnalysisProcessor(
-                sp.GetRequiredService<MarkdownAnalyzer>(),
-                sp.GetRequiredService<Func<AnalyzerContext>>(),
-                sp.GetService<ILogger<MarkdownAnalysisProcessor>>()));
         // Catch-all parser should run last in the parsing pipeline
         services.AddPlainTextFormat();
 

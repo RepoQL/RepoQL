@@ -2,7 +2,7 @@
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 
-namespace RepoQL.Indexing.Extensions;
+namespace RepoQL.FileSystem.Classification;
 
 public static class ClassificationExtensions
 {
@@ -10,7 +10,7 @@ public static class ClassificationExtensions
     private static readonly ImmutableDictionary<string, SemanticMediaType> FileNameMap = BuildFileNameMap();
     private static readonly (string Suffix, string MediaType)[] CompoundExtensions = BuildCompoundExtensionMap();
 
-    internal static SemanticMediaType? GuessMediaTypeFromNamingConvention(this IFileInfo fileInfo)
+    public static SemanticMediaType? GuessMediaTypeFromNamingConvention(this IFileInfo fileInfo)
     {
         var name = fileInfo.Name;
 
@@ -103,10 +103,10 @@ public static class ClassificationExtensions
         Add("text/plain;kind=build.qmake", ".pro", ".pri");
 
         // Project and build descriptors
-        Add("application/xml;kind=project.csharp", ".csproj");
+        Add("application/xml;kind=dotnet.csproj", ".csproj");
         Add("application/xml;kind=project.visualbasic", ".vbproj");
         Add("application/xml;kind=project.fsharp", ".fsproj");
-        Add("text/plain;kind=project.dotnet-sln", ".sln", ".slnf");
+        Add("text/plain;kind=dotnet.sln", ".sln", ".slnf");
         Add("application/xml;kind=project.msbuild", ".proj", ".props", ".targets", ".msbuildproj");
         Add("application/xml;kind=project.vcxproj", ".vcxproj", ".filters", ".vcproj");
         Add("application/xcode-project", ".xcodeproj", ".xcworkspace");
@@ -270,6 +270,14 @@ public static class ClassificationExtensions
         Add("text/plain;kind=config.include", ".include");
         Add("text/plain;kind=linker.module-definition", ".def", ".exp");
         Add("application/octet-stream;kind=binary.library", ".lib", ".a", ".so", ".dll", ".dylib");
+        Add("application/octet-stream;kind=binary.executable", ".exe");
+        Add("application/octet-stream;kind=binary.debug-symbols", ".pdb");
+        Add("application/xml;kind=docs.xmldoc", ".xml");
+        Add("application/xml;kind=config.xml", ".config");
+        Add("text/plain", ".txt");
+        Add("application/octet-stream;kind=ml.onnx", ".onnx");
+        Add("application/zip", ".zip");
+        Add("application/zip;kind=package.android-archive", ".aar");
 
         // Images and design assets
         Add("image/png", ".png");
@@ -354,6 +362,8 @@ public static class ClassificationExtensions
         Add("setup.py", "text/plain;kind=config.python-setup");
         Add("setup.cfg", "text/plain;kind=config.python-setupcfg");
         Add("isort.cfg", "text/plain;kind=config.isort");
+        Add("tsc", "text/plain;kind=code.shell");
+        Add("tsserver", "text/plain;kind=code.shell");
 
         return builder.ToImmutable();
 

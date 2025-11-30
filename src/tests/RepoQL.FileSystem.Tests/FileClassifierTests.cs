@@ -18,13 +18,13 @@ public class FileClassifierTests
             ("Program.cs", "text", "plain", "code.csharp"),
             ("Module.cpp", "text", "plain", "code.cpp"),
             ("Header.hpp", "text", "plain", "code.cpp-header"),
-            ("project.csproj", "application", "xml", "project.csharp"),
+            ("project.csproj", "application", "xml", "dotnet.csproj"),
             ("settings.json", "application", "json", null),
             ("README.md", "text", "markdown", "markdown.doc"),
             ("diagram.drawio", "application", "xml", "diagram.drawio"),
             ("schema.proto", "text", "plain", "schema.protobuf"),
             ("build.gradle", "text", "plain", "build.gradle"),
-            ("Solution.sln", "text", "plain", "project.dotnet-sln"),
+            ("Solution.sln", "text", "plain", "dotnet.sln"),
             ("icon.png", "image", "png", null),
             ("audio.mp3", "audio", "mpeg", null)
         };
@@ -82,8 +82,9 @@ public class FileClassifierTests
         foreach (var (name, type, subtype, kind) in expectations)
         {
             var file = new StringFileInfo(name, "content");
-            MediaTypeMappings.TryGetMappedMediaType(file, out var direct).Should().BeTrue($"{name} should have explicit mapping");
-            direct.Kind.Should().Be(kind);
+            var direct = file.GuessMediaTypeFromNamingConvention();
+            direct.Should().NotBeNull($"{name} should have explicit mapping");
+            direct!.Kind.Should().Be(kind);
             var mediaType = _classifier.GetMediaType(file);
             mediaType.Type.Should().Be(type);
             mediaType.Subtype.Should().Be(subtype);

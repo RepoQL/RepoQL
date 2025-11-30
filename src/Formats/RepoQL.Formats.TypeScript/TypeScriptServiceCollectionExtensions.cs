@@ -61,7 +61,6 @@ public static class TypeScriptServiceCollectionExtensions
         });
 
         services.AddIndexingProcessor<TypeScriptClassifier>();
-        services.AddIndexingProcessor<TypeScriptParser>();
 
         return services;
     }
