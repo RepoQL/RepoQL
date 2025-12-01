@@ -93,13 +93,18 @@ public sealed class SingleThreadedDatabaseWriter(
         await EnqueueAndWaitAsync(barrierOp, ct).ConfigureAwait(false);
         var after = _processed;
 
-        // Force WAL checkpoint so data is visible to other connections
-        if (_writeConnection is { State: System.Data.ConnectionState.Open })
+        // Force WAL checkpoint so data is visible to other connections.
+        // IMPORTANT: This must be enqueued as an operation to run in the writer loop,
+        // not executed directly here. Otherwise we race with the writer loop which may
+        // have already started a new transaction after completing the barrier.
+        var checkpointOp = new WriteOperation
         {
-            using var cmd = _writeConnection.CreateCommand();
-            cmd.CommandText = "CHECKPOINT;";
-            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        }
+            Id = Guid.NewGuid(),
+            Type = WriteOperationType.Checkpoint,
+            Uri = RepoUri.Parse("mem://writer-checkpoint"),
+            ParsedData = Records.Empty
+        };
+        await EnqueueAndWaitAsync(checkpointOp, ct).ConfigureAwait(false);
 
         return new FlushResult { OperationsFlushed = (int)(after - before) };
     }
@@ -604,8 +609,19 @@ public sealed class SingleThreadedDatabaseWriter(
             WriteOperationType.UpsertAnnotations => ExecuteSynchronously(() => ApplyUpsertAnnotations(op)),
             WriteOperationType.DeleteDocument => ExecuteSynchronously(() => ApplyDeleteDocument(op)),
             WriteOperationType.Barrier => Task.CompletedTask,
+            WriteOperationType.Checkpoint => ApplyCheckpointAsync(),
             _ => throw new NotSupportedException($"Unsupported op: {op.Type}")
         };
+    }
+
+    private async Task ApplyCheckpointAsync()
+    {
+        if (_writeConnection is { State: System.Data.ConnectionState.Open })
+        {
+            using var cmd = _writeConnection.CreateCommand();
+            cmd.CommandText = "CHECKPOINT;";
+            await cmd.ExecuteNonQueryAsync(_stopping.Token).ConfigureAwait(false);
+        }
     }
 
     private static Task ExecuteSynchronously(Action action)
