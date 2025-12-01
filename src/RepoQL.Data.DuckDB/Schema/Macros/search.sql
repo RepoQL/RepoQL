@@ -545,14 +545,15 @@ FROM search(
 -- Phase 1: Find candidate files and chunks using semantic search
 -- Phase 2: Filter objects by chunk overlap, then embed on-demand
 -- Optimization: Uses document chunks as clues to reduce JIT embedding count
+-- Dynamic scaling: Adjusts embed budget based on chunk hit strength
 CREATE OR REPLACE MACRO object_search(
     q,
     k := 20,
     file_candidates := 10,
     uri_glob := NULL,
     mime_glob := NULL,
-    chunks_per_file := 3,        -- Max chunks to consider per file for object filtering
-    max_embed_candidates := 80   -- Max objects to JIT embed (down from 200)
+    chunks_per_file := 10,       -- High default (cheap pre-computed check, safety valve)
+    max_embed_candidates := 20   -- Low default (expensive JIT work)
 ) AS TABLE (
 WITH params AS (
     SELECT
@@ -561,8 +562,8 @@ WITH params AS (
         CAST(coalesce(file_candidates, 10) AS BIGINT) AS file_k,
         NULLIF(trim(uri_glob), '')                 AS uri_filter,
         NULLIF(trim(mime_glob), '')                AS mime_filter,
-        CAST(coalesce(chunks_per_file, 3) AS BIGINT) AS chunks_k,
-        CAST(coalesce(max_embed_candidates, 80) AS BIGINT) AS embed_limit
+        CAST(coalesce(chunks_per_file, 10) AS BIGINT) AS chunks_k,
+        CAST(coalesce(max_embed_candidates, 20) AS BIGINT) AS base_embed_limit
 ),
 -- Embed the query once (needed for both file and chunk scoring)
 query_embedding AS (
@@ -669,6 +670,29 @@ best_chunks AS (
     FROM ranked_chunks
     JOIN params p ON TRUE
     WHERE chunk_rank <= p.chunks_k
+),
+-- Dynamic embed limit based on chunk strength
+-- Strong chunks → more candidates; weak chunks → fewer (save expensive JIT work)
+chunk_strength AS (
+    SELECT
+        COALESCE(MAX(chunk_score), 0) AS max_chunk_score,
+        COUNT(*) AS chunk_count
+    FROM best_chunks
+),
+dynamic_limit AS (
+    SELECT
+        CASE
+            -- Strong semantic match: allow up to 2x base limit
+            WHEN cs.max_chunk_score >= 0.6 THEN LEAST(p.base_embed_limit * 2, 50)
+            -- Moderate match: use base limit
+            WHEN cs.max_chunk_score >= 0.35 THEN p.base_embed_limit
+            -- Weak match: reduce to half (save JIT cost)
+            WHEN cs.max_chunk_score >= 0.2 THEN GREATEST(p.base_embed_limit / 2, 10)
+            -- Very weak or no chunks: minimal embedding, rely on lexical
+            ELSE 10
+        END AS effective_embed_limit
+    FROM params p
+    CROSS JOIN chunk_strength cs
 ),
 -- Phase 2: Get objects from candidate files with span byte ranges
 -- Join to span table to get byte offsets for overlap checking
@@ -803,11 +827,11 @@ candidate_objects_raw AS (
        OR NOT EXISTS (SELECT 1 FROM best_chunks bc2 WHERE bc2.doc_id = owcs.doc_id)  -- File has no chunks
 ),
 -- Limit candidates before expensive JIT embedding
--- Reduced from 200 to max_embed_candidates (default 80) since we've pre-filtered by chunk
+-- Uses dynamic limit based on chunk strength (strong matches → more embeddings)
 candidate_objects AS (
     SELECT * FROM candidate_objects_raw
     ORDER BY lexical_priority DESC, file_score DESC
-    LIMIT (SELECT embed_limit FROM params)
+    LIMIT (SELECT effective_embed_limit FROM dynamic_limit)
 ),
 -- Embed headline and body separately, compute weighted similarity
 scored_objects AS (
