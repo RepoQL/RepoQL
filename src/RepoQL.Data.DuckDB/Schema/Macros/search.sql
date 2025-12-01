@@ -93,8 +93,7 @@ score_source AS (
     SELECT
         ri.node_id,
         ri.doc_id,
-        cls.keywords_empty,
-        cls.keywords_empty,
+        cls.keywords_empty AS lex_keywords_empty,
         concat_ws(' ',
             coalesce(ri.search_key, ''),
             coalesce(ri.basename, ''),
@@ -108,7 +107,7 @@ score_source AS (
             WHEN coalesce(ri.symbol_key, '') = cls.keywords_lc THEN 4.0
             WHEN cls.keywords_lc <> '' AND position(cls.keywords_lc IN coalesce(ri.symbol_key, '')) > 0 THEN 3.2
             WHEN lower(coalesce(ri.basename, '')) = cls.keywords_lc
-              OR lower(regexp_replace(coalesce(ri.basename, ''), '\\.[^.]*$', '')) = cls.keywords_lc THEN 3.0
+              OR lower(regexp_replace(coalesce(ri.basename, ''), '\.[^.]*$', '')) = cls.keywords_lc THEN 3.0
             WHEN position(cls.keywords_lc IN lower(coalesce(ri.basename, ''))) > 0 THEN 2.0
             WHEN position(cls.keywords_lc IN ri.search_key) > 0 THEN 1.0
             WHEN position(cls.keywords_lc IN lower(coalesce(ri.body, ''))) > 0 THEN 0.5
@@ -139,7 +138,7 @@ ranked_lex AS (
         SELECT
             node_id,
             doc_id,
-            keywords_empty AS lex_keywords_empty,
+            lex_keywords_empty,
             bm25_heur,
             bm25_fallback,
             bm25_tokens,
@@ -196,6 +195,7 @@ sem_all_chunks AS (
              JOIN document_embedding de ON de.embedding IS NOT NULL
              JOIN filtered ri ON ri.node_id = de.node_id
     WHERE de.scope = 'document'
+      AND qv.qjson IS NOT NULL  -- Guard against disabled embedding provider
 ),
 -- Aggregate to best chunk per document (MAX semantic score)
 sem_scored AS (
@@ -282,7 +282,25 @@ scored AS (
         ri.mime,
         ri.headline,
         ri.structure,
-        substr(coalesce(ri.body, ''), 1, 640) AS snippet,
+        -- Use semantic chunk location for snippet when available
+        CASE
+            WHEN ss.best_chunk_start IS NOT NULL
+                 AND ss.best_chunk_end IS NOT NULL
+                 AND art.text_content IS NOT NULL
+                 AND length(art.text_content) > 0
+            THEN array_to_string(
+                list_slice(
+                    string_split(art.text_content, chr(10)),
+                    GREATEST(1, line_for_byte_offset(art.text_content, ss.best_chunk_start) - 2),
+                    LEAST(
+                        len(string_split(art.text_content, chr(10))),
+                        line_for_byte_offset(art.text_content, ss.best_chunk_end) + 2
+                    )
+                ),
+                chr(10)
+            )
+            ELSE substr(coalesce(ri.body, ''), 1, 640)
+        END AS snippet,
         ri.line_start,
         ri.line_end,
         ri.digest,
@@ -306,6 +324,9 @@ scored AS (
                  FROM sem_norm
                  GROUP BY node_id
              ) sn ON sn.node_id = fn.fn_node_id
+             LEFT JOIN sem_scored ss ON ss.node_id = fn.fn_node_id
+             LEFT JOIN node doc_node ON doc_node.id = ri.doc_id
+             LEFT JOIN artifact art ON art.id = doc_node.artifact_id
              LEFT JOIN lex_rrf rlex ON rlex.node_id = fn.fn_node_id
              LEFT JOIN sem_rrf rsem ON rsem.node_id = fn.fn_node_id
              JOIN config cfg ON TRUE
@@ -457,6 +478,7 @@ SELECT
     mime,
     headline,
     structure,
+    -- TODO: Add chunk-based snippet extraction (requires adding per-chunk similarity scoring)
     substr(coalesce(body, ''), 1, 640) AS snippet,
     line_start,
     line_end,
@@ -527,7 +549,7 @@ WITH params AS (
 semantic_files AS (
     SELECT doc_id, uri AS file_uri, score AS file_score
     FROM file_search(
-        (SELECT query_text FROM params),
+        keywords := NULL,
         question := (SELECT query_text FROM params),
         k := (SELECT file_k FROM params)
     )

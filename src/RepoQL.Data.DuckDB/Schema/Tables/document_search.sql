@@ -72,7 +72,7 @@ score_source AS (
             WHEN COALESCE(ri.symbol_key, '') = inp.keywords_lc THEN 4.0
             WHEN inp.keywords_lc <> '' AND position(inp.keywords_lc IN COALESCE(ri.symbol_key, '')) > 0 THEN 3.2
             WHEN lower(COALESCE(ri.basename, '')) = inp.keywords_lc
-              OR lower(regexp_replace(COALESCE(ri.basename, ''), '\\.[^.]*$', '')) = inp.keywords_lc THEN 3.0
+              OR lower(regexp_replace(COALESCE(ri.basename, ''), '\.[^.]*$', '')) = inp.keywords_lc THEN 3.0
             WHEN position(inp.keywords_lc IN lower(COALESCE(ri.basename, ''))) > 0 THEN 2.0
             WHEN position(inp.keywords_lc IN ri.search_key) > 0 THEN 1.0
             WHEN position(inp.keywords_lc IN lower(COALESCE(ri.body, ''))) > 0 THEN 0.5
