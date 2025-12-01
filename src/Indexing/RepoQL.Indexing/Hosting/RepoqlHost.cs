@@ -63,6 +63,16 @@ public sealed class RepoqlHost : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Log mounted file systems at startup for debugging
+        foreach (var (id, scheme, includeInEnum) in _fileSystem.GetMounts())
+        {
+            _logger.LogInformation(
+                "RepoqlHost mount: id={MountId} scheme={Scheme} includeInEnum={IncludeInEnum}",
+                id,
+                scheme,
+                includeInEnum);
+        }
+
         if (_options.RunFullScanOnStartup)
         {
             await EnqueueFullScanAsync(stoppingToken).ConfigureAwait(false);

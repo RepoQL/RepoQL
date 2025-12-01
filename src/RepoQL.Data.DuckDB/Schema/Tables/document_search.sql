@@ -131,7 +131,9 @@ sem_candidates AS (
 ),
 sem_norm AS (
     -- Enhanced semantic spread: apply power transformation to increase separation
-    SELECT node_id, doc_id, POWER((sem / NULLIF(MAX(sem) OVER (), 0)), 1.5) AS semn
+    -- GREATEST clamps negative cosine similarities to 0 before POWER
+    -- (negative values cause NaN with fractional exponents)
+    SELECT node_id, doc_id, POWER(GREATEST(sem / NULLIF(MAX(sem) OVER (), 0), 0), 1.5) AS semn
     FROM sem_candidates
 ),
 union_nodes AS (

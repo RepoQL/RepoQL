@@ -31,7 +31,9 @@ namespace RepoQL.Data.DuckDB;
         private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
         private readonly object _annotationGate = new();
         private readonly object _connectionLock = new();
-        // Default batch size for int8 quantized model (uses ~4x less memory than float32)
+        // Batch size for embedding. With arena disabled, larger batches don't improve
+        // performance since overhead is per-allocation not per-batch.
+        // Override with REPOQL_EMBED_BATCH_SIZE env var.
         private const int DefaultEmbeddingBatchSize = 256;
 
         #region Cached Database Counts
@@ -834,7 +836,7 @@ namespace RepoQL.Data.DuckDB;
         try
         {
             connection.Open();
-            ConfigureConnectionSettings(connection);
+            DuckDbConnectionConfiguration.Apply(connection);
             return connection;
         }
         catch (DuckDBException ex) when (TryRecoverInvalidDatabaseFile(filePath, logger, ex))
@@ -842,33 +844,11 @@ namespace RepoQL.Data.DuckDB;
             connection.Dispose();
             var retry = new DuckDBConnection($"Data Source={filePath}");
             retry.Open();
-            ConfigureConnectionSettings(retry);
+            DuckDbConnectionConfiguration.Apply(retry);
             return retry;
         }
     }
 
-    private static void ConfigureConnectionSettings(DuckDBConnection connection)
-    {
-        static void Exec(DuckDBConnection conn, string sql)
-        {
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = sql;
-            cmd.ExecuteNonQuery();
-        }
-
-        var limit = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT") ?? "2GB";
-        Exec(connection, $"SET memory_limit='{limit}';");
-        Exec(connection, "SET enable_object_cache=false;");
-        Exec(connection, "SET preserve_insertion_order=false;");
-
-        var threads = Environment.GetEnvironmentVariable("DUCKDB_THREADS") ?? "1";
-        Exec(connection, $"SET threads={threads};");
-
-        var tempDirEnv = Environment.GetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY") ?? ".repoql/index.duckdb.tmp";
-        var tempDirPath = Path.GetFullPath(tempDirEnv).Replace("\\", "/");
-        Directory.CreateDirectory(tempDirPath);
-        Exec(connection, $"SET temp_directory='{tempDirPath}';");
-    }
 
     private static void DeleteWalIfExists(string filePath, ILogger logger)
     {
@@ -1277,14 +1257,9 @@ WHERE rk = 1;
             }
         }
 
-        // Rebuild FTS index best effort; missing extension is tolerated
-        TryExec("PRAGMA drop_fts_index('document_search');");
-        var ftsCreated = TryExec("PRAGMA create_fts_index('document_search', 'doc_id', 'basename', 'dirname', 'search_key');");
-
         activity?.SetTag("repoql.search.refresh.documents", inserted);
         activity?.SetTag("repoql.search.refresh.duration_ms", sw.Elapsed.TotalMilliseconds);
-        activity?.SetTag("repoql.search.refresh.fts", ftsCreated);
-        _logger.LogInformation("Search projection refreshed: docs={Docs}, fts={Fts}, ms={Duration}", inserted, ftsCreated, (long)sw.Elapsed.TotalMilliseconds);
+        _logger.LogInformation("Search projection refreshed: docs={Docs}, ms={Duration}", inserted, (long)sw.Elapsed.TotalMilliseconds);
     }
 
     public Artifact UpsertArtifact(Artifact artifact)
@@ -2445,8 +2420,8 @@ WHERE rk = 1;
             TryExec($"LOAD {ext};");
         }
 
-        TryExec("PRAGMA threads=" + Math.Max(1, Environment.ProcessorCount));
-        TryExec("PRAGMA enable_object_cache=true;");
+        // Note: threads and object_cache are explicitly configured in the connection factory
+        // and constructor to limit memory usage. Do NOT override them here.
     }
 
     private bool ArtifactExists(Guid id)

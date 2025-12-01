@@ -1,4 +1,5 @@
-﻿using DuckDB.NET.Data;
+﻿using System.Diagnostics;
+using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts.Embeddings;
@@ -28,7 +29,13 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
     public async Task RefreshAsync(CancellationToken cancellationToken)
     {
         if (!_embeddingProvider.Enabled)
+        {
+            _logger.LogDebug("Embedding refresh skipped - provider disabled.");
             return;
+        }
+
+        _logger.LogInformation("Embedding refresh starting...");
+        var sw = Stopwatch.StartNew();
 
         await using var connection = _connectionFactory.CreateConnection();
         if (connection.State == System.Data.ConnectionState.Closed)
@@ -52,6 +59,9 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
         }
 
         await RemoveDanglingEmbeddingsAsync(connection, cancellationToken).ConfigureAwait(false);
+
+        sw.Stop();
+        _logger.LogInformation("Embedding refresh completed in {ElapsedMs}ms.", sw.ElapsedMilliseconds);
     }
 
     private static async Task RemoveDanglingEmbeddingsAsync(DuckDBConnection connection, CancellationToken cancellationToken)

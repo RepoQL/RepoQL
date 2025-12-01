@@ -227,7 +227,9 @@ sem_norm AS (
     SELECT
         node_id,
         doc_id,
-        POWER((sem / NULLIF(MAX(sem) OVER (), 0)), 1.5) AS semn
+        -- GREATEST clamps negative cosine similarities to 0 before POWER
+        -- (negative values cause NaN with fractional exponents)
+        POWER(GREATEST(sem / NULLIF(MAX(sem) OVER (), 0), 0), 1.5) AS semn
     FROM sem_top
 ),
 sem_rrf AS (

@@ -224,6 +224,19 @@ public sealed class CompositeFileSystem : IMultiFileSystem
         }
     }
 
+    /// <summary>
+    /// Returns a snapshot of mount information for diagnostics/logging.
+    /// </summary>
+    public IReadOnlyList<(string Id, string Scheme, bool IncludeInEnumeration)> GetMounts()
+    {
+        lock (_gate)
+        {
+            return _orderedMounts
+                .Select(m => (m.Id, m.FileSystem.Scheme, m.IncludeInEnumeration))
+                .ToList();
+        }
+    }
+
     /// <summary>Immutable snapshot describing a registered mount.</summary>
     private sealed record MountRegistration(
         string Id,

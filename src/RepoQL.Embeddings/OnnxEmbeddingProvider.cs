@@ -53,6 +53,9 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                 LogVerbosityLevel = 0,
             };
 
+            // Memory arena configuration
+            ConfigureMemoryOptions(so);
+
             if (intraOp is { } io and > 0) so.IntraOpNumThreads = io;
             if (interOp is { } eo and > 0) so.InterOpNumThreads = eo;
 
@@ -387,6 +390,16 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
             _logger.LogWarning(ex, "Batch embedding inference failed");
             return Enumerable.Range(0, batch).Select(_ => (float[]?)null).ToArray();
         }
+    }
+
+    private void ConfigureMemoryOptions(SessionOptions so)
+    {
+        // Disable arena - prevents unbounded memory growth.
+        // AppendExecutionProvider with options only supports QNN/SNPE/XNNPACK/AZURE, not CPU.
+        // Use large batch sizes to amortize per-inference allocation overhead.
+        so.EnableCpuMemArena = false;
+        so.EnableMemoryPattern = false;
+        _logger.LogInformation("ONNX memory arena disabled (CPU provider doesn't support arena config options)");
     }
 
     private string ConfigureExecutionProvider(SessionOptions so)

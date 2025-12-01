@@ -31,8 +31,10 @@ internal class HostCommands(IAnsiConsole console)
 {
     public async Task Serve(string? repository = null, bool implicitStart = false)
     {
-        repository ??= Directory.GetCurrentDirectory();
+        var cwd = Directory.GetCurrentDirectory();
+        repository ??= cwd;
         var repo = ProgramHelpers.ResolveRepo(repository);
+
         if (!implicitStart)
         {
             await TryShutdownExistingHostAsync(repo, CancellationToken.None).ConfigureAwait(false);
@@ -81,6 +83,9 @@ internal class HostCommands(IAnsiConsole console)
         builder.Services.AddHostedService<PipelineHealthPublisher>();
 
         var app = builder.Build();
+        
+        // Always log startup info
+        app.Logger.LogInformation("[Host] cwd={WorkingDirectory} repository={Repository} resolved repo={ResolvedRepository}", cwd, repository, repo);
         app.MapGrpcService<RepoQlServiceImpl>();
         app.MapGrpcService<HealthServiceImpl>();
         var health = app.Services.GetRequiredService<HealthServiceImpl>();

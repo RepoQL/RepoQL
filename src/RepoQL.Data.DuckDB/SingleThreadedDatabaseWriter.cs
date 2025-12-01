@@ -92,6 +92,15 @@ public sealed class SingleThreadedDatabaseWriter(
         };
         await EnqueueAndWaitAsync(barrierOp, ct).ConfigureAwait(false);
         var after = _processed;
+
+        // Force WAL checkpoint so data is visible to other connections
+        if (_writeConnection is { State: System.Data.ConnectionState.Open })
+        {
+            using var cmd = _writeConnection.CreateCommand();
+            cmd.CommandText = "CHECKPOINT;";
+            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
         return new FlushResult { OperationsFlushed = (int)(after - before) };
     }
 

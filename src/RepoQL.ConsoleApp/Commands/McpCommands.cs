@@ -13,11 +13,17 @@ namespace RepoQL.ConsoleApp.Commands;
 internal class McpCommands
 {
     /// <summary>
-    ///    Runs RepoQL as an MCP server 
+    ///    Runs RepoQL as an MCP server
     /// </summary>
     /// <param name="cancel"></param>
     public async Task Mcp(CancellationToken cancel = default)
     {
+           // Log startup info to stderr for debugging
+           var cwd = Directory.GetCurrentDirectory();
+           var repoRoot = RepoQL.Contracts.RepoLocator.FindRepoRoot(cwd);
+           await Console.Error.WriteLineAsync($"[MCP] cwd={cwd}").ConfigureAwait(false);
+           await Console.Error.WriteLineAsync($"[MCP] repoRoot={repoRoot}").ConfigureAwait(false);
+
            var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
            builder.Logging.SetMinimumLevel(LogLevel.Warning);
             builder.Logging.AddConsole(consoleLogOptions =>

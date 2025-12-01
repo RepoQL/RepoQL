@@ -14,6 +14,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
+using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
@@ -577,6 +578,15 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         if (waitStages.Count > 0)
         {
             await coordinator.WaitForPipelineAsync(waitStages, waitAll: true, context.CancellationToken).ConfigureAwait(false);
+        }
+
+        // Flush writer to ensure all indexed documents are committed before refreshing FTS
+        await writer.FlushAsync(context.CancellationToken).ConfigureAwait(false);
+
+        // Refresh search projection to include newly imported documents
+        if (store is DuckDbGraphStore duck)
+        {
+            duck.RefreshSearchProjection(incrementalRefresh: true);
         }
 
         var snapshot = coordinator.GetPipelineStatus();

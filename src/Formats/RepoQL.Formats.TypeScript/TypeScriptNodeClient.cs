@@ -1,21 +1,15 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
 
 namespace RepoQL.Formats.TypeScript;
 
-public sealed class TypeScriptNodeClient : IAsyncDisposable, IDisposable
+public sealed partial class TypeScriptNodeClient : IAsyncDisposable, IDisposable
 {
     private readonly ILogger<TypeScriptNodeClient> _logger;
     private readonly SemaphoreSlim _mutex = new(1, 1);
-
-    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNameCaseInsensitive = true
-    };
 
     private Process? _process;
     private StreamWriter? _stdin;
@@ -83,7 +77,7 @@ public sealed class TypeScriptNodeClient : IAsyncDisposable, IDisposable
                 Text = sourceText
             };
 
-            var payload = JsonSerializer.Serialize(request, SerializerOptions);
+            var payload = JsonSerializer.Serialize(request, TypeScriptJsonContext.Default.NodeRequest);
             await _stdin!.WriteLineAsync(payload).ConfigureAwait(false);
             await _stdin.FlushAsync(cancellationToken).ConfigureAwait(false);
 
@@ -106,7 +100,7 @@ public sealed class TypeScriptNodeClient : IAsyncDisposable, IDisposable
             NodeResponse? response = null;
             try
             {
-                response = JsonSerializer.Deserialize<NodeResponse>(line, SerializerOptions);
+                response = JsonSerializer.Deserialize(line, TypeScriptJsonContext.Default.NodeResponse);
             }
             catch (Exception ex)
             {
@@ -300,4 +294,10 @@ public sealed class TypeScriptNodeClient : IAsyncDisposable, IDisposable
         [JsonPropertyName("result")]
         public TypeScriptParseResult? Result { get; set; }
     }
+
+    [JsonSerializable(typeof(NodeRequest))]
+    [JsonSerializable(typeof(NodeResponse))]
+    [JsonSerializable(typeof(TypeScriptParseResult))]
+    [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
+    private partial class TypeScriptJsonContext : JsonSerializerContext;
 }
