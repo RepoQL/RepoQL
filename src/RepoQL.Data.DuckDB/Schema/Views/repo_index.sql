@@ -80,11 +80,18 @@ object_rows AS (
             repository_uri_file_name(doc.uri)
         ) AS headline,
         NULLIF(child.structure, '') AS structure,
-        -- Extract actual code content from document using line numbers, fallback to metadata
+        -- High-value body: combine metadata (headline/summary/docstring) with code
+        -- This helps embeddings and lexical search see both description and implementation
         NULLIF(
             trim(
-                COALESCE(
-                    -- Primary: extract code lines from document (no caps - accuracy > speed)
+                concat_ws(
+                    E'\n\n',
+                    -- Metadata first (high-value for semantic understanding)
+                    NULLIF(child.headline, ''),
+                    json_extract_string(child.properties, '$.summary'),
+                    json_extract_string(child.properties, '$.docstring'),
+                    NULLIF(child.structure, ''),
+                    -- Then the actual code lines when available
                     CASE
                         WHEN art.text_content IS NOT NULL
                              AND span.start_line IS NOT NULL
@@ -98,15 +105,7 @@ object_rows AS (
                             chr(10)
                         )
                         ELSE NULL
-                    END,
-                    -- Fallback: use metadata if code extraction not available
-                    concat_ws(
-                        E'\n\n',
-                        NULLIF(child.headline, ''),
-                        NULLIF(child.structure, ''),
-                        json_extract_string(child.properties, '$.summary'),
-                        json_extract_string(child.properties, '$.docstring')
-                    )
+                    END
                 )
             ),
             ''

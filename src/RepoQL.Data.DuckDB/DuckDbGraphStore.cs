@@ -836,7 +836,7 @@ namespace RepoQL.Data.DuckDB;
         try
         {
             connection.Open();
-            DuckDbConnectionConfiguration.Apply(connection);
+            DuckDbConnectionConfiguration.Apply(connection, filePath);
             return connection;
         }
         catch (DuckDBException ex) when (TryRecoverInvalidDatabaseFile(filePath, logger, ex))
@@ -844,7 +844,7 @@ namespace RepoQL.Data.DuckDB;
             connection.Dispose();
             var retry = new DuckDBConnection($"Data Source={filePath}");
             retry.Open();
-            DuckDbConnectionConfiguration.Apply(retry);
+            DuckDbConnectionConfiguration.Apply(retry, filePath);
             return retry;
         }
     }

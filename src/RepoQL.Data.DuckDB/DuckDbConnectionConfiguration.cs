@@ -17,18 +17,18 @@ public static class DuckDbConnectionConfiguration
     /// <remarks>
     /// Environment variables:
     /// <list type="bullet">
-    ///   <item><c>DUCKDB_MEMORY_LIMIT</c> - Max memory (default: 2GB)</item>
+    ///   <item><c>DUCKDB_MEMORY_LIMIT</c> - Max memory (default: 8GB)</item>
     ///   <item><c>DUCKDB_THREADS</c> - Worker threads (default: 1)</item>
-    ///   <item><c>DUCKDB_TEMP_DIRECTORY</c> - Spill directory (default: .repoql/index.duckdb.tmp)</item>
+    ///   <item><c>DUCKDB_TEMP_DIRECTORY</c> - Spill directory (default: next to database file)</item>
     /// </list>
     /// </remarks>
     private static int _applyCount;
 
-    public static void Apply(DuckDBConnection connection)
+    public static void Apply(DuckDBConnection connection, string? databasePath = null)
     {
         var count = Interlocked.Increment(ref _applyCount);
 
-        var limit = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT") ?? "2GB";
+        var limit = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT") ?? "8GB";
         Exec(connection, $"SET memory_limit='{limit}';");
 
         // Disable object cache - defaults to 80% of RAM which is far too aggressive
@@ -43,8 +43,15 @@ public static class DuckDbConnectionConfiguration
         // Return freed memory to OS more aggressively (default 128MB holds too long)
         Exec(connection, "SET allocator_flush_threshold='64MB';");
 
-        // Ensure spills go to a deterministic temp directory
-        var tempDir = Environment.GetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY") ?? ".repoql/index.duckdb.tmp";
+        // Ensure spills go to a deterministic temp directory (relative to database, not CWD)
+        var tempDir = Environment.GetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY");
+        if (string.IsNullOrEmpty(tempDir) && !string.IsNullOrEmpty(databasePath))
+        {
+            // Default to temp directory next to the database file
+            var dbDir = Path.GetDirectoryName(Path.GetFullPath(databasePath));
+            tempDir = Path.Combine(dbDir ?? ".", "index.duckdb.tmp");
+        }
+        tempDir ??= ".repoql/index.duckdb.tmp";
         var tempDirPath = Path.GetFullPath(tempDir).Replace("\\", "/", StringComparison.Ordinal);
         Directory.CreateDirectory(tempDirPath);
         Exec(connection, $"SET temp_directory='{tempDirPath}';");

@@ -114,7 +114,8 @@ score_source AS (
             ELSE NULL
         END                                                     AS bm25_heur,
         match_score(cls.keywords_lc, text_target)               AS bm25_fallback,
-        (SELECT MAX(match_score(trim(t.value), ri.search_key))
+        -- Use text_target (path + name + content) for per-token scoring, not just search_key
+        (SELECT MAX(match_score(trim(t.value), text_target))
             FROM UNNEST(str_split(cls.keywords_lc, ' ')) AS t(value)
             WHERE length(trim(t.value)) > 0)                    AS bm25_tokens,
         match_score(cls.keywords_lc, ri.search_key)             AS fuzz
@@ -307,15 +308,8 @@ scored AS (
         coalesce(lx.bm25n, 0)                 AS bm25_score,
         coalesce(lx.fuzzn, 0)                 AS fuzzy_score,
         coalesce(sn.semn, 0)                  AS dense_score,
-        coalesce(rlex.rrf_lex, 0) + coalesce(rsem.rrf_sem, 0) AS rrf,
-        combine(
-            coalesce(lx.bm25n, 0),
-            coalesce(lx.fuzzn, 0),
-            coalesce(sn.semn, 0),
-            wb := cfg.bm25_w,
-            wf := cfg.fuzzy_w,
-            ws := cfg.effective_sem_weight
-        ) AS score
+        coalesce(rlex.rrf_lex, 0) + coalesce(rsem.rrf_sem, 0) AS rrf
+        -- score computed in final_with_conf using doc_semn for objects
     FROM final_nodes fn
              JOIN filtered ri ON ri.node_id = fn.fn_node_id
              LEFT JOIN normalized_lex lx ON lx.node_id = fn.fn_node_id
@@ -336,36 +330,50 @@ scored AS (
     FROM scored
     GROUP BY doc_id
 ), final_with_conf AS (
+    -- Compute score using doc_semn so objects get semantic signal from their parent document
     SELECT
-        s.*,
-        coalesce(ds.doc_semn, s.dense_score) AS doc_semn,
+        fws.*,
         CASE
-            WHEN s.score >= 2 THEN 0.95
-            WHEN s.score >= 1.2 THEN 0.8
-            WHEN s.score >= 0.8 THEN 0.65
+            WHEN fws.score >= 2 THEN 0.95
+            WHEN fws.score >= 1.2 THEN 0.8
+            WHEN fws.score >= 0.8 THEN 0.65
             ELSE 0.4
-        END AS confidence,
-        cls.route_mode,
-        cls.uri_glob_filter,
-        cls.mime_glob_filter,
-        cls.keywords_empty,
-        cls.keywords_lc,
-        cls.requested_mode,
-        json_object(
-            'route', cls.route_mode,
-            'uri_glob_applied', cls.uri_glob_filter IS NOT NULL,
-            'mime_glob_applied', cls.mime_glob_filter IS NOT NULL,
-            'keywords_empty', cls.keywords_empty
-        ) AS boosts_json,
-        json_object(
-            'route', cls.route_mode,
-            'lex_candidates', (SELECT cnt FROM lex_stats),
-            'dense_candidates', (SELECT cnt FROM sem_stats),
-            'requested_mode', cls.requested_mode
-        ) AS explain_json
-    FROM scored s
-         LEFT JOIN doc_sem ds ON ds.doc_id = s.doc_id
-         JOIN classified cls ON TRUE
+        END AS confidence
+    FROM (
+        SELECT
+            s.*,
+            coalesce(ds.doc_semn, s.dense_score) AS doc_semn,
+            combine(
+                s.bm25_score,
+                s.fuzzy_score,
+                coalesce(ds.doc_semn, s.dense_score),
+                wb := cfg.bm25_w,
+                wf := cfg.fuzzy_w,
+                ws := cfg.effective_sem_weight
+            ) AS score,
+            cls.route_mode,
+            cls.uri_glob_filter,
+            cls.mime_glob_filter,
+            cls.keywords_empty,
+            cls.keywords_lc,
+            cls.requested_mode,
+            json_object(
+                'route', cls.route_mode,
+                'uri_glob_applied', cls.uri_glob_filter IS NOT NULL,
+                'mime_glob_applied', cls.mime_glob_filter IS NOT NULL,
+                'keywords_empty', cls.keywords_empty
+            ) AS boosts_json,
+            json_object(
+                'route', cls.route_mode,
+                'lex_candidates', (SELECT cnt FROM lex_stats),
+                'dense_candidates', (SELECT cnt FROM sem_stats),
+                'requested_mode', cls.requested_mode
+            ) AS explain_json
+        FROM scored s
+        LEFT JOIN doc_sem ds ON ds.doc_id = s.doc_id
+        JOIN classified cls ON TRUE
+        JOIN config cfg ON TRUE
+    ) fws
 )
 SELECT *
 FROM final_with_conf
@@ -514,7 +522,13 @@ SELECT
     dense_score AS semn,
     score
 FROM search(
-        trim(concat_ws(' ', coalesce(keywords, ''), coalesce(question, ''))),
+        -- Avoid "q q" duplication when only question is provided
+        CASE
+            WHEN question IS NOT NULL AND length(trim(question)) > 0
+                 AND (keywords IS NULL OR length(trim(keywords)) = 0)
+            THEN trim(question)
+            ELSE trim(concat_ws(' ', coalesce(keywords, ''), coalesce(question, '')))
+        END,
         mode := CASE
                   WHEN question IS NOT NULL AND length(trim(question)) > 0 THEN 'heavy'
                   ELSE 'auto'
@@ -659,11 +673,11 @@ candidate_objects_raw AS (
       AND (p.mime_filter IS NULL
            OR repoql_glob_match(coalesce(ri.mime, ''), p.mime_filter, TRUE, NULL) IS TRUE)
 ),
--- Limit candidates to top 100 by lexical priority before expensive JIT embedding
+-- Limit candidates before expensive JIT embedding (accuracy > speed)
 candidate_objects AS (
     SELECT * FROM candidate_objects_raw
     ORDER BY lexical_priority DESC, file_score DESC
-    LIMIT 100
+    LIMIT 200
 ),
 -- Embed headline and body separately, compute weighted similarity
 scored_objects AS (
