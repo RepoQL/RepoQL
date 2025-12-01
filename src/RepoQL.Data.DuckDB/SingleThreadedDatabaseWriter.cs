@@ -102,9 +102,14 @@ public sealed class SingleThreadedDatabaseWriter(
             Id = Guid.NewGuid(),
             Type = WriteOperationType.Checkpoint,
             Uri = RepoUri.Parse("mem://writer-checkpoint"),
-            ParsedData = Records.Empty
+            ParsedData = Records.Empty,
+            CancellationToken = ct
         };
-        await EnqueueAndWaitAsync(checkpointOp, ct).ConfigureAwait(false);
+        var checkpointResult = await EnqueueAndWaitAsync(checkpointOp, ct).ConfigureAwait(false);
+        if (!checkpointResult.Success)
+        {
+            throw checkpointResult.Error ?? new InvalidOperationException("Checkpoint failed without error details");
+        }
 
         return new FlushResult { OperationsFlushed = (int)(after - before) };
     }
@@ -347,6 +352,13 @@ public sealed class SingleThreadedDatabaseWriter(
         {
             await ProcessOneAsync(batch[0]).ConfigureAwait(false);
             return true;
+        }
+
+        // Checkpoint and Barrier operations cannot run inside a transaction.
+        // If any item in the batch is a Checkpoint or Barrier, force individual processing.
+        if (batch.Any(qi => qi.Operation.Type is WriteOperationType.Checkpoint or WriteOperationType.Barrier))
+        {
+            return false;
         }
 
         try
@@ -609,18 +621,21 @@ public sealed class SingleThreadedDatabaseWriter(
             WriteOperationType.UpsertAnnotations => ExecuteSynchronously(() => ApplyUpsertAnnotations(op)),
             WriteOperationType.DeleteDocument => ExecuteSynchronously(() => ApplyDeleteDocument(op)),
             WriteOperationType.Barrier => Task.CompletedTask,
-            WriteOperationType.Checkpoint => ApplyCheckpointAsync(),
+            WriteOperationType.Checkpoint => ApplyCheckpointAsync(op.CancellationToken),
             _ => throw new NotSupportedException($"Unsupported op: {op.Type}")
         };
     }
 
-    private async Task ApplyCheckpointAsync()
+    private async Task ApplyCheckpointAsync(CancellationToken cancellationToken)
     {
         if (_writeConnection is { State: System.Data.ConnectionState.Open })
         {
+            // Link to both the caller's token and the stopping token so checkpoint
+            // can be cancelled either by the caller or by the service stopping.
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             using var cmd = _writeConnection.CreateCommand();
             cmd.CommandText = "CHECKPOINT;";
-            await cmd.ExecuteNonQueryAsync(_stopping.Token).ConfigureAwait(false);
+            await cmd.ExecuteNonQueryAsync(linkedCts.Token).ConfigureAwait(false);
         }
     }
 
