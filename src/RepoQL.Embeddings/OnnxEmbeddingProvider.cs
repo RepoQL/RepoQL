@@ -155,13 +155,13 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         var batch = texts.Count;
         var totalTimer = System.Diagnostics.Stopwatch.StartNew();
 
-        // Tokenize
+        // Tokenize in parallel - WordPieceTokenizer.Encode is thread-safe (reads immutable vocab)
         var tokenizeTimer = System.Diagnostics.Stopwatch.StartNew();
         var encs = new EncodingResult[batch];
-        for (var i = 0; i < batch; i++)
+        Parallel.For(0, batch, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, i =>
         {
             encs[i] = _tokenizer!.Encode(texts[i], _maxSeqLen);
-        }
+        });
         tokenizeTimer.Stop();
 
         // Autodetect input dtype

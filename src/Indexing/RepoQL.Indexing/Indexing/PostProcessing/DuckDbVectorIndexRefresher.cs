@@ -8,7 +8,8 @@ using RepoQL.Data.DuckDB;
 namespace RepoQL.Indexing.Indexing.PostProcessing;
 
 /// <summary>
-/// Refreshes the DuckDB-backed vector index by invoking <see cref="DuckDbGraphStore.RefreshDocumentEmbeddings"/>.
+/// Refreshes the DuckDB-backed vector index by invoking <see cref="DuckDbGraphStore.RefreshDocumentEmbeddingsAsync"/>.
+/// Uses pipelined producer-consumer pattern for optimal throughput.
 /// </summary>
 public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
 {
@@ -55,7 +56,7 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
                    logger: graphStoreLogger,
                    embeddingProvider: _embeddingProvider))
         {
-            store.RefreshDocumentEmbeddings(_embeddingProvider, cancellationToken);
+            await store.RefreshDocumentEmbeddingsAsync(_embeddingProvider, cancellationToken).ConfigureAwait(false);
         }
 
         await RemoveDanglingEmbeddingsAsync(connection, cancellationToken).ConfigureAwait(false);

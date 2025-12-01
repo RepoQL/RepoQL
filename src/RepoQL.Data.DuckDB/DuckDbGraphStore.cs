@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
+using System.Threading.Channels;
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -416,6 +417,343 @@ namespace RepoQL.Data.DuckDB;
         _logger.LogInformation(
             "Semantic indexing complete: {Count} documents embedded in {Seconds:F1}s ({Throughput:F0}/s, model={Model})",
             docSuccess,
+            totalMs / 1000.0,
+            throughput,
+            provider.Model);
+    }
+
+    /// <summary>
+    /// Async version with pipelined embedding generation and DB writes.
+    /// Uses a producer-consumer pattern where embedding batches are generated
+    /// concurrently with DB writes for the previous batch.
+    /// </summary>
+    public async Task RefreshDocumentEmbeddingsAsync(Contracts.Embeddings.IEmbeddingProvider provider, CancellationToken ct = default)
+    {
+        using var connectionLock = EnterConnectionScope();
+        if (provider is null || !provider.Enabled)
+            return;
+
+        var totalDocuments = CountTotalDocuments();
+        var documents = LoadDocumentEmbeddingSources();
+        var docsSkippedAsUpToDate = totalDocuments - documents.Count;
+
+        if (documents.Count == 0)
+        {
+            _logger.LogInformation("Semantic indexing complete: all {Total} documents up-to-date", totalDocuments);
+            return;
+        }
+
+        _logger.LogDebug("Semantic indexing: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
+            documents.Count, totalDocuments, docsSkippedAsUpToDate);
+
+        var workItems = BuildEmbeddingWorkItems(documents);
+        if (workItems.Count == 0)
+            return;
+
+        var batchSize = GetEffectiveBatchSize(provider);
+        var uniqueDocs = workItems.Select(w => w.DocId).Distinct().Count();
+        var totalChunks = workItems.Count;
+        var chunkedDocs = workItems.Where(w => w.ChunkIndex > 0).Select(w => w.DocId).Distinct().Count();
+
+        _logger.LogInformation("Semantic indexing: {Docs} documents ({Chunks} chunks, {Chunked} chunked)...",
+            uniqueDocs, totalChunks, chunkedDocs);
+
+        var sw = Stopwatch.StartNew();
+
+        // Bounded channel for double-buffering: producer can be 1 batch ahead
+        var channel = Channel.CreateBounded<EmbeddingBatchResult>(
+            new BoundedChannelOptions(2) { SingleReader = true, SingleWriter = true });
+
+        // Start producer task (runs embedding on background thread)
+        var producerTask = ProduceEmbeddingsAsync(workItems, batchSize, provider, channel.Writer, ct);
+
+        // Consumer: writes to DB on current thread (single-writer architecture)
+        var stats = await ConsumeAndWriteEmbeddingsAsync(channel.Reader, provider, ct).ConfigureAwait(false);
+
+        // Wait for producer to complete (handles exceptions)
+        await producerTask.ConfigureAwait(false);
+
+        sw.Stop();
+        LogEmbeddingCompletionStats(sw.Elapsed, stats, provider);
+    }
+
+    private int GetEffectiveBatchSize(Contracts.Embeddings.IEmbeddingProvider provider)
+    {
+        var batchSize = DefaultEmbeddingBatchSize;
+        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_BATCH_SIZE"), out var bs) && bs > 0)
+        {
+            batchSize = bs;
+        }
+
+        if (provider is RepoQL.Embeddings.OnnxEmbeddingProvider onnx)
+        {
+            var providerName = onnx.Provider?.ToUpperInvariant() ?? "CPU";
+            if ((providerName == "COREML" || providerName == "DML") && batchSize > 256)
+            {
+                _logger.LogWarning("Capping embedding batch size from {Requested} to 256 for {Provider}", batchSize, providerName);
+                batchSize = 256;
+            }
+        }
+        return batchSize;
+    }
+
+    private readonly record struct EmbeddingBatchResult(
+        EmbeddingWorkItem[] Items,
+        float[]?[] Vectors,
+        TimeSpan EmbedTime);
+
+    private readonly record struct EmbeddingStats(
+        int DocSuccess,
+        int DocSkipped,
+        int ObjSuccess,
+        int ObjSkipped,
+        int Batches,
+        int TotalItems,
+        double EmbedMsTotal,
+        double DbMsTotal);
+
+    private async Task ProduceEmbeddingsAsync(
+        List<EmbeddingWorkItem> workItems,
+        int batchSize,
+        Contracts.Embeddings.IEmbeddingProvider provider,
+        ChannelWriter<EmbeddingBatchResult> writer,
+        CancellationToken ct)
+    {
+        try
+        {
+            for (var ofs = 0; ofs < workItems.Count; ofs += batchSize)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var sliceLength = Math.Min(batchSize, workItems.Count - ofs);
+                var sliceItems = new EmbeddingWorkItem[sliceLength];
+                var payloads = new string[sliceLength];
+                for (var i = 0; i < sliceLength; i++)
+                {
+                    sliceItems[i] = workItems[ofs + i];
+                    payloads[i] = sliceItems[i].Payload;
+                }
+
+                float[]?[] vectors;
+                var batchTimer = Stopwatch.StartNew();
+                try
+                {
+                    vectors = await provider.EmbedBatchAsync(payloads, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    batchTimer.Stop();
+                    _logger.LogWarning(ex, "Embedding batch failed (size={BatchSize}, model={Model})", sliceLength, provider.Model);
+                    vectors = Array.Empty<float[]?>();
+                }
+                batchTimer.Stop();
+
+                await writer.WriteAsync(new EmbeddingBatchResult(sliceItems, vectors, batchTimer.Elapsed), ct).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            writer.Complete();
+        }
+    }
+
+    private async Task<EmbeddingStats> ConsumeAndWriteEmbeddingsAsync(
+        ChannelReader<EmbeddingBatchResult> reader,
+        Contracts.Embeddings.IEmbeddingProvider provider,
+        CancellationToken ct)
+    {
+        var docSuccess = 0;
+        var docSkipped = 0;
+        var objSuccess = 0;
+        var objSkipped = 0;
+        var batches = 0;
+        var totalItems = 0;
+        double embedMsTotal = 0;
+        double dbMsTotal = 0;
+
+        await foreach (var batch in reader.ReadAllAsync(ct).ConfigureAwait(false))
+        {
+            batches++;
+            totalItems += batch.Items.Length;
+            embedMsTotal += batch.EmbedTime.TotalMilliseconds;
+
+            var dbTimer = Stopwatch.StartNew();
+
+            // Collect valid items for bulk insert
+            var validItems = new List<(EmbeddingWorkItem Item, float[] Vec)>();
+            for (var i = 0; i < batch.Items.Length; i++)
+            {
+                var item = batch.Items[i];
+                var vec = (batch.Vectors != null && i < batch.Vectors.Length) ? batch.Vectors[i] : null;
+
+                if (vec is null)
+                {
+                    if (item.Scope == DocumentEmbeddingScope) docSkipped++; else objSkipped++;
+                    RecordEmbeddingError(item, provider, batch.EmbedTime.TotalMilliseconds / batch.Items.Length);
+                    continue;
+                }
+
+                validItems.Add((item, vec));
+            }
+
+            // Bulk insert all valid items
+            if (validItems.Count > 0)
+            {
+                WriteBatchBulk(validItems, provider);
+                foreach (var (item, _) in validItems)
+                {
+                    if (item.Scope == DocumentEmbeddingScope) docSuccess++; else objSuccess++;
+                    RecordEmbeddingSuccess(item, provider, batch.EmbedTime.TotalMilliseconds / batch.Items.Length);
+                }
+            }
+
+            dbTimer.Stop();
+            dbMsTotal += dbTimer.Elapsed.TotalMilliseconds;
+
+            _metrics.EmbeddingBatchSize.Record(batch.Items.Length);
+            _metrics.EmbeddingPhaseDuration.Record(batch.EmbedTime.TotalMilliseconds, new TagList
+            {
+                { "phase", "embed" },
+                { "batch_size", batch.Items.Length },
+                { "model", provider.Model }
+            });
+            _metrics.EmbeddingPhaseDuration.Record(dbTimer.Elapsed.TotalMilliseconds, new TagList
+            {
+                { "phase", "db" },
+                { "batch_size", batch.Items.Length },
+                { "model", provider.Model }
+            });
+
+            var perItemMs = batch.Items.Length == 0 ? 0 : batch.EmbedTime.TotalMilliseconds / batch.Items.Length;
+            _logger.LogInformation("Batch processing: size={BatchSize}, embedding={EmbedMs:F1}ms ({EmbedPerItem:F1}ms/item), database={DbMs:F1}ms ({DbPerItem:F1}ms/item), total={TotalMs:F1}ms",
+                batch.Items.Length,
+                batch.EmbedTime.TotalMilliseconds, perItemMs,
+                dbTimer.Elapsed.TotalMilliseconds, dbTimer.Elapsed.TotalMilliseconds / batch.Items.Length,
+                batch.EmbedTime.TotalMilliseconds + dbTimer.Elapsed.TotalMilliseconds);
+        }
+
+        return new EmbeddingStats(docSuccess, docSkipped, objSuccess, objSkipped, batches, totalItems, embedMsTotal, dbMsTotal);
+    }
+
+    private void WriteBatchBulk(List<(EmbeddingWorkItem Item, float[] Vec)> items, Contracts.Embeddings.IEmbeddingProvider provider)
+    {
+        if (items.Count == 0) return;
+
+        using var tx = _connection.BeginTransaction();
+        try
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("""
+                INSERT INTO document_embedding(doc_id, node_id, chunk_index, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
+                VALUES
+                """);
+
+            using var cmd = _connection.CreateCommand();
+            cmd.Transaction = tx;
+
+            for (var i = 0; i < items.Count; i++)
+            {
+                if (i > 0) sb.Append(",\n");
+                var paramBase = i * 10;
+                sb.Append($"(?{paramBase + 1},?{paramBase + 2},?{paramBase + 3},?{paramBase + 4},?{paramBase + 5},?{paramBase + 6},?{paramBase + 7},?{paramBase + 8},?{paramBase + 9},?{paramBase + 10},CURRENT_TIMESTAMP)");
+
+                var (item, vec) = items[i];
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.DocId });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.NodeId });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.ChunkIndex });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.Uri });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.Scope });
+                cmd.Parameters.Add(new DuckDBParameter { Value = provider.Model });
+                cmd.Parameters.Add(new DuckDBParameter { Value = provider.Dimension });
+                cmd.Parameters.Add(new DuckDBParameter { Value = SerializeFloatArray(vec) });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.StartByte ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.EndByte ?? (object)DBNull.Value });
+            }
+
+            sb.AppendLine("""
+                ON CONFLICT (doc_id, node_id, chunk_index)
+                DO UPDATE SET uri=excluded.uri, scope=excluded.scope, model=excluded.model,
+                              dim=excluded.dim, embedding=excluded.embedding,
+                              start_byte=excluded.start_byte, end_byte=excluded.end_byte,
+                              updated_at=excluded.updated_at
+                """);
+
+            cmd.CommandText = sb.ToString();
+            ExecuteWithTupleDeleteRetry(() => cmd.ExecuteNonQuery());
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
+    }
+
+    private void RecordEmbeddingError(EmbeddingWorkItem item, Contracts.Embeddings.IEmbeddingProvider provider, double perItemMs)
+    {
+        _metrics.EmbedErrors.Add(1, new TagList
+        {
+            { "source", "refresh" },
+            { "scope", item.Scope },
+            { "model", provider.Model },
+            { "dim", provider.Dimension }
+        });
+        var errorTags = new TagList
+        {
+            { "source", "refresh" },
+            { "scope", item.Scope },
+            { "model", provider.Model },
+            { "dim", provider.Dimension },
+            { "status", "error" }
+        };
+        _metrics.EmbedRequests.Add(1, errorTags);
+        _metrics.EmbedDuration.Record(perItemMs, errorTags);
+    }
+
+    private void RecordEmbeddingSuccess(EmbeddingWorkItem item, Contracts.Embeddings.IEmbeddingProvider provider, double perItemMs)
+    {
+        var okTags = new TagList
+        {
+            { "source", "refresh" },
+            { "scope", item.Scope },
+            { "model", provider.Model },
+            { "dim", provider.Dimension },
+            { "status", "ok" }
+        };
+        _metrics.EmbedRequests.Add(1, okTags);
+        _metrics.EmbedDuration.Record(perItemMs, okTags);
+    }
+
+    private void LogEmbeddingCompletionStats(TimeSpan elapsed, EmbeddingStats stats, Contracts.Embeddings.IEmbeddingProvider provider)
+    {
+        var totalMs = elapsed.TotalMilliseconds;
+        var embedPct = totalMs <= 0 ? 0 : (stats.EmbedMsTotal / totalMs) * 100;
+        var dbPct = totalMs <= 0 ? 0 : (stats.DbMsTotal / totalMs) * 100;
+        var throughput = stats.TotalItems == 0 ? 0 : stats.TotalItems / Math.Max(0.001, totalMs / 1000d);
+
+        _metrics.EmbeddingPhaseDuration.Record(stats.EmbedMsTotal, new TagList { { "phase", "embed_total" }, { "model", provider.Model } });
+        _metrics.EmbeddingPhaseDuration.Record(stats.DbMsTotal, new TagList { { "phase", "db_total" }, { "model", provider.Model } });
+
+        _logger.LogDebug(
+            "Embeddings detail: docs={DocRows}, objects={ObjectRows}, skipped_docs={SkippedDocs}, skipped_objects={SkippedObjects}, model={Model}, dim={Dim}, batches={Batches}, items={Items}, embed_ms={EmbedMs:F1} ({EmbedPct:F1}%), db_ms={DbMs:F1} ({DbPct:F1}%), total_ms={TotalMs:F1}, throughput={Throughput:F1}/s",
+            stats.DocSuccess,
+            stats.ObjSuccess,
+            stats.DocSkipped,
+            stats.ObjSkipped,
+            provider.Model,
+            provider.Dimension,
+            stats.Batches,
+            stats.TotalItems,
+            stats.EmbedMsTotal,
+            embedPct,
+            stats.DbMsTotal,
+            dbPct,
+            totalMs,
+            throughput);
+
+        _logger.LogInformation(
+            "Semantic indexing complete: {Count} documents embedded in {Seconds:F1}s ({Throughput:F0}/s, model={Model})",
+            stats.DocSuccess,
             totalMs / 1000.0,
             throughput,
             provider.Model);
