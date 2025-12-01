@@ -542,14 +542,17 @@ FROM search(
 );
 
 -- Two-phase object search with just-in-time embeddings.
--- Phase 1: Find candidate files using file_search (pre-computed file embeddings)
--- Phase 2: Embed objects within those files on-demand and rank by similarity
+-- Phase 1: Find candidate files and chunks using semantic search
+-- Phase 2: Filter objects by chunk overlap, then embed on-demand
+-- Optimization: Uses document chunks as clues to reduce JIT embedding count
 CREATE OR REPLACE MACRO object_search(
     q,
     k := 20,
     file_candidates := 10,
     uri_glob := NULL,
-    mime_glob := NULL
+    mime_glob := NULL,
+    chunks_per_file := 3,        -- Max chunks to consider per file for object filtering
+    max_embed_candidates := 80   -- Max objects to JIT embed (down from 200)
 ) AS TABLE (
 WITH params AS (
     SELECT
@@ -557,7 +560,16 @@ WITH params AS (
         CAST(coalesce(k, 20) AS BIGINT)            AS result_k,
         CAST(coalesce(file_candidates, 10) AS BIGINT) AS file_k,
         NULLIF(trim(uri_glob), '')                 AS uri_filter,
-        NULLIF(trim(mime_glob), '')                AS mime_filter
+        NULLIF(trim(mime_glob), '')                AS mime_filter,
+        CAST(coalesce(chunks_per_file, 3) AS BIGINT) AS chunks_k,
+        CAST(coalesce(max_embed_candidates, 80) AS BIGINT) AS embed_limit
+),
+-- Embed the query once (needed for both file and chunk scoring)
+query_embedding AS (
+    SELECT embed_text_json(
+        'Represent this sentence for searching relevant passages: ' ||
+        (SELECT query_text FROM params)
+    ) AS qvec
 ),
 -- Phase 1a: Find candidate files using file_search with file-level embeddings
 semantic_files AS (
@@ -622,16 +634,45 @@ candidate_files AS (
     )
     GROUP BY doc_id, file_uri
 ),
--- Embed the query once for object comparison
-query_embedding AS (
-    SELECT embed_text_json(
-        'Represent this sentence for searching relevant passages: ' ||
-        (SELECT query_text FROM params)
-    ) AS qvec
+-- Phase 1d: Score all chunks within candidate files to find the most relevant regions
+-- This uses the pre-computed document_embedding chunks
+chunk_scores AS (
+    SELECT
+        de.doc_id,
+        de.chunk_index,
+        de.start_byte,
+        de.end_byte,
+        cosine_similarity_json(qe.qvec, de.embedding) AS chunk_score
+    FROM document_embedding de
+    JOIN candidate_files cf ON de.doc_id = cf.doc_id
+    CROSS JOIN query_embedding qe
+    WHERE de.scope = 'document'
+      AND de.embedding IS NOT NULL
+      AND qe.qvec IS NOT NULL
+      AND de.start_byte IS NOT NULL  -- Only chunked documents have byte ranges
+      AND de.end_byte IS NOT NULL
 ),
--- Phase 2: Get objects from candidate files, pre-scored by lexical match
--- Limit to top candidates BEFORE expensive embedding step
-candidate_objects_raw AS (
+-- Rank chunks per document, keep top N per file
+ranked_chunks AS (
+    SELECT
+        doc_id,
+        chunk_index,
+        start_byte,
+        end_byte,
+        chunk_score,
+        ROW_NUMBER() OVER (PARTITION BY doc_id ORDER BY chunk_score DESC) AS chunk_rank
+    FROM chunk_scores
+),
+-- Keep best chunks per file (these define the "hot zones" for object search)
+best_chunks AS (
+    SELECT doc_id, chunk_index, start_byte, end_byte, chunk_score
+    FROM ranked_chunks
+    JOIN params p ON TRUE
+    WHERE chunk_rank <= p.chunks_k
+),
+-- Phase 2: Get objects from candidate files with span byte ranges
+-- Join to span table to get byte offsets for overlap checking
+objects_with_spans AS (
     SELECT
         ri.doc_id,
         ri.node_id,
@@ -651,6 +692,9 @@ candidate_objects_raw AS (
         ri.basename,
         cf.file_uri,
         cf.file_score,
+        -- Get span byte range for overlap checking
+        sp.start_byte AS obj_start_byte,
+        sp.end_byte AS obj_end_byte,
         -- Headline text for high-value matching (symbol name, signature)
         coalesce(ri.symbol, ri.headline, '') AS headline_text,
         -- Body text for full content matching
@@ -666,6 +710,8 @@ candidate_objects_raw AS (
         END AS lexical_priority
     FROM repo_index ri
     JOIN candidate_files cf ON ri.doc_id = cf.doc_id
+    JOIN node n ON n.id = ri.node_id
+    LEFT JOIN span sp ON sp.id = n.span_id
     JOIN params p ON TRUE
     WHERE ri.scope = 'object'
       AND (p.uri_filter IS NULL
@@ -673,11 +719,95 @@ candidate_objects_raw AS (
       AND (p.mime_filter IS NULL
            OR repoql_glob_match(coalesce(ri.mime, ''), p.mime_filter, TRUE, NULL) IS TRUE)
 ),
--- Limit candidates before expensive JIT embedding (accuracy > speed)
+-- Filter objects to those overlapping with high-scoring chunks
+-- An object overlaps a chunk if: obj_start < chunk_end AND obj_end > chunk_start
+-- Objects with no byte range (legacy) or files with no chunks are included via lexical match
+objects_with_chunk_scores AS (
+    SELECT
+        ows.doc_id,
+        ows.node_id,
+        ows.uri,
+        ows.path,
+        ows.kind,
+        ows.symbol,
+        ows.headline,
+        ows.structure,
+        ows.body,
+        ows.line_start,
+        ows.line_end,
+        ows.lang,
+        ows.mime,
+        ows.mtime,
+        ows.digest,
+        ows.basename,
+        ows.file_uri,
+        ows.file_score,
+        ows.headline_text,
+        ows.body_text,
+        ows.lexical_priority AS base_lexical_priority,
+        -- Take best chunk score for this object (may overlap multiple chunks)
+        MAX(bc.chunk_score) AS best_chunk_score
+    FROM objects_with_spans ows
+    LEFT JOIN best_chunks bc ON bc.doc_id = ows.doc_id
+        AND ows.obj_start_byte IS NOT NULL
+        AND ows.obj_end_byte IS NOT NULL
+        AND bc.start_byte IS NOT NULL
+        AND bc.end_byte IS NOT NULL
+        -- Overlap condition: object and chunk ranges intersect
+        AND ows.obj_start_byte < bc.end_byte
+        AND ows.obj_end_byte > bc.start_byte
+    GROUP BY
+        ows.doc_id, ows.node_id, ows.uri, ows.path, ows.kind, ows.symbol,
+        ows.headline, ows.structure, ows.body, ows.line_start, ows.line_end,
+        ows.lang, ows.mime, ows.mtime, ows.digest, ows.basename, ows.file_uri,
+        ows.file_score, ows.headline_text, ows.body_text, ows.lexical_priority
+),
+-- Calculate final priority and filter
+candidate_objects_raw AS (
+    SELECT
+        doc_id,
+        node_id,
+        uri,
+        path,
+        kind,
+        symbol,
+        headline,
+        structure,
+        body,
+        line_start,
+        line_end,
+        lang,
+        mime,
+        mtime,
+        digest,
+        basename,
+        file_uri,
+        file_score,
+        headline_text,
+        body_text,
+        -- Boost priority for objects in high-scoring chunks
+        CASE
+            -- Direct lexical match always wins
+            WHEN base_lexical_priority >= 60 THEN base_lexical_priority + 50
+            -- Object overlaps a high-scoring chunk: boost based on chunk score
+            WHEN best_chunk_score IS NOT NULL THEN base_lexical_priority + (best_chunk_score * 40)
+            -- Fallback: no chunk info or no overlap, use base lexical priority
+            ELSE base_lexical_priority
+        END AS lexical_priority,
+        -- Track whether object is in a hot chunk (for diagnostics)
+        best_chunk_score IS NOT NULL AS in_hot_chunk
+    FROM objects_with_chunk_scores owcs
+    -- Include object if: has lexical match OR overlaps hot chunk OR file has no chunks
+    WHERE base_lexical_priority >= 20  -- Has some lexical match
+       OR best_chunk_score IS NOT NULL  -- Overlaps a hot chunk
+       OR NOT EXISTS (SELECT 1 FROM best_chunks bc2 WHERE bc2.doc_id = owcs.doc_id)  -- File has no chunks
+),
+-- Limit candidates before expensive JIT embedding
+-- Reduced from 200 to max_embed_candidates (default 80) since we've pre-filtered by chunk
 candidate_objects AS (
     SELECT * FROM candidate_objects_raw
     ORDER BY lexical_priority DESC, file_score DESC
-    LIMIT 200
+    LIMIT (SELECT embed_limit FROM params)
 ),
 -- Embed headline and body separately, compute weighted similarity
 scored_objects AS (

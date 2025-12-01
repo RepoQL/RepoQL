@@ -140,12 +140,39 @@ Thin wrapper that concatenates keyword + question text, switches to `heavy` mode
 
 ## `object_search(...)`
 
-Two-phase search optimized for finding functions/classes:
+Two-phase search optimized for finding functions/classes, with chunk-guided filtering to minimize JIT embedding cost.
 
-1. **Phase 1**: Find candidate files using `file_search()` with file-level embeddings
-2. **Phase 2**: JIT-embed objects within those files, rank by headline+body similarity
+**Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `q` | required | Search query |
+| `k` | 20 | Max results to return |
+| `file_candidates` | 10 | Max files to consider from semantic search |
+| `uri_glob` | NULL | Optional URI pattern filter |
+| `mime_glob` | NULL | Optional MIME type filter |
+| `chunks_per_file` | 3 | Max document chunks per file for object filtering |
+| `max_embed_candidates` | 80 | Max objects to JIT embed (hard limit) |
 
-This avoids pre-computing embeddings for every object while still enabling semantic object search.
+**Algorithm:**
+
+1. **Phase 1a**: Find candidate files using `file_search()` with pre-computed document embeddings
+2. **Phase 1b/1c**: Add files with lexical matches (symbol/headline/structure/body)
+3. **Phase 1d**: Score document chunks within candidate files against the query
+4. **Phase 2a**: Filter objects to those whose byte ranges overlap with high-scoring chunks
+5. **Phase 2b**: JIT-embed the filtered objects (headline + body), rank by similarity
+
+**Chunk-guided optimization:**
+The key optimization is using pre-computed document chunk embeddings as "clues" to identify relevant regions within files. Instead of embedding all objects in candidate files (up to 200), we:
+- Score each document chunk against the query
+- Keep top N chunks per file (default 3)
+- Only embed objects whose span byte range overlaps these "hot zones"
+
+This typically reduces JIT embeddings from ~200 to ~20-80, dramatically improving search latency while maintaining accuracy (relevant objects are in relevant chunks).
+
+**Fallback behavior:**
+- Objects with strong lexical matches (priority >= 60) bypass chunk filtering
+- Files without chunk embeddings (small/non-chunked files) include all their objects
+- Objects in files with no matching chunks still included if they have lexical matches
 
 ## Debugging Tips
 
