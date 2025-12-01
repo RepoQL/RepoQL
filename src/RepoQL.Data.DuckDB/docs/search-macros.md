@@ -140,12 +140,49 @@ Thin wrapper that concatenates keyword + question text, switches to `heavy` mode
 
 ## `object_search(...)`
 
-Two-phase search optimized for finding functions/classes:
+Two-phase search optimized for finding functions/classes, with chunk-guided filtering and dynamic scaling to minimize JIT embedding cost.
 
-1. **Phase 1**: Find candidate files using `file_search()` with file-level embeddings
-2. **Phase 2**: JIT-embed objects within those files, rank by headline+body similarity
+**Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `q` | required | Search query |
+| `k` | 20 | Max results to return |
+| `file_candidates` | 10 | Max files to consider from semantic search |
+| `uri_glob` | NULL | Optional URI pattern filter |
+| `mime_glob` | NULL | Optional MIME type filter |
+| `chunks_per_file` | 10 | Max document chunks per file (high, cheap pre-computed check) |
+| `max_embed_candidates` | 20 | Base max objects to JIT embed (scaled dynamically) |
 
-This avoids pre-computing embeddings for every object while still enabling semantic object search.
+**Algorithm:**
+
+1. **Phase 1a**: Find candidate files using `file_search()` with pre-computed document embeddings
+2. **Phase 1b/1c**: Add files with lexical matches (symbol/headline/structure/body)
+3. **Phase 1d**: Score document chunks within candidate files against the query
+4. **Phase 1e**: Calculate dynamic embed limit based on chunk strength
+5. **Phase 2a**: Filter objects to those whose byte ranges overlap with high-scoring chunks
+6. **Phase 2b**: JIT-embed the filtered objects (headline + body), rank by similarity
+
+**Chunk-guided optimization:**
+The key optimization is using pre-computed document chunk embeddings as "clues" to identify relevant regions within files. Instead of embedding all objects in candidate files (up to 200), we:
+- Score each document chunk against the query (cheap, pre-computed)
+- Keep top N chunks per file (default 10, just a safety valve)
+- Only embed objects whose span byte range overlaps these "hot zones"
+
+**Dynamic scaling:**
+The JIT embedding budget scales based on chunk hit quality:
+| Max Chunk Score | Effective Limit | Rationale |
+|-----------------|-----------------|-----------|
+| ≥ 0.6 (strong)  | 2× base (max 50) | High confidence, worth exploring more |
+| 0.35-0.6 (moderate) | base (20) | Normal search |
+| 0.2-0.35 (weak) | 0.5× base (min 10) | Low confidence, save JIT cost |
+| < 0.2 (very weak) | 10 | Rely on lexical matching |
+
+This typically reduces JIT embeddings from ~200 to ~10-50, dramatically improving search latency while maintaining accuracy.
+
+**Fallback behavior:**
+- Objects with strong lexical matches (priority >= 60) bypass chunk filtering
+- Files without chunk embeddings (small/non-chunked files) include all their objects
+- Objects in files with no matching chunks still included if they have lexical matches
 
 ## Debugging Tips
 
