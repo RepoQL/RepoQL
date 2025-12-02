@@ -9,7 +9,8 @@ namespace RepoQL.Embeddings;
 
 /// <summary>
 /// Local ONNX embedding provider for BGE small v1.5.
-/// Fast path: CLS pooling + L2 norm. CPU by default, tries CUDA/DML.
+/// Fast path: CLS pooling + L2 norm. CPU by default on Windows (GPU is slower).
+/// Linux/Unix probes for CUDA. Override via REPOQL_ORT_PROVIDER env var.
 /// </summary>
 public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 {
@@ -430,47 +431,23 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
             return "CPU";
         }
 
-        _logger.LogInformation("Probing for available GPU execution providers...");
-
-        if (OperatingSystem.IsMacOS())
-        {
-            _logger.LogInformation("Attempting CoreML execution provider (macOS)");
-            if (TryAppendProvider(so, "COREML", out var error))
-            {
-                _logger.LogInformation("Successfully configured CoreML execution provider");
-                return "COREML";
-            }
-            _logger.LogInformation("CoreML execution provider not available: {Error}", error);
-        }
-
+        // Windows: Default to CPU. GPU providers (DirectML, CUDA) are slower than CPU for this workload,
+        // and CoreML causes memory leaks. Users can override via REPOQL_ORT_PROVIDER if needed.
         if (OperatingSystem.IsWindows())
         {
-            _logger.LogInformation("Attempting DirectML execution provider (Windows)");
-            if (TryAppendProvider(so, "DML", out var dmlError))
-            {
-                _logger.LogInformation("Successfully configured DirectML execution provider");
-                return "DML";
-            }
-            _logger.LogInformation("DirectML execution provider not available: {Error}", dmlError);
+            _logger.LogInformation("Using CPU execution provider (default for Windows - GPU is slower for embeddings)");
+            return "CPU";
+        }
 
-            _logger.LogInformation("Attempting CUDA execution provider (Windows)");
-            if (TryAppendProvider(so, "CUDA", out var error))
-            {
-                _logger.LogInformation("Successfully configured CUDA execution provider");
-                return "CUDA";
-            }
-            _logger.LogInformation("CUDA execution provider not available: {Error}", error);
-        }
-        else
+        // Non-Windows: probe for CUDA
+        _logger.LogInformation("Probing for available GPU execution providers...");
+        _logger.LogInformation("Attempting CUDA execution provider (Linux/Unix)");
+        if (TryAppendProvider(so, "CUDA", out var cudaError))
         {
-            _logger.LogInformation("Attempting CUDA execution provider (Linux/Unix)");
-            if (TryAppendProvider(so, "CUDA", out var error))
-            {
-                _logger.LogInformation("Successfully configured CUDA execution provider");
-                return "CUDA";
-            }
-            _logger.LogInformation("CUDA execution provider not available: {Error}", error);
+            _logger.LogInformation("Successfully configured CUDA execution provider");
+            return "CUDA";
         }
+        _logger.LogInformation("CUDA execution provider not available: {Error}", cudaError);
 
         _logger.LogInformation("No GPU execution providers available, using CPU");
         return "CPU";
