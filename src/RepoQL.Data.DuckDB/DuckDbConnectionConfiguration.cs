@@ -17,7 +17,6 @@ public static class DuckDbConnectionConfiguration
     /// <remarks>
     /// Environment variables:
     /// <list type="bullet">
-    ///   <item><c>DUCKDB_MEMORY_LIMIT</c> - Max memory (default: 8GB)</item>
     ///   <item><c>DUCKDB_THREADS</c> - Worker threads (default: 1)</item>
     ///   <item><c>DUCKDB_TEMP_DIRECTORY</c> - Spill directory (default: next to database file)</item>
     /// </list>
@@ -27,9 +26,6 @@ public static class DuckDbConnectionConfiguration
     public static void Apply(DuckDBConnection connection, string? databasePath = null)
     {
         var count = Interlocked.Increment(ref _applyCount);
-
-        var limit = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT") ?? "8GB";
-        Exec(connection, $"SET memory_limit='{limit}';");
 
         // Disable object cache - defaults to 80% of RAM which is far too aggressive
         Exec(connection, "SET enable_object_cache=false;");
@@ -59,7 +55,7 @@ public static class DuckDbConnectionConfiguration
         // Log settings on first apply
         if (count == 1)
         {
-            Console.Error.WriteLine($"[DuckDB] Configuration applied: memory_limit={limit}, threads={threads}, object_cache=false, flush_threshold=64MB, temp_dir={tempDirPath}");
+            Console.Error.WriteLine($"[DuckDB] Configuration applied: threads={threads}, object_cache=false, flush_threshold=64MB, temp_dir={tempDirPath}");
         }
     }
 
