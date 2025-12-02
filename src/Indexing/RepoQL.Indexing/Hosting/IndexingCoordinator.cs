@@ -136,36 +136,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
 
         foreach (var stage in targets)
         {
-            // Each stage must wait for all upstream stages to complete.
-            // Pipeline order: Discovery -> Parsing -> Analysis -> Writer
-            switch (stage)
-            {
-                case CoordinatorPipelineStage.Discovery:
-                    waits.Add(_engine.WaitForAsync(IndexingState.ClassificationIdle, cancellationToken).AsTask());
-                    break;
-                case CoordinatorPipelineStage.Parsing:
-                    // Must wait for Discovery + Parsing stages
-                    waits.Add(_engine.WaitForAsync(
-                        IndexingState.ClassificationIdle |
-                        IndexingState.ParsingIdle |
-                        IndexingState.SingleFileAnalysisIdle,
-                        cancellationToken).AsTask());
-                    break;
-                case CoordinatorPipelineStage.Analysis:
-                    // Must wait for Discovery + Parsing + Analysis stages
-                    waits.Add(_engine.WaitForAsync(
-                        IndexingState.ClassificationIdle |
-                        IndexingState.ParsingIdle |
-                        IndexingState.SingleFileAnalysisIdle |
-                        IndexingState.MultiFileAnalysisIdle |
-                        IndexingState.IndexRebuildIdle,
-                        cancellationToken).AsTask());
-                    break;
-                case CoordinatorPipelineStage.Writer:
-                    // Must wait for all stages + writer
-                    waits.Add(WaitForAllIncludingWriterAsync(cancellationToken));
-                    break;
-            }
+            waits.Add(WaitForStageCompleteAsync(stage, cancellationToken));
         }
 
         if (waits.Count == 0)
@@ -181,19 +152,85 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
     }
 
-    private async Task WaitForAllIncludingWriterAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Waits for a pipeline stage to complete, considering both worker state and queue depth.
+    /// </summary>
+    /// <remarks>
+    /// A stage is considered complete when:
+    /// 1. All workers for that stage (and upstream stages) are idle
+    /// 2. The work queue is empty (no pending items)
+    ///
+    /// This prevents returning prematurely when items are queued but workers haven't started yet.
+    /// </remarks>
+    private async Task WaitForStageCompleteAsync(CoordinatorPipelineStage stage, CancellationToken cancellationToken)
     {
-        // Wait for all pipeline stages first
-        await _engine.WaitForAsync(
-            IndexingState.ClassificationIdle |
-            IndexingState.ParsingIdle |
-            IndexingState.SingleFileAnalysisIdle |
-            IndexingState.MultiFileAnalysisIdle |
-            IndexingState.IndexRebuildIdle,
-            cancellationToken).AsTask().ConfigureAwait(false);
+        var requiredState = GetRequiredIdleState(stage);
 
-        // Then wait for writer to flush
-        await WaitForWriterIdleAsync(cancellationToken).ConfigureAwait(false);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Wait for state flags to indicate idle
+            await _engine.WaitForAsync(requiredState, cancellationToken).ConfigureAwait(false);
+
+            // After state indicates idle, verify queue is also empty
+            // This handles the race between enqueue and worker pickup
+            if (IsQueueEmptyForStage(stage))
+            {
+                // For Writer stage, also wait for the writer to flush
+                if (stage == CoordinatorPipelineStage.Writer)
+                {
+                    await WaitForWriterIdleAsync(cancellationToken).ConfigureAwait(false);
+                }
+                return;
+            }
+
+            // Queue still has items - workers will pick them up and become busy again
+            // Wait a short interval before rechecking to avoid tight polling
+            await Task.Delay(StatusPollInterval, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static IndexingState GetRequiredIdleState(CoordinatorPipelineStage stage)
+    {
+        // Each stage must wait for all upstream stages to complete.
+        // Pipeline order: Discovery -> Parsing -> Analysis -> Writer
+        return stage switch
+        {
+            CoordinatorPipelineStage.Discovery => IndexingState.ClassificationIdle,
+            CoordinatorPipelineStage.Parsing =>
+                IndexingState.ClassificationIdle |
+                IndexingState.ParsingIdle |
+                IndexingState.SingleFileAnalysisIdle,
+            CoordinatorPipelineStage.Analysis =>
+                IndexingState.ClassificationIdle |
+                IndexingState.ParsingIdle |
+                IndexingState.SingleFileAnalysisIdle |
+                IndexingState.MultiFileAnalysisIdle |
+                IndexingState.IndexRebuildIdle,
+            CoordinatorPipelineStage.Writer =>
+                IndexingState.ClassificationIdle |
+                IndexingState.ParsingIdle |
+                IndexingState.SingleFileAnalysisIdle |
+                IndexingState.MultiFileAnalysisIdle |
+                IndexingState.IndexRebuildIdle,
+            _ => IndexingState.ClassificationIdle
+        };
+    }
+
+    private bool IsQueueEmptyForStage(CoordinatorPipelineStage stage)
+    {
+        var hotPathSnapshot = _engine.GetHotPathQueueSnapshot();
+        var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
+
+        return stage switch
+        {
+            CoordinatorPipelineStage.Discovery => hotPathSnapshot.Depth <= 0,
+            CoordinatorPipelineStage.Parsing => hotPathSnapshot.Depth <= 0,
+            CoordinatorPipelineStage.Analysis => hotPathSnapshot.Depth <= 0 && analysisSnapshot.Depth <= 0,
+            CoordinatorPipelineStage.Writer => hotPathSnapshot.Depth <= 0 && analysisSnapshot.Depth <= 0,
+            _ => true
+        };
     }
 
     public Task WaitForIdleAsync(CancellationToken cancellationToken)
