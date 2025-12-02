@@ -14,4 +14,8 @@ public sealed record WriteOperation
     /// </summary>
     public ActivityContext? ParentContext { get; init; }
     public Func<WriteOperation, CommitResult, Task>? OnCommitted { get; init; }
+    /// <summary>
+    ///     Optional cancellation token for operations that support cancellation (e.g., Checkpoint).
+    /// </summary>
+    public CancellationToken CancellationToken { get; init; }
 }

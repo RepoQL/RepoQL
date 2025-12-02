@@ -10,9 +10,7 @@ using Markdig.Syntax.Inlines;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
-using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
-using RepoQL.Embeddings;
 using RepoQL.Templating;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -24,8 +22,6 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
     internal const string StateMetadataKey = "markdown.state";
 
     private readonly ILogger<MarkdownLoader> _logger;
-    private readonly IEmbeddingProvider _embeddingProvider;
-    private readonly Lazy<float[]?> _genericHeadingCentroid;
 
     private static readonly SemanticMediaType MarkdownMediaType = SemanticMediaType
         .Create("text", "markdown")
@@ -40,12 +36,6 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
     private static readonly Lazy<string> MarkdownViewsSql = new(
         () => ReadEmbeddedResource("RepoQL.Formats.Markdown.Schema.markdown_views.sql"));
 
-    private static readonly string[] GenericHeadingSeeds =
-    [
-        "Overview", "Introduction", "Summary", "Conclusion", "Usage", "Examples", "References", "Appendix",
-        "FAQ", "Background", "Notes", "See Also"
-    ];
-
     private static readonly (string Pattern, string Label)[] TitleTypePatterns =
     [
         ("proposal", "proposal"),
@@ -59,11 +49,9 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
         ("design", "architecture")
     ];
 
-    public MarkdownLoader(ILogger<MarkdownLoader>? logger = null, IEmbeddingProvider? embeddingProvider = null)
+    public MarkdownLoader(ILogger<MarkdownLoader>? logger = null)
     {
         _logger = logger ?? NullLogger<MarkdownLoader>.Instance;
-        _embeddingProvider = embeddingProvider ?? new HashedEmbeddingProvider();
-        _genericHeadingCentroid = new Lazy<float[]?>(ComputeGenericHeadingCentroid, LazyThreadSafetyMode.ExecutionAndPublication);
         _pipeline = new MarkdownPipelineBuilder()
             .UsePreciseSourceLocation()
             .UseYamlFrontMatter()
@@ -667,44 +655,16 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
         return tags;
     }
 
-    private IReadOnlyList<string> SelectImportantHeadings(IReadOnlyList<HeadingInfo> headings, string? queryText)
+    private static IReadOnlyList<string> SelectImportantHeadings(IReadOnlyList<HeadingInfo> headings, string? queryText)
     {
-        if (headings.Count == 0)
-            return Array.Empty<string>();
-
-        var queryVector = TryEmbed(queryText);
-        var genericCentroid = _genericHeadingCentroid.Value;
-        var ranked = new List<(string Text, double Score, int Ordinal)>();
-
-        for (var i = 0; i < headings.Count; i++)
-        {
-            var heading = headings[i];
-            if (heading.Level < 2)
-                continue;
-
-            var text = heading.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(text))
-                continue;
-
-            var headingVector = TryEmbed(text);
-            if (headingVector is null)
-                continue;
-
-            var specificity = queryVector is not null ? CosineSimilarity(queryVector, headingVector) : 0;
-            var genericity = genericCentroid is not null ? CosineSimilarity(genericCentroid, headingVector) : 0;
-            var score = specificity - genericity;
-
-            ranked.Add((text, score, i));
-        }
-
-        if (ranked.Count == 0)
-            return Array.Empty<string>();
-
-        return ranked
-            .OrderByDescending(r => r.Score)
-            .ThenBy(r => r.Ordinal)
-            .Select(r => r.Text)
+        // Simple selection: return first 8 distinct H2+ headings in document order
+        return headings
+            .Where(h => h.Level >= 2)
+            .Select(h => h.Text?.Trim())
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(8)
+            .OfType<string>()
             .ToList();
     }
 
@@ -731,88 +691,6 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
         }
 
         return lineInfo;
-    }
-
-    private float[]? TryEmbed(string? text)
-    {
-        if (_embeddingProvider is null || !_embeddingProvider.Enabled || string.IsNullOrWhiteSpace(text))
-            return null;
-
-        try
-        {
-            return _embeddingProvider
-                .EmbedAsync(text!)
-                .ConfigureAwait(false)
-                .GetAwaiter()
-                .GetResult();
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Failed to embed text for heading importance.");
-            return null;
-        }
-    }
-
-    private float[]? ComputeGenericHeadingCentroid()
-    {
-        if (_embeddingProvider is null || !_embeddingProvider.Enabled)
-            return null;
-
-        var vectors = new List<float[]>();
-        foreach (var seed in GenericHeadingSeeds)
-        {
-            var vec = TryEmbed(seed);
-            if (vec is not null)
-                vectors.Add(vec);
-        }
-
-        return vectors.Count == 0 ? null : AverageVectors(vectors);
-    }
-
-    private static float[] AverageVectors(IReadOnlyList<float[]> vectors)
-    {
-        var dimension = vectors[0].Length;
-        var result = new float[dimension];
-
-        foreach (var vector in vectors)
-        {
-            for (var i = 0; i < dimension; i++)
-            {
-                result[i] += vector[i];
-            }
-        }
-
-        for (var i = 0; i < dimension; i++)
-        {
-            result[i] /= vectors.Count;
-        }
-
-        return result;
-    }
-
-    private static double CosineSimilarity(IReadOnlyList<float> left, IReadOnlyList<float> right)
-    {
-        if (left.Count != right.Count)
-            return 0;
-
-        double dot = 0;
-        double leftNorm = 0;
-        double rightNorm = 0;
-
-        for (var i = 0; i < left.Count; i++)
-        {
-            var l = left[i];
-            var r = right[i];
-            dot += l * r;
-            leftNorm += l * l;
-            rightNorm += r * r;
-        }
-
-        var denominator = Math.Sqrt(leftNorm) * Math.Sqrt(rightNorm);
-        if (denominator == 0)
-            return 0;
-
-        return dot / denominator;
     }
 
     private sealed record XrayMetadata(
