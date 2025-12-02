@@ -61,10 +61,10 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     private static readonly TimeSpan StatusPollInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
-    /// Maximum time to wait for queue to drain when workers are idle.
+    /// Maximum time to wait for queue to drain when workers are idle with no progress.
     /// Prevents infinite polling if workers never pick up queued items.
     /// </summary>
-    private static readonly TimeSpan MaxQueueDrainWait = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan MaxQueueDrainWait = TimeSpan.FromMinutes(1);
     private readonly CompositeFileSystem _fileSystem;
     private readonly ICompositeFileSystemManager? _mountManager;
     private readonly IndexingEngine _engine;
