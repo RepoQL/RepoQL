@@ -59,6 +59,12 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     ];
 
     private static readonly TimeSpan StatusPollInterval = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// Maximum time to wait for queue to drain when workers are idle.
+    /// Prevents infinite polling if workers never pick up queued items.
+    /// </summary>
+    private static readonly TimeSpan MaxQueueDrainWait = TimeSpan.FromMinutes(20);
     private readonly CompositeFileSystem _fileSystem;
     private readonly ICompositeFileSystemManager? _mountManager;
     private readonly IndexingEngine _engine;
@@ -161,10 +167,14 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     /// 2. The work queue is empty (no pending items)
     ///
     /// This prevents returning prematurely when items are queued but workers haven't started yet.
+    /// Times out after <see cref="MaxQueueDrainWait"/> to prevent infinite polling when workers
+    /// are idle but queue never drains.
     /// </remarks>
     private async Task WaitForStageCompleteAsync(CoordinatorPipelineStage stage, CancellationToken cancellationToken)
     {
         var requiredState = GetRequiredIdleState(stage);
+        var stuckTimer = Stopwatch.StartNew();
+        var lastQueueDepth = long.MaxValue;
 
         while (true)
         {
@@ -175,7 +185,8 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
 
             // After state indicates idle, verify queue is also empty
             // This handles the race between enqueue and worker pickup
-            if (IsQueueEmptyForStage(stage))
+            var currentDepth = GetQueueDepthForStage(stage);
+            if (currentDepth <= 0)
             {
                 // For Writer stage, also wait for the writer to flush
                 if (stage == CoordinatorPipelineStage.Writer)
@@ -185,10 +196,43 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 return;
             }
 
-            // Queue still has items - workers will pick them up and become busy again
+            // Queue still has items but workers are idle
+            // If queue depth decreased, reset the stuck timer (progress being made)
+            if (currentDepth < lastQueueDepth)
+            {
+                stuckTimer.Restart();
+                lastQueueDepth = currentDepth;
+            }
+            else if (stuckTimer.Elapsed > MaxQueueDrainWait)
+            {
+                // No progress for MaxQueueDrainWait - timeout to prevent infinite wait
+                _logger.LogWarning(
+                    "WaitForPipelineAsync timed out waiting for {Stage} queue to drain. " +
+                    "Workers are idle but queue depth={Depth} after {Elapsed:F1}s with no progress. " +
+                    "This may indicate workers are not processing queued items.",
+                    stage, currentDepth, stuckTimer.Elapsed.TotalSeconds);
+                return;
+            }
+
+            // Workers should pick up items and become busy again
             // Wait a short interval before rechecking to avoid tight polling
             await Task.Delay(StatusPollInterval, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private long GetQueueDepthForStage(CoordinatorPipelineStage stage)
+    {
+        var hotPathSnapshot = _engine.GetHotPathQueueSnapshot();
+        var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
+
+        return stage switch
+        {
+            CoordinatorPipelineStage.Discovery => hotPathSnapshot.Depth,
+            CoordinatorPipelineStage.Parsing => hotPathSnapshot.Depth,
+            CoordinatorPipelineStage.Analysis => hotPathSnapshot.Depth + analysisSnapshot.Depth,
+            CoordinatorPipelineStage.Writer => hotPathSnapshot.Depth + analysisSnapshot.Depth,
+            _ => 0
+        };
     }
 
     private static IndexingState GetRequiredIdleState(CoordinatorPipelineStage stage)
@@ -215,21 +259,6 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 IndexingState.MultiFileAnalysisIdle |
                 IndexingState.IndexRebuildIdle,
             _ => IndexingState.ClassificationIdle
-        };
-    }
-
-    private bool IsQueueEmptyForStage(CoordinatorPipelineStage stage)
-    {
-        var hotPathSnapshot = _engine.GetHotPathQueueSnapshot();
-        var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
-
-        return stage switch
-        {
-            CoordinatorPipelineStage.Discovery => hotPathSnapshot.Depth <= 0,
-            CoordinatorPipelineStage.Parsing => hotPathSnapshot.Depth <= 0,
-            CoordinatorPipelineStage.Analysis => hotPathSnapshot.Depth <= 0 && analysisSnapshot.Depth <= 0,
-            CoordinatorPipelineStage.Writer => hotPathSnapshot.Depth <= 0 && analysisSnapshot.Depth <= 0,
-            _ => true
         };
     }
 
