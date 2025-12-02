@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <Version>1.2.10</Version>
+        <Version>1.2.11</Version>
         <TargetFramework>net10.0</TargetFramework>
         <OutputType>Exe</OutputType>
         <AssemblyName>repoql</AssemblyName>
@@ -37,7 +37,7 @@
       </PackageReference>
       <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1" GeneratePathProperty="true" />
       <PackageReference Include="JetBrains.Annotations" Version="2025.2.1" />
-      <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.19.2" GeneratePathProperty="true" />
+      <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" GeneratePathProperty="true" />
       <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
         <PackageReference Include="Spectre.Console" Version="0.50.0" />
         <PackageReference Include="ModelContextProtocol" Version="0.4.0-preview.3" />

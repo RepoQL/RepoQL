@@ -10,8 +10,16 @@ namespace RepoQL.Embeddings;
 /// <summary>
 /// Local ONNX embedding provider for BGE small v1.5.
 /// Fast path: CLS pooling + L2 norm. CPU by default on Windows (GPU is slower).
-/// Linux/Unix probes for CUDA. Override via REPOQL_ORT_PROVIDER env var.
+/// Linux/Unix probes for CUDA.
 /// </summary>
+/// <remarks>
+/// <para><strong>Environment Variables:</strong></para>
+/// <list type="bullet">
+///   <item><c>REPOQL_ORT_PROVIDER</c> - Execution provider override (CPU, CUDA, DML, COREML). macOS users can set COREML for ANE/GPU acceleration.</item>
+///   <item><c>REPOQL_ORT_INTRA_THREADS</c> - Intra-op parallelism threads (default: auto-detect based on hardware)</item>
+///   <item><c>REPOQL_ORT_INTER_THREADS</c> - Inter-op parallelism threads (default: 1, ignored in sequential mode)</item>
+/// </list>
+/// </remarks>
 public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 {
     private InferenceSession? _session;
@@ -49,6 +57,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
             using var so = new SessionOptions
             {
                 GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+                ExecutionMode = ExecutionMode.ORT_SEQUENTIAL, // Optimal for single-model inference
                 // Default to quiet logs to avoid noisy provider-assignment warnings.
                 LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
                 LogVerbosityLevel = 0,
@@ -57,8 +66,19 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
             // Memory arena configuration
             ConfigureMemoryOptions(so);
 
-            if (intraOp is { } io and > 0) so.IntraOpNumThreads = io;
-            if (interOp is { } eo and > 0) so.InterOpNumThreads = eo;
+            // Thread config: env vars take precedence, then constructor params, then ONNX defaults
+            var intraOpThreads = intraOp;
+            var interOpThreads = interOp;
+            if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_ORT_INTRA_THREADS"), out var envIntra) && envIntra > 0)
+                intraOpThreads = envIntra;
+            if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_ORT_INTER_THREADS"), out var envInter) && envInter >= 0)
+                interOpThreads = envInter;
+
+            // IntraOp: 0 = ONNX auto-detect based on hardware. InterOp: 1 is sensible for sequential mode.
+            so.IntraOpNumThreads = intraOpThreads ?? 0;
+            so.InterOpNumThreads = interOpThreads ?? 1;
+            _logger.LogInformation("ONNX thread config: IntraOp={IntraOp}, InterOp={InterOp}",
+                so.IntraOpNumThreads, so.InterOpNumThreads);
 
             var provider = ConfigureExecutionProvider(so);
 
@@ -156,13 +176,11 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         var batch = texts.Count;
         var totalTimer = System.Diagnostics.Stopwatch.StartNew();
 
-        // Tokenize in parallel - WordPieceTokenizer.Encode is thread-safe (reads immutable vocab)
+        // Tokenize sequentially - inference is 98% of time, parallel overhead not worth it
         var tokenizeTimer = System.Diagnostics.Stopwatch.StartNew();
         var encs = new EncodingResult[batch];
-        Parallel.For(0, batch, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, i =>
-        {
+        for (var i = 0; i < batch; i++)
             encs[i] = _tokenizer!.Encode(texts[i], _maxSeqLen);
-        });
         tokenizeTimer.Stop();
 
         // Autodetect input dtype

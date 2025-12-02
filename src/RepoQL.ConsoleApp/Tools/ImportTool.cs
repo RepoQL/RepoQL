@@ -22,6 +22,8 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider)
         """;
 
     [McpServerTool(ReadOnly = false, Destructive = false, OpenWorld = false, Name = "import"), Description(ImportInstructions)]
+    [McpMeta("defer_loading", false)]
+    [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> ImportAsync(
         [Description("URI to import (e.g., github://owner/repo@ref).")] string uri,
         [Description("Pipeline stage to wait for before returning. Defaults to Indexing; pass Unspecified to avoid waiting.")] string waitFor = "Indexing",

@@ -48,7 +48,8 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
                                                  """; 
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "xray"), Description(SummarizeInstructions)]
-    
+    [McpMeta("defer_loading", false)]
+    [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> SummarizeAsync(
         [Description("Glob to filter by path. Examples: \"**/*.cs\", \"**/tests/**\", \"**/docs/*\".")] string? pattern = null,
         [Description("Media type filter (rarely needed). Example: \"*csharp*\". Prefer pattern instead.")] string? type = null,

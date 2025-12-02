@@ -1418,10 +1418,9 @@ internal class InstallCommand(IAnsiConsole console)
             };
         }
 
-        if (agent.Type is AgentType.ClaudeDesktop or AgentType.ClaudeCode)
-        {
-            repoqlConfig["allowedTools"] = new JsonArray("query", "xray");
-        }
+        // Ensure tools are always visible upfront (not progressively disclosed)
+        // See: https://www.anthropic.com/engineering/advanced-tool-use
+        repoqlConfig["defer_loading"] = false;
 
         if (existingLocation is not null && !ReferenceEquals(existingLocation.Parent, serversNode))
         {

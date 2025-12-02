@@ -188,6 +188,8 @@ internal class QueryTool(QueryExecutor queryExecutor)
                                              """;
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "query"), Description(QueryInstructions)]
+    [McpMeta("defer_loading", false)]
+    [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> Query(
         [Description("DuckDB-style SQL to execute")] string sql,
         [Description("Maximum number of rows to include when formatting the response.")] int maxRows = 500,

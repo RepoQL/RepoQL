@@ -10,13 +10,27 @@ namespace RepoQL.Indexing.Indexing.PostProcessing;
 /// <summary>
 /// Coordinates post-index vector refreshes. The heavy lifting is delegated to an <see cref="IVectorIndexRefresher"/>.
 /// </summary>
+/// <remarks>
+/// <para><strong>Environment Variables:</strong></para>
+/// <list type="bullet">
+///   <item><c>REPOQL_EMBED_CONCURRENCY</c> - Max concurrent refresh operations (default: 1). Increase to allow parallel embedding batches for higher throughput.</item>
+/// </list>
+/// </remarks>
 public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposable
 {
+    private static readonly int RefreshConcurrency = GetRefreshConcurrency();
     private readonly IVectorIndexRefresher _refresher;
     private readonly ILogger<VectorIndexCoordinator> _logger;
-    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
     private long _lastRefreshedEpoch = long.MinValue;
     private volatile bool _needsRefresh;
+
+    private static int GetRefreshConcurrency()
+    {
+        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_CONCURRENCY"), out var c) && c > 0)
+            return c;
+        return 2; // Default to 2 concurrent batches for better throughput
+    }
 
     public VectorIndexCoordinator(
         IDuckDBConnectionFactory connectionFactory,
