@@ -29,6 +29,9 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
     }
 
     private const string SummarizeInstructions = """
+                                                 You know the Spectagraph from the movie Prometheus? Thats what xray is. 
+                                                 Use it to map out the repository and scan for what you are looking for before committing
+                                                 
                                                  Find and preview repository content. Search files, objects (functions/classes/methods/headings/etc), or both.
 
                                                  <KillerFeatures>
@@ -44,7 +47,7 @@ internal sealed class XrayTool(RepoQlClientProvider clientProvider)
                                                  detail=summary, pattern=**/UserService.cs → understand file before reading
                                                  </Examples>
                                                  
-                                                 Flow: headline → summary → snippet / Read tool for full content.
+                                                 Flow: headline → summary → snippet or Read tool for full content.
                                                  """; 
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "xray"), Description(SummarizeInstructions)]
