@@ -215,6 +215,19 @@ internal class InstallCommand(IAnsiConsole console)
             AddCandidatesFromDirectory(Path.Combine(appData, "Code - Insiders"), 3);
         }
 
+        // WSL: Check Windows AppData directories via /mnt/c
+        var windowsHome = GetWindowsUserHomeInWsl();
+        if (!string.IsNullOrEmpty(windowsHome))
+        {
+            var windowsAppData = Path.Combine(windowsHome, "AppData", "Roaming");
+            AddCandidatesFromDirectory(Path.Combine(windowsAppData, "Codex"), 3);
+            AddCandidatesFromDirectory(Path.Combine(windowsAppData, "You"), 3);
+            AddCandidatesFromDirectory(Path.Combine(windowsAppData, "Anthropic"), 3);
+            AddCandidatesFromDirectory(Path.Combine(windowsAppData, "Claude"), 3);
+            AddCandidatesFromDirectory(Path.Combine(windowsAppData, "Code"), 3);
+            AddCandidatesFromDirectory(Path.Combine(windowsAppData, "Code - Insiders"), 3);
+        }
+
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             var library = Path.Combine(homeDir, "Library", "Application Support");
@@ -261,6 +274,14 @@ internal class InstallCommand(IAnsiConsole console)
         {
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             paths.Add(Path.Combine(appData, "Claude", "claude_desktop_config.json"));
+        }
+
+        // WSL: Check Windows Claude Desktop config via /mnt/c
+        var windowsHome = GetWindowsUserHomeInWsl();
+        if (!string.IsNullOrEmpty(windowsHome))
+        {
+            var windowsAppData = Path.Combine(windowsHome, "AppData", "Roaming");
+            paths.Add(Path.Combine(windowsAppData, "Claude", "claude_desktop_config.json"));
         }
 
         foreach (var path in paths.Where(File.Exists))
@@ -369,6 +390,19 @@ internal class InstallCommand(IAnsiConsole console)
             candidates.Add("/usr/bin/claude");
             candidates.Add(CombineIfNotNull(GetUserHomeDirectory(), ".local", "bin", "claude"));
             candidates.Add("/opt/homebrew/bin/claude");
+
+            // WSL: Check Windows installation paths via /mnt/c
+            var windowsHome = GetWindowsUserHomeInWsl();
+            if (!string.IsNullOrEmpty(windowsHome))
+            {
+                var windowsAppData = Path.Combine(windowsHome, "AppData", "Roaming");
+                var windowsLocalAppData = Path.Combine(windowsHome, "AppData", "Local");
+
+                candidates.Add(Path.Combine(windowsAppData, "npm", "claude"));
+                candidates.Add(Path.Combine(windowsAppData, "npm", "claude.cmd"));
+                candidates.Add(Path.Combine(windowsLocalAppData, "Programs", "Claude", "claude.exe"));
+                candidates.Add(Path.Combine(windowsLocalAppData, "Programs", "Claude Code", "claude.exe"));
+            }
         }
 
         return FirstExistingPath(candidates);
@@ -395,6 +429,18 @@ internal class InstallCommand(IAnsiConsole console)
             candidates.Add("/usr/bin/codex");
             candidates.Add(CombineIfNotNull(GetUserHomeDirectory(), ".local", "bin", "codex"));
             candidates.Add("/opt/homebrew/bin/codex");
+
+            // WSL: Check Windows installation paths via /mnt/c
+            var windowsHome = GetWindowsUserHomeInWsl();
+            if (!string.IsNullOrEmpty(windowsHome))
+            {
+                var windowsAppData = Path.Combine(windowsHome, "AppData", "Roaming");
+                var windowsLocalAppData = Path.Combine(windowsHome, "AppData", "Local");
+
+                candidates.Add(Path.Combine(windowsAppData, "npm", "codex"));
+                candidates.Add(Path.Combine(windowsAppData, "npm", "codex.cmd"));
+                candidates.Add(Path.Combine(windowsLocalAppData, "Programs", "Codex", "codex.exe"));
+            }
         }
 
         return FirstExistingPath(candidates);
@@ -468,6 +514,18 @@ internal class InstallCommand(IAnsiConsole console)
         {
             yield return Path.Combine(appData, "Code", "extensions");
             yield return Path.Combine(appData, "Code - Insiders", "extensions");
+        }
+
+        // WSL: Check Windows VS Code extensions via /mnt/c
+        var windowsHome = GetWindowsUserHomeInWsl();
+        if (!string.IsNullOrEmpty(windowsHome))
+        {
+            yield return Path.Combine(windowsHome, ".vscode", "extensions");
+            yield return Path.Combine(windowsHome, ".vscode-insiders", "extensions");
+
+            var windowsAppData = Path.Combine(windowsHome, "AppData", "Roaming");
+            yield return Path.Combine(windowsAppData, "Code", "extensions");
+            yield return Path.Combine(windowsAppData, "Code - Insiders", "extensions");
         }
     }
 
@@ -786,6 +844,62 @@ internal class InstallCommand(IAnsiConsole console)
     }
 
     private static string? GetUserHomeDirectory() => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+    private static bool IsRunningInWsl()
+    {
+        if (!OperatingSystem.IsLinux())
+            return false;
+
+        return File.Exists("/proc/sys/fs/binfmt_misc/WSLInterop")
+            || File.Exists("/proc/sys/fs/binfmt_misc/WSLInterop-late");
+    }
+
+    private static string? GetWindowsUserHomeInWsl()
+    {
+        if (!IsRunningInWsl())
+            return null;
+
+        // Try to get Windows username from environment or wslpath
+        var windowsUser = Environment.GetEnvironmentVariable("LOGNAME")
+            ?? Environment.GetEnvironmentVariable("USER");
+
+        // Try common mount points with the Linux username (often matches Windows username)
+        if (!string.IsNullOrEmpty(windowsUser))
+        {
+            var candidatePath = $"/mnt/c/Users/{windowsUser}";
+            if (Directory.Exists(candidatePath))
+                return candidatePath;
+        }
+
+        // Fallback: enumerate /mnt/c/Users to find a valid user directory
+        const string usersPath = "/mnt/c/Users";
+        if (Directory.Exists(usersPath))
+        {
+            try
+            {
+                foreach (var userDir in Directory.EnumerateDirectories(usersPath))
+                {
+                    var dirName = Path.GetFileName(userDir);
+                    // Skip system directories
+                    if (dirName.Equals("Public", StringComparison.OrdinalIgnoreCase) ||
+                        dirName.Equals("Default", StringComparison.OrdinalIgnoreCase) ||
+                        dirName.Equals("Default User", StringComparison.OrdinalIgnoreCase) ||
+                        dirName.Equals("All Users", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    // Check if this looks like an actual user directory (has AppData)
+                    if (Directory.Exists(Path.Combine(userDir, "AppData")))
+                        return userDir;
+                }
+            }
+            catch
+            {
+                // Ignore permission errors
+            }
+        }
+
+        return null;
+    }
 
     private static string? TryGetCurrentRepositoryPath()
     {
