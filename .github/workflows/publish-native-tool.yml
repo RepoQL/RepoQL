@@ -85,6 +85,7 @@ jobs:
           - { os: ubuntu-latest, rid: linux-x64 }
           - { os: windows-latest, rid: win-x64 }
           - { os: windows-latest, rid: win-arm64 }
+          - { os: macos-13, rid: osx-x64 }
           - { os: macos-14, rid: osx-arm64 }
     runs-on: ${{ matrix.os }}
     env:
@@ -146,7 +147,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rid: [ linux-x64, win-x64, win-arm64, osx-arm64 ]
+        rid: [ linux-x64, win-x64, win-arm64, osx-x64, osx-arm64 ]
     env:
       RELEASE_VERSION: ${{ needs.version-check.outputs['current-version'] }}
       CLOUDFLARE_R2_BUCKET: ${{ vars.CLOUDFLARE_R2_BUCKET }}
