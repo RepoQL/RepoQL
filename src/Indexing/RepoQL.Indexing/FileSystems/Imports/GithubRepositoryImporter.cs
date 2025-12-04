@@ -92,7 +92,9 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             {
                 "repo",
                 "clone",
-                $"{spec.Owner}/{spec.Repository}"
+                $"{spec.Owner}/{spec.Repository}",
+                targetRoot,
+                "--"
             };
 
             if (!string.IsNullOrWhiteSpace(spec.Ref))
@@ -101,8 +103,6 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
                 args.Add(spec.Ref!);
             }
 
-            args.Add(targetRoot);
-            args.Add("--");
             args.Add("--depth");
             args.Add("1");
             await RunGhAsync(args, _primary.RootPath, ct).ConfigureAwait(false);
