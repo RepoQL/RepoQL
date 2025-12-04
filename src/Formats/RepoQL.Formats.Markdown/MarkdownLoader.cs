@@ -187,9 +187,16 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
             for (var i = 0; i < pendingHeadings.Count; i++)
             {
                 var current = pendingHeadings[i];
-                var sectionEnd = i + 1 < pendingHeadings.Count
-                    ? pendingHeadings[i + 1].HeadingSpan.StartChar
-                    : lineMap.TextLength;
+                // Find next heading at same level or higher (lower number = higher level)
+                var sectionEnd = lineMap.TextLength;
+                for (var j = i + 1; j < pendingHeadings.Count; j++)
+                {
+                    if (pendingHeadings[j].Level <= current.Level)
+                    {
+                        sectionEnd = pendingHeadings[j].HeadingSpan.StartChar;
+                        break;
+                    }
+                }
                 sectionEnd = Math.Max(sectionEnd, current.HeadingSpan.StartChar);
                 var sectionSpan = lineMap.GetSpan(current.HeadingSpan.StartChar, sectionEnd);
                 headings.Add(new HeadingInfo(
@@ -358,7 +365,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
 
         foreach (var heading in state.Surface.Headings)
         {
-            var span = ToSpan(document, heading.HeadingSpan, docNode.Id, heading.SpanId);
+            var span = ToSpan(document, heading.SectionSpan, docNode.Id, heading.SpanId);
             spans.Add(span);
 
             var node = new Node

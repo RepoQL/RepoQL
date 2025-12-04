@@ -514,54 +514,31 @@ CREATE OR REPLACE MACRO file_search(
     k := 50,
     max_cand := 5000
 ) AS TABLE (
--- file_search returns one row per document with the best scores from search()
--- search() returns both documents and objects; we aggregate by doc_id to deduplicate
-WITH raw_results AS (
-    SELECT
-        doc_id,
-        bm25_score,
-        fuzzy_score,
-        dense_score,
-        score
-    FROM search(
-            -- Avoid "q q" duplication when only question is provided
-            CASE
-                WHEN question IS NOT NULL AND length(trim(question)) > 0
-                     AND (keywords IS NULL OR length(trim(keywords)) = 0)
-                THEN trim(question)
-                ELSE trim(concat_ws(' ', coalesce(keywords, ''), coalesce(question, '')))
-            END,
-            mode := CASE
-                      WHEN question IS NOT NULL AND length(trim(question)) > 0 THEN 'heavy'
-                      ELSE 'auto'
-                    END,
-            k := k,
-            max_cand := max_cand,
-            bm25_weight := 0.20,
-            fuzzy_weight := 0.00,
-            semantic_weight := 0.80
-        )
-),
-aggregated AS (
-    SELECT
-        doc_id,
-        MAX(bm25_score) AS bm25n,
-        MAX(fuzzy_score) AS fuzzn,
-        MAX(dense_score) AS semn,
-        MAX(score) AS score
-    FROM raw_results
-    GROUP BY doc_id
-)
 SELECT
-    a.doc_id,
-    n.uri,
-    a.bm25n,
-    a.fuzzn,
-    a.semn,
-    a.score
-FROM aggregated a
-JOIN node n ON n.id = a.doc_id
-ORDER BY a.score DESC
+    doc_id,
+    uri,
+    bm25_score AS bm25n,
+    fuzzy_score AS fuzzn,
+    dense_score AS semn,
+    score
+FROM search(
+        -- Avoid "q q" duplication when only question is provided
+        CASE
+            WHEN question IS NOT NULL AND length(trim(question)) > 0
+                 AND (keywords IS NULL OR length(trim(keywords)) = 0)
+            THEN trim(question)
+            ELSE trim(concat_ws(' ', coalesce(keywords, ''), coalesce(question, '')))
+        END,
+        mode := CASE
+                  WHEN question IS NOT NULL AND length(trim(question)) > 0 THEN 'heavy'
+                  ELSE 'auto'
+                END,
+        k := k,
+        max_cand := max_cand,
+        bm25_weight := 0.10,
+        fuzzy_weight := 0.00,
+        semantic_weight := 0.90
+    )
 );
 
 -- Two-phase object search with just-in-time embeddings.
@@ -596,17 +573,13 @@ query_embedding AS (
     ) AS qvec
 ),
 -- Phase 1a: Find candidate files using file_search with file-level embeddings
--- Note: file_search returns both documents and objects; we need the document URI
--- to properly deduplicate in candidate_files (which groups by doc_id, file_uri)
 semantic_files AS (
-    SELECT doc_id,
-           (SELECT uri FROM node WHERE id = fs.doc_id) AS file_uri,
-           score AS file_score
+    SELECT doc_id, uri AS file_uri, score AS file_score
     FROM file_search(
         keywords := NULL,
         question := (SELECT query_text FROM params),
         k := (SELECT file_k FROM params)
-    ) fs
+    )
 ),
 -- Phase 1b: Include files containing matching symbol/headline/structure (lexical fallback)
 -- Priority: headline > structure > body (headline has highest value info)

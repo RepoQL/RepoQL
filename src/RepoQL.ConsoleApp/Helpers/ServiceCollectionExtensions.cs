@@ -1,6 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.ConsoleApp.Resources;
+using RepoQL.ConsoleApp.Search;
+using RepoQL.Rendering;
+using RepoQL.Rendering.Search;
 using RepoQL.Templating;
 using Spectre.Console;
 
@@ -21,6 +24,12 @@ internal static class ServiceCollectionExtensions
         }
         services.AddSingleton<QueryExecutor>();
         services.AddSingleton<RepoResourceService>();
+        services.AddSingleton<IXrayRenderingEngine, XrayRenderingEngine>();
+
+        // Search services
+        services.AddSingleton<IDocumentSearchService, DocumentSearchService>();
+        services.AddSingleton<IObjectSearchService, ObjectSearchService>();
+        services.AddSingleton<IXraySearchEngine, XraySearchEngine>();
         services.AddLiquidTemplatingFromEmbedded(
             assembly: typeof(ServiceCollectionExtensions).Assembly,
             resourceRoot: "RepoQL.ConsoleApp.Templates");
