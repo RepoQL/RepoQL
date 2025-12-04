@@ -91,15 +91,9 @@ public static class ChunkProximityBooster
         }
 
         // No overlap - check if adjacent
-        int distance;
-        if (objEnd < chunkStart)
-        {
-            distance = chunkStart - objEnd;
-        }
-        else
-        {
-            distance = objStart - chunkEnd;
-        }
+        int distance = (objEnd < chunkStart)
+            ? chunkStart - objEnd
+            : objStart - chunkEnd;
 
         if (distance <= AdjacentLineThreshold)
         {
