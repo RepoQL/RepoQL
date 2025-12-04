@@ -535,9 +535,9 @@ FROM search(
                 END,
         k := k,
         max_cand := max_cand,
-        bm25_weight := 0.20,
+        bm25_weight := 0.10,
         fuzzy_weight := 0.00,
-        semantic_weight := 0.80
+        semantic_weight := 0.90
     )
 );
 
