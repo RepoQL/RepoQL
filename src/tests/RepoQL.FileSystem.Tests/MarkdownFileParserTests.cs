@@ -165,10 +165,10 @@ public class MarkdownFileParserTests
         ords.SequenceEqual(ords.OrderBy(x => x)).Should().BeTrue();
         ords.Distinct().Count().Should().Be(ords.Length);
 
-        // Basic span sanity for heading
+        // Basic span sanity for heading - note: SpanId references the SectionSpan (heading to next heading/EOF)
         var headingSpan = records.Spans.First(s => s.Id == heading.SpanId);
         headingSpan.StartLine.Should().Be(1);
-        headingSpan.EndLine.Should().Be(1);
+        headingSpan.EndLine.Should().Be(9); // Section extends to end of document
     }
 
     [Test]
