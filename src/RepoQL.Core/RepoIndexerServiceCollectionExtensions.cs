@@ -376,21 +376,30 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetService<ILogger<IndexRebuildPipeline>>()));
         services.AddSingleton<DocumentPreviewService>();
 
-        services.AddSingleton(sp => new IndexingEngine(
-            sp.GetRequiredService<IDatabaseWriter>(),
-            sp.GetRequiredService<IUriFilter>(),
-            sp.GetRequiredService<ClassificationPipeline>(),
-            sp.GetRequiredService<ParsingPipeline>(),
-            sp.GetRequiredService<SingleFileAnalysisPipeline>(),
-            sp.GetRequiredService<MultiFileAnalysisPipeline>(),
-            sp.GetRequiredService<IndexRebuildPipeline>(),
-            sp.GetRequiredService<IDocumentCatalog>(),
-            sp.GetRequiredService<IIndexingCommitter>(),
-            sp.GetRequiredService<IArtifactPruner>(),
-            sp.GetRequiredService<IVectorIndexCoordinator>(),
-            sp.GetService<IOptions<IndexingEngineOptions>>()?.Value,
-            sp.GetService<ILogger<IndexingEngine>>(),
-            sp.GetRequiredService<IndexingMetrics>()));
+        services.AddSingleton(sp =>
+        {
+            var engine = new IndexingEngine(
+                sp.GetRequiredService<IDatabaseWriter>(),
+                sp.GetRequiredService<IUriFilter>(),
+                sp.GetRequiredService<ClassificationPipeline>(),
+                sp.GetRequiredService<ParsingPipeline>(),
+                sp.GetRequiredService<SingleFileAnalysisPipeline>(),
+                sp.GetRequiredService<MultiFileAnalysisPipeline>(),
+                sp.GetRequiredService<IndexRebuildPipeline>(),
+                sp.GetRequiredService<IDocumentCatalog>(),
+                sp.GetRequiredService<IIndexingCommitter>(),
+                sp.GetRequiredService<IArtifactPruner>(),
+                sp.GetRequiredService<IVectorIndexCoordinator>(),
+                sp.GetService<IOptions<IndexingEngineOptions>>()?.Value,
+                sp.GetService<ILogger<IndexingEngine>>(),
+                sp.GetRequiredService<IndexingMetrics>());
+
+            // Register diagnostics provider for the UDF (separate from engine)
+            var diagnosticsProvider = new RepoQL.Indexing.Indexing.IndexingEngineDiagnosticsProvider(engine);
+            RepoQL.Contracts.Diagnostics.IndexingDiagnostics.SetProvider(diagnosticsProvider);
+
+            return engine;
+        });
 
         services.AddSingleton<IIndexingCoordinator>(sp => new IndexingCoordinator(
             sp.GetRequiredService<CompositeFileSystem>(),

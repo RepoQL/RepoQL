@@ -230,7 +230,10 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
             CoordinatorPipelineStage.Discovery => hotPathSnapshot.Depth,
             CoordinatorPipelineStage.Parsing => hotPathSnapshot.Depth,
             CoordinatorPipelineStage.Analysis => hotPathSnapshot.Depth + analysisSnapshot.Depth,
-            CoordinatorPipelineStage.Writer => hotPathSnapshot.Depth + analysisSnapshot.Depth,
+            // Writer stage (SemanticIndexing) must wait for idle post-processing which includes
+            // vector/embedding refresh. Items in _pendingAnalysis haven't yet been processed
+            // through ReleaseAnalysisAsync which triggers VectorCoordinator.ApplyAsync().
+            CoordinatorPipelineStage.Writer => hotPathSnapshot.Depth + analysisSnapshot.Depth + _engine.GetPendingIdleProcessingCount(),
             _ => 0
         };
     }

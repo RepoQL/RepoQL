@@ -89,4 +89,14 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     {
         _refreshGate.Dispose();
     }
+
+    /// <summary>
+    /// Gets the last epoch that was refreshed for embeddings.
+    /// </summary>
+    public long GetLastRefreshedEpoch() => Interlocked.Read(ref _lastRefreshedEpoch);
+
+    /// <summary>
+    /// Gets whether the coordinator needs a refresh (e.g., due to deletes).
+    /// </summary>
+    public bool GetNeedsRefresh() => _needsRefresh;
 }

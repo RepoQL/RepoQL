@@ -190,6 +190,11 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         var busy = Math.Max(0, Volatile.Read(ref _busy));
         return new WorkQueueSnapshot(depth, busy, MaxDepth);
     }
+
+    /// <summary>
+    /// Gets all items currently in the queue (including those being processed).
+    /// </summary>
+    public IReadOnlyList<T> GetPendingItems() => _waitSet.Keys.ToList();
 }
 
 public readonly record struct WorkQueueSnapshot(int Depth, int InProgress, int MaxDepth)

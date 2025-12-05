@@ -869,6 +869,42 @@ public static class RepositoryUserDefinedFunctions
             },
             isPureFunction: true
         );
+
+        // ------------------- Diagnostics UDF -------------------
+
+        // indexing_diagnostics() -> JSON string with indexing pipeline state
+        connection.RegisterScalarFunction<string>(
+            "indexing_diagnostics",
+            (writer, n) =>
+            {
+                var json = RepoQL.Contracts.Diagnostics.IndexingDiagnostics.GetDiagnosticsJson();
+                for (ulong i = 0; i < n; i++)
+                {
+                    writer.WriteValue(json, i);
+                }
+            },
+            isPureFunction: false // State changes between calls
+        );
+
+        // indexing_queue() -> JSON array of queued items
+        // Usage: SELECT * FROM (SELECT unnest(from_json(indexing_queue(), '["json"]')) as item)
+        // Or simpler: SELECT json_extract(value, '$.uri') as uri, ... FROM (SELECT unnest(indexing_queue()::json[]) as value)
+        connection.RegisterScalarFunction<string>(
+            "indexing_queue",
+            (writer, n) =>
+            {
+                var items = RepoQL.Contracts.Diagnostics.IndexingDiagnostics.GetQueuedItems();
+                var json = System.Text.Json.JsonSerializer.Serialize(items, new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower
+                });
+                for (ulong i = 0; i < n; i++)
+                {
+                    writer.WriteValue(json, i);
+                }
+            },
+            isPureFunction: false
+        );
     }
 
     // ------------------- private helpers -------------------
