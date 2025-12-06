@@ -142,14 +142,58 @@ public partial class IndexingEngine : IAsyncDisposable
     private readonly Dictionary<IndexingState, StageCounter> _stageCounters = new();
     private bool _disposed;
     private long _lastReleasedEpoch = long.MinValue;
+    private int _activeIdleProcessingCount;
+    private string? _lastError;
     private IArtifactPruner ArtifactPruner { get; }
-    private IVectorIndexCoordinator VectorCoordinator { get; }
+    internal IVectorIndexCoordinator VectorCoordinator { get; }
+
+    // Diagnostic accessors (used by IndexingEngineDiagnosticsProvider)
+    internal int ActiveIdleProcessingCount => Volatile.Read(ref _activeIdleProcessingCount);
+    internal string? LastError => Volatile.Read(ref _lastError);
+    internal long CurrentEpoch => _epochTracker.CurrentEpoch;
 
     internal bool HasPendingAnalysis(long epoch)
     {
         lock (_analysisLock)
         {
             return _pendingAnalysis.TryGetValue(epoch, out var backlog) && backlog.Count > 0;
+        }
+    }
+
+    /// <summary>
+    /// Returns a non-zero value if there is pending idle post-processing work (including semantic indexing).
+    /// This includes:
+    /// <list type="bullet">
+    /// <item>Items in <c>_pendingAnalysis</c> waiting for <c>HotPathIdle</c> to dispatch them</item>
+    /// <item>Epochs currently being processed in <c>ReleaseAnalysisAsync</c> (pruning, vector refresh, analysis enqueue)</item>
+    /// </list>
+    /// </summary>
+    internal int GetPendingIdleProcessingCount()
+    {
+        lock (_analysisLock)
+        {
+            var count = Volatile.Read(ref _activeIdleProcessingCount);
+            foreach (var backlog in _pendingAnalysis.Values)
+            {
+                count += backlog.Count;
+            }
+            return count;
+        }
+    }
+
+    /// <summary>
+    /// Gets items currently in the hot path queue (for diagnostics).
+    /// </summary>
+    internal IReadOnlyList<IndexItem> GetHotPathPendingItems() => IndexerQueue.GetPendingItems();
+
+    /// <summary>
+    /// Gets items waiting for idle processing (for diagnostics).
+    /// </summary>
+    internal IReadOnlyList<IndexItem> GetPendingAnalysisItems()
+    {
+        lock (_analysisLock)
+        {
+            return _pendingAnalysis.Values.SelectMany(q => q).ToList();
         }
     }
 
@@ -487,6 +531,7 @@ public partial class IndexingEngine : IAsyncDisposable
         catch (Exception ex)
         {
             status = "error";
+            Volatile.Write(ref _lastError, $"{item.Uri}: {ex.Message}");
             Metrics?.FilesErrored.Add(1, new TagList
             {
                 { "mime_type", mime },
@@ -671,18 +716,28 @@ public partial class IndexingEngine : IAsyncDisposable
     {
         var epochTimer = Stopwatch.StartNew();
         Exception? failure = null;
+        var startedProcessing = false;
         try
         {
             Queue<IndexItem>? backlog = null;
             lock (_analysisLock)
             {
                 _pendingAnalysis.Remove(epoch, out backlog);
+
+                // Atomically increment the active processing counter BEFORE releasing the lock.
+                // This ensures GetPendingIdleProcessingCount() never sees zero while we have work to do.
+                // The counter is decremented in the finally block.
+                if (backlog is not null && backlog.Count > 0)
+                {
+                    Interlocked.Increment(ref _activeIdleProcessingCount);
+                    startedProcessing = true;
+                }
             }
 
-            if (backlog is null || backlog.Count == 0)
+            if (!startedProcessing)
                 return;
 
-            var pendingItems = backlog.ToArray();
+            var pendingItems = backlog!.ToArray();
 
             // Prune phase
             var pruneTimer = Stopwatch.StartNew();
@@ -705,6 +760,10 @@ public partial class IndexingEngine : IAsyncDisposable
                 await DeleteStaleDocumentsAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
                 await VectorCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
             }
+
+            // NOTE: VectorCoordinator.ApplyAsync marks items for embedding but doesn't flush the writer.
+            // For imports, embedding refresh is triggered in RepoQlServiceImpl.ImportRepository after
+            // the writer flush completes. For file watching, embeddings update on subsequent idle cycles.
 
             // Vector refresh phase
             var vectorTimer = Stopwatch.StartNew();
@@ -733,10 +792,17 @@ public partial class IndexingEngine : IAsyncDisposable
         catch (Exception ex)
         {
             failure = ex;
+            Volatile.Write(ref _lastError, $"Epoch {epoch}: {ex.Message}");
             Logger.LogError(ex, "Failed to dispatch analysis work for epoch {Epoch}", epoch);
         }
         finally
         {
+            // Decrement active processing counter so WaitForPipelineAsync knows idle work is done
+            if (startedProcessing)
+            {
+                Interlocked.Decrement(ref _activeIdleProcessingCount);
+            }
+
             epochTimer.Stop();
 
             // Record epoch metrics
@@ -867,6 +933,7 @@ public partial class IndexingEngine : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            Volatile.Write(ref _lastError, $"Analysis {item.Uri}: {ex.Message}");
             LogUriFailedDuringAnalysis(Logger, ex, item.Uri);
             return;
         }

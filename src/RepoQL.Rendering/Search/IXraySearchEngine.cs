@@ -81,7 +81,7 @@ public sealed class XraySearchEngine : IXraySearchEngine
             results,
             TotalDocumentsMatched: docResult.Documents.Count,
             TotalObjectsMatched: objects.Count,
-            IndexerStatus: null // TODO: Get from somewhere
+            IndexerStatus: null // Populated by caller (XrayTool) with timing info
         );
     }
 }

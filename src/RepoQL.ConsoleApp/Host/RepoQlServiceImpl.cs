@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.FileSystems.Imports;
@@ -34,6 +35,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly DocumentPreviewService _previewService;
     private readonly IDatabaseWriter writer;
     private readonly IHostApplicationLifetime _hostLifetime;
+    private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly ILogger<RepoQlServiceImpl> _logger;
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -52,12 +54,14 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         DocumentPreviewService previewService,
         IDatabaseWriter writer,
         IHostApplicationLifetime hostLifetime,
+        IEmbeddingProvider? embeddingProvider = null,
         ILogger<RepoQlServiceImpl>? logger = null)
     {
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
         this.barrier = barrier ?? throw new ArgumentNullException(nameof(barrier));
         this.queryBarrier = queryBarrier ?? throw new ArgumentNullException(nameof(queryBarrier));
+        this._embeddingProvider = embeddingProvider;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
         _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
@@ -583,10 +587,36 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         // Flush writer to ensure all indexed documents are committed before refreshing FTS
         await writer.FlushAsync(context.CancellationToken).ConfigureAwait(false);
 
-        // Refresh search projection to include newly imported documents
+        // Refresh search projection and embeddings to include newly imported documents
+        var waitForEmbeddings = waitStages.Contains(CoordinatorPipelineStage.Writer); // Writer = SemanticIndexing
         if (store is DuckDbGraphStore duck)
         {
             duck.RefreshSearchProjection(incrementalRefresh: true);
+
+            if (_embeddingProvider is not null && _embeddingProvider.Enabled)
+            {
+                if (waitForEmbeddings)
+                {
+                    // SemanticIndexing requested - wait for embeddings to complete
+                    await duck.RefreshDocumentEmbeddingsAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    // No semantic wait - refresh embeddings in background
+                    var provider = _embeddingProvider;
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await duck.RefreshDocumentEmbeddingsAsync(provider, CancellationToken.None).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Background embedding refresh failed");
+                        }
+                    });
+                }
+            }
         }
 
         var snapshot = coordinator.GetPipelineStatus();
@@ -656,7 +686,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private static IReadOnlyCollection<CoordinatorPipelineStage> ResolveImportStages(ImportRequest request)
     {
         if (!request.HasWaitStage)
-            return new[] { CoordinatorPipelineStage.Analysis };
+            return new[] { CoordinatorPipelineStage.Writer }; // Default to SemanticIndexing - waits for embeddings
 
         if (request.WaitStage == ProtoPipelineStage.Unspecified)
             return Array.Empty<CoordinatorPipelineStage>();

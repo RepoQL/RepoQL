@@ -1,30 +1,47 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Server;
+using RepoQL.Contracts.Diagnostics;
 using RepoQL.Rendering;
 using RepoQL.Rendering.Search;
 
 namespace RepoQL.ConsoleApp.Tools;
 
 [McpServerToolType]
-internal sealed class XrayTool(IXraySearchEngine searchEngine, IXrayRenderingEngine renderingEngine)
+internal sealed class XrayTool(
+    IXraySearchEngine searchEngine,
+    IXrayRenderingEngine renderingEngine,
+    IIndexingDiagnosticsProvider? diagnosticsProvider = null)
 {
     private readonly IXraySearchEngine _searchEngine = searchEngine ?? throw new ArgumentNullException(nameof(searchEngine));
     private readonly IXrayRenderingEngine _renderingEngine = renderingEngine ?? throw new ArgumentNullException(nameof(renderingEngine));
+    private readonly IIndexingDiagnosticsProvider? _diagnosticsProvider = diagnosticsProvider;
 
     private const string ToolInstructions = """
+        <CONCEPT>
         The best tool for 95% of your reading and understanding needs.
         X-ray vision files in your repo (code/docs/config/everything). See structure, find things without reading files or knowing keywords.
+        </CONCEPT>
 
-        tokenBudget: investment level → more tokens = richer detail. You set the budget, xray maximizes value.
+        <KNOBS>
+        tokenBudget: 
+            investment level → more tokens = richer detail. You set the budget, xray maximizes value. 
+            if you want to be sure you found everything, set a high budget
+            important: budget is exactly how many tokens you want to spend on seeing the answer, it is not a maximum. 
+            the underlying query is the same regardless of budget - budget controls the level of detail in the response, and attempts to maximize value given the budget and intent
+            
         intent: zoom level
-          explore → what's here? (headlines)
-          find → where is it? (broad context)
-          read → show me (actual snippets & detailed structure)
+          explore → what's here? (headlines) | Search criteria optional
+          find → where is it? (broad context) | Search criteria required
+          read → show me (actual snippets & detailed structure) | Search criteria required
+        
+        Know the uri(s) of the thing you are a looking for? Use ReadMcpResourceTool - works for objects and files, supports globbing patterns.
 
         Filter with scope (glob), guide with question (semantic). Results ranked by confidence.
+        </KNOBS>
 
-        Examples:
+        <EXAMPLES>
         - What docs exist? → tokenBudget=800, intent=explore, scope=docs://**
         - Explore with focus → tokenBudget=1200, intent=explore, scope=file:///src/**, question="How is error handling implemented?"
         - Find without knowing the words → tokenBudget=600, intent=find, question="Where does retry logic live?"
@@ -32,9 +49,12 @@ internal sealed class XrayTool(IXraySearchEngine searchEngine, IXrayRenderingEng
         - Deep dive with boost → tokenBudget=2000, intent=read, question="How is JWT validated?", patterns=Validate.*,Token
         - Understand a module → tokenBudget=2000, intent=read, scope=file:///src/Auth/**, question="How does authentication work?"
         - Read specific file → tokenBudget=1500, intent=read, scope=file:///README.md
+        </EXAMPLES>
 
+        <REMEMBER>
         Your first use should be to understand what documentation is available to you:
         tokenBudget=1000, intent=explore, scope=docs://**
+        </REMEMBER>
         """;
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "xray"), Description(ToolInstructions)]
@@ -63,7 +83,8 @@ internal sealed class XrayTool(IXraySearchEngine searchEngine, IXrayRenderingEng
             Intent: intent
         );
 
-        // Execute two-phase search
+        // Execute two-phase search with timing
+        var sw = Stopwatch.StartNew();
         SearchEngineResult searchResult;
         try
         {
@@ -73,12 +94,17 @@ internal sealed class XrayTool(IXraySearchEngine searchEngine, IXrayRenderingEng
         {
             return $"Error: Search failed. {ExtractErrorMessage(ex)}";
         }
+        sw.Stop();
+
+        // Get indexer status with timing
+        var indexerStatus = GetIndexerStatus(sw.ElapsedMilliseconds);
 
         if (searchResult.Results.Count == 0)
         {
-            return string.IsNullOrWhiteSpace(question)
+            var noResults = string.IsNullOrWhiteSpace(question)
                 ? "No results found in the specified scope."
                 : "No results found matching your query.";
+            return $"{noResults}\n\n{RepresentationFormatter.FormatStatusFooter(indexerStatus)}";
         }
 
         // Convert to rendering types
@@ -98,10 +124,25 @@ internal sealed class XrayTool(IXraySearchEngine searchEngine, IXrayRenderingEng
             TokenBudget: tokenBudget,
             Limit: limit,
             HasSearchCriteria: hasSearchCriteria,
-            IndexerStatus: searchResult.IndexerStatus
+            IndexerStatus: indexerStatus
         );
 
         return _renderingEngine.Render(xrayResults, context);
+    }
+
+    private IndexerStatus GetIndexerStatus(long elapsedMs)
+    {
+        var snapshot = _diagnosticsProvider?.GetSnapshot();
+        if (snapshot is null)
+            return new IndexerStatus(0, false, false, elapsedMs);
+
+        return IndexerStatus.FromDiagnostics(
+            snapshot.HotPathDepth,
+            snapshot.IdlePending,
+            snapshot.AnalysisDepth,
+            snapshot.WriterPending,
+            elapsedMs,
+            snapshot.EmbedEnabled);
     }
 
     #region Parameter Parsing

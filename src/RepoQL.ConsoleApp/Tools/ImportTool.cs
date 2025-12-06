@@ -18,7 +18,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider)
         Import an external data source (e.g., a GitHub repository) into the current repoql datastore so that it can be queried alongside existing data.
 
         Provide a URI supported by importers such as `github://owner/repo@ref`.
-        Optionally specify which pipeline stage to wait for [Discovery|Indexing|SemanticIndexing|Analysis|Unspecified]. Defaults to Indexing. Use Unspecified to return immediately.
+        Optionally specify which pipeline stage to wait for [Discovery|Indexing|SemanticIndexing|Analysis|Unspecified]. Defaults to SemanticIndexing to ensure embeddings are ready for search. Use Unspecified to return immediately.
         """;
 
     [McpServerTool(ReadOnly = false, Destructive = false, OpenWorld = false, Name = "import"), Description(ImportInstructions)]
@@ -26,7 +26,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider)
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> ImportAsync(
         [Description("URI to import (e.g., github://owner/repo@ref).")] string uri,
-        [Description("Pipeline stage to wait for before returning. Defaults to Indexing; pass Unspecified to avoid waiting.")] string waitFor = "Indexing",
+        [Description("Pipeline stage to wait for before returning. Defaults to SemanticIndexing to ensure embeddings are ready; pass Indexing for faster return (hot path only) or Unspecified to return immediately.")] string waitFor = "SemanticIndexing",
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(uri))
@@ -78,7 +78,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider)
     private static PipelineStage ParseWaitStage(string waitFor)
     {
         if (string.IsNullOrWhiteSpace(waitFor))
-            return PipelineStage.Indexing;
+            return PipelineStage.SemanticIndexing;
 
         if (Enum.TryParse<PipelineStage>(waitFor.Trim(), ignoreCase: true, out var parsed))
             return parsed;

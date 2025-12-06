@@ -296,7 +296,7 @@ public class RepresentationFormatterTests
             ["code.csharp"] = 15,
             ["markdown.doc"] = 10
         };
-        var output = RepresentationFormatter.FormatTruncationSummary(25, omittedByType, null);
+        var output = RepresentationFormatter.FormatTruncationSummary(25, omittedByType);
 
         output.Should().Be("[More: 15x code.csharp, 10x markdown.doc]");
     }
@@ -305,22 +305,42 @@ public class RepresentationFormatterTests
     [DisplayName("Truncation summary without types shows count only")]
     public void Given_TruncationNoTypes_Then_ShowsCountOnly()
     {
-        var output = RepresentationFormatter.FormatTruncationSummary(5, null, null);
+        var output = RepresentationFormatter.FormatTruncationSummary(5, null);
 
         output.Should().Be("[More: 5]");
     }
 
     [Test]
-    [DisplayName("Truncation summary with indexer status")]
-    public void Given_TruncationWithIndexerStatus_Then_ShowsStatus()
+    [DisplayName("Status footer shows pending when indexing")]
+    public void Given_PendingFiles_Then_ShowsPending()
     {
-        var omittedByType = new Dictionary<string, int> { ["code.csharp"] = 3 };
-        var indexerStatus = new IndexerStatus("SemanticIndexing", Progress: 45, PendingFiles: 120);
+        var status = new IndexerStatus(IndexPending: 5, SemanticReady: false, SemanticEnabled: true, ElapsedMs: 150);
 
-        var output = RepresentationFormatter.FormatTruncationSummary(3, omittedByType, indexerStatus);
+        var output = RepresentationFormatter.FormatStatusFooter(status);
 
-        output.Should().Contain("[More: 3x code.csharp]");
-        output.Should().Contain("[Indexer: SemanticIndexing 45%, 120 pending]");
+        output.Should().Be("[150ms | index: 5 pending | semantic: pending]");
+    }
+
+    [Test]
+    [DisplayName("Status footer shows ready when idle")]
+    public void Given_NoPending_Then_ShowsReady()
+    {
+        var status = new IndexerStatus(IndexPending: 0, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 50);
+
+        var output = RepresentationFormatter.FormatStatusFooter(status);
+
+        output.Should().Be("[50ms | index: ready | semantic: ready]");
+    }
+
+    [Test]
+    [DisplayName("Status footer shows disabled when embeddings off")]
+    public void Given_EmbeddingsDisabled_Then_ShowsDisabled()
+    {
+        var status = new IndexerStatus(IndexPending: 0, SemanticReady: false, SemanticEnabled: false, ElapsedMs: 30);
+
+        var output = RepresentationFormatter.FormatStatusFooter(status);
+
+        output.Should().Be("[30ms | index: ready | semantic: disabled]");
     }
 
     [Test]
@@ -336,7 +356,7 @@ public class RepresentationFormatterTests
             ["type5"] = 2,
             ["type6"] = 1
         };
-        var output = RepresentationFormatter.FormatTruncationSummary(31, omittedByType, null);
+        var output = RepresentationFormatter.FormatTruncationSummary(31, omittedByType);
 
         output.Should().Contain("10x type1");
         output.Should().Contain("8x type2");

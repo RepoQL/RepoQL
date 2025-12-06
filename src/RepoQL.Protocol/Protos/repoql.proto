@@ -248,7 +248,9 @@ message WaitForPipelineResponse {
 message ImportRequest {
   // Repository URI to import (e.g., github://owner/repo@ref).
   string uri = 1;
-  // Stage to wait for after enqueueing imported artifacts. When omitted the server waits for analysis.
+  // Stage to wait for after enqueueing imported artifacts. When omitted the server waits for
+  // SEMANTIC_INDEXING to ensure embeddings are ready for search. Pass INDEXING for hot-path only,
+  // or UNSPECIFIED to return immediately without waiting.
   optional PipelineStage wait_stage = 2;
 }
 
