@@ -9,68 +9,66 @@ namespace RepoQL.ConsoleApp.Tools;
 internal class QueryTool(QueryExecutor queryExecutor)
 {
     private const string QueryInstructions = """
-                                             # Repository Query Language
-                                             
                                              <CONCEPT>
-                                             Treat the entities and structures contained inside repo files as a database to quickly understand repository contents and find features in many different file types
-                                             
-                                             **Read unfamiliar files only after searching with  RepoQL first**
+                                                 Query is very powerful and allows you to do complex analysis and retrieval with all the power of DuckDB
+                                                 HOWEVER: 
+                                                    use xray first - it will always use less tokens than the query equivilent
+                                                    use query when you need more control or your needs are complex
                                              </CONCEPT>
                                              
                                              <PURPOSE>
-                                             - Find structures in files with semantic search, avoid reading files you don't need to
-                                             - Understand contents of files without token waste (Structure, relationships, dependencies, technologies)
-                                             - See linting errors across many file types (annotations)
-                                             - Understand "what uses this?" and "What links to this?" and "What breaks if I change this?"
+                                                 - Find structures in files with semantic search, avoid reading files you don't need to
+                                                 - Understand contents of files without token waste (Structure, relationships, dependencies, technologies)
+                                                 - See linting errors across many file types (annotations)
+                                                 - Understand "what uses this?" and "What links to this?" and "What breaks if I change this?"
                                              </PURPOSE>
                                              
                                              <CONTEXT>
-                                             - Dialect is DuckDB flavored SQL with custom UDFs
-                                             - Assume all file types are supported
-                                             - Every entity is represented by a repo URI e.g.
-                                               `file:///repo/lib.cs#symbol=Foo.Bar&line=12,20`
-                                               `docs:///quickstart`
-                                             - Semantic mime type indicates both file type and contents e.g.
-                                               `application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
+                                                 - Dialect is DuckDB flavored SQL with custom UDFs
+                                                 - Assume all file types are supported
+                                                 - Every entity is represented by a repo URI e.g.
+                                                   `file:///repo/lib.cs#symbol=Foo.Bar&line=12,20`
+                                                   `docs:///quickstart`
+                                                 - Semantic mime type indicates both file type and contents e.g.
+                                                   `application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
                                              </CONTEXT>
                                              
                                              <SCHEMA>
-                                              Everything is a graph. Files are nodes with artifacts (bytes). Entities inside files (headings, functions, etc.) are child nodes connected by edges. Precise locations use spans. Everything else (lint, metrics, outlines) is annotations.
-                                             
-                                             Core Tables
-                                             
-                                             -- Content (bytes + text + x-ray summaries)
-                                             artifact(id, digest, media_type, text_content, headline, summary, structure)
-                                             
-                                             -- Entities (documents and everything inside them)
-                                             node(id, kind, uri, artifact_id, span_id, properties[JSON])
-                                             -- Only 'document' nodes have uri; others addressed via span
-                                             
-                                             -- Relationships (composition=tree, references=graph)
-                                             edge(id, source_node_id, destination_node_id, type, is_composition, ordinal)
-                                             -- type: 'HAS_PART' (composition) or 'REFERS_TO', 'CALLS', etc.
-                                             
-                                             -- Locations (precise line/char ranges)
-                                             span(id, document_id, start_line, end_line, start_byte, end_byte)
-                                             -- Lines: 1-based inclusive. Chars: 0-based half-open
-                                             
-                                             -- Diagnostics & facts (lint, outlines, metrics, etc.)
-                                             annotation(id, kind, severity, source, message, data[JSON], scope_document_id, target_node_id, resolved_target_uri)
-                                             
+                                                 Everything is a graph. Files are nodes with artifacts (bytes). Entities inside files (headings, functions, etc.) are child nodes connected by edges. Precise locations use spans. Everything else (lint, metrics, outlines) is annotations.
+                                                 
+                                                 Core Tables
+                                                 
+                                                 -- Content (bytes + text + x-ray summaries)
+                                                 artifact(id, digest, media_type, text_content, headline, summary, structure)
+                                                 
+                                                 -- Entities (documents and everything inside them)
+                                                 node(id, kind, uri, artifact_id, span_id, properties[JSON])
+                                                 -- Only 'document' nodes have uri; others addressed via span
+                                                 
+                                                 -- Relationships (composition=tree, references=graph)
+                                                 edge(id, source_node_id, destination_node_id, type, is_composition, ordinal)
+                                                 -- type: 'HAS_PART' (composition) or 'REFERS_TO', 'CALLS', etc.
+                                                 
+                                                 -- Locations (precise line/char ranges)
+                                                 span(id, document_id, start_line, end_line, start_byte, end_byte)
+                                                 -- Lines: 1-based inclusive. Chars: 0-based half-open
+                                                 
+                                                 -- Diagnostics & facts (lint, outlines, metrics, etc.)
+                                                 annotation(id, kind, severity, source, message, data[JSON], scope_document_id, target_node_id, resolved_target_uri)
                                              </SCHEMA>
                                              
                                              <ESSENTIAL_MACROS>
-                                             SELECT * FROM xray_documents()  -- inventory
-                                             SELECT * FROM snippet('file:///path#line=42', 3)  -- preview
+                                                 SELECT * FROM xray_documents()  -- inventory
+                                                 SELECT * FROM snippet('file:///path#line=42', 3)  -- preview
 
-                                             -- Files: file_search(keywords, question := ..., k)
-                                             SELECT uri, score FROM file_search('auth', question := 'How refresh JWTs?', k := 10)
+                                                 -- Files: file_search(keywords, question := ..., k)
+                                                 SELECT uri, score FROM file_search('auth', question := 'How refresh JWTs?', k := 10)
 
-                                             -- Objects (functions/classes/headings): search(q, k) WHERE scope='object'
-                                             SELECT uri, symbol, kind, line_start FROM search('ProcessRequest', k := 10) WHERE scope = 'object'
-                                             SELECT uri, scope, symbol FROM search('error handling', k := 30)  -- mixed
+                                                 -- Objects (functions/classes/headings): search(q, k) WHERE scope='object'
+                                                 SELECT uri, symbol, kind, line_start FROM search('ProcessRequest', k := 10) WHERE scope = 'object'
+                                                 SELECT uri, scope, symbol FROM search('error handling', k := 30)  -- mixed
 
-                                             SELECT * FROM annotations WHERE severity = 'error'  -- diagnostics
+                                                 SELECT * FROM annotations WHERE severity = 'error'  -- diagnostics
                                              </ESSENTIAL_MACROS>
 
                                              Docs at docs:///quickstart.md, docs:///advanced-search.md

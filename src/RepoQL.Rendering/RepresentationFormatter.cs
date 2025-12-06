@@ -100,12 +100,11 @@ public static class RepresentationFormatter
     }
 
     /// <summary>
-    /// Format a truncation summary with semantic type breakdown and indexer status.
+    /// Format a truncation summary with semantic type breakdown.
     /// </summary>
     public static string FormatTruncationSummary(
         int count,
-        IReadOnlyDictionary<string, int>? omittedByType,
-        IndexerStatus? indexerStatus)
+        IReadOnlyDictionary<string, int>? omittedByType)
     {
         var sb = new StringBuilder();
 
@@ -129,24 +128,29 @@ public static class RepresentationFormatter
         }
 
         sb.Append(']');
-
-        // Add indexer status if not complete
-        if (indexerStatus is not null && indexerStatus.Stage != "Complete")
-        {
-            sb.Append('\n');
-            sb.Append("[Indexer: ");
-            sb.Append(indexerStatus.Stage);
-
-            if (indexerStatus.Progress.HasValue)
-                sb.Append($" {indexerStatus.Progress}%");
-
-            if (indexerStatus.PendingFiles.HasValue && indexerStatus.PendingFiles > 0)
-                sb.Append($", {indexerStatus.PendingFiles} pending");
-
-            sb.Append(']');
-        }
-
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Format the status footer showing indexer state and timing.
+    /// </summary>
+    public static string FormatStatusFooter(IndexerStatus status)
+    {
+        // Format: [42ms | index: ready | semantic: ready]
+        // Or if busy: [42ms | index: 5 pending | semantic: pending]
+        var indexStatus = status.IndexPending > 0
+            ? $"{status.IndexPending} pending"
+            : "ready";
+
+        string semanticStatus;
+        if (!status.SemanticEnabled)
+            semanticStatus = "disabled";
+        else if (status.SemanticReady)
+            semanticStatus = "ready";
+        else
+            semanticStatus = "pending";
+
+        return $"[{status.ElapsedMs}ms | index: {indexStatus} | semantic: {semanticStatus}]";
     }
 
     /// <summary>

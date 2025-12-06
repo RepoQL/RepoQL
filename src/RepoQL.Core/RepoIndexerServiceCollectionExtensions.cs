@@ -394,11 +394,18 @@ public static class RepoIndexerServiceCollectionExtensions
                 sp.GetService<ILogger<IndexingEngine>>(),
                 sp.GetRequiredService<IndexingMetrics>());
 
-            // Register diagnostics provider for the UDF (separate from engine)
+            // Set static provider for UDFs (they can't use DI)
             var diagnosticsProvider = new RepoQL.Indexing.Indexing.IndexingEngineDiagnosticsProvider(engine);
             RepoQL.Contracts.Diagnostics.IndexingDiagnostics.SetProvider(diagnosticsProvider);
 
             return engine;
+        });
+
+        // Also register provider in DI for tools that can use it
+        services.AddSingleton<RepoQL.Contracts.Diagnostics.IIndexingDiagnosticsProvider>(sp =>
+        {
+            var engine = sp.GetRequiredService<IndexingEngine>();
+            return new RepoQL.Indexing.Indexing.IndexingEngineDiagnosticsProvider(engine);
         });
 
         services.AddSingleton<IIndexingCoordinator>(sp => new IndexingCoordinator(

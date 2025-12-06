@@ -40,11 +40,8 @@ internal class McpCommands
                 {
                     s.InitializationTimeout = TimeSpan.FromSeconds(45);
                     s.ServerInstructions = """
-                                           # Repository Query Language
-
                                            <CONCEPT>
                                            Treat the entities and structures contained inside repo files as a database to quickly understand repository contents and find features in many different file types
-
                                            **Read unfamiliar files only after searching with  RepoQL first**
                                            </CONCEPT>
 
@@ -67,6 +64,13 @@ internal class McpCommands
                                            </CONTEXT>
 
                                            The documentation for RepoQL can be read by querying - consider obtaining it to be the tutorial.
+                                           
+                                           <REMEMBER>
+                                            - Xray should be your first tool for finding and understanding
+                                            - Use Query to do what xray cannot with all the power of SQL
+                                            - Always map the territory before reading whole files
+                                            - Use ReadMcpResourceTool to read files or objects within them given URI. Supports git-style URI globbing 
+                                           </REMEMBER>
                                            
                                            ### Repository Navigation - RepoQL
                                            

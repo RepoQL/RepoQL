@@ -199,8 +199,8 @@ public class OutputComposerTests
     }
 
     [Test]
-    [DisplayName("Indexer status shown when not complete")]
-    public void Given_IncompleteIndexer_Then_ShowsStatus()
+    [DisplayName("Status footer shown with pending files")]
+    public void Given_PendingFiles_Then_ShowsStatusFooter()
     {
         var decisions = new[]
         {
@@ -210,16 +210,16 @@ public class OutputComposerTests
         };
         var omittedByType = new Dictionary<string, int> { ["code.csharp"] = 5 };
         var result = new DecisionResult(decisions, 5, omittedByType);
-        var indexerStatus = new IndexerStatus("SemanticIndexing", Progress: 45, PendingFiles: 120);
+        var indexerStatus = new IndexerStatus(IndexPending: 5, SemanticReady: false, SemanticEnabled: true, ElapsedMs: 150);
 
         var output = OutputComposer.Compose(result, showConfidence: true, indexerStatus);
 
-        output.Should().Contain("[Indexer: SemanticIndexing 45%, 120 pending]");
+        output.Should().Contain("[150ms | index: 5 pending | semantic: pending]");
     }
 
     [Test]
-    [DisplayName("Indexer status not shown when complete")]
-    public void Given_CompleteIndexer_Then_NoStatus()
+    [DisplayName("Status footer shown when ready")]
+    public void Given_Ready_Then_ShowsStatusFooter()
     {
         var decisions = new[]
         {
@@ -227,11 +227,11 @@ public class OutputComposerTests
                 new XrayResult("file:///a.cs", 90, null, "A", null, null, null),
                 Representation.Compact, 10),
         };
-        var omittedByType = new Dictionary<string, int> { ["code.csharp"] = 5 };
-        var result = new DecisionResult(decisions, 5, omittedByType);
+        var result = new DecisionResult(decisions, 0, null);
+        var indexerStatus = new IndexerStatus(IndexPending: 0, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 50);
 
-        var output = OutputComposer.Compose(result, showConfidence: true, IndexerStatus.Complete);
+        var output = OutputComposer.Compose(result, showConfidence: true, indexerStatus);
 
-        output.Should().NotContain("[Indexer:");
+        output.Should().Contain("[50ms | index: ready | semantic: ready]");
     }
 }

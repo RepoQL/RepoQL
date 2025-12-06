@@ -12,7 +12,7 @@ public static class OutputComposer
     /// </summary>
     /// <param name="decisionResult">The decision result containing decisions and omitted info.</param>
     /// <param name="showConfidence">Whether to show confidence scores.</param>
-    /// <param name="indexerStatus">Optional indexer status for truncation summary.</param>
+    /// <param name="indexerStatus">Optional indexer status for footer.</param>
     /// <returns>The composed output string.</returns>
     public static string Compose(
         DecisionResult decisionResult,
@@ -50,8 +50,16 @@ public static class OutputComposer
                 sb.Append('\n');
             sb.Append(RepresentationFormatter.FormatTruncationSummary(
                 decisionResult.OmittedCount,
-                decisionResult.OmittedByType,
-                indexerStatus));
+                decisionResult.OmittedByType));
+        }
+
+        // Always add status footer if available
+        if (indexerStatus is not null)
+        {
+            sb.Append('\n');
+            if (previousWasMultiline || decisionResult.OmittedCount > 0)
+                sb.Append('\n');
+            sb.Append(RepresentationFormatter.FormatStatusFooter(indexerStatus));
         }
 
         return sb.ToString();
