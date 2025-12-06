@@ -588,26 +588,34 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         await writer.FlushAsync(context.CancellationToken).ConfigureAwait(false);
 
         // Refresh search projection and embeddings to include newly imported documents
+        var waitForEmbeddings = waitStages.Contains(CoordinatorPipelineStage.Writer); // Writer = SemanticIndexing
         if (store is DuckDbGraphStore duck)
         {
             duck.RefreshSearchProjection(incrementalRefresh: true);
 
-            // Refresh embeddings for documents that were just committed
-            // Run in background to avoid blocking the import response
             if (_embeddingProvider is not null && _embeddingProvider.Enabled)
             {
-                var provider = _embeddingProvider;
-                _ = Task.Run(async () =>
+                if (waitForEmbeddings)
                 {
-                    try
+                    // SemanticIndexing requested - wait for embeddings to complete
+                    await duck.RefreshDocumentEmbeddingsAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    // No semantic wait - refresh embeddings in background
+                    var provider = _embeddingProvider;
+                    _ = Task.Run(async () =>
                     {
-                        await duck.RefreshDocumentEmbeddingsAsync(provider, CancellationToken.None).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Background embedding refresh failed");
-                    }
-                });
+                        try
+                        {
+                            await duck.RefreshDocumentEmbeddingsAsync(provider, CancellationToken.None).ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Background embedding refresh failed");
+                        }
+                    });
+                }
             }
         }
 
@@ -678,7 +686,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private static IReadOnlyCollection<CoordinatorPipelineStage> ResolveImportStages(ImportRequest request)
     {
         if (!request.HasWaitStage)
-            return new[] { CoordinatorPipelineStage.Writer }; // Default to Writer (SemanticIndexing) to ensure embeddings are ready
+            return new[] { CoordinatorPipelineStage.Writer }; // Default to SemanticIndexing - waits for embeddings
 
         if (request.WaitStage == ProtoPipelineStage.Unspecified)
             return Array.Empty<CoordinatorPipelineStage>();
