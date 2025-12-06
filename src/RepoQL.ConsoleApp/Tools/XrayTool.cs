@@ -16,6 +16,7 @@ internal sealed class XrayTool(
 {
     private readonly IXraySearchEngine _searchEngine = searchEngine ?? throw new ArgumentNullException(nameof(searchEngine));
     private readonly IXrayRenderingEngine _renderingEngine = renderingEngine ?? throw new ArgumentNullException(nameof(renderingEngine));
+    private readonly IIndexingDiagnosticsProvider? _diagnosticsProvider = diagnosticsProvider;
 
     private const string ToolInstructions = """
         <CONCEPT>
