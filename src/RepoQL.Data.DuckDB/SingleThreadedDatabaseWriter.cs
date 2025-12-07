@@ -122,14 +122,19 @@ public sealed class SingleThreadedDatabaseWriter(
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        using var initSpan = Activity.StartActivity("database_initialization", ActivityKind.Internal);
+
         // Initialize connection and store once
         _writeConnection = _connectionFactory.CreateConnection();
         var formatScripts = _schemaProviders
             .SelectMany(p => p.GetSchemaScripts())
             .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
             .ToArray();
+        initSpan?.SetTag("format_script_count", formatScripts.Length);
+
         _store = _graphStoreFactory.Create(_writeConnection, formatScripts);
         _store.EnsureSchema();
+        initSpan?.SetTag("schema_initialized", true);
 
         _metrics.SetQueueDepthCallback(() => _channel.Reader.Count);
         _metrics.SetQueueCapacityCallback(() => MaxQueueDepth);
@@ -622,8 +627,52 @@ public sealed class SingleThreadedDatabaseWriter(
             WriteOperationType.DeleteDocument => ExecuteSynchronously(() => ApplyDeleteDocument(op)),
             WriteOperationType.Barrier => Task.CompletedTask,
             WriteOperationType.Checkpoint => ApplyCheckpointAsync(op.CancellationToken),
+            WriteOperationType.WriteStructureEmbeddings => ExecuteSynchronously(() => ApplyWriteStructureEmbeddings(op)),
             _ => throw new NotSupportedException($"Unsupported op: {op.Type}")
         };
+    }
+
+    private void ApplyWriteStructureEmbeddings(WriteOperation op)
+    {
+        if (op.StructureEmbeddings is null || op.StructureEmbeddings.Count == 0)
+            return;
+
+        if (_writeConnection is not { State: ConnectionState.Open })
+            return;
+
+        using var tx = _writeConnection.BeginTransaction();
+        try
+        {
+            foreach (var item in op.StructureEmbeddings)
+            {
+                using var cmd = _writeConnection.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = """
+                    INSERT INTO document_embedding(doc_id, node_id, chunk_index, embedding_type, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
+                    VALUES (?, ?, 0, 'structure', ?, 'document', ?, ?, ?, NULL, NULL, CURRENT_TIMESTAMP)
+                    ON CONFLICT (doc_id, node_id, chunk_index, embedding_type)
+                    DO UPDATE SET uri=excluded.uri, model=excluded.model, dim=excluded.dim,
+                                  embedding=excluded.embedding, updated_at=excluded.updated_at
+                    """;
+
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.DocId });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.NodeId });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.Uri });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.Model });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.Dimension });
+                cmd.Parameters.Add(new DuckDBParameter { Value = new List<float>(item.Embedding) });
+
+                cmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            _logger.LogDebug("Wrote {Count} structure embeddings", op.StructureEmbeddings.Count);
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
     }
 
     private async Task ApplyCheckpointAsync(CancellationToken cancellationToken)

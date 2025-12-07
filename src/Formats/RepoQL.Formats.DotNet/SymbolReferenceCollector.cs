@@ -13,6 +13,7 @@ internal sealed class SymbolReferenceCollector : CSharpSyntaxWalker
     private readonly Guid _documentId;
     private readonly IReadOnlyDictionary<string, Guid>? _filePathToDocumentId;
     private readonly List<CSharpSymbolReference> _references = new();
+    private readonly Dictionary<SyntaxNode, Guid?> _ownerCache = new(ReferenceEqualityComparer.Instance);
 
     public SymbolReferenceCollector(
         SemanticModel semanticModel,
@@ -20,7 +21,7 @@ internal sealed class SymbolReferenceCollector : CSharpSyntaxWalker
         TextLineMap lineMap,
         Guid documentId,
         IReadOnlyDictionary<string, Guid>? filePathToDocumentId = null)
-        : base(SyntaxWalkerDepth.StructuredTrivia)
+        : base(SyntaxWalkerDepth.Node)
     {
         _semanticModel = semanticModel;
         _declaredNodeIds = declaredNodeIds;
@@ -65,13 +66,20 @@ internal sealed class SymbolReferenceCollector : CSharpSyntaxWalker
 
     private Guid? ResolveOwner(SyntaxNode node)
     {
+        if (_ownerCache.TryGetValue(node, out var cached))
+            return cached;
+
         var current = node;
         while (current is not null)
         {
             if (_declaredNodeIds.TryGetValue(current, out var nodeId))
+            {
+                _ownerCache[node] = nodeId;
                 return nodeId;
+            }
             current = current.Parent;
         }
+        _ownerCache[node] = _documentId;
         return _documentId;
     }
 

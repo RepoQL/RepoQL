@@ -13,7 +13,7 @@ internal class VectorIndexCoordinatorTests
     public async Task Given_VectorCoordinator_When_ApplyAsyncTwice_Then_RefreshesOnce()
     {
         var refresher = new FakeRefresher();
-        var coordinator = new VectorIndexCoordinator(refresher, NullLogger<VectorIndexCoordinator>.Instance);
+        var coordinator = new VectorIndexCoordinator(refresher, logger: NullLogger<VectorIndexCoordinator>.Instance);
         var item = new IndexingTestItemBuilder()
             .WithUri("file:///repo/vector.md")
             .WithContent("text")

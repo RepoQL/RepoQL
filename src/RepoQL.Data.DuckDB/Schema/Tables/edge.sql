@@ -1,7 +1,8 @@
 CREATE TABLE IF NOT EXISTS edge (
                                     id                     UUID PRIMARY KEY,
                                     source_node_id         UUID NOT NULL,
-                                    destination_node_id    UUID NOT NULL,
+                                    destination_node_id    UUID,
+                                    destination_uri        VARCHAR,
                                     type                   VARCHAR NOT NULL,
                                     is_composition         BOOLEAN NOT NULL,
                                     ordinal                INTEGER,
@@ -21,13 +22,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS edge_semantic_key_unique ON edge(semantic_key)
 CREATE UNIQUE INDEX IF NOT EXISTS edge_composition_single_parent ON edge(composition_child_id);
 CREATE INDEX IF NOT EXISTS edge_source_idx      ON edge(source_node_id);
 CREATE INDEX IF NOT EXISTS edge_destination_idx ON edge(destination_node_id);
+CREATE INDEX IF NOT EXISTS edge_destination_uri_idx ON edge(destination_uri);
 CREATE INDEX IF NOT EXISTS edge_type_idx         ON edge(type);
 CREATE INDEX IF NOT EXISTS edge_scope_idx        ON edge(scope_document_id);
 
 COMMENT ON TABLE edge IS 'Directed relationship between nodes with optional spans and attributes.';
 COMMENT ON COLUMN edge.id IS 'Edge identifier (GUID).';
 COMMENT ON COLUMN edge.source_node_id IS 'Source node id.';
-COMMENT ON COLUMN edge.destination_node_id IS 'Destination node id.';
+COMMENT ON COLUMN edge.destination_node_id IS 'Destination node id (nullable for unresolved references).';
+COMMENT ON COLUMN edge.destination_uri IS 'Target URI for reference edges; enables deferred resolution and broken-link detection.';
 COMMENT ON COLUMN edge.type IS 'Relation type (e.g., HAS_PART, REFERS_TO, CALLS).';
 COMMENT ON COLUMN edge.is_composition IS 'True when expressing containment/ownership.';
 COMMENT ON COLUMN edge.ordinal IS 'Stable order among composition siblings.';

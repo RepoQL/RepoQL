@@ -18,4 +18,20 @@ public sealed record WriteOperation
     ///     Optional cancellation token for operations that support cancellation (e.g., Checkpoint).
     /// </summary>
     public CancellationToken CancellationToken { get; init; }
+
+    /// <summary>
+    ///     Structure embeddings to write (for WriteStructureEmbeddings operation type).
+    /// </summary>
+    public IReadOnlyList<StructureEmbeddingData>? StructureEmbeddings { get; init; }
 }
+
+/// <summary>
+/// Data for a single structure embedding to be written.
+/// </summary>
+public sealed record StructureEmbeddingData(
+    Guid DocId,
+    Guid NodeId,
+    string Uri,
+    float[] Embedding,
+    string Model,
+    int Dimension);

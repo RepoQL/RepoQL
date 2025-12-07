@@ -29,7 +29,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly IGraphStore store;
     private readonly RepositoryConfiguration repoConfig;
     private readonly IInitialIndexingBarrier barrier;
-    private readonly IQueryBarrier queryBarrier;
     private readonly IIndexingCoordinator coordinator;
     private readonly IFileSystemImportService importService;
     private readonly DocumentPreviewService _previewService;
@@ -48,7 +47,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         IGraphStore store,
         RepositoryConfiguration repoConfig,
         IInitialIndexingBarrier barrier,
-        IQueryBarrier queryBarrier,
         IIndexingCoordinator coordinator,
         IFileSystemImportService importService,
         DocumentPreviewService previewService,
@@ -60,7 +58,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         this.store = store ?? throw new ArgumentNullException(nameof(store));
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
         this.barrier = barrier ?? throw new ArgumentNullException(nameof(barrier));
-        this.queryBarrier = queryBarrier ?? throw new ArgumentNullException(nameof(queryBarrier));
         this._embeddingProvider = embeddingProvider;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
@@ -71,11 +68,10 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         // Note: Schema version checking is now handled by DuckDbGraphStore.EnsureSchema()
     }
 
-    public override async Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
+    public override Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
     {
-        // Use intelligent query barrier that waits for appropriate indexing stages
-        // based on query characteristics (hot path for all, semantic index for search queries)
-        await queryBarrier.WaitForQueryReadyAsync(request.Sql, context.CancellationToken).ConfigureAwait(false);
+        // No barrier - queries execute immediately with whatever data is available.
+        // XrayTool handles "call again to wait" pattern for semantic readiness.
         var resp = new RawQueryResponse();
         try
         {
@@ -112,7 +108,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         {
             throw new RpcException(new Status(StatusCode.Internal, ex.Message));
         }
-        return resp;
+        return Task.FromResult(resp);
     }
 
     public override async Task<ClientLeaseSummary> HoldClientLease(IAsyncStreamReader<ClientLeaseBeat> requestStream, ServerCallContext context)
@@ -598,7 +594,15 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 if (waitForEmbeddings)
                 {
                     // SemanticIndexing requested - wait for embeddings to complete
-                    await duck.RefreshDocumentEmbeddingsAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
+                    try
+                    {
+                        await duck.RefreshDocumentEmbeddingsAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Embedding refresh failed during import");
+                        throw new RpcException(new Grpc.Core.Status(Grpc.Core.StatusCode.Internal, $"Embedding refresh failed: {ex.Message}"));
+                    }
                 }
                 else
                 {

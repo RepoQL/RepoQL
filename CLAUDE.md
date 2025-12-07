@@ -115,3 +115,11 @@ annotations_for(uri, 'lint', 'warning')               -- Diagnostics
 3. **Convenient**: Only add features more powerful than standard agent tools. High success rate, low false positives.
 
 **Golden Rules**: Schema stability. Standard formats at edges. Sensible defaults. Errors never cascade. Single writer.
+
+## Testing changes
+
+RepoQL is a complex project and it is necessary that we have great tests in place to make maintaining it feasible as it grows in complexity. 
+It is designed to be extremely testable - almost all of it can be run entirely in memory - and this is not by mistake. Generally speaking if we add ANY functionality it must have test coverage. In the indexer particularly bugs are very very expensive, and ideally we would have 100% code coverage there. Tread carefully.
+
+Many changes require you to try them out to see if they are effective in the real world, to facilitate that you can run deploy.ps1, which will kill all running copies of repoql, publish the changes and then copy them to where you are configured to run the MCP server from. You'll need to ask the user to reconnect the tool via /mcp after running the script to see the changes.
+

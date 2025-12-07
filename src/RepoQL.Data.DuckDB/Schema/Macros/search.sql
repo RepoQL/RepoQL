@@ -167,7 +167,8 @@ lex_rrf AS (
     FROM lex_ranked
 ),
 -- Dense scorer (OpenAI-style embedding similarity).
--- Scores ALL chunks per document and aggregates to MAX for multi-chunk documents.
+-- Uses BOTH structure embeddings (fast, available immediately) AND full-text embeddings.
+-- Applies a boost when both match strongly (high confidence).
 semantic_seed AS (
     SELECT
         CASE
@@ -183,33 +184,66 @@ qv AS (
     FROM semantic_seed
     WHERE query_text IS NOT NULL
 ),
--- Score all chunks (not just chunk_index=0) to find best match within each document
-sem_all_chunks AS (
+-- Structure embeddings (fast, always chunk_index=0)
+structure_sem AS (
+    SELECT
+        de.doc_id,
+        de.node_id,
+        list_cosine_similarity(qv.qjson::FLOAT[], de.embedding) AS struct_sem
+    FROM qv
+             JOIN document_embedding de ON de.embedding IS NOT NULL
+             JOIN filtered ri ON ri.node_id = de.node_id
+    WHERE de.scope = 'document'
+      AND de.embedding_type = 'structure'
+      AND qv.qjson IS NOT NULL
+),
+-- Full-text embeddings: score all chunks to find best match within each document
+full_text_chunks AS (
     SELECT
         de.doc_id,
         de.node_id,
         de.chunk_index,
         de.start_byte,
         de.end_byte,
-        cosine_similarity_json(qv.qjson, de.embedding) AS chunk_sem
+        list_cosine_similarity(qv.qjson::FLOAT[], de.embedding) AS chunk_sem
     FROM qv
              JOIN document_embedding de ON de.embedding IS NOT NULL
              JOIN filtered ri ON ri.node_id = de.node_id
     WHERE de.scope = 'document'
-      AND qv.qjson IS NOT NULL  -- Guard against disabled embedding provider
+      AND de.embedding_type = 'full'
+      AND qv.qjson IS NOT NULL
 ),
--- Aggregate to best chunk per document (MAX semantic score)
-sem_scored AS (
+-- Aggregate full-text to best chunk per document
+full_text_scored AS (
     SELECT
         node_id,
         doc_id,
-        MAX(chunk_sem) AS sem,
-        -- Keep track of which chunk had the best match for proximity scoring
+        MAX(chunk_sem) AS full_sem,
         (ARRAY_AGG(chunk_index ORDER BY chunk_sem DESC))[1] AS best_chunk_index,
         (ARRAY_AGG(start_byte ORDER BY chunk_sem DESC))[1] AS best_chunk_start,
         (ARRAY_AGG(end_byte ORDER BY chunk_sem DESC))[1] AS best_chunk_end
-    FROM sem_all_chunks
+    FROM full_text_chunks
     GROUP BY node_id, doc_id
+),
+-- Combine structure + full-text: take the maximum score with small agreement boost
+-- Structure embeddings are fast (available immediately after hot path)
+-- Full-text embeddings are more detailed (available after background processing)
+sem_scored AS (
+    SELECT
+        COALESCE(ss.node_id, fs.node_id) AS node_id,
+        COALESCE(ss.doc_id, fs.doc_id) AS doc_id,
+        -- Use whichever embedding scored higher, plus 5% of combined when both exist
+        GREATEST(COALESCE(ss.struct_sem, 0), COALESCE(fs.full_sem, 0))
+            + CASE
+                WHEN ss.struct_sem IS NOT NULL AND fs.full_sem IS NOT NULL
+                THEN 0.05 * (ss.struct_sem + fs.full_sem)
+                ELSE 0
+            END AS sem,
+        fs.best_chunk_index,
+        fs.best_chunk_start,
+        fs.best_chunk_end
+    FROM structure_sem ss
+    FULL OUTER JOIN full_text_scored fs ON ss.node_id = fs.node_id
 ),
 sem_top AS (
     SELECT node_id, doc_id, sem, sem_rank
@@ -445,7 +479,7 @@ scored AS (
         f.*,
         CASE
             WHEN seed.embedding IS NOT NULL AND f.embedding IS NOT NULL
-                THEN cosine_similarity_json(seed.embedding, f.embedding)
+                THEN list_cosine_similarity(seed.embedding, f.embedding)
             ELSE NULL
         END AS sim_score,
         match_score(lower(coalesce(seed.symbol_key, seed.search_key, '')), f.search_key) AS bm25_score,
@@ -517,10 +551,10 @@ CREATE OR REPLACE MACRO file_search(
 SELECT
     doc_id,
     uri,
-    bm25_score AS bm25n,
-    fuzzy_score AS fuzzn,
-    dense_score AS semn,
-    score
+    MAX(bm25_score) AS bm25n,
+    MAX(fuzzy_score) AS fuzzn,
+    MAX(dense_score) AS semn,
+    MAX(score) AS score
 FROM search(
         -- Avoid "q q" duplication when only question is provided
         CASE
@@ -539,6 +573,9 @@ FROM search(
         fuzzy_weight := 0.00,
         semantic_weight := 0.90
     )
+WHERE scope = 'document'
+GROUP BY doc_id, uri
+ORDER BY score DESC
 );
 
 -- Two-phase object search with just-in-time embeddings.
@@ -636,18 +673,19 @@ candidate_files AS (
     GROUP BY doc_id, file_uri
 ),
 -- Phase 1d: Score all chunks within candidate files to find the most relevant regions
--- This uses the pre-computed document_embedding chunks
+-- This uses the pre-computed document_embedding chunks (full-text only, not structure)
 chunk_scores AS (
     SELECT
         de.doc_id,
         de.chunk_index,
         de.start_byte,
         de.end_byte,
-        cosine_similarity_json(qe.qvec, de.embedding) AS chunk_score
+        list_cosine_similarity(qe.qvec::FLOAT[], de.embedding) AS chunk_score
     FROM document_embedding de
     JOIN candidate_files cf ON de.doc_id = cf.doc_id
     CROSS JOIN query_embedding qe
     WHERE de.scope = 'document'
+      AND de.embedding_type = 'full'  -- Structure embeddings don't have chunks
       AND de.embedding IS NOT NULL
       AND qe.qvec IS NOT NULL
       AND de.start_byte IS NOT NULL  -- Only chunked documents have byte ranges
@@ -866,7 +904,7 @@ with_scores AS (
         so.digest,
         so.file_uri,
         so.file_score,
-        -- Separate semantic scores for headline vs body
+        -- Separate semantic scores for headline vs body (both are JSON from embed_text_json)
         cosine_similarity_json(so.qvec, so.headline_embedding) AS headline_semantic,
         cosine_similarity_json(so.qvec, so.body_embedding) AS body_semantic,
         -- Combined semantic: headline weighted 60%, body 40%

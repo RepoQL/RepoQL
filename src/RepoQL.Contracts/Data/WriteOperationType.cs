@@ -6,5 +6,6 @@ public enum WriteOperationType
     UpsertAnnotations,
     DeleteDocument,
     Barrier,
-    Checkpoint
+    Checkpoint,
+    WriteStructureEmbeddings
 }

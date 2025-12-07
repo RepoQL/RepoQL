@@ -206,9 +206,22 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
 
         var now = DateTimeOffset.UtcNow;
 
+        var packages = state.Packages
+            .Select(p => new JsonObject
+            {
+                ["id"] = p.Id,
+                ["version"] = string.IsNullOrWhiteSpace(p.Version) ? null : p.Version
+            })
+            .ToArray();
+
+        var projectRefs = state.ProjectRefs
+            .Select(p => Path.GetFileNameWithoutExtension(p.Include))
+            .ToArray();
+
+        var docNodeId = Guid.NewGuid();
         var docNode = new Node
         {
-            Id = Guid.NewGuid(),
+            Id = docNodeId,
             Kind = "document",
             Uri = document.Uri,
             ArtifactId = artifact.Id,
@@ -218,119 +231,41 @@ public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLo
                 ["sdk"] = state.Sdk,
                 ["tfms"] = string.Join(';', state.TargetFrameworks),
                 ["output_type"] = state.OutputType,
-                ["pack"] = state.Pack
+                ["pack"] = state.Pack,
+                ["packages"] = new JsonArray(packages),
+                ["project_refs"] = new JsonArray(projectRefs.Select(p => JsonValue.Create(p)).ToArray())
             },
             CreatedAt = now,
             UpdatedAt = now
         };
 
-        var nodes = new List<Node> { docNode };
+        // Create reference edges to referenced projects
         var edges = new List<Edge>();
-        var spans = new List<Span>();
-
-        var ordinal = 0;
-
-        if (state.TargetFrameworks.Count > 0)
-        {
-            foreach (var tfm in state.TargetFrameworks)
-            {
-                var n = new Node
-                {
-                    Id = Guid.NewGuid(),
-                    Kind = "dotnet.tfm",
-                    Props = new JsonObject { ["tfm"] = tfm },
-                    CreatedAt = now,
-                    UpdatedAt = now
-                };
-                nodes.Add(n);
-                edges.Add(HasPart(docNode.Id, n.Id, docNode.Id, ordinal++, now));
-            }
-        }
-
-        foreach (var pkg in state.Packages)
-        {
-            Span? span = null;
-            if (pkg.Line > 0)
-            {
-                var s = new Span
-                {
-                    Id = Guid.NewGuid(),
-                    DocumentId = docNode.Id,
-                    StartLine = pkg.Line,
-                    EndLine = pkg.Line,
-                };
-                span = s;
-                spans.Add(s);
-            }
-            var node = new Node
-            {
-                Id = Guid.NewGuid(),
-                Kind = "nuget.package",
-                SpanId = span?.Id,
-                Props = new JsonObject
-                {
-                    ["id"] = pkg.Id,
-                    ["version"] = string.IsNullOrWhiteSpace(pkg.Version) ? null : pkg.Version
-                },
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-            nodes.Add(node);
-            edges.Add(HasPart(docNode.Id, node.Id, docNode.Id, ordinal++, now));
-        }
-
+        var baseDir = Path.GetDirectoryName(document.Uri.Container.LocalPath) ?? "";
         foreach (var pr in state.ProjectRefs)
         {
-            Span? span = null;
-            if (pr.Line > 0)
-            {
-                var s = new Span
-                {
-                    Id = Guid.NewGuid(),
-                    DocumentId = docNode.Id,
-                    StartLine = pr.Line,
-                    EndLine = pr.Line,
-                };
-                span = s;
-                spans.Add(s);
-            }
-            var node = new Node
+            var targetPath = Path.GetFullPath(Path.Combine(baseDir, pr.Include.Replace('\\', '/')));
+            var targetUri = RepoUri.Parse(new Uri(targetPath).AbsoluteUri);
+            edges.Add(new Edge
             {
                 Id = Guid.NewGuid(),
-                Kind = "dotnet.project_reference",
-                SpanId = span?.Id,
-                Props = new JsonObject
-                {
-                    ["include"] = pr.Include
-                },
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-            nodes.Add(node);
-            edges.Add(HasPart(docNode.Id, node.Id, docNode.Id, ordinal++, now));
+                SrcId = docNodeId,
+                DstUri = targetUri,
+                Type = "IMPORTS",
+                IsComposition = false,
+                ScopeDocumentId = docNodeId,
+                CreatedAt = now
+            });
         }
 
         return new Records
         {
             Artifacts = [artifact],
-            Nodes = [.. nodes],
-            Spans = [.. spans],
+            Nodes = [docNode],
+            Spans = [],
             Edges = [.. edges]
         };
     }
-
-    private static Edge HasPart(Guid documentId, Guid childId, Guid scopeDocumentId, int ordinal, DateTimeOffset ts)
-        => new()
-        {
-            Id = Guid.NewGuid(),
-            SrcId = documentId,
-            DstId = childId,
-            Type = "HAS_PART",
-            IsComposition = true,
-            Ordinal = ordinal,
-            ScopeDocumentId = scopeDocumentId,
-            CreatedAt = ts
-        };
 
     private static XDocument? TryParseProject(string text, LoadOptions options, out string parseSource)
     {

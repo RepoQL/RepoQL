@@ -1,7 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Models;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Data.DuckDB;
 
@@ -18,8 +21,11 @@ namespace RepoQL.Indexing.Indexing.PostProcessing;
 /// </remarks>
 public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposable
 {
+    private const int StructureEmbeddingBatchSize = 128;
     private static readonly int RefreshConcurrency = GetRefreshConcurrency();
     private readonly IVectorIndexRefresher _refresher;
+    private readonly IDatabaseWriter? _writer;
+    private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly ILogger<VectorIndexCoordinator> _logger;
     private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
     private long _lastRefreshedEpoch = long.MinValue;
@@ -35,16 +41,21 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     public VectorIndexCoordinator(
         IDuckDBConnectionFactory connectionFactory,
         IEmbeddingProvider embeddingProvider,
+        IDatabaseWriter? writer = null,
         ILogger<VectorIndexCoordinator>? logger = null)
-        : this(new DuckDbVectorIndexRefresher(connectionFactory, embeddingProvider), logger)
+        : this(new DuckDbVectorIndexRefresher(connectionFactory, embeddingProvider), writer, embeddingProvider, logger)
     {
     }
 
     internal VectorIndexCoordinator(
         IVectorIndexRefresher refresher,
+        IDatabaseWriter? writer = null,
+        IEmbeddingProvider? embeddingProvider = null,
         ILogger<VectorIndexCoordinator>? logger = null)
     {
         _refresher = refresher ?? throw new ArgumentNullException(nameof(refresher));
+        _writer = writer;
+        _embeddingProvider = embeddingProvider;
         _logger = logger ?? NullLogger<VectorIndexCoordinator>.Instance;
     }
 
@@ -83,6 +94,121 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     {
         _logger.LogDebug("Vector index refresh triggered");
         await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task GenerateStructureEmbeddingsAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken)
+    {
+        if (items.Count == 0)
+            return;
+
+        if (_writer is null || _embeddingProvider is null || !_embeddingProvider.Enabled)
+        {
+            _logger.LogDebug("Structure embedding skipped: writer={Writer}, provider={Provider}, enabled={Enabled}",
+                _writer is not null, _embeddingProvider is not null, _embeddingProvider?.Enabled);
+            return;
+        }
+
+        var timer = Stopwatch.StartNew();
+
+        // Build structure payloads from items that have document nodes
+        var workItems = new List<(Guid DocId, Guid NodeId, string Uri, string Payload)>();
+        var withRecords = 0;
+        var withArtifacts = 0;
+        var withDocNodes = 0;
+        foreach (var item in items)
+        {
+            if (item.Records is not null) withRecords++;
+            var artifact = item.Records?.Artifacts?.FirstOrDefault();
+            if (artifact is not null) withArtifacts++;
+            var docNode = item.Records?.Nodes?.FirstOrDefault(n => n.Kind == "document");
+            if (docNode is not null) withDocNodes++;
+            if (artifact is null || docNode is null)
+                continue;
+
+            var payload = BuildStructurePayload(item.Uri.ToString(), artifact.Headline, artifact.Structure);
+            if (!string.IsNullOrWhiteSpace(payload))
+            {
+                workItems.Add((docNode.Id, docNode.Id, item.Uri.ToString(), payload));
+            }
+        }
+
+        _logger.LogInformation("Structure embedding: {Total} items, {WithRecords} with records, {WithArtifacts} with artifacts, {WithDocNodes} with docNodes, {WorkItems} work items",
+            items.Count, withRecords, withArtifacts, withDocNodes, workItems.Count);
+
+        if (workItems.Count == 0)
+        {
+            _logger.LogDebug("No structure embeddings to generate");
+            return;
+        }
+
+        _logger.LogInformation("Generating {Count} structure embeddings...", workItems.Count);
+
+        // Generate embeddings in batches, then enqueue to writer
+        var allEmbeddings = new List<StructureEmbeddingData>();
+        var totalBatches = (workItems.Count + StructureEmbeddingBatchSize - 1) / StructureEmbeddingBatchSize;
+        var batchNum = 0;
+
+        for (var offset = 0; offset < workItems.Count; offset += StructureEmbeddingBatchSize)
+        {
+            batchNum++;
+            var batch = workItems.Skip(offset).Take(StructureEmbeddingBatchSize).ToArray();
+            var payloads = batch.Select(w => w.Payload).ToArray();
+
+            var percentComplete = (int)((offset + batch.Length) * 100.0 / workItems.Count);
+            _logger.LogInformation("Structure embeddings: batch {Batch}/{Total} ({Percent}%)",
+                batchNum, totalBatches, percentComplete);
+
+            var vectors = await _embeddingProvider.EmbedBatchAsync(payloads, cancellationToken).ConfigureAwait(false);
+
+            for (var i = 0; i < batch.Length; i++)
+            {
+                var vec = vectors[i];
+                if (vec is null || vec.Length == 0)
+                    continue;
+
+                var work = batch[i];
+                allEmbeddings.Add(new StructureEmbeddingData(
+                    work.DocId,
+                    work.NodeId,
+                    work.Uri,
+                    vec,
+                    _embeddingProvider.Model,
+                    _embeddingProvider.Dimension));
+            }
+        }
+
+        if (allEmbeddings.Count > 0)
+        {
+            // Enqueue write operation through the single-threaded writer
+            var writeOp = new WriteOperation
+            {
+                Id = Guid.NewGuid(),
+                Type = WriteOperationType.WriteStructureEmbeddings,
+                Uri = RepoUri.Parse("mem://structure-embeddings"),
+                ParsedData = Records.Empty,
+                StructureEmbeddings = allEmbeddings
+            };
+
+            await _writer.EnqueueAsync(writeOp, cancellationToken).ConfigureAwait(false);
+        }
+
+        timer.Stop();
+        _logger.LogInformation("Structure embeddings complete: {Count} embeddings in {Ms}ms", allEmbeddings.Count, timer.ElapsedMilliseconds);
+    }
+
+    private static string BuildStructurePayload(string uri, string? headline, string? structure)
+    {
+        // Build payload: relative uri + headline + structure
+        var relativeUri = uri.Replace("file:///", "").Replace('\\', '/');
+        var parts = new List<string> { relativeUri };
+
+        if (!string.IsNullOrWhiteSpace(headline))
+            parts.Add(headline);
+
+        if (!string.IsNullOrWhiteSpace(structure))
+            parts.Add(structure);
+
+        return string.Join("\n\n", parts);
     }
 
     public void Dispose()

@@ -219,12 +219,19 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
             if (obj.IsUnique)
                 props["is_unique"] = true;
 
+            var objType = obj.Type.ToString().ToLowerInvariant();
+            var nodeHeadline = obj.OnTable is not null
+                ? $"{objType} {obj.Name} on {obj.OnTable}"
+                : $"{objType} {obj.Name}";
+
             var node = new Node
             {
                 Id = Guid.NewGuid(),
-                Kind = $"sql.{obj.Type.ToString().ToLowerInvariant()}",
+                Kind = $"sql.{objType}",
                 SpanId = span?.Id,
+                Uri = RepoUri.FromSymbol(document.Uri.Container, obj.Name, span?.StartLine, span?.EndLine),
                 Props = props,
+                Headline = nodeHeadline,
                 CreatedAt = now,
                 UpdatedAt = now
             };

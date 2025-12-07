@@ -71,6 +71,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     private readonly IDatabaseWriter _writer;
     private readonly ILogger<IndexingCoordinator> _logger;
     private int _reindexScopes;
+    private int _activeMountIndexing;
 
     public IndexingCoordinator(
         CompositeFileSystem fileSystem,
@@ -224,16 +225,20 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     {
         var hotPathSnapshot = _engine.GetHotPathQueueSnapshot();
         var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
+        var mountIndexing = Volatile.Read(ref _activeMountIndexing);
 
         return stage switch
         {
-            CoordinatorPipelineStage.Discovery => hotPathSnapshot.Depth,
-            CoordinatorPipelineStage.Parsing => hotPathSnapshot.Depth,
-            CoordinatorPipelineStage.Analysis => hotPathSnapshot.Depth + analysisSnapshot.Depth,
+            // All stages must wait for mount indexing to complete (files are being enumerated)
+            CoordinatorPipelineStage.Discovery => hotPathSnapshot.Depth + mountIndexing,
+            // Parsing stage must wait for idle processing which generates structure embeddings.
+            // Structure embeddings are created in ReleaseAnalysisAsync after hot path completes.
+            CoordinatorPipelineStage.Parsing => hotPathSnapshot.Depth + mountIndexing + _engine.GetPendingIdleProcessingCount(),
+            CoordinatorPipelineStage.Analysis => hotPathSnapshot.Depth + analysisSnapshot.Depth + mountIndexing + _engine.GetPendingIdleProcessingCount(),
             // Writer stage (SemanticIndexing) must wait for idle post-processing which includes
             // vector/embedding refresh. Items in _pendingAnalysis haven't yet been processed
             // through ReleaseAnalysisAsync which triggers VectorCoordinator.ApplyAsync().
-            CoordinatorPipelineStage.Writer => hotPathSnapshot.Depth + analysisSnapshot.Depth + _engine.GetPendingIdleProcessingCount(),
+            CoordinatorPipelineStage.Writer => hotPathSnapshot.Depth + analysisSnapshot.Depth + mountIndexing + _engine.GetPendingIdleProcessingCount(),
             _ => 0
         };
     }
@@ -818,8 +823,21 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
             e.Mount.Id,
             e.Mount.FileSystem.Scheme);
 
+        // Track that mount indexing is in progress (for WaitForPipelineAsync)
+        Interlocked.Increment(ref _activeMountIndexing);
+
         // Index the mount in the background to avoid blocking the caller
-        _ = Task.Run(() => IndexMountAsync(e.Mount, CancellationToken.None));
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await IndexMountAsync(e.Mount, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _activeMountIndexing);
+            }
+        });
     }
 
     /// <summary>
@@ -867,12 +885,32 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 }
             }
 
-            sw.Stop();
             _logger.LogInformation(
-                "Mount {MountId} indexing completed: {Enqueued} files enqueued, {Skipped} skipped in {Duration:F1}s",
+                "Mount {MountId} enumeration completed: {Enqueued} files enqueued, {Skipped} skipped in {Duration:F1}s. Waiting for hot path...",
                 mount.Id,
                 enqueued,
                 skipped,
+                sw.Elapsed.TotalSeconds);
+
+            // Wait for hot path and idle processing (structure embeddings) to complete
+            // This ensures WaitForPipelineAsync returns only after all files are fully indexed
+            await _engine.WaitForAsync(
+                IndexingState.ClassificationIdle | IndexingState.ParsingIdle | IndexingState.SingleFileAnalysisIdle,
+                cancellationToken).ConfigureAwait(false);
+
+            // Also wait for pending idle processing (structure embeddings) to drain
+            while (_engine.GetPendingIdleProcessingCount() > 0)
+            {
+                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+            }
+
+            // Flush writer to ensure structure embeddings are written to database
+            await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+            sw.Stop();
+            _logger.LogInformation(
+                "Mount {MountId} indexing fully completed in {Duration:F1}s",
+                mount.Id,
                 sw.Elapsed.TotalSeconds);
         }
         catch (OperationCanceledException)

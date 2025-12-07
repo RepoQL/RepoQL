@@ -274,6 +274,7 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
                             ["label"] = node.Label,
                             ["shape"] = node.ShapeOpen.ToString()
                         },
+                        Headline = string.IsNullOrEmpty(node.Label) ? $"node {node.Id}" : $"{node.Id}: {node.Label}",
                         CreatedAt = now,
                         UpdatedAt = now
                     });
@@ -299,6 +300,9 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
                     });
                     break;
                 case SeqParticipant participant:
+                    var partHeadline = string.IsNullOrEmpty(participant.Alias)
+                        ? $"participant {participant.Name}"
+                        : $"participant {participant.Name} as {participant.Alias}";
                     nodes.Add(new Node
                     {
                         Id = Guid.NewGuid(),
@@ -308,6 +312,7 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
                             ["name"] = participant.Name,
                             ["alias"] = participant.Alias
                         },
+                        Headline = partHeadline,
                         CreatedAt = now,
                         UpdatedAt = now
                     });
@@ -342,6 +347,7 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
                             ["label"] = entry.LabelRaw,
                             ["value"] = entry.Value
                         },
+                        Headline = $"{entry.LabelRaw}: {entry.Value}",
                         CreatedAt = now,
                         UpdatedAt = now
                     });

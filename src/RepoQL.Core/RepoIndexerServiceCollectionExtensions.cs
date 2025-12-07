@@ -347,7 +347,11 @@ public static class RepoIndexerServiceCollectionExtensions
             Func<bool> isReindexing = () => coordinatorLazy.Value.IsReindexing;
             return new StorageBackedArtifactPruner(connectionFactory, isReindexing, logger);
         });
-        services.AddSingleton<IVectorIndexCoordinator, VectorIndexCoordinator>();
+        services.AddSingleton<IVectorIndexCoordinator>(sp => new VectorIndexCoordinator(
+            sp.GetRequiredService<IDuckDBConnectionFactory>(),
+            sp.GetRequiredService<IEmbeddingProvider>(),
+            sp.GetRequiredService<IDatabaseWriter>(),
+            sp.GetService<ILogger<VectorIndexCoordinator>>()));
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
             sp.GetRequiredService<IDatabaseWriter>(),
             sp.GetRequiredService<IDocumentCatalog>(),

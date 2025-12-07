@@ -105,14 +105,9 @@ public class PaymentService
         var records = loader.Materialize(document);
 
         var docNode = records.Nodes.Single(n => n.Kind == "document");
-        var namespaceCandidates = records.Nodes
-            .Where(n => n.Kind == "csharp.namespace")
-            .Select(n => n.Props["qualified_name"]?.ToString() ?? "<null>")
-            .ToArray();
-        namespaceCandidates.Should().Contain("MyApp.Core");
-        var nsNode = records.Nodes.FirstOrDefault(n => n.Kind == "csharp.namespace" && n.Props["qualified_name"]!.ToString() == "MyApp.Core");
-        nsNode.Should().NotBeNull($"namespace node should exist. Available namespaces: {string.Join(", ", namespaceCandidates)}");
-        nsNode!.Props["qualified_name"]!.ToString().Should().Be("MyApp.Core");
+
+        // Namespaces are no longer materialized as nodes - they are stored as properties on types
+        records.Nodes.Where(n => n.Kind == "csharp.namespace").Should().BeEmpty("namespaces are not materialized as nodes");
 
         var typeCandidates = records.Nodes
             .Where(n => n.Kind == "csharp.type")
@@ -146,8 +141,8 @@ public class PaymentService
         parameters[0]!["name"]!.ToString().Should().Be("left");
         memberNode.Props["symbol_key"].Should().NotBeNull();
 
-        records.Edges.Count(e => e.IsComposition && e.SrcId == docNode.Id && e.DstId == nsNode.Id).Should().Be(1);
-        records.Edges.Count(e => e.IsComposition && e.SrcId == nsNode.Id && e.DstId == typeNodeValue.Id).Should().Be(1);
+        // Document -> Type composition (no namespace node in between)
+        records.Edges.Count(e => e.IsComposition && e.SrcId == docNode.Id && e.DstId == typeNodeValue.Id).Should().BeGreaterThanOrEqualTo(1);
         records.Edges.Count(e => e.IsComposition && e.SrcId == typeNodeValue.Id && e.DstId == memberNode.Id).Should().Be(1);
 
         var usesSymbolEdges = records.Edges.Where(e => e.Type == "USES_SYMBOL").ToArray();
@@ -636,7 +631,9 @@ dotnet_diagnostic.AN0001.severity = none
                 string.Equals(a.StoreUri.Scheme, "repoql", StringComparison.OrdinalIgnoreCase));
             generatedArtifact.Text.Should().Contain("GeneratedProperty");
 
+            // Types now also have URIs, so filter for document nodes specifically
             var generatedNode = records.Nodes.Single(n =>
+                n.Kind == "document" &&
                 n.Uri is not null &&
                 string.Equals(n.Uri.Scheme, "repoql", StringComparison.OrdinalIgnoreCase));
             bool.Parse(generatedNode.Props["is_generated"]!.ToString()).Should().BeTrue();
@@ -1193,8 +1190,8 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
             var document = await loader.LoadAsync(artifact);
             var records = loader.Materialize(document);
 
-            var ns = records.Nodes.FirstOrDefault(n => n.Kind == "csharp.namespace" && n.Props["qualified_name"]!.ToString() == "MyApp.Services");
-            ns.Should().NotBeNull();
+            // Namespaces are no longer materialized as nodes
+            records.Nodes.Where(n => n.Kind == "csharp.namespace").Should().BeEmpty();
 
             var service = records.Nodes.FirstOrDefault(n => n.Kind == "csharp.type" && n.Props["name"]!.ToString() == "MyService");
             service.Should().NotBeNull();

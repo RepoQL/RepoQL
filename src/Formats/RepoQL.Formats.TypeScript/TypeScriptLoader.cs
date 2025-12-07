@@ -120,6 +120,15 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
         };
 
         var now = DateTimeOffset.UtcNow;
+        var imports = state.Parse.Imports
+            .Select(i => new JsonObject
+            {
+                ["specifier"] = i.Specifier,
+                ["kind"] = i.ImportKind,
+                ["style"] = i.ImportStyle
+            })
+            .ToArray();
+
         var docNode = new Node
         {
             Id = state.DocumentId,
@@ -129,7 +138,8 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             Props = new JsonObject
             {
                 ["media_type"] = state.MediaType.ToString(),
-                ["script_kind"] = state.Parse.ScriptKind
+                ["script_kind"] = state.Parse.ScriptKind,
+                ["imports"] = new JsonArray(imports)
             },
             Headline = artifact.Headline,
             Structure = artifact.Structure,
@@ -142,51 +152,32 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
         var edges = new List<Edge>();
         var ordinal = 0;
 
-        foreach (var import in state.Parse.Imports)
-        {
-            var spanId = Guid.NewGuid();
-            var span = ToSpan(document, state.DocumentId, spanId, import.Span);
-            spans.Add(span);
-
-            var nodeId = Guid.NewGuid();
-            nodes.Add(new Node
-            {
-                Id = nodeId,
-                Kind = "ts_import",
-                SpanId = spanId,
-                Props = new JsonObject
-                {
-                    ["specifier"] = import.Specifier,
-                    ["import_kind"] = import.ImportKind,
-                    ["import_style"] = import.ImportStyle
-                },
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-
-            edges.Add(CreateHasPart(docNode.Id, nodeId, docNode.Id, ordinal++, now));
-        }
-
         foreach (var decl in state.Parse.Declarations)
         {
             var spanId = Guid.NewGuid();
             var span = ToSpan(document, state.DocumentId, spanId, decl.Span);
             spans.Add(span);
 
+            var declName = decl.Name ?? string.Empty;
             var declNodeId = Guid.NewGuid();
+            var declHeadline = BuildDeclHeadline(decl);
             nodes.Add(new Node
             {
                 Id = declNodeId,
                 Kind = $"ts_decl_{decl.DeclKind}",
                 SpanId = spanId,
+                Uri = string.IsNullOrEmpty(declName)
+                    ? RepoUri.FromLines(document.Uri.Container, span.StartLine, span.EndLine)
+                    : RepoUri.FromSymbol(document.Uri.Container, declName, span.StartLine, span.EndLine),
                 Props = new JsonObject
                 {
-                    ["name"] = decl.Name ?? string.Empty,
+                    ["name"] = declName,
                     ["decl_kind"] = decl.DeclKind,
                     ["is_exported"] = decl.IsExported,
                     ["export_kind"] = decl.ExportKind,
                     ["is_component"] = decl.IsComponent
                 },
+                Headline = declHeadline,
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -202,17 +193,22 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
                     var memberSpan = ToSpan(document, state.DocumentId, memberSpanId, member.Span);
                     spans.Add(memberSpan);
 
+                    var memberSymbol = string.IsNullOrEmpty(declName)
+                        ? member.Name
+                        : $"{declName}.{member.Name}";
                     var memberNodeId = Guid.NewGuid();
                     nodes.Add(new Node
                     {
                         Id = memberNodeId,
                         Kind = $"ts_member_{member.MemberKind}",
                         SpanId = memberSpanId,
+                        Uri = RepoUri.FromSymbol(document.Uri.Container, memberSymbol, memberSpan.StartLine, memberSpan.EndLine),
                         Props = new JsonObject
                         {
                             ["name"] = member.Name,
                             ["member_kind"] = member.MemberKind
                         },
+                        Headline = $"{member.MemberKind} {member.Name}",
                         CreatedAt = now,
                         UpdatedAt = now
                     });
@@ -283,6 +279,16 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             ScopeDocumentId = scopeDocumentId,
             CreatedAt = timestamp
         };
+
+    private static string BuildDeclHeadline(TypeScriptDeclaration decl)
+    {
+        var parts = new List<string>();
+        if (decl.IsExported) parts.Add("export");
+        parts.Add(decl.DeclKind);
+        if (!string.IsNullOrEmpty(decl.Name)) parts.Add(decl.Name);
+        if (decl.IsComponent) parts.Add("(component)");
+        return string.Join(" ", parts);
+    }
 
     private static string BuildHeadline(DocumentModel document, TypeScriptDocumentState state)
     {

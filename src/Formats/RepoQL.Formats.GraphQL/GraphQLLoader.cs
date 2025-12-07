@@ -175,7 +175,8 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
 
         foreach (var operation in state.Operations)
         {
-            spans.Add(operation.Span.ToSpan(document, docNode.Id, operation.SpanId));
+            var opSpan = operation.Span.ToSpan(document, docNode.Id, operation.SpanId);
+            spans.Add(opSpan);
 
             var opProps = new JsonObject
             {
@@ -189,12 +190,17 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                 opProps["fields"] = new JsonArray(operation.TopLevelFields.Select(f => JsonValue.Create(f)!).ToArray());
             }
 
+            var opName = string.IsNullOrEmpty(operation.Name)
+                ? operation.Kind.ToString().ToLowerInvariant()
+                : operation.Name;
             nodes.Add(new Node
             {
                 Id = operation.NodeId,
                 Kind = "graphql.operation",
                 SpanId = operation.SpanId,
+                Uri = RepoUri.FromSymbol(document.Uri.Container, opName, opSpan.StartLine, opSpan.EndLine),
                 Props = opProps,
+                Headline = $"{operation.Kind.ToString().ToLowerInvariant()} {operation.Name}".Trim(),
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -222,7 +228,8 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
 
         foreach (var fragment in state.Fragments)
         {
-            spans.Add(fragment.Span.ToSpan(document, docNode.Id, fragment.SpanId));
+            var fragSpan = fragment.Span.ToSpan(document, docNode.Id, fragment.SpanId);
+            spans.Add(fragSpan);
 
             var props = new JsonObject
             {
@@ -237,7 +244,9 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                 Id = fragment.NodeId,
                 Kind = "graphql.fragment",
                 SpanId = fragment.SpanId,
+                Uri = RepoUri.FromSymbol(document.Uri.Container, fragment.Name, fragSpan.StartLine, fragSpan.EndLine),
                 Props = props,
+                Headline = $"fragment {fragment.Name} on {fragment.TypeCondition}",
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -255,7 +264,8 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
 
         foreach (var type in state.Types)
         {
-            spans.Add(type.Span.ToSpan(document, docNode.Id, type.SpanId));
+            var typeSpan = type.Span.ToSpan(document, docNode.Id, type.SpanId);
+            spans.Add(typeSpan);
 
             var props = new JsonObject
             {
@@ -268,12 +278,18 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                 ["has_description"] = type.HasDescription
             };
 
+            var typeKind = type.Kind.ToString().ToLowerInvariant();
+            var typeHeadline = type.Implements.Count > 0
+                ? $"{typeKind} {type.Name} implements {string.Join(", ", type.Implements)}"
+                : $"{typeKind} {type.Name}";
             nodes.Add(new Node
             {
                 Id = type.NodeId,
-                Kind = $"graphql.{type.Kind.ToString().ToLowerInvariant()}",
+                Kind = $"graphql.{typeKind}",
                 SpanId = type.SpanId,
+                Uri = RepoUri.FromSymbol(document.Uri.Container, type.Name, typeSpan.StartLine, typeSpan.EndLine),
                 Props = props,
+                Headline = typeHeadline,
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -289,13 +305,15 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
 
             foreach (var field in type.Fields)
             {
-                spans.Add(field.Span.ToSpan(document, docNode.Id, field.SpanId));
+                var fieldSpan = field.Span.ToSpan(document, docNode.Id, field.SpanId);
+                spans.Add(fieldSpan);
 
                 nodes.Add(new Node
                 {
                     Id = field.NodeId,
                     Kind = "graphql.field",
                     SpanId = field.SpanId,
+                    Uri = RepoUri.FromSymbol(document.Uri.Container, $"{type.Name}.{field.Name}", fieldSpan.StartLine, fieldSpan.EndLine),
                     Props = new JsonObject
                     {
                         ["name"] = field.Name,
@@ -305,6 +323,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                         ["deprecation_reason"] = field.DeprecationReason,
                         ["has_description"] = field.HasDescription
                     },
+                    Headline = $"{field.Name}: {field.Type}",
                     CreatedAt = now,
                     UpdatedAt = now
                 });
@@ -321,12 +340,14 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
 
             foreach (var enumValue in type.EnumValues)
             {
-                spans.Add(enumValue.Span.ToSpan(document, docNode.Id, enumValue.SpanId));
+                var enumSpan = enumValue.Span.ToSpan(document, docNode.Id, enumValue.SpanId);
+                spans.Add(enumSpan);
                 nodes.Add(new Node
                 {
                     Id = enumValue.NodeId,
                     Kind = "graphql.enum_value",
                     SpanId = enumValue.SpanId,
+                    Uri = RepoUri.FromSymbol(document.Uri.Container, $"{type.Name}.{enumValue.Name}", enumSpan.StartLine, enumSpan.EndLine),
                     Props = new JsonObject
                     {
                         ["name"] = enumValue.Name,
@@ -334,6 +355,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                         ["deprecation_reason"] = enumValue.DeprecationReason,
                         ["has_description"] = enumValue.HasDescription
                     },
+                    Headline = enumValue.Name,
                     CreatedAt = now,
                     UpdatedAt = now
                 });
@@ -343,7 +365,8 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
 
         foreach (var directive in state.Directives)
         {
-            spans.Add(directive.Span.ToSpan(document, docNode.Id, directive.SpanId));
+            var dirSpan = directive.Span.ToSpan(document, docNode.Id, directive.SpanId);
+            spans.Add(dirSpan);
             var props = new JsonObject
             {
                 ["name"] = directive.Name,
@@ -358,7 +381,9 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                 Id = directive.NodeId,
                 Kind = "graphql.directive",
                 SpanId = directive.SpanId,
+                Uri = RepoUri.FromSymbol(document.Uri.Container, $"@{directive.Name}", dirSpan.StartLine, dirSpan.EndLine),
                 Props = props,
+                Headline = $"directive @{directive.Name}" + (directive.IsRepeatable ? " repeatable" : ""),
                 CreatedAt = now,
                 UpdatedAt = now
             });

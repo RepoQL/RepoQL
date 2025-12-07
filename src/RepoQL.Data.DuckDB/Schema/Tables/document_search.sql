@@ -20,7 +20,7 @@ CREATE OR REPLACE MACRO combine(bm25n, fuzzn, semn, wb := 0.45, wf := 0.45, ws :
 );
                   
 CREATE OR REPLACE MACRO vss_candidates(qvec_json, top_k) AS TABLE (
-SELECT doc_id, node_id, scope, cosine_similarity_json(qvec_json, embedding) AS sem
+SELECT doc_id, node_id, scope, list_cosine_similarity(qvec_json::FLOAT[], embedding) AS sem
 FROM document_embedding
 WHERE scope IN ('document', 'object')
 ORDER BY sem DESC

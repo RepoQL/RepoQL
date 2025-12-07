@@ -35,7 +35,7 @@ WITH document_rows AS (
         art.digest
     FROM node doc
              LEFT JOIN artifact art ON art.id = doc.artifact_id
-             LEFT JOIN document_embedding de ON de.node_id = doc.id AND de.chunk_index = 0
+             LEFT JOIN document_embedding de ON de.node_id = doc.id AND de.chunk_index = 0 AND de.embedding_type = 'full'
     WHERE doc.kind = 'document'
 ),
 object_rows AS (
@@ -118,10 +118,10 @@ object_rows AS (
              JOIN span ON span.id = child.span_id
              JOIN node doc ON doc.id = span.document_id
              LEFT JOIN artifact art ON art.id = doc.artifact_id
-             LEFT JOIN document_embedding de ON de.node_id = child.id
+             LEFT JOIN document_embedding de ON de.node_id = child.id AND de.embedding_type = 'full'
     WHERE child.kind <> 'document'
 )
-SELECT
+SELECT DISTINCT ON (uri)
     doc_id,
     node_id,
     uri,
@@ -145,7 +145,7 @@ SELECT
     digest
 FROM document_rows
 UNION ALL
-SELECT
+SELECT DISTINCT ON (uri)
     doc_id,
     node_id,
     uri,

@@ -1,8 +1,10 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Server;
-using RepoQL.Contracts.Diagnostics;
+using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Contracts;
 using RepoQL.Rendering;
 using RepoQL.Rendering.Search;
 
@@ -12,11 +14,14 @@ namespace RepoQL.ConsoleApp.Tools;
 internal sealed class XrayTool(
     IXraySearchEngine searchEngine,
     IXrayRenderingEngine renderingEngine,
-    IIndexingDiagnosticsProvider? diagnosticsProvider = null)
+    RepoQlClientProvider clientProvider)
 {
     private readonly IXraySearchEngine _searchEngine = searchEngine ?? throw new ArgumentNullException(nameof(searchEngine));
     private readonly IXrayRenderingEngine _renderingEngine = renderingEngine ?? throw new ArgumentNullException(nameof(renderingEngine));
-    private readonly IIndexingDiagnosticsProvider? _diagnosticsProvider = diagnosticsProvider;
+    private readonly RepoQlClientProvider _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
+
+    // Track last request to implement "call again to wait" pattern (static to persist across tool invocations)
+    private static string? _lastRequestSignature;
 
     private const string ToolInstructions = """
         <CONCEPT>
@@ -75,6 +80,40 @@ internal sealed class XrayTool(
         if (tokenBudget <= 0)
             return "Error: tokenBudget must be a positive integer.";
 
+        // Create request signature for "call again to wait" pattern
+        var requestSignature = $"{tokenBudget}|{intent}|{scope}|{question}|{patterns}|{limit}";
+        var isRepeatRequest = _lastRequestSignature == requestSignature;
+
+        // Check if indexer is ready before executing
+        var preStatus = await GetIndexerStatusAsync(0, cancellationToken).ConfigureAwait(false);
+        var needsIndex = preStatus.IndexPending > 0;
+        var needsSemantic = !string.IsNullOrWhiteSpace(question) && !preStatus.SemanticReady;
+
+        if ((needsIndex || needsSemantic) && !isRepeatRequest)
+        {
+            // First time seeing this request while not ready - return status and instructions
+            _lastRequestSignature = requestSignature;
+            var waitingFor = needsIndex ? $"index ({preStatus.IndexPending} pending)" : "semantic index";
+            return $"""
+                Indexing in progress - {waitingFor}
+
+                Current status: {RepresentationFormatter.FormatStatusFooter(preStatus)}
+
+                Call xray again with the same arguments to wait for indexing to complete before executing.
+                """;
+        }
+
+        if ((needsIndex || needsSemantic) && isRepeatRequest)
+        {
+            // Repeat request - wait for ready
+            var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
+            var stage = needsSemantic ? PipelineStage.SemanticIndexing : PipelineStage.Indexing;
+            await client.WaitForPipelineAsync(new[] { stage }, cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+
+        // Clear the pending request now that we're executing
+        _lastRequestSignature = null;
+
         // Build search parameters (limit is not passed - it only affects display, not search)
         var searchParams = new SearchParameters(
             Scope: scope,
@@ -97,7 +136,7 @@ internal sealed class XrayTool(
         sw.Stop();
 
         // Get indexer status with timing
-        var indexerStatus = GetIndexerStatus(sw.ElapsedMilliseconds);
+        var indexerStatus = await GetIndexerStatusAsync(sw.ElapsedMilliseconds, cancellationToken).ConfigureAwait(false);
 
         if (searchResult.Results.Count == 0)
         {
@@ -130,19 +169,37 @@ internal sealed class XrayTool(
         return _renderingEngine.Render(xrayResults, context);
     }
 
-    private IndexerStatus GetIndexerStatus(long elapsedMs)
+    private async Task<IndexerStatus> GetIndexerStatusAsync(long elapsedMs, CancellationToken ct)
     {
-        var snapshot = _diagnosticsProvider?.GetSnapshot();
-        if (snapshot is null)
-            return new IndexerStatus(0, false, false, elapsedMs);
+        try
+        {
+            var client = await _clientProvider.GetClientAsync(ct).ConfigureAwait(false);
+            var result = await client.ExecuteRawQueryAsync("SELECT indexing_diagnostics() as json", cancellationToken: ct).ConfigureAwait(false);
 
-        return IndexerStatus.FromDiagnostics(
-            snapshot.HotPathDepth,
-            snapshot.IdlePending,
-            snapshot.AnalysisDepth,
-            snapshot.WriterPending,
-            elapsedMs,
-            snapshot.EmbedEnabled);
+            if (result.Rows.Count > 0)
+            {
+                var json = result.Rows[0].Values.FirstOrDefault()?.StringValue;
+                if (!string.IsNullOrEmpty(json))
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    var root = doc.RootElement;
+
+                    var hotPathDepth = root.TryGetProperty("hot_path_depth", out var hp) ? hp.GetInt32() : 0;
+                    var idlePending = root.TryGetProperty("idle_pending", out var ip) ? ip.GetInt32() : 0;
+                    var analysisDepth = root.TryGetProperty("analysis_depth", out var ad) ? ad.GetInt32() : 0;
+                    var writerPending = root.TryGetProperty("writer_pending", out var wp) ? wp.GetInt32() : 0;
+                    var embedEnabled = root.TryGetProperty("embed_enabled", out var ee) && ee.GetBoolean();
+
+                    return IndexerStatus.FromDiagnostics(hotPathDepth, idlePending, analysisDepth, writerPending, elapsedMs, embedEnabled);
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to unknown status on any error
+        }
+
+        return new IndexerStatus(0, false, false, elapsedMs);
     }
 
     #region Parameter Parsing

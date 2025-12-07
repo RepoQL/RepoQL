@@ -160,6 +160,8 @@ namespace RepoQL.Data.DuckDB;
         private const int MaxObjectPayloadChars = 6000;
         private const int MaxSnippetBytes = 4096;
         private const string DocumentEmbeddingScope = "document";
+        private const string StructureEmbeddingType = "structure";
+        private const string FullEmbeddingType = "full";
         private static readonly JsonSerializerOptions CompactJsonOptions = new() { WriteIndented = false };
 
         private readonly struct ConnectionScope : IDisposable
@@ -338,13 +340,13 @@ namespace RepoQL.Data.DuckDB;
                     continue;
                 }
 
-                var json = SerializeFloatArray(vec);
+                var json = ToNativeArray(vec);
                 using var up = _connection.CreateCommand();
                 up.Transaction = tx;
                 up.CommandText = """
-                                 INSERT INTO document_embedding(doc_id, node_id, chunk_index, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
-                                 VALUES (?,?,?,?,?,?,?,?,?,?, CURRENT_TIMESTAMP)
-                                 ON CONFLICT (doc_id, node_id, chunk_index)
+                                 INSERT INTO document_embedding(doc_id, node_id, chunk_index, embedding_type, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
+                                 VALUES (?,?,?,?,?,?,?,?,?,?,?, CURRENT_TIMESTAMP)
+                                 ON CONFLICT (doc_id, node_id, chunk_index, embedding_type)
                                  DO UPDATE SET
                                      uri = excluded.uri,
                                      scope = excluded.scope,
@@ -355,7 +357,7 @@ namespace RepoQL.Data.DuckDB;
                                      end_byte = excluded.end_byte,
                                      updated_at = excluded.updated_at;
                                  """;
-                AddParameters(up, item.DocId, item.NodeId, item.ChunkIndex, item.Uri, item.Scope, provider.Model, provider.Dimension, json, item.StartByte, item.EndByte);
+                AddParameters(up, item.DocId, item.NodeId, item.ChunkIndex, item.EmbeddingType, item.Uri, item.Scope, provider.Model, provider.Dimension, json, item.StartByte, item.EndByte);
                 ExecuteWithTupleDeleteRetry(() => up.ExecuteNonQuery());
 
                 if (item.Scope == DocumentEmbeddingScope) docSuccess++; else objSuccess++;
@@ -429,7 +431,8 @@ namespace RepoQL.Data.DuckDB;
     /// </summary>
     public async Task RefreshDocumentEmbeddingsAsync(Contracts.Embeddings.IEmbeddingProvider provider, CancellationToken ct = default)
     {
-        using var connectionLock = EnterConnectionScope();
+        // NOTE: Do NOT use EnterConnectionScope() here - Monitor locks don't work across async boundaries.
+        // Reads are safe (single reader), writes go through SingleThreadedDatabaseWriter.
         if (provider is null || !provider.Enabled)
             return;
 
@@ -468,7 +471,7 @@ namespace RepoQL.Data.DuckDB;
         var producerTask = ProduceEmbeddingsAsync(workItems, batchSize, provider, channel.Writer, ct);
 
         // Consumer: writes to DB on current thread (single-writer architecture)
-        var stats = await ConsumeAndWriteEmbeddingsAsync(channel.Reader, provider, ct).ConfigureAwait(false);
+        var stats = await ConsumeAndWriteEmbeddingsAsync(channel.Reader, provider, totalChunks, ct).ConfigureAwait(false);
 
         // Wait for producer to complete (handles exceptions)
         await producerTask.ConfigureAwait(false);
@@ -560,6 +563,7 @@ namespace RepoQL.Data.DuckDB;
     private async Task<EmbeddingStats> ConsumeAndWriteEmbeddingsAsync(
         ChannelReader<EmbeddingBatchResult> reader,
         Contracts.Embeddings.IEmbeddingProvider provider,
+        int totalExpectedItems,
         CancellationToken ct)
     {
         var docSuccess = 0;
@@ -576,6 +580,10 @@ namespace RepoQL.Data.DuckDB;
             batches++;
             totalItems += batch.Items.Length;
             embedMsTotal += batch.EmbedTime.TotalMilliseconds;
+
+            var percentComplete = totalExpectedItems > 0 ? (int)(totalItems * 100.0 / totalExpectedItems) : 100;
+            _logger.LogInformation("Full-text embeddings: {Processed}/{Total} ({Percent}%)",
+                totalItems, totalExpectedItems, percentComplete);
 
             var dbTimer = Stopwatch.StartNew();
 
@@ -644,7 +652,7 @@ namespace RepoQL.Data.DuckDB;
         {
             var sb = new StringBuilder();
             sb.AppendLine("""
-                INSERT INTO document_embedding(doc_id, node_id, chunk_index, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
+                INSERT INTO document_embedding(doc_id, node_id, chunk_index, embedding_type, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
                 VALUES
                 """);
 
@@ -654,24 +662,25 @@ namespace RepoQL.Data.DuckDB;
             for (var i = 0; i < items.Count; i++)
             {
                 if (i > 0) sb.Append(",\n");
-                var paramBase = i * 10;
-                sb.Append($"(?{paramBase + 1},?{paramBase + 2},?{paramBase + 3},?{paramBase + 4},?{paramBase + 5},?{paramBase + 6},?{paramBase + 7},?{paramBase + 8},?{paramBase + 9},?{paramBase + 10},CURRENT_TIMESTAMP)");
+                var paramBase = i * 11;
+                sb.Append($"(?{paramBase + 1},?{paramBase + 2},?{paramBase + 3},?{paramBase + 4},?{paramBase + 5},?{paramBase + 6},?{paramBase + 7},?{paramBase + 8},?{paramBase + 9},?{paramBase + 10},?{paramBase + 11},CURRENT_TIMESTAMP)");
 
                 var (item, vec) = items[i];
                 cmd.Parameters.Add(new DuckDBParameter { Value = item.DocId });
                 cmd.Parameters.Add(new DuckDBParameter { Value = item.NodeId });
                 cmd.Parameters.Add(new DuckDBParameter { Value = item.ChunkIndex });
+                cmd.Parameters.Add(new DuckDBParameter { Value = item.EmbeddingType });
                 cmd.Parameters.Add(new DuckDBParameter { Value = item.Uri });
                 cmd.Parameters.Add(new DuckDBParameter { Value = item.Scope });
                 cmd.Parameters.Add(new DuckDBParameter { Value = provider.Model });
                 cmd.Parameters.Add(new DuckDBParameter { Value = provider.Dimension });
-                cmd.Parameters.Add(new DuckDBParameter { Value = SerializeFloatArray(vec) });
+                cmd.Parameters.Add(new DuckDBParameter { Value = ToNativeArray(vec) });
                 cmd.Parameters.Add(new DuckDBParameter { Value = item.StartByte ?? (object)DBNull.Value });
                 cmd.Parameters.Add(new DuckDBParameter { Value = item.EndByte ?? (object)DBNull.Value });
             }
 
             sb.AppendLine("""
-                ON CONFLICT (doc_id, node_id, chunk_index)
+                ON CONFLICT (doc_id, node_id, chunk_index, embedding_type)
                 DO UPDATE SET uri=excluded.uri, scope=excluded.scope, model=excluded.model,
                               dim=excluded.dim, embedding=excluded.embedding,
                               start_byte=excluded.start_byte, end_byte=excluded.end_byte,
@@ -895,7 +904,7 @@ namespace RepoQL.Data.DuckDB;
                 var payload = BuildStructureOnlyEmbeddingText(doc);
                 if (!string.IsNullOrWhiteSpace(payload))
                 {
-                    work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, 0, doc.Uri, DocumentEmbeddingScope, payload, null, null));
+                    work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, 0, FullEmbeddingType, doc.Uri, DocumentEmbeddingScope, payload, null, null));
                 }
             }
             else if (textLength <= SmallFileThresholdChars)
@@ -904,7 +913,7 @@ namespace RepoQL.Data.DuckDB;
                 var payload = BuildDocumentEmbeddingText(doc);
                 if (!string.IsNullOrWhiteSpace(payload))
                 {
-                    work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, 0, doc.Uri, DocumentEmbeddingScope, payload, null, null));
+                    work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, 0, FullEmbeddingType, doc.Uri, DocumentEmbeddingScope, payload, null, null));
                 }
             }
             else
@@ -926,7 +935,7 @@ namespace RepoQL.Data.DuckDB;
                         // Convert char positions to byte positions for the source text
                         var startByte = Encoding.UTF8.GetByteCount(doc.Text!.AsSpan(0, startChar));
                         var endByte = Encoding.UTF8.GetByteCount(doc.Text!.AsSpan(0, endChar));
-                        work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, i, doc.Uri, DocumentEmbeddingScope, payload, startByte, endByte));
+                        work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, i, FullEmbeddingType, doc.Uri, DocumentEmbeddingScope, payload, startByte, endByte));
                     }
                 }
             }
@@ -1112,27 +1121,18 @@ namespace RepoQL.Data.DuckDB;
         Guid DocId,
         Guid NodeId,
         int ChunkIndex,
+        string EmbeddingType,  // 'structure' or 'full'
         string Uri,
         string Scope,
         string Payload,
         long? StartByte,
         long? EndByte);
 
-    private static string SerializeFloatArray(float[] vec)
-    {
-        using var ms = new MemoryStream();
-        using (var w = new Utf8JsonWriter(ms))
-        {
-            w.WriteStartArray();
-            foreach (var f in vec)
-            {
-                w.WriteNumberValue(f);
-            }
-            w.WriteEndArray();
-            w.Flush();
-        }
-        return Encoding.UTF8.GetString(ms.ToArray());
-    }
+    /// <summary>
+    /// Converts float[] to List&lt;float&gt; for DuckDB native FLOAT[N] array storage.
+    /// DuckDB.NET maps List&lt;T&gt; to DuckDB's array/list types.
+    /// </summary>
+    private static List<float> ToNativeArray(float[] vec) => new List<float>(vec);
 
     /// <summary>
     ///     Creates a DuckDbGraphStore with an existing connection.
@@ -2032,12 +2032,14 @@ WHERE rk = 1;
                 ins.CommandText = @"INSERT INTO node
                   (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at)
                   VALUES (?,?,?,?,?,?,?,?,?,?,?);";
-                var uriStr = n.Uri?.Container.AbsoluteUri;
+                // Child nodes use full URI (with fragment) for lookup, not container_uri_lowercase
+                // Only document nodes need container_uri_lowercase for unique document lookup
+                var uriStr = n.Uri?.ToString();
                 AddParameters(ins,
                     n.Id,
                     n.Kind,
                     uriStr,
-                    uriStr?.ToLowerInvariant(),
+                    null,  // container_uri_lowercase is only for document nodes
                     n.ArtifactId,
                     n.SpanId,
                     JsonFromNode(n.Props),
@@ -2073,19 +2075,19 @@ WHERE rk = 1;
             var compositionSeen = new HashSet<Guid>();
             foreach (var e in edges)
             {
-                if (e.IsComposition)
+                if (e.IsComposition && e.DstId.HasValue)
                 {
-                    if (!compositionSeen.Add(e.DstId))
+                    if (!compositionSeen.Add(e.DstId.Value))
                         continue; // skip duplicate HAS_PART for same child
                 }
                 using var ins = _connection.CreateCommand();
                 ins.Transaction = tx;
                 ins.CommandText = @"INSERT INTO edge
-                  (id,source_node_id,destination_node_id,type,is_composition,ordinal,scope_document_id,semantic_key,
+                  (id,source_node_id,destination_node_id,destination_uri,type,is_composition,ordinal,scope_document_id,semantic_key,
                    source_span_id,destination_span_id,composition_child_id,properties,created_at)
-                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);";
+                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
                 AddParameters(ins,
-                    e.Id, e.SrcId, e.DstId, e.Type, e.IsComposition, e.Ordinal, e.ScopeDocumentId, e.EdgeKey,
+                    e.Id, e.SrcId, e.DstId, e.DstUri?.ToString(), e.Type, e.IsComposition, e.Ordinal, e.ScopeDocumentId, e.EdgeKey,
                     e.SrcSpanId, e.DstSpanId,
                     e.IsComposition ? e.DstId : null, JsonFromNode(e.Props), e.CreatedAt.UtcDateTime);
                 using (var activity = StartDbActivity(ins.CommandText))
@@ -2344,8 +2346,10 @@ WHERE rk = 1;
         using var connectionLock = EnterConnectionScope();
         using var opActivity = StartOperationActivity("UpsertEdge");
         edge.Validate();
-        if (GetNode(edge.SrcId) is null || GetNode(edge.DstId) is null)
-            throw new InvalidOperationException("Src or Dst node does not exist.");
+        if (GetNode(edge.SrcId) is null)
+            throw new InvalidOperationException("Source node does not exist.");
+        if (edge.DstId.HasValue && GetNode(edge.DstId.Value) is null)
+            throw new InvalidOperationException("Destination node does not exist.");
 
         using var tx = _connection.BeginTransaction();
         try
@@ -2356,11 +2360,11 @@ WHERE rk = 1;
             using var upd = _connection.CreateCommand();
             upd.CommandText =
                 @"UPDATE edge SET
-                        source_node_id=?, destination_node_id=?, type=?, is_composition=?, ordinal=?, scope_document_id=?,
+                        source_node_id=?, destination_node_id=?, destination_uri=?, type=?, is_composition=?, ordinal=?, scope_document_id=?,
                         source_span_id=?, destination_span_id=?, composition_child_id=?, properties=?
                       WHERE semantic_key=?;";
             AddParameters(upd,
-                edge.SrcId, edge.DstId, edge.Type, edge.IsComposition, edge.Ordinal, edge.ScopeDocumentId,
+                edge.SrcId, edge.DstId, edge.DstUri?.ToString(), edge.Type, edge.IsComposition, edge.Ordinal, edge.ScopeDocumentId,
                 edge.SrcSpanId, edge.DstSpanId,
                 edge.IsComposition ? edge.DstId : null, JsonFromNode(edge.Props),
                 edge.EdgeKey);
@@ -2381,11 +2385,11 @@ WHERE rk = 1;
         {
             ins.CommandText =
                 @"INSERT INTO edge
-                      (id,source_node_id,destination_node_id,type,is_composition,ordinal,scope_document_id,semantic_key,
+                      (id,source_node_id,destination_node_id,destination_uri,type,is_composition,ordinal,scope_document_id,semantic_key,
                        source_span_id,destination_span_id,composition_child_id,properties,created_at)
-                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);";
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?);";
             AddParameters(ins,
-                edge.Id, edge.SrcId, edge.DstId, edge.Type, edge.IsComposition, edge.Ordinal, edge.ScopeDocumentId,
+                edge.Id, edge.SrcId, edge.DstId, edge.DstUri?.ToString(), edge.Type, edge.IsComposition, edge.Ordinal, edge.ScopeDocumentId,
                 edge.EdgeKey, edge.SrcSpanId, edge.DstSpanId,
                 edge.IsComposition ? edge.DstId : null, JsonFromNode(edge.Props),
                 edge.CreatedAt.UtcDateTime);

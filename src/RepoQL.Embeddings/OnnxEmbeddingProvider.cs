@@ -80,6 +80,11 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
             _logger.LogInformation("ONNX thread config: IntraOp={IntraOp}, InterOp={InterOp}",
                 so.IntraOpNumThreads, so.InterOpNumThreads);
 
+            // Int8 quantized model optimizations
+            so.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
+            so.AddSessionConfigEntry("session.use_onnx_model_bytes_directly", "1");
+            so.AddSessionConfigEntry("session.set_denormal_as_zero", "1");
+
             var provider = ConfigureExecutionProvider(so);
 
             _session = new InferenceSession(modelFull, so);
@@ -204,8 +209,10 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                     Array.Copy(e.Ids, 0, ids, rowBase, _maxSeqLen);
                     Array.Copy(e.AttentionMask, 0, mask, rowBase, _maxSeqLen);
                 }
-                var n0 = NamedOnnxValue.CreateFromTensor(_inputIdsName, new DenseTensor<int>(ids, shape));
-                var n1 = NamedOnnxValue.CreateFromTensor(_attnMaskName, new DenseTensor<int>(mask, shape));
+                // ArrayPool may return larger buffer - slice to exact size needed for DenseTensor
+                var exactSize = batch * _maxSeqLen;
+                var n0 = NamedOnnxValue.CreateFromTensor(_inputIdsName, new DenseTensor<int>(ids.AsMemory(0, exactSize), shape));
+                var n1 = NamedOnnxValue.CreateFromTensor(_attnMaskName, new DenseTensor<int>(mask.AsMemory(0, exactSize), shape));
                 tensorPrepTimer.Stop();
 
                 float[]?[] result;
@@ -245,8 +252,10 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                     for (var i = 0; i < _maxSeqLen; i++) ids[rowBase + i] = e.Ids[i];
                     for (var i = 0; i < _maxSeqLen; i++) mask[rowBase + i] = e.AttentionMask[i];
                 }
-                var n0 = NamedOnnxValue.CreateFromTensor(_inputIdsName, new DenseTensor<long>(ids, shape));
-                var n1 = NamedOnnxValue.CreateFromTensor(_attnMaskName, new DenseTensor<long>(mask, shape));
+                // ArrayPool may return larger buffer - slice to exact size needed for DenseTensor
+                var exactSize = batch * _maxSeqLen;
+                var n0 = NamedOnnxValue.CreateFromTensor(_inputIdsName, new DenseTensor<long>(ids.AsMemory(0, exactSize), shape));
+                var n1 = NamedOnnxValue.CreateFromTensor(_attnMaskName, new DenseTensor<long>(mask.AsMemory(0, exactSize), shape));
                 tensorPrepTimer.Stop();
 
                 float[]?[] result;
@@ -414,11 +423,10 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     private void ConfigureMemoryOptions(SessionOptions so)
     {
         // Disable arena - prevents unbounded memory growth.
-        // AppendExecutionProvider with options only supports QNN/SNPE/XNNPACK/AZURE, not CPU.
-        // Use large batch sizes to amortize per-inference allocation overhead.
+        // Memory is released after each inference instead of being pooled.
         so.EnableCpuMemArena = false;
         so.EnableMemoryPattern = false;
-        _logger.LogInformation("ONNX memory arena disabled (CPU provider doesn't support arena config options)");
+        _logger.LogInformation("ONNX memory arena disabled (prevents unbounded memory growth)");
     }
 
     private string ConfigureExecutionProvider(SessionOptions so)

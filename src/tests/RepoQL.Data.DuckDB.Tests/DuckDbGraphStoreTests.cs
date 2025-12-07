@@ -390,7 +390,7 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = "INSERT INTO document_embedding (doc_id, node_id, uri, scope, model, dim, embedding, updated_at) VALUES (?,?,?,?,?,?,?,?);";
-            AddParameters(cmd, document.Id, document.Id, uri.ToString(), "document", "test-model", 2, "[0.1,0.9]", DateTimeOffset.UtcNow.UtcDateTime);
+            AddParameters(cmd, document.Id, document.Id, uri.ToString(), "document", "test-model", 2, new List<float> { 0.1f, 0.9f }, DateTimeOffset.UtcNow.UtcDateTime);
             cmd.ExecuteNonQuery();
         }
 
@@ -811,7 +811,7 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = "INSERT INTO document_embedding (doc_id, node_id, uri, scope, model, dim, embedding, updated_at) VALUES (?,?,?,?,?,?,?,?);";
-            AddParameters(cmd, doc.Id, doc.Id, docUri.ToString(), "document", "test", 2, "[0.1,0.2]", DateTimeOffset.UtcNow.UtcDateTime);
+            AddParameters(cmd, doc.Id, doc.Id, docUri.ToString(), "document", "test", 2, new List<float> { 0.1f, 0.2f }, DateTimeOffset.UtcNow.UtcDateTime);
             cmd.ExecuteNonQuery();
         }
 
@@ -870,7 +870,7 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         using (var cmd = connection.CreateCommand())
         {
             cmd.CommandText = "INSERT INTO document_embedding (doc_id, node_id, uri, scope, model, dim, embedding, updated_at) VALUES (?,?,?,?,?,?,?,?);";
-            AddParameters(cmd, doc.Id, child.Id, docUri.ToString(), "object", "test", 2, "[0.3,0.7]", DateTimeOffset.UtcNow.UtcDateTime);
+            AddParameters(cmd, doc.Id, child.Id, docUri.ToString(), "object", "test", 2, new List<float> { 0.3f, 0.7f }, DateTimeOffset.UtcNow.UtcDateTime);
             cmd.ExecuteNonQuery();
         }
 
@@ -972,7 +972,7 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         {
             using var cmd = connection.CreateCommand();
             cmd.CommandText = "INSERT INTO document_embedding (doc_id, node_id, uri, scope, model, dim, embedding, updated_at) VALUES (?,?,?,?,?,?,?,?);";
-            AddParameters(cmd, doc.Id, nodeId, uri, nodeId == doc.Id ? "document" : "object", "test", 2, "[0.1,0.2]", DateTimeOffset.UtcNow.UtcDateTime);
+            AddParameters(cmd, doc.Id, nodeId, uri, nodeId == doc.Id ? "document" : "object", "test", 2, new List<float> { 0.1f, 0.2f }, DateTimeOffset.UtcNow.UtcDateTime);
             cmd.ExecuteNonQuery();
         }
 
@@ -1419,16 +1419,11 @@ public sealed class DuckDbGraphStoreTests : IDisposable
         var rows = new List<(Guid, Guid, string, string, float[])>();
         while (reader.Read())
         {
-            rows.Add((reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3), ParseEmbedding(reader.GetString(4))));
+            var embedding = reader.GetFieldValue<List<float>>(4);
+            rows.Add((reader.GetGuid(0), reader.GetGuid(1), reader.GetString(2), reader.GetString(3), embedding.ToArray()));
         }
 
         return rows;
-    }
-
-    private static float[] ParseEmbedding(string json)
-    {
-        var array = JsonNode.Parse(json)!.AsArray();
-        return array.Select(node => node!.GetValue<float>()).ToArray();
     }
 
     private sealed class TestEmbeddingProvider : IEmbeddingProvider

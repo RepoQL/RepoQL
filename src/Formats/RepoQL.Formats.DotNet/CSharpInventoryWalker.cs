@@ -18,7 +18,7 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
     private readonly Dictionary<SyntaxNode, Guid> _declaredNodeIds = new(ReferenceEqualityComparer.Instance);
 
     public CSharpInventoryWalker(Guid documentId, TextLineMap lineMap)
-        : base(SyntaxWalkerDepth.StructuredTrivia)
+        : base(SyntaxWalkerDepth.Node)
     {
         _documentId = documentId;
         _lineMap = lineMap ?? throw new ArgumentNullException(nameof(lineMap));
@@ -328,10 +328,17 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
 
     private static string ResolveAccessibility(SyntaxTokenList modifiers, string fallback)
     {
-        var hasPublic = modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword));
-        var hasProtected = modifiers.Any(m => m.IsKind(SyntaxKind.ProtectedKeyword));
-        var hasInternal = modifiers.Any(m => m.IsKind(SyntaxKind.InternalKeyword));
-        var hasPrivate = modifiers.Any(m => m.IsKind(SyntaxKind.PrivateKeyword));
+        bool hasPublic = false, hasProtected = false, hasInternal = false, hasPrivate = false;
+        foreach (var m in modifiers)
+        {
+            switch (m.Kind())
+            {
+                case SyntaxKind.PublicKeyword: hasPublic = true; break;
+                case SyntaxKind.ProtectedKeyword: hasProtected = true; break;
+                case SyntaxKind.InternalKeyword: hasInternal = true; break;
+                case SyntaxKind.PrivateKeyword: hasPrivate = true; break;
+            }
+        }
 
         if (hasPublic) return "public";
         if (hasProtected && hasInternal) return "protected internal";

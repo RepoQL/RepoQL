@@ -131,6 +131,7 @@ public partial class IndexingEngine : IAsyncDisposable
     private readonly EpochTracker _epochTracker = new();
     private readonly object _analysisLock = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingAnalysis = new();
+    private readonly Dictionary<long, Queue<IndexItem>> _pendingStructureEmbeddings = new();  // Separate from analysis - includes read-only items
     private readonly Channel<long> _analysisEpochChannel = Channel.CreateUnbounded<long>(new UnboundedChannelOptions
     {
         AllowSynchronousContinuations = false,
@@ -429,6 +430,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
     internal async Task IndexItemAsync(IndexItem item, CancellationToken cancellationToken = default)
     {
+        // Per-item processing is tracked via epoch activities (StartEpochActivity/CompleteEpochActivity)
         var overallTimer = Stopwatch.StartNew();
         var status = "unknown";
         var currentStage = "enqueue";
@@ -594,28 +596,51 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private void ScheduleAnalysis(IndexItem item)
     {
-        if (item.IsReadOnly)
-        {
-            AddEpochTag(item.Epoch, "analysis.skip", "read_only_idle");
-            return;
-        }
         if (item.Epoch < 0)
             return;
 
+        bool needsRequeue;
         lock (_analysisLock)
         {
-            if (!_pendingAnalysis.TryGetValue(item.Epoch, out var backlog))
+            // Always track items for structure embeddings (regardless of read-only status)
+            if (!_pendingStructureEmbeddings.TryGetValue(item.Epoch, out var embedQueue))
             {
-                backlog = new Queue<IndexItem>();
-                _pendingAnalysis[item.Epoch] = backlog;
+                embedQueue = new Queue<IndexItem>();
+                _pendingStructureEmbeddings[item.Epoch] = embedQueue;
+            }
+            embedQueue.Enqueue(item);
+
+            // Only track non-read-only items for multi-file analysis
+            if (!item.IsReadOnly)
+            {
+                if (!_pendingAnalysis.TryGetValue(item.Epoch, out var analysisQueue))
+                {
+                    analysisQueue = new Queue<IndexItem>();
+                    _pendingAnalysis[item.Epoch] = analysisQueue;
+                }
+                analysisQueue.Enqueue(item);
+            }
+            else
+            {
+                AddEpochTag(item.Epoch, "analysis.skip", "read_only_idle");
             }
 
-            backlog.Enqueue(item);
+            // If this epoch was already released, we need to re-enqueue it
+            // otherwise the item will be orphaned
+            needsRequeue = item.Epoch <= Interlocked.Read(ref _lastReleasedEpoch);
+        }
+
+        if (needsRequeue)
+        {
+            EnqueueIdleEpoch(item.Epoch);
         }
     }
 
     private void OnHotPathIdle(object? sender, HotPathIdleEventArgs args)
     {
+        // Complete the hot path epoch span before starting idle processing
+        CompleteEpochActivity(args.Epoch, success: true);
+
         Metrics?.IdleCycles.Add(1);
         EnqueueIdleEpoch(args.Epoch);
         // Start a fresh epoch so subsequent work participates in idle post-processing again.
@@ -632,9 +657,9 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private void StartEpochActivity(long epoch)
     {
-        var activity = ActivitySource.StartActivity(ActivityKind.Internal, name: "Indexer.Epoch", tags: new TagList
+        var activity = ActivitySource.StartActivity(ActivityKind.Internal, name: "hot_path_epoch", tags: new TagList
         {
-            { "index.epoch", epoch }
+            { "epoch", epoch }
         });
 
         if (activity is null)
@@ -688,13 +713,22 @@ public partial class IndexingEngine : IAsyncDisposable
             {
                 while (reader.TryRead(out var epoch))
                 {
-                    if (epoch <= Interlocked.Read(ref _lastReleasedEpoch))
+                    // Check if there's actually work to do for this epoch
+                    bool hasWork;
+                    lock (_analysisLock)
+                    {
+                        hasWork = _pendingAnalysis.TryGetValue(epoch, out var backlog) && backlog.Count > 0;
+                    }
+
+                    if (!hasWork)
                         continue;
 
                     try
                     {
                         await ReleaseAnalysisAsync(epoch).ConfigureAwait(false);
-                        Interlocked.Exchange(ref _lastReleasedEpoch, epoch);
+                        // Only update _lastReleasedEpoch if this is a newer epoch
+                        if (epoch > Interlocked.Read(ref _lastReleasedEpoch))
+                            Interlocked.Exchange(ref _lastReleasedEpoch, epoch);
                     }
                     catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
                     {
@@ -719,15 +753,19 @@ public partial class IndexingEngine : IAsyncDisposable
         var startedProcessing = false;
         try
         {
-            Queue<IndexItem>? backlog = null;
+            Queue<IndexItem>? structureEmbedQueue = null;
+            Queue<IndexItem>? analysisQueue = null;
             lock (_analysisLock)
             {
-                _pendingAnalysis.Remove(epoch, out backlog);
+                _pendingStructureEmbeddings.Remove(epoch, out structureEmbedQueue);
+                _pendingAnalysis.Remove(epoch, out analysisQueue);
 
                 // Atomically increment the active processing counter BEFORE releasing the lock.
                 // This ensures GetPendingIdleProcessingCount() never sees zero while we have work to do.
                 // The counter is decremented in the finally block.
-                if (backlog is not null && backlog.Count > 0)
+                var hasWork = (structureEmbedQueue is not null && structureEmbedQueue.Count > 0) ||
+                              (analysisQueue is not null && analysisQueue.Count > 0);
+                if (hasWork)
                 {
                     Interlocked.Increment(ref _activeIdleProcessingCount);
                     startedProcessing = true;
@@ -737,57 +775,87 @@ public partial class IndexingEngine : IAsyncDisposable
             if (!startedProcessing)
                 return;
 
-            var pendingItems = backlog!.ToArray();
+            var structureEmbedItems = structureEmbedQueue?.ToArray() ?? Array.Empty<IndexItem>();
+            var pendingItems = analysisQueue?.ToArray() ?? Array.Empty<IndexItem>();
 
-            // Prune phase
-            var pruneTimer = Stopwatch.StartNew();
-            var pruningResult = await ArtifactPruner.PruneAsync(pendingItems, Shutdown.Token).ConfigureAwait(false);
-            pruneTimer.Stop();
-            var prunedCount = pruningResult.DeletedArtifacts.Count;
-            Interlocked.Exchange(ref _lastPrunedCount, prunedCount);
-            if (prunedCount > 0)
+            // Create span for the entire idle phase processing
+            using var idleSpan = ActivitySource.StartActivity("idle_processing", ActivityKind.Internal);
+            idleSpan?.SetTag("epoch", epoch);
+            idleSpan?.SetTag("structure_embed_count", structureEmbedItems.Length);
+            idleSpan?.SetTag("analysis_count", pendingItems.Length);
+
+            // Prune phase (uses all items including read-only for pruning stale documents)
+            PruningResult pruningResult;
+            using (ActivitySource.StartActivity("prune_phase", ActivityKind.Internal))
             {
-                Interlocked.Add(ref _totalPrunedCount, prunedCount);
-                Metrics?.FilesPruned.Add(prunedCount);
+                var pruneTimer = Stopwatch.StartNew();
+                pruningResult = await ArtifactPruner.PruneAsync(structureEmbedItems, Shutdown.Token).ConfigureAwait(false);
+                pruneTimer.Stop();
+                var prunedCount = pruningResult.DeletedArtifacts.Count;
+                Interlocked.Exchange(ref _lastPrunedCount, prunedCount);
+                if (prunedCount > 0)
+                {
+                    Interlocked.Add(ref _totalPrunedCount, prunedCount);
+                    Metrics?.FilesPruned.Add(prunedCount);
+                }
+                Metrics?.IdlePhaseDuration.Record(pruneTimer.Elapsed.TotalMilliseconds, new TagList
+                {
+                    { "phase", "prune" }
+                });
+
+                if (pruningResult.DeletedArtifacts.Count > 0)
+                {
+                    await DeleteStaleDocumentsAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
+                    await VectorCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
+                }
             }
-            Metrics?.IdlePhaseDuration.Record(pruneTimer.Elapsed.TotalMilliseconds, new TagList
-            {
-                { "phase", "prune" }
-            });
 
-            if (pruningResult.DeletedArtifacts.Count > 0)
+            // Structure embedding phase (fast, enables immediate semantic search)
+            // Uses structureEmbedItems which includes ALL items (even read-only imports)
+            using (ActivitySource.StartActivity("structure_embedding_phase", ActivityKind.Internal))
             {
-                await DeleteStaleDocumentsAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
-                await VectorCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
+                var structureTimer = Stopwatch.StartNew();
+                await VectorCoordinator.GenerateStructureEmbeddingsAsync(structureEmbedItems, Shutdown.Token).ConfigureAwait(false);
+                structureTimer.Stop();
+                Metrics?.IdlePhaseDuration.Record(structureTimer.Elapsed.TotalMilliseconds, new TagList
+                {
+                    { "phase", "structure_embedding" }
+                });
             }
 
-            // NOTE: VectorCoordinator.ApplyAsync marks items for embedding but doesn't flush the writer.
+            // NOTE: VectorCoordinator.ApplyAsync marks items for full-text embedding but doesn't flush the writer.
             // For imports, embedding refresh is triggered in RepoQlServiceImpl.ImportRepository after
             // the writer flush completes. For file watching, embeddings update on subsequent idle cycles.
 
-            // Vector refresh phase
-            var vectorTimer = Stopwatch.StartNew();
-            foreach (var item in pendingItems)
+            // Full-text vector refresh phase
+            using (ActivitySource.StartActivity("vector_refresh_phase", ActivityKind.Internal))
             {
-                await VectorCoordinator.ApplyAsync(item, Shutdown.Token).ConfigureAwait(false);
+                var vectorTimer = Stopwatch.StartNew();
+                foreach (var item in pendingItems)
+                {
+                    await VectorCoordinator.ApplyAsync(item, Shutdown.Token).ConfigureAwait(false);
+                }
+                vectorTimer.Stop();
+                Metrics?.IdlePhaseDuration.Record(vectorTimer.Elapsed.TotalMilliseconds, new TagList
+                {
+                    { "phase", "vector_refresh" }
+                });
             }
-            vectorTimer.Stop();
-            Metrics?.IdlePhaseDuration.Record(vectorTimer.Elapsed.TotalMilliseconds, new TagList
-            {
-                { "phase", "vector_refresh" }
-            });
 
             // Multi-file analysis enqueue phase
-            var analysisEnqueueTimer = Stopwatch.StartNew();
-            foreach (var item in pendingItems)
+            using (ActivitySource.StartActivity("multi_file_analysis_phase", ActivityKind.Internal))
             {
-                await AnalysisQueue.EnqueueAsync(item, Shutdown.Token).ConfigureAwait(false);
+                var analysisEnqueueTimer = Stopwatch.StartNew();
+                foreach (var item in pendingItems)
+                {
+                    await AnalysisQueue.EnqueueAsync(item, Shutdown.Token).ConfigureAwait(false);
+                }
+                analysisEnqueueTimer.Stop();
+                Metrics?.IdlePhaseDuration.Record(analysisEnqueueTimer.Elapsed.TotalMilliseconds, new TagList
+                {
+                    { "phase", "multi_file_analysis" }
+                });
             }
-            analysisEnqueueTimer.Stop();
-            Metrics?.IdlePhaseDuration.Record(analysisEnqueueTimer.Elapsed.TotalMilliseconds, new TagList
-            {
-                { "phase", "multi_file_analysis" }
-            });
         }
         catch (Exception ex)
         {
@@ -817,7 +885,8 @@ public partial class IndexingEngine : IAsyncDisposable
             // Clear peak tracking to prevent memory leaks
             _epochTracker.ClearEpochPeak(epoch);
 
-            CompleteEpochActivity(epoch, failure is null, failure);
+            // Note: hot_path_epoch activity is completed in OnHotPathIdle before idle processing starts
+            // The idle_processing span is tracked separately via ActivitySource.StartActivity above
         }
     }
 

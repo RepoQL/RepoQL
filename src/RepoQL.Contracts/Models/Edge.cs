@@ -21,9 +21,14 @@ public sealed class Edge
     public required Guid SrcId { get; init; }
 
     /// <summary>
-    ///     Gets the destination node identifier.
+    ///     Gets the destination node identifier. Nullable for unresolved references.
     /// </summary>
-    public required Guid DstId { get; init; }
+    public Guid? DstId { get; init; }
+
+    /// <summary>
+    ///     Gets the destination URI for reference edges. Enables deferred resolution and broken-link detection.
+    /// </summary>
+    public RepoUri? DstUri { get; init; }
 
     /// <summary>
     ///     Gets the relationship type token, for example <c>HAS_PART</c> or <c>REFERS_TO</c>.
@@ -78,8 +83,15 @@ public sealed class Edge
     {
         if (Id == Guid.Empty) throw new InvalidOperationException("Edge Id is required.");
         if (SrcId == Guid.Empty) throw new InvalidOperationException("Source node is required.");
-        if (DstId == Guid.Empty) throw new InvalidOperationException("Destination node is required.");
         if (string.IsNullOrWhiteSpace(Type)) throw new InvalidOperationException("Edge type is required.");
+
+        // Composition edges require a resolved destination
+        if (IsComposition && DstId is null)
+            throw new InvalidOperationException("Composition edge requires destination node id.");
+
+        // Reference edges need either DstId or DstUri
+        if (!IsComposition && DstId is null && DstUri is null)
+            throw new InvalidOperationException("Reference edge requires destination node id or URI.");
 
         // Self-edges are allowed unless this is a composition relation.
         if (IsComposition && SrcId == DstId)

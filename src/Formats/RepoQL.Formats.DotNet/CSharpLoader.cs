@@ -199,7 +199,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
         };
 
         var filePath = TryGetPhysicalPath(artifact);
-        var semantic = await AnnotateSemanticInfoAsync(filePath, surface, walker, syntaxTree, lineMap, cancellationToken).ConfigureAwait(false);
+        var semantic = await AnnotateSemanticInfoAsync(filePath, surface, walker, syntaxTree, root, lineMap, cancellationToken).ConfigureAwait(false);
 
         var state = new CSharpDocumentState
         {
@@ -306,28 +306,6 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                 Props = surface.DocumentProperties
             });
 
-            foreach (var ns in surface.Namespaces)
-            {
-                spans.Add(CreateSpan(ns.SpanId, ns.Span, surface.DocumentId));
-                var nsProps = new JsonObject
-                {
-                    ["name"] = ns.Name,
-                    ["qualified_name"] = ns.QualifiedName
-                };
-                if (ns.ParentNamespaceId.HasValue)
-                    nsProps["parent_namespace_id"] = ns.ParentNamespaceId.Value.ToString();
-
-                nodes.Add(new Node
-                {
-                    Id = ns.NodeId,
-                    Kind = "csharp.namespace",
-                    SpanId = ns.SpanId,
-                    Props = nsProps
-                });
-
-                AddComposition(surface.DocumentId, ns.ParentNamespaceId ?? surface.DocumentId, ns.NodeId);
-            }
-
             foreach (var type in surface.Types)
             {
                 spans.Add(CreateSpan(type.SpanId, type.Span, surface.DocumentId));
@@ -361,10 +339,13 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                     Id = type.NodeId,
                     Kind = "csharp.type",
                     SpanId = type.SpanId,
-                    Props = typeProps
+                    Uri = RepoUri.FromSymbol(uri.Container, type.QualifiedName, type.Span.StartLine, type.Span.EndLine),
+                    Props = typeProps,
+                    Headline = BuildTypeHeadline(type)
                 });
 
-                var parent = type.ParentTypeId ?? type.NamespaceNodeId ?? surface.DocumentId;
+                // Nested types -> parent type, top-level types -> document
+                var parent = type.ParentTypeId ?? surface.DocumentId;
                 AddComposition(surface.DocumentId, parent, type.NodeId);
             }
 
@@ -400,12 +381,17 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                 if (!string.IsNullOrEmpty(member.SymbolKey))
                     memberProps["symbol_key"] = member.SymbolKey;
 
+                var memberSymbol = string.IsNullOrEmpty(member.DeclaringTypeDisplay)
+                    ? member.Name
+                    : $"{member.DeclaringTypeDisplay}.{member.Name}";
                 nodes.Add(new Node
                 {
                     Id = member.NodeId,
                     Kind = "csharp.member",
                     SpanId = member.SpanId,
-                    Props = memberProps
+                    Uri = RepoUri.FromSymbol(uri.Container, memberSymbol, member.Span.StartLine, member.Span.EndLine),
+                    Props = memberProps,
+                    Headline = BuildMemberHeadline(member)
                 });
 
                 AddComposition(surface.DocumentId, member.DeclaringTypeId, member.NodeId);
@@ -481,6 +467,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
         CSharpDocumentSurface surface,
         CSharpInventoryWalker walker,
         SyntaxTree syntaxTree,
+        SyntaxNode root,
         TextLineMap lineMap,
         CancellationToken cancellationToken)
     {
@@ -532,7 +519,6 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                 walker.DeclaredNodeIds,
                 lineMap,
                 surface.DocumentId);
-            var root = await syntaxTree.GetRootAsync(cancellationToken).ConfigureAwait(false);
             collector.Visit(root);
             var diagnostics = CollectDiagnostics(compilation, syntaxTree, lineMap, cancellationToken);
             if (!_analysisEnabled)
@@ -645,6 +631,77 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
             ["async_member_count"] = walker.Members.Count(m => m.IsAsync)
         };
         return docProps;
+    }
+
+    private static string BuildTypeHeadline(CSharpTypeInfo type)
+    {
+        // Format: "public class MyClass : BaseClass, IFoo"
+        var sb = new StringBuilder();
+        if (!string.IsNullOrEmpty(type.Accessibility))
+            sb.Append(type.Accessibility).Append(' ');
+        if (type.IsStatic)
+            sb.Append("static ");
+        if (type.IsPartial)
+            sb.Append("partial ");
+        sb.Append(type.Kind).Append(' ').Append(type.Name);
+
+        if (!string.IsNullOrWhiteSpace(type.BaseType) || type.Interfaces.Count > 0)
+        {
+            sb.Append(" : ");
+            var first = true;
+            if (!string.IsNullOrWhiteSpace(type.BaseType))
+            {
+                sb.Append(type.BaseType);
+                first = false;
+            }
+            foreach (var iface in type.Interfaces)
+            {
+                if (!first) sb.Append(", ");
+                sb.Append(iface);
+                first = false;
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    private static string BuildMemberHeadline(CSharpMemberInfo member)
+    {
+        // Format: "public async Task<string> GetDataAsync(int id, string name)"
+        var sb = new StringBuilder();
+        if (!string.IsNullOrEmpty(member.Accessibility))
+            sb.Append(member.Accessibility).Append(' ');
+        if (member.IsStatic)
+            sb.Append("static ");
+        if (member.IsAsync)
+            sb.Append("async ");
+
+        // Return type (skip for constructors)
+        if (!string.Equals(member.Kind, "constructor", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(member.ReturnType))
+        {
+            sb.Append(member.ReturnType).Append(' ');
+        }
+
+        sb.Append(member.Name);
+
+        // Parameters for methods/constructors/indexers
+        if (string.Equals(member.Kind, "method", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(member.Kind, "constructor", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(member.Kind, "indexer", StringComparison.OrdinalIgnoreCase))
+        {
+            var bracket = string.Equals(member.Kind, "indexer", StringComparison.OrdinalIgnoreCase) ? '[' : '(';
+            var closeBracket = bracket == '[' ? ']' : ')';
+            sb.Append(bracket);
+            for (var i = 0; i < member.Parameters.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append(member.Parameters[i].Type).Append(' ').Append(member.Parameters[i].Name);
+            }
+            sb.Append(closeBracket);
+        }
+
+        return sb.ToString();
     }
 
     private static string BuildHeadline(RepoUri uri, CSharpDocumentSurface surface)
