@@ -41,19 +41,17 @@ internal sealed class ObjectSearchService : IObjectSearchService
         // Track how many objects we found per document via embedding search
         var objectCountByDoc = new Dictionary<string, int>();
 
-        // For strong matches with a question, do embedding search per document
+        // For strong matches with a question, do ONE embedding search across all documents
         if (hasQuestion)
         {
-            foreach (var docUri in documentUris)
-            {
-                var docObjects = await SearchObjectsInDocumentAsync(
-                    client, docUri, question!, objectsPerDocument, cancellationToken).ConfigureAwait(false);
+            var allObjects = await SearchObjectsInDocumentsAsync(
+                client, documentUris, question!, objectsPerDocument, cancellationToken).ConfigureAwait(false);
 
-                if (docObjects.Count > 0)
-                {
-                    results.AddRange(docObjects);
-                    objectCountByDoc[docUri] = docObjects.Count;
-                }
+            foreach (var obj in allObjects)
+            {
+                results.Add(obj);
+                objectCountByDoc.TryGetValue(obj.DocumentUri, out var count);
+                objectCountByDoc[obj.DocumentUri] = count + 1;
             }
         }
 
@@ -91,17 +89,24 @@ internal sealed class ObjectSearchService : IObjectSearchService
     }
 
     /// <summary>
-    /// Search for objects within a specific document using embedding similarity.
+    /// Search for objects across multiple documents using a single embedding search.
+    /// Returns top objects per document, respecting the objectsPerDocument limit.
     /// </summary>
-    private async Task<List<ObjectMatch>> SearchObjectsInDocumentAsync(
+    private async Task<List<ObjectMatch>> SearchObjectsInDocumentsAsync(
         IRepoQlClient client,
-        string documentUri,
+        IReadOnlyList<string> documentUris,
         string question,
-        int limit,
+        int objectsPerDocument,
         CancellationToken cancellationToken)
     {
-        // Run embedding search on objects, filter to this document
-        // k=50 is enough - fallback handles misses
+        if (documentUris.Count == 0)
+            return [];
+
+        // Build URI pattern filter for all documents
+        var uriPatterns = string.Join(" OR ", documentUris.Select((u, i) => $"s.uri LIKE ${i + 2}"));
+        var totalLimit = documentUris.Count * objectsPerDocument * 2; // 2x buffer for ranking
+
+        // Single search query covering all documents
         var sql = $"""
             WITH search_results AS (
                 SELECT
@@ -114,38 +119,50 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     s.line_end,
                     s.lang,
                     s.mime as semantic_type,
-                    s.score
-                FROM search(?, k := 50) s
+                    s.score,
+                    split_part(s.uri, '#', 1) as document_uri
+                FROM search($1, k := {Math.Max(50, totalLimit)}) s
                 WHERE s.scope = 'object'
-                  AND s.uri LIKE ?
+                  AND ({uriPatterns})
+            ),
+            ranked AS (
+                SELECT *,
+                    ROW_NUMBER() OVER (PARTITION BY document_uri ORDER BY score DESC) as rn
+                FROM search_results
             )
-            SELECT * FROM search_results
+            SELECT uri, symbol, kind, headline, snippet, line_start, line_end, lang, semantic_type, score, document_uri
+            FROM ranked
+            WHERE rn <= {objectsPerDocument}
             ORDER BY score DESC
-            LIMIT {limit}
             """;
 
-        var docPattern = EscapeSql(documentUri) + "#%";
+        var parameters = new List<object?> { question };
+        foreach (var docUri in documentUris)
+        {
+            parameters.Add(EscapeSql(docUri) + "#%");
+        }
 
         try
         {
             var response = await client.ExecuteRawQueryAsync(
-                sql, [question, docPattern], null, cancellationToken).ConfigureAwait(false);
+                sql, parameters.ToArray(), null, cancellationToken).ConfigureAwait(false);
 
             var results = new List<ObjectMatch>();
             foreach (var row in response.Rows)
             {
                 var values = row.Values;
-                if (values.Count < 10) continue;
+                if (values.Count < 11) continue;
 
                 var uri = ExtractString(values[0]);
                 var kind = ExtractString(values[2]);
+                var docUri = ExtractString(values[10]);
 
-                if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(kind))
+                if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(kind) || string.IsNullOrWhiteSpace(docUri))
                     continue;
 
                 results.Add(new ObjectMatch(
                     Uri: uri,
-                    DocumentUri: documentUri,
+                    DocumentUri: docUri,
                     Kind: kind,
                     Symbol: ExtractString(values[1]),
                     Headline: ExtractString(values[3]),

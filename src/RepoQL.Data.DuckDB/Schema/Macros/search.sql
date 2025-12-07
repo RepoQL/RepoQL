@@ -871,18 +871,17 @@ candidate_objects AS (
     ORDER BY lexical_priority DESC, file_score DESC
     LIMIT (SELECT effective_embed_limit FROM dynamic_limit)
 ),
--- Embed headline and body separately, compute weighted similarity
+-- Embed body only (last-mile refinement after chunk proximity ranking)
+-- Headline/symbol matching already done via lexical scoring in candidate selection
 scored_objects AS (
     SELECT
         co.*,
-        -- Embed headline (high-value, short text)
-        embed_text_json(co.headline_text || ' ' || co.kind) AS headline_embedding,
-        -- Embed body (full content, capped)
+        -- Embed body (full content, capped) - this is where the semantic value is
         embed_text_json(substr(co.body_text, 1, 6000)) AS body_embedding,
         qe.qvec
     FROM candidate_objects co
     CROSS JOIN query_embedding qe
-    WHERE length(co.headline_text) > 0 OR length(co.body_text) > 0
+    WHERE length(co.body_text) > 0
 ),
 -- Compute similarity scores with lexical heuristics (matching search() approach)
 with_scores AS (
@@ -904,12 +903,8 @@ with_scores AS (
         so.digest,
         so.file_uri,
         so.file_score,
-        -- Separate semantic scores for headline vs body (both are JSON from embed_text_json)
-        cosine_similarity_json(so.qvec, so.headline_embedding) AS headline_semantic,
-        cosine_similarity_json(so.qvec, so.body_embedding) AS body_semantic,
-        -- Combined semantic: headline weighted 60%, body 40%
-        (cosine_similarity_json(so.qvec, so.headline_embedding) * 0.6 +
-         cosine_similarity_json(so.qvec, so.body_embedding) * 0.4) AS semantic_score,
+        -- Body-only semantic score (headline/symbol matching via lexical is sufficient)
+        cosine_similarity_json(so.qvec, so.body_embedding) AS semantic_score,
         match_score(lower((SELECT query_text FROM params)), lower(coalesce(so.symbol, ''))) AS fuzzy_score,
         -- BM25-like lexical heuristics: symbol > headline > structure > body
         CASE
@@ -962,8 +957,6 @@ SELECT
     digest,
     bm25_score,
     fuzzy_score,
-    headline_semantic,
-    body_semantic,
     semantic_score AS dense_score,
     score,
     confidence

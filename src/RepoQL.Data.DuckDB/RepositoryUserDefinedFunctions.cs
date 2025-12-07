@@ -781,49 +781,96 @@ public static class RepositoryUserDefinedFunctions
         );
 
         // embed_text_json(text) -> JSON string of float[] or NULL if provider disabled
+        // BATCHED: Collects all texts from vectorized call, embeds in one batch, writes results back
         connection.RegisterScalarFunction<string, string>(
             "embed_text_json",
             (readers, writer, n) =>
             {
+                if (embeddingProvider is null || !embeddingProvider.Enabled)
+                {
+                    for (ulong i = 0; i < n; i++)
+                        writer.WriteNull(i);
+                    return;
+                }
+
                 var r = readers[0];
+
+                // Pass 1: Collect valid texts and their indices
+                var textsToEmbed = new List<string>();
+                var indexMap = new List<ulong>(); // Maps batch index -> original row index
+
                 for (ulong i = 0; i < n; i++)
                 {
-                    try
-                    {
-                        if (embeddingProvider is null || !embeddingProvider.Enabled || !r.IsValid(i))
-                        {
-                            writer.WriteNull(i);
-                            continue;
-                        }
-                        var text = r.GetValue<string>(i) ?? string.Empty;
-                        // Synchronous wait acceptable in vectorized UDF for small N; provider should be fast
-                        var sw = System.Diagnostics.Stopwatch.StartNew();
-                        var vec = embeddingProvider.EmbedAsync(text).GetAwaiter().GetResult();
-                        sw.Stop();
-                        if (vec is null)
-                        {
-                            writer.WriteNull(i);
-                            metrics.EmbedErrors.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
-                            metrics.EmbedRequests.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "error" } });
-                            metrics.EmbedDuration.Record(sw.Elapsed.TotalMilliseconds, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "error" } });
-                            continue;
-                        }
-                        var json = SerializeFloatArray(vec);
-                        writer.WriteValue(json, i);
-                        metrics.EmbedRequests.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "ok" } });
-                        metrics.EmbedDuration.Record(sw.Elapsed.TotalMilliseconds, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "ok" } });
-                    }
-                    catch
-                    {
-                        writer.WriteNull(i);
-                        if (embeddingProvider is not null)
-                        {
-                            metrics.EmbedErrors.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
-                            metrics.EmbedRequests.Add(1, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "exception" } });
-                            metrics.EmbedDuration.Record(0, new TagList { { "source", "query-udf" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "exception" } });
-                        }
-                    }
+                    if (!r.IsValid(i))
+                        continue;
+
+                    var text = r.GetValue<string>(i);
+                    if (string.IsNullOrEmpty(text))
+                        continue;
+
+                    textsToEmbed.Add(text);
+                    indexMap.Add(i);
                 }
+
+                if (textsToEmbed.Count == 0)
+                {
+                    for (ulong i = 0; i < n; i++)
+                        writer.WriteNull(i);
+                    return;
+                }
+
+                // Batch embed all texts at once
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                float[]?[] vectors;
+                try
+                {
+                    vectors = embeddingProvider.EmbedBatchAsync(textsToEmbed, CancellationToken.None).GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    // Batch failed - write nulls for all
+                    for (ulong i = 0; i < n; i++)
+                        writer.WriteNull(i);
+                    metrics.EmbedErrors.Add(textsToEmbed.Count, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
+                    metrics.EmbedRequests.Add(textsToEmbed.Count, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "exception" } });
+                    return;
+                }
+                sw.Stop();
+
+                // Initialize all outputs to null
+                for (ulong i = 0; i < n; i++)
+                    writer.WriteNull(i);
+
+                // Pass 2: Write results back to correct indices
+                var successCount = 0;
+                var errorCount = 0;
+                for (var batchIdx = 0; batchIdx < vectors.Length; batchIdx++)
+                {
+                    var originalIdx = indexMap[batchIdx];
+                    var vec = vectors[batchIdx];
+
+                    if (vec is null)
+                    {
+                        errorCount++;
+                        continue;
+                    }
+
+                    var json = SerializeFloatArray(vec);
+                    writer.WriteValue(json, originalIdx);
+                    successCount++;
+                }
+
+                // Record metrics for the batch
+                if (successCount > 0)
+                {
+                    metrics.EmbedRequests.Add(successCount, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "ok" } });
+                }
+                if (errorCount > 0)
+                {
+                    metrics.EmbedErrors.Add(errorCount, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
+                    metrics.EmbedRequests.Add(errorCount, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "error" } });
+                }
+                metrics.EmbedDuration.Record(sw.Elapsed.TotalMilliseconds, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "batch_size", textsToEmbed.Count.ToString() } });
             },
             isPureFunction: false
         );
