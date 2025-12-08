@@ -366,6 +366,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CSharpParser>();
         services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, MarkdownClassifier>();
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CsProjParser>();
+        services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, SlnParser>();
         // Catch-all parser should run last in the parsing pipeline
         services.AddPlainTextFormat();
 
