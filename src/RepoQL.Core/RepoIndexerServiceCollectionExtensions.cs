@@ -252,7 +252,7 @@ public static class RepoIndexerServiceCollectionExtensions
             var loader = sp.GetRequiredService<CsProjLoader>();
             var analyzer = sp.GetRequiredService<CsProjAnalyzer>();
             return new FormatDescriptor(
-                SemanticMediaType.Create("text", "xml").WithKind("dotnet.csproj"),
+                SemanticMediaType.Create("application", "xml").WithKind("dotnet.csproj"),
                 loader,
                 analyzer,
                 loader,
@@ -365,6 +365,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, CSharpClassifier>();
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CSharpParser>();
         services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, MarkdownClassifier>();
+        services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CsProjParser>();
         // Catch-all parser should run last in the parsing pipeline
         services.AddPlainTextFormat();
 
