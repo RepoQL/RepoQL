@@ -1163,7 +1163,7 @@ namespace RepoQL.Data.DuckDB;
         if (enableExtensions)
             EnableExtensions();
         if (registerUdfs)
-            RepositoryUserDefinedFunctions.RegisterAll(connection, _metrics, embeddingProvider);
+            RepositoryUserDefinedFunctions.RegisterAll(connection, embeddingProvider);
     }
 
     private static DuckDBConnection OpenConnectionWithRecovery(string filePath, ILogger logger)
@@ -1260,7 +1260,7 @@ namespace RepoQL.Data.DuckDB;
         if (enableExtensions)
             EnableExtensions();
         if (registerUdfs)
-            RepositoryUserDefinedFunctions.RegisterAll(_connection, _metrics, embeddingProvider);
+            RepositoryUserDefinedFunctions.RegisterAll(_connection, embeddingProvider);
     }
 
     /// <summary>

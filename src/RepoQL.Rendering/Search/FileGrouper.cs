@@ -14,7 +14,7 @@ public record FileGroup(
 /// <summary>
 /// Groups search results by file.
 /// Key rules:
-/// - If a file has object matches, show objects only (not the file itself)
+/// - If a file has object matches, show the document WITH nested child objects
 /// - Limit to 3 snippets per file, show rest as headlines
 /// </summary>
 public static class FileGrouper
@@ -46,11 +46,11 @@ public static class FileGrouper
 
             if (objectsByDoc.TryGetValue(doc.Uri, out var docObjects) && docObjects.Count > 0)
             {
-                // File has objects → show objects, NOT the file
+                // File has objects → show document WITH nested child objects
                 groups.Add(new FileGroup(
                     doc.Uri,
                     doc.Score,
-                    Document: null,  // Don't show document when we have objects
+                    Document: doc,  // Show document with child objects
                     SnippetObjects: docObjects.Take(MaxSnippetsPerFile).ToList(),
                     HeadlineObjects: docObjects.Skip(MaxSnippetsPerFile).ToList()
                 ));
@@ -89,7 +89,7 @@ public static class FileGrouper
     }
 
     /// <summary>
-    /// Flatten file groups into a list of search results.
+    /// Flatten file groups into a list of search results with nested child objects.
     /// </summary>
     public static IReadOnlyList<SearchResult> Flatten(IReadOnlyList<FileGroup> groups)
     {
@@ -99,7 +99,52 @@ public static class FileGrouper
         {
             if (group.Document is not null)
             {
-                // Show document (no objects in this file)
+                // Convert snippet objects to SearchResult children
+                var childObjects = new List<SearchResult>();
+
+                // Add snippet objects (top 3) as children
+                foreach (var obj in group.SnippetObjects)
+                {
+                    childObjects.Add(new SearchResult(
+                        Uri: obj.Uri,
+                        Scope: SearchScope.Symbol,
+                        Kind: obj.Kind,
+                        Symbol: obj.Symbol,
+                        Headline: obj.Headline,
+                        Structure: obj.Structure,
+                        Snippet: obj.Snippet,
+                        LineStart: obj.LineStart,
+                        LineEnd: obj.LineEnd,
+                        Lang: obj.Lang,
+                        SemanticType: obj.SemanticType,
+                        RawScore: obj.RawScore,
+                        Confidence: 0,
+                        ChildObjects: null
+                    ));
+                }
+
+                // Add headline objects (rest - no snippet) as children
+                foreach (var obj in group.HeadlineObjects)
+                {
+                    childObjects.Add(new SearchResult(
+                        Uri: obj.Uri,
+                        Scope: SearchScope.Symbol,
+                        Kind: obj.Kind,
+                        Symbol: obj.Symbol,
+                        Headline: obj.Headline,
+                        Structure: obj.Structure,
+                        Snippet: null,  // No snippet for headline-only
+                        LineStart: obj.LineStart,
+                        LineEnd: obj.LineEnd,
+                        Lang: obj.Lang,
+                        SemanticType: obj.SemanticType,
+                        RawScore: obj.RawScore,
+                        Confidence: 0,
+                        ChildObjects: null
+                    ));
+                }
+
+                // Show document with child objects (if any)
                 results.Add(new SearchResult(
                     Uri: group.Document.Uri,
                     Scope: SearchScope.Document,
@@ -113,48 +158,56 @@ public static class FileGrouper
                     Lang: group.Document.Lang,
                     SemanticType: group.Document.SemanticType,
                     RawScore: group.Document.Score,
-                    Confidence: 0  // Will be normalized later
+                    Confidence: 0,  // Will be normalized later
+                    ChildObjects: childObjects.Count > 0 ? childObjects : null
                 ));
             }
-
-            // Show snippet objects (top 3)
-            foreach (var obj in group.SnippetObjects)
+            else
             {
-                results.Add(new SearchResult(
-                    Uri: obj.Uri,
-                    Scope: SearchScope.Symbol,
-                    Kind: obj.Kind,
-                    Symbol: obj.Symbol,
-                    Headline: obj.Headline,
-                    Structure: null,
-                    Snippet: obj.Snippet,
-                    LineStart: obj.LineStart,
-                    LineEnd: obj.LineEnd,
-                    Lang: obj.Lang,
-                    SemanticType: obj.SemanticType,
-                    RawScore: obj.RawScore,
-                    Confidence: 0
-                ));
-            }
+                // Document not in results, but objects are - show objects without parent
+                // (This handles orphaned objects whose documents weren't matched)
 
-            // Show headline objects (rest - no snippet)
-            foreach (var obj in group.HeadlineObjects)
-            {
-                results.Add(new SearchResult(
-                    Uri: obj.Uri,
-                    Scope: SearchScope.Symbol,
-                    Kind: obj.Kind,
-                    Symbol: obj.Symbol,
-                    Headline: obj.Headline,
-                    Structure: null,
-                    Snippet: null,  // No snippet for headline-only
-                    LineStart: obj.LineStart,
-                    LineEnd: obj.LineEnd,
-                    Lang: obj.Lang,
-                    SemanticType: obj.SemanticType,
-                    RawScore: obj.RawScore,
-                    Confidence: 0
-                ));
+                // Show snippet objects (top 3)
+                foreach (var obj in group.SnippetObjects)
+                {
+                    results.Add(new SearchResult(
+                        Uri: obj.Uri,
+                        Scope: SearchScope.Symbol,
+                        Kind: obj.Kind,
+                        Symbol: obj.Symbol,
+                        Headline: obj.Headline,
+                        Structure: obj.Structure,
+                        Snippet: obj.Snippet,
+                        LineStart: obj.LineStart,
+                        LineEnd: obj.LineEnd,
+                        Lang: obj.Lang,
+                        SemanticType: obj.SemanticType,
+                        RawScore: obj.RawScore,
+                        Confidence: 0,
+                        ChildObjects: null
+                    ));
+                }
+
+                // Show headline objects (rest - no snippet)
+                foreach (var obj in group.HeadlineObjects)
+                {
+                    results.Add(new SearchResult(
+                        Uri: obj.Uri,
+                        Scope: SearchScope.Symbol,
+                        Kind: obj.Kind,
+                        Symbol: obj.Symbol,
+                        Headline: obj.Headline,
+                        Structure: obj.Structure,
+                        Snippet: null,  // No snippet for headline-only
+                        LineStart: obj.LineStart,
+                        LineEnd: obj.LineEnd,
+                        Lang: obj.Lang,
+                        SemanticType: obj.SemanticType,
+                        RawScore: obj.RawScore,
+                        Confidence: 0,
+                        ChildObjects: null
+                    ));
+                }
             }
         }
 

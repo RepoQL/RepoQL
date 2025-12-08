@@ -42,6 +42,14 @@ internal class HostCommands(IAnsiConsole console)
         }
         var builder = WebApplication.CreateSlimBuilder([]);
         builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Logging:LogLevel:Default"] = "Information",
+            ["Logging:LogLevel:Grpc"] = "Warning",
+            ["Logging:LogLevel:Microsoft"] = "Warning",
+            ["Logging:LogLevel:System"] = "Warning"
+        });
+        builder.Configuration.AddEnvironmentVariables();
         builder.Host.UseConsoleLifetime();
         builder.Logging.ClearProviders();
         if (!implicitStart)
@@ -50,7 +58,6 @@ internal class HostCommands(IAnsiConsole console)
 
         }
 
-        builder.Logging.AddFilter((s, level) => s != null && !s.StartsWith("Microsoft", StringComparison.OrdinalIgnoreCase) && !s.StartsWith("System", StringComparison.OrdinalIgnoreCase) || level >= LogLevel.Information);
         builder.Logging.AddOpenTelemetry();
         builder.Services.AddOpenTelemetry()
             .WithMetrics(m => m

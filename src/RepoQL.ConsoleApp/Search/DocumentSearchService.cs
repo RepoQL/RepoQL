@@ -28,13 +28,19 @@ internal sealed class DocumentSearchService : IDocumentSearchService
         var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
 
         var hasQuestion = !string.IsNullOrWhiteSpace(question);
-        var hasScope = !string.IsNullOrWhiteSpace(scope);
+
+        // Split scope by semicolons to support multiple patterns
+        var scopePatterns = scope?.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
+        var hasScope = scopePatterns.Length > 0;
 
         string sql;
         var parameters = new List<object?>();
 
         if (hasQuestion)
         {
+            // Build scope WHERE clause
+            var scopeWhereClause = BuildScopeWhereClause("fs.uri", scopePatterns, parameters);
+
             // Semantic search with file_search macro
             // Also query chunk-level scores for proximity boosting
             sql = $"""
@@ -44,7 +50,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                         fs.doc_id,
                         fs.score
                     FROM file_search(?, question := ?, k := {limit * 3}) fs
-                    {(hasScope ? "WHERE glob_match(fs.uri, ?, default_scheme := 'file:///') OR glob_match(fs.uri, ?, default_scheme := 'docs:///')" : "")}
+                    {scopeWhereClause}
                 ),
                 doc_results AS (
                     SELECT
@@ -74,14 +80,12 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             // BM25 keywords were hurting results (tests matched keywords better than implementation)
             parameters.Add("");  // Empty keywords - rely on semantic search
             parameters.Add(question);
-            if (hasScope)
-            {
-                parameters.Add(scope);
-                parameters.Add(scope);
-            }
         }
         else if (hasScope)
         {
+            // Build scope WHERE clause
+            var scopeWhereClause = BuildScopeWhereClause("ri.uri", scopePatterns, parameters);
+
             // Explore mode - scope only, no semantic search
             sql = $"""
                 SELECT
@@ -95,12 +99,10 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                     ri.doc_id
                 FROM repo_index ri
                 WHERE ri.scope = 'document'
-                  AND (glob_match(ri.uri, ?, default_scheme := 'file:///') OR glob_match(ri.uri, ?, default_scheme := 'docs:///'))
+                  {scopeWhereClause.Replace("WHERE", "AND")}
                 ORDER BY ri.mtime DESC, ri.uri
                 LIMIT {limit}
                 """;
-            parameters.Add(scope);
-            parameters.Add(scope);
         }
         else
         {
@@ -266,6 +268,27 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             .Take(10);
 
         return string.Join(" ", words);
+    }
+
+    /// <summary>
+    /// Build WHERE clause for scope patterns, supporting semicolon-delimited lists.
+    /// </summary>
+    private static string BuildScopeWhereClause(string columnName, string[] scopePatterns, List<object?> parameters)
+    {
+        if (scopePatterns.Length == 0)
+            return "";
+
+        // Build OR conditions for each scope pattern, trying both file:/// and docs:/// schemes
+        var conditions = new List<string>();
+        foreach (var pattern in scopePatterns)
+        {
+            conditions.Add($"glob_match({columnName}, ?, default_scheme := 'file:///')");
+            parameters.Add(pattern);
+            conditions.Add($"glob_match({columnName}, ?, default_scheme := 'docs:///')");
+            parameters.Add(pattern);
+        }
+
+        return $"WHERE ({string.Join(" OR ", conditions)})";
     }
 
     private static string EscapeSql(string value) => value.Replace("'", "''");

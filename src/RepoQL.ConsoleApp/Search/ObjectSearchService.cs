@@ -114,6 +114,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     s.symbol,
                     s.kind,
                     s.headline,
+                    s.structure,
                     s.snippet,
                     s.line_start,
                     s.line_end,
@@ -130,7 +131,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     ROW_NUMBER() OVER (PARTITION BY document_uri ORDER BY score DESC) as rn
                 FROM search_results
             )
-            SELECT uri, symbol, kind, headline, snippet, line_start, line_end, lang, semantic_type, score, document_uri
+            SELECT uri, symbol, kind, headline, structure, snippet, line_start, line_end, lang, semantic_type, score, document_uri
             FROM ranked
             WHERE rn <= {objectsPerDocument}
             ORDER BY score DESC
@@ -151,11 +152,11 @@ internal sealed class ObjectSearchService : IObjectSearchService
             foreach (var row in response.Rows)
             {
                 var values = row.Values;
-                if (values.Count < 11) continue;
+                if (values.Count < 12) continue;
 
                 var uri = ExtractString(values[0]);
                 var kind = ExtractString(values[2]);
-                var docUri = ExtractString(values[10]);
+                var docUri = ExtractString(values[11]);
 
                 if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(kind) || string.IsNullOrWhiteSpace(docUri))
                     continue;
@@ -166,12 +167,13 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     Kind: kind,
                     Symbol: ExtractString(values[1]),
                     Headline: ExtractString(values[3]),
-                    Snippet: ExtractString(values[4]),
-                    LineStart: ExtractInt(values[5]) ?? 1,
-                    LineEnd: ExtractInt(values[6]) ?? 1,
-                    Lang: ExtractString(values[7]),
-                    SemanticType: ExtractString(values[8]),
-                    Score: ExtractDouble(values[9]) ?? 0.5
+                    Structure: ExtractString(values[4]),
+                    Snippet: ExtractString(values[5]),
+                    LineStart: ExtractInt(values[6]) ?? 1,
+                    LineEnd: ExtractInt(values[7]) ?? 1,
+                    Lang: ExtractString(values[8]),
+                    SemanticType: ExtractString(values[9]),
+                    Score: ExtractDouble(values[10]) ?? 0.5
                 ));
             }
 
@@ -209,6 +211,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     ri.kind,
                     ri.symbol,
                     ri.headline,
+                    ri.structure,
                     ri.body as snippet,
                     ri.line_start,
                     ri.line_end,
@@ -230,7 +233,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
                   END) IN ({uriList})
             )
             SELECT
-                uri, document_uri, kind, symbol, headline, snippet,
+                uri, document_uri, kind, symbol, headline, structure, snippet,
                 line_start, line_end, lang, semantic_type, score
             FROM objects
             WHERE rn <= {objectsPerDocument}
@@ -243,7 +246,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
         foreach (var row in response.Rows)
         {
             var values = row.Values;
-            if (values.Count < 11) continue;
+            if (values.Count < 12) continue;
 
             var uri = ExtractString(values[0]);
             var docUri = ExtractString(values[1]);
@@ -258,12 +261,13 @@ internal sealed class ObjectSearchService : IObjectSearchService
                 Kind: kind,
                 Symbol: ExtractString(values[3]),
                 Headline: ExtractString(values[4]),
-                Snippet: ExtractString(values[5]),
-                LineStart: ExtractInt(values[6]) ?? 1,
-                LineEnd: ExtractInt(values[7]) ?? 1,
-                Lang: ExtractString(values[8]),
-                SemanticType: ExtractString(values[9]),
-                Score: ExtractDouble(values[10]) ?? 0.5
+                Structure: ExtractString(values[5]),
+                Snippet: ExtractString(values[6]),
+                LineStart: ExtractInt(values[7]) ?? 1,
+                LineEnd: ExtractInt(values[8]) ?? 1,
+                Lang: ExtractString(values[9]),
+                SemanticType: ExtractString(values[10]),
+                Score: ExtractDouble(values[11]) ?? 0.5
             ));
         }
 

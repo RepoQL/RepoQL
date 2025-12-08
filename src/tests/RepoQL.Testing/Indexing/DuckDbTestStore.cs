@@ -31,7 +31,7 @@ public sealed class DuckDbTestStore : IDisposable
         connection.Open();
 
         var metrics = new IndexingMetrics();
-        RepositoryUserDefinedFunctions.RegisterAll(connection, metrics);
+        RepositoryUserDefinedFunctions.RegisterAll(connection, null);
 
         var graph = new DuckDbGraphStore(
             connection,

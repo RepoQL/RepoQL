@@ -161,6 +161,7 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             var declName = decl.Name ?? string.Empty;
             var declNodeId = Guid.NewGuid();
             var declHeadline = BuildDeclHeadline(decl);
+            var declStructure = BuildDeclStructure(decl);
             nodes.Add(new Node
             {
                 Id = declNodeId,
@@ -178,6 +179,7 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
                     ["is_component"] = decl.IsComponent
                 },
                 Headline = declHeadline,
+                Structure = declStructure,
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -288,6 +290,25 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
         if (!string.IsNullOrEmpty(decl.Name)) parts.Add(decl.Name);
         if (decl.IsComponent) parts.Add("(component)");
         return string.Join(" ", parts);
+    }
+
+    private static string? BuildDeclStructure(TypeScriptDeclaration decl)
+    {
+        // Only build structure for types that have members (classes, interfaces)
+        if (decl.Members.Count == 0)
+            return null;
+
+        var sb = new StringBuilder();
+        var typeName = !string.IsNullOrEmpty(decl.Name) ? decl.Name : $"<{decl.DeclKind}>";
+
+        sb.AppendLine($"{decl.DeclKind} {typeName}");
+
+        foreach (var member in decl.Members)
+        {
+            sb.AppendLine($"  {member.MemberKind} {member.Name}");
+        }
+
+        return sb.ToString().TrimEnd();
     }
 
     private static string BuildHeadline(DocumentModel document, TypeScriptDocumentState state)

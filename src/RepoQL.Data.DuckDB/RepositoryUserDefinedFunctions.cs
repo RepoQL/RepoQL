@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using RepoQL.Contracts;
-using RepoQL.Metrics;
 
 #pragma warning disable DuckDBNET001
 
@@ -16,18 +15,28 @@ namespace RepoQL.Data.DuckDB;
 /// </summary>
 public static class RepositoryUserDefinedFunctions
 {
+    // Static holder for the embedding provider - avoids closure issues with DuckDB UDFs
+    private static RepoQL.Contracts.Embeddings.IEmbeddingProvider? _embeddingProvider;
+
     /// <summary>
     ///     Registers all scalar UDFs on the provided open connection.
     /// </summary>
     public static void RegisterAll(
         DuckDBConnection connection,
-        IndexingMetrics metrics,
-        RepoQL.Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null)
+        RepoQL.Contracts.Embeddings.IEmbeddingProvider? embeddingProvider)
     {
+        // Always update the static provider reference (may be called multiple times with different providers)
+        if (embeddingProvider is not null)
+            _embeddingProvider = embeddingProvider;
+
         if (ScalarFunctionExists(connection, "repository_uri_container"))
-        {
             return;
-        }
+
+        // Record query-time embedding provider state for diagnostics
+        RepoQL.Contracts.Diagnostics.IndexingDiagnostics.SetQueryEmbeddingProvider(
+            embeddingProvider?.GetType().Name,
+            embeddingProvider?.Enabled ?? false,
+            embeddingProvider?.Model);
 
         // ------------------- Repository URI helpers -------------------
 
@@ -780,13 +789,29 @@ public static class RepositoryUserDefinedFunctions
             isPureFunction: true
         );
 
-        // embed_text_json(text) -> JSON string of float[] or NULL if provider disabled
-        // BATCHED: Collects all texts from vectorized call, embeds in one batch, writes results back
+        // embed_status() -> Key-value format showing runtime embedding provider state (no JSON, survives IL trimming)
+        connection.RegisterScalarFunction<string>(
+            "embed_status",
+            (writer, n) =>
+            {
+                var providerType = _embeddingProvider?.GetType().Name ?? "null";
+                var enabled = _embeddingProvider?.Enabled ?? false;
+                var model = _embeddingProvider?.Model ?? "null";
+                var dimension = _embeddingProvider?.Dimension ?? 0;
+
+                var status = $"provider_type: {providerType}\nenabled: {enabled}\nmodel: {model}\ndimension: {dimension}";
+                for (ulong i = 0; i < n; i++)
+                    writer.WriteValue(status, i);
+            },
+            isPureFunction: false
+        );
+
+        // embed_text(text) -> array string for embedding (use ::FLOAT[] to cast)
         connection.RegisterScalarFunction<string, string>(
-            "embed_text_json",
+            "embed_text",
             (readers, writer, n) =>
             {
-                if (embeddingProvider is null || !embeddingProvider.Enabled)
+                if (_embeddingProvider is null || !_embeddingProvider.Enabled)
                 {
                     for (ulong i = 0; i < n; i++)
                         writer.WriteNull(i);
@@ -794,20 +819,14 @@ public static class RepositoryUserDefinedFunctions
                 }
 
                 var r = readers[0];
-
-                // Pass 1: Collect valid texts and their indices
                 var textsToEmbed = new List<string>();
-                var indexMap = new List<ulong>(); // Maps batch index -> original row index
+                var indexMap = new List<ulong>();
 
                 for (ulong i = 0; i < n; i++)
                 {
-                    if (!r.IsValid(i))
-                        continue;
-
+                    if (!r.IsValid(i)) continue;
                     var text = r.GetValue<string>(i);
-                    if (string.IsNullOrEmpty(text))
-                        continue;
-
+                    if (string.IsNullOrEmpty(text)) continue;
                     textsToEmbed.Add(text);
                     indexMap.Add(i);
                 }
@@ -819,58 +838,35 @@ public static class RepositoryUserDefinedFunctions
                     return;
                 }
 
-                // Batch embed all texts at once
-                var sw = System.Diagnostics.Stopwatch.StartNew();
                 float[]?[] vectors;
                 try
                 {
-                    vectors = embeddingProvider.EmbedBatchAsync(textsToEmbed, CancellationToken.None).GetAwaiter().GetResult();
+                    vectors = _embeddingProvider.EmbedBatchAsync(textsToEmbed, CancellationToken.None).GetAwaiter().GetResult();
                 }
-                catch (Exception ex)
+                catch
                 {
-                    // Batch failed - write nulls for all
                     for (ulong i = 0; i < n; i++)
                         writer.WriteNull(i);
-                    metrics.EmbedErrors.Add(textsToEmbed.Count, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
-                    metrics.EmbedRequests.Add(textsToEmbed.Count, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "exception" } });
                     return;
                 }
-                sw.Stop();
 
-                // Initialize all outputs to null
-                for (ulong i = 0; i < n; i++)
-                    writer.WriteNull(i);
-
-                // Pass 2: Write results back to correct indices
-                var successCount = 0;
-                var errorCount = 0;
+                // Build a map of successful embeddings
+                var resultMap = new Dictionary<ulong, string>();
                 for (var batchIdx = 0; batchIdx < vectors.Length; batchIdx++)
                 {
-                    var originalIdx = indexMap[batchIdx];
                     var vec = vectors[batchIdx];
-
-                    if (vec is null)
-                    {
-                        errorCount++;
-                        continue;
-                    }
-
-                    var json = SerializeFloatArray(vec);
-                    writer.WriteValue(json, originalIdx);
-                    successCount++;
+                    if (vec is not null)
+                        resultMap[indexMap[batchIdx]] = SerializeFloatArray(vec);
                 }
 
-                // Record metrics for the batch
-                if (successCount > 0)
+                // Write each position exactly once
+                for (ulong i = 0; i < n; i++)
                 {
-                    metrics.EmbedRequests.Add(successCount, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "ok" } });
+                    if (resultMap.TryGetValue(i, out var json))
+                        writer.WriteValue(json, i);
+                    else
+                        writer.WriteNull(i);
                 }
-                if (errorCount > 0)
-                {
-                    metrics.EmbedErrors.Add(errorCount, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension } });
-                    metrics.EmbedRequests.Add(errorCount, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "status", "error" } });
-                }
-                metrics.EmbedDuration.Record(sw.Elapsed.TotalMilliseconds, new TagList { { "source", "query-udf-batch" }, { "model", embeddingProvider.Model }, { "dim", embeddingProvider.Dimension }, { "batch_size", textsToEmbed.Count.ToString() } });
             },
             isPureFunction: false
         );
@@ -919,15 +915,15 @@ public static class RepositoryUserDefinedFunctions
 
         // ------------------- Diagnostics UDF -------------------
 
-        // indexing_diagnostics() -> JSON string with indexing pipeline state
+        // indexing_diagnostics() -> Key-value format with indexing pipeline state (no JSON, survives IL trimming)
         connection.RegisterScalarFunction<string>(
             "indexing_diagnostics",
             (writer, n) =>
             {
-                var json = RepoQL.Contracts.Diagnostics.IndexingDiagnostics.GetDiagnosticsJson();
+                var text = RepoQL.Contracts.Diagnostics.IndexingDiagnostics.GetDiagnosticsText();
                 for (ulong i = 0; i < n; i++)
                 {
-                    writer.WriteValue(json, i);
+                    writer.WriteValue(text, i);
                 }
             },
             isPureFunction: false // State changes between calls
@@ -1042,20 +1038,23 @@ public static class RepositoryUserDefinedFunctions
         catch { return null; }
     }
 
+    /// <summary>
+    /// Serializes float array to JSON array format [1.0,2.0,...].
+    /// Use result::FLOAT[] in SQL to convert back.
+    /// </summary>
     private static string SerializeFloatArray(float[] vec)
     {
-        using var ms = new MemoryStream();
-        using (var w = new System.Text.Json.Utf8JsonWriter(ms))
+        if (vec == null || vec.Length == 0) return "[]";
+
+        var sb = new StringBuilder(vec.Length * 10 + 2); // Pre-size for efficiency
+        sb.Append('[');
+        for (var i = 0; i < vec.Length; i++)
         {
-            w.WriteStartArray();
-            for (var i = 0; i < vec.Length; i++)
-            {
-                w.WriteNumberValue(vec[i]);
-            }
-            w.WriteEndArray();
-            w.Flush();
+            if (i > 0) sb.Append(',');
+            sb.Append(vec[i].ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
-        return System.Text.Encoding.UTF8.GetString(ms.ToArray());
+        sb.Append(']');
+        return sb.ToString();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

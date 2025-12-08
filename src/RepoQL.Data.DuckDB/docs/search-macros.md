@@ -91,7 +91,7 @@ This catches typos and partial matches that lexical heuristics miss.
 ### Semantic Score (`dense_score`)
 
 Embedding-based similarity using cosine distance:
-1. Query is embedded via `embed_text_json()`
+1. Query is embedded via `embed_text()`
 2. All document embeddings scored via `cosine_similarity_json()`
 3. Multi-chunk documents: score ALL chunks, take MAX
 4. Normalized with power transform: `POWER(GREATEST(sem/max_sem, 0), 1.5)`

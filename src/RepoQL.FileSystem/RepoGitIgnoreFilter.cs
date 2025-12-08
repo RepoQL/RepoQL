@@ -60,8 +60,40 @@ public sealed partial class RepoGitIgnoreFilter : IUriFilter
 
         if (DefaultExcludes.IsMatch(rel))
             return false;
+        if (IsTempOrBackupFile(rel))
+            return false;
         if (_excludedRelPaths.Contains(rel)) return false;
         return !_ignore.IsIgnored(rel);
+    }
+
+    /// <summary>
+    /// Check if a filename represents a temporary or backup file that should be excluded.
+    /// </summary>
+    private static bool IsTempOrBackupFile(string path)
+    {
+        // Get just the filename
+        var lastSlash = path.LastIndexOfAny(['/', '\\']);
+        var fileName = lastSlash >= 0 ? path[(lastSlash + 1)..] : path;
+
+        // Common temp/backup file patterns:
+        // - Ends with ~ (vim backup, editor temp files)
+        // - Ends with .swp, .swo (vim swap files)
+        // - Ends with .tmp
+        // - Starts with ~ (Office temp files)
+        // - Starts with .# (Emacs lock files)
+        // - Ends with .bak
+        if (fileName.EndsWith('~') ||
+            fileName.EndsWith(".swp", StringComparison.OrdinalIgnoreCase) ||
+            fileName.EndsWith(".swo", StringComparison.OrdinalIgnoreCase) ||
+            fileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) ||
+            fileName.EndsWith(".bak", StringComparison.OrdinalIgnoreCase) ||
+            fileName.StartsWith('~') ||
+            fileName.StartsWith(".#"))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     [GeneratedRegex(@"(\.git|\.repoql)[\\/]", RegexOptions.IgnoreCase | RegexOptions.Compiled)]

@@ -99,6 +99,13 @@ public static class RepoUriGlobMatcher
         }
 
         candidate = CollapseSlashes(candidate);
+
+        // Trailing slash should match all descendants
+        if (candidate.EndsWith("/") && !candidate.EndsWith("**/"))
+        {
+            candidate += "**";
+        }
+
         if (ignoreCase)
             candidate = candidate.ToUpperInvariant();
         return new PatternInfo(candidate);

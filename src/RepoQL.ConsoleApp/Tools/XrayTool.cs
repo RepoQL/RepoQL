@@ -141,21 +141,13 @@ internal sealed class XrayTool(
         if (searchResult.Results.Count == 0)
         {
             var noResults = string.IsNullOrWhiteSpace(question)
-                ? "No results found in the specified scope."
-                : "No results found matching your query.";
+                ? $"No results found in scope: {scope ?? "(all)"}"
+                : $"No results matching '{question}' in scope: {scope ?? "(all)"}";
             return $"{noResults}\n\n{RepresentationFormatter.FormatStatusFooter(indexerStatus)}";
         }
 
         // Convert to rendering types
-        var xrayResults = searchResult.Results.Select(r => new XrayResult(
-            Uri: r.Uri,
-            Confidence: r.Confidence,
-            Kind: r.Scope == SearchScope.Symbol ? r.Kind : null,
-            Headline: r.Headline,
-            Structure: r.Structure,
-            Snippet: r.Snippet,
-            Lang: r.Lang
-        )).ToList();
+        var xrayResults = searchResult.Results.Select(r => ConvertToXrayResult(r)).ToList();
 
         var hasSearchCriteria = !string.IsNullOrWhiteSpace(question) || patternStrings.Count > 0;
         var context = new RenderingContext(
@@ -174,21 +166,21 @@ internal sealed class XrayTool(
         try
         {
             var client = await _clientProvider.GetClientAsync(ct).ConfigureAwait(false);
-            var result = await client.ExecuteRawQueryAsync("SELECT indexing_diagnostics() as json", cancellationToken: ct).ConfigureAwait(false);
+            var result = await client.ExecuteRawQueryAsync("SELECT indexing_diagnostics() as diag", cancellationToken: ct).ConfigureAwait(false);
 
             if (result.Rows.Count > 0)
             {
-                var json = result.Rows[0].Values.FirstOrDefault()?.StringValue;
-                if (!string.IsNullOrEmpty(json))
+                var text = result.Rows[0].Values.FirstOrDefault()?.StringValue;
+                if (!string.IsNullOrEmpty(text))
                 {
-                    using var doc = JsonDocument.Parse(json);
-                    var root = doc.RootElement;
+                    // Parse key-value format (key: value\n...)
+                    var values = ParseKeyValueText(text);
 
-                    var hotPathDepth = root.TryGetProperty("hot_path_depth", out var hp) ? hp.GetInt32() : 0;
-                    var idlePending = root.TryGetProperty("idle_pending", out var ip) ? ip.GetInt32() : 0;
-                    var analysisDepth = root.TryGetProperty("analysis_depth", out var ad) ? ad.GetInt32() : 0;
-                    var writerPending = root.TryGetProperty("writer_pending", out var wp) ? wp.GetInt32() : 0;
-                    var embedEnabled = root.TryGetProperty("embed_enabled", out var ee) && ee.GetBoolean();
+                    var hotPathDepth = values.TryGetValue("hot_path_depth", out var hp) ? int.Parse(hp) : 0;
+                    var idlePending = values.TryGetValue("idle_pending", out var ip) ? int.Parse(ip) : 0;
+                    var analysisDepth = values.TryGetValue("analysis_depth", out var ad) ? int.Parse(ad) : 0;
+                    var writerPending = values.TryGetValue("writer_pending", out var wp) ? int.Parse(wp) : 0;
+                    var embedEnabled = values.TryGetValue("embed_enabled", out var ee) && bool.Parse(ee);
 
                     return IndexerStatus.FromDiagnostics(hotPathDepth, idlePending, analysisDepth, writerPending, elapsedMs, embedEnabled);
                 }
@@ -200,6 +192,22 @@ internal sealed class XrayTool(
         }
 
         return new IndexerStatus(0, false, false, elapsedMs);
+    }
+
+    private static Dictionary<string, string> ParseKeyValueText(string text)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var colonIndex = line.IndexOf(':');
+            if (colonIndex > 0)
+            {
+                var key = line[..colonIndex].Trim();
+                var value = line[(colonIndex + 1)..].Trim();
+                result[key] = value;
+            }
+        }
+        return result;
     }
 
     #region Parameter Parsing
@@ -229,6 +237,30 @@ internal sealed class XrayTool(
     #endregion
 
     #region Helpers
+
+    /// <summary>
+    /// Convert a SearchResult to XrayResult, including child objects recursively.
+    /// </summary>
+    private static XrayResult ConvertToXrayResult(SearchResult result)
+    {
+        IReadOnlyList<XrayResult>? childObjects = null;
+        if (result.ChildObjects is { Count: > 0 })
+        {
+            childObjects = result.ChildObjects.Select(ConvertToXrayResult).ToList();
+        }
+
+        return new XrayResult(
+            Uri: result.Uri,
+            Confidence: result.Confidence,
+            Kind: result.Scope == SearchScope.Symbol ? result.Kind : null,
+            Headline: result.Headline,
+            Structure: result.Structure,
+            Snippet: result.Snippet,
+            Lang: result.Lang,
+            SemanticType: result.SemanticType,
+            ChildObjects: childObjects
+        );
+    }
 
     private static string ExtractErrorMessage(Exception ex)
     {

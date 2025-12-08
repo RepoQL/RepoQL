@@ -306,6 +306,11 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                 Props = surface.DocumentProperties
             });
 
+            // Build member lookup for type structure generation
+            var membersByType = surface.Members
+                .GroupBy(m => m.DeclaringTypeId)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
             foreach (var type in surface.Types)
             {
                 spans.Add(CreateSpan(type.SpanId, type.Span, surface.DocumentId));
@@ -341,7 +346,8 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                     SpanId = type.SpanId,
                     Uri = RepoUri.FromSymbol(uri.Container, type.QualifiedName, type.Span.StartLine, type.Span.EndLine),
                     Props = typeProps,
-                    Headline = BuildTypeHeadline(type)
+                    Headline = BuildTypeHeadline(type),
+                    Structure = BuildTypeStructure(type, membersByType)
                 });
 
                 // Nested types -> parent type, top-level types -> document
@@ -837,6 +843,55 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
             foreach (var type in globalTypes)
             {
                 AppendType(type, "  ");
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string? BuildTypeStructure(CSharpTypeInfo type, Dictionary<Guid, List<CSharpMemberInfo>> membersByType)
+    {
+        if (!membersByType.TryGetValue(type.NodeId, out var members) || members.Count == 0)
+            return null;
+
+        var sb = new StringBuilder();
+
+        static char AccessibilitySymbol(string? accessibility) => accessibility?.ToLowerInvariant() switch
+        {
+            "public" => '+',
+            "protected" => '#',
+            "internal" => '~',
+            "private" => '-',
+            "protected internal" => '#',
+            "private protected" => '-',
+            _ => ' '
+        };
+
+        foreach (var member in members.Take(CSharpLoaderConstants.MaxMembersInStructure))
+        {
+            var memberSymbol = AccessibilitySymbol(member.Accessibility);
+            var returnPart = !string.IsNullOrWhiteSpace(member.ReturnType) && member.ReturnType != "void"
+                ? $" → {member.ReturnType}"
+                : string.Empty;
+
+            if (string.Equals(member.Kind, "method", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(member.Kind, "constructor", StringComparison.OrdinalIgnoreCase))
+            {
+                var paramText = member.Parameters.Count == 0
+                    ? "()"
+                    : $"({string.Join(", ", member.Parameters.Select(p => p.Type))})";
+                sb.AppendLine($"{memberSymbol}{member.Name}{paramText}{returnPart}");
+            }
+            else if (string.Equals(member.Kind, "property", StringComparison.OrdinalIgnoreCase))
+            {
+                sb.AppendLine($"{memberSymbol}{member.Name}{returnPart}");
+            }
+            else // field, event, etc.
+            {
+                var typePart = !string.IsNullOrWhiteSpace(member.ReturnType)
+                    ? $" : {member.ReturnType}"
+                    : string.Empty;
+                sb.AppendLine($"{memberSymbol}{member.Name}{typePart}");
             }
         }
 

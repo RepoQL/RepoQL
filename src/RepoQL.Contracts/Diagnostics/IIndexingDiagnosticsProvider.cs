@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace RepoQL.Contracts.Diagnostics;
 
 /// <summary>
@@ -78,6 +76,11 @@ public static class IndexingDiagnostics
 {
     private static IIndexingDiagnosticsProvider? _provider;
 
+    // Query-time embedding provider diagnostics
+    private static string? _queryEmbedProvider;
+    private static bool _queryEmbedEnabled;
+    private static string? _queryEmbedModel;
+
     /// <summary>
     /// Registers the diagnostics provider. Should be called once during startup.
     /// </summary>
@@ -87,19 +90,44 @@ public static class IndexingDiagnostics
     }
 
     /// <summary>
-    /// Gets the current diagnostics snapshot as JSON.
+    /// Sets the query-time embedding provider info (called from UDF registration).
     /// </summary>
-    public static string GetDiagnosticsJson()
+    public static void SetQueryEmbeddingProvider(string? providerType, bool enabled, string? model)
+    {
+        _queryEmbedProvider = providerType;
+        _queryEmbedEnabled = enabled;
+        _queryEmbedModel = model;
+    }
+
+    /// <summary>
+    /// Gets the current diagnostics snapshot as key-value text (no JSON, survives IL trimming).
+    /// </summary>
+    public static string GetDiagnosticsText()
     {
         if (_provider is null)
-            return JsonSerializer.Serialize(new { error = "No diagnostics provider registered" });
+            return "error: No diagnostics provider registered";
 
         var snapshot = _provider.GetSnapshot();
-        return JsonSerializer.Serialize(snapshot, new JsonSerializerOptions
-        {
-            WriteIndented = false,
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
-        });
+
+        // Use key-value format instead of JSON to survive IL trimming
+        return string.Join("\n",
+            $"status: {snapshot.Status}",
+            $"epoch: {snapshot.Epoch}",
+            $"hot_path_depth: {snapshot.HotPathDepth}",
+            $"hot_path_active: {snapshot.HotPathActive}",
+            $"idle_pending: {snapshot.IdlePending}",
+            $"idle_active: {snapshot.IdleActive}",
+            $"analysis_depth: {snapshot.AnalysisDepth}",
+            $"analysis_active: {snapshot.AnalysisActive}",
+            $"writer_pending: {snapshot.WriterPending}",
+            $"writer_total: {snapshot.WriterTotal}",
+            $"embed_enabled: {snapshot.EmbedEnabled}",
+            $"embed_last_epoch: {snapshot.EmbedLastEpoch}",
+            $"last_error: {snapshot.LastError ?? "null"}",
+            $"query_embed_provider: {_queryEmbedProvider ?? "null"}",
+            $"query_embed_enabled: {_queryEmbedEnabled}",
+            $"query_embed_model: {_queryEmbedModel ?? "null"}"
+        );
     }
 
     /// <summary>

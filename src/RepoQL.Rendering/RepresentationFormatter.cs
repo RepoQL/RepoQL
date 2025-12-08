@@ -33,6 +33,8 @@ public static class RepresentationFormatter
             sb.Append(headline);
         }
 
+        AppendChildObjects(sb, result, Representation.Compact, showConfidence);
+
         return sb.ToString();
     }
 
@@ -57,6 +59,8 @@ public static class RepresentationFormatter
             sb.Append(result.Structure);
         }
 
+        AppendChildObjects(sb, result, Representation.Standard, showConfidence);
+
         return sb.ToString();
     }
 
@@ -80,6 +84,8 @@ public static class RepresentationFormatter
                 sb.Append('\n');
             sb.Append("```");
         }
+
+        AppendChildObjects(sb, result, Representation.Rich, showConfidence);
 
         return sb.ToString();
     }
@@ -196,5 +202,43 @@ public static class RepresentationFormatter
         return slashIndex >= 0 && slashIndex < trimmed.Length - 1
             ? trimmed[(slashIndex + 1)..]
             : trimmed;
+    }
+
+    /// <summary>
+    /// Append child objects (if any) with proper indentation.
+    /// Each child is rendered at the specified representation level with 2-space indent.
+    /// </summary>
+    private static void AppendChildObjects(
+        StringBuilder sb,
+        XrayResult result,
+        Representation level,
+        bool showConfidence)
+    {
+        if (result.ChildObjects is null || result.ChildObjects.Count == 0)
+            return;
+
+        foreach (var child in result.ChildObjects)
+        {
+            sb.Append('\n');
+
+            // Format the child at the appropriate level
+            var childFormatted = level switch
+            {
+                Representation.Compact => FormatCompact(child, showConfidence),
+                Representation.Standard => FormatStandard(child, showConfidence),
+                Representation.Rich => FormatRich(child, showConfidence),
+                _ => FormatCompact(child, showConfidence)
+            };
+
+            // Indent each line of the child with 2 spaces
+            var lines = childFormatted.Split('\n');
+            for (var i = 0; i < lines.Length; i++)
+            {
+                if (i > 0)
+                    sb.Append('\n');
+                if (!string.IsNullOrWhiteSpace(lines[i]))
+                    sb.Append("  ").Append(lines[i]);
+            }
+        }
     }
 }

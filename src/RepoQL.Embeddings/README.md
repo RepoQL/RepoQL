@@ -32,7 +32,7 @@ by default; if a compatible GPU is available, ONNX Runtime may use CUDA or DML.
   stored in DuckDB table `document_embedding` (document rows use `node_id = doc_id`, object rows
   capture structured children) as JSON arrays.
 - Queries: the primary `search(q, mode := 'auto', ...)` macro (and the legacy `file_search` wrapper) compute a query
-  vector on the fly via the `embed_text_json(text)` UDF.
+  vector on the fly via the `embed_text(text)` UDF.
 - The macro prepends the standard BGE retrieval instruction to queries:
   `"Represent this sentence for searching relevant passages: " || q`
 
@@ -52,7 +52,7 @@ by default; if a compatible GPU is available, ONNX Runtime may use CUDA or DML.
 
 ## DuckDB UDFs and Storage
 
-- `embed_text_json(text)` → JSON float array or NULL if disabled
+- `embed_text(text)` → float array string or NULL if disabled (use `::FLOAT[]` to cast)
 - `cosine_similarity_json(a_json, b_json)` → cosine similarity (0..1)
 - `document_embedding` stores both document- and object-scope vectors as JSON (VARCHAR) for portability:<br/>
   `(doc_id UUID, node_id UUID, uri TEXT, scope TEXT CHECK(scope IN ('document','object')), model TEXT, dim INT, embedding JSON, updated_at TIMESTAMP)`.<br/>
@@ -80,7 +80,7 @@ by default; if a compatible GPU is available, ONNX Runtime may use CUDA or DML.
 SELECT COUNT(*) FROM document_embedding;
 
 -- Query-time vector
-SELECT embed_text_json('hello world');
+SELECT embed_text('hello world');
 
 -- Search
 SELECT uri, score, semn FROM file_search('docs', 'Find markdown references', k := 5);

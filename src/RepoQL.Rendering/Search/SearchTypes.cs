@@ -43,6 +43,7 @@ public record ObjectMatch(
     string Kind,
     string? Symbol,
     string? Headline,
+    string? Structure,
     string? Snippet,
     int LineStart,
     int LineEnd,
@@ -73,7 +74,8 @@ public record SearchResult(
     string? Lang,
     string? SemanticType,
     double RawScore,
-    int Confidence
+    int Confidence,
+    IReadOnlyList<SearchResult>? ChildObjects = null
 );
 
 /// <summary>

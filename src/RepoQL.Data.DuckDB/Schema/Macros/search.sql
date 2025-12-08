@@ -1,4 +1,5 @@
 -- Primary search entry point combining lexical, fuzzy, and semantic scorers.
+-- Semantic is primary signal; lexical acts as modifier/boost.
 CREATE OR REPLACE MACRO search(
     q,
     mode := 'auto',
@@ -6,9 +7,9 @@ CREATE OR REPLACE MACRO search(
     uri_glob := NULL,
     mime_glob := NULL,
     max_cand := 5000,
-    bm25_weight := 0.45,
-    fuzzy_weight := 0.35,
-    semantic_weight := 0.20
+    bm25_weight := 0.15,
+    fuzzy_weight := 0.15,
+    semantic_weight := 0.70
 ) AS TABLE (
 WITH base_params AS (
     -- Normalize caller-provided parameters once so every downstream CTE
@@ -18,9 +19,9 @@ WITH base_params AS (
         lower(coalesce(mode, 'auto'))                            AS requested_mode,
         CAST(coalesce(k, 50) AS BIGINT)                          AS result_k,
         CAST(coalesce(max_cand, 5000) AS BIGINT)                 AS max_candidates,
-        coalesce(bm25_weight, 0.45)                              AS bm25_w,
-        coalesce(fuzzy_weight, 0.35)                             AS fuzzy_w,
-        coalesce(semantic_weight, 0.20)                          AS base_sem_w,
+        coalesce(bm25_weight, 0.15)                              AS bm25_w,
+        coalesce(fuzzy_weight, 0.15)                             AS fuzzy_w,
+        coalesce(semantic_weight, 0.70)                          AS base_sem_w,
         NULLIF(trim(uri_glob), '')                               AS uri_glob_filter,
         NULLIF(trim(mime_glob), '')                              AS mime_glob_filter
 ),
@@ -42,14 +43,15 @@ classified AS (
     FROM base_params
 ),
 -- Configure weighting + candidate limits based on the inferred route.
+-- Semantic is always primary; only reduce for pure symbol lookups where exact match matters more.
 config AS (
     SELECT
         *,
         CASE
-            WHEN keywords_empty THEN 0.70
-            WHEN route_mode = 'symbol' THEN base_sem_w * 0.3
-            WHEN route_mode = 'heavy' THEN base_sem_w * 1.5
-            WHEN route_mode = 'error' THEN base_sem_w * 1.2
+            WHEN keywords_empty THEN 0.80
+            WHEN route_mode = 'symbol' THEN base_sem_w * 0.7
+            WHEN route_mode = 'heavy' THEN base_sem_w
+            WHEN route_mode = 'error' THEN base_sem_w
             ELSE base_sem_w
         END                                                      AS effective_sem_weight,
         CASE
@@ -179,7 +181,7 @@ semantic_seed AS (
          JOIN config cfg ON TRUE
 ),
 qv AS (
-    SELECT embed_text_json(
+    SELECT embed_text(
                    'Represent this sentence for searching relevant passages: ' || query_text) AS qjson
     FROM semantic_seed
     WHERE query_text IS NOT NULL
@@ -259,12 +261,13 @@ sem_top AS (
     WHERE sem_rank <= cfg.dense_limit
 ),
 sem_norm AS (
+    -- Cubed Boosted Raw: cube aggressively penalizes weak matches
+    -- sem=0.7 → 0.39, sem=0.5 → 0.14, sem=0.3 → 0.03
+    -- Relative ranking still provides ±15% adjustment
     SELECT
         node_id,
         doc_id,
-        -- GREATEST clamps negative cosine similarities to 0 before POWER
-        -- (negative values cause NaN with fractional exponents)
-        POWER(GREATEST(sem / NULLIF(MAX(sem) OVER (), 0), 0), 1.5) AS semn
+        POWER(GREATEST(sem, 0), 3) * (0.85 + 0.3 * GREATEST(sem, 0) / NULLIF(MAX(sem) OVER (), 0)) AS semn
     FROM sem_top
 ),
 sem_rrf AS (
@@ -604,7 +607,7 @@ WITH params AS (
 ),
 -- Embed the query once (needed for both file and chunk scoring)
 query_embedding AS (
-    SELECT embed_text_json(
+    SELECT embed_text(
         'Represent this sentence for searching relevant passages: ' ||
         (SELECT query_text FROM params)
     ) AS qvec
@@ -877,7 +880,7 @@ scored_objects AS (
     SELECT
         co.*,
         -- Embed body (full content, capped) - this is where the semantic value is
-        embed_text_json(substr(co.body_text, 1, 6000)) AS body_embedding,
+        embed_text(substr(co.body_text, 1, 6000)) AS body_embedding,
         qe.qvec
     FROM candidate_objects co
     CROSS JOIN query_embedding qe

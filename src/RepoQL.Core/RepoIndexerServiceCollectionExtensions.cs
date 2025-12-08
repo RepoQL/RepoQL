@@ -109,7 +109,12 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddOptions<RepoqlHostOptions>();
 
         // Graph store factory - creates DuckDbGraphStore instances with proper DI
-        services.AddSingleton<IDuckDbGraphStoreFactory, DuckDbGraphStoreFactory>();
+        // Use explicit factory to ensure embedding provider is resolved
+        services.AddSingleton<IDuckDbGraphStoreFactory>(sp =>
+            new DuckDbGraphStoreFactory(
+                sp.GetRequiredService<IndexingMetrics>(),
+                sp.GetRequiredService<IEmbeddingProvider>(),
+                sp.GetService<ILogger<DuckDbGraphStore>>()));
 
         // Single-writer for all write operations
         services.AddSingleton<IDatabaseWriter, SingleThreadedDatabaseWriter>();

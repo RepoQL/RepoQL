@@ -36,6 +36,20 @@ public static class DecisionEngine
         var preferredCost = EstimatePreferredCost(distribution, context.Intent);
         var pressure = (double)preferredCost / context.TokenBudget;
 
+        // Step 3a: Detect limit budget concentration
+        // When explicit limit is small and per-item budget is high, reduce pressure to bias toward richer representations
+        if (context.Limit.HasValue && context.Limit.Value > 0)
+        {
+            var perItemBudget = context.TokenBudget / (double)context.Limit.Value;
+            const int RichRepresentationThreshold = 200;
+
+            if (perItemBudget >= RichRepresentationThreshold)
+            {
+                // Reduce pressure to encourage richer representations
+                pressure *= 0.5;
+            }
+        }
+
         // Step 4: Select strategy
         var strategy = StrategySelector.Select(context.Intent, distribution.Shape, pressure);
 

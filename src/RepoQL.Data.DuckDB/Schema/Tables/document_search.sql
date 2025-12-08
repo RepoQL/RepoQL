@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS document_search (
+CREATE TABLE IF NOT EXISTS document_search (
                                                doc_id    UUID PRIMARY KEY,
                                                uri       VARCHAR NOT NULL,
                                                search_key VARCHAR NOT NULL,
@@ -14,11 +14,11 @@ CREATE INDEX IF NOT EXISTS document_search_dirname_idx ON document_search(dirnam
 CREATE OR REPLACE MACRO zero_one(x) AS (
   CASE WHEN MAX(x) OVER () IS NULL OR MAX(x) OVER () = 0 THEN 0 ELSE COALESCE(x,0) / NULLIF(MAX(x) OVER (),0) END
 );
-                  
+
 CREATE OR REPLACE MACRO combine(bm25n, fuzzn, semn, wb := 0.45, wf := 0.45, ws := 0.10) AS (
   coalesce(wb * bm25n, 0) + coalesce(wf * fuzzn, 0) + coalesce(ws * semn, 0)
 );
-                  
+
 CREATE OR REPLACE MACRO vss_candidates(qvec_json, top_k) AS TABLE (
 SELECT doc_id, node_id, scope, list_cosine_similarity(qvec_json::FLOAT[], embedding) AS sem
 FROM document_embedding
@@ -32,41 +32,31 @@ CREATE OR REPLACE MACRO file_search(
     question := NULL,
     k := 50,
     max_cand := 5000,
-    bm25_weight := 0.45,
-    fuzzy_weight := 0.45,
-    semantic_weight := 0.10
+    bm25_weight := 0.15,
+    fuzzy_weight := 0.15,
+    semantic_weight := 0.70
 ) AS TABLE (
 WITH inputs AS (
     SELECT
         coalesce(keywords, '') AS keywords_raw,
         lower(coalesce(keywords, '')) AS keywords_lc,
-        CASE WHEN question IS NULL OR length(trim(question)) = 0 THEN NULL ELSE question END AS question_clean,
+        CASE WHEN question IS NULL OR length(trim(CAST(question AS VARCHAR))) = 0
+             THEN CAST(NULL AS VARCHAR)
+             ELSE CAST(question AS VARCHAR) END AS question_clean,
         CASE WHEN length(trim(coalesce(keywords, ''))) = 0 THEN TRUE ELSE FALSE END AS keywords_empty,
-        -- Dynamic semantic weight: boost when keywords are weak/empty
-        CASE
-            WHEN length(trim(coalesce(keywords, ''))) = 0 THEN 0.70
-            WHEN length(trim(coalesce(keywords, ''))) < 5 THEN 0.30
-            ELSE semantic_weight
-        END AS effective_sem_weight
+        CASE WHEN question IS NULL OR length(trim(CAST(question AS VARCHAR))) = 0
+             THEN 0.20
+             ELSE semantic_weight END AS effective_sem_weight
 ),
 repo_base AS (
-    SELECT *
-    FROM repo_index
+    SELECT * FROM repo_index
 ),
 score_source AS (
     SELECT
         ri.node_id,
         ri.doc_id,
         inp.keywords_empty AS lex_keywords_empty,
-        concat_ws(' ',
-            coalesce(ri.search_key, ''),
-            coalesce(ri.basename, ''),
-            coalesce(ri.body, ''),
-            coalesce(ri.headline, ''),
-            coalesce(ri.structure, ''),
-            coalesce(ri.symbol, '')
-        ) AS text_target,
-        -- Symbol + path heuristics act like lightweight BM25 surrogates
+        concat_ws(' ', coalesce(ri.search_key, ''), coalesce(ri.basename, '')) AS text_target,
         CASE
             WHEN inp.keywords_empty THEN 0.0
             WHEN COALESCE(ri.symbol_key, '') = inp.keywords_lc THEN 4.0
@@ -78,24 +68,16 @@ score_source AS (
             WHEN position(inp.keywords_lc IN lower(COALESCE(ri.body, ''))) > 0 THEN 0.5
             ELSE NULL
         END AS bm25_heur,
-        match_score(inp.keywords_lc, text_target) AS bm25_fallback,
-        (SELECT MAX(match_score(trim(t.value), text_target))
-            FROM UNNEST(str_split(inp.keywords_lc, ' ')) AS t(value)
-            WHERE length(trim(t.value)) > 0) AS bm25_tokens,
         match_score(inp.keywords_lc, ri.search_key) AS fuzz
     FROM repo_base ri
-             CROSS JOIN inputs inp
+    CROSS JOIN inputs inp
     WHERE inp.keywords_empty = FALSE
 ),
 ranked_lex AS (
     SELECT
         node_id,
         doc_id,
-        COALESCE(
-            bm25_heur,
-            bm25_fallback,
-            bm25_tokens,
-            CASE WHEN lex_keywords_empty THEN 0 ELSE 0.05 END) AS bm25,
+        COALESCE(bm25_heur, 0.05) AS bm25,
         fuzz
     FROM score_source
     ORDER BY coalesce(bm25, 0) DESC, fuzz DESC
@@ -113,27 +95,27 @@ semantic_seed AS (
     SELECT
         CASE
             WHEN inp.question_clean IS NOT NULL THEN inp.question_clean
-            WHEN inp.keywords_empty THEN NULL
+            WHEN inp.keywords_empty THEN CAST(NULL AS VARCHAR)
             ELSE inp.keywords_raw
-            END AS query_text
+        END AS query_text
     FROM inputs inp
 ),
 qv AS (
-    SELECT embed_text_json(
-                   'Represent this sentence for searching relevant passages: ' || query_text) AS qjson
+    SELECT embed_text('Represent this sentence for searching relevant passages: ' || query_text) AS qjson
     FROM semantic_seed
     WHERE query_text IS NOT NULL
 ),
 sem_candidates AS (
     SELECT vc.doc_id, vc.node_id, vc.sem
     FROM qv
-             CROSS JOIN vss_candidates(qv.qjson, max_cand) AS vc
+    CROSS JOIN vss_candidates(qv.qjson, max_cand) AS vc
 ),
 sem_norm AS (
-    -- Enhanced semantic spread: apply power transformation to increase separation
-    -- GREATEST clamps negative cosine similarities to 0 before POWER
-    -- (negative values cause NaN with fractional exponents)
-    SELECT node_id, doc_id, POWER(GREATEST(sem / NULLIF(MAX(sem) OVER (), 0), 0), 1.5) AS semn
+    -- Cubed Boosted Raw: cube aggressively penalizes weak matches
+    -- sem=0.7 -> 0.39, sem=0.5 -> 0.14, sem=0.3 -> 0.03
+    -- Relative ranking still provides +/-15% adjustment
+    SELECT node_id, doc_id,
+        POWER(GREATEST(sem, 0), 3) * (0.85 + 0.3 * GREATEST(sem, 0) / NULLIF(MAX(sem) OVER (), 0)) AS semn
     FROM sem_candidates
 ),
 union_nodes AS (
@@ -177,9 +159,9 @@ SELECT
         * CASE WHEN ri.scope = 'object' THEN 1.05 ELSE 1.0 END
     ) AS score
 FROM union_nodes u
-         JOIN repo_base ri ON ri.node_id = u.node_id
-         LEFT JOIN normalized_lex lx USING(node_id)
-         LEFT JOIN sem_norm sn USING(node_id)
+JOIN repo_base ri ON ri.node_id = u.node_id
+LEFT JOIN normalized_lex lx ON lx.node_id = u.node_id
+LEFT JOIN sem_norm sn ON sn.node_id = u.node_id
 ORDER BY score DESC, length(ri.uri)
 LIMIT CAST(k AS BIGINT)
 );
