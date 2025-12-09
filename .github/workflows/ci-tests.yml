@@ -20,6 +20,7 @@ permissions:
 jobs:
   tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       ARTIFACTS_PATH: ${{ github.workspace }}/artifacts/tests
     steps:
