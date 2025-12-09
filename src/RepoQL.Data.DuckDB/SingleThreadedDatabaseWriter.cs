@@ -640,39 +640,30 @@ public sealed class SingleThreadedDatabaseWriter(
         if (_writeConnection is not { State: ConnectionState.Open })
             return;
 
-        using var tx = _writeConnection.BeginTransaction();
-        try
+        // Note: No transaction started here - this method participates in the enclosing
+        // batch transaction from TryProcessBatchAsync, or auto-commits when processing individually.
+        foreach (var item in op.StructureEmbeddings)
         {
-            foreach (var item in op.StructureEmbeddings)
-            {
-                using var cmd = _writeConnection.CreateCommand();
-                cmd.Transaction = tx;
-                cmd.CommandText = """
-                    INSERT INTO document_embedding(doc_id, node_id, chunk_index, embedding_type, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
-                    VALUES (?, ?, 0, 'structure', ?, 'document', ?, ?, ?, NULL, NULL, CURRENT_TIMESTAMP)
-                    ON CONFLICT (doc_id, node_id, chunk_index, embedding_type)
-                    DO UPDATE SET uri=excluded.uri, model=excluded.model, dim=excluded.dim,
-                                  embedding=excluded.embedding, updated_at=excluded.updated_at
-                    """;
+            using var cmd = _writeConnection.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO document_embedding(doc_id, node_id, chunk_index, embedding_type, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
+                VALUES (?, ?, 0, 'structure', ?, 'document', ?, ?, ?, NULL, NULL, CURRENT_TIMESTAMP)
+                ON CONFLICT (doc_id, node_id, chunk_index, embedding_type)
+                DO UPDATE SET uri=excluded.uri, model=excluded.model, dim=excluded.dim,
+                              embedding=excluded.embedding, updated_at=excluded.updated_at
+                """;
 
-                cmd.Parameters.Add(new DuckDBParameter { Value = item.DocId });
-                cmd.Parameters.Add(new DuckDBParameter { Value = item.NodeId });
-                cmd.Parameters.Add(new DuckDBParameter { Value = item.Uri });
-                cmd.Parameters.Add(new DuckDBParameter { Value = item.Model });
-                cmd.Parameters.Add(new DuckDBParameter { Value = item.Dimension });
-                cmd.Parameters.Add(new DuckDBParameter { Value = new List<float>(item.Embedding) });
+            cmd.Parameters.Add(new DuckDBParameter { Value = item.DocId });
+            cmd.Parameters.Add(new DuckDBParameter { Value = item.NodeId });
+            cmd.Parameters.Add(new DuckDBParameter { Value = item.Uri });
+            cmd.Parameters.Add(new DuckDBParameter { Value = item.Model });
+            cmd.Parameters.Add(new DuckDBParameter { Value = item.Dimension });
+            cmd.Parameters.Add(new DuckDBParameter { Value = new List<float>(item.Embedding) });
 
-                cmd.ExecuteNonQuery();
-            }
-
-            tx.Commit();
-            _logger.LogDebug("Wrote {Count} structure embeddings", op.StructureEmbeddings.Count);
+            cmd.ExecuteNonQuery();
         }
-        catch
-        {
-            tx.Rollback();
-            throw;
-        }
+
+        _logger.LogDebug("Wrote {Count} structure embeddings", op.StructureEmbeddings.Count);
     }
 
     private async Task ApplyCheckpointAsync(CancellationToken cancellationToken)
