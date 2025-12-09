@@ -1608,7 +1608,8 @@ WHERE rk = 1;
         var existing = GetArtifactByDigest(artifact.Digest);
         if (existing is not null) return existing;
 
-        using var tx = _connection.BeginTransaction();
+        // Note: No transaction started here - this method participates in the enclosing
+        // transaction from SingleThreadedDatabaseWriter (batch or single-item mode).
         try
         {
             using var cmd = _connection.CreateCommand();
@@ -1638,12 +1639,10 @@ WHERE rk = 1;
                     throw;
                 }
             }
-            tx.Commit();
             return artifact;
         }
         catch (Exception ex)
         {
-            tx.Rollback();
             RecordException(opActivity, ex);
             throw;
         }
@@ -1776,9 +1775,9 @@ WHERE rk = 1;
             if (doc is null)
                 return;
 
-            using var tx = _connection.BeginTransaction();
-            DeleteSubtreeInternal(doc.Id, tx);
-            tx.Commit();
+            // Note: No transaction started here - this method participates in the enclosing
+            // transaction from SingleThreadedDatabaseWriter (batch or single-item mode).
+            DeleteSubtreeInternal(doc.Id);
         }
         catch (Exception ex)
         {
@@ -1787,12 +1786,16 @@ WHERE rk = 1;
         }
     }
 
-    private void DeleteEdgesForDocument(Guid documentId, IReadOnlyCollection<Guid> childNodeIds, IDbTransaction tx)
+    private void DeleteEdgesForDocument(Guid documentId, IReadOnlyCollection<Guid> childNodeIds, IDbTransaction? tx = null)
     {
         if (childNodeIds.Count == 0)
         {
-            Execute("DELETE FROM edge WHERE scope_document_id=? OR source_node_id=? OR destination_node_id=?;",
-                tx, documentId, documentId, documentId);
+            if (tx is null)
+                Execute("DELETE FROM edge WHERE scope_document_id=? OR source_node_id=? OR destination_node_id=?;",
+                    documentId, documentId, documentId);
+            else
+                Execute("DELETE FROM edge WHERE scope_document_id=? OR source_node_id=? OR destination_node_id=?;",
+                    tx, documentId, documentId, documentId);
             return;
         }
 
@@ -1806,18 +1809,28 @@ WHERE rk = 1;
         Array.Copy(nodeParams, 0, parameters, 1, nodeParams.Length);
         Array.Copy(nodeParams, 0, parameters, 1 + nodeParams.Length, nodeParams.Length);
 
-        Execute($@"DELETE FROM edge
-                   WHERE scope_document_id=?
-                      OR source_node_id IN ({placeholders})
-                      OR destination_node_id IN ({placeholders});",
-            tx, parameters);
+        if (tx is null)
+            Execute($@"DELETE FROM edge
+                       WHERE scope_document_id=?
+                          OR source_node_id IN ({placeholders})
+                          OR destination_node_id IN ({placeholders});",
+                parameters);
+        else
+            Execute($@"DELETE FROM edge
+                       WHERE scope_document_id=?
+                          OR source_node_id IN ({placeholders})
+                          OR destination_node_id IN ({placeholders});",
+                tx, parameters);
     }
 
-    private void DeleteDocumentEmbeddings(Guid documentId, IReadOnlyCollection<Guid> childNodeIds, IDbTransaction tx)
+    private void DeleteDocumentEmbeddings(Guid documentId, IReadOnlyCollection<Guid> childNodeIds, IDbTransaction? tx = null)
     {
         if (childNodeIds.Count == 0)
         {
-            ExecuteWithTupleDeleteRetry(() => Execute("DELETE FROM document_embedding WHERE doc_id=?;", tx, documentId));
+            if (tx is null)
+                ExecuteWithTupleDeleteRetry(() => Execute("DELETE FROM document_embedding WHERE doc_id=?;", documentId));
+            else
+                ExecuteWithTupleDeleteRetry(() => Execute("DELETE FROM document_embedding WHERE doc_id=?;", tx, documentId));
             return;
         }
 
@@ -1826,9 +1839,14 @@ WHERE rk = 1;
         var placeholders = string.Join(",", docIds.Select((_, i) => "?"));
         var parameters = docIds.Cast<object?>().ToArray();
 
-        ExecuteWithTupleDeleteRetry(() => Execute($@"DELETE FROM document_embedding
-                   WHERE doc_id IN ({placeholders});",
-            tx, parameters));
+        if (tx is null)
+            ExecuteWithTupleDeleteRetry(() => Execute($@"DELETE FROM document_embedding
+                       WHERE doc_id IN ({placeholders});",
+                parameters));
+        else
+            ExecuteWithTupleDeleteRetry(() => Execute($@"DELETE FROM document_embedding
+                       WHERE doc_id IN ({placeholders});",
+                tx, parameters));
     }
 
     public void MoveDocumentUri(RepoUri oldUri, RepoUri newUri)
@@ -1884,14 +1902,12 @@ WHERE rk = 1;
             if (uri is null) throw new ArgumentNullException(nameof(uri));
             if (document is null) throw new ArgumentNullException(nameof(document));
 
+            // Note: No transaction started here - this method participates in the enclosing
+            // transaction from SingleThreadedDatabaseWriter (batch or single-item mode).
             var lc = uri.Container.AbsoluteUri.ToLowerInvariant();
-            using var tx = _connection.BeginTransaction();
-            try
-            {
 
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.Transaction = tx;
                 cmd.CommandText = @"SELECT id FROM node WHERE container_uri_lowercase=?;";
                 AddParameters(cmd, lc);
                 using var activitySel = StartDbActivity(cmd.CommandText);
@@ -1900,10 +1916,9 @@ WHERE rk = 1;
                 {
                     var id = r.GetGuid(0);
                     using var upd = _connection.CreateCommand();
-                    upd.Transaction = tx;
-                upd.CommandText = @"UPDATE node
-                                    SET kind=?, uri=?, container_uri_lowercase=?, artifact_id=?, span_id=?, properties=?, headline=?, structure=?, updated_at=?
-                                  WHERE id=?;";
+                    upd.CommandText = @"UPDATE node
+                                        SET kind=?, uri=?, container_uri_lowercase=?, artifact_id=?, span_id=?, properties=?, headline=?, structure=?, updated_at=?
+                                      WHERE id=?;";
                     var uriStr = uri.Container.AbsoluteUri;
                     AddParameters(upd,
                         document.Kind,
@@ -1911,17 +1926,16 @@ WHERE rk = 1;
                         uriStr.ToLowerInvariant(),
                         document.ArtifactId,
                         document.SpanId,
-                    JsonFromNode(document.Props),
-                    document.Headline,
-                    document.Structure,
-                    document.UpdatedAt.UtcDateTime,
-                    id);
+                        JsonFromNode(document.Props),
+                        document.Headline,
+                        document.Structure,
+                        document.UpdatedAt.UtcDateTime,
+                        id);
                     using (var activityUpd = StartDbActivity(upd.CommandText))
                     {
                         var rows = upd.ExecuteNonQuery();
                         activityUpd?.SetTag("db.sql.rows_affected", rows);
                     }
-                    tx.Commit();
                     return GetNode(id)!;
                 }
             }
@@ -1929,10 +1943,9 @@ WHERE rk = 1;
             // Insert new
             using (var ins = _connection.CreateCommand())
             {
-                ins.Transaction = tx;
-            ins.CommandText = @"INSERT INTO node
-                  (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at)
-                  VALUES (?,?,?,?,?,?,?,?,?,?,?);";
+                ins.CommandText = @"INSERT INTO node
+                      (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?);";
                 var uriStr = uri.Container.AbsoluteUri;
                 AddParameters(ins,
                     document.Id,
@@ -1941,26 +1954,18 @@ WHERE rk = 1;
                     uriStr.ToLowerInvariant(),
                     document.ArtifactId,
                     document.SpanId,
-                JsonFromNode(document.Props),
-                document.Headline,
-                document.Structure,
-                document.CreatedAt.UtcDateTime,
-                document.UpdatedAt.UtcDateTime);
+                    JsonFromNode(document.Props),
+                    document.Headline,
+                    document.Structure,
+                    document.CreatedAt.UtcDateTime,
+                    document.UpdatedAt.UtcDateTime);
                 using (var activityIns = StartDbActivity(ins.CommandText))
                 {
                     var rows = ins.ExecuteNonQuery();
                     activityIns?.SetTag("db.sql.rows_affected", rows);
                 }
             }
-            tx.Commit();
             return GetNode(document.Id)!;
-            }
-            catch (Exception ex)
-            {
-                tx.Rollback();
-                RecordException(opActivity, ex);
-                throw;
-            }
         }
         catch (Exception ex)
         {
@@ -1975,14 +1980,14 @@ WHERE rk = 1;
         using var opActivity = StartOperationActivity("ReplaceDocumentContent");
         try
         {
-            using var tx = _connection.BeginTransaction();
+            // Note: No transaction started here - this method participates in the enclosing
+            // transaction from SingleThreadedDatabaseWriter (batch or single-item mode).
 
             // Collect composition subtree nodes under the document (direct and transitive)
             var toDelete = new HashSet<Guid>();
             var queue = new Queue<Guid>();
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.Transaction = tx;
                 cmd.CommandText = @"SELECT destination_node_id FROM edge WHERE source_node_id=? AND is_composition=TRUE;";
                 AddParameters(cmd, documentId);
                 using (var activity = StartDbActivity(cmd.CommandText))
@@ -1996,7 +2001,6 @@ WHERE rk = 1;
                 var cur = queue.Dequeue();
                 if (!toDelete.Add(cur)) continue;
                 using var c2 = _connection.CreateCommand();
-                c2.Transaction = tx;
                 c2.CommandText = @"SELECT destination_node_id FROM edge WHERE source_node_id=? AND is_composition=TRUE;";
                 AddParameters(c2, cur);
                 using (var activity2 = StartDbActivity(c2.CommandText))
@@ -2007,8 +2011,8 @@ WHERE rk = 1;
             }
 
             // Remove old spans/search rows for this document root
-            Execute("DELETE FROM span WHERE document_id=?;", tx, documentId);
-            Execute("DELETE FROM document_search WHERE doc_id=?;", tx, documentId);
+            Execute("DELETE FROM span WHERE document_id=?;", documentId);
+            Execute("DELETE FROM document_search WHERE doc_id=?;", documentId);
 
             var childIds = toDelete.Count > 0 ? toDelete.ToList() : new List<Guid>();
 
@@ -2016,20 +2020,19 @@ WHERE rk = 1;
             {
                 var placeholders = string.Join(",", childIds.Select((_, i) => "?"));
                 var idParams = childIds.Cast<object>().ToArray();
-                Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", tx, idParams);
-                Execute($@"DELETE FROM span WHERE document_id IN ({placeholders});", tx, idParams);
+                Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", idParams);
+                Execute($@"DELETE FROM span WHERE document_id IN ({placeholders});", idParams);
                 // Remove nodes
-                Execute($"DELETE FROM node WHERE id IN ({placeholders});", tx, idParams);
+                Execute($"DELETE FROM node WHERE id IN ({placeholders});", idParams);
             }
 
-            DeleteEdgesForDocument(documentId, childIds, tx);
-            DeleteDocumentEmbeddings(documentId, childIds, tx);
+            DeleteEdgesForDocument(documentId, childIds);
+            DeleteDocumentEmbeddings(documentId, childIds);
 
             // Insert children
             foreach (var n in children)
             {
                 using var ins = _connection.CreateCommand();
-                ins.Transaction = tx;
                 ins.CommandText = @"INSERT INTO node
                   (id,kind,uri,container_uri_lowercase,artifact_id,span_id,properties,headline,structure,created_at,updated_at)
                   VALUES (?,?,?,?,?,?,?,?,?,?,?);";
@@ -2059,7 +2062,6 @@ WHERE rk = 1;
             foreach (var s in spans)
             {
                 using var ins = _connection.CreateCommand();
-                ins.Transaction = tx;
                 ins.CommandText = @"INSERT INTO span
                  (id,document_id,start_byte,end_byte,start_line,start_column,end_line,end_column)
                  VALUES (?,?,?,?,?,?,?,?);";
@@ -2082,7 +2084,6 @@ WHERE rk = 1;
                         continue; // skip duplicate HAS_PART for same child
                 }
                 using var ins = _connection.CreateCommand();
-                ins.Transaction = tx;
                 ins.CommandText = @"INSERT INTO edge
                   (id,source_node_id,destination_node_id,destination_uri,type,is_composition,ordinal,scope_document_id,semantic_key,
                    source_span_id,destination_span_id,composition_child_id,properties,created_at)
@@ -2097,8 +2098,6 @@ WHERE rk = 1;
                     activity?.SetTag("db.sql.rows_affected", rows);
                 }
             }
-
-            tx.Commit();
         }
         catch (Exception ex)
         {
@@ -2434,7 +2433,7 @@ WHERE rk = 1;
         }
     }
 
-    private int DeleteSubtreeInternal(Guid rootId, IDbTransaction tx)
+    private int DeleteSubtreeInternal(Guid rootId, IDbTransaction? tx = null)
     {
         // Phase 1: Collect all nodes in the composition subtree
         var queue = new Queue<Guid>();
@@ -2448,7 +2447,8 @@ WHERE rk = 1;
 
             using var cmd = _connection.CreateCommand();
             cmd.CommandText = "SELECT destination_node_id FROM edge WHERE source_node_id=? AND is_composition=TRUE;";
-            cmd.Transaction = tx as DuckDBTransaction;
+            if (tx is not null)
+                cmd.Transaction = tx as DuckDBTransaction;
             AddParameters(cmd, cur);
             using (var activity = StartDbActivity(cmd.CommandText))
             {
@@ -2470,22 +2470,41 @@ WHERE rk = 1;
 
         // 2a. First delete edges (they reference both nodes and spans)
         // Delete ALL edges that reference any node in the subtree
-        Execute($@"DELETE FROM edge 
-                  WHERE source_node_id IN ({placeholders}) 
-                     OR destination_node_id IN ({placeholders})
-                     OR scope_document_id IN ({placeholders})",
-            tx, nodeParams.Concat(nodeParams).Concat(nodeParams).ToArray());
-        Execute($@"DELETE FROM document_embedding WHERE doc_id IN ({placeholders});", tx, nodeParams);
-        Execute($@"DELETE FROM document_embedding WHERE node_id IN ({placeholders});", tx, nodeParams);
-        Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", tx, nodeParams);
+        var edgeParams = nodeParams.Concat(nodeParams).Concat(nodeParams).ToArray();
+        if (tx is null)
+        {
+            Execute($@"DELETE FROM edge
+                      WHERE source_node_id IN ({placeholders})
+                         OR destination_node_id IN ({placeholders})
+                         OR scope_document_id IN ({placeholders})",
+                edgeParams);
+            Execute($@"DELETE FROM document_embedding WHERE doc_id IN ({placeholders});", nodeParams);
+            Execute($@"DELETE FROM document_embedding WHERE node_id IN ({placeholders});", nodeParams);
+            Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", nodeParams);
 
-        // 2b. Then delete spans (they reference nodes)
-        Execute($"DELETE FROM span WHERE document_id IN ({placeholders})", tx, nodeParams);
+            // 2b. Then delete spans (they reference nodes)
+            Execute($"DELETE FROM span WHERE document_id IN ({placeholders})", nodeParams);
 
-        // 2c. Finally delete nodes (no more references exist)
-        var deleted = Execute($"DELETE FROM node WHERE id IN ({placeholders})", tx, nodeParams);
+            // 2c. Finally delete nodes (no more references exist)
+            return Execute($"DELETE FROM node WHERE id IN ({placeholders})", nodeParams);
+        }
+        else
+        {
+            Execute($@"DELETE FROM edge
+                      WHERE source_node_id IN ({placeholders})
+                         OR destination_node_id IN ({placeholders})
+                         OR scope_document_id IN ({placeholders})",
+                tx, edgeParams);
+            Execute($@"DELETE FROM document_embedding WHERE doc_id IN ({placeholders});", tx, nodeParams);
+            Execute($@"DELETE FROM document_embedding WHERE node_id IN ({placeholders});", tx, nodeParams);
+            Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", tx, nodeParams);
 
-        return deleted;
+            // 2b. Then delete spans (they reference nodes)
+            Execute($"DELETE FROM span WHERE document_id IN ({placeholders})", tx, nodeParams);
+
+            // 2c. Finally delete nodes (no more references exist)
+            return Execute($"DELETE FROM node WHERE id IN ({placeholders})", tx, nodeParams);
+        }
     }
 
     public IEnumerable<T> RawQuery<T>(string sql, Func<IDataRecord, T> map, params object?[] parameters)
@@ -2548,11 +2567,11 @@ WHERE rk = 1;
         using var connectionLock = EnterConnectionScope();
         lock (_annotationGate)
         {
-            using var tx = _connection.BeginTransaction();
+            // Note: No transaction started here - this method participates in the enclosing
+            // transaction from SingleThreadedDatabaseWriter (batch or single-item mode).
             try
             {
                 using var cmd = _connection.CreateCommand();
-                cmd.Transaction = tx;
                 var useSemantic = !string.IsNullOrWhiteSpace(a.SemanticKey);
                 cmd.CommandText = useSemantic
                     ? @"INSERT INTO annotation
@@ -2617,10 +2636,8 @@ WHERE rk = 1;
                     if (r.Read())
                     {
                         var id = r.GetGuid(0);
-                        tx.Commit();
                         return a;
                     }
-                    tx.Commit();
                     return a;
                 }
             }
@@ -2632,7 +2649,6 @@ WHERE rk = 1;
                     "TargetEdgeId={TargetEdgeId}, TargetSpanId={TargetSpanId}, ScopeDocumentId={ScopeDocumentId}",
                     a.SemanticKey, a.Kind, a.RuleId, a.TargetUri,
                     a.TargetNodeId, a.TargetEdgeId, a.TargetSpanId, a.ScopeDocumentId);
-                tx.Rollback();
                 throw;
             }
         }
