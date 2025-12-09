@@ -3,7 +3,9 @@
     "repoql": {
       "type": "stdio",
       "command": "artifacts\\publish\\RepoQL.McpProxy.exe",
-      "args": []
+      "args": [
+        "artifacts\\publish\\repoql.exe"
+      ]
     },
     "aspire-dashboard": {
       "type": "http",
