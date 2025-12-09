@@ -39,12 +39,18 @@ params AS (
 
 -- Derive boost regex from keywords (split on whitespace to create OR alternatives)
 -- "jwt token" -> "jwt|token"
+-- Skip derivation if keywords look like a question (ends with ?) - questions make bad regexes
 cfg AS (
     SELECT
         kw,
         scope_like,
         neg_re,
-        CAST(COALESCE(boost_in, regexp_replace(kw, '\s+', '|', 'g')) AS VARCHAR) AS boost_re
+        CAST(COALESCE(
+            boost_in,
+            CASE WHEN kw LIKE '%?' THEN NULL
+                 ELSE regexp_replace(kw, '\s+', '|', 'g')
+            END
+        ) AS VARCHAR) AS boost_re
     FROM params
 ),
 
@@ -193,3 +199,120 @@ SELECT
     , 3) AS score
 FROM features
 ORDER BY score DESC;
+
+-- Fetch raw object candidates from selected documents for second-pass object search.
+-- Does NOT compute final scores - just retrieves object metadata with cheap features.
+-- The C# EnhancedObjectSearchService handles scoring, JIT embedding planning, and final ranking.
+--
+-- Parameters:
+--   doc_uris          - Array of document URIs to fetch objects from
+--   keywords          - Keywords for name matching and boost regex derivation
+--   boost_pattern     - Optional regex for boosting (derived from keywords if not provided)
+--   max_per_doc       - Maximum objects per document
+--
+-- Returns object candidates with:
+--   - Basic metadata (uri, kind, symbol, headline, structure, body, line range)
+--   - name_hit_score: How well the object name matches query keywords
+--   - regex_mentions: Count of boost pattern matches in headline+structure
+
+CREATE OR REPLACE MACRO hybrid_object_candidates(
+    doc_uris,
+    keywords := '',
+    boost_pattern := NULL,
+    max_per_doc := 50
+) AS TABLE
+WITH
+params AS (
+    SELECT
+        trim(coalesce(keywords, '')) AS kw,
+        NULLIF(trim(coalesce(boost_pattern, '')), '') AS boost_in
+),
+
+cfg AS (
+    SELECT
+        kw,
+        CAST(COALESCE(
+            boost_in,
+            CASE WHEN kw LIKE '%?' THEN NULL
+                 ELSE regexp_replace(kw, '\s+', '|', 'g')
+            END
+        ) AS VARCHAR) AS boost_re,
+        lower(kw) AS kw_lower
+    FROM params
+),
+
+-- Get all objects from the specified documents
+raw_objects AS (
+    SELECT
+        ri.doc_id,
+        ri.node_id,
+        ri.uri,
+        split_part(ri.uri, '#', 1) AS document_uri,
+        ri.kind,
+        ri.symbol,
+        ri.symbol_key,
+        ri.headline,
+        ri.structure,
+        ri.body,
+        ri.line_start,
+        ri.line_end,
+        ri.lang,
+        ri.mime AS semantic_type,
+        coalesce(ri.headline, '') || ' ' || coalesce(ri.structure, '') AS outline_text,
+        ROW_NUMBER() OVER (PARTITION BY ri.doc_id ORDER BY ri.line_start NULLS LAST, ri.node_id) AS row_in_doc
+    FROM repo_index ri
+    WHERE ri.scope = 'object'
+      AND split_part(ri.uri, '#', 1) = ANY(doc_uris)
+),
+
+-- Filter to max_per_doc and compute cheap features
+candidates AS (
+    SELECT
+        ro.doc_id,
+        ro.node_id,
+        ro.uri,
+        ro.document_uri,
+        ro.kind,
+        ro.symbol,
+        ro.headline,
+        ro.structure,
+        ro.body,
+        ro.line_start,
+        ro.line_end,
+        ro.lang,
+        ro.semantic_type,
+        -- Name hit score: exact match = 1.0, substring = 0.5-0.8
+        CASE
+            WHEN cfg.kw_lower <> '' AND ro.symbol_key = cfg.kw_lower THEN 1.0
+            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN ro.symbol_key) > 0 THEN 0.8
+            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN lower(coalesce(ro.headline, ''))) > 0 THEN 0.5
+            ELSE 0.0
+        END AS name_hit_score,
+        -- Regex mentions in outline (headline + structure)
+        CASE
+            WHEN length(cfg.boost_re) > 0
+            THEN COALESCE(array_length(regexp_extract_all(ro.outline_text, '(?i)' || cfg.boost_re)), 0)
+            ELSE 0
+        END AS regex_mentions
+    FROM raw_objects ro
+    CROSS JOIN cfg
+    WHERE ro.row_in_doc <= max_per_doc
+)
+
+SELECT
+    node_id,
+    uri,
+    document_uri,
+    kind,
+    symbol,
+    headline,
+    structure,
+    body,
+    line_start,
+    line_end,
+    lang,
+    semantic_type,
+    name_hit_score,
+    regex_mentions
+FROM candidates
+ORDER BY document_uri, line_start NULLS LAST, node_id;

@@ -138,6 +138,62 @@ public static class RepresentationFormatter
     }
 
     /// <summary>
+    /// Format an enhanced truncation summary with hints.
+    /// </summary>
+    /// <param name="omittedDocuments">Number of documents omitted.</param>
+    /// <param name="omittedObjects">Number of objects (symbols) omitted.</param>
+    /// <param name="omittedByType">Breakdown by semantic type.</param>
+    /// <param name="hints">Action hints for the user.</param>
+    /// <returns>Formatted summary string.</returns>
+    public static string FormatEnhancedTruncationSummary(
+        int omittedDocuments,
+        int omittedObjects,
+        IReadOnlyDictionary<string, int>? omittedByType,
+        IReadOnlyList<string>? hints)
+    {
+        var sb = new StringBuilder();
+
+        // Format: [More: 3 docs, 8 symbols (5x csharp.method, 3x csharp.class) | narrow with pattern]
+        sb.Append("[More: ");
+
+        var parts = new List<string>();
+        if (omittedDocuments > 0)
+            parts.Add($"{omittedDocuments} doc{(omittedDocuments > 1 ? "s" : "")}");
+        if (omittedObjects > 0)
+            parts.Add($"{omittedObjects} symbol{(omittedObjects > 1 ? "s" : "")}");
+
+        if (parts.Count > 0)
+        {
+            sb.Append(string.Join(", ", parts));
+
+            // Add type breakdown if available
+            if (omittedByType is { Count: > 0 })
+            {
+                var typeBreakdown = omittedByType
+                    .Take(3)
+                    .Select(kvp => $"{kvp.Value}x {kvp.Key}");
+                sb.Append(" (");
+                sb.Append(string.Join(", ", typeBreakdown));
+                sb.Append(')');
+            }
+        }
+        else
+        {
+            sb.Append("more results available");
+        }
+
+        // Add hints if available
+        if (hints is { Count: > 0 })
+        {
+            sb.Append(" | ");
+            sb.Append(string.Join(", ", hints));
+        }
+
+        sb.Append(']');
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Format the status footer showing indexer state and timing.
     /// </summary>
     public static string FormatStatusFooter(IndexerStatus status)

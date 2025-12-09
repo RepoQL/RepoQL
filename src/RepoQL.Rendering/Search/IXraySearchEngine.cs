@@ -70,9 +70,15 @@ public sealed class XraySearchEngine : IXraySearchEngine
         // 6. Flatten to results
         var results = FileGrouper.Flatten(groups).ToList();
 
-        // 7. Apply pattern boosts
-        var patterns = PatternBooster.ParsePatterns(string.Join(",", parameters.Patterns));
-        PatternBooster.ApplyBoosts(results, patterns);
+        // 7. Apply pattern boosts and penalties
+        var boostPatterns = PatternBooster.ParsePatterns(string.Join(",", parameters.Patterns));
+        PatternBooster.ApplyBoosts(results, boostPatterns);
+
+        if (parameters.PenalizePatterns is { Count: > 0 })
+        {
+            var penalizePatterns = PatternBooster.ParsePatterns(string.Join(",", parameters.PenalizePatterns));
+            PatternBooster.ApplyPenalties(results, penalizePatterns);
+        }
 
         // 8. Normalize confidence
         ConfidenceNormalizer.NormalizeInPlace(results);

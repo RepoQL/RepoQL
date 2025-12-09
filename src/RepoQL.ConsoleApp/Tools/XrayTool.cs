@@ -30,35 +30,56 @@ internal sealed class XrayTool(
         </CONCEPT>
 
         <KNOBS>
-        tokenBudget: 
-            investment level → more tokens = richer detail. You set the budget, xray maximizes value. 
+        tokenBudget:
+            investment level → more tokens = richer detail. You set the budget, xray maximizes value.
             if you want to be sure you found everything, set a high budget
-            important: budget is exactly how many tokens you want to spend on seeing the answer, it is not a maximum. 
+            important: budget is exactly how many tokens you want to spend on seeing the answer, it is not a maximum.
             the underlying query is the same regardless of budget - budget controls the level of detail in the response, and attempts to maximize value given the budget and intent
-            
+
         intent: zoom level
           explore → what's here? (headlines) | Search criteria optional
           find → where is it? (broad context) | Search criteria required
           read → show me (actual snippets & detailed structure) | Search criteria required
-        
+
+        keywords: search terms for hybrid (semantic + lexical) search
+          - Questions + boost patterns work best: keywords="How does auth work?" boost="Auth.*,Validate.*"
+          - Questions alone find conceptually related content via semantic search
+          - Keywords alone work for precise symbol searches: "ValidateToken JWT"
+          - Combine both approaches: question for context, boost for specific symbols
+
         Know the uri(s) of the thing you are a looking for? Use ReadMcpResourceTool - works for objects and files, supports globbing patterns.
 
-        Filter with scope (glob), guide with question (semantic). Results ranked by confidence.
+        Filter with scope (glob), guide with keywords (semantic). Results ranked by confidence.
         </KNOBS>
 
+        <PATTERNS>
+        boost: RE2 regex patterns to boost matching results (comma-separated)
+          - Validate.*Token → boost results containing "ValidateToken", "ValidateAccessToken", etc.
+          - (?i)error|exception → boost error handling code (case-insensitive)
+          - Auth.* → boost anything starting with "Auth" (AuthService, Authentication, etc.)
+
+        penalize: RE2 regex patterns to de-rank matching results (comma-separated)
+          - (?i)test|spec|mock → de-rank test files and mocks
+          - \.generated\. → de-rank generated code
+          - deprecated|obsolete → de-rank deprecated code
+
+        Note: RE2 regex (no backreferences/lookahead). Patterns applied at SQL level for true filtering.
+        </PATTERNS>
+
         <EXAMPLES>
-        - What docs exist? → tokenBudget=800, intent=explore, scope=docs://**
-        - Explore with focus → tokenBudget=1200, intent=explore, scope=file:///src/**, question="How is error handling implemented?"
-        - Find without knowing the words → tokenBudget=600, intent=find, question="Where does retry logic live?"
-        - Cross-boundary search → tokenBudget=800, intent=find, question="How are database connections configured?", scope=file:///**/*.json;file:///**/*.yaml;docs://**
-        - Deep dive with boost → tokenBudget=2000, intent=read, question="How is JWT validated?", patterns=Validate.*,Token
-        - Understand a module → tokenBudget=2000, intent=read, scope=file:///src/Auth/**, question="How does authentication work?"
-        - Read specific file → tokenBudget=1500, intent=read, scope=file:///README.md
+        - What docs exist? → tokenBudget=1000, intent=explore, scope=docs://**
+        - Explore with focus → tokenBudget=1200, intent=explore, scope=file:///src/**, keywords="How does error handling work?"
+        - Find feature → tokenBudget=800, intent=find, keywords="How does authentication validate JWT tokens?"
+        - Cross-boundary search → tokenBudget=800, intent=find, keywords="Where is database connection configured?", scope=file:///**/*.json;file:///**/*.yaml;docs://**
+        - Deep dive with boost → tokenBudget=2000, intent=read, keywords="JWT validation flow", boost="Validate.*,Token.*"
+        - Exclude tests → tokenBudget=1500, intent=find, keywords="authentication implementation", penalize="(?i)test|mock"
+        - Understand a module → tokenBudget=2000, intent=read, scope=file:///src/Auth/**, keywords="How does the authentication flow work?"
+        - Read specific file → tokenBudget=1500, intent=read, scope=file:///**/README.md
         </EXAMPLES>
 
         <REMEMBER>
-        Your first use should be to understand what documentation is available to you:
-        tokenBudget=1000, intent=explore, scope=docs://**
+        First use: explore available documentation with tokenBudget=1000, intent=explore, scope=docs://**
+        For finding code: combine question + boost pattern for best results
         </REMEMBER>
         """;
 
@@ -69,25 +90,28 @@ internal sealed class XrayTool(
         [Description("Tokens to invest in the response")] int tokenBudget,
         [Description("Zoom level: explore, find, or read")] Intent intent,
         [Description("Where to look (glob pattern), full uri, semicolon delimited list of uris")] string? scope = null,
-        [Description("What to find (semantic search)")] string? question = null,
-        [Description("Boost matches (.net flavoured regex, comma-separated)")] string? patterns = null,
+        [Description("Search terms for hybrid search - full sentences work best (e.g., \"How does JWT token refresh work?\")")] string? keywords = null,
+        [Description("Regex patterns to boost matches, comma-separated (e.g., \"Validate.*Token,(?i)auth\")")] string? boost = null,
+        [Description("Regex patterns to de-rank matches, comma-separated (e.g., \"(?i)test|mock,\\.generated\\.\")")] string? penalize = null,
         [Description("Cap results shown - used with token budget to decide how things are displayed. Leave blank to have xray optimize it.")] int? limit = null,
         CancellationToken cancellationToken = default)
     {
-        // Parse and validate parameters
-        var patternStrings = ParsePatternStrings(patterns);
+        // Parse and validate pattern parameters
+        var boostPatterns = ParsePatternStrings(boost);
+        var penalizePatterns = ParsePatternStrings(penalize);
+        var patternStrings = boostPatterns;
 
         if (tokenBudget <= 0)
             return "Error: tokenBudget must be a positive integer.";
 
         // Create request signature for "call again to wait" pattern
-        var requestSignature = $"{tokenBudget}|{intent}|{scope}|{question}|{patterns}|{limit}";
+        var requestSignature = $"{tokenBudget}|{intent}|{scope}|{keywords}|{boost}|{penalize}|{limit}";
         var isRepeatRequest = _lastRequestSignature == requestSignature;
 
         // Check if indexer is ready before executing
         var preStatus = await GetIndexerStatusAsync(0, cancellationToken).ConfigureAwait(false);
         var needsIndex = preStatus.IndexPending > 0;
-        var needsSemantic = !string.IsNullOrWhiteSpace(question) && !preStatus.SemanticReady;
+        var needsSemantic = !string.IsNullOrWhiteSpace(keywords) && !preStatus.SemanticReady;
 
         if ((needsIndex || needsSemantic) && !isRepeatRequest)
         {
@@ -117,9 +141,10 @@ internal sealed class XrayTool(
         // Build search parameters (limit is not passed - it only affects display, not search)
         var searchParams = new SearchParameters(
             Scope: scope,
-            Question: question,
+            Question: keywords,
             Patterns: patternStrings,
-            Intent: intent
+            Intent: intent,
+            PenalizePatterns: penalizePatterns.Count > 0 ? penalizePatterns : null
         );
 
         // Execute two-phase search with timing
@@ -140,16 +165,16 @@ internal sealed class XrayTool(
 
         if (searchResult.Results.Count == 0)
         {
-            var noResults = string.IsNullOrWhiteSpace(question)
+            var noResults = string.IsNullOrWhiteSpace(keywords)
                 ? $"No results found in scope: {scope ?? "(all)"}"
-                : $"No results matching '{question}' in scope: {scope ?? "(all)"}";
+                : $"No results matching '{keywords}' in scope: {scope ?? "(all)"}";
             return $"{noResults}\n\n{RepresentationFormatter.FormatStatusFooter(indexerStatus)}";
         }
 
         // Convert to rendering types
         var xrayResults = searchResult.Results.Select(r => ConvertToXrayResult(r)).ToList();
 
-        var hasSearchCriteria = !string.IsNullOrWhiteSpace(question) || patternStrings.Count > 0;
+        var hasSearchCriteria = !string.IsNullOrWhiteSpace(keywords) || patternStrings.Count > 0;
         var context = new RenderingContext(
             Intent: intent,
             TokenBudget: tokenBudget,

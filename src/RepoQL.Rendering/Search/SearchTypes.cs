@@ -7,7 +7,8 @@ public record SearchParameters(
     string? Scope,
     string? Question,
     IReadOnlyList<string> Patterns,
-    Intent Intent
+    Intent Intent,
+    IReadOnlyList<string>? PenalizePatterns = null
 );
 
 /// <summary>

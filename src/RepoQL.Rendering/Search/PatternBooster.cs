@@ -3,14 +3,19 @@ using System.Text.RegularExpressions;
 namespace RepoQL.Rendering.Search;
 
 /// <summary>
-/// Applies regex pattern boosts to search results.
+/// Applies regex pattern boosts and penalties to search results.
 /// </summary>
 public static class PatternBooster
 {
     /// <summary>
-    /// Each pattern match multiplies score by this factor (compounding).
+    /// Each boost pattern match multiplies score by this factor (compounding).
     /// </summary>
     private const double BoostMultiplier = 1.1;
+
+    /// <summary>
+    /// Each penalize pattern match multiplies score by this factor (de-ranking).
+    /// </summary>
+    private const double PenalizeMultiplier = 0.5;
 
     /// <summary>
     /// Apply pattern boosts to search results.
@@ -50,6 +55,28 @@ public static class PatternBooster
             {
                 var boost = Math.Pow(BoostMultiplier, matchCount);
                 obj.RawScore *= boost;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Apply pattern penalties to search results.
+    /// Each match applies 50% penalty (de-ranking).
+    /// </summary>
+    public static void ApplyPenalties(IList<SearchResult> results, IReadOnlyList<Regex> patterns)
+    {
+        if (patterns.Count == 0) return;
+
+        for (var i = 0; i < results.Count; i++)
+        {
+            var result = results[i];
+            var searchText = $"{result.Uri} {result.Symbol} {result.Headline} {result.Snippet}";
+            var matchCount = CountMatches(searchText, patterns);
+
+            if (matchCount > 0)
+            {
+                var penalty = Math.Pow(PenalizeMultiplier, matchCount);
+                results[i] = result with { RawScore = result.RawScore * penalty };
             }
         }
     }
