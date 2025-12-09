@@ -1309,6 +1309,7 @@ namespace RepoQL.Data.DuckDB;
         ExecuteSqlResource("Macros/xray_lines.sql");
         ExecuteSqlResource("Tables/document_search.sql");
         ExecuteSqlResource("Macros/search.sql");
+        ExecuteSqlResource("Macros/hybrid_search.sql");
 
         foreach (var script in _formatSchemaScripts)
         {
