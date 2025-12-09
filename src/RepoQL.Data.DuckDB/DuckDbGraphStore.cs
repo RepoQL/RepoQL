@@ -1775,9 +1775,9 @@ WHERE rk = 1;
             if (doc is null)
                 return;
 
-            using var tx = _connection.BeginTransaction();
-            DeleteSubtreeInternal(doc.Id, tx);
-            tx.Commit();
+            // Note: No transaction started here - this method participates in the enclosing
+            // transaction from SingleThreadedDatabaseWriter (batch or single-item mode).
+            DeleteSubtreeInternal(doc.Id);
         }
         catch (Exception ex)
         {
@@ -2433,7 +2433,7 @@ WHERE rk = 1;
         }
     }
 
-    private int DeleteSubtreeInternal(Guid rootId, IDbTransaction tx)
+    private int DeleteSubtreeInternal(Guid rootId, IDbTransaction? tx = null)
     {
         // Phase 1: Collect all nodes in the composition subtree
         var queue = new Queue<Guid>();
@@ -2447,7 +2447,8 @@ WHERE rk = 1;
 
             using var cmd = _connection.CreateCommand();
             cmd.CommandText = "SELECT destination_node_id FROM edge WHERE source_node_id=? AND is_composition=TRUE;";
-            cmd.Transaction = tx as DuckDBTransaction;
+            if (tx is not null)
+                cmd.Transaction = tx as DuckDBTransaction;
             AddParameters(cmd, cur);
             using (var activity = StartDbActivity(cmd.CommandText))
             {
@@ -2469,22 +2470,41 @@ WHERE rk = 1;
 
         // 2a. First delete edges (they reference both nodes and spans)
         // Delete ALL edges that reference any node in the subtree
-        Execute($@"DELETE FROM edge 
-                  WHERE source_node_id IN ({placeholders}) 
-                     OR destination_node_id IN ({placeholders})
-                     OR scope_document_id IN ({placeholders})",
-            tx, nodeParams.Concat(nodeParams).Concat(nodeParams).ToArray());
-        Execute($@"DELETE FROM document_embedding WHERE doc_id IN ({placeholders});", tx, nodeParams);
-        Execute($@"DELETE FROM document_embedding WHERE node_id IN ({placeholders});", tx, nodeParams);
-        Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", tx, nodeParams);
+        var edgeParams = nodeParams.Concat(nodeParams).Concat(nodeParams).ToArray();
+        if (tx is null)
+        {
+            Execute($@"DELETE FROM edge
+                      WHERE source_node_id IN ({placeholders})
+                         OR destination_node_id IN ({placeholders})
+                         OR scope_document_id IN ({placeholders})",
+                edgeParams);
+            Execute($@"DELETE FROM document_embedding WHERE doc_id IN ({placeholders});", nodeParams);
+            Execute($@"DELETE FROM document_embedding WHERE node_id IN ({placeholders});", nodeParams);
+            Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", nodeParams);
 
-        // 2b. Then delete spans (they reference nodes)
-        Execute($"DELETE FROM span WHERE document_id IN ({placeholders})", tx, nodeParams);
+            // 2b. Then delete spans (they reference nodes)
+            Execute($"DELETE FROM span WHERE document_id IN ({placeholders})", nodeParams);
 
-        // 2c. Finally delete nodes (no more references exist)
-        var deleted = Execute($"DELETE FROM node WHERE id IN ({placeholders})", tx, nodeParams);
+            // 2c. Finally delete nodes (no more references exist)
+            return Execute($"DELETE FROM node WHERE id IN ({placeholders})", nodeParams);
+        }
+        else
+        {
+            Execute($@"DELETE FROM edge
+                      WHERE source_node_id IN ({placeholders})
+                         OR destination_node_id IN ({placeholders})
+                         OR scope_document_id IN ({placeholders})",
+                tx, edgeParams);
+            Execute($@"DELETE FROM document_embedding WHERE doc_id IN ({placeholders});", tx, nodeParams);
+            Execute($@"DELETE FROM document_embedding WHERE node_id IN ({placeholders});", tx, nodeParams);
+            Execute($@"DELETE FROM document_search WHERE doc_id IN ({placeholders});", tx, nodeParams);
 
-        return deleted;
+            // 2b. Then delete spans (they reference nodes)
+            Execute($"DELETE FROM span WHERE document_id IN ({placeholders})", tx, nodeParams);
+
+            // 2c. Finally delete nodes (no more references exist)
+            return Execute($"DELETE FROM node WHERE id IN ({placeholders})", tx, nodeParams);
+        }
     }
 
     public IEnumerable<T> RawQuery<T>(string sql, Func<IDataRecord, T> map, params object?[] parameters)
@@ -2547,11 +2567,11 @@ WHERE rk = 1;
         using var connectionLock = EnterConnectionScope();
         lock (_annotationGate)
         {
-            using var tx = _connection.BeginTransaction();
+            // Note: No transaction started here - this method participates in the enclosing
+            // transaction from SingleThreadedDatabaseWriter (batch or single-item mode).
             try
             {
                 using var cmd = _connection.CreateCommand();
-                cmd.Transaction = tx;
                 var useSemantic = !string.IsNullOrWhiteSpace(a.SemanticKey);
                 cmd.CommandText = useSemantic
                     ? @"INSERT INTO annotation
@@ -2616,10 +2636,8 @@ WHERE rk = 1;
                     if (r.Read())
                     {
                         var id = r.GetGuid(0);
-                        tx.Commit();
                         return a;
                     }
-                    tx.Commit();
                     return a;
                 }
             }
@@ -2631,7 +2649,6 @@ WHERE rk = 1;
                     "TargetEdgeId={TargetEdgeId}, TargetSpanId={TargetSpanId}, ScopeDocumentId={ScopeDocumentId}",
                     a.SemanticKey, a.Kind, a.RuleId, a.TargetUri,
                     a.TargetNodeId, a.TargetEdgeId, a.TargetSpanId, a.ScopeDocumentId);
-                tx.Rollback();
                 throw;
             }
         }
