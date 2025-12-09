@@ -238,7 +238,25 @@ public sealed class SingleThreadedDatabaseWriter(
             try
             {
                 var sw = Stopwatch.StartNew();
-                await ExecuteOperationAsync(op).ConfigureAwait(false);
+
+                // Checkpoint and Barrier operations cannot run inside a transaction.
+                // For data operations, wrap in a transaction for consistency with batch processing.
+                if (op.Type is WriteOperationType.Checkpoint or WriteOperationType.Barrier or WriteOperationType.WriteStructureEmbeddings)
+                {
+                    await ExecuteOperationAsync(op).ConfigureAwait(false);
+                }
+                else
+                {
+                    _writeConnection ??= _connectionFactory.CreateConnection();
+                    if (_writeConnection.State != System.Data.ConnectionState.Open)
+                    {
+                        await _writeConnection.OpenAsync(_stopping.Token).ConfigureAwait(false);
+                    }
+                    await using var tx = await _writeConnection.BeginTransactionAsync(_stopping.Token).ConfigureAwait(false);
+                    await ExecuteOperationAsync(op).ConfigureAwait(false);
+                    await tx.CommitAsync(_stopping.Token).ConfigureAwait(false);
+                }
+
                 sw.Stop();
                 Interlocked.Increment(ref _processed);
                 _metrics.RecordDbWriteDuration(sw.Elapsed.TotalMilliseconds, op.Type.ToString());
