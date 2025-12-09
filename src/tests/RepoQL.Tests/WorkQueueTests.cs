@@ -62,12 +62,14 @@ internal class WorkQueueTests
     {
         var meter = new Meter("RepoQL.Tests.WorkQueue");
 
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
 
         async Task Handle(int _)
         {
             Interlocked.Increment(ref calls);
+            started.TrySetResult(true);
             await release.Task.ConfigureAwait(false);
         }
 
@@ -77,27 +79,35 @@ internal class WorkQueueTests
         _ = await q.EnqueueAsync(42, CancellationToken.None);
         _ = await q.EnqueueAsync(42, CancellationToken.None);
 
-        // Give a brief moment for a potential (incorrect) second schedule
-        await Task.Delay(50);
-        calls.Should().Be(1); // only once so far
+        // Wait for handler to actually start (eliminates race condition that could cause hang on failure)
+        await Task.WhenAny(started.Task, Task.Delay(DefaultTimeout));
+        started.Task.IsCompleted.Should().BeTrue("handler should have started");
+        calls.Should().Be(1); // only once so far (deduplication worked)
 
         // Complete first processing
         release.TrySetResult(true);
         await Task.WhenAny(q.WhenIdleAsync(), Task.Delay(DefaultTimeout));
+        q.WhenIdleAsync().IsCompleted.Should().BeTrue("queue should be idle after processing");
 
         // Now re-enqueue after idle; should process again
+        var started2 = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release2 = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         async Task Handle2(int _)
         {
             Interlocked.Increment(ref calls);
+            started2.TrySetResult(true);
             await release2.Task.ConfigureAwait(false);
         }
 
-        await using var q2 = new WorkQueue<int>("t", capacity: 10, readers: 1, processItem: Handle2, CancellationToken.None, meter);
+        await using var q2 = new WorkQueue<int>("t2", capacity: 10, readers: 1, processItem: Handle2, CancellationToken.None, meter);
 
         _ = await q2.EnqueueAsync(42, CancellationToken.None);
-        await Task.Delay(50);
+
+        // Wait for handler to actually start
+        await Task.WhenAny(started2.Task, Task.Delay(DefaultTimeout));
+        started2.Task.IsCompleted.Should().BeTrue("handler2 should have started");
         calls.Should().Be(2);
+
         release2.TrySetResult(true);
         await Task.WhenAny(q2.WhenIdleAsync(), Task.Delay(DefaultTimeout));
         q2.WhenIdleAsync().IsCompleted.Should().BeTrue();
