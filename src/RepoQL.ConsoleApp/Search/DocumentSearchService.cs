@@ -38,7 +38,13 @@ internal sealed class DocumentSearchService : IDocumentSearchService
 
         if (hasQuestion)
         {
-            // Build scope WHERE clause
+            // IMPORTANT: Add file_search parameters FIRST (they appear first in the SQL)
+            // Let semantic search do the heavy lifting - empty keywords
+            // BM25 keywords were hurting results (tests matched keywords better than implementation)
+            parameters.Add("");  // Empty keywords - rely on semantic search
+            parameters.Add(question);
+
+            // Build scope WHERE clause AFTER file_search params (WHERE clause appears after file_search in SQL)
             var scopeWhereClause = BuildScopeWhereClause("fs.uri", scopePatterns, parameters);
 
             // Semantic search with file_search macro
@@ -75,11 +81,6 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                 LEFT JOIN repo_index ri ON ri.uri = dr.doc_uri AND ri.scope = 'document'
                 ORDER BY dr.score DESC
                 """;
-
-            // Let semantic search do the heavy lifting - empty keywords
-            // BM25 keywords were hurting results (tests matched keywords better than implementation)
-            parameters.Add("");  // Empty keywords - rely on semantic search
-            parameters.Add(question);
         }
         else if (hasScope)
         {
