@@ -14,6 +14,20 @@ using ConsoleAppFramework;
 // Defaults to 80 :(
 AnsiConsole.Profile.Width = 600;
 
+// Disable ANSI colors when running as MCP server to prevent JSON-RPC corruption
+// (ANSI escape codes in stdout corrupt the JSON protocol)
+var isMcpMode = args.Any(a => a.Equals("mcp", StringComparison.OrdinalIgnoreCase));
+if (isMcpMode)
+{
+    AnsiConsole.Profile.Capabilities.Ansi = false;
+    AnsiConsole.Profile.Capabilities.Links = false;
+    AnsiConsole.Profile.Capabilities.Interactive = false;
+
+    // Force auto-flush on stdout to prevent WSL buffering delays
+    // This ensures JSON-RPC responses are sent immediately
+    Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+}
+
 var explicitWorkingDirectory = Environment.GetEnvironmentVariable("REPOQL_CWD");
 if (!string.IsNullOrWhiteSpace(explicitWorkingDirectory) &&
     !explicitWorkingDirectory.Contains('{') &&
@@ -81,11 +95,22 @@ internal class ExceptionLoggingFilter(ConsoleAppFramework.ConsoleAppFilter next,
         }
         catch (RpcException rpcEx)
         {
-            console.WriteLine(rpcEx.Status.Detail, Color.Red);
+            // In MCP mode, write errors to stderr to avoid corrupting JSON-RPC on stdout
+            if (IsMcpMode(context))
+                await Console.Error.WriteLineAsync(rpcEx.Status.Detail);
+            else
+                console.WriteLine(rpcEx.Status.Detail, Color.Red);
         }
         catch (Exception e)
         {
-            console.WriteLine(e.GetBaseException().ToString(), Color.Red);
+            // In MCP mode, write errors to stderr to avoid corrupting JSON-RPC on stdout
+            if (IsMcpMode(context))
+                await Console.Error.WriteLineAsync(e.GetBaseException().ToString());
+            else
+                console.WriteLine(e.GetBaseException().ToString(), Color.Red);
         }
     }
+
+    private static bool IsMcpMode(ConsoleAppFramework.ConsoleAppContext context)
+        => context.Arguments.Any(a => a.Equals("mcp", StringComparison.OrdinalIgnoreCase));
 }
