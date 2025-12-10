@@ -1552,11 +1552,21 @@ namespace RepoQL.Data.DuckDB;
 
         var sw = Stopwatch.StartNew();
         int inserted;
+        int deleted;
         using (var tx = _connection.BeginTransaction())
         {
             try
             {
-                Execute("DELETE FROM document_search;");
+                // STEP 1: Remove orphaned entries FIRST to avoid URI uniqueness conflicts
+                // If a document was deleted and recreated with the same URI but different ID,
+                // the upsert would fail due to the UNIQUE index on uri
+                deleted = Execute(@"
+DELETE FROM document_search
+WHERE doc_id NOT IN (SELECT id FROM node WHERE kind = 'document');
+", tx);
+
+                // STEP 2: Use upsert pattern instead of DELETE + INSERT to avoid race conditions
+                // with concurrent document writes that also modify document_search
                 inserted = Execute(@"
 INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
 WITH base AS (
@@ -1584,8 +1594,14 @@ SELECT
     COALESCE(regexp_extract(normalized_uri, '([^/]+)$', 1), normalized_uri) AS basename,
     regexp_extract(normalized_uri, '^(.*)/[^/]*$', 1) AS dirname
 FROM dedup
-WHERE rk = 1;
+WHERE rk = 1
+ON CONFLICT (doc_id) DO UPDATE SET
+    uri = excluded.uri,
+    search_key = excluded.search_key,
+    basename = excluded.basename,
+    dirname = excluded.dirname;
 ", tx);
+
                 tx.Commit();
             }
             catch (Exception ex)
@@ -1597,8 +1613,9 @@ WHERE rk = 1;
         }
 
         activity?.SetTag("repoql.search.refresh.documents", inserted);
+        activity?.SetTag("repoql.search.refresh.deleted", deleted);
         activity?.SetTag("repoql.search.refresh.duration_ms", sw.Elapsed.TotalMilliseconds);
-        _logger.LogInformation("Search projection refreshed: docs={Docs}, ms={Duration}", inserted, (long)sw.Elapsed.TotalMilliseconds);
+        _logger.LogInformation("Search projection refreshed: docs={Docs}, deleted={Deleted}, ms={Duration}", inserted, deleted, (long)sw.Elapsed.TotalMilliseconds);
     }
 
     public Artifact UpsertArtifact(Artifact artifact)

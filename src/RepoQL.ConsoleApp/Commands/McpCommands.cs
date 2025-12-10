@@ -25,6 +25,8 @@ internal class McpCommands
            await Console.Error.WriteLineAsync($"[MCP] repoRoot={repoRoot}").ConfigureAwait(false);
 
            var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
+           // Reduce graceful shutdown timeout from default 30s to 5s for faster exit
+           builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(5));
            builder.Logging.SetMinimumLevel(LogLevel.Warning);
             builder.Logging.AddConsole(consoleLogOptions =>
             {

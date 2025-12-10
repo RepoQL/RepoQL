@@ -271,11 +271,25 @@ public sealed class RepoQlClient : IRepoQlClient
             await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
         }
 
+        // Include diagnostics from the host process if available
+        var (stderr, exitCode) = GetLastHostDiagnostics();
+        var diagnosticInfo = "";
+        if (exitCode.HasValue && exitCode.Value != 0)
+        {
+            diagnosticInfo = $" Host exited with code {exitCode.Value}.";
+            if (!string.IsNullOrWhiteSpace(stderr))
+            {
+                var stderrPreview = stderr.Length > 500 ? stderr[..500] + "..." : stderr;
+                diagnosticInfo += $" Stderr: {stderrPreview.Trim()}";
+            }
+        }
+
         _logger.LogError(
-            "RepoQlClient: host did not become ready within {Timeout} ms (lastSocket='{Socket}').",
+            "RepoQlClient: host did not become ready within {Timeout} ms (lastSocket='{Socket}').{Diagnostics}",
             timeout.TotalMilliseconds,
-            currentSocketPath);
-        throw new TimeoutException($"RepoQL host did not become ready within {timeout.TotalMilliseconds} ms (socket: {currentSocketPath})");
+            currentSocketPath,
+            diagnosticInfo);
+        throw new TimeoutException($"RepoQL host did not become ready within {timeout.TotalMilliseconds} ms (socket: {currentSocketPath}).{diagnosticInfo}");
     }
 
     private static async Task<Socket?> ConnectAsync(string socketPath, CancellationToken cancellationToken)
@@ -365,9 +379,33 @@ public sealed class RepoQlClient : IRepoQlClient
     private static IEnumerable<string> BuildExecutableCandidates(string basePath)
     {
         if (OperatingSystem.IsWindows())
+        {
             yield return basePath + ".exe";
-        yield return basePath + ".dll"; // dotnet <dll>
-        yield return basePath;           // self-contained
+            yield return basePath + ".dll"; // dotnet <dll>
+        }
+        else
+        {
+            // On non-Windows, prefer native self-contained binary over .dll
+            // to avoid requiring dotnet on PATH
+            yield return basePath;           // self-contained
+            yield return basePath + ".dll"; // dotnet <dll>
+        }
+    }
+
+    private static string? _lastHostStderr;
+    private static int? _lastHostExitCode;
+    private static readonly object _hostDiagnosticsLock = new();
+
+    /// <summary>
+    /// Gets diagnostic information from the last host launch attempt.
+    /// Useful for debugging startup failures.
+    /// </summary>
+    public static (string? Stderr, int? ExitCode) GetLastHostDiagnostics()
+    {
+        lock (_hostDiagnosticsLock)
+        {
+            return (_lastHostStderr, _lastHostExitCode);
+        }
     }
 
     private static void StartProcess(string exePathOrCommand, string workingDirectory, IEnumerable<string> args, IDictionary<string, string?> env)
@@ -396,8 +434,42 @@ public sealed class RepoQlClient : IRepoQlClient
             RedirectStandardError = true
         };
         foreach (var kv in env) psi.Environment[kv.Key] = kv.Value;
-        try { System.Diagnostics.Process.Start(psi); }
-        catch (Exception ex) { throw new InvalidOperationException($"Failed to launch RepoQL host using '{exePathOrCommand}'. Set REPOQL_HOST_PATH to override.", ex); }
+
+        System.Diagnostics.Process process;
+        try
+        {
+            process = System.Diagnostics.Process.Start(psi) ?? throw new InvalidOperationException("Process.Start returned null");
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to launch RepoQL host using '{exePathOrCommand}'. Set REPOQL_HOST_PATH to override.", ex);
+        }
+
+        // Capture stderr asynchronously for diagnostics
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var stderr = await process.StandardError.ReadToEndAsync();
+                process.WaitForExit(30000); // Wait up to 30s for exit code
+
+                lock (_hostDiagnosticsLock)
+                {
+                    _lastHostStderr = stderr;
+                    _lastHostExitCode = process.HasExited ? process.ExitCode : null;
+                }
+
+                // If process exited quickly with an error, log it
+                if (process.HasExited && process.ExitCode != 0 && !string.IsNullOrWhiteSpace(stderr))
+                {
+                    Console.Error.WriteLine($"[RepoQlClient] Host process exited with code {process.ExitCode}. Stderr: {stderr.Trim()}");
+                }
+            }
+            catch
+            {
+                // Ignore errors in diagnostic capture
+            }
+        });
     }
 
     private static int EnvironmentTimeout(string name, int dflt) =>

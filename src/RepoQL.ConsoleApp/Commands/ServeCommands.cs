@@ -51,6 +51,9 @@ internal class HostCommands(IAnsiConsole console)
         });
         builder.Configuration.AddEnvironmentVariables();
         builder.Host.UseConsoleLifetime();
+        // Reduce graceful shutdown timeout from default 30s to 5s
+        // The indexing queues will be cancelled immediately on shutdown
+        builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(5));
         builder.Logging.ClearProviders();
         if (!implicitStart)
         {

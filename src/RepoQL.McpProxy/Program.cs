@@ -51,11 +51,12 @@ class Program
         if (!string.IsNullOrEmpty(explicitPath) && File.Exists(explicitPath))
             return Path.GetFullPath(explicitPath);
 
+        var baseName = OperatingSystem.IsWindows() ? "repoql.exe" : "repoql";
         var candidates = new[]
         {
-            Path.Combine(AppContext.BaseDirectory, "repoql.exe"),
-            Path.Combine(Environment.CurrentDirectory, "artifacts", "publish", "repoql.exe"),
-            Path.Combine(Environment.CurrentDirectory, "repoql.exe"),
+            Path.Combine(AppContext.BaseDirectory, baseName),
+            Path.Combine(Environment.CurrentDirectory, "artifacts", "publish", baseName),
+            Path.Combine(Environment.CurrentDirectory, baseName),
         };
 
         foreach (var candidate in candidates)
@@ -67,7 +68,7 @@ class Program
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in pathEnv.Split(Path.PathSeparator))
         {
-            var candidate = Path.Combine(dir, "repoql.exe");
+            var candidate = Path.Combine(dir, baseName);
             if (File.Exists(candidate))
                 return candidate;
         }
@@ -179,6 +180,9 @@ class Program
     {
         var buffer = new byte[65536];
         var stdin = Console.OpenStandardInput();
+        // Use a streaming decoder to handle multi-byte UTF-8 sequences split across buffer boundaries
+        var decoder = Encoding.UTF8.GetDecoder();
+        var charBuffer = new char[65536];
 
         try
         {
@@ -188,7 +192,12 @@ class Program
                 if (bytesRead == 0)
                     break;
 
-                var data = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+                // Decode bytes to chars, preserving incomplete multi-byte sequences for next read
+                var charCount = decoder.GetChars(buffer, 0, bytesRead, charBuffer, 0, flush: false);
+                var data = new string(charBuffer, 0, charCount);
+
+                if (string.IsNullOrEmpty(data))
+                    continue;
 
                 // Check for proxy control commands
                 if (TryHandleProxyCommand(data, out var response))

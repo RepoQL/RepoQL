@@ -57,7 +57,18 @@ public sealed class UnixSocketTransport
         SocketsHttpConnectionContext context,
         CancellationToken cancellationToken)
     {
-        var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        Socket socket;
+        try
+        {
+            socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        }
+        catch (SocketException ex)
+        {
+            throw new PlatformNotSupportedException(
+                "Unix domain sockets are not supported on this platform. " +
+                "Windows requires version 1803 (build 17134) or later with AF_UNIX support enabled.",
+                ex);
+        }
 
         try
         {
@@ -102,18 +113,17 @@ public sealed class UnixSocketTransport
             throw new ArgumentException("Socket path cannot be empty", nameof(_socketPath));
         }
 
-        // Check path length limits
-        if (!OperatingSystem.IsWindows())
+        // Check path length limits - applies to all platforms using AF_UNIX
+        // Unix domain socket path limit is typically 108 characters (sun_path in sockaddr_un)
+        // Windows AF_UNIX also has this limit
+        const int MaxUnixSocketPathLength = 108;
+        if (_socketPath.Length >= MaxUnixSocketPathLength)
         {
-            // Unix domain socket path limit is typically 108 characters
-            const int MaxUnixSocketPathLength = 108;
-            if (_socketPath.Length >= MaxUnixSocketPathLength)
-            {
-                throw new ArgumentException(
-                    $"Socket path too long ({_socketPath.Length} chars). " +
-                    $"Maximum is {MaxUnixSocketPathLength - 1} characters.",
-                    nameof(_socketPath));
-            }
+            throw new ArgumentException(
+                $"Socket path too long ({_socketPath.Length} chars). " +
+                $"Maximum is {MaxUnixSocketPathLength - 1} characters. " +
+                $"Path: {_socketPath}",
+                nameof(_socketPath));
         }
 
         // Ensure directory exists
@@ -135,6 +145,7 @@ public sealed class UnixSocketTransport
 
     /// <summary>
     /// Checks if the socket file exists and attempts to clean up stale sockets.
+    /// Uses atomic rename to avoid race conditions with other processes.
     /// </summary>
     /// <returns>True if a stale socket was removed, false otherwise.</returns>
     public static bool TryCleanupStaleSocket(string? socketPath = null)
@@ -157,6 +168,33 @@ public sealed class UnixSocketTransport
         catch (SocketException)
         {
             // Socket file exists but nothing is listening - it's stale
+            // Use atomic rename-then-delete to avoid race with another process binding
+            try
+            {
+                var tempPath = path + ".stale." + Guid.NewGuid().ToString("N")[..8];
+                File.Move(path, tempPath);
+
+                // Verify the socket is still stale after rename (another process could have bound)
+                // If the original path exists again, a new server started - leave it alone
+                if (File.Exists(path))
+                {
+                    // New server started, try to restore our renamed file or just delete it
+                    try { File.Delete(tempPath); } catch { }
+                    return false;
+                }
+
+                File.Delete(tempPath);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        catch (PlatformNotSupportedException)
+        {
+            // AF_UNIX not supported on this platform (older Windows)
+            // Just try to delete the stale file directly - it's likely from a previous install
             try
             {
                 File.Delete(path);

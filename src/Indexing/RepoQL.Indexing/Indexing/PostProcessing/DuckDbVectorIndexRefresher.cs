@@ -59,20 +59,43 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
             await store.RefreshDocumentEmbeddingsAsync(_embeddingProvider, cancellationToken).ConfigureAwait(false);
         }
 
+        // Remove dangling embeddings AFTER the refresh completes, within a transaction
+        // to avoid race conditions with concurrent inserts
         await RemoveDanglingEmbeddingsAsync(connection, cancellationToken).ConfigureAwait(false);
 
         sw.Stop();
         _logger.LogInformation("Embedding refresh completed in {ElapsedMs}ms.", sw.ElapsedMilliseconds);
     }
 
-    private static async Task RemoveDanglingEmbeddingsAsync(DuckDBConnection connection, CancellationToken cancellationToken)
+    private async Task RemoveDanglingEmbeddingsAsync(DuckDBConnection connection, CancellationToken cancellationToken)
     {
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandText = """
-                          DELETE FROM document_embedding
-                          WHERE doc_id NOT IN (SELECT id FROM node WHERE kind = 'document')
-                             OR node_id NOT IN (SELECT id FROM node);
-                          """;
-        await Task.Run(() => cmd.ExecuteNonQuery(), cancellationToken).ConfigureAwait(false);
+        await using var tx = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var cmd = connection.CreateCommand();
+            cmd.Transaction = tx;
+            // Use a subquery snapshot approach to minimize race window:
+            // First capture the current set of valid node IDs, then delete based on that snapshot
+            cmd.CommandText = """
+                              WITH valid_docs AS (SELECT id FROM node WHERE kind = 'document'),
+                                   valid_nodes AS (SELECT id FROM node)
+                              DELETE FROM document_embedding
+                              WHERE doc_id NOT IN (SELECT id FROM valid_docs)
+                                 OR node_id NOT IN (SELECT id FROM valid_nodes);
+                              """;
+            var deleted = await Task.Run(() => cmd.ExecuteNonQuery(), cancellationToken).ConfigureAwait(false);
+            await tx.CommitAsync(cancellationToken).ConfigureAwait(false);
+
+            if (deleted > 0)
+            {
+                _logger.LogInformation("Removed {Count} dangling embeddings", deleted);
+            }
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(cancellationToken).ConfigureAwait(false);
+            _logger.LogWarning(ex, "Failed to remove dangling embeddings");
+            throw;
+        }
     }
 }

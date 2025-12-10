@@ -12,7 +12,7 @@ namespace RepoQL.ConsoleApp.Commands;
 [RegisterCommands]
 internal class InstallCommand(IAnsiConsole console)
 {
-    private readonly Dictionary<string, ConfigStatus> configStatusCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ConfigStatus> configStatusCache = new(GetPathComparer());
     private static readonly string[] DefaultServerPropertyPriority = new[] { "mcpServers", "servers" };
     private static readonly string[] CopilotServerPropertyPriority = new[] { "servers", "mcpServers" };
     private static readonly string[] KnownServerPropertyNames = new[] { "mcpServers", "servers" };
@@ -170,8 +170,18 @@ internal class InstallCommand(IAnsiConsole console)
             : null;
     }
 
-    private static bool PathsEqual(string? left, string? right) =>
-        string.Equals(left ?? string.Empty, right ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    private static bool PathsEqual(string? left, string? right)
+    {
+        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(left ?? string.Empty, right ?? string.Empty, comparison);
+    }
+
+    private static StringComparer GetPathComparer() =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
 
     private async Task<List<AgentInfo>> DetectInstalledAgentsAsync()
     {
@@ -274,6 +284,22 @@ internal class InstallCommand(IAnsiConsole console)
         {
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             paths.Add(Path.Combine(appData, "Claude", "claude_desktop_config.json"));
+        }
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            // Linux: Check XDG_CONFIG_HOME first, then ~/.config
+            var xdgConfig = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+            if (!string.IsNullOrEmpty(xdgConfig))
+            {
+                paths.Add(Path.Combine(xdgConfig, "Claude", "claude_desktop_config.json"));
+                paths.Add(Path.Combine(xdgConfig, "claude", "claude_desktop_config.json"));
+            }
+
+            paths.Add(Path.Combine(homeDir, ".config", "Claude", "claude_desktop_config.json"));
+            paths.Add(Path.Combine(homeDir, ".config", "claude", "claude_desktop_config.json"));
+
+            // Also check ~/.claude for consistency with Claude Code
+            paths.Add(Path.Combine(homeDir, ".claude", "claude_desktop_config.json"));
         }
 
         // WSL: Check Windows Claude Desktop config via /mnt/c
@@ -492,8 +518,21 @@ internal class InstallCommand(IAnsiConsole console)
         {
             candidates.Add(LocateExecutable("code"));
             candidates.Add("/usr/bin/code");
-            candidates.Add("/var/lib/snapd/snap/bin/code");
             candidates.Add("/usr/bin/code-insiders");
+
+            // Snap installations
+            candidates.Add("/var/lib/snapd/snap/bin/code");
+            candidates.Add("/snap/bin/code");
+
+            // Flatpak installations
+            var home = GetUserHomeDirectory();
+            if (!string.IsNullOrEmpty(home))
+            {
+                candidates.Add(Path.Combine(home, ".local", "share", "flatpak", "exports", "bin", "com.visualstudio.code"));
+                candidates.Add(Path.Combine(home, ".local", "share", "flatpak", "exports", "bin", "com.visualstudio.code-insiders"));
+            }
+            candidates.Add("/var/lib/flatpak/exports/bin/com.visualstudio.code");
+            candidates.Add("/var/lib/flatpak/exports/bin/com.visualstudio.code-insiders");
         }
 
         return FirstExistingPath(candidates);
@@ -507,6 +546,10 @@ internal class InstallCommand(IAnsiConsole console)
             yield return Path.Combine(home, ".vscode", "extensions");
             yield return Path.Combine(home, ".vscode-insiders", "extensions");
             yield return Path.Combine(home, ".vscode-oss", "extensions");
+
+            // Flatpak VS Code extensions (user install)
+            yield return Path.Combine(home, ".var", "app", "com.visualstudio.code", "data", "vscode", "extensions");
+            yield return Path.Combine(home, ".var", "app", "com.visualstudio.code-insiders", "data", "vscode", "extensions");
         }
 
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -724,6 +767,12 @@ internal class InstallCommand(IAnsiConsole console)
         {
             var json = await File.ReadAllTextAsync(path, cancel).ConfigureAwait(false);
 
+            // If file is empty or whitespace, treat as new config
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return new JsonObject();
+            }
+
             var nodeOptions = new JsonNodeOptions
             {
                 PropertyNameCaseInsensitive = true
@@ -734,9 +783,24 @@ internal class InstallCommand(IAnsiConsole console)
                 AllowTrailingCommas = true
             };
 
-            if (JsonNode.Parse(json, nodeOptions, documentOptions) is JsonObject existing)
+            try
             {
-                return existing;
+                if (JsonNode.Parse(json, nodeOptions, documentOptions) is JsonObject existing)
+                {
+                    return existing;
+                }
+
+                // File contains valid JSON but not an object (e.g., array, string, number)
+                throw new InvalidOperationException(
+                    $"Configuration file '{path}' contains valid JSON but is not an object. " +
+                    "Expected a JSON object at the root level.");
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Configuration file '{path}' contains invalid JSON: {ex.Message}. " +
+                    "Please fix the syntax errors or delete the file to start fresh.",
+                    ex);
             }
         }
 
@@ -859,22 +923,53 @@ internal class InstallCommand(IAnsiConsole console)
         if (!IsRunningInWsl())
             return null;
 
-        // Try to get Windows username from environment or wslpath
+        // Try to get Windows username from WSL environment variables
         var windowsUser = Environment.GetEnvironmentVariable("LOGNAME")
             ?? Environment.GetEnvironmentVariable("USER");
 
-        // Try common mount points with the Linux username (often matches Windows username)
-        if (!string.IsNullOrEmpty(windowsUser))
+        // Find all drvfs mount points (Windows drives) from /proc/mounts
+        var windowsMounts = new List<string>();
+        try
         {
-            var candidatePath = $"/mnt/c/Users/{windowsUser}";
-            if (Directory.Exists(candidatePath))
-                return candidatePath;
+            var mounts = File.ReadAllLines("/proc/mounts");
+            foreach (var mount in mounts)
+            {
+                var parts = mount.Split(' ');
+                if (parts.Length >= 3 && parts[2].Equals("drvfs", StringComparison.OrdinalIgnoreCase))
+                {
+                    windowsMounts.Add(parts[1]);
+                }
+            }
+        }
+        catch
+        {
+            // Fallback to common mount points
+            windowsMounts.Add("/mnt/c");
+            windowsMounts.Add("/mnt/d");
         }
 
-        // Fallback: enumerate /mnt/c/Users to find a valid user directory
-        const string usersPath = "/mnt/c/Users";
-        if (Directory.Exists(usersPath))
+        // If no drvfs mounts found, use defaults
+        if (windowsMounts.Count == 0)
         {
+            windowsMounts.Add("/mnt/c");
+        }
+
+        // Try each Windows mount point
+        foreach (var mount in windowsMounts)
+        {
+            var usersPath = Path.Combine(mount, "Users");
+            if (!Directory.Exists(usersPath))
+                continue;
+
+            // Try the Linux username first (often matches Windows username)
+            if (!string.IsNullOrEmpty(windowsUser))
+            {
+                var candidatePath = Path.Combine(usersPath, windowsUser);
+                if (Directory.Exists(candidatePath) && Directory.Exists(Path.Combine(candidatePath, "AppData")))
+                    return candidatePath;
+            }
+
+            // Fallback: enumerate Users directory to find a valid user
             try
             {
                 foreach (var userDir in Directory.EnumerateDirectories(usersPath))
@@ -894,7 +989,7 @@ internal class InstallCommand(IAnsiConsole console)
             }
             catch
             {
-                // Ignore permission errors
+                // Ignore permission errors, try next mount
             }
         }
 
@@ -957,8 +1052,9 @@ internal class InstallCommand(IAnsiConsole console)
                 {
                     return Directory.EnumerateFiles(current, pattern, SearchOption.TopDirectoryOnly);
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Trace.WriteLine($"[install] Failed to enumerate files in '{current}' (pattern '{pattern}'): {ex.Message}");
                     return Array.Empty<string>();
                 }
             }
@@ -990,8 +1086,9 @@ internal class InstallCommand(IAnsiConsole console)
                     stack.Push((dir, depth + 1));
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Trace.WriteLine($"[install] Failed to enumerate subdirectories of '{current}': {ex.Message}");
             }
         }
     }
@@ -1553,6 +1650,21 @@ internal class InstallCommand(IAnsiConsole console)
                         WriteIndented = true
                     };
                     var updatedJson = config.ToJsonString(options);
+
+                    // Create backup of existing config before overwriting
+                    if (File.Exists(resolvedConfigPath))
+                    {
+                        var backupPath = resolvedConfigPath + ".backup";
+                        try
+                        {
+                            File.Copy(resolvedConfigPath, backupPath, overwrite: true);
+                        }
+                        catch
+                        {
+                            // Backup failure is non-fatal, continue with install
+                        }
+                    }
+
                     await File.WriteAllTextAsync(resolvedConfigPath, updatedJson, cancel).ConfigureAwait(false);
 
                     console.MarkupLine($"[green]  ✓ Installed to {safeAgentName} ({safeScopeLabel})[/]");
@@ -1564,6 +1676,13 @@ internal class InstallCommand(IAnsiConsole console)
                 catch (Exception ex)
                 {
                     console.MarkupLine($"[red]  ✗ Failed to install to {safeAgentName}: {EscapeMarkup(ex.Message)}[/]");
+
+                    // Hint about backup if it exists
+                    var backupPath = resolvedConfigPath + ".backup";
+                    if (File.Exists(backupPath))
+                    {
+                        console.MarkupLine($"[dim]    A backup of your previous config is available at: {EscapeMarkup(backupPath)}[/]");
+                    }
                 }
             });
     }
@@ -1820,15 +1939,15 @@ internal class InstallCommand(IAnsiConsole console)
         if (LooksLikeRepoqlExecutable(processPath))
             return processPath!;
 
-        var located = LocateExecutable("repoql");
-        if (!string.IsNullOrEmpty(located))
-            return located;
-
         foreach (var candidate in EnumerateRepoqlExecutableCandidates())
         {
             if (File.Exists(candidate))
                 return candidate;
         }
+
+        var located = LocateExecutable("repoql");
+        if (!string.IsNullOrEmpty(located))
+            return located;
 
         return "repoql";
     }
