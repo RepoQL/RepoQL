@@ -168,7 +168,13 @@ public sealed class SingleThreadedDatabaseWriter(
         _channel.Writer.TryComplete();
         if (_writerTask is not null)
         {
-            try { await _writerTask.ConfigureAwait(false); } catch { /* ignore */ }
+            // Wait up to 2 seconds for writer to finish current batch, then give up
+            // We don't want to block shutdown indefinitely if a write is stuck
+            var completed = await Task.WhenAny(_writerTask, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+            if (completed != _writerTask)
+            {
+                _logger.LogWarning("Database writer did not stop within 2 seconds, continuing shutdown");
+            }
         }
         _store?.Dispose();
         await (_writeConnection?.DisposeAsync() ?? ValueTask.CompletedTask);

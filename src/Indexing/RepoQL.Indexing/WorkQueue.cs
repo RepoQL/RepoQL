@@ -169,7 +169,18 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     public async ValueTask DisposeAsync()
     {
         try { _channel.Writer.Complete(); } catch { }
-        await Task.WhenAll(_readers);
+
+        // Wait up to 2 seconds for readers to finish gracefully, then give up
+        // The cancellation token should have already been triggered, so readers
+        // should exit quickly. If they're stuck in a long operation, we don't
+        // want to block shutdown indefinitely.
+        var allReaders = Task.WhenAll(_readers);
+        var completed = await Task.WhenAny(allReaders, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+        if (completed != allReaders)
+        {
+            // Readers didn't finish in time - log but don't block shutdown
+            // The process is exiting anyway, so orphaned tasks will be cleaned up
+        }
     }
 
     /// <summary>Completes the next time the queue has no pending or in-flight items.</summary>
