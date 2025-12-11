@@ -3,7 +3,7 @@ namespace RepoQL.Contracts.Models;
 /// <summary>
 ///     Byte and line range extent within a single document node used for precise edits and diagnostics.
 /// </summary>
-public sealed class Span
+public sealed record Span
 {
     /// <summary>
     ///     Gets the span identifier. Value is a generated Guid.

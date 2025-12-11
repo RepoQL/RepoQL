@@ -6,7 +6,7 @@ namespace RepoQL.Contracts.Models;
 ///     Content-addressed bytes that may be referenced by one or more document nodes.
 /// </summary>
 [DebuggerDisplay("{Digest} ({Size} bytes)")]
-public sealed class Artifact
+public sealed record Artifact
 {
     /// <summary>
     ///     Gets the stable identifier for this artifact. Value is a generated Guid.

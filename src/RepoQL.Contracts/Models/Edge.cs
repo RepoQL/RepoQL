@@ -8,7 +8,7 @@ namespace RepoQL.Contracts.Models;
 ///     A directed relationship between two nodes with optional attributes and source or destination spans.
 /// </summary>
 [DebuggerDisplay("{Type} {SrcId} -> {DstId}")]
-public sealed class Edge
+public sealed record Edge
 {
     /// <summary>
     ///     Gets the edge identifier. Value is a generated Guid.

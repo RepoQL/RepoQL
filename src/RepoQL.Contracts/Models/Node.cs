@@ -7,7 +7,7 @@ namespace RepoQL.Contracts.Models;
 ///     A vertex in the property graph. Documents, sections, symbols, and other entities are nodes.
 /// </summary>
 [DebuggerDisplay("{Kind} {Uri}")]
-public sealed class Node
+public sealed record Node
 {
     /// <summary>
     ///     Gets the node identifier. Value is a generated Guid.
@@ -56,7 +56,7 @@ public sealed class Node
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 
     /// <summary>
-    ///     Gets or sets the update timestamp in UTC. Update when the node changes materially.
+    ///     Gets the update timestamp in UTC. Update when the node changes materially.
     /// </summary>
-    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; init; } = DateTimeOffset.UtcNow;
 }
