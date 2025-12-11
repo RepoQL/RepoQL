@@ -9,10 +9,12 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Channels;
 using DuckDB.NET.Data;
+using Humanizer;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Metrics;
 using System.Diagnostics.Metrics;
@@ -30,6 +32,7 @@ namespace RepoQL.Data.DuckDB;
         private readonly ILogger<DuckDbGraphStore> _logger;
         private readonly IndexingMetrics _metrics;
         private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
+        private readonly string? _repoRootPath;
         private readonly object _annotationGate = new();
         private readonly object _connectionLock = new();
         // Batch size for embedding. With arena disabled, larger batches don't improve
@@ -152,9 +155,9 @@ namespace RepoQL.Data.DuckDB;
         // Chunking constants: BGE model has 512 token limit (~2000 chars for code).
         // Small files get a single embedding; large files are chunked with overlap.
         private const int ChunkSizeChars = 1500;          // Target chunk size (~375 tokens)
-        private const int ChunkOverlapChars = 300;        // 20% overlap for context continuity
+        private const int ChunkOverlapChars = 75;         // 5% overlap for context continuity
         private const int SmallFileThresholdChars = 2000; // Files under this size = single embedding
-        private const int LargeFileThresholdBytes = 250 * 1024; // 250KB - files above this use structure-only embedding
+        private const int LargeFileThresholdBytes = 150 * 1024; // 150KB - files above this use structure-only embedding
 
         private const int MaxDocumentPayloadChars = int.MaxValue;
         private const int MaxObjectPayloadChars = 6000;
@@ -268,8 +271,15 @@ namespace RepoQL.Data.DuckDB;
         var uniqueDocs = workItems.Select(w => w.DocId).Distinct().Count();
         var totalChunks = workItems.Count;
         var chunkedDocs = workItems.Where(w => w.ChunkIndex > 0).Select(w => w.DocId).Distinct().Count();
+        var totalBatches = (workItems.Count + batchSize - 1) / batchSize;
         _logger.LogInformation("Semantic indexing: {Docs} documents ({Chunks} chunks, {Chunked} chunked)...",
             uniqueDocs, totalChunks, chunkedDocs);
+
+        using var embeddingActivity = ActivitySource.StartActivity("repoql.embedding.full", ActivityKind.Internal);
+        embeddingActivity?.SetTag("documents", uniqueDocs);
+        embeddingActivity?.SetTag("chunks", totalChunks);
+        embeddingActivity?.SetTag("batches", totalBatches);
+        embeddingActivity?.SetTag("model", provider.Model);
 
         for (var ofs = 0; ofs < workItems.Count; ofs += batchSize)
         {
@@ -284,20 +294,30 @@ namespace RepoQL.Data.DuckDB;
 
             ct.ThrowIfCancellationRequested();
 
+            batches++;
+
             float[]?[] vectors;
             var batchTimer = Stopwatch.StartNew();
-            try
+            using (var batchActivity = ActivitySource.StartActivity("repoql.embedding.batch", ActivityKind.Internal))
             {
-                vectors = provider.EmbedBatchAsync(payloads, ct).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                batchTimer.Stop();
-                _logger.LogWarning(ex, "Embedding batch failed (size={BatchSize}, model={Model})", sliceLength, provider.Model);
-                vectors = Array.Empty<float[]?>();
+                batchActivity?.SetTag("batch", batches);
+                batchActivity?.SetTag("total_batches", totalBatches);
+                batchActivity?.SetTag("size", sliceLength);
+
+                try
+                {
+                    var itemsAfterBatch = totalItems + sliceLength;
+                    var progress = new BatchEmbeddingProgress(batches, totalBatches, itemsAfterBatch, totalChunks, sw.Elapsed);
+                    vectors = provider.EmbedBatchAsync(payloads, progress, ct).GetAwaiter().GetResult();
+                }
+                catch (Exception ex)
+                {
+                    batchTimer.Stop();
+                    _logger.LogWarning(ex, "Embedding batch failed (size={BatchSize}, model={Model})", sliceLength, provider.Model);
+                    vectors = Array.Empty<float[]?>();
+                }
             }
             batchTimer.Stop();
-            batches++;
             totalItems += sliceLength;
             embedMsTotal += batchTimer.Elapsed.TotalMilliseconds;
             _metrics.EmbeddingBatchSize.Record(sliceLength);
@@ -383,11 +403,20 @@ namespace RepoQL.Data.DuckDB;
                 { "model", provider.Model }
             });
 
-            _logger.LogInformation("Batch processing: size={BatchSize}, embedding={EmbedMs:F1}ms ({EmbedPerItem:F1}ms/item), database={DbMs:F1}ms ({DbPerItem:F1}ms/item), total={TotalMs:F1}ms",
+            var percentComplete = totalChunks > 0 ? (int)(totalItems * 100.0 / totalChunks) : 100;
+            var remainingItems = totalChunks - totalItems;
+            var etaStr = "";
+            if (remainingItems > 0 && totalItems > 0)
+            {
+                var msPerItem = sw.Elapsed.TotalMilliseconds / totalItems;
+                var eta = TimeSpan.FromMilliseconds(msPerItem * remainingItems);
+                etaStr = $", ETA {eta.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Second)}";
+            }
+            _logger.LogInformation("Semantic indexing: {Batch}/{TotalBatches} ({Percent}%) - {BatchSize} items in {EmbedTime}, {DbMs:F0}ms db{Eta}",
+                batches, totalBatches, percentComplete,
                 sliceLength,
-                batchTimer.Elapsed.TotalMilliseconds, perItemMs,
-                dbTimer.Elapsed.TotalMilliseconds, dbTimer.Elapsed.TotalMilliseconds / sliceLength,
-                batchTimer.Elapsed.TotalMilliseconds + dbTimer.Elapsed.TotalMilliseconds);
+                batchTimer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond),
+                dbTimer.Elapsed.TotalMilliseconds, etaStr);
         }
 
         sw.Stop();
@@ -1144,6 +1173,7 @@ namespace RepoQL.Data.DuckDB;
     /// <param name="logger">Optional logger for macro/view creation warnings.</param>
     /// <param name="embeddingProvider">Optional embedding provider for document embeddings.</param>
     /// <param name="formatSchemaScripts">Optional SQL snippets supplied by format loaders.</param>
+    /// <param name="repoRootPath">Optional repo root path for cleaning up imports when schema is dropped.</param>
     public DuckDbGraphStore(
         DuckDBConnection connection,
         IndexingMetrics? metrics = null,
@@ -1151,13 +1181,15 @@ namespace RepoQL.Data.DuckDB;
         bool registerUdfs = true,
         ILogger<DuckDbGraphStore>? logger = null,
         Contracts.Embeddings.IEmbeddingProvider? embeddingProvider = null,
-        IEnumerable<FormatSqlScript>? formatSchemaScripts = null)
+        IEnumerable<FormatSqlScript>? formatSchemaScripts = null,
+        string? repoRootPath = null)
     {
         _connection = connection ?? throw new ArgumentNullException(nameof(connection));
         _ownsConnection = false;
         _logger = logger ?? NullLogger<DuckDbGraphStore>.Instance;
         _metrics = metrics ?? new IndexingMetrics();
         _formatSchemaScripts = formatSchemaScripts?.ToArray() ?? Array.Empty<FormatSqlScript>();
+        _repoRootPath = repoRootPath;
         _databaseLabel = TryExtractDbNameSafe(_connection.ConnectionString);
 
         if (enableExtensions)
@@ -1444,6 +1476,24 @@ namespace RepoQL.Data.DuckDB;
             _logger.LogDebug("Dropped remaining table: {TableName}", table);
         }
 
+        // Clean up imported repositories - they reference data that no longer exists
+        if (!string.IsNullOrWhiteSpace(_repoRootPath))
+        {
+            var importsPath = Path.Combine(_repoRootPath, ".repoql", "imports");
+            if (Directory.Exists(importsPath))
+            {
+                try
+                {
+                    Directory.Delete(importsPath, recursive: true);
+                    _logger.LogInformation("Deleted imports folder: {ImportsPath}", importsPath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete imports folder: {ImportsPath}", importsPath);
+                }
+            }
+        }
+
         _logger.LogInformation("All tables and views dropped. Recreating schema.");
     }
 
@@ -1565,8 +1615,17 @@ DELETE FROM document_search
 WHERE doc_id NOT IN (SELECT id FROM node WHERE kind = 'document');
 ", tx);
 
-                // STEP 2: Use upsert pattern instead of DELETE + INSERT to avoid race conditions
+                // STEP 2: Also remove entries where the uri no longer matches any document
+                // This handles the case where a document was re-indexed with a different doc_id
+                // but the same URI (the old entry with old doc_id would conflict)
+                Execute(@"
+DELETE FROM document_search
+WHERE uri NOT IN (SELECT uri FROM node WHERE kind = 'document' AND uri IS NOT NULL);
+", tx);
+
+                // STEP 3: Use upsert pattern instead of DELETE + INSERT to avoid race conditions
                 // with concurrent document writes that also modify document_search
+                // Note: ON CONFLICT (doc_id) handles the primary key; we cleaned up uri conflicts above
                 inserted = Execute(@"
 INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
 WITH base AS (

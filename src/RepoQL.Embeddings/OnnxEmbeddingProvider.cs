@@ -1,3 +1,4 @@
+using Humanizer;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.ML.OnnxRuntime;
@@ -175,7 +176,13 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     /// <summary>
     /// Encode a batch. Faster than N single calls. Returns null for failed samples.
     /// </summary>
-    public async Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+    public Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+        => EmbedBatchAsync(texts, default(BatchEmbeddingProgress), cancellationToken);
+
+    /// <summary>
+    /// Encode a batch with progress reporting. Faster than N single calls. Returns null for failed samples.
+    /// </summary>
+    public async Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
     {
         if (!Enabled || texts is null || texts.Count == 0) return [];
         var batch = texts.Count;
@@ -228,9 +235,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                 }
 
                 totalTimer.Stop();
-                _logger.LogInformation("Batch embedding: size={BatchSize}, tokenize={TokenizeMs:F1}ms, tensorPrep={TensorPrepMs:F1}ms, total={TotalMs:F1}ms, perItem={PerItemMs:F1}ms",
-                    batch, tokenizeTimer.Elapsed.TotalMilliseconds, tensorPrepTimer.Elapsed.TotalMilliseconds,
-                    totalTimer.Elapsed.TotalMilliseconds, totalTimer.Elapsed.TotalMilliseconds / batch);
+                LogBatchProgress(progress, batch, totalTimer.Elapsed);
                 return result;
             }
             finally
@@ -271,9 +276,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                 }
 
                 totalTimer.Stop();
-                _logger.LogInformation("Batch embedding: size={BatchSize}, tokenize={TokenizeMs:F1}ms, tensorPrep={TensorPrepMs:F1}ms, total={TotalMs:F1}ms, perItem={PerItemMs:F1}ms",
-                    batch, tokenizeTimer.Elapsed.TotalMilliseconds, tensorPrepTimer.Elapsed.TotalMilliseconds,
-                    totalTimer.Elapsed.TotalMilliseconds, totalTimer.Elapsed.TotalMilliseconds / batch);
+                LogBatchProgress(progress, batch, totalTimer.Elapsed);
                 return result;
             }
             finally
@@ -281,6 +284,33 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                 ArrayPool<long>.Shared.Return(ids);
                 ArrayPool<long>.Shared.Return(mask);
             }
+        }
+    }
+
+    private void LogBatchProgress(BatchEmbeddingProgress progress, int batchSize, TimeSpan batchTime)
+    {
+        var perItemMs = batchSize == 0 ? 0 : batchTime.TotalMilliseconds / batchSize;
+
+        if (progress.TotalBatches > 0)
+        {
+            var eta = progress.EstimatedRemaining;
+            var etaStr = eta.HasValue && eta.Value > TimeSpan.Zero
+                ? $", ETA {eta.Value.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Second)}"
+                : "";
+
+            _logger.LogInformation(
+                "Batch embedding: {Batch}/{Total} ({Percent}%) size={BatchSize}, batch={BatchTime}, perItem={PerItemMs:F1}ms{Eta}",
+                progress.BatchNumber, progress.TotalBatches, progress.PercentComplete, batchSize,
+                batchTime.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond),
+                perItemMs, etaStr);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Batch embedding: size={BatchSize}, batch={BatchTime}, perItem={PerItemMs:F1}ms",
+                batchSize,
+                batchTime.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond),
+                perItemMs);
         }
     }
 

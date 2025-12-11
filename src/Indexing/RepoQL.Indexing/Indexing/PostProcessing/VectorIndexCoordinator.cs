@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using Humanizer;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
@@ -148,17 +149,40 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         var totalBatches = (workItems.Count + StructureEmbeddingBatchSize - 1) / StructureEmbeddingBatchSize;
         var batchNum = 0;
 
+        using var structureActivity = IndexingEngine.ActivitySource.StartActivity("repoql.embedding.structure", ActivityKind.Internal);
+        structureActivity?.SetTag("items", workItems.Count);
+        structureActivity?.SetTag("batches", totalBatches);
+        structureActivity?.SetTag("model", _embeddingProvider.Model);
+
         for (var offset = 0; offset < workItems.Count; offset += StructureEmbeddingBatchSize)
         {
             batchNum++;
             var batch = workItems.Skip(offset).Take(StructureEmbeddingBatchSize).ToArray();
             var payloads = batch.Select(w => w.Payload).ToArray();
 
-            var percentComplete = (int)((offset + batch.Length) * 100.0 / workItems.Count);
-            _logger.LogInformation("Structure embeddings: batch {Batch}/{Total} ({Percent}%)",
-                batchNum, totalBatches, percentComplete);
+            var itemsAfterBatch = offset + batch.Length;
+            var progress = new BatchEmbeddingProgress(batchNum, totalBatches, itemsAfterBatch, workItems.Count, timer.Elapsed);
 
-            var vectors = await _embeddingProvider.EmbedBatchAsync(payloads, cancellationToken).ConfigureAwait(false);
+            var batchTimer = Stopwatch.StartNew();
+            float[]?[] vectors;
+            using (var batchActivity = IndexingEngine.ActivitySource.StartActivity("repoql.embedding.structure.batch", ActivityKind.Internal))
+            {
+                batchActivity?.SetTag("batch", batchNum);
+                batchActivity?.SetTag("total_batches", totalBatches);
+                batchActivity?.SetTag("size", batch.Length);
+
+                vectors = await _embeddingProvider.EmbedBatchAsync(payloads, progress, cancellationToken).ConfigureAwait(false);
+            }
+            batchTimer.Stop();
+
+            var percentComplete = (int)(itemsAfterBatch * 100.0 / workItems.Count);
+            var eta = progress.EstimatedRemaining;
+            var etaStr = eta.HasValue && eta.Value > TimeSpan.Zero
+                ? $", ETA {eta.Value.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Second)}"
+                : "";
+            _logger.LogInformation("Structure embeddings: {Batch}/{Total} ({Percent}%) - {BatchSize} items in {Time}{Eta}",
+                batchNum, totalBatches, percentComplete, batch.Length,
+                batchTimer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond), etaStr);
 
             for (var i = 0; i < batch.Length; i++)
             {
@@ -193,7 +217,8 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         }
 
         timer.Stop();
-        _logger.LogInformation("Structure embeddings complete: {Count} embeddings in {Ms}ms", allEmbeddings.Count, timer.ElapsedMilliseconds);
+        _logger.LogInformation("Structure embeddings complete: {Count} embeddings in {Time}",
+            allEmbeddings.Count, timer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond));
     }
 
     private static string BuildStructurePayload(string uri, string? headline, string? structure)

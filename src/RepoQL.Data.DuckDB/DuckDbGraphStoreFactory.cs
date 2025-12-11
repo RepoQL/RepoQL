@@ -15,15 +15,18 @@ public sealed class DuckDbGraphStoreFactory : IDuckDbGraphStoreFactory
     private readonly IndexingMetrics? _metrics;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly ILogger<DuckDbGraphStore> _logger;
+    private readonly string? _repoRootPath;
 
     public DuckDbGraphStoreFactory(
         IndexingMetrics? metrics = null,
         IEmbeddingProvider? embeddingProvider = null,
-        ILogger<DuckDbGraphStore>? logger = null)
+        ILogger<DuckDbGraphStore>? logger = null,
+        string? repoRootPath = null)
     {
         _metrics = metrics;
         _embeddingProvider = embeddingProvider;
         _logger = logger ?? NullLogger<DuckDbGraphStore>.Instance;
+        _repoRootPath = repoRootPath;
     }
 
     public DuckDbGraphStore Create(DuckDBConnection connection, IEnumerable<FormatSqlScript>? formatSchemaScripts = null)
@@ -35,6 +38,7 @@ public sealed class DuckDbGraphStoreFactory : IDuckDbGraphStoreFactory
             registerUdfs: true,
             logger: _logger,
             embeddingProvider: _embeddingProvider,
-            formatSchemaScripts: formatSchemaScripts);
+            formatSchemaScripts: formatSchemaScripts,
+            repoRootPath: _repoRootPath);
     }
 }
