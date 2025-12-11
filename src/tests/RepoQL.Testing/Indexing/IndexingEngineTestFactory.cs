@@ -31,7 +31,7 @@ public static class IndexingEngineTestFactory
 
 public sealed class IndexingEngineTestBuilder
 {
-    private IDatabaseWriter? _databaseWriter;
+    private IRepoDatabase? _database;
     private IUriFilter? _filter;
     private ClassificationPipeline? _classifier;
     private ParsingPipeline? _parser;
@@ -45,9 +45,9 @@ public sealed class IndexingEngineTestBuilder
     private IndexingEngineOptions? _options;
     private ILogger<IndexingEngine>? _logger;
 
-    public IndexingEngineTestBuilder WithDatabaseWriter(IDatabaseWriter writer)
+    public IndexingEngineTestBuilder WithDatabase(IRepoDatabase db)
     {
-        _databaseWriter = writer;
+        _database = db;
         return this;
     }
 
@@ -190,7 +190,7 @@ public sealed class IndexingEngineTestBuilder
         var logger = _logger ?? TestLogging.CreateLogger<IndexingEngine>();
 
         var engine = new IndexingEngine(
-            databaseWriter: _databaseWriter,
+            db: _database,
             filter: filter,
             classifier: classifier,
             parser: parser,
@@ -214,7 +214,7 @@ public sealed class IndexingEngineTestBuilder
             filter,
             catalog,
             committer,
-            _databaseWriter,
+            _database,
             artifactPruner,
             vectorCoordinator,
             options,
@@ -234,7 +234,7 @@ public sealed class IndexingEngineTestContext
         IUriFilter filter,
         IDocumentCatalog catalog,
         IIndexingCommitter committer,
-        IDatabaseWriter? writer,
+        IRepoDatabase? database,
         IArtifactPruner artifactPruner,
         IVectorIndexCoordinator vectorCoordinator,
         IndexingEngineOptions options,
@@ -249,7 +249,7 @@ public sealed class IndexingEngineTestContext
         Filter = filter;
         Catalog = catalog;
         Committer = committer;
-        Writer = writer;
+        Database = database;
         ArtifactPruner = artifactPruner;
         VectorCoordinator = vectorCoordinator;
         Options = options;
@@ -265,7 +265,7 @@ public sealed class IndexingEngineTestContext
     public IUriFilter Filter { get; }
     public IDocumentCatalog Catalog { get; }
     public IIndexingCommitter Committer { get; }
-    public IDatabaseWriter? Writer { get; }
+    public IRepoDatabase? Database { get; }
     public IArtifactPruner ArtifactPruner { get; }
     public IVectorIndexCoordinator VectorCoordinator { get; }
     public IndexingEngineOptions Options { get; }

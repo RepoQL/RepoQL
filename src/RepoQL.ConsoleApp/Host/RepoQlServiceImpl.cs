@@ -26,13 +26,12 @@ namespace RepoQL.ConsoleApp.Host;
 
 public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 {
-    private readonly IGraphStore store;
+    private readonly IRepoDatabase _db;
     private readonly RepositoryConfiguration repoConfig;
     private readonly IInitialIndexingBarrier barrier;
     private readonly IIndexingCoordinator coordinator;
     private readonly IFileSystemImportService importService;
     private readonly DocumentPreviewService _previewService;
-    private readonly IDatabaseWriter writer;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly ILogger<RepoQlServiceImpl> _logger;
@@ -44,28 +43,25 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
 
     public RepoQlServiceImpl(
-        IGraphStore store,
+        IRepoDatabase db,
         RepositoryConfiguration repoConfig,
         IInitialIndexingBarrier barrier,
         IIndexingCoordinator coordinator,
         IFileSystemImportService importService,
         DocumentPreviewService previewService,
-        IDatabaseWriter writer,
         IHostApplicationLifetime hostLifetime,
         IEmbeddingProvider? embeddingProvider = null,
         ILogger<RepoQlServiceImpl>? logger = null)
     {
-        this.store = store ?? throw new ArgumentNullException(nameof(store));
+        _db = db ?? throw new ArgumentNullException(nameof(db));
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
         this.barrier = barrier ?? throw new ArgumentNullException(nameof(barrier));
         this._embeddingProvider = embeddingProvider;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
         _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
-        this.writer = writer ?? throw new ArgumentNullException(nameof(writer));
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
-        // Note: Schema version checking is now handled by DuckDbGraphStore.EnsureSchema()
     }
 
     public override Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
@@ -75,8 +71,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         var resp = new RawQueryResponse();
         try
         {
-            var parameters = request.Parameters.Select(FromProtoValue).ToArray();
-            var rows = store.RawQuery(request.Sql, parameters);
+            var rows = _db.Query(request.Sql);
 
             var limited = request.Limit > 0;
             var take = limited ? rows.Take(request.Limit) : rows;
@@ -102,7 +97,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 resp.Rows.Add(rd);
             }
             resp.RowCount = resp.Rows.Count;
-            resp.Truncated = limited && (first is not null) && (store.RawQuery(request.Sql, parameters).Skip(resp.Rows.Count).Any());
+            resp.Truncated = limited && (first is not null) && (_db.Query(request.Sql).Skip(resp.Rows.Count).Any());
         }
         catch (Exception ex)
         {
@@ -179,13 +174,13 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             try
             {
                 var canonicalUri = CanonicalizeRepositoryUri(u, repoConfig.Path);
-                var sql = @"SELECT kind, severity, source, rule_id, message,
-                                   CASE WHEN ? THEN data ELSE NULL END AS data,
-                                   CASE WHEN ? THEN resolved_target_uri ELSE NULL END AS resolved_target_uri,
+                var kindsList = string.Join(',', kinds);
+                var sql = $@"SELECT kind, severity, source, rule_id, message,
+                                   CASE WHEN {includeData} THEN data ELSE NULL END AS data,
+                                   CASE WHEN {includeResolvedTargetUri} THEN resolved_target_uri ELSE NULL END AS resolved_target_uri,
                                    target_node_id, target_edge_id, target_span_id, created_at, expires_at
-                            FROM annotations_for(?, ?, ?)";
-                var rows = store.RawQuery(sql, includeData, includeResolvedTargetUri, canonicalUri,
-                    string.Join(',', kinds), minSeverity ?? (object)DBNull.Value);
+                            FROM annotations_for('{canonicalUri.Replace("'", "''")}', '{kindsList.Replace("'", "''")}', {(minSeverity is null ? "NULL" : $"'{minSeverity.Replace("'", "''")}'")})";
+                var rows = _db.Query(sql);
 
                 var any = false;
                 foreach (var row in rows)
@@ -225,8 +220,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 }
                 if (!any)
                 {
-                    const string existsSql = "SELECT 1 FROM node WHERE lower(uri)=lower(repository_uri_container(?)) LIMIT 1";
-                    var exists = store.RawQuery(existsSql, canonicalUri).Any();
+                    var existsSql = $"SELECT 1 FROM node WHERE lower(uri)=lower(repository_uri_container('{canonicalUri.Replace("'", "''")}')) LIMIT 1";
+                    var exists = _db.Query(existsSql).Any();
                     result.Status = exists ? SummaryStatus.Ok : SummaryStatus.NotFound;
                 }
                 else
@@ -474,17 +469,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         }
     }
 
-    private static object? FromProtoValue(Value v) => v.KindCase switch
-    {
-        Value.KindOneofCase.NullValue => DBNull.Value,
-        Value.KindOneofCase.BoolValue => v.BoolValue,
-        Value.KindOneofCase.NumberValue => v.NumberValue,
-        Value.KindOneofCase.StringValue => v.StringValue,
-        Value.KindOneofCase.StructValue => JsonFormatter.Default.Format(v),
-        Value.KindOneofCase.ListValue => JsonFormatter.Default.Format(v),
-        _ => DBNull.Value
-    };
-
     private static Value ToProtoValue(object? value) => value switch
     {
         null => Value.ForNull(),
@@ -536,8 +520,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         {
             await responseStream.WriteAsync(ToProtoProgress(progress)).ConfigureAwait(false);
         }
-
-        await writer.FlushAsync(context.CancellationToken).ConfigureAwait(false);
     }
 
     public override async Task<WaitForPipelineResponse> WaitForPipeline(WaitForPipelineRequest request, ServerCallContext context)
@@ -580,12 +562,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             await coordinator.WaitForPipelineAsync(waitStages, waitAll: true, context.CancellationToken).ConfigureAwait(false);
         }
 
-        // Flush writer to ensure all indexed documents are committed before refreshing FTS
-        await writer.FlushAsync(context.CancellationToken).ConfigureAwait(false);
-
         // Refresh search projection and embeddings to include newly imported documents
         var waitForEmbeddings = waitStages.Contains(CoordinatorPipelineStage.Writer); // Writer = SemanticIndexing
-        if (store is DuckDbGraphStore duck)
+        if (_db is DuckDbRepoDatabase duck)
         {
             duck.RefreshSearchProjection(incrementalRefresh: true);
 

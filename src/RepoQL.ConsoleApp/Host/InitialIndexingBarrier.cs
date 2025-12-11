@@ -9,7 +9,7 @@ namespace RepoQL.ConsoleApp.Host;
 
 internal sealed class InitialIndexingBarrier(
     IIndexingCoordinator coordinator,
-    IGraphStore store,
+    IRepoDatabase db,
     ILogger<InitialIndexingBarrier>? logger = null)
     : BackgroundService, IInitialIndexingBarrier
 {
@@ -26,7 +26,7 @@ internal sealed class InitialIndexingBarrier(
             await coordinator.WaitForIdleAsync(stoppingToken).ConfigureAwait(false);
             try
             {
-                if (store is DuckDbGraphStore duck)
+                if (db is DuckDbRepoDatabase duck)
                 {
                     using var span = Activity.StartActivity("repoql.search.refresh");
                     span?.SetTag("repoql.search.refresh.phase", "initial");

@@ -630,19 +630,17 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
-    [DisplayName("Pruning deletes are issued through the database writer")]
-    public async Task Given_StaleDocuments_When_PrunerFindsThem_Then_DeleteOperationSentToWriter(CancellationToken token)
+    [DisplayName("Pruning deletes are issued through the database")]
+    public async Task Given_StaleDocuments_When_PrunerFindsThem_Then_DeleteOperationSentToDatabase(CancellationToken token)
     {
         var deleteUri = CreateUri("file:///repo/stale.md");
         var pruner = A.Fake<IArtifactPruner>();
         A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<IndexItem>>._, A<CancellationToken>._))
             .Returns(Task.FromResult(new PruningResult(new[] { deleteUri })));
 
-        var writer = A.Fake<IDatabaseWriter>();
-        A.CallTo(() => writer.EnqueueAndWaitAsync(
-                A<WriteOperation>.That.Matches(op => op.Type == WriteOperationType.DeleteDocument && op.Uri == deleteUri),
-                A<CancellationToken>._))
-            .Returns(new ValueTask<CommitResult>(new CommitResult { Success = true }));
+        var db = A.Fake<IRepoDatabase>();
+        A.CallTo(() => db.DeleteArtifact(deleteUri))
+            .Returns(true);
 
         var vector = NullVectorIndexCoordinator.Instance;
         var analysisSignal = NewTaskCompletionSource<bool>();
@@ -651,12 +649,12 @@ public class IndexingEngineTests
             multiFileSignal: analysisSignal,
             pruner: pruner,
             vectorCoordinator: vector,
-            writer: writer);
+            db: db);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/live.md"), IndexItemOptions.Default, token);
 
         await analysisSignal.Task.WaitAsync(token);
-        writer.ShouldHaveDeletedDocuments(deleteUri);
+        db.ShouldHaveDeletedDocuments(deleteUri);
     }
 
     private static RepoUri CreateUri(string value)
@@ -716,7 +714,7 @@ public class IndexingEngineTests
         TaskCompletionSource<bool> multiFileSignal,
         IArtifactPruner? pruner = null,
         IVectorIndexCoordinator? vectorCoordinator = null,
-        IDatabaseWriter? writer = null)
+        IRepoDatabase? db = null)
     {
         var context = IndexingEngineTestFactory.Create(builder =>
         {
@@ -738,9 +736,9 @@ public class IndexingEngineTests
                 builder.WithVectorCoordinator(vectorCoordinator);
             }
 
-            if (writer is not null)
+            if (db is not null)
             {
-                builder.WithDatabaseWriter(writer);
+                builder.WithDatabase(db);
             }
         });
 

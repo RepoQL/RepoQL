@@ -271,8 +271,11 @@ internal class HostCommands(IAnsiConsole console)
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
-            using var stream = new FileStream(dbPath, FileMode.OpenOrCreate, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            // If database doesn't exist yet, it's not locked
+            if (!File.Exists(dbPath))
+                return true;
+
+            using var stream = new FileStream(dbPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             return true;
         }
         catch (IOException ex) when (IsSharingViolation(ex))

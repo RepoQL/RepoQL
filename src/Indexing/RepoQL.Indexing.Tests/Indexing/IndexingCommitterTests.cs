@@ -25,29 +25,26 @@ public class IndexingCommitterTests
         A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._))
             .Invokes(call => appliedEntry = call.GetArgument<DocumentCatalogEntry>(0));
 
-        var writer = A.Fake<IDatabaseWriter>();
-        WriteOperation? capturedOperation = null;
-        A.CallTo(() => writer.EnqueueAndWaitAsync(A<WriteOperation>._, A<CancellationToken>._))
+        var db = A.Fake<IRepoDatabase>();
+        ParsedArtifact? capturedArtifact = null;
+        A.CallTo(() => db.IndexArtifactBatch(A<IReadOnlyList<(RepoUri, ParsedArtifact)>>._))
             .ReturnsLazily(call =>
             {
-                capturedOperation = call.GetArgument<WriteOperation>(0);
-                return new ValueTask<CommitResult>(new CommitResult { Success = true });
+                var items = call.GetArgument<IReadOnlyList<(RepoUri, ParsedArtifact)>>(0)!;
+                if (items.Count > 0)
+                    capturedArtifact = items[0].Item2;
+                return items.Select(_ => new IndexResult(Guid.NewGuid(), false)).ToList();
             });
 
-        var committer = new IndexingCommitter(writer, catalog, NullLogger<IndexingCommitter>.Instance);
+        using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
 
         // Act
         await committer.CommitAsync(item, CancellationToken.None);
 
         // Assert
-        capturedOperation.Should().NotBeNull();
-        capturedOperation!.Type.Should().Be(WriteOperationType.ReplaceDocument);
-        capturedOperation.Uri.Should().Be(item.Uri);
-        capturedOperation.ParsedData.Should().NotBeNull();
-        capturedOperation.ParsedData!.Annotations.Length.Should().Be(1);
-
-        // Simulate the writer completing successfully.
-        await capturedOperation.OnCommitted!(capturedOperation, new CommitResult { Success = true });
+        capturedArtifact.Should().NotBeNull();
+        capturedArtifact!.DocumentNode.Should().NotBeNull();
+        capturedArtifact.Annotations.Count.Should().Be(1);
 
         appliedEntry.Should().NotBeNull();
         appliedEntry!.Uri.Should().Be(item.Uri);
@@ -65,15 +62,15 @@ public class IndexingCommitterTests
         item.DigestHex = Convert.ToHexString(await item.RawArtifact.Digest.WithCancellation(CancellationToken.None));
         item.MediaType = SemanticMediaType.Parse("text/markdown;kind=markdown.doc");
 
-        var writer = A.Fake<IDatabaseWriter>();
+        var db = A.Fake<IRepoDatabase>();
         var catalog = A.Fake<IDocumentCatalog>();
-        var committer = new IndexingCommitter(writer, catalog, NullLogger<IndexingCommitter>.Instance);
+        using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
 
         // Act
         await committer.CommitAsync(item, CancellationToken.None);
 
         // Assert
-        A.CallTo(() => writer.EnqueueAndWaitAsync(A<WriteOperation>._, A<CancellationToken>._)).MustNotHaveHappened();
+        A.CallTo(() => db.IndexArtifactBatch(A<IReadOnlyList<(RepoUri, ParsedArtifact)>>._)).MustNotHaveHappened();
         A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._)).MustNotHaveHappened();
     }
 
@@ -84,23 +81,19 @@ public class IndexingCommitterTests
         // Arrange
         var item = await CreatePopulatedItemAsync("file:///repo/doc.md");
 
-        var writer = A.Fake<IDatabaseWriter>();
-        A.CallTo(() => writer.EnqueueAndWaitAsync(A<WriteOperation>._, A<CancellationToken>._))
-            .Returns(new ValueTask<CommitResult>(new CommitResult
-            {
-                Success = false,
-                Error = new InvalidOperationException("DuckDB failure")
-            }));
+        var db = A.Fake<IRepoDatabase>();
+        A.CallTo(() => db.IndexArtifactBatch(A<IReadOnlyList<(RepoUri, ParsedArtifact)>>._))
+            .Throws(new InvalidOperationException("DuckDB failure"));
 
         var catalog = A.Fake<IDocumentCatalog>();
-        var committer = new IndexingCommitter(writer, catalog, NullLogger<IndexingCommitter>.Instance);
+        using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
 
         // Act
         var act = async () => await committer.CommitAsync(item, CancellationToken.None);
 
         // Assert
         await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("Database commit failed for *");
+            .WithMessage("DuckDB failure");
         A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._)).MustNotHaveHappened();
     }
 
@@ -110,16 +103,26 @@ public class IndexingCommitterTests
         item.MediaType = SemanticMediaType.Parse("text/markdown;kind=markdown.doc");
         item.DigestHex = Convert.ToHexString(await item.RawArtifact.Digest.WithCancellation(CancellationToken.None));
 
+        var artifactId = Guid.NewGuid();
+        var artifact = new RepoQL.Contracts.Models.Artifact
+        {
+            Id = artifactId,
+            Digest = "abc123",
+            Size = 7,
+            MediaType = SemanticMediaType.Parse("text/markdown"),
+            Headline = "Title"
+        };
+
         var documentNode = new Node
         {
             Kind = "document",
             Uri = item.Uri,
-            ArtifactId = Guid.NewGuid()
+            ArtifactId = artifactId
         };
 
         item.Records = new Records
         {
-            Artifacts = [],
+            Artifacts = [artifact],
             Nodes = [documentNode],
             Spans = [],
             Edges = [],

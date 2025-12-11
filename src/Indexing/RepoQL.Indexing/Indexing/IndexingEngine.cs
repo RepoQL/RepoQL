@@ -233,12 +233,12 @@ public partial class IndexingEngine : IAsyncDisposable
     private WorkQueue<IndexItem> IndexerQueue { get; }
 
     public IndexingEngine(
-        IDatabaseWriter? databaseWriter,
+        IRepoDatabase? db,
         IUriFilter? filter,
-        ClassificationPipeline? classifier = null, 
-        ParsingPipeline? parser = null, 
-        SingleFileAnalysisPipeline? singleFileAnalyzer = null, 
-        MultiFileAnalysisPipeline? multiFileAnalyzer = null, 
+        ClassificationPipeline? classifier = null,
+        ParsingPipeline? parser = null,
+        SingleFileAnalysisPipeline? singleFileAnalyzer = null,
+        MultiFileAnalysisPipeline? multiFileAnalyzer = null,
         IndexRebuildPipeline? indexRebuilder = null,
         IDocumentCatalog? documentCatalog = null,
         IIndexingCommitter? committer = null,
@@ -248,7 +248,8 @@ public partial class IndexingEngine : IAsyncDisposable
         ILogger<IndexingEngine>? logger = null,
         IndexingMetrics? metrics = null)
     {
-        Writer =  databaseWriter;
+        Database = db;
+        Writer =  db as IDatabaseWriter;
         Filter = filter ?? new RepoGitIgnoreFilter(".");
         Classifier = classifier ?? new ClassificationPipeline( []);
         Parser = parser ?? new ParsingPipeline([]);
@@ -256,10 +257,7 @@ public partial class IndexingEngine : IAsyncDisposable
         MultiFileAnalyzer = multiFileAnalyzer ??  new MultiFileAnalysisPipeline([]);
         IndexRebuilder = indexRebuilder ?? new IndexRebuildPipeline([]);
         DocumentCatalog = documentCatalog ?? new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
-        Committer = committer
-            ?? (databaseWriter is not null
-                ? new IndexingCommitter(databaseWriter, DocumentCatalog)
-                : NullIndexingCommitter.Instance);
+        Committer = committer ?? NullIndexingCommitter.Instance;
         ArtifactPruner = artifactPruner ?? NullArtifactPruner.Instance;
         VectorCoordinator = vectorCoordinator ?? NullVectorIndexCoordinator.Instance;
         Options = options ??  new IndexingEngineOptions();
@@ -361,6 +359,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
     public IUriFilter Filter { get; }
 
+    public IRepoDatabase? Database { get; }
     public IDatabaseWriter? Writer { get; }
 
     public WorkQueue<IndexItem> AnalysisQueue { get; }
@@ -890,47 +889,34 @@ public partial class IndexingEngine : IAsyncDisposable
         }
     }
 
-    private async Task DeleteStaleDocumentsAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken)
+    private Task DeleteStaleDocumentsAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken)
     {
         if (deletedArtifacts.Count == 0)
-            return;
+            return Task.CompletedTask;
 
-        if (Writer is null)
+        if (Database is null)
         {
-            Logger.LogWarning("Detected {Count} stale documents but no writer is configured; catalog entries will be cleared only in-memory.", deletedArtifacts.Count);
+            Logger.LogWarning("Detected {Count} stale documents but no database is configured; catalog entries will be cleared only in-memory.", deletedArtifacts.Count);
             foreach (var uri in deletedArtifacts)
             {
                 DocumentCatalog.ApplyDelete(uri);
             }
-            return;
+            return Task.CompletedTask;
         }
 
         foreach (var uri in deletedArtifacts)
         {
-            var operation = new WriteOperation
-            {
-                Id = Guid.NewGuid(),
-                Type = WriteOperationType.DeleteDocument,
-                Uri = uri,
-                ParsedData = Records.Empty,
-                ParentContext = Activity.Current?.Context,
-                OnCommitted = (_, result) =>
-                {
-                    if (result.Success)
-                    {
-                        DocumentCatalog.ApplyDelete(uri);
-                    }
+            cancellationToken.ThrowIfCancellationRequested();
 
-                    return Task.CompletedTask;
-                }
-            };
-
-            var commitResult = await Writer.EnqueueAndWaitAsync(operation, cancellationToken).ConfigureAwait(false);
-            if (!commitResult.Success)
+            // IRepoDatabase.DeleteArtifact is synchronous
+            var deleted = Database.DeleteArtifact(uri);
+            if (deleted)
             {
-                throw commitResult.Error ?? new InvalidOperationException($"Database delete failed for {uri}.");
+                DocumentCatalog.ApplyDelete(uri);
             }
         }
+
+        return Task.CompletedTask;
     }
 
     internal async Task<PipelineResult> ApplyIndexerPipeline(IndexItem item, CancellationToken cancellationToken)

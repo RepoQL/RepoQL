@@ -49,6 +49,11 @@ public interface IRepoDatabase : IDisposable
     IndexResult IndexArtifact(RepoUri uri, ParsedArtifact artifact);
 
     /// <summary>
+    /// Index multiple artifacts in a single transaction for better performance.
+    /// </summary>
+    IReadOnlyList<IndexResult> IndexArtifactBatch(IReadOnlyList<(RepoUri Uri, ParsedArtifact Artifact)> items);
+
+    /// <summary>
     /// Delete an artifact and its entire subtree by URI.
     /// </summary>
     /// <returns>True if artifact was found and deleted; false if not found.</returns>
@@ -56,10 +61,13 @@ public interface IRepoDatabase : IDisposable
 
     /// <summary>
     /// Replace annotations for an artifact. Deletes existing annotations from
-    /// the same sources as the new annotations, then inserts the new ones.
+    /// the specified sources, then inserts the new ones.
     /// </summary>
+    /// <param name="artifactUri">URI of the artifact to update.</param>
+    /// <param name="annotations">New annotations to insert.</param>
+    /// <param name="sourcesToClear">Sources to clear before inserting. If null, inferred from annotations.</param>
     /// <returns>True if artifact was found; false if not found.</returns>
-    bool ReplaceAnnotations(RepoUri artifactUri, IReadOnlyList<Annotation> annotations);
+    bool ReplaceAnnotations(RepoUri artifactUri, IReadOnlyList<Annotation> annotations, IReadOnlyCollection<string>? sourcesToClear = null);
 
     /// <summary>
     /// Write embeddings in batch. Supports both structure and full embeddings,

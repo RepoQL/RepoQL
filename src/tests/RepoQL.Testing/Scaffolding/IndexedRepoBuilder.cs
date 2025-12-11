@@ -54,6 +54,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
     private readonly string _databasePath;
     private readonly ILoggerFactory _loggerFactory;
     private readonly IReadOnlyList<FormatSqlScript> _formatScripts;
+    private IRepoDatabase _database;
     private DuckDbGraphStore _store;
     private readonly ConcurrentDictionary<string, RepoUri> _trackedUris = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
@@ -61,6 +62,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
     private IndexedRepoBuilder(
         MemoryFileSystem fileSystem,
         CompositeFileSystem composite,
+        IRepoDatabase database,
         DuckDbGraphStore store,
         MetricsIndexingMetrics metrics,
         FormatRegistry? formatRegistry,
@@ -79,6 +81,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
     {
         FileSystem = fileSystem;
         _compositeFileSystem = composite;
+        _database = database;
         _store = store;
         Metrics = metrics;
         FormatRegistry = formatRegistry;
@@ -139,6 +142,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
         var databasePath = ResolveDatabasePath(options);
         var deleteOnDispose = options.DeleteDatabaseOnDispose || string.IsNullOrWhiteSpace(options.DatabasePath);
 
+        IRepoDatabase? database = null;
         DuckDbGraphStore? store = null;
         IAnalysisResultWriter? analysisWriter = null;
         SingleThreadedDatabaseWriter? singleWriter = null;
@@ -160,6 +164,15 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
                 .ToList();
 
+            // Create unified database interface for indexing operations
+            database = new DuckDbRepoDatabase(
+                databasePath,
+                embeddingProvider: null,
+                formatSchemaScripts: formatScripts,
+                logger: loggerFactory.CreateLogger<DuckDbRepoDatabase>());
+            database.EnsureSchema();
+
+            // Create legacy graph store for test helper methods
             store = new DuckDbGraphStore(
                 databasePath,
                 metrics,
@@ -167,7 +180,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 formatSchemaScripts: formatScripts);
             store.EnsureSchema();
 
-            analysisWriter = options.CreateAnalysisWriter?.Invoke(store);
+            analysisWriter = options.CreateAnalysisWriter?.Invoke(database);
 
             var connectionFactory = new DuckDBConnectionFactory($"Data Source={databasePath}");
 
@@ -198,7 +211,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 loggerFactory.CreateLogger<StorageBackedArtifactPruner>());
             var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
             var committer = new IndexingCommitter(
-                writer,
+                database,
                 catalog,
                 loggerFactory.CreateLogger<IndexingCommitter>());
 
@@ -244,7 +257,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 loggerFactory.CreateLogger<IndexRebuildPipeline>());
 
             engine = new IndexingEngine(
-                writer,
+                database,
                 options.Filter,
                 classificationPipeline,
                 parsingPipeline,
@@ -261,7 +274,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
             coordinator = new IndexingCoordinator(
                 composite,
                 engine,
-                writer,
+                database,
                 loggerFactory.CreateLogger<IndexingCoordinator>());
 
             var hostOptions = new RepoqlHostOptions
@@ -280,6 +293,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
             return new IndexedRepoBuilder(
                 fileSystem,
                 composite,
+                database,
                 store,
                 metrics,
                 formatRegistry,
@@ -314,6 +328,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                     break;
             }
 
+            database?.Dispose();
             store?.Dispose();
             metrics.Dispose();
 

@@ -1,6 +1,5 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using RepoQL.Contracts.Data;
 
 namespace RepoQL.ConsoleApp.Host;
 
@@ -8,7 +7,6 @@ internal sealed class IdleShutdownHostedService(
     IHostApplicationLifetime lifetime,
     ILogger<IdleShutdownHostedService> logger,
     HostState state,
-    IDatabaseWriter writer,
     HostMetrics metrics
 ) : BackgroundService
 {
@@ -20,7 +18,7 @@ internal sealed class IdleShutdownHostedService(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         metrics.SetLeaseCountProvider(() => LeaseRegistry.Count);
-        metrics.SetWriterPendingProvider(() => writer.GetStatus().PendingCount);
+        metrics.SetWriterPendingProvider(() => 0); // Always 0 with sync writes
         metrics.SetImplicitStartProvider(() => state.ImplicitStart ? 1 : 0);
         metrics.SetIdleSecondsProvider(() => _idleSecondsRemaining);
 
@@ -38,16 +36,15 @@ internal sealed class IdleShutdownHostedService(
                     if ((now - l.LastBeatUtc) > _leaseTtl) LeaseRegistry.Remove(l.ClientId);
 
                 var active = LeaseRegistry.Count;
-                var writerIdle = writer.GetStatus().PendingCount == 0;
 
-                if (active == 0 && writerIdle)
+                if (active == 0)
                 {
                     idleStartUtc ??= now;
                     var remaining = _idleGrace - (now - idleStartUtc.Value);
                     _idleSecondsRemaining = Math.Max(0, remaining.TotalSeconds);
                     if (remaining <= TimeSpan.Zero)
                     {
-                        logger.LogInformation("IdleShutdown: no clients and writer idle for {Elapsed}s — shutting down", _idleGrace.TotalSeconds);
+                        logger.LogInformation("IdleShutdown: no clients for {Elapsed}s — shutting down", _idleGrace.TotalSeconds);
                         lifetime.StopApplication();
                         break;
                     }

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
 using RepoQL.Indexing.Indexing.Pipelines;
@@ -9,10 +10,21 @@ using RepoQL.Indexing.Indexing.State;
 namespace RepoQL.Indexing.Indexing.Commit;
 
 /// <summary>
-/// Converts <see cref="IndexItem"/> to <see cref="WriteOperation"/> and persists to database.
-/// Updates <see cref="IDocumentCatalog"/> via OnCommitted callback after write succeeds.
+/// Converts <see cref="IndexItem"/> to <see cref="ParsedArtifact"/> and persists to database.
+/// Updates <see cref="IDocumentCatalog"/> after write succeeds.
 /// </summary>
 /// <remarks>
+/// <para><strong>Batching</strong></para>
+/// <para>
+/// Items are queued and committed in batches for better performance.
+/// Batches are flushed when:
+/// </para>
+/// <list type="bullet">
+/// <item><description>Batch size reaches <see cref="MaxBatchSize"/> (default 32)</description></item>
+/// <item><description>Timer fires after <see cref="FlushIntervalMs"/> (default 25ms)</description></item>
+/// </list>
+/// <para>Callers wait on a TaskCompletionSource until their item is committed.</para>
+///
 /// <para><strong>Validation</strong></para>
 /// <para>
 /// Before creating write operation, validates:
@@ -33,38 +45,46 @@ namespace RepoQL.Indexing.Indexing.Commit;
 /// <item><description><see cref="IndexItem.Records"/>.Annotations (from parsers)</description></item>
 /// <item><description><see cref="IndexItem.AnnotationsList"/> (from analyzers)</description></item>
 /// </list>
-/// <para>
-/// Both are written to database in single commit.
-/// </para>
-///
-/// <para><strong>OnCommitted Callback</strong></para>
-/// <para>
-/// Creates <see cref="WriteOperation.OnCommitted"/> callback that updates catalog ONLY if
-/// write succeeds. This ensures catalog reflects committed state (not in-progress state).
-/// </para>
-/// <code>
-/// OnCommitted: (_, result) => {
-///     if (result.Success)
-///         catalog.ApplyUpsert(new DocumentCatalogEntry(...));
-/// }
-/// </code>
-///
-/// <para><strong>Error Handling</strong></para>
-/// <para>
-/// If <see cref="IDatabaseWriter.EnqueueAndWaitAsync"/> returns <c>Success = false</c>,
-/// throws <see cref="InvalidOperationException"/>. This allows <see cref="IndexingEngine"/>
-/// to handle the error (typically log and continue, allowing retry).
-/// </para>
 /// </remarks>
-public sealed class IndexingCommitter(
-    IDatabaseWriter writer,
-    IDocumentCatalog catalog,
-    ILogger<IndexingCommitter>? logger = null)
-    : IIndexingCommitter
+public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
 {
-    private readonly IDatabaseWriter _writer = writer ?? throw new ArgumentNullException(nameof(writer));
-    private readonly IDocumentCatalog _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
-    private readonly ILogger<IndexingCommitter> _logger = logger ?? NullLogger<IndexingCommitter>.Instance;
+    private const int MaxBatchSize = 64;
+    private const int FlushIntervalMs = 100; // 100ms to balance batching vs latency
+
+    private readonly IRepoDatabase _db;
+    private readonly IDocumentCatalog _catalog;
+    private readonly ILogger<IndexingCommitter> _logger;
+
+    // Batching infrastructure
+    private readonly object _batchLock = new();
+    private readonly List<PendingCommit> _pendingItems = new();
+    private readonly Timer _flushTimer;
+    private volatile bool _disposed;
+
+    private sealed class PendingCommit
+    {
+        public required IndexItem Item { get; init; }
+        public required ParsedArtifact Artifact { get; init; }
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    public IndexingCommitter(
+        IRepoDatabase db,
+        IDocumentCatalog catalog,
+        ILogger<IndexingCommitter>? logger = null)
+    {
+        _db = db ?? throw new ArgumentNullException(nameof(db));
+        _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
+        _logger = logger ?? NullLogger<IndexingCommitter>.Instance;
+        _flushTimer = new Timer(OnFlushTimer, null, FlushIntervalMs, FlushIntervalMs);
+    }
+
+    private void OnFlushTimer(object? state)
+    {
+        if (_disposed)
+            return;
+        FlushPendingItems();
+    }
 
     public async Task CommitAsync(IndexItem item, CancellationToken cancellationToken)
     {
@@ -98,37 +118,163 @@ public sealed class IndexingCommitter(
         }
 
         var commitRecords = CreateCommitRecords(item);
-        var digestHex = item.DigestHex;
 
-        var operation = new WriteOperation
+        // Create ParsedArtifact from Records
+        var parsedArtifact = new ParsedArtifact
         {
-            Id = Guid.NewGuid(),
-            Type = WriteOperationType.ReplaceDocument,
-            Uri = item.Uri,
-            ParsedData = commitRecords,
-            ParentContext = Activity.Current?.Context,
-            OnCommitted = (_, result) =>
-            {
-                if (!result.Success)
-                    return Task.CompletedTask;
+            Artifact = commitRecords.Artifacts?.FirstOrDefault() ?? throw new InvalidOperationException("No artifact in records"),
+            DocumentNode = documentNode,
+            Children = commitRecords.Nodes?.Where(n => n.Kind != "document").ToArray() ?? [],
+            Spans = commitRecords.Spans ?? [],
+            Edges = commitRecords.Edges ?? [],
+            Annotations = commitRecords.Annotations ?? [],
+            AnnotationSources = commitRecords.AnnotationSources ?? []
+        };
 
+        // Queue for batch commit
+        var pending = new PendingCommit { Item = item, Artifact = parsedArtifact };
+        bool shouldFlush;
+
+        lock (_batchLock)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(IndexingCommitter));
+
+            _pendingItems.Add(pending);
+            shouldFlush = _pendingItems.Count >= MaxBatchSize;
+        }
+
+        // Flush immediately if batch is full
+        if (shouldFlush)
+            FlushPendingItems();
+
+        // Wait for commit to complete
+        await pending.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Flush all pending items to the database in a single batch.
+    /// Thread-safe - can be called concurrently from timer and CommitAsync.
+    /// </summary>
+    private void FlushPendingItems()
+    {
+        List<PendingCommit> batch;
+
+        lock (_batchLock)
+        {
+            if (_pendingItems.Count == 0)
+                return;
+
+            batch = new List<PendingCommit>(_pendingItems);
+            _pendingItems.Clear();
+        }
+
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            // Batch commit to database
+            var dbItems = batch.Select(p => (p.Item.Uri, p.Artifact)).ToList();
+            _db.IndexArtifactBatch(dbItems);
+
+            // Update catalog and complete all items
+            foreach (var pending in batch)
+            {
+                var item = pending.Item;
+                var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
                 var entry = new DocumentCatalogEntry(
                     item.Uri,
-                    digestHex!,
-                    mediaType,
+                    item.DigestHex!,
+                    mediaType!,
                     item.RawArtifact.PhysicalPath,
                     item.LastModified);
                 _catalog.ApplyUpsert(entry);
-                return Task.CompletedTask;
+                pending.Completion.TrySetResult();
             }
-        };
 
-        var commitResult = await _writer.EnqueueAndWaitAsync(operation, cancellationToken).ConfigureAwait(false);
+            _logger.LogDebug("Committed batch of {Count} items in {ElapsedMs:F1}ms ({PerItem:F1}ms/item)",
+                batch.Count, sw.Elapsed.TotalMilliseconds, sw.Elapsed.TotalMilliseconds / batch.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Batch commit failed for {Count} items", batch.Count);
+            foreach (var pending in batch)
+            {
+                pending.Completion.TrySetException(ex);
+            }
+        }
+    }
 
-        if (!commitResult.Success)
-            throw commitResult.Error is not null
-                ? new InvalidOperationException($"Database commit failed for {item.Uri}.", commitResult.Error)
-                : new InvalidOperationException($"Database commit failed for {item.Uri}.");
+    public Task CommitBatchAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken)
+    {
+        if (items.Count == 0)
+            return Task.CompletedTask;
+
+        // Prepare batch items, filtering out invalid ones
+        var batchItems = new List<(RepoUri Uri, ParsedArtifact Artifact, IndexItem Item)>();
+
+        foreach (var item in items)
+        {
+            if (item.Records is null || string.IsNullOrEmpty(item.DigestHex))
+                continue;
+
+            var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
+            if (mediaType is null)
+                continue;
+
+            var documentNode = item.Records.Nodes.FirstOrDefault(n =>
+                string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase));
+            if (documentNode is null)
+                continue;
+
+            var commitRecords = CreateCommitRecords(item);
+            var parsedArtifact = new ParsedArtifact
+            {
+                Artifact = commitRecords.Artifacts?.FirstOrDefault() ?? throw new InvalidOperationException("No artifact in records"),
+                DocumentNode = documentNode,
+                Children = commitRecords.Nodes?.Where(n => n.Kind != "document").ToArray() ?? [],
+                Spans = commitRecords.Spans ?? [],
+                Edges = commitRecords.Edges ?? [],
+                Annotations = commitRecords.Annotations ?? [],
+                AnnotationSources = commitRecords.AnnotationSources ?? []
+            };
+
+            batchItems.Add((item.Uri, parsedArtifact, item));
+        }
+
+        if (batchItems.Count == 0)
+            return Task.CompletedTask;
+
+        // Index as batch (bypasses the internal queue for explicit batch calls)
+        var dbItems = batchItems.Select(b => (b.Uri, b.Artifact)).ToList();
+        _db.IndexArtifactBatch(dbItems);
+
+        // Update catalog for all items
+        foreach (var (_, _, item) in batchItems)
+        {
+            var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
+            var entry = new DocumentCatalogEntry(
+                item.Uri,
+                item.DigestHex!,
+                mediaType!,
+                item.RawArtifact.PhysicalPath,
+                item.LastModified);
+            _catalog.ApplyUpsert(entry);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+            return;
+        _disposed = true;
+
+        _flushTimer.Dispose();
+
+        // Flush any remaining items
+        FlushPendingItems();
     }
 
     private static Records CreateCommitRecords(IndexItem item)

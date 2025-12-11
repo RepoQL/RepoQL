@@ -34,7 +34,7 @@ public sealed class IndexedRepoOptions
     public bool EnableWatching { get; set; }
     public bool RunFullScanOnStartup { get; set; }
     public IndexingEngineOptions? EngineOptions { get; set; }
-    public Func<DuckDbGraphStore, IAnalysisResultWriter?>? CreateAnalysisWriter { get; set; } = store => new AnnotationResultWriter(store);
+    public Func<IRepoDatabase, IAnalysisResultWriter?>? CreateAnalysisWriter { get; set; } = db => new AnnotationResultWriter(db);
     public IList<FormatDescriptor> Formats { get; } = new List<FormatDescriptor>();
     public IList<CompositeFileSystemMount> AdditionalMounts { get; } = new List<CompositeFileSystemMount>();
 

@@ -155,7 +155,7 @@ namespace RepoQL.Data.DuckDB;
         // Chunking constants: BGE model has 512 token limit (~2000 chars for code).
         // Small files get a single embedding; large files are chunked with overlap.
         private const int ChunkSizeChars = 1500;          // Target chunk size (~375 tokens)
-        private const int ChunkOverlapChars = 75;         // 5% overlap for context continuity
+        private const int ChunkOverlapChars = 150;        // 10% overlap for context continuity
         private const int SmallFileThresholdChars = 2000; // Files under this size = single embedding
         private const int LargeFileThresholdBytes = 150 * 1024; // 150KB - files above this use structure-only embedding
 
@@ -228,7 +228,7 @@ namespace RepoQL.Data.DuckDB;
             return;
         }
 
-        _logger.LogDebug("Semantic indexing: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
+        _logger.LogInformation("Semantic indexing: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
             documents.Count, totalDocuments, docsSkippedAsUpToDate);
 
         var workItems = BuildEmbeddingWorkItems(documents);
@@ -475,7 +475,7 @@ namespace RepoQL.Data.DuckDB;
             return;
         }
 
-        _logger.LogDebug("Semantic indexing: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
+        _logger.LogInformation("Semantic indexing: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
             documents.Count, totalDocuments, docsSkippedAsUpToDate);
 
         var workItems = BuildEmbeddingWorkItems(documents);
@@ -551,11 +551,16 @@ namespace RepoQL.Data.DuckDB;
         ChannelWriter<EmbeddingBatchResult> writer,
         CancellationToken ct)
     {
+        var totalBatches = (workItems.Count + batchSize - 1) / batchSize;
+        var batchNum = 0;
+        var overallTimer = Stopwatch.StartNew();
+
         try
         {
             for (var ofs = 0; ofs < workItems.Count; ofs += batchSize)
             {
                 ct.ThrowIfCancellationRequested();
+                batchNum++;
 
                 var sliceLength = Math.Min(batchSize, workItems.Count - ofs);
                 var sliceItems = new EmbeddingWorkItem[sliceLength];
@@ -566,11 +571,15 @@ namespace RepoQL.Data.DuckDB;
                     payloads[i] = sliceItems[i].Payload;
                 }
 
+                // Build progress info for this batch
+                var itemsAfterBatch = ofs + sliceLength;
+                var progress = new BatchEmbeddingProgress(batchNum, totalBatches, itemsAfterBatch, workItems.Count, overallTimer.Elapsed);
+
                 float[]?[] vectors;
                 var batchTimer = Stopwatch.StartNew();
                 try
                 {
-                    vectors = await provider.EmbedBatchAsync(payloads, ct).ConfigureAwait(false);
+                    vectors = await provider.EmbedBatchAsync(payloads, progress, ct).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -821,7 +830,7 @@ namespace RepoQL.Data.DuckDB;
                           FROM node n
                                    JOIN artifact a ON a.id = n.artifact_id
                                    LEFT JOIN document_embedding de
-                                        ON de.doc_id = n.id AND de.scope = 'document'
+                                        ON de.doc_id = n.id AND de.scope = 'document' AND de.embedding_type = 'full'
                           WHERE n.kind = 'document'
                             AND a.text_content IS NOT NULL
                             AND (de.doc_id IS NULL OR de.updated_at < n.updated_at)

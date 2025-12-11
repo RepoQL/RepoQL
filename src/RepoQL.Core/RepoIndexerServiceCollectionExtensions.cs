@@ -322,19 +322,21 @@ public static class RepoIndexerServiceCollectionExtensions
         // Register metrics
         services.AddSingleton<IndexingMetrics>();
 
-        services.AddSingleton<IGraphStore>(sp =>
+        // Unified database interface - replaces old IGraphStore + IDatabaseWriter pattern
+        services.AddSingleton<IRepoDatabase>(sp =>
         {
             var scripts = sp.GetServices<IFormatSchemaProvider>()
                 .SelectMany(p => p.GetSchemaScripts())
                 .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
                 .ToList();
 
-            return new DuckDbGraphStore(
+            var db = new DuckDbRepoDatabase(
                 dbFileFullPath,
-                sp.GetRequiredService<IndexingMetrics>(),
-                logger: sp.GetService<ILogger<DuckDbGraphStore>>(),
-                embeddingProvider: sp.GetRequiredService<IEmbeddingProvider>(),
-                formatSchemaScripts: scripts);
+                sp.GetRequiredService<IEmbeddingProvider>(),
+                scripts,
+                sp.GetService<ILogger<DuckDbRepoDatabase>>());
+            db.EnsureSchema();
+            return db;
         });
         // In-memory OTEL sink for dashboards/tests
         services.AddSingleton<InMemoryMetricsSink>(_ => new InMemoryMetricsSink("RepoQL.Indexing"));
@@ -355,10 +357,10 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IVectorIndexCoordinator>(sp => new VectorIndexCoordinator(
             sp.GetRequiredService<IDuckDBConnectionFactory>(),
             sp.GetRequiredService<IEmbeddingProvider>(),
-            sp.GetRequiredService<IDatabaseWriter>(),
+            sp.GetService<IRepoDatabase>(),
             sp.GetService<ILogger<VectorIndexCoordinator>>()));
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
-            sp.GetRequiredService<IDatabaseWriter>(),
+            sp.GetRequiredService<IRepoDatabase>(),
             sp.GetRequiredService<IDocumentCatalog>(),
             sp.GetService<ILogger<IndexingCommitter>>()));
 
@@ -390,7 +392,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton(sp =>
         {
             var engine = new IndexingEngine(
-                sp.GetRequiredService<IDatabaseWriter>(),
+                sp.GetRequiredService<IRepoDatabase>(),
                 sp.GetRequiredService<IUriFilter>(),
                 sp.GetRequiredService<ClassificationPipeline>(),
                 sp.GetRequiredService<ParsingPipeline>(),
@@ -422,7 +424,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IIndexingCoordinator>(sp => new IndexingCoordinator(
             sp.GetRequiredService<CompositeFileSystem>(),
             sp.GetRequiredService<IndexingEngine>(),
-            sp.GetRequiredService<IDatabaseWriter>(),
+            sp.GetRequiredService<IRepoDatabase>(),
             sp.GetService<ILogger<IndexingCoordinator>>(),
             sp.GetRequiredService<ICompositeFileSystemManager>()));
 

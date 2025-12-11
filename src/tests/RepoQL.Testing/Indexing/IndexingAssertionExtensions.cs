@@ -104,17 +104,15 @@ public static class IndexingAssertionExtensions
             () => A.CallTo(() => catalog.CompleteProcessing(uri)).MustHaveHappened());
     }
 
-    public static void ShouldHaveDeletedDocuments(this IDatabaseWriter writer, params RepoUri[] uris)
+    public static void ShouldHaveDeletedDocuments(this IRepoDatabase db, params RepoUri[] uris)
     {
-        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(db);
         if (uris is null || uris.Length == 0)
             return;
 
         foreach (var uri in uris)
         {
-            A.CallTo(() => writer.EnqueueAndWaitAsync(
-                    A<WriteOperation>.That.Matches(op => op.Type == WriteOperationType.DeleteDocument && op.Uri == uri),
-                    A<CancellationToken>._))
+            A.CallTo(() => db.DeleteArtifact(uri))
                 .MustHaveHappenedOnceExactly();
         }
     }

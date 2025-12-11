@@ -68,7 +68,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     private readonly CompositeFileSystem _fileSystem;
     private readonly ICompositeFileSystemManager? _mountManager;
     private readonly IndexingEngine _engine;
-    private readonly IDatabaseWriter _writer;
+    private readonly IRepoDatabase _db;
     private readonly ILogger<IndexingCoordinator> _logger;
     private int _reindexScopes;
     private int _activeMountIndexing;
@@ -76,13 +76,13 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     public IndexingCoordinator(
         CompositeFileSystem fileSystem,
         IndexingEngine engine,
-        IDatabaseWriter writer,
+        IRepoDatabase db,
         ILogger<IndexingCoordinator>? logger = null,
         ICompositeFileSystemManager? mountManager = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
-        _writer = writer ?? throw new ArgumentNullException(nameof(writer));
+        _db = db ?? throw new ArgumentNullException(nameof(db));
         _logger = logger ?? NullLogger<IndexingCoordinator>.Instance;
         _mountManager = mountManager;
 
@@ -100,7 +100,6 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         var capturedAt = DateTimeOffset.UtcNow;
         var discoverySnapshot = _engine.GetHotPathQueueSnapshot();
         var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
-        var writerStatus = _writer.GetStatus();
 
         var stages = new List<PipelineStageStatusSnapshot>(capacity: 4)
         {
@@ -121,16 +120,16 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 _engine.GetActiveCount(IndexingState.MultiFileAnalysisBusy) + _engine.GetActiveCount(IndexingState.IndexRebuildBusy)),
             new(
                 CoordinatorPipelineStage.Writer,
-                writerStatus.PendingCount > 0,
-                writerStatus.PendingCount,
-                writerStatus.PendingCount > 0 ? 1 : 0)
+                false,  // Sync writes = never busy
+                0,      // No queue
+                0)      // No in-progress
         };
 
         return new PipelineStatusSnapshot(
             capturedAt,
             stages,
             IsReindexing,
-            writerStatus.PendingCount > 0);
+            false);  // WriterPending = false (sync writes)
     }
 
     public async Task WaitForPipelineAsync(
@@ -449,15 +448,10 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
     }
 
-    private async Task WaitForWriterIdleAsync(CancellationToken cancellationToken)
+    private Task WaitForWriterIdleAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Writer flush started.");
-        var timer = Stopwatch.StartNew();
-        var result = await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-        _logger.LogInformation(
-            "Writer flush completed [Operations: {Operations:N0} Duration: {Duration:F1}s]",
-            result.OperationsFlushed,
-            timer.Elapsed.TotalSeconds);
+        _logger.LogInformation("Writer is using sync mode - no flush needed");
+        return Task.CompletedTask;
     }
 
     private async IAsyncEnumerable<ReindexProgressSnapshot> TrackHotPathAsync(
@@ -904,8 +898,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 await Task.Delay(100, cancellationToken).ConfigureAwait(false);
             }
 
-            // Flush writer to ensure structure embeddings are written to database
-            await _writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+            // No flush needed - sync writes mean structure embeddings are already written
 
             sw.Stop();
             _logger.LogInformation(

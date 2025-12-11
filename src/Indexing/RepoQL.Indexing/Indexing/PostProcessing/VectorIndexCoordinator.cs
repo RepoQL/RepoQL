@@ -25,7 +25,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private const int StructureEmbeddingBatchSize = 128;
     private static readonly int RefreshConcurrency = GetRefreshConcurrency();
     private readonly IVectorIndexRefresher _refresher;
-    private readonly IDatabaseWriter? _writer;
+    private readonly IRepoDatabase? _db;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly ILogger<VectorIndexCoordinator> _logger;
     private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
@@ -42,20 +42,20 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     public VectorIndexCoordinator(
         IDuckDBConnectionFactory connectionFactory,
         IEmbeddingProvider embeddingProvider,
-        IDatabaseWriter? writer = null,
+        IRepoDatabase? db = null,
         ILogger<VectorIndexCoordinator>? logger = null)
-        : this(new DuckDbVectorIndexRefresher(connectionFactory, embeddingProvider), writer, embeddingProvider, logger)
+        : this(new DuckDbVectorIndexRefresher(connectionFactory, embeddingProvider), db, embeddingProvider, logger)
     {
     }
 
     internal VectorIndexCoordinator(
         IVectorIndexRefresher refresher,
-        IDatabaseWriter? writer = null,
+        IRepoDatabase? db = null,
         IEmbeddingProvider? embeddingProvider = null,
         ILogger<VectorIndexCoordinator>? logger = null)
     {
         _refresher = refresher ?? throw new ArgumentNullException(nameof(refresher));
-        _writer = writer;
+        _db = db;
         _embeddingProvider = embeddingProvider;
         _logger = logger ?? NullLogger<VectorIndexCoordinator>.Instance;
     }
@@ -94,7 +94,16 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private async Task RefreshEmbeddingsAsync(CancellationToken cancellationToken)
     {
         _logger.LogDebug("Vector index refresh triggered");
+        try
+        {
         await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
+            _logger.LogDebug("Vector index refresh completed");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Vector index refresh failed");
+            throw;
+        }
     }
 
     public async Task GenerateStructureEmbeddingsAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken)
@@ -102,10 +111,10 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         if (items.Count == 0)
             return;
 
-        if (_writer is null || _embeddingProvider is null || !_embeddingProvider.Enabled)
+        if (_db is null || _embeddingProvider is null || !_embeddingProvider.Enabled)
         {
-            _logger.LogDebug("Structure embedding skipped: writer={Writer}, provider={Provider}, enabled={Enabled}",
-                _writer is not null, _embeddingProvider is not null, _embeddingProvider?.Enabled);
+            _logger.LogDebug("Structure embedding skipped: db={Db}, provider={Provider}, enabled={Enabled}",
+                _db is not null, _embeddingProvider is not null, _embeddingProvider?.Enabled);
             return;
         }
 
@@ -203,17 +212,19 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
         if (allEmbeddings.Count > 0)
         {
-            // Enqueue write operation through the single-threaded writer
-            var writeOp = new WriteOperation
-            {
-                Id = Guid.NewGuid(),
-                Type = WriteOperationType.WriteStructureEmbeddings,
-                Uri = RepoUri.Parse("mem://structure-embeddings"),
-                ParsedData = Records.Empty,
-                StructureEmbeddings = allEmbeddings
-            };
+            // Convert StructureEmbeddingData to DocumentEmbedding
+            var documentEmbeddings = allEmbeddings.Select(e => new DocumentEmbedding(
+                e.DocId,
+                e.NodeId,
+                ChunkIndex: 0,  // Structure embeddings are always chunk 0
+                DocumentEmbedding.TypeStructure,  // "structure"
+                e.Uri,
+                DocumentEmbedding.ScopeDocument,  // "document" scope
+                e.Embedding,
+                e.Model,
+                e.Dimension)).ToList();
 
-            await _writer.EnqueueAsync(writeOp, cancellationToken).ConfigureAwait(false);
+            _db.WriteEmbeddings(documentEmbeddings);
         }
 
         timer.Stop();

@@ -30,26 +30,19 @@ internal class FrontmatterParsingTests
         """;
 
         var uri = repo.AddOrUpdateText("docs/fm.md", content);
-
         await repo.IndexAsync();
 
-        Node? doc = repo.Store.GetDocumentByUri(uri);
-        if (doc is null)
-        {
-            var deadline = DateTime.UtcNow.AddSeconds(2);
-            do
-            {
-                await Task.Delay(50);
-                doc = repo.Store.GetDocumentByUri(uri);
-                if (doc is not null)
-                    break;
-            } while (DateTime.UtcNow < deadline);
-        }
-
+        var doc = await repo.WaitForDocumentAsync(uri, TimeSpan.FromSeconds(5));
         doc.Should().NotBeNull();
-        doc!.Props!["description"]!.GetValue<string>().Should().Be("Test document");
-        doc.Props!["documentationCategory"]!.GetValue<string>().Should().Be("example");
-        var tags = doc.Props!["tags"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray();
+
+        // The frontmatter is stored under "frontmatter" key in props (not flattened at root)
+        doc!.Props!.TryGetPropertyValue("frontmatter", out var fmNode).Should().BeTrue();
+        fmNode.Should().NotBeNull();
+
+        var fm = fmNode!.AsObject();
+        fm["description"]!.GetValue<string>().Should().Be("Test document");
+        fm["documentationCategory"]!.GetValue<string>().Should().Be("example");
+        var tags = fm["tags"]!.AsArray().Select(n => n!.GetValue<string>()).ToArray();
         tags.Should().BeEquivalentTo(["markdown", "md", "text/markdown"]);
     }
 

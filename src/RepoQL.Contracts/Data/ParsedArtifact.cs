@@ -34,6 +34,16 @@ public sealed class ParsedArtifact
     public IReadOnlyList<Edge> Edges { get; init; } = [];
 
     /// <summary>
+    /// Annotations (lint warnings, metrics, etc.) for this document.
+    /// </summary>
+    public IReadOnlyList<Annotation> Annotations { get; init; } = [];
+
+    /// <summary>
+    /// Annotation source identifiers (for tracking which analyzers produced annotations).
+    /// </summary>
+    public IReadOnlyList<string> AnnotationSources { get; init; } = [];
+
+    /// <summary>
     /// Create a <see cref="ParsedArtifact"/> from parser <see cref="Records"/> output.
     /// </summary>
     /// <exception cref="ArgumentException">
@@ -60,7 +70,9 @@ public sealed class ParsedArtifact
             DocumentNode = docNode,
             Children = children,
             Spans = records.Spans,
-            Edges = records.Edges
+            Edges = records.Edges,
+            Annotations = records.Annotations,
+            AnnotationSources = records.AnnotationSources
         };
     }
 }

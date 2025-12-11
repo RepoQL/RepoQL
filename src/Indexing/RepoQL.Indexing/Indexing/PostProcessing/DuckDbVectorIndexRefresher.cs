@@ -31,11 +31,11 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
     {
         if (!_embeddingProvider.Enabled)
         {
-            _logger.LogDebug("Embedding refresh skipped - provider disabled.");
+            _logger.LogInformation("Embedding refresh skipped - provider disabled (model={Model}).", _embeddingProvider.Model);
             return;
         }
 
-        _logger.LogInformation("Embedding refresh starting...");
+        _logger.LogInformation("Embedding refresh starting (model={Model}, dim={Dim})...", _embeddingProvider.Model, _embeddingProvider.Dimension);
         var sw = Stopwatch.StartNew();
 
         await using var connection = _connectionFactory.CreateConnection();

@@ -1,6 +1,7 @@
 using System.Data;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Text;
 using System.Text.Json.Nodes;
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
@@ -165,6 +166,13 @@ public sealed class DuckDbRepoDatabase : IRepoDatabase
         _lock.EnterWriteLock();
         try
         {
+            // Configure for write performance - reduce checkpoint frequency
+            // Checkpoints are expensive; we'll do them less frequently
+            if (!_isInMemory)
+            {
+                _writer.Execute("SET wal_autocheckpoint = '256MB';"); // Default is 16MB
+            }
+
             _writer.Execute("""
                              CREATE TABLE IF NOT EXISTS repo_metadata(
                                  key TEXT PRIMARY KEY,
@@ -172,7 +180,7 @@ public sealed class DuckDbRepoDatabase : IRepoDatabase
                                  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                              );
                              """);
-            
+
             // Register UDFs FIRST - some schema uses them
             RepositoryUserDefinedFunctions.RegisterAll(_writer, _embeddingProvider);
 
@@ -366,6 +374,90 @@ public sealed class DuckDbRepoDatabase : IRepoDatabase
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<IndexResult> IndexArtifactBatch(IReadOnlyList<(RepoUri Uri, ParsedArtifact Artifact)> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+
+        if (items.Count == 0)
+            return [];
+
+        var sw = Stopwatch.StartNew();
+        var lockSw = Stopwatch.StartNew();
+        _lock.EnterWriteLock();
+        LockWaitDuration.Record(lockSw.Elapsed.TotalMilliseconds, new TagList { { "lock_type", "write" } });
+
+        try
+        {
+            using var tx = _writer.BeginTransaction();
+            var results = new List<IndexResult>(items.Count);
+            var totalNodes = 0;
+            var totalSpans = 0;
+            var totalEdges = 0;
+
+            foreach (var (uri, artifact) in items)
+            {
+                // 1. Check if this is an update
+                var existingDoc = GetDocumentByUriInternal(uri);
+                var isUpdate = existingDoc is not null;
+
+                // 2. Upsert artifact
+                var savedArtifact = UpsertArtifactInternal(artifact.Artifact, tx);
+
+                // 3. Create document node with artifact ID
+                var docNode = artifact.DocumentNode with { ArtifactId = savedArtifact.Id };
+
+                // 4. Upsert document
+                var savedDoc = UpsertDocumentByUriInternal(uri, docNode, tx);
+
+                // 5. Remap children with correct artifact IDs
+                var children = artifact.Children.Select(c =>
+                    c with { ArtifactId = c.ArtifactId == artifact.Artifact.Id ? savedArtifact.Id : c.ArtifactId }
+                ).ToList();
+
+                // 6. Remap spans with document ID
+                var spans = artifact.Spans.Select(s => s with { DocumentId = savedDoc.Id }).ToList();
+
+                // 7. Remap edges with scope document ID
+                var edges = artifact.Edges.Select(e => e with { ScopeDocumentId = savedDoc.Id }).ToList();
+
+                // 8. Replace document content
+                ReplaceDocumentContentInternal(savedDoc.Id, children, spans, edges, tx);
+
+                // 9. Upsert document_search projection
+                UpsertDocumentSearchInternal(savedDoc.Id, uri, tx);
+
+                results.Add(new IndexResult(savedDoc.Id, isUpdate));
+                totalNodes += children.Count;
+                totalSpans += spans.Count;
+                totalEdges += edges.Count;
+            }
+
+            tx.Commit();
+
+            // Record batch metrics
+            var tags = new TagList { { "operation", "batch" } };
+            DocumentsIndexed.Add(items.Count, tags);
+            NodesWritten.Add(totalNodes, tags);
+            SpansWritten.Add(totalSpans, tags);
+            EdgesWritten.Add(totalEdges, tags);
+            IndexDuration.Record(sw.Elapsed.TotalMilliseconds, new TagList
+            {
+                { "batch_size", items.Count.ToString() },
+                { "operation", "batch" }
+            });
+
+            _logger.LogDebug("Indexed batch of {Count} artifacts in {ElapsedMs:F1}ms ({PerItem:F1}ms/item)",
+                items.Count, sw.Elapsed.TotalMilliseconds, sw.Elapsed.TotalMilliseconds / items.Count);
+
+            return results;
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
+    }
+
+    /// <inheritdoc />
     public bool DeleteArtifact(RepoUri uri)
     {
         ArgumentNullException.ThrowIfNull(uri);
@@ -397,7 +489,7 @@ public sealed class DuckDbRepoDatabase : IRepoDatabase
     }
 
     /// <inheritdoc />
-    public bool ReplaceAnnotations(RepoUri artifactUri, IReadOnlyList<Annotation> annotations)
+    public bool ReplaceAnnotations(RepoUri artifactUri, IReadOnlyList<Annotation> annotations, IReadOnlyCollection<string>? sourcesToClear = null)
     {
         ArgumentNullException.ThrowIfNull(artifactUri);
         ArgumentNullException.ThrowIfNull(annotations);
@@ -415,12 +507,13 @@ public sealed class DuckDbRepoDatabase : IRepoDatabase
 
             using var tx = _writer.BeginTransaction();
 
-            // Get sources from new annotations
-            var sources = annotations
-                .Where(a => !string.IsNullOrEmpty(a.Source))
-                .Select(a => a.Source!)
-                .Distinct()
-                .ToHashSet(StringComparer.Ordinal);
+            // Get sources to clear - either explicitly provided or inferred from annotations
+            var sources = sourcesToClear?.ToHashSet(StringComparer.Ordinal)
+                ?? annotations
+                    .Where(a => !string.IsNullOrEmpty(a.Source))
+                    .Select(a => a.Source!)
+                    .Distinct()
+                    .ToHashSet(StringComparer.Ordinal);
 
             // Delete existing annotations from these sources
             if (sources.Count > 0)
@@ -529,6 +622,149 @@ public sealed class DuckDbRepoDatabase : IRepoDatabase
         {
             _lock.ExitWriteLock();
         }
+    }
+
+    /// <summary>
+    /// Refresh the search projection for all documents.
+    /// </summary>
+    /// <param name="incrementalRefresh">When true, only refresh documents missing from projection.</param>
+    public void RefreshSearchProjection(bool incrementalRefresh = false)
+    {
+        _lock.EnterWriteLock();
+        try
+        {
+            if (incrementalRefresh)
+            {
+                // Only insert documents that are missing from the projection
+                _writer.Execute("""
+                    INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
+                    SELECT
+                        n.id,
+                        n.uri,
+                        LOWER(REPLACE(n.uri, '\', '/')),
+                        CASE
+                            WHEN POSITION('/' IN REPLACE(n.uri, '\', '/')) > 0
+                            THEN SUBSTRING(REPLACE(n.uri, '\', '/') FROM LENGTH(REPLACE(n.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(n.uri, '\', '/'))) + 2)
+                            ELSE REPLACE(n.uri, '\', '/')
+                        END,
+                        CASE
+                            WHEN POSITION('/' IN REPLACE(n.uri, '\', '/')) > 0
+                            THEN SUBSTRING(REPLACE(n.uri, '\', '/') FROM 1 FOR LENGTH(REPLACE(n.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(n.uri, '\', '/'))))
+                            ELSE NULL
+                        END
+                    FROM node n
+                    WHERE n.kind = 'document'
+                      AND n.uri IS NOT NULL
+                      AND NOT EXISTS (SELECT 1 FROM document_search ds WHERE ds.doc_id = n.id)
+                    ON CONFLICT (doc_id) DO NOTHING;
+                    """);
+            }
+            else
+            {
+                // Full refresh - clear and rebuild
+                _writer.Execute("DELETE FROM document_search;");
+                _writer.Execute("""
+                    INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
+                    SELECT
+                        n.id,
+                        n.uri,
+                        LOWER(REPLACE(n.uri, '\', '/')),
+                        CASE
+                            WHEN POSITION('/' IN REPLACE(n.uri, '\', '/')) > 0
+                            THEN SUBSTRING(REPLACE(n.uri, '\', '/') FROM LENGTH(REPLACE(n.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(n.uri, '\', '/'))) + 2)
+                            ELSE REPLACE(n.uri, '\', '/')
+                        END,
+                        CASE
+                            WHEN POSITION('/' IN REPLACE(n.uri, '\', '/')) > 0
+                            THEN SUBSTRING(REPLACE(n.uri, '\', '/') FROM 1 FOR LENGTH(REPLACE(n.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(n.uri, '\', '/'))))
+                            ELSE NULL
+                        END
+                    FROM node n
+                    WHERE n.kind = 'document' AND n.uri IS NOT NULL;
+                    """);
+            }
+        }
+        finally
+        {
+            _lock.ExitWriteLock();
+        }
+    }
+
+    /// <summary>
+    /// Refresh document embeddings for documents missing embeddings.
+    /// </summary>
+    public async Task RefreshDocumentEmbeddingsAsync(IEmbeddingProvider embeddingProvider, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(embeddingProvider);
+
+        if (!embeddingProvider.Enabled)
+            return;
+
+        // Find documents missing embeddings
+        var missingDocs = Query<(Guid DocId, string Uri, string? Text)>(
+            """
+            SELECT n.id, n.uri, a.text_content
+            FROM node n
+            JOIN artifact a ON n.artifact_id = a.id
+            WHERE n.kind = 'document'
+              AND n.uri IS NOT NULL
+              AND a.text_content IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM document_embedding de
+                  WHERE de.doc_id = n.id AND de.embedding_type = 'full'
+              )
+            LIMIT 1000;
+            """,
+            r => (r.GetGuid(0), r.GetString(1), r.IsDBNull(2) ? null : r.GetString(2)));
+
+        if (missingDocs.Count == 0)
+            return;
+
+        _logger.LogInformation("Generating embeddings for {Count} documents missing embeddings", missingDocs.Count);
+
+        var embeddings = new List<DocumentEmbedding>();
+        foreach (var (docId, uri, text) in missingDocs)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                continue;
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var vector = await embeddingProvider.EmbedAsync(text, cancellationToken).ConfigureAwait(false);
+                if (vector is null)
+                    continue;
+
+                embeddings.Add(new DocumentEmbedding(
+                    DocumentId: docId,
+                    NodeId: docId, // Same as document for document-level embeddings
+                    ChunkIndex: 0,
+                    EmbeddingType: DocumentEmbedding.TypeFull,
+                    Uri: uri,
+                    Scope: DocumentEmbedding.ScopeDocument,
+                    Vector: vector,
+                    Model: embeddingProvider.Model,
+                    Dimension: vector.Length,
+                    StartByte: null,
+                    EndByte: null));
+
+                // Batch write every 100 embeddings
+                if (embeddings.Count >= 100)
+                {
+                    WriteEmbeddings(embeddings);
+                    embeddings.Clear();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to generate embedding for {Uri}", uri);
+            }
+        }
+
+        // Write remaining embeddings
+        if (embeddings.Count > 0)
+            WriteEmbeddings(embeddings);
     }
 
     /// <inheritdoc />
@@ -682,50 +918,128 @@ public sealed class DuckDbRepoDatabase : IRepoDatabase
         foreach (var id in childNodesToDelete)
             _writer.Execute(tx, "DELETE FROM node WHERE id = ?;", id);
 
-        // Insert new spans
-        foreach (var span in spans)
+        // Bulk insert spans (much faster than individual inserts)
+        if (spans.Count > 0)
+            BulkInsertSpans(spans, tx);
+
+        // Bulk insert child nodes
+        if (children.Count > 0)
+            BulkInsertNodes(children, tx);
+
+        // Bulk insert edges
+        if (edges.Count > 0)
+            BulkInsertEdges(edges, tx);
+    }
+
+    private void BulkInsertSpans(IReadOnlyList<Span> spans, DuckDBTransaction tx)
+    {
+        const int batchSize = 100; // DuckDB handles large parameter lists well
+        for (var offset = 0; offset < spans.Count; offset += batchSize)
         {
+            var batch = spans.Skip(offset).Take(batchSize).ToList();
+            var sb = new StringBuilder();
+            sb.AppendLine("INSERT INTO span (id, document_id, start_line, start_column, end_line, end_column, start_byte, end_byte) VALUES");
+
             using var cmd = _writer.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO span (id, document_id, start_line, start_column, end_line, end_column, start_byte, end_byte)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?);
-                """;
-            cmd.AddParameters( span.Id, span.DocumentId, span.StartLine, span.StartColumn,
-                span.EndLine, span.EndColumn, span.StartByte, span.EndByte);
+
+            for (var i = 0; i < batch.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                var p = i * 8;
+                sb.Append($"(${p + 1},${p + 2},${p + 3},${p + 4},${p + 5},${p + 6},${p + 7},${p + 8})");
+
+                var span = batch[i];
+                cmd.Parameters.Add(new DuckDBParameter { Value = span.Id });
+                cmd.Parameters.Add(new DuckDBParameter { Value = span.DocumentId });
+                cmd.Parameters.Add(new DuckDBParameter { Value = span.StartLine });
+                cmd.Parameters.Add(new DuckDBParameter { Value = span.StartColumn });
+                cmd.Parameters.Add(new DuckDBParameter { Value = span.EndLine });
+                cmd.Parameters.Add(new DuckDBParameter { Value = span.EndColumn });
+                cmd.Parameters.Add(new DuckDBParameter { Value = span.StartByte });
+                cmd.Parameters.Add(new DuckDBParameter { Value = span.EndByte });
+            }
+
+            cmd.CommandText = sb.ToString();
             cmd.ExecuteNonQuery();
         }
+    }
 
-        // Insert new child nodes
-        foreach (var node in children)
+    private void BulkInsertNodes(IReadOnlyList<Node> nodes, DuckDBTransaction tx)
+    {
+        const int batchSize = 50; // Nodes have more columns, smaller batches
+        for (var offset = 0; offset < nodes.Count; offset += batchSize)
         {
+            var batch = nodes.Skip(offset).Take(batchSize).ToList();
+            var sb = new StringBuilder();
+            sb.AppendLine("INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at) VALUES");
+
             using var cmd = _writer.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                """;
-            var uriStr = node.Uri?.AbsoluteUri;
-            cmd.AddParameters( node.Id, node.Kind, uriStr, uriStr?.ToLowerInvariant(), node.ArtifactId,
-                node.SpanId, node.Props.ToJsonString(), node.Headline, node.Structure,
-                node.CreatedAt.UtcDateTime, node.UpdatedAt.UtcDateTime);
+
+            for (var i = 0; i < batch.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                var p = i * 11;
+                sb.Append($"(${p + 1},${p + 2},${p + 3},${p + 4},${p + 5},${p + 6},${p + 7},${p + 8},${p + 9},${p + 10},${p + 11})");
+
+                var node = batch[i];
+                var uriStr = node.Uri?.AbsoluteUri;
+                cmd.Parameters.Add(new DuckDBParameter { Value = node.Id });
+                cmd.Parameters.Add(new DuckDBParameter { Value = node.Kind });
+                cmd.Parameters.Add(new DuckDBParameter { Value = uriStr ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = uriStr?.ToLowerInvariant() ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = node.ArtifactId });
+                cmd.Parameters.Add(new DuckDBParameter { Value = node.SpanId ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = node.Props.ToJsonString() ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = node.Headline ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = node.Structure ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = node.CreatedAt.UtcDateTime });
+                cmd.Parameters.Add(new DuckDBParameter { Value = node.UpdatedAt.UtcDateTime });
+            }
+
+            cmd.CommandText = sb.ToString();
             cmd.ExecuteNonQuery();
         }
+    }
 
-        // Insert new edges
-        foreach (var edge in edges)
+    private void BulkInsertEdges(IReadOnlyList<Edge> edges, DuckDBTransaction tx)
+    {
+        const int batchSize = 50; // Edges have many columns
+        for (var offset = 0; offset < edges.Count; offset += batchSize)
         {
+            var batch = edges.Skip(offset).Take(batchSize).ToList();
+            var sb = new StringBuilder();
+            sb.AppendLine("INSERT INTO edge (id, source_node_id, destination_node_id, destination_uri, type, is_composition, ordinal, scope_document_id, semantic_key, source_span_id, destination_span_id, composition_child_id, properties, created_at) VALUES");
+
             using var cmd = _writer.CreateCommand();
             cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO edge (id, source_node_id, destination_node_id, destination_uri, type, is_composition, ordinal,
-                                  scope_document_id, semantic_key, source_span_id, destination_span_id, composition_child_id, properties, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                """;
-            // composition_child_id is set to DstId when is_composition=true to enforce single-parent constraint
-            var compositionChildId = edge.IsComposition ? edge.DstId : null;
-            cmd.AddParameters( edge.Id, edge.SrcId, edge.DstId, edge.DstUri?.ToString(), edge.Type, edge.IsComposition, edge.Ordinal,
-                edge.ScopeDocumentId, edge.EdgeKey, edge.SrcSpanId, edge.DstSpanId, compositionChildId, edge.Props.ToJsonString(), edge.CreatedAt.UtcDateTime);
+
+            for (var i = 0; i < batch.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                var p = i * 14;
+                sb.Append($"(${p + 1},${p + 2},${p + 3},${p + 4},${p + 5},${p + 6},${p + 7},${p + 8},${p + 9},${p + 10},${p + 11},${p + 12},${p + 13},${p + 14})");
+
+                var edge = batch[i];
+                var compositionChildId = edge.IsComposition ? edge.DstId : (Guid?)null;
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.Id });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.SrcId });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.DstId });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.DstUri?.ToString() ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.Type });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.IsComposition });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.Ordinal });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.ScopeDocumentId ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.EdgeKey ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.SrcSpanId ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.DstSpanId ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = compositionChildId ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.Props.ToJsonString() ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = edge.CreatedAt.UtcDateTime });
+            }
+
+            cmd.CommandText = sb.ToString();
             cmd.ExecuteNonQuery();
         }
     }
