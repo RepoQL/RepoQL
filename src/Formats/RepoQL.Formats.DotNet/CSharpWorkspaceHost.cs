@@ -33,12 +33,20 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
 {
     private static readonly object LocatorGate = new();
     private static bool _locatorRegistered;
+    private static bool _sdkAvailable;
+    private static string? _sdkUnavailableReason;
     private static readonly SemaphoreSlim ConcurrencyLimit = new(Math.Max(1, Math.Min(Environment.ProcessorCount / 2, 4)), Math.Max(1, Math.Min(Environment.ProcessorCount / 2, 4)));
 
     private readonly ConcurrentDictionary<string, ProjectSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Func<MSBuildWorkspace> _workspaceFactory;
+    private readonly Func<MSBuildWorkspace>? _workspaceFactory;
     private readonly ILogger<CSharpWorkspaceHost> _logger;
     private volatile bool _disposing;
+
+    /// <summary>
+    /// Gets whether the .NET SDK is available for semantic analysis.
+    /// When false, only syntactic analysis is available.
+    /// </summary>
+    public static bool IsSdkAvailable => _sdkAvailable;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="CSharpWorkspaceHost"/> class with default settings.
@@ -56,8 +64,8 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
     internal CSharpWorkspaceHost(Func<MSBuildWorkspace>? workspaceFactory, ILogger<CSharpWorkspaceHost>? logger = null)
     {
         _logger = logger ?? NullLogger<CSharpWorkspaceHost>.Instance;
-        _workspaceFactory = workspaceFactory ?? (() => CreateWorkspace(_logger));
-        EnsureLocator();
+        EnsureLocator(_logger);
+        _workspaceFactory = _sdkAvailable ? (workspaceFactory ?? (() => CreateWorkspace(_logger))) : null;
     }
 
     internal int ActiveSessionCount => _sessions.Count;
@@ -75,6 +83,10 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         TextLineMap lineMap,
         CancellationToken cancellationToken)
     {
+        // Check if SDK is available for semantic analysis
+        if (!_sdkAvailable || _workspaceFactory is null)
+            return null;
+
         // Check if we're disposing to prevent adding new sessions
         if (_disposing)
             return null;
@@ -138,7 +150,7 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         // Static semaphores should live for the application lifetime.
     }
 
-    private static void EnsureLocator()
+    private static void EnsureLocator(ILogger logger)
     {
         if (_locatorRegistered)
             return;
@@ -146,8 +158,37 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         {
             if (_locatorRegistered)
                 return;
-            if (!MSBuildLocator.IsRegistered)
-                MSBuildLocator.RegisterDefaults();
+
+            try
+            {
+                if (!MSBuildLocator.IsRegistered)
+                {
+                    var instances = MSBuildLocator.QueryVisualStudioInstances().ToList();
+                    if (instances.Count == 0)
+                    {
+                        _sdkAvailable = false;
+                        _sdkUnavailableReason = "No .NET SDK found. Semantic analysis for C# will be disabled.";
+                        logger.LogWarning(_sdkUnavailableReason);
+                    }
+                    else
+                    {
+                        MSBuildLocator.RegisterDefaults();
+                        _sdkAvailable = true;
+                        logger.LogDebug("MSBuild SDK registered: {SdkPath}", instances[0].MSBuildPath);
+                    }
+                }
+                else
+                {
+                    _sdkAvailable = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                _sdkAvailable = false;
+                _sdkUnavailableReason = $"Failed to locate .NET SDK: {ex.Message}";
+                logger.LogWarning(ex, "MSBuild locator failed. Semantic analysis for C# will be disabled.");
+            }
+
             _locatorRegistered = true;
         }
     }
