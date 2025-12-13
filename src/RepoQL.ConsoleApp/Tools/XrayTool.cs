@@ -1,8 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Server;
+using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Rendering;
@@ -14,11 +14,13 @@ namespace RepoQL.ConsoleApp.Tools;
 internal sealed class XrayTool(
     IXraySearchEngine searchEngine,
     IXrayRenderingEngine renderingEngine,
-    RepoQlClientProvider clientProvider)
+    RepoQlClientProvider clientProvider,
+    SelfTestRunner selfTestRunner)
 {
     private readonly IXraySearchEngine _searchEngine = searchEngine ?? throw new ArgumentNullException(nameof(searchEngine));
     private readonly IXrayRenderingEngine _renderingEngine = renderingEngine ?? throw new ArgumentNullException(nameof(renderingEngine));
     private readonly RepoQlClientProvider _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
+    private readonly SelfTestRunner _selfTestRunner = selfTestRunner ?? throw new ArgumentNullException(nameof(selfTestRunner));
 
     // Track last request to implement "call again to wait" pattern (static to persist across tool invocations)
     private static string? _lastRequestSignature;
@@ -156,6 +158,12 @@ internal sealed class XrayTool(
         }
         catch (Exception ex)
         {
+            // For infrastructure errors, append diagnostic information
+            if (ErrorClassifier.IsInfrastructureError(ex))
+            {
+                var diagnostics = await _selfTestRunner.RunAsync(cancellationToken);
+                return $"Error: Search failed. {ExtractErrorMessage(ex)}\n\n{diagnostics}";
+            }
             return $"Error: Search failed. {ExtractErrorMessage(ex)}";
         }
         sw.Stop();

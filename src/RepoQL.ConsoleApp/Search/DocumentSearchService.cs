@@ -1,7 +1,6 @@
 using System.Globalization;
 using Google.Protobuf.WellKnownTypes;
 using RepoQL.ConsoleApp.Helpers;
-using RepoQL.Contracts;
 using RepoQL.Protocol;
 using RepoQL.Rendering.Search;
 

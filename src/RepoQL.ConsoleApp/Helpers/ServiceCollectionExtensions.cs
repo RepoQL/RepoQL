@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Search;
@@ -25,6 +26,9 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<QueryExecutor>();
         services.AddSingleton<RepoResourceService>();
         services.AddSingleton<IXrayRenderingEngine, XrayRenderingEngine>();
+
+        // Diagnostics
+        services.AddSingleton<SelfTestRunner>();
 
         // Search services
         services.AddSingleton<IDocumentSearchService, DocumentSearchService>();

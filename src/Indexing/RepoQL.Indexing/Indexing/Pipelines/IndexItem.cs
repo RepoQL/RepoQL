@@ -102,7 +102,7 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     public bool TryGet<T>(string key, [MaybeNullWhen(false)] out T value)
     {
         value = default;
-        if (_dictionaryImplementation.TryGetValue(key, out var obj) || obj is not T t)
+        if (!_dictionaryImplementation.TryGetValue(key, out var obj) || obj is not T t)
             return false;
         value = t;
         return true;

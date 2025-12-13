@@ -13,35 +13,35 @@ namespace RepoQL.Indexing.Indexing.PostProcessing;
 /// </summary>
 public sealed class StorageBackedArtifactPruner : IArtifactPruner
 {
-    private readonly IDuckDBConnectionFactory _connectionFactory;
+    private readonly DuckDbDataStore _store;
     private readonly ILogger<StorageBackedArtifactPruner> _logger;
     private readonly Func<bool> _isReindexingAccessor;
 
     public StorageBackedArtifactPruner(
-        IDuckDBConnectionFactory connectionFactory,
+        DuckDbDataStore store,
         ILogger<StorageBackedArtifactPruner>? logger = null)
-        : this(connectionFactory, static () => false, logger)
+        : this(store, static () => false, logger)
     {
     }
 
     public StorageBackedArtifactPruner(
-        IDuckDBConnectionFactory connectionFactory,
+        DuckDbDataStore store,
         Func<bool> isReindexingAccessor,
         ILogger<StorageBackedArtifactPruner>? logger = null)
     {
-        _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
+        _store = store ?? throw new ArgumentNullException(nameof(store));
         _logger = logger ?? NullLogger<StorageBackedArtifactPruner>.Instance;
         _isReindexingAccessor = isReindexingAccessor ?? throw new ArgumentNullException(nameof(isReindexingAccessor));
     }
 
-    public async Task<PruningResult> PruneAsync(IReadOnlyCollection<IndexItem> pendingItems, CancellationToken cancellationToken)
+    public Task<PruningResult> PruneAsync(IReadOnlyCollection<IndexItem> pendingItems, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(pendingItems);
 
         if (!_isReindexingAccessor())
         {
             _logger.LogDebug("Pruning skipped because no reindex operation is active.");
-            return PruningResult.None;
+            return Task.FromResult(PruningResult.None);
         }
 
         // Build the set of URIs that were observed during the latest indexing sweep.
@@ -51,37 +51,30 @@ public sealed class StorageBackedArtifactPruner : IArtifactPruner
             live.Add(item.Uri.AbsoluteUri);
         }
 
-        var stale = new List<RepoUri>();
-
-        await using var connection = _connectionFactory.CreateConnection();
-        if (connection.State != System.Data.ConnectionState.Open)
-        {
-            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT uri FROM node WHERE kind = 'document'";
-
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
-        {
-            var uriText = reader.GetString(0);
-            if (string.IsNullOrWhiteSpace(uriText))
-                continue;
-
-            if (live.Contains(uriText))
-                continue;
-
-            if (RepoUri.TryParse(uriText, out var parsed) && parsed is not null)
+        var stale = _store.Read(
+            "SELECT uri FROM node WHERE kind = 'document'",
+            reader =>
             {
-                stale.Add(parsed);
-            }
-        }
+                var uriText = reader.GetString(0);
+                if (string.IsNullOrWhiteSpace(uriText))
+                    return null;
+
+                if (live.Contains(uriText))
+                    return null;
+
+                if (RepoUri.TryParse(uriText, out var parsed) && parsed is not null)
+                    return parsed;
+
+                return null;
+            })
+            .Where(u => u is not null)
+            .Cast<RepoUri>()
+            .ToList();
 
         if (stale.Count == 0)
-            return PruningResult.None;
+            return Task.FromResult(PruningResult.None);
 
         _logger.LogInformation("Pruning identified {Count} stale documents.", stale.Count);
-        return new PruningResult(stale);
+        return Task.FromResult(new PruningResult(stale));
     }
 }

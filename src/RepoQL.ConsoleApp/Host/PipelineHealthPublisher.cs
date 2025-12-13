@@ -1,4 +1,3 @@
-using System.Linq;
 using Grpc.Health.V1;
 using Grpc.HealthCheck;
 using Microsoft.Extensions.Hosting;

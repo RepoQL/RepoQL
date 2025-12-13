@@ -4,7 +4,6 @@ using Google.Protobuf.WellKnownTypes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.ConsoleApp.Helpers;
-using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Protocol;
 using RepoQL.Rendering.Search;

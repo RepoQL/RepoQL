@@ -1,12 +1,13 @@
 ﻿using System.ComponentModel;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Commands;
+using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 
 namespace RepoQL.ConsoleApp.Tools;
 
 [McpServerToolType]
-internal class QueryTool(QueryExecutor queryExecutor)
+internal class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRunner)
 {
     private const string QueryInstructions = """
                                              <CONCEPT>
@@ -189,12 +190,18 @@ internal class QueryTool(QueryExecutor queryExecutor)
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> Query(
-        [Description("DuckDB-style SQL to execute")] string sql,
+        [Description("DuckDB-style SQL to execute. Pass ':diagnostics:' to run connection diagnostics.")] string sql,
         [Description("Maximum number of rows to include when formatting the response.")] int maxRows = 500,
         CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(sql))
             throw new ArgumentException("SQL query cannot be empty.", nameof(sql));
+
+        // Special command: run diagnostics
+        if (sql.Trim().Equals(":diagnostics:", StringComparison.OrdinalIgnoreCase))
+        {
+            return await selfTestRunner.RunAsync(cancel);
+        }
 
         try
         {
@@ -204,7 +211,15 @@ internal class QueryTool(QueryExecutor queryExecutor)
         catch (Exception ex)
         {
             await Console.Error.WriteLineAsync(ex.ToString());
-            // Return detailed error information to help debug SQL issues
+
+            // For infrastructure errors, append diagnostic information
+            if (ErrorClassifier.IsInfrastructureError(ex))
+            {
+                var diagnostics = await selfTestRunner.RunAsync(cancel);
+                return $"Error: {ex.Message}\n\n{diagnostics}";
+            }
+
+            // For user input errors (SQL syntax, etc.), just return the message
             return ex.Message;
         }
     }

@@ -330,16 +330,16 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<InMemoryRateProvider>(sp => new InMemoryRateProvider(sp.GetRequiredService<InMemoryMetricsSink>()));
 
         services.AddSingleton<IDocumentCatalogDataSource>(sp => new DuckDbDocumentCatalogDataSource(
-            sp.GetRequiredService<IDuckDBConnectionFactory>(),
+            sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetService<ILogger<DuckDbDocumentCatalogDataSource>>()));
         services.AddSingleton<IDocumentCatalog>(sp => new DocumentCatalog(sp.GetRequiredService<IDocumentCatalogDataSource>()));
         services.AddSingleton<IArtifactPruner>(sp =>
         {
-            var connectionFactory = sp.GetRequiredService<IDuckDBConnectionFactory>();
+            var store = sp.GetRequiredService<DuckDbDataStore>();
             var logger = sp.GetService<ILogger<StorageBackedArtifactPruner>>();
             var coordinatorLazy = new Lazy<IIndexingCoordinator>(() => sp.GetRequiredService<IIndexingCoordinator>());
             Func<bool> isReindexing = () => coordinatorLazy.Value.IsReindexing;
-            return new StorageBackedArtifactPruner(connectionFactory, isReindexing, logger);
+            return new StorageBackedArtifactPruner(store, isReindexing, logger);
         });
         services.AddSingleton<IVectorIndexCoordinator>(sp => new VectorIndexCoordinator(
             sp.GetRequiredService<DuckDbDataStore>(),

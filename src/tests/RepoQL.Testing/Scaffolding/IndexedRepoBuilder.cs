@@ -156,7 +156,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
             analysisWriter = options.CreateAnalysisWriter?.Invoke(database);
 
             var artifactPruner = new StorageBackedArtifactPruner(
-                new DuckDBConnectionFactory($"Data Source={databasePath}"),
+                database,
                 () => coordinator?.IsReindexing ?? false,
                 loggerFactory.CreateLogger<StorageBackedArtifactPruner>());
             var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);

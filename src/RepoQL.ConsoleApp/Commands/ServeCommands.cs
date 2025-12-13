@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Net.Http;
 using System.Net.Sockets;
 using Grpc.Core;
 using Grpc.Health.V1;

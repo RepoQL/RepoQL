@@ -1,8 +1,6 @@
-using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Indexing.Hosting;
-using RepoQL.Indexing.Indexing;
 
 namespace RepoQL.ConsoleApp.Host;
 

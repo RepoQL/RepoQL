@@ -13,80 +13,73 @@ namespace RepoQL.Core;
 /// </summary>
 public sealed class DuckDbDocumentCatalogDataSource : IDocumentCatalogDataSource
 {
-    private readonly IDuckDBConnectionFactory _connectionFactory;
+    private readonly DuckDbDataStore _store;
     private readonly ILogger<DuckDbDocumentCatalogDataSource> _logger;
 
     public DuckDbDocumentCatalogDataSource(
-        IDuckDBConnectionFactory connectionFactory,
+        DuckDbDataStore store,
         ILogger<DuckDbDocumentCatalogDataSource>? logger = null)
     {
-        _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
+        _store = store ?? throw new ArgumentNullException(nameof(store));
         _logger = logger ?? NullLogger<DuckDbDocumentCatalogDataSource>.Instance;
     }
 
-    public async Task<IReadOnlyList<DocumentCatalogEntry>> LoadAsync(CancellationToken cancellationToken)
+    public Task<IReadOnlyList<DocumentCatalogEntry>> LoadAsync(CancellationToken cancellationToken)
     {
-        var entries = new List<DocumentCatalogEntry>();
         _logger.LogInformation("Starting catalog hydration from database...");
 
         try
         {
-            await using var connection = _connectionFactory.CreateConnection();
-            _logger.LogDebug("Database connection opened for catalog hydration");
-            await using var cmd = connection.CreateCommand();
-
-            cmd.CommandText = @"
+            const string sql = """
                 SELECT n.uri, a.digest, a.media_type, n.id, n.updated_at
                 FROM node n
                 JOIN artifact a ON a.id = n.artifact_id
-                WHERE n.kind = 'document';";
+                WHERE n.kind = 'document';
+                """;
 
-            await using var reader = await cmd.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-
-            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            var entries = _store.Read(sql, reader =>
             {
                 var uriStr = reader.GetString(0);
                 var rawDigest = reader.GetString(1);
                 var mediaTypeStr = reader.GetString(2);
+                // Column 3 is document_id (not used - catalog uses URI as key)
+                var updatedAt = reader.GetDateTime(4);
 
                 // Database stores "xxh64:abc123", but catalog compares against "ABC123" (hex only, uppercase)
                 var digest = rawDigest.Contains(':')
                     ? rawDigest[(rawDigest.IndexOf(':') + 1)..].ToUpperInvariant()
                     : rawDigest.ToUpperInvariant();
-                // Column 3 is document_id (not used - catalog uses URI as key)
-                var updatedAt = reader.GetDateTime(4);
 
                 if (!RepoUri.TryParse(uriStr, out var uri))
                 {
                     _logger.LogWarning("Skipping catalog entry with invalid URI: {Uri}", uriStr);
-                    continue;
+                    return null;
                 }
 
                 if (!SemanticMediaType.TryParse(mediaTypeStr, out var mediaType))
                 {
                     _logger.LogWarning("Skipping catalog entry with invalid media type: {MediaType}", mediaTypeStr);
-                    continue;
+                    return null;
                 }
 
                 // PhysicalPath: derive from file:// URIs, null for others (embedded docs, imports)
                 var physicalPath = uri.Scheme == "file" ? uri.Container.LocalPath : null;
 
-                entries.Add(new DocumentCatalogEntry(
+                return new DocumentCatalogEntry(
                     uri,
                     digest,
                     mediaType,
                     physicalPath,
-                    new DateTimeOffset(updatedAt, TimeSpan.Zero)));
-            }
+                    new DateTimeOffset(updatedAt, TimeSpan.Zero));
+            }).Where(e => e is not null).Cast<DocumentCatalogEntry>().ToList();
 
             _logger.LogInformation("Loaded {Count} catalog entries from database", entries.Count);
+            return Task.FromResult<IReadOnlyList<DocumentCatalogEntry>>(entries);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to load catalog from database; starting with empty catalog");
-            return Array.Empty<DocumentCatalogEntry>();
+            return Task.FromResult<IReadOnlyList<DocumentCatalogEntry>>(Array.Empty<DocumentCatalogEntry>());
         }
-
-        return entries;
     }
 }

@@ -1,17 +1,16 @@
 using System.ComponentModel;
-using System.IO;
-using System.Linq;
 using ModelContextProtocol.Server;
+using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
-using RepoQL.Protocol;
 
 namespace RepoQL.ConsoleApp.Tools;
 
 [McpServerToolType]
-internal sealed class ImportTool(RepoQlClientProvider clientProvider)
+internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRunner selfTestRunner)
 {
     private readonly RepoQlClientProvider _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
+    private readonly SelfTestRunner _selfTestRunner = selfTestRunner ?? throw new ArgumentNullException(nameof(selfTestRunner));
 
     private const string ImportInstructions =
         """
@@ -71,6 +70,14 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider)
         catch (Exception ex)
         {
             await Console.Error.WriteLineAsync(ex.ToString());
+
+            // For infrastructure errors, append diagnostic information
+            if (ErrorClassifier.IsInfrastructureError(ex))
+            {
+                var diagnostics = await _selfTestRunner.RunAsync(cancellationToken);
+                return $"Import failed: {ex.Message}\n\n{diagnostics}";
+            }
+
             return $"Import failed: {ex.Message}";
         }
     }

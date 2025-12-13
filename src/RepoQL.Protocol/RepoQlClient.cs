@@ -396,6 +396,15 @@ public sealed class RepoQlClient : IRepoQlClient
     private static int? _lastHostExitCode;
     private static readonly object _hostDiagnosticsLock = new();
 
+    // Enhanced diagnostics: ring buffer and launch info
+    private const int StderrBufferMaxLines = 50;
+    private static readonly Queue<string> _stderrBuffer = new(StderrBufferMaxLines);
+    private static string? _hostWorkingDirectory;
+    private static string? _hostExecutablePath;
+    private static DateTime? _hostLaunchTime;
+    private static int? _hostProcessId;
+    private static System.Diagnostics.Process? _hostProcess;
+
     /// <summary>
     /// Gets diagnostic information from the last host launch attempt.
     /// Useful for debugging startup failures.
@@ -405,6 +414,53 @@ public sealed class RepoQlClient : IRepoQlClient
         lock (_hostDiagnosticsLock)
         {
             return (_lastHostStderr, _lastHostExitCode);
+        }
+    }
+
+    /// <summary>
+    /// Gets comprehensive diagnostic information about the host process.
+    /// Includes recent stderr output, launch info, and process status.
+    /// </summary>
+    public static HostDiagnostics GetHostDiagnostics()
+    {
+        lock (_hostDiagnosticsLock)
+        {
+            bool? hasExited = null;
+            int? exitCode = _lastHostExitCode;
+
+            if (_hostProcess != null)
+            {
+                try
+                {
+                    hasExited = _hostProcess.HasExited;
+                    if (hasExited == true)
+                        exitCode = _hostProcess.ExitCode;
+                }
+                catch
+                {
+                    // Process may have been disposed
+                }
+            }
+
+            return new HostDiagnostics(
+                StderrTail: _stderrBuffer.ToList(),
+                ExitCode: exitCode,
+                WorkingDirectory: _hostWorkingDirectory,
+                ExecutablePath: _hostExecutablePath,
+                LaunchTime: _hostLaunchTime,
+                ProcessId: _hostProcessId,
+                HasExited: hasExited
+            );
+        }
+    }
+
+    private static void AddToStderrBuffer(string line)
+    {
+        lock (_hostDiagnosticsLock)
+        {
+            if (_stderrBuffer.Count >= StderrBufferMaxLines)
+                _stderrBuffer.Dequeue();
+            _stderrBuffer.Enqueue(line);
         }
     }
 
@@ -423,6 +479,17 @@ public sealed class RepoQlClient : IRepoQlClient
             arguments = string.Join(' ', args.Select(a => "\"" + a + "\""));
         }
 
+        // Store launch info before starting
+        lock (_hostDiagnosticsLock)
+        {
+            _hostWorkingDirectory = workingDirectory;
+            _hostExecutablePath = exePathOrCommand;
+            _hostLaunchTime = DateTime.UtcNow;
+            _stderrBuffer.Clear(); // Clear previous session's output
+            _lastHostStderr = null;
+            _lastHostExitCode = null;
+        }
+
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = fileName,
@@ -430,7 +497,7 @@ public sealed class RepoQlClient : IRepoQlClient
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = false,
+            RedirectStandardOutput = true,
             RedirectStandardError = true
         };
         foreach (var kv in env) psi.Environment[kv.Key] = kv.Value;
@@ -445,29 +512,77 @@ public sealed class RepoQlClient : IRepoQlClient
             throw new InvalidOperationException($"Failed to launch RepoQL host using '{exePathOrCommand}'. Set REPOQL_HOST_PATH to override.", ex);
         }
 
-        // Capture stderr asynchronously for diagnostics
+        // Store process reference for status checks
+        lock (_hostDiagnosticsLock)
+        {
+            _hostProcess = process;
+            _hostProcessId = process.Id;
+        }
+
+        // Stream stderr line-by-line to Console.Error and ring buffer
         _ = Task.Run(async () =>
         {
+            var stderrLines = new List<string>();
             try
             {
-                var stderr = await process.StandardError.ReadToEndAsync();
-                process.WaitForExit(30000); // Wait up to 30s for exit code
-
-                lock (_hostDiagnosticsLock)
+                while (!process.HasExited || !process.StandardError.EndOfStream)
                 {
-                    _lastHostStderr = stderr;
-                    _lastHostExitCode = process.HasExited ? process.ExitCode : null;
-                }
+                    var line = await process.StandardError.ReadLineAsync();
+                    if (line == null) break;
 
-                // If process exited quickly with an error, log it
-                if (process.HasExited && process.ExitCode != 0 && !string.IsNullOrWhiteSpace(stderr))
-                {
-                    Console.Error.WriteLine($"[RepoQlClient] Host process exited with code {process.ExitCode}. Stderr: {stderr.Trim()}");
+                    // Add timestamp and prefix, write to stderr
+                    var timestamped = $"[host {DateTime.UtcNow:HH:mm:ss}] {line}";
+                    await Console.Error.WriteLineAsync(timestamped);
+
+                    // Add to ring buffer and full capture
+                    AddToStderrBuffer(timestamped);
+                    stderrLines.Add(line);
                 }
             }
             catch
             {
-                // Ignore errors in diagnostic capture
+                // Stream closed or process terminated
+            }
+
+            // Store final state
+            lock (_hostDiagnosticsLock)
+            {
+                _lastHostStderr = string.Join(Environment.NewLine, stderrLines);
+                try
+                {
+                    _lastHostExitCode = process.HasExited ? process.ExitCode : null;
+                }
+                catch
+                {
+                    // Process may be disposed
+                }
+            }
+
+            // Log if exited with error
+            if (process.HasExited && process.ExitCode != 0)
+            {
+                await Console.Error.WriteLineAsync($"[host] Process exited with code {process.ExitCode}");
+            }
+        });
+
+        // Stream stdout to stderr as well (host shouldn't produce stdout normally, but if it does, we want to see it)
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!process.HasExited || !process.StandardOutput.EndOfStream)
+                {
+                    var line = await process.StandardOutput.ReadLineAsync();
+                    if (line == null) break;
+
+                    var timestamped = $"[host stdout {DateTime.UtcNow:HH:mm:ss}] {line}";
+                    await Console.Error.WriteLineAsync(timestamped);
+                    AddToStderrBuffer(timestamped);
+                }
+            }
+            catch
+            {
+                // Stream closed or process terminated
             }
         });
     }
