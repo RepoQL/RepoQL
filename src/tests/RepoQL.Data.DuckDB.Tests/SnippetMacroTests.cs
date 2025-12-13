@@ -1,34 +1,24 @@
-using DuckDB.NET.Data;
 using AwesomeAssertions;
-using System.Text;
 using System.Text.Json.Nodes;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
-using RepoQL.Metrics;
 using Artifact = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Data.DuckDB.Tests;
 
 public class SnippetMacroTests : IDisposable
 {
-    private readonly DuckDBConnection _connection;
-    private readonly DuckDbGraphStore _store;
-    private readonly IndexingMetrics _metrics;
+    private readonly DuckDbDataStore _store;
 
     public SnippetMacroTests()
     {
-        _connection = new DuckDBConnection("Data Source=:memory:");
-        _connection.Open();
-        _metrics = new IndexingMetrics();
-        _store = new DuckDbGraphStore(_connection, _metrics);
-        _store.EnsureSchema();
+        _store = new DuckDbDataStore();
     }
 
     public void Dispose()
     {
         _store?.Dispose();
-        _metrics?.Dispose();
-        _connection?.Dispose();
     }
 
     // ========== Language Detection Tests ==========
@@ -36,23 +26,17 @@ public class SnippetMacroTests : IDisposable
     [Test]
     public void LanguageFromMediaTypeOrUri_DetectsFromMediaType()
     {
-        using var cmd = _connection.CreateCommand();
-
         // Test various media types
-        cmd.CommandText = "SELECT language_from_media_type_or_uri('text/x-csharp', 'test.txt')";
-        var result = cmd.ExecuteScalar();
+        var result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri('text/x-csharp', 'test.txt')");
         result.Should().Be("csharp");
 
-        cmd.CommandText = "SELECT language_from_media_type_or_uri('text/x-python', 'test.txt')";
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri('text/x-python', 'test.txt')");
         result.Should().Be("python");
 
-        cmd.CommandText = "SELECT language_from_media_type_or_uri('application/json', 'test.txt')";
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri('application/json', 'test.txt')");
         result.Should().Be("json");
 
-        cmd.CommandText = "SELECT language_from_media_type_or_uri('text/markdown', 'test.txt')";
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri('text/markdown', 'test.txt')");
         result.Should().Be("markdown");
     }
 
@@ -60,42 +44,31 @@ public class SnippetMacroTests : IDisposable
     [Skip("language_from_media_type_or_uri extension fallback not working - returns NULL for unknown extensions")]
     public void LanguageFromMediaTypeOrUri_FallsBackToExtension()
     {
-        using var cmd = _connection.CreateCommand();
-
         // Test file extensions when media type is null or unknown
-        cmd.CommandText = "SELECT language_from_media_type_or_uri(NULL, 'test.cs')";
-        var result = cmd.ExecuteScalar();
+        var result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri(NULL, 'test.cs')");
         result.Should().Be("csharp");
 
-        cmd.CommandText = "SELECT language_from_media_type_or_uri(NULL, 'script.py')";
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri(NULL, 'script.py')");
         result.Should().Be("python");
 
-        cmd.CommandText = "SELECT language_from_media_type_or_uri(NULL, 'component.tsx')";
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri(NULL, 'component.tsx')");
         result.Should().Be("tsx");
 
-        cmd.CommandText = "SELECT language_from_media_type_or_uri(NULL, 'config.yml')";
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri(NULL, 'config.yml')");
         result.Should().Be("yaml");
 
-        cmd.CommandText = "SELECT language_from_media_type_or_uri('text/plain', 'main.rs')";
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri('text/plain', 'main.rs')");
         result.Should().Be("rust");
     }
 
     [Test]
     public void LanguageFromMediaTypeOrUri_ReturnsNullForUnknown()
     {
-        using var cmd = _connection.CreateCommand();
+        var result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri(NULL, 'unknown.xyz')");
+        result.Should().BeNull();
 
-        cmd.CommandText = "SELECT language_from_media_type_or_uri(NULL, 'unknown.xyz')";
-        var result = cmd.ExecuteScalar();
-        result.Should().Be(DBNull.Value);
-
-        cmd.CommandText = "SELECT language_from_media_type_or_uri('application/unknown', 'file')";
-        result = cmd.ExecuteScalar();
-        result.Should().Be(DBNull.Value);
+        result = _store.ReadScalar<string>("SELECT language_from_media_type_or_uri('application/unknown', 'file')");
+        result.Should().BeNull();
     }
 
     // ========== Line/Column Calculation Tests ==========
@@ -103,102 +76,68 @@ public class SnippetMacroTests : IDisposable
     [Test]
     public void LineForByteOffset_CalculatesCorrectly()
     {
-        using var cmd = _connection.CreateCommand();
         var text = "Line 1\nLine 2\nLine 3";
-        var bytes = Encoding.UTF8.GetBytes(text);
 
         // First line
-        cmd.CommandText = "SELECT line_for_byte_offset(?, 0)";
-        cmd.Parameters.Add(new DuckDBParameter(text));
-        var result = cmd.ExecuteScalar();
+        var result = _store.ReadScalar<int>($"SELECT line_for_byte_offset('{text}', 0)");
         result.Should().Be(1);
 
         // Second line (after first \n at position 6)
-        cmd.CommandText = "SELECT line_for_byte_offset(?, 7)";
-        cmd.Parameters.Clear();
-        cmd.Parameters.Add(new DuckDBParameter(text));
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<int>($"SELECT line_for_byte_offset('{text}', 7)");
         result.Should().Be(2);
 
         // Third line (after second \n at position 13)
-        cmd.CommandText = "SELECT line_for_byte_offset(?, 14)";
-        cmd.Parameters.Clear();
-        cmd.Parameters.Add(new DuckDBParameter(text));
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<int>($"SELECT line_for_byte_offset('{text}', 14)");
         result.Should().Be(3);
     }
 
     [Test]
     public void LineForByteOffset_HandlesNulls()
     {
-        using var cmd = _connection.CreateCommand();
+        var result = _store.ReadScalar<int?>("SELECT line_for_byte_offset(NULL, 10)");
+        result.Should().BeNull();
 
-        cmd.CommandText = "SELECT line_for_byte_offset(NULL, 10)";
-        var result = cmd.ExecuteScalar();
-        result.Should().Be(DBNull.Value);
+        result = _store.ReadScalar<int?>("SELECT line_for_byte_offset('test', NULL)");
+        result.Should().BeNull();
 
-        cmd.CommandText = "SELECT line_for_byte_offset('test', NULL)";
-        result = cmd.ExecuteScalar();
-        result.Should().Be(DBNull.Value);
-
-        cmd.CommandText = "SELECT line_for_byte_offset('test', -1)";
-        result = cmd.ExecuteScalar();
-        result.Should().Be(DBNull.Value);
+        result = _store.ReadScalar<int?>("SELECT line_for_byte_offset('test', -1)");
+        result.Should().BeNull();
     }
 
     [Test]
     public void ColumnForByteOffset_CalculatesCorrectly()
     {
-        using var cmd = _connection.CreateCommand();
         var text = "Line 1\nLine 2 here\nLine 3";
 
         // Beginning of first line
-        cmd.CommandText = "SELECT column_for_byte_offset(?, 0)";
-        cmd.Parameters.Add(new DuckDBParameter(text));
-        var result = cmd.ExecuteScalar();
+        var result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 0)");
         result.Should().Be(1);
 
         // Middle of first line (position 3 = 'e' in "Line")
-        cmd.CommandText = "SELECT column_for_byte_offset(?, 3)";
-        cmd.Parameters.Clear();
-        cmd.Parameters.Add(new DuckDBParameter(text));
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 3)");
         result.Should().Be(4);
 
         // Beginning of second line (position 7, after \n)
-        cmd.CommandText = "SELECT column_for_byte_offset(?, 7)";
-        cmd.Parameters.Clear();
-        cmd.Parameters.Add(new DuckDBParameter(text));
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 7)");
         result.Should().Be(1);
 
         // Middle of second line (position 14 = 'h' in "here")
-        cmd.CommandText = "SELECT column_for_byte_offset(?, 14)";
-        cmd.Parameters.Clear();
-        cmd.Parameters.Add(new DuckDBParameter(text));
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 14)");
         result.Should().Be(8);
     }
 
     [Test]
     public void ColumnForByteOffset_HandlesMultiByteChars()
     {
-        using var cmd = _connection.CreateCommand();
         // UTF-8 emoji is multi-byte
         var text = "Hello 😀 World";
-        var bytes = Encoding.UTF8.GetBytes(text);
 
         // Before emoji
-        cmd.CommandText = "SELECT column_for_byte_offset(?, 6)";
-        cmd.Parameters.Add(new DuckDBParameter(text));
-        var result = cmd.ExecuteScalar();
+        var result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 6)");
         result.Should().Be(7); // After "Hello "
 
         // After emoji (emoji is 4 bytes in UTF-8)
-        cmd.CommandText = "SELECT column_for_byte_offset(?, 11)";
-        cmd.Parameters.Clear();
-        cmd.Parameters.Add(new DuckDBParameter(text));
-        result = cmd.ExecuteScalar();
+        result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 11)");
         result.Should().Be(9); // After emoji and space
     }
 
@@ -216,7 +155,6 @@ public class SnippetMacroTests : IDisposable
             Text = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8\nLine 9\nLine 10",
             MediaType = SemanticMediaType.Parse("text/x-csharp")
         };
-        _store.UpsertArtifact(artifact);
 
         var node = new Node
         {
@@ -226,26 +164,20 @@ public class SnippetMacroTests : IDisposable
             ArtifactId = artifact.Id,
             Props = new JsonObject()
         };
-        _store.UpsertNode(node);
+
+        _store.IndexArtifact(new ParsedArtifact { Artifact = artifact, DocumentNode = node });
 
         // Query snippet with line range
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT line_number, text, is_focus, language 
-            FROM snippet('file:///test.cs#line=4,6', 2)
-            ORDER BY line_number";
-
-        using var reader = cmd.ExecuteReader();
-        var results = new List<(int line, string text, bool focus, string? lang)>();
-        while (reader.Read())
-        {
-            results.Add((
-                reader.GetInt32(0),
-                reader.GetString(1),
-                reader.GetBoolean(2),
-                reader.IsDBNull(3) ? null : reader.GetString(3)
+        var results = _store.Read(
+            @"SELECT line_number, text, is_focus, language
+              FROM snippet('file:///test.cs#line=4,6', 2)
+              ORDER BY line_number",
+            r => (
+                line: r.GetInt32(0),
+                text: r.GetString(1),
+                focus: r.GetBoolean(2),
+                lang: r.IsDBNull(3) ? null : r.GetString(3)
             ));
-        }
 
         // Should get lines 2-8 (context of 2 lines on each side)
         results.Should().HaveCount(7);
@@ -270,7 +202,6 @@ public class SnippetMacroTests : IDisposable
             Text = "First line\nSecond line\nThird line",
             MediaType = SemanticMediaType.Parse("text/x-python")
         };
-        _store.UpsertArtifact(artifact);
 
         var node = new Node
         {
@@ -280,25 +211,19 @@ public class SnippetMacroTests : IDisposable
             ArtifactId = artifact.Id,
             Props = new JsonObject()
         };
-        _store.UpsertNode(node);
+
+        _store.IndexArtifact(new ParsedArtifact { Artifact = artifact, DocumentNode = node });
 
         // Query snippet without fragment (should show first window)
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT line_number, text, is_focus 
-            FROM snippet('file:///script.py', 3)
-            ORDER BY line_number";
-
-        using var reader = cmd.ExecuteReader();
-        var results = new List<(int line, string text, bool focus)>();
-        while (reader.Read())
-        {
-            results.Add((
-                reader.GetInt32(0),
-                reader.GetString(1),
-                reader.GetBoolean(2)
+        var results = _store.Read(
+            @"SELECT line_number, text, is_focus
+              FROM snippet('file:///script.py', 3)
+              ORDER BY line_number",
+            r => (
+                line: r.GetInt32(0),
+                text: r.GetString(1),
+                focus: r.GetBoolean(2)
             ));
-        }
 
         // Should get first 7 lines (1 + 3*2 context)
         results.Should().HaveCount(3);
@@ -320,7 +245,6 @@ public class SnippetMacroTests : IDisposable
             Text = text,
             MediaType = SemanticMediaType.Parse("text/plain")
         };
-        _store.UpsertArtifact(artifact);
 
         var node = new Node
         {
@@ -330,27 +254,21 @@ public class SnippetMacroTests : IDisposable
             ArtifactId = artifact.Id,
             Props = new JsonObject()
         };
-        _store.UpsertNode(node);
+
+        _store.IndexArtifact(new ParsedArtifact { Artifact = artifact, DocumentNode = node });
 
         // Query snippet with char range (byte offsets 12-26 = "This is a test")
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT line_number, text, is_focus, focus_start_column, focus_end_column
-            FROM snippet('file:///test.txt#char=12,26', 0)
-            ORDER BY line_number";
-
-        using var reader = cmd.ExecuteReader();
-        var results = new List<(int line, string text, bool focus, int? startCol, int? endCol)>();
-        while (reader.Read())
-        {
-            results.Add((
-                reader.GetInt32(0),
-                reader.GetString(1),
-                reader.GetBoolean(2),
-                reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                reader.IsDBNull(4) ? null : reader.GetInt32(4)
+        var results = _store.Read(
+            @"SELECT line_number, text, is_focus, focus_start_column, focus_end_column
+              FROM snippet('file:///test.txt#char=12,26', 0)
+              ORDER BY line_number",
+            r => (
+                line: r.GetInt32(0),
+                text: r.GetString(1),
+                focus: r.GetBoolean(2),
+                startCol: r.IsDBNull(3) ? (int?)null : r.GetInt32(3),
+                endCol: r.IsDBNull(4) ? (int?)null : r.GetInt32(4)
             ));
-        }
 
         // Should get just line 2 (no context requested)
         results.Should().HaveCount(1);
@@ -381,7 +299,6 @@ public class SnippetMacroTests : IDisposable
             Text = text,
             MediaType = SemanticMediaType.Parse("text/plain")
         };
-        _store.UpsertArtifact(artifact);
 
         var docUri = RepoUri.Parse("file:///demo/Foo.cs");
         var documentNode = new Node
@@ -392,7 +309,6 @@ public class SnippetMacroTests : IDisposable
             ArtifactId = artifact.Id,
             Props = new JsonObject()
         };
-        _store.UpsertNode(documentNode);
 
         var symbolSpan = new Span
         {
@@ -403,7 +319,6 @@ public class SnippetMacroTests : IDisposable
             StartColumn = 1,
             EndColumn = 24
         };
-        _store.InsertSpan(symbolSpan);
 
         var symbolNode = new Node
         {
@@ -416,27 +331,27 @@ public class SnippetMacroTests : IDisposable
                 ["qualified_name"] = "Demo.Foo"
             }
         };
-        _store.UpsertNode(symbolNode);
 
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT line_number, text, is_focus, focus_start_column, focus_end_column, resolved_uri
-            FROM snippet('file:///demo/Foo.cs#symbol=Demo.Foo', 1)
-            ORDER BY line_number";
-
-        using var reader = cmd.ExecuteReader();
-        var results = new List<(int line, string text, bool focus, int? startCol, int? endCol, string resolved)>();
-        while (reader.Read())
+        _store.IndexArtifact(new ParsedArtifact
         {
-            results.Add((
-                reader.GetInt32(0),
-                reader.GetString(1),
-                reader.GetBoolean(2),
-                reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                reader.IsDBNull(4) ? null : reader.GetInt32(4),
-                reader.IsDBNull(5) ? string.Empty : reader.GetString(5)
+            Artifact = artifact,
+            DocumentNode = documentNode,
+            Children = [symbolNode],
+            Spans = [symbolSpan]
+        });
+
+        var results = _store.Read(
+            @"SELECT line_number, text, is_focus, focus_start_column, focus_end_column, resolved_uri
+              FROM snippet('file:///demo/Foo.cs#symbol=Demo.Foo', 1)
+              ORDER BY line_number",
+            r => (
+                line: r.GetInt32(0),
+                text: r.GetString(1),
+                focus: r.GetBoolean(2),
+                startCol: r.IsDBNull(3) ? (int?)null : r.GetInt32(3),
+                endCol: r.IsDBNull(4) ? (int?)null : r.GetInt32(4),
+                resolved: r.IsDBNull(5) ? string.Empty : r.GetString(5)
             ));
-        }
 
         results.Should().NotBeEmpty();
         results.Select(r => r.line).Should().Equal(2, 3, 4, 5, 6);
@@ -462,7 +377,6 @@ public class SnippetMacroTests : IDisposable
             Text = "function foo() {\n  bar();\n  baz();\n}",
             MediaType = SemanticMediaType.Parse("text/javascript")
         };
-        _store.UpsertArtifact(artifact);
 
         var node = new Node
         {
@@ -472,7 +386,6 @@ public class SnippetMacroTests : IDisposable
             ArtifactId = artifact.Id,
             Props = new JsonObject()
         };
-        _store.UpsertNode(node);
 
         // Create a span for the bar() call
         var span = new Span
@@ -484,7 +397,6 @@ public class SnippetMacroTests : IDisposable
             StartColumn = 3,
             EndColumn = 8
         };
-        _store.InsertSpan(span);
 
         // Create an edge with source span
         var edge = new Edge
@@ -497,27 +409,27 @@ public class SnippetMacroTests : IDisposable
             ScopeDocumentId = node.Id,
             Props = new JsonObject()
         };
-        _store.UpsertEdge(edge);
+
+        _store.IndexArtifact(new ParsedArtifact
+        {
+            Artifact = artifact,
+            DocumentNode = node,
+            Spans = [span],
+            Edges = [edge]
+        });
 
         // Query snippet with edge fragment
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = $@"
-            SELECT line_number, text, is_focus, focus_start_column, focus_end_column
-            FROM snippet('file:///app.js#edge={edge.Id}', 1)
-            ORDER BY line_number";
-
-        using var reader = cmd.ExecuteReader();
-        var results = new List<(int line, string text, bool focus, int? startCol, int? endCol)>();
-        while (reader.Read())
-        {
-            results.Add((
-                reader.GetInt32(0),
-                reader.GetString(1),
-                reader.GetBoolean(2),
-                reader.IsDBNull(3) ? null : reader.GetInt32(3),
-                reader.IsDBNull(4) ? null : reader.GetInt32(4)
+        var results = _store.Read(
+            $@"SELECT line_number, text, is_focus, focus_start_column, focus_end_column
+               FROM snippet('file:///app.js#edge={edge.Id}', 1)
+               ORDER BY line_number",
+            r => (
+                line: r.GetInt32(0),
+                text: r.GetString(1),
+                focus: r.GetBoolean(2),
+                startCol: r.IsDBNull(3) ? (int?)null : r.GetInt32(3),
+                endCol: r.IsDBNull(4) ? (int?)null : r.GetInt32(4)
             ));
-        }
 
         // Should get lines 1-3 with focus on line 2
         results.Should().HaveCount(3);
@@ -542,7 +454,6 @@ public class SnippetMacroTests : IDisposable
             Text = "Test content",
             MediaType = SemanticMediaType.Parse("text/plain")
         };
-        _store.UpsertArtifact(artifact);
 
         var node = new Node
         {
@@ -552,16 +463,14 @@ public class SnippetMacroTests : IDisposable
             ArtifactId = artifact.Id,
             Props = new JsonObject()
         };
-        _store.UpsertNode(node);
+
+        _store.IndexArtifact(new ParsedArtifact { Artifact = artifact, DocumentNode = node });
 
         // Query snippet and check resolved_uri
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT resolved_uri 
-            FROM snippet('file:///doc.txt#line=1', 0)
-            LIMIT 1";
-
-        var resolvedUri = cmd.ExecuteScalar() as string;
+        var resolvedUri = _store.ReadScalar<string>(
+            @"SELECT resolved_uri
+              FROM snippet('file:///doc.txt#line=1', 0)
+              LIMIT 1");
         resolvedUri.Should().Be("file:///doc.txt#line=1");
     }
 }

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
+using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Indexing.Indexing.Pipelines;
@@ -233,7 +234,7 @@ public partial class IndexingEngine : IAsyncDisposable
     private WorkQueue<IndexItem> IndexerQueue { get; }
 
     public IndexingEngine(
-        IRepoDatabase? db,
+        DuckDbDataStore? db,
         IUriFilter? filter,
         ClassificationPipeline? classifier = null,
         ParsingPipeline? parser = null,
@@ -249,7 +250,6 @@ public partial class IndexingEngine : IAsyncDisposable
         IndexingMetrics? metrics = null)
     {
         Database = db;
-        Writer =  db as IDatabaseWriter;
         Filter = filter ?? new RepoGitIgnoreFilter(".");
         Classifier = classifier ?? new ClassificationPipeline( []);
         Parser = parser ?? new ParsingPipeline([]);
@@ -330,10 +330,10 @@ public partial class IndexingEngine : IAsyncDisposable
         Metrics.RegisterQueueCallbacks(
             indexerDepth: () => IndexerQueue.Depth,
             analysisDepth: () => AnalysisQueue.Depth,
-            writerDepth: () => Writer?.GetStatus().PendingCount ?? 0,
+            writerDepth: () => 0, // DuckDbDataStore uses synchronous writes
             indexerCapacity: () => IndexerQueue.MaxDepth,
             analysisCapacity: () => AnalysisQueue.MaxDepth,
-            writerCapacity: () => Writer?.QueueCapacity ?? 0,
+            writerCapacity: () => 0, // DuckDbDataStore uses synchronous writes
             indexerWorkers: () => GetActiveCount(IndexingState.ClassificationBusy) +
                                   GetActiveCount(IndexingState.ParsingBusy) +
                                   GetActiveCount(IndexingState.SingleFileAnalysisBusy),
@@ -359,8 +359,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
     public IUriFilter Filter { get; }
 
-    public IRepoDatabase? Database { get; }
-    public IDatabaseWriter? Writer { get; }
+    public DuckDbDataStore? Database { get; }
 
     public WorkQueue<IndexItem> AnalysisQueue { get; }
 
@@ -908,7 +907,7 @@ public partial class IndexingEngine : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // IRepoDatabase.DeleteArtifact is synchronous
+            // DuckDbDataStore.DeleteArtifact is synchronous
             var deleted = Database.DeleteArtifact(uri);
             if (deleted)
             {

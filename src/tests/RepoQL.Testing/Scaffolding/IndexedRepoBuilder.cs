@@ -1,12 +1,5 @@
-using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text.Json.Nodes;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -20,7 +13,6 @@ using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.InMemory;
-using RepoQL.Indexing;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.Hosting;
 using RepoQL.Indexing.Indexing;
@@ -32,9 +24,9 @@ using RepoQL.Indexing.Indexing.Pipelines.Discovery;
 using RepoQL.Indexing.Indexing.Pipelines.Parsing;
 using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Indexing.Indexing.State;
+using RepoQL.Indexing;
 using RepoQL.Metrics;
 using MetricsIndexingMetrics = RepoQL.Metrics.IndexingMetrics;
-using System.Threading;
 
 namespace RepoQL.Testing.Scaffolding;
 
@@ -46,32 +38,24 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
     private readonly CompositeFileSystem _compositeFileSystem;
     private readonly IndexingCoordinator _coordinator;
     private readonly RepoqlHost _host;
-    private readonly IDatabaseWriter _writer;
-    private readonly bool _ownsWriter;
-    private readonly SingleThreadedDatabaseWriter? _singleThreadedWriter;
     private readonly IAnalysisResultWriter? _analysisWriter;
     private readonly bool _deleteDatabaseOnDispose;
     private readonly string _databasePath;
     private readonly ILoggerFactory _loggerFactory;
     private readonly IReadOnlyList<FormatSqlScript> _formatScripts;
-    private IRepoDatabase _database;
-    private DuckDbGraphStore _store;
+    private DuckDbDataStore _dataStore;
     private readonly ConcurrentDictionary<string, RepoUri> _trackedUris = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
     private IndexedRepoBuilder(
         MemoryFileSystem fileSystem,
         CompositeFileSystem composite,
-        IRepoDatabase database,
-        DuckDbGraphStore store,
+        DuckDbDataStore dataStore,
         MetricsIndexingMetrics metrics,
         FormatRegistry? formatRegistry,
         IndexingEngine engine,
         IndexingCoordinator coordinator,
         RepoqlHost host,
-        IDatabaseWriter writer,
-        bool ownsWriter,
-        SingleThreadedDatabaseWriter? singleThreadedWriter,
         IHasher hasher,
         IAnalysisResultWriter? analysisWriter,
         string databasePath,
@@ -81,16 +65,12 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
     {
         FileSystem = fileSystem;
         _compositeFileSystem = composite;
-        _database = database;
-        _store = store;
+        _dataStore = dataStore;
         Metrics = metrics;
         FormatRegistry = formatRegistry;
         Engine = engine;
         _coordinator = coordinator;
         _host = host;
-        _writer = writer;
-        _ownsWriter = ownsWriter;
-        _singleThreadedWriter = singleThreadedWriter;
         Hasher = hasher;
         _analysisWriter = analysisWriter;
         _databasePath = databasePath;
@@ -101,7 +81,12 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
 
     public MemoryFileSystem FileSystem { get; }
 
-    public DuckDbGraphStore Store => _store;
+    public DuckDbDataStore DataStore => _dataStore;
+
+    /// <summary>
+    /// Alias for DataStore for backward compatibility with tests.
+    /// </summary>
+    public DuckDbDataStore Store => _dataStore;
 
     public FormatRegistry? FormatRegistry { get; }
 
@@ -142,14 +127,11 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
         var databasePath = ResolveDatabasePath(options);
         var deleteOnDispose = options.DeleteDatabaseOnDispose || string.IsNullOrWhiteSpace(options.DatabasePath);
 
-        IRepoDatabase? database = null;
-        DuckDbGraphStore? store = null;
+        DuckDbDataStore? database = null;
         IAnalysisResultWriter? analysisWriter = null;
-        SingleThreadedDatabaseWriter? singleWriter = null;
         RepoqlHost? host = null;
         IndexingCoordinator? coordinator = null;
         IndexingEngine? engine = null;
-        bool ownsWriter = false;
 
         try
         {
@@ -165,48 +147,16 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 .ToList();
 
             // Create unified database interface for indexing operations
-            database = new DuckDbRepoDatabase(
+            database = new DuckDbDataStore(
                 databasePath,
                 embeddingProvider: null,
                 formatSchemaScripts: formatScripts,
-                logger: loggerFactory.CreateLogger<DuckDbRepoDatabase>());
-            database.EnsureSchema();
-
-            // Create legacy graph store for test helper methods
-            store = new DuckDbGraphStore(
-                databasePath,
-                metrics,
-                logger: loggerFactory.CreateLogger<DuckDbGraphStore>(),
-                formatSchemaScripts: formatScripts);
-            store.EnsureSchema();
+                logger: loggerFactory.CreateLogger<DuckDbDataStore>());
 
             analysisWriter = options.CreateAnalysisWriter?.Invoke(database);
 
-            var connectionFactory = new DuckDBConnectionFactory($"Data Source={databasePath}");
-
-            IDatabaseWriter writer;
-            if (options.DatabaseWriter is not null)
-            {
-                writer = options.DatabaseWriter;
-            }
-            else
-            {
-                var graphStoreFactory = new DuckDbGraphStoreFactory(
-                    metrics,
-                    embeddingProvider: null,
-                    loggerFactory.CreateLogger<DuckDbGraphStore>());
-                singleWriter = new SingleThreadedDatabaseWriter(
-                    connectionFactory,
-                    graphStoreFactory,
-                    metrics,
-                    loggerFactory.CreateLogger<SingleThreadedDatabaseWriter>());
-                await singleWriter.StartAsync(cancellationToken).ConfigureAwait(false);
-                writer = singleWriter;
-                ownsWriter = true;
-            }
-
             var artifactPruner = new StorageBackedArtifactPruner(
-                connectionFactory,
+                new DuckDBConnectionFactory($"Data Source={databasePath}"),
                 () => coordinator?.IsReindexing ?? false,
                 loggerFactory.CreateLogger<StorageBackedArtifactPruner>());
             var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
@@ -294,15 +244,11 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 fileSystem,
                 composite,
                 database,
-                store,
                 metrics,
                 formatRegistry,
                 engine,
                 coordinator,
                 host,
-                writer,
-                ownsWriter,
-                singleWriter,
                 hasher,
                 analysisWriter,
                 databasePath,
@@ -329,14 +275,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
             }
 
             database?.Dispose();
-            store?.Dispose();
             metrics.Dispose();
-
-            if (singleWriter is not null)
-            {
-                try { await singleWriter.StopAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
-                await singleWriter.DisposeAsync().ConfigureAwait(false);
-            }
 
             if (deleteOnDispose && File.Exists(databasePath))
             {
@@ -379,7 +318,6 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
 
         await EnqueueUrisAsync(_trackedUris.Values, skipUnchanged, cancellationToken).ConfigureAwait(false);
         await _coordinator.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
-        RefreshReadStore();
     }
 
     public async Task ReindexAsync(bool clear = false, CancellationToken cancellationToken = default)
@@ -389,21 +327,17 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                            .ConfigureAwait(false))
         {
         }
-
-        RefreshReadStore();
     }
 
     public async Task IndexUriAsync(RepoUri uri, bool skipUnchanged = false, CancellationToken cancellationToken = default)
     {
         await EnqueueUrisAsync(new[] { uri }, skipUnchanged, cancellationToken).ConfigureAwait(false);
         await _coordinator.WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
-        RefreshReadStore();
     }
 
     public Task WaitForIdleAsync(CancellationToken cancellationToken = default)
     {
-        var task = _coordinator.WaitForIdleAsync(cancellationToken);
-        return AwaitAndRefreshAsync(task);
+        return _coordinator.WaitForIdleAsync(cancellationToken);
     }
 
     public Task WaitForStagesIdleAsync(PipelineStage stages, CancellationToken cancellationToken = default)
@@ -415,8 +349,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
         if (mapped.Count == 0)
             return Task.CompletedTask;
 
-        var waitTask = _coordinator.WaitForPipelineAsync(mapped, waitAll: true, cancellationToken);
-        return AwaitAndRefreshAsync(waitTask);
+        return _coordinator.WaitForPipelineAsync(mapped, waitAll: true, cancellationToken);
     }
 
     public RepoUri GetUri(string relativePath)
@@ -451,29 +384,13 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 break;
         }
 
-        if (_ownsWriter && _singleThreadedWriter is not null)
-        {
-            try { await _singleThreadedWriter.StopAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
-            await _singleThreadedWriter.DisposeAsync().ConfigureAwait(false);
-        }
-        else
-        {
-            await _writer.DisposeAsync().ConfigureAwait(false);
-        }
-
+        _dataStore.Dispose();
         Metrics.Dispose();
-        Store.Dispose();
 
         if (_deleteDatabaseOnDispose && File.Exists(_databasePath))
         {
             try { File.Delete(_databasePath); } catch { }
         }
-    }
-
-    private async Task AwaitAndRefreshAsync(Task waitTask)
-    {
-        await waitTask.ConfigureAwait(false);
-        RefreshReadStore();
     }
 
     private async Task EnqueueUrisAsync(IEnumerable<RepoUri> uris, bool skipUnchanged, CancellationToken cancellationToken)
@@ -503,25 +420,13 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
         return uri;
     }
 
-    private void RefreshReadStore()
-    {
-        var newStore = new DuckDbGraphStore(
-            _databasePath,
-            Metrics,
-            logger: _loggerFactory.CreateLogger<DuckDbGraphStore>(),
-            formatSchemaScripts: _formatScripts);
-        newStore.EnsureSchema();
-        var oldStore = Interlocked.Exchange(ref _store, newStore);
-        oldStore.Dispose();
-    }
-
     public async Task<Node?> WaitForDocumentAsync(RepoUri uri, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
         var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(2));
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var doc = Store.GetDocumentByUri(uri);
+            var doc = _dataStore.GetDocumentByUri(uri);
             if (doc is not null)
                 return doc;
             if (DateTime.UtcNow >= deadline)

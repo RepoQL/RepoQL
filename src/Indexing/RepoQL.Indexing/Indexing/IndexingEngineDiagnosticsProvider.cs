@@ -21,7 +21,6 @@ public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProv
         var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
         var idlePending = _engine.GetPendingIdleProcessingCount();
         var idleActive = _engine.ActiveIdleProcessingCount;
-        var writerStatus = _engine.Writer?.GetStatus();
 
         var status = ComputeStatus(hotPathSnapshot, analysisSnapshot, idlePending, idleActive);
 
@@ -35,8 +34,8 @@ public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProv
             IdleActive = idleActive,
             AnalysisDepth = analysisSnapshot.Depth,
             AnalysisActive = analysisSnapshot.InProgress,
-            WriterPending = writerStatus?.PendingCount ?? 0,
-            WriterTotal = writerStatus?.TotalProcessed ?? 0,
+            WriterPending = 0, // DuckDbDataStore uses synchronous writes
+            WriterTotal = 0, // DuckDbDataStore uses synchronous writes
             EmbedEnabled = _engine.VectorCoordinator is not NullVectorIndexCoordinator,
             EmbedLastEpoch = _engine.VectorCoordinator is VectorIndexCoordinator vic
                 ? vic.GetLastRefreshedEpoch()

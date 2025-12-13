@@ -12,7 +12,6 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
-using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
@@ -26,7 +25,7 @@ namespace RepoQL.ConsoleApp.Host;
 
 public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 {
-    private readonly IRepoDatabase _db;
+    private readonly DuckDbDataStore _db;
     private readonly RepositoryConfiguration repoConfig;
     private readonly IInitialIndexingBarrier barrier;
     private readonly IIndexingCoordinator coordinator;
@@ -43,7 +42,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
 
     public RepoQlServiceImpl(
-        IRepoDatabase db,
+        DuckDbDataStore db,
         RepositoryConfiguration repoConfig,
         IInitialIndexingBarrier barrier,
         IIndexingCoordinator coordinator,
@@ -564,41 +563,42 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
         // Refresh search projection and embeddings to include newly imported documents
         var waitForEmbeddings = waitStages.Contains(CoordinatorPipelineStage.Writer); // Writer = SemanticIndexing
-        if (_db is DuckDbRepoDatabase duck)
-        {
-            duck.RefreshSearchProjection(incrementalRefresh: true);
+        _db.RefreshSearchProjection(incremental: true);
 
-            if (_embeddingProvider is not null && _embeddingProvider.Enabled)
+        if (_embeddingProvider is not null && _embeddingProvider.Enabled)
+        {
+            if (waitForEmbeddings)
             {
-                if (waitForEmbeddings)
+                // SemanticIndexing requested - wait for embeddings to complete
+                try
                 {
-                    // SemanticIndexing requested - wait for embeddings to complete
+                    var refresher = new EmbeddingRefresher(_db, _logger as ILogger<EmbeddingRefresher>);
+                    await refresher.RefreshAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Embedding refresh failed during import");
+                    throw new RpcException(new Grpc.Core.Status(Grpc.Core.StatusCode.Internal, $"Embedding refresh failed: {ex.Message}"));
+                }
+            }
+            else
+            {
+                // No semantic wait - refresh embeddings in background
+                var provider = _embeddingProvider;
+                var db = _db;
+                var logger = _logger;
+                _ = Task.Run(async () =>
+                {
                     try
                     {
-                        await duck.RefreshDocumentEmbeddingsAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
+                        var refresher = new EmbeddingRefresher(db, logger as ILogger<EmbeddingRefresher>);
+                        await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Embedding refresh failed during import");
-                        throw new RpcException(new Grpc.Core.Status(Grpc.Core.StatusCode.Internal, $"Embedding refresh failed: {ex.Message}"));
+                        logger.LogError(ex, "Background embedding refresh failed");
                     }
-                }
-                else
-                {
-                    // No semantic wait - refresh embeddings in background
-                    var provider = _embeddingProvider;
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await duck.RefreshDocumentEmbeddingsAsync(provider, CancellationToken.None).ConfigureAwait(false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Background embedding refresh failed");
-                        }
-                    });
-                }
+                });
             }
         }
 

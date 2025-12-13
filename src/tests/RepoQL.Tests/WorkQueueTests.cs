@@ -1,3 +1,4 @@
+using RepoQL.Data.DuckDB;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;

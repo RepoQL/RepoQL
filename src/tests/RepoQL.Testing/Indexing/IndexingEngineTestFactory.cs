@@ -2,7 +2,9 @@
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Data.DuckDB;
 using RepoQL.Contracts.Models;
+using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Indexing.Indexing;
 using RepoQL.Indexing.Indexing.Commit;
@@ -31,7 +33,7 @@ public static class IndexingEngineTestFactory
 
 public sealed class IndexingEngineTestBuilder
 {
-    private IRepoDatabase? _database;
+    private DuckDbDataStore? _dataStore;
     private IUriFilter? _filter;
     private ClassificationPipeline? _classifier;
     private ParsingPipeline? _parser;
@@ -45,9 +47,9 @@ public sealed class IndexingEngineTestBuilder
     private IndexingEngineOptions? _options;
     private ILogger<IndexingEngine>? _logger;
 
-    public IndexingEngineTestBuilder WithDatabase(IRepoDatabase db)
+    public IndexingEngineTestBuilder WithDataStore(DuckDbDataStore db)
     {
-        _database = db;
+        _dataStore = db;
         return this;
     }
 
@@ -190,7 +192,7 @@ public sealed class IndexingEngineTestBuilder
         var logger = _logger ?? TestLogging.CreateLogger<IndexingEngine>();
 
         var engine = new IndexingEngine(
-            db: _database,
+            db: _dataStore,
             filter: filter,
             classifier: classifier,
             parser: parser,
@@ -214,7 +216,7 @@ public sealed class IndexingEngineTestBuilder
             filter,
             catalog,
             committer,
-            _database,
+            _dataStore,
             artifactPruner,
             vectorCoordinator,
             options,
@@ -234,7 +236,7 @@ public sealed class IndexingEngineTestContext
         IUriFilter filter,
         IDocumentCatalog catalog,
         IIndexingCommitter committer,
-        IRepoDatabase? database,
+        DuckDbDataStore? database,
         IArtifactPruner artifactPruner,
         IVectorIndexCoordinator vectorCoordinator,
         IndexingEngineOptions options,
@@ -249,7 +251,7 @@ public sealed class IndexingEngineTestContext
         Filter = filter;
         Catalog = catalog;
         Committer = committer;
-        Database = database;
+        DataStore = database;
         ArtifactPruner = artifactPruner;
         VectorCoordinator = vectorCoordinator;
         Options = options;
@@ -265,7 +267,7 @@ public sealed class IndexingEngineTestContext
     public IUriFilter Filter { get; }
     public IDocumentCatalog Catalog { get; }
     public IIndexingCommitter Committer { get; }
-    public IRepoDatabase? Database { get; }
+    public DuckDbDataStore? DataStore { get; }
     public IArtifactPruner ArtifactPruner { get; }
     public IVectorIndexCoordinator VectorCoordinator { get; }
     public IndexingEngineOptions Options { get; }

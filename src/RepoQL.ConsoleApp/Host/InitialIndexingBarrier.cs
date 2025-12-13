@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using RepoQL.Contracts.Data;
 using RepoQL.Indexing.Hosting;
 using RepoQL.Data.DuckDB;
 
@@ -9,7 +8,7 @@ namespace RepoQL.ConsoleApp.Host;
 
 internal sealed class InitialIndexingBarrier(
     IIndexingCoordinator coordinator,
-    IRepoDatabase db,
+    DuckDbDataStore db,
     ILogger<InitialIndexingBarrier>? logger = null)
     : BackgroundService, IInitialIndexingBarrier
 {
@@ -26,18 +25,15 @@ internal sealed class InitialIndexingBarrier(
             await coordinator.WaitForIdleAsync(stoppingToken).ConfigureAwait(false);
             try
             {
-                if (db is DuckDbRepoDatabase duck)
-                {
-                    using var span = Activity.StartActivity("repoql.search.refresh");
-                    span?.SetTag("repoql.search.refresh.phase", "initial");
-                    span?.SetTag("repoql.search.refresh.trigger", "barrier");
-                    var sw = Stopwatch.StartNew();
-                    duck.RefreshSearchProjection(incrementalRefresh: false);
-                    sw.Stop();
-                    _logger.LogInformation("Initial search refresh completed in {DurationMs} ms", (long)sw.Elapsed.TotalMilliseconds);
-                    span?.SetTag("otel.status_code", "OK");
-                    span?.SetTag("repoql.search.refresh.duration_ms", sw.Elapsed.TotalMilliseconds);
-                }
+                using var span = Activity.StartActivity("repoql.search.refresh");
+                span?.SetTag("repoql.search.refresh.phase", "initial");
+                span?.SetTag("repoql.search.refresh.trigger", "barrier");
+                var sw = Stopwatch.StartNew();
+                db.RefreshSearchProjection(incremental: false);
+                sw.Stop();
+                _logger.LogInformation("Initial search refresh completed in {DurationMs} ms", (long)sw.Elapsed.TotalMilliseconds);
+                span?.SetTag("otel.status_code", "OK");
+                span?.SetTag("repoql.search.refresh.duration_ms", sw.Elapsed.TotalMilliseconds);
             }
             catch (Exception ex)
             {

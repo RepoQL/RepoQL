@@ -1,3 +1,4 @@
+using RepoQL.Data.DuckDB;
 using System;
 using System.Linq;
 using AwesomeAssertions;

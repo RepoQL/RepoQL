@@ -1,3 +1,4 @@
+using RepoQL.Data.DuckDB;
 using System.Diagnostics;
 using AwesomeAssertions;
 using Microsoft.Extensions.Logging;
@@ -64,8 +65,7 @@ internal class CsProjXrayTests
         artifact.Summary.Should().Contain("OutputType: Exe");
 
         var docProps = repo.Store.RawQuery(
-            "SELECT properties->>'sdk' AS sdk, properties->>'output_type' AS output_type, CAST(coalesce(properties->>'pack','false') AS VARCHAR) AS pack FROM node WHERE kind='document' AND lower(uri)=lower(?)",
-            uri.AbsoluteUri).First();
+            $"SELECT properties->>'sdk' AS sdk, properties->>'output_type' AS output_type, CAST(coalesce(properties->>'pack','false') AS VARCHAR) AS pack FROM node WHERE kind='document' AND lower(uri)=lower('{uri.AbsoluteUri}')").First();
         docProps["sdk"].Should().NotBeNull();
         docProps["output_type"]!.ToString()!.ToLowerInvariant().Should().Be("exe");
         docProps["pack"]!.ToString()!.ToLowerInvariant().Should().BeOneOf("true", "yes");
@@ -76,7 +76,7 @@ internal class CsProjXrayTests
         IReadOnlyDictionary<string, object?>[] ann;
         do
         {
-            ann = repo.Store.RawQuery("SELECT kind,severity,message FROM annotations_for(?, 'lint', 'hint')", uri.AbsoluteUri).ToArray();
+            ann = repo.Store.RawQuery($"SELECT kind,severity,message FROM annotations_for('{uri.AbsoluteUri}', 'lint', 'hint')").ToArray();
             if (ann.Length > 0) break;
             await Task.Delay(50, CancellationToken.None);
         } while (sw.Elapsed < DefaultTimeout);

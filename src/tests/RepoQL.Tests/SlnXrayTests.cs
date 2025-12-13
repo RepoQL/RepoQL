@@ -1,3 +1,4 @@
+using RepoQL.Data.DuckDB;
 using AwesomeAssertions;
 using RepoQL.Testing.Scaffolding;
 
@@ -69,7 +70,7 @@ internal class SlnXrayTests
         artifact.Structure!.Should().Contain("App");
         artifact.Structure!.Should().Contain("Core");
 
-        var docProps = repo.Store.RawQuery("SELECT properties->>'format_version' AS format_version, CAST(properties->>'project_count' AS INTEGER) AS project_count, CAST(properties->>'folder_count' AS INTEGER) AS folder_count FROM node WHERE kind='document' AND lower(uri)=lower(?)", uri.AbsoluteUri).First();
+        var docProps = repo.Store.RawQuery($"SELECT properties->>'format_version' AS format_version, CAST(properties->>'project_count' AS INTEGER) AS project_count, CAST(properties->>'folder_count' AS INTEGER) AS folder_count FROM node WHERE kind='document' AND lower(uri)=lower('{uri.AbsoluteUri}')").First();
         docProps["format_version"].Should().NotBeNull();
         docProps["format_version"]!.ToString()!.Should().Contain("12.00");
         int.Parse(docProps["project_count"]!.ToString()!).Should().Be(2);

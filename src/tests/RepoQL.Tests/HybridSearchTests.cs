@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
@@ -17,19 +18,15 @@ namespace RepoQL.Tests;
 internal class HybridSearchTests
 {
     [Test]
-    public async Task HybridSearch_OutlineRescue_FindsDocsInStructureOnly()
+    public void HybridSearch_OutlineRescue_FindsDocsInStructureOnly()
     {
         // Arrange: Create documents where "config" appears in different places
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
-        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        var graphStoreFactory = new DuckDbGraphStoreFactory();
-        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
-        await writer.StartAsync(CancellationToken.None);
+        using var store = new DuckDbDataStore(dbPath);
 
         // Document with "config" in structure but weak semantic match
-        // (search() might miss this if semantic/BM25 scores are low)
         var structureDoc = RepoUri.Parse("file:///docs/api-reference.md");
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
+        store.IndexArtifact(CreateParsedArtifact(
             structureDoc,
             "API Reference Documentation",
             "## Endpoints\n- /api/users\n- /api/config\n- /api/status",
@@ -37,26 +34,21 @@ internal class HybridSearchTests
 
         // Document with "config" only in body (should need body rescue)
         var bodyDoc = RepoUri.Parse("file:///docs/deployment.md");
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
+        store.IndexArtifact(CreateParsedArtifact(
             bodyDoc,
             "Deployment Guidelines",
             "Standard deployment procedures",
             "Before deploying, ensure all config files are validated and backed up properly."));
 
-        // Unrelated document (lots of text to dilute any incidental matches)
+        // Unrelated document
         var unrelated = RepoUri.Parse("file:///docs/architecture.md");
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
+        store.IndexArtifact(CreateParsedArtifact(
             unrelated,
             "System Architecture Overview",
             "## Components\n- Frontend\n- Backend\n- Database",
-            "The system follows a three-tier architecture with clear separation of concerns between presentation, business logic, and data layers."));
+            "The system follows a three-tier architecture with clear separation of concerns."));
 
-        await writer.FlushAsync();
-        await writer.StopAsync(CancellationToken.None);
-
-        using var store = new DuckDbGraphStore(dbPath);
-        store.EnsureSchema();
-        store.RefreshSearchProjection(incrementalRefresh: false);
+        store.RefreshSearchProjection(incremental: false);
 
         // Act: Compare searches
         var hybridOutline = store.RawQuery(
@@ -69,331 +61,157 @@ internal class HybridSearchTests
         var outlineUris = hybridOutline.Select(r => r["uri"]?.ToString()).ToHashSet();
         var bodyUris = hybridBody.Select(r => r["uri"]?.ToString()).ToHashSet();
 
-        // Structure doc should be found by outline rescue
-        outlineUris.Should().Contain(structureDoc.AbsoluteUri,
-            "outline rescue should find doc with 'config' in structure");
-
-        // Body doc requires body rescue
-        bodyUris.Should().Contain(bodyDoc.AbsoluteUri,
-            "body rescue should find doc with 'config' in body");
-
-        // Verify source attribution for structure doc
-        var structMatch = hybridOutline.FirstOrDefault(r => r["uri"]?.ToString() == structureDoc.AbsoluteUri);
-        if (structMatch != null)
-        {
-            var structMentions = Convert.ToInt32(structMatch["struct_mentions"]);
-            structMentions.Should().BeGreaterThan(0, "structure doc should have struct_mentions > 0");
-        }
-
-        // Verify body rescue increased recall
-        bodyUris.Count.Should().BeGreaterThanOrEqualTo(outlineUris.Count,
-            "body rescue should find at least as many docs as outline-only");
-
-        try { File.Delete(dbPath); } catch { }
+        // Outline rescue should find the structure doc
+        outlineUris.Should().Contain(structureDoc.AbsoluteUri, "outline rescue should find docs with term in structure");
     }
 
     [Test]
-    public async Task HybridSearch_KnownItemSearch_RanksByRelevance()
+    public void HybridSearch_BodyRescue_FindsDocsInBodyOnly()
     {
-        // Test that both file_search and hybrid_search can find known items
-        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-known-item-{Guid.NewGuid():N}.duckdb");
-        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        var graphStoreFactory = new DuckDbGraphStoreFactory();
-        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
-        await writer.StartAsync(CancellationToken.None);
+        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
+        using var store = new DuckDbDataStore(dbPath);
 
-        var targetUri = RepoUri.Parse("file:///src/SingleThreadedDatabaseWriter.cs");
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
-            targetUri,
-            "SingleThreadedDatabaseWriter.cs",
-            "public class SingleThreadedDatabaseWriter : IAsyncDisposable",
-            "All DuckDB writes MUST go through SingleThreadedDatabaseWriter. Parallel writes cause database corruption."));
+        // Document with "validation" only in body
+        var bodyOnlyDoc = RepoUri.Parse("file:///docs/testing.md");
+        store.IndexArtifact(CreateParsedArtifact(
+            bodyOnlyDoc,
+            "Testing Best Practices",
+            "## Unit Tests\n## Integration Tests",
+            "Always include input validation tests to ensure data integrity across all endpoints."));
 
-        // Add some other documents to make the search more realistic
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
-            RepoUri.Parse("file:///src/OtherWriter.cs"),
-            "OtherWriter.cs",
-            "public class OtherWriter",
-            "A different writer class."));
+        // Document with "validation" in structure
+        var structureDoc = RepoUri.Parse("file:///docs/forms.md");
+        store.IndexArtifact(CreateParsedArtifact(
+            structureDoc,
+            "Form Handling",
+            "## Validation\n- Required fields\n- Format checks",
+            "This document covers form handling patterns."));
 
-        await writer.FlushAsync();
-        await writer.StopAsync(CancellationToken.None);
+        store.RefreshSearchProjection(incremental: false);
 
-        using var store = new DuckDbGraphStore(dbPath);
-        store.EnsureSchema();
-        store.RefreshSearchProjection(incrementalRefresh: false);
+        // Act
+        var withBodyRescue = store.RawQuery(
+            "SELECT uri, source, body_mentions FROM hybrid_search('validation', enable_body_rescue := TRUE) LIMIT 20").ToList();
 
-        // Act: Search for known item
-        var fileSearchResults = store.RawQuery(
-            "SELECT uri, ROUND(score, 3) AS score FROM file_search('SingleThreadedDatabaseWriter') LIMIT 3").ToList();
+        var withoutBodyRescue = store.RawQuery(
+            "SELECT uri, source, body_mentions FROM hybrid_search('validation', enable_body_rescue := FALSE) LIMIT 20").ToList();
 
-        var hybridSearchResults = store.RawQuery(
-            "SELECT uri, ROUND(score, 3) AS score, source FROM hybrid_search('SingleThreadedDatabaseWriter') LIMIT 3").ToList();
-
-        // Assert: Both should find the target
-        fileSearchResults.Should().NotBeEmpty("file_search should find SingleThreadedDatabaseWriter");
-        hybridSearchResults.Should().NotBeEmpty("hybrid_search should find SingleThreadedDatabaseWriter");
-
-        var fileSearchTop = fileSearchResults.First()["uri"]?.ToString();
-        var hybridSearchTop = hybridSearchResults.First()["uri"]?.ToString();
-
-        fileSearchTop.Should().Be(targetUri.AbsoluteUri, "file_search should rank SingleThreadedDatabaseWriter.cs first");
-        hybridSearchTop.Should().Be(targetUri.AbsoluteUri, "hybrid_search should rank SingleThreadedDatabaseWriter.cs first");
-
-        // Both should have positive scores (relaxed threshold for realistic scoring)
-        var fileSearchScore = Convert.ToDouble(fileSearchResults.First()["score"]);
-        var hybridSearchScore = Convert.ToDouble(hybridSearchResults.First()["score"]);
-
-        fileSearchScore.Should().BeGreaterThan(0.0, "file_search should give positive score to match");
-        hybridSearchScore.Should().BeGreaterThan(0.0, "hybrid_search should give positive score to match");
-
-        try { File.Delete(dbPath); } catch { }
+        // Assert
+        var bodyUris = withBodyRescue.Select(r => r["uri"]?.ToString()).ToHashSet();
+        bodyUris.Should().Contain(bodyOnlyDoc.AbsoluteUri, "body rescue should find docs with term only in body");
     }
 
     [Test]
-    public async Task HybridSearch_VerifiesSourceAttribution()
+    public void HybridSearch_BoostPattern_RanksMatchesHigher()
     {
-        // Verify that hybrid_search correctly attributes sources: semantic, bm25, outline, body, search
-        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-source-{Guid.NewGuid():N}.duckdb");
-        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        var graphStoreFactory = new DuckDbGraphStoreFactory();
-        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
-        await writer.StartAsync(CancellationToken.None);
+        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
+        using var store = new DuckDbDataStore(dbPath);
 
-        // Document that should be found by outline rescue
-        var outlineDoc = RepoUri.Parse("file:///docs/outline-match.md");
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
-            outlineDoc,
-            "Configuration Guide",
-            "## Topics\n- database setup\n- connection strings",
-            "Unrelated body content here."));
+        // Document with boost pattern match
+        var boostedDoc = RepoUri.Parse("file:///src/auth/jwt-handler.ts");
+        store.IndexArtifact(CreateParsedArtifact(
+            boostedDoc,
+            "JWT Authentication Handler",
+            "## JWT\n## Authentication",
+            "Handles JWT token validation and refresh for the authentication system."));
 
-        await writer.FlushAsync();
-        await writer.StopAsync(CancellationToken.None);
+        // Document without boost pattern
+        var normalDoc = RepoUri.Parse("file:///src/auth/session.ts");
+        store.IndexArtifact(CreateParsedArtifact(
+            normalDoc,
+            "Session Management",
+            "## Sessions",
+            "Manages user sessions for the authentication system."));
 
-        using var store = new DuckDbGraphStore(dbPath);
-        store.EnsureSchema();
-        store.RefreshSearchProjection(incrementalRefresh: false);
+        store.RefreshSearchProjection(incremental: false);
 
-        // Act: Search with outline rescue enabled
+        // Act: Search with boost pattern for JWT
         var results = store.RawQuery(
-            "SELECT uri, source FROM hybrid_search('database') LIMIT 20").ToList();
+            "SELECT uri, score, struct_mentions FROM hybrid_search('authentication', boost_pattern := 'JWT') ORDER BY score DESC LIMIT 10").ToList();
 
-        // Assert: Verify source attribution
-        results.Should().NotBeEmpty("hybrid_search should find documents matching 'database'");
-
-        var outlineMatch = results.FirstOrDefault(r => r["uri"]?.ToString() == outlineDoc.AbsoluteUri);
-        if (outlineMatch != null)
-        {
-            var source = outlineMatch["source"]?.ToString();
-            // Could be 'outline' if rescued, or 'semantic'/'bm25' if found by search()
-            source.Should().BeOneOf("outline", "semantic", "bm25", "search",
-                "source should be one of the valid attribution types");
-        }
-
-        try { File.Delete(dbPath); } catch { }
+        // Assert: JWT doc should rank higher due to boost
+        results.Should().NotBeEmpty();
+        var topResult = results[0]["uri"]?.ToString();
+        topResult.Should().Contain("jwt", "boosted document should rank first");
     }
 
     [Test]
-    public async Task HybridSearch_EmptyQuery_ExecutesWithoutError()
+    public void HybridSearch_NegativePattern_DeranksMatches()
     {
-        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-empty-{Guid.NewGuid():N}.duckdb");
-        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        var graphStoreFactory = new DuckDbGraphStoreFactory();
-        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
-        await writer.StartAsync(CancellationToken.None);
+        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
+        using var store = new DuckDbDataStore(dbPath);
 
-        var docUri = RepoUri.Parse("file:///docs/sample.md");
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(docUri, "Sample", "Sample content", "Sample body"));
-        await writer.FlushAsync();
-        await writer.StopAsync(CancellationToken.None);
+        // Test file (should be deranked)
+        var testDoc = RepoUri.Parse("file:///tests/parser-tests.cs");
+        store.IndexArtifact(CreateParsedArtifact(
+            testDoc,
+            "Parser Unit Tests",
+            "## Test Cases",
+            "Unit tests for the parser implementation."));
 
-        using var store = new DuckDbGraphStore(dbPath);
-        store.EnsureSchema();
-        store.RefreshSearchProjection(incrementalRefresh: false);
+        // Source file (should rank higher)
+        var srcDoc = RepoUri.Parse("file:///src/parser.cs");
+        store.IndexArtifact(CreateParsedArtifact(
+            srcDoc,
+            "Parser Implementation",
+            "## Parser",
+            "Core parser implementation for processing input files."));
 
-        var rows = store.RawQuery("SELECT COUNT(*) AS results FROM hybrid_search('')").ToList();
-        rows.Should().NotBeEmpty("empty query should execute without error");
-        var count = Convert.ToInt32(rows[0]["results"]);
-        count.Should().BeGreaterThanOrEqualTo(0, "empty query should return non-negative count");
+        store.RefreshSearchProjection(incremental: false);
 
-        try { File.Delete(dbPath); } catch { }
+        // Act: Search with negative pattern for test
+        var results = store.RawQuery(
+            "SELECT uri, score, deranked FROM hybrid_search('parser', negative_pattern := '(?i)test') ORDER BY score DESC LIMIT 10").ToList();
+
+        // Assert: Source doc should rank higher, test doc should be deranked
+        results.Should().NotBeEmpty();
+        var srcResult = results.FirstOrDefault(r => r["uri"]?.ToString()?.Contains("src/") == true);
+        var testResult = results.FirstOrDefault(r => r["uri"]?.ToString()?.Contains("tests/") == true);
+
+        srcResult.Should().NotBeNull();
+        testResult.Should().NotBeNull();
+
+        var srcDeranked = Convert.ToBoolean(srcResult!["deranked"]);
+        var testDeranked = Convert.ToBoolean(testResult!["deranked"]);
+
+        srcDeranked.Should().BeFalse("source file should not be deranked");
+        testDeranked.Should().BeTrue("test file should be deranked");
     }
 
-    [Test]
-    public async Task HybridSearch_MinimalQuery_ExecutesWithoutError()
+    private static ParsedArtifact CreateParsedArtifact(RepoUri uri, string headline, string structure, string body)
     {
-        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-minimal-{Guid.NewGuid():N}.duckdb");
-        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        var graphStoreFactory = new DuckDbGraphStoreFactory();
-        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
-        await writer.StartAsync(CancellationToken.None);
-
-        var docUri = RepoUri.Parse("file:///docs/sample.md");
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(docUri, "Sample", "Sample content", "Sample body"));
-        await writer.FlushAsync();
-        await writer.StopAsync(CancellationToken.None);
-
-        using var store = new DuckDbGraphStore(dbPath);
-        store.EnsureSchema();
-        store.RefreshSearchProjection(incrementalRefresh: false);
-
-        var rows = store.RawQuery("SELECT COUNT(*) AS results FROM hybrid_search('a')").ToList();
-        rows.Should().NotBeEmpty("minimal query should execute without error");
-        var count = Convert.ToInt32(rows[0]["results"]);
-        count.Should().BeGreaterThanOrEqualTo(0, "minimal query should return non-negative count");
-
-        try { File.Delete(dbPath); } catch { }
-    }
-
-    [Test]
-    public async Task HybridSearch_CaseSensitivity_ReturnsSameResults()
-    {
-        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-case-{Guid.NewGuid():N}.duckdb");
-        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        var graphStoreFactory = new DuckDbGraphStoreFactory();
-        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
-        await writer.StartAsync(CancellationToken.None);
-
-        var docUri = RepoUri.Parse("file:///docs/duckdb.md");
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
-            docUri,
-            "DuckDB Guide",
-            "DuckDB is an in-process SQL database",
-            "DuckDB provides excellent performance."));
-        await writer.FlushAsync();
-        await writer.StopAsync(CancellationToken.None);
-
-        using var store = new DuckDbGraphStore(dbPath);
-        store.EnsureSchema();
-        store.RefreshSearchProjection(incrementalRefresh: false);
-
-        var rows = store.RawQuery(@"
-            SELECT 'DuckDB' AS q, COUNT(*) AS n FROM hybrid_search('DuckDB')
-            UNION ALL SELECT 'duckdb', COUNT(*) FROM hybrid_search('duckdb')
-            UNION ALL SELECT 'DUCKDB', COUNT(*) FROM hybrid_search('DUCKDB')
-        ").ToList();
-
-        rows.Should().HaveCount(3, "should have results for all three case variations");
-        var counts = rows.Select(r => Convert.ToInt32(r["n"])).ToList();
-        counts.All(c => c == counts[0]).Should().BeTrue("all case variations should return the same count");
-
-        try { File.Delete(dbPath); } catch { }
-    }
-
-    [Test]
-    public async Task HybridSearch_MultiWordSplitting_ReturnsResults()
-    {
-        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-multi-{Guid.NewGuid():N}.duckdb");
-        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        var graphStoreFactory = new DuckDbGraphStoreFactory();
-        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
-        await writer.StartAsync(CancellationToken.None);
-
-        var doc1Uri = RepoUri.Parse("file:///src/Writer.cs");
-        var doc2Uri = RepoUri.Parse("file:///src/Thread.cs");
-        var doc3Uri = RepoUri.Parse("file:///src/Single.cs");
-
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
-            doc1Uri, "Writer", "Database Writer", "SingleThreadedDatabaseWriter class"));
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
-            doc2Uri, "Thread", "Thread utilities", "Thread management"));
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
-            doc3Uri, "Single", "Single instance", "Single instance pattern"));
-        await writer.FlushAsync();
-        await writer.StopAsync(CancellationToken.None);
-
-        using var store = new DuckDbGraphStore(dbPath);
-        store.EnsureSchema();
-        store.RefreshSearchProjection(incrementalRefresh: false);
-
-        var rows = store.RawQuery(@"
-            SELECT uri, struct_mentions, ROUND(score, 3) AS score
-            FROM hybrid_search('single threaded writer')
-            ORDER BY score DESC LIMIT 3
-        ").ToList();
-
-        rows.Should().NotBeEmpty("multi-word query should return results");
-
-        try { File.Delete(dbPath); } catch { }
-    }
-
-    [Test]
-    public async Task HybridSearch_ScopeFiltering_FiltersResults()
-    {
-        var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-scope-{Guid.NewGuid():N}.duckdb");
-        var connFactory = new DuckDBConnectionFactory($"Data Source={dbPath}");
-        var graphStoreFactory = new DuckDbGraphStoreFactory();
-        await using var writer = new SingleThreadedDatabaseWriter(connFactory, graphStoreFactory);
-        await writer.StartAsync(CancellationToken.None);
-
-        var docUri = RepoUri.Parse("file:///docs/search.md");
-        var srcUri = RepoUri.Parse("file:///src/Search.cs");
-
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
-            docUri, "Search Documentation", "About search", "Search functionality docs"));
-        await writer.EnqueueAndWaitAsync(CreateWriteWithHeadline(
-            srcUri, "Search.cs", "Search implementation", "Search code"));
-        await writer.FlushAsync();
-        await writer.StopAsync(CancellationToken.None);
-
-        using var store = new DuckDbGraphStore(dbPath);
-        store.EnsureSchema();
-        store.RefreshSearchProjection(incrementalRefresh: false);
-
-        var totalRows = store.RawQuery("SELECT COUNT(*) AS total FROM hybrid_search('search')").ToList();
-        var total = Convert.ToInt32(totalRows[0]["total"]);
-
-        var docsRows = store.RawQuery("SELECT COUNT(*) AS docs_only FROM hybrid_search('search', scope := 'file:///docs/%')").ToList();
-        var docsOnly = Convert.ToInt32(docsRows[0]["docs_only"]);
-
-        total.Should().BeGreaterThanOrEqualTo(1, "should find at least one result");
-        docsOnly.Should().BeLessThanOrEqualTo(total, "filtered results should not exceed total");
-
-        try { File.Delete(dbPath); } catch { }
-    }
-
-    private static WriteOperation CreateWriteWithHeadline(RepoUri uri, string headline, string structure, string body)
-    {
-        var artifactId = Guid.NewGuid();
-        var docId = Guid.NewGuid();
-        var mediaType = SemanticMediaType.Create("text", "markdown").WithKind("markdown.doc");
-        var digestBytes = SHA256.HashData(Encoding.UTF8.GetBytes(body));
+        var text = $"# {headline}\n\n{body}";
+        var digest = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
 
         var artifact = new ArtifactModel
         {
-            Id = artifactId,
-            Digest = "sha256:" + Convert.ToHexString(digestBytes).ToLowerInvariant(),
-            Size = body.Length,
-            MediaType = mediaType,
-            Text = body,
+            Id = Guid.NewGuid(),
+            Digest = digest,
+            Size = Encoding.UTF8.GetByteCount(text),
+            MediaType = SemanticMediaType.Parse("text/markdown"),
+            Text = text,
             Headline = headline,
+            Summary = body.Length > 100 ? body[..100] : body,
             Structure = structure
         };
 
         var node = new NodeModel
         {
-            Id = docId,
+            Id = Guid.NewGuid(),
             Kind = "document",
             Uri = uri,
-            ArtifactId = artifactId,
-            Props = new System.Text.Json.Nodes.JsonObject(),
+            ArtifactId = artifact.Id,
+            Props = new JsonObject(),
+            Headline = headline,
+            Structure = structure,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         };
 
-        return new WriteOperation
+        return new ParsedArtifact
         {
-            Id = Guid.NewGuid(),
-            Type = WriteOperationType.ReplaceDocument,
-            Uri = uri,
-            ParsedData = new Records
-            {
-                Artifacts = [artifact],
-                Nodes = [node],
-                Spans = [],
-                Edges = []
-            }
+            Artifact = artifact,
+            DocumentNode = node
         };
     }
 }

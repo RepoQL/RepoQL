@@ -4,7 +4,7 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
-using RepoQL.Contracts.Data;
+using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Indexing.FileSystems;
@@ -68,7 +68,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     private readonly CompositeFileSystem _fileSystem;
     private readonly ICompositeFileSystemManager? _mountManager;
     private readonly IndexingEngine _engine;
-    private readonly IRepoDatabase _db;
+    private readonly DuckDbDataStore _db;
     private readonly ILogger<IndexingCoordinator> _logger;
     private int _reindexScopes;
     private int _activeMountIndexing;
@@ -76,7 +76,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     public IndexingCoordinator(
         CompositeFileSystem fileSystem,
         IndexingEngine engine,
-        IRepoDatabase db,
+        DuckDbDataStore db,
         ILogger<IndexingCoordinator>? logger = null,
         ICompositeFileSystemManager? mountManager = null)
     {

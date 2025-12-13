@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using FakeItEasy;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing;
 using RepoQL.Indexing.Indexing.Commit;
 using RepoQL.Indexing.Indexing.Pipelines;
@@ -634,13 +635,34 @@ public class IndexingEngineTests
     public async Task Given_StaleDocuments_When_PrunerFindsThem_Then_DeleteOperationSentToDatabase(CancellationToken token)
     {
         var deleteUri = CreateUri("file:///repo/stale.md");
+
+        // Create a real database with a document that will be "stale"
+        using var db = new DuckDbDataStore();
+
+        // Insert the stale document first
+        var staleArtifact = new Contracts.Models.Artifact
+        {
+            Id = Guid.NewGuid(),
+            Digest = "stale-digest",
+            Size = 10,
+            MediaType = SemanticMediaType.Parse("text/markdown")
+        };
+        var staleNode = new Contracts.Models.Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "document",
+            Uri = deleteUri,
+            ArtifactId = staleArtifact.Id,
+            Props = new System.Text.Json.Nodes.JsonObject()
+        };
+        db.IndexArtifact(new ParsedArtifact { Artifact = staleArtifact, DocumentNode = staleNode });
+
+        // Verify it exists
+        db.GetDocumentByUri(deleteUri).Should().NotBeNull("stale document should exist before pruning");
+
         var pruner = A.Fake<IArtifactPruner>();
         A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<IndexItem>>._, A<CancellationToken>._))
             .Returns(Task.FromResult(new PruningResult(new[] { deleteUri })));
-
-        var db = A.Fake<IRepoDatabase>();
-        A.CallTo(() => db.DeleteArtifact(deleteUri))
-            .Returns(true);
 
         var vector = NullVectorIndexCoordinator.Instance;
         var analysisSignal = NewTaskCompletionSource<bool>();
@@ -649,7 +671,7 @@ public class IndexingEngineTests
             multiFileSignal: analysisSignal,
             pruner: pruner,
             vectorCoordinator: vector,
-            db: db);
+            dataStore: db);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/live.md"), IndexItemOptions.Default, token);
 
@@ -714,7 +736,7 @@ public class IndexingEngineTests
         TaskCompletionSource<bool> multiFileSignal,
         IArtifactPruner? pruner = null,
         IVectorIndexCoordinator? vectorCoordinator = null,
-        IRepoDatabase? db = null)
+        DuckDbDataStore? dataStore = null)
     {
         var context = IndexingEngineTestFactory.Create(builder =>
         {
@@ -736,9 +758,9 @@ public class IndexingEngineTests
                 builder.WithVectorCoordinator(vectorCoordinator);
             }
 
-            if (db is not null)
+            if (dataStore is not null)
             {
-                builder.WithDatabase(db);
+                builder.WithDataStore(dataStore);
             }
         });
 

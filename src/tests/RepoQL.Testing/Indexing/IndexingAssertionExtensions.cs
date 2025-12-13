@@ -3,6 +3,7 @@ using System.Linq;
 using FakeItEasy;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Indexing.Indexing.State;
@@ -104,16 +105,20 @@ public static class IndexingAssertionExtensions
             () => A.CallTo(() => catalog.CompleteProcessing(uri)).MustHaveHappened());
     }
 
-    public static void ShouldHaveDeletedDocuments(this IRepoDatabase db, params RepoUri[] uris)
+    public static void ShouldHaveDeletedDocuments(this DuckDbDataStore db, params RepoUri[] uris)
     {
         ArgumentNullException.ThrowIfNull(db);
         if (uris is null || uris.Length == 0)
             return;
 
+        // For real DuckDbDataStore instances, verify the documents no longer exist
         foreach (var uri in uris)
         {
-            A.CallTo(() => db.DeleteArtifact(uri))
-                .MustHaveHappenedOnceExactly();
+            var doc = db.GetDocumentByUri(uri);
+            if (doc is not null)
+            {
+                throw new InvalidOperationException($"Document {uri} should have been deleted but still exists.");
+            }
         }
     }
 

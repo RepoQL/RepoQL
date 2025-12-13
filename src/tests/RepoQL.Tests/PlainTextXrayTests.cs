@@ -1,3 +1,4 @@
+using RepoQL.Data.DuckDB;
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Core;

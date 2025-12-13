@@ -1,3 +1,4 @@
+using RepoQL.Data.DuckDB;
 using AwesomeAssertions;
 using RepoQL.Testing.Scaffolding;
 using RepoQL.FileSystem.Embedded;
@@ -62,33 +63,30 @@ internal class DocsQueriesTests
         markdownDocs.Should().NotBeEmpty("at least one embedded doc should be markdown");
 
         var full = store.RawQuery(
-            """
+            $"""
             SELECT a.text_content
               FROM node n JOIN artifact a ON a.id = n.artifact_id
-             WHERE n.uri = ?
-            """,
-            schemaUri);
+             WHERE n.uri = '{schemaUri}'
+            """);
         full.Should().NotBeEmpty("content should be present for documents");
         (full.First()["text_content"]?.ToString() ?? string.Empty).Length.Should().BeGreaterThan(0);
 
         var snippet = store.RawQuery(
-            """
+            $"""
             SELECT line_number, text, is_focus
-              FROM snippet(? || '#line=1', 3)
-            """,
-            schemaUri);
+              FROM snippet('{schemaUri}' || '#line=1', 3)
+            """);
         snippet.Should().NotBeEmpty("snippet should return a small window");
 
         var headings = store.RawQuery(
-            """
+            $"""
             SELECT child.properties->>'text' AS heading
               FROM node doc
               JOIN edge e     ON e.source_node_id = doc.id AND e.is_composition = TRUE AND e.type = 'HAS_PART'
               JOIN node child ON child.id = e.destination_node_id AND child.kind = 'md_heading'
-             WHERE doc.uri = ?
+             WHERE doc.uri = '{schemaUri}'
              ORDER BY e.ordinal
-            """,
-            schemaUri);
+            """);
         headings.Should().NotBeEmpty("schema doc should have headings");
     }
 

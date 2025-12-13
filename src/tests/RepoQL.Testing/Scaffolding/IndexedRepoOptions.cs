@@ -25,7 +25,6 @@ public sealed class IndexedRepoOptions
     public IFileClassifier? Classifier { get; set; }
     public IHasher? Hasher { get; set; }
     public IUriFilter Filter { get; set; } = new NoOpUriFilter();
-    public IDatabaseWriter? DatabaseWriter { get; set; }
     public IAnalyzerSettingsProvider? SettingsProvider { get; set; }
     public ILoggerFactory? LoggerFactory { get; set; }
     public string? RepositoryRoot { get; set; }
@@ -34,7 +33,7 @@ public sealed class IndexedRepoOptions
     public bool EnableWatching { get; set; }
     public bool RunFullScanOnStartup { get; set; }
     public IndexingEngineOptions? EngineOptions { get; set; }
-    public Func<IRepoDatabase, IAnalysisResultWriter?>? CreateAnalysisWriter { get; set; } = db => new AnnotationResultWriter(db);
+    public Func<DuckDbDataStore, IAnalysisResultWriter?>? CreateAnalysisWriter { get; set; } = db => new AnnotationResultWriter(db);
     public IList<FormatDescriptor> Formats { get; } = new List<FormatDescriptor>();
     public IList<CompositeFileSystemMount> AdditionalMounts { get; } = new List<CompositeFileSystemMount>();
 

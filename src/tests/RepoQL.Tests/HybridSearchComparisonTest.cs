@@ -1,4 +1,3 @@
-using System.Text;
 using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Tests;
@@ -10,6 +9,7 @@ namespace RepoQL.Tests;
 internal class HybridSearchComparisonTest
 {
     [Test]
+    [Skip("Manual test - requires running repoql instance with indexed database")]
     public void CompareHybridSearchVsFileSearch_OnRealCodebase()
     {
         var dbPath = Path.Combine(Environment.CurrentDirectory, ".repoql", "index.duckdb");
@@ -35,8 +35,7 @@ internal class HybridSearchComparisonTest
             return;
         }
 
-        using var store = new DuckDbGraphStore(dbPath);
-        store.EnsureSchema();
+        using var store = new DuckDbDataStore(dbPath);
 
         Console.WriteLine("=".PadRight(80, '='));
         Console.WriteLine("HYBRID_SEARCH vs FILE_SEARCH COMPARISON");
@@ -49,10 +48,10 @@ internal class HybridSearchComparisonTest
         CompareRecall(store, "markdown");
         Console.WriteLine();
 
-        // Test 2: Known item search - "SingleThreadedDatabaseWriter"
-        Console.WriteLine("TEST 2: Known Item Search - 'SingleThreadedDatabaseWriter'");
+        // Test 2: Known item search - "DuckDbDataStore"
+        Console.WriteLine("TEST 2: Known Item Search - 'DuckDbDataStore'");
         Console.WriteLine("-".PadRight(80, '-'));
-        CompareKnownItem(store, "SingleThreadedDatabaseWriter");
+        CompareKnownItem(store, "DuckDbDataStore");
         Console.WriteLine();
 
         // Test 3: Rescue feature demonstration - "DuckDB"
@@ -68,7 +67,7 @@ internal class HybridSearchComparisonTest
         Console.WriteLine("✓ Check console output above for detailed comparison results");
     }
 
-    private static void CompareRecall(DuckDbGraphStore store, string query)
+    private static void CompareRecall(DuckDbDataStore store, string query)
     {
         var fileSearchSql = $"SELECT uri FROM file_search('{query}') LIMIT 20";
         var hybridSearchSql = $@"
@@ -80,8 +79,8 @@ internal class HybridSearchComparisonTest
             LEFT JOIN fs ON fs.uri = hs.uri
             ORDER BY found_by DESC, hs.uri";
 
-        var fileSearchResults = store.RawQuery(fileSearchSql).ToList();
-        var comparisonResults = store.RawQuery(hybridSearchSql).ToList();
+        var fileSearchResults = store.Query(fileSearchSql).ToList();
+        var comparisonResults = store.Query(hybridSearchSql).ToList();
 
         Console.WriteLine($"file_search found: {fileSearchResults.Count} documents");
         Console.WriteLine($"hybrid_search found: {comparisonResults.Count} documents");
@@ -108,13 +107,13 @@ internal class HybridSearchComparisonTest
         }
     }
 
-    private static void CompareKnownItem(DuckDbGraphStore store, string query)
+    private static void CompareKnownItem(DuckDbDataStore store, string query)
     {
         var fileSearchSql = $"SELECT uri, ROUND(score, 3) AS score FROM file_search('{query}') LIMIT 3";
         var hybridSearchSql = $"SELECT uri, ROUND(score, 3) AS score, source FROM hybrid_search('{query}') LIMIT 3";
 
-        var fileSearchResults = store.RawQuery(fileSearchSql).ToList();
-        var hybridSearchResults = store.RawQuery(hybridSearchSql).ToList();
+        var fileSearchResults = store.Query(fileSearchSql).ToList();
+        var hybridSearchResults = store.Query(hybridSearchSql).ToList();
 
         Console.WriteLine("file_search results:");
         foreach (var row in fileSearchResults)
@@ -150,14 +149,14 @@ internal class HybridSearchComparisonTest
         }
     }
 
-    private static void DemonstrateRescue(DuckDbGraphStore store, string query)
+    private static void DemonstrateRescue(DuckDbDataStore store, string query)
     {
         var sql = $@"
             SELECT uri, source, struct_mentions, body_mentions, ROUND(score, 3) AS score
             FROM hybrid_search('{query}', enable_body_rescue := TRUE)
             LIMIT 10";
 
-        var results = store.RawQuery(sql).ToList();
+        var results = store.Query(sql).ToList();
 
         Console.WriteLine($"Top 10 results with rescue attribution:");
         Console.WriteLine($"{"Score",-8} {"Source",-10} {"Struct",-7} {"Body",-6} {"File",-40}");

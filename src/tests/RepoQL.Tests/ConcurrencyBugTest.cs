@@ -67,13 +67,8 @@ internal class ConcurrencyBugTest
         {
             try
             {
-                using var connection = new DuckDBConnection("Data Source=:memory:");
-#pragma warning disable CA1849
-                connection.Open();
-#pragma warning restore CA1849
-
-                using var store = new DuckDbGraphStore(connection, new RepoQL.Metrics.IndexingMetrics());
-                store.EnsureSchema();
+                // Each iteration creates its own in-memory store
+                using var store = new DuckDbDataStore();
 
                 var node = new Node
                 {

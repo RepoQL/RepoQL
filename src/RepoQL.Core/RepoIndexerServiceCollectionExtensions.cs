@@ -108,18 +108,6 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddOptions<IndexingEngineOptions>();
         services.AddOptions<RepoqlHostOptions>();
 
-        // Graph store factory - creates DuckDbGraphStore instances with proper DI
-        // Use explicit factory to ensure embedding provider is resolved
-        services.AddSingleton<IDuckDbGraphStoreFactory>(sp =>
-            new DuckDbGraphStoreFactory(
-                sp.GetRequiredService<IndexingMetrics>(),
-                sp.GetRequiredService<IEmbeddingProvider>(),
-                sp.GetService<ILogger<DuckDbGraphStore>>()));
-
-        // Single-writer for all write operations
-        services.AddSingleton<IDatabaseWriter, SingleThreadedDatabaseWriter>();
-        services.AddHostedService(sp => (SingleThreadedDatabaseWriter)sp.GetRequiredService<IDatabaseWriter>());
-
         // Embeddings provider (local only). Enabled by default; disable via REPOQL_EMBED_ENABLED=0
         services.AddSingleton<IEmbeddingProvider>(sp =>
         {
@@ -322,20 +310,19 @@ public static class RepoIndexerServiceCollectionExtensions
         // Register metrics
         services.AddSingleton<IndexingMetrics>();
 
-        // Unified database interface - replaces old IGraphStore + IDatabaseWriter pattern
-        services.AddSingleton<IRepoDatabase>(sp =>
+        // Unified database - DuckDbDataStore handles all reads and writes
+        services.AddSingleton<DuckDbDataStore>(sp =>
         {
             var scripts = sp.GetServices<IFormatSchemaProvider>()
                 .SelectMany(p => p.GetSchemaScripts())
                 .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
                 .ToList();
 
-            var db = new DuckDbRepoDatabase(
+            var db = new DuckDbDataStore(
                 dbFileFullPath,
                 sp.GetRequiredService<IEmbeddingProvider>(),
                 scripts,
-                sp.GetService<ILogger<DuckDbRepoDatabase>>());
-            db.EnsureSchema();
+                sp.GetService<ILogger<DuckDbDataStore>>());
             return db;
         });
         // In-memory OTEL sink for dashboards/tests
@@ -355,12 +342,11 @@ public static class RepoIndexerServiceCollectionExtensions
             return new StorageBackedArtifactPruner(connectionFactory, isReindexing, logger);
         });
         services.AddSingleton<IVectorIndexCoordinator>(sp => new VectorIndexCoordinator(
-            sp.GetRequiredService<IDuckDBConnectionFactory>(),
+            sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IEmbeddingProvider>(),
-            sp.GetService<IRepoDatabase>(),
             sp.GetService<ILogger<VectorIndexCoordinator>>()));
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
-            sp.GetRequiredService<IRepoDatabase>(),
+            sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IDocumentCatalog>(),
             sp.GetService<ILogger<IndexingCommitter>>()));
 
@@ -392,7 +378,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton(sp =>
         {
             var engine = new IndexingEngine(
-                sp.GetRequiredService<IRepoDatabase>(),
+                sp.GetRequiredService<DuckDbDataStore>(),
                 sp.GetRequiredService<IUriFilter>(),
                 sp.GetRequiredService<ClassificationPipeline>(),
                 sp.GetRequiredService<ParsingPipeline>(),
@@ -424,7 +410,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IIndexingCoordinator>(sp => new IndexingCoordinator(
             sp.GetRequiredService<CompositeFileSystem>(),
             sp.GetRequiredService<IndexingEngine>(),
-            sp.GetRequiredService<IRepoDatabase>(),
+            sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetService<ILogger<IndexingCoordinator>>(),
             sp.GetRequiredService<ICompositeFileSystemManager>()));
 

@@ -25,7 +25,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private const int StructureEmbeddingBatchSize = 128;
     private static readonly int RefreshConcurrency = GetRefreshConcurrency();
     private readonly IVectorIndexRefresher _refresher;
-    private readonly IRepoDatabase? _db;
+    private readonly DuckDbDataStore? _db;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly ILogger<VectorIndexCoordinator> _logger;
     private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
@@ -40,17 +40,16 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     }
 
     public VectorIndexCoordinator(
-        IDuckDBConnectionFactory connectionFactory,
+        DuckDbDataStore database,
         IEmbeddingProvider embeddingProvider,
-        IRepoDatabase? db = null,
         ILogger<VectorIndexCoordinator>? logger = null)
-        : this(new DuckDbVectorIndexRefresher(connectionFactory, embeddingProvider), db, embeddingProvider, logger)
+        : this(new DuckDbVectorIndexRefresher(database, embeddingProvider), database, embeddingProvider, logger)
     {
     }
 
     internal VectorIndexCoordinator(
         IVectorIndexRefresher refresher,
-        IRepoDatabase? db = null,
+        DuckDbDataStore? db = null,
         IEmbeddingProvider? embeddingProvider = null,
         ILogger<VectorIndexCoordinator>? logger = null)
     {

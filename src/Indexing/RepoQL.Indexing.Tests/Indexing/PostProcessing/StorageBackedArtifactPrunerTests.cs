@@ -16,7 +16,7 @@ internal class StorageBackedArtifactPrunerTests
         store.SeedDocument("file:///repo/doc-a.md");
 
         var pruner = new StorageBackedArtifactPruner(
-            new SingleConnectionFactory(store.Connection),
+            store.ConnectionFactory,
             () => true,
             NullLogger<StorageBackedArtifactPruner>.Instance);
         var pending = new[]
@@ -40,7 +40,7 @@ internal class StorageBackedArtifactPrunerTests
         store.SeedDocument("file:///repo/doc-stale.md");
 
         var pruner = new StorageBackedArtifactPruner(
-            new SingleConnectionFactory(store.Connection),
+            store.ConnectionFactory,
             () => true,
             NullLogger<StorageBackedArtifactPruner>.Instance);
         var pending = new[]
@@ -63,7 +63,7 @@ internal class StorageBackedArtifactPrunerTests
         store.SeedDocument("file:///repo/doc.md");
 
         var pruner = new StorageBackedArtifactPruner(
-            new SingleConnectionFactory(store.Connection),
+            store.ConnectionFactory,
             () => false,
             NullLogger<StorageBackedArtifactPruner>.Instance);
 

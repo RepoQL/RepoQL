@@ -6,42 +6,39 @@ using RepoQL.Contracts.Models;
 
 namespace RepoQL.Data.DuckDB.Tests;
 
-public class DuckDbRepoDatabaseTests
+public class DuckDbDataStoreTests
 {
     [Test]
     [DisplayName("Schema initialization creates all tables")]
     public void EnsureSchema_CreatesAllTables()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
-        var results = db.Query("SELECT COUNT(*) AS cnt FROM node");
+        var results = db.Read("SELECT COUNT(*) AS cnt FROM node", r => r.GetInt64(0));
         results.Should().HaveCount(1);
-        results[0]["cnt"].Should().Be(0L);
+        results[0].Should().Be(0L);
     }
 
     [Test]
     [DisplayName("Query returns dictionary results")]
     public void Query_ReturnsDictionaryResults()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
-        var results = db.Query("SELECT 1 AS value, 'hello' AS text");
+        var results = db.Read("SELECT 1 AS value, 'hello' AS text", r => new { Value = r.GetInt32(0), Text = r.GetString(1) });
 
         results.Should().HaveCount(1);
-        results[0]["value"].Should().Be(1);
-        results[0]["text"].Should().Be("hello");
+        results[0].Value.Should().Be(1);
+        results[0].Text.Should().Be("hello");
     }
 
     [Test]
     [DisplayName("Query with mapper returns typed results")]
     public void Query_WithMapper_ReturnsTypedResults()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
-        var results = db.Query("SELECT 42 AS num", r => r.GetInt32(0));
+        var results = db.Read("SELECT 42 AS num", r => r.GetInt32(0));
 
         results.Should().HaveCount(1);
         results[0].Should().Be(42);
@@ -51,8 +48,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("IndexArtifact inserts new document and populates search projection")]
     public void IndexArtifact_InsertsNewDocument()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var artifact = CreateTestArtifact();
@@ -63,22 +59,21 @@ public class DuckDbRepoDatabaseTests
         result.WasUpdate.Should().BeFalse();
 
         // Verify document node
-        var rows = db.Query("SELECT uri FROM node WHERE kind = 'document'");
+        var rows = db.Read("SELECT uri FROM node WHERE kind = 'document'", r => r.GetString(0));
         rows.Should().HaveCount(1);
-        rows[0]["uri"]!.ToString().Should().Contain("test/doc.md");
+        rows[0].Should().Contain("test/doc.md");
 
         // Verify search projection
-        var searchRows = db.Query("SELECT basename FROM document_search");
+        var searchRows = db.Read("SELECT basename FROM document_search", r => r.GetString(0));
         searchRows.Should().HaveCount(1);
-        searchRows[0]["basename"].Should().Be("doc.md");
+        searchRows[0].Should().Be("doc.md");
     }
 
     [Test]
     [DisplayName("IndexArtifact updates existing document at same URI")]
     public void IndexArtifact_UpdatesExistingDocument()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var artifact1 = CreateTestArtifact("content v1");
@@ -91,16 +86,15 @@ public class DuckDbRepoDatabaseTests
         result2.WasUpdate.Should().BeTrue();
 
         // Should still be only one document
-        var rows = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'");
-        rows[0]["cnt"].Should().Be(1L);
+        var count = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0))[0];
+        count.Should().Be(1L);
     }
 
     [Test]
     [DisplayName("DeleteArtifact removes document and cleans up search projection")]
     public void DeleteArtifact_RemovesDocumentAndSearchProjection()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         db.IndexArtifact(uri, CreateTestArtifact());
@@ -109,9 +103,9 @@ public class DuckDbRepoDatabaseTests
 
         deleted.Should().BeTrue();
 
-        db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'")[0]["cnt"]
+        db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0))[0]
             .Should().Be(0L);
-        db.Query("SELECT COUNT(*) AS cnt FROM document_search")[0]["cnt"]
+        db.Read("SELECT COUNT(*) AS cnt FROM document_search", r => r.GetInt64(0))[0]
             .Should().Be(0L);
     }
 
@@ -119,8 +113,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("DeleteArtifact returns false for non-existent document")]
     public void DeleteArtifact_ReturnsFalseWhenNotFound()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var deleted = db.DeleteArtifact(RepoUri.Parse("file:///nonexistent.md")!);
 
@@ -131,8 +124,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("ReplaceAnnotations inserts new annotations for document")]
     public void ReplaceAnnotations_InsertsAnnotations()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -152,15 +144,14 @@ public class DuckDbRepoDatabaseTests
         var replaced = db.ReplaceAnnotations(uri, annotations);
 
         replaced.Should().BeTrue();
-        db.Query("SELECT COUNT(*) AS cnt FROM annotation")[0]["cnt"].Should().Be(1L);
+        db.Read("SELECT COUNT(*) AS cnt FROM annotation", r => r.GetInt64(0))[0].Should().Be(1L);
     }
 
     [Test]
     [DisplayName("ReplaceAnnotations clears previous annotations from same source")]
     public void ReplaceAnnotations_ClearsOldFromSameSource()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -181,17 +172,16 @@ public class DuckDbRepoDatabaseTests
                     Message = "New info", ScopeDocumentId = indexResult.DocumentId }
         });
 
-        var rows = db.Query("SELECT message FROM annotation");
+        var rows = db.Read("SELECT message FROM annotation", r => r.GetString(0));
         rows.Should().HaveCount(1, "old annotations from same source should be deleted");
-        rows[0]["message"].Should().Be("New info");
+        rows[0].Should().Be("New info");
     }
 
     [Test]
     [DisplayName("ReplaceAnnotations returns false for non-existent document")]
     public void ReplaceAnnotations_ReturnsFalseWhenDocumentNotFound()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var replaced = db.ReplaceAnnotations(
             RepoUri.Parse("file:///nonexistent.md")!,
@@ -208,8 +198,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("WriteEmbeddings inserts structure embeddings for document")]
     public void WriteEmbeddings_InsertsStructureEmbeddings()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -221,18 +210,18 @@ public class DuckDbRepoDatabaseTests
                 [0.1f, 0.2f, 0.3f], "test-model", 3)
         });
 
-        var rows = db.Query("SELECT embedding_type, scope FROM document_embedding");
+        var rows = db.Read("SELECT embedding_type, scope FROM document_embedding",
+            r => new { EmbeddingType = r.GetString(0), Scope = r.GetString(1) });
         rows.Should().HaveCount(1);
-        rows[0]["embedding_type"].Should().Be("structure");
-        rows[0]["scope"].Should().Be("document");
+        rows[0].EmbeddingType.Should().Be("structure");
+        rows[0].Scope.Should().Be("document");
     }
 
     [Test]
     [DisplayName("WriteEmbeddings inserts chunked full embeddings")]
     public void WriteEmbeddings_InsertsChunkedFullEmbeddings()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -248,53 +237,65 @@ public class DuckDbRepoDatabaseTests
                 [0.4f, 0.5f, 0.6f], "test-model", 3, StartByte: 800, EndByte: 1800)
         });
 
-        var rows = db.Query("SELECT chunk_index, start_byte, end_byte FROM document_embedding ORDER BY chunk_index");
+        var rows = db.Read("SELECT chunk_index, start_byte, end_byte FROM document_embedding ORDER BY chunk_index",
+            r => new { ChunkIndex = r.GetInt32(0), StartByte = r.GetInt64(1), EndByte = r.GetInt64(2) });
         rows.Should().HaveCount(2, "two chunks should be stored");
-        rows[0]["chunk_index"].Should().Be(0);
-        rows[0]["start_byte"].Should().Be(0L);
-        rows[1]["chunk_index"].Should().Be(1);
-        rows[1]["start_byte"].Should().Be(800L);
+        rows[0].ChunkIndex.Should().Be(0);
+        rows[0].StartByte.Should().Be(0L);
+        rows[1].ChunkIndex.Should().Be(1);
+        rows[1].StartByte.Should().Be(800L);
     }
 
     [Test]
     [DisplayName("IndexArtifact writes edges with all fields")]
     public void IndexArtifact_WritesEdgesWithAllFields()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var artifact = CreateTestArtifactWithEdge();
 
         db.IndexArtifact(uri, artifact);
 
-        var rows = db.Query("SELECT type, is_composition, ordinal, semantic_key, destination_uri, composition_child_id FROM edge");
+        var rows = db.Read("SELECT type, is_composition, ordinal, semantic_key, destination_uri FROM edge",
+            r => new {
+                Type = r.GetString(0),
+                IsComposition = r.GetBoolean(1),
+                Ordinal = r.GetInt32(2),
+                SemanticKey = r.IsDBNull(3) ? null : r.GetString(3),
+                DestinationUri = r.IsDBNull(4) ? null : r.GetString(4)
+            });
         rows.Should().HaveCount(1);
-        rows[0]["type"].Should().Be("REFERS_TO");
-        rows[0]["is_composition"].Should().Be(false);
-        rows[0]["ordinal"].Should().Be(1);
-        rows[0]["semantic_key"].Should().Be("test-key");
-        rows[0]["destination_uri"].Should().Be("file:///other/file.md");
+        rows[0].Type.Should().Be("REFERS_TO");
+        rows[0].IsComposition.Should().Be(false);
+        rows[0].Ordinal.Should().Be(1);
+        rows[0].SemanticKey.Should().Be("test-key");
+        rows[0].DestinationUri.Should().Be("file:///other/file.md");
     }
 
     [Test]
     [DisplayName("IndexArtifact writes composition edges with child constraint")]
     public void IndexArtifact_WritesCompositionEdges()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var artifact = CreateTestArtifactWithCompositionEdge();
 
         db.IndexArtifact(uri, artifact);
 
-        var rows = db.Query("SELECT type, is_composition, composition_child_id, destination_node_id FROM edge");
+        var rows = db.Read("SELECT type, is_composition, composition_child_id, destination_node_id FROM edge",
+            r => new {
+                Type = r.GetString(0),
+                IsComposition = r.GetBoolean(1),
+                CompositionChildId = r.IsDBNull(2) ? (Guid?)null : r.GetGuid(2),
+                DestinationNodeId = r.IsDBNull(3) ? (Guid?)null : r.GetGuid(3)
+            });
         rows.Should().HaveCount(1);
-        rows[0]["type"].Should().Be("HAS_PART");
-        rows[0]["is_composition"].Should().Be(true);
+        rows[0].Type.Should().Be("HAS_PART");
+        rows[0].IsComposition.Should().Be(true);
         // composition_child_id should equal destination_node_id for composition edges
-        rows[0]["composition_child_id"].Should().Be(rows[0]["destination_node_id"]);
+        rows[0].CompositionChildId.Should().Be(rows[0].DestinationNodeId);
     }
 
     private static ParsedArtifact CreateTestArtifact(string content = "test content")
@@ -419,8 +420,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("Concurrent reads do not block each other")]
     public async Task ConcurrentReads_DoNotBlock()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         // Index some documents first
         for (var i = 0; i < 10; i++)
@@ -430,13 +430,13 @@ public class DuckDbRepoDatabaseTests
         }
 
         // Run many concurrent reads
-        var tasks = new List<Task<int>>();
+        var tasks = new List<Task<long>>();
         for (var i = 0; i < 20; i++)
         {
             tasks.Add(Task.Run(() =>
             {
-                var results = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'");
-                return Convert.ToInt32(results[0]["cnt"]);
+                var results = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0));
+                return results[0];
             }));
         }
 
@@ -450,8 +450,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("Concurrent writes are serialized correctly")]
     public async Task ConcurrentWrites_AreSerializedCorrectly()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         // Run many concurrent writes
         var tasks = new List<Task>();
@@ -468,19 +467,18 @@ public class DuckDbRepoDatabaseTests
         await Task.WhenAll(tasks);
 
         // All 20 documents should be indexed
-        var results = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'");
-        Convert.ToInt32(results[0]["cnt"]).Should().Be(20);
+        var count = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0))[0];
+        count.Should().Be(20);
     }
 
     [Test]
     [DisplayName("Mixed concurrent reads and writes maintain consistency")]
     public async Task MixedConcurrentReadsAndWrites_MaintainConsistency()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var writeCount = 0;
-        var readResults = new List<int>();
+        var readResults = new List<long>();
         var writeLock = new object();
         var readLock = new object();
 
@@ -506,8 +504,8 @@ public class DuckDbRepoDatabaseTests
             {
                 // Small delay to let some writes happen
                 Thread.Sleep(Random.Shared.Next(1, 5));
-                var results = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'");
-                var count = Convert.ToInt32(results[0]["cnt"]);
+                var results = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0));
+                var count = results[0];
                 lock (readLock) { readResults.Add(count); }
             }));
         }
@@ -515,8 +513,8 @@ public class DuckDbRepoDatabaseTests
         await Task.WhenAll(tasks);
 
         // Final count should be 15
-        var finalCount = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'");
-        Convert.ToInt32(finalCount[0]["cnt"]).Should().Be(15);
+        var finalCount = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0))[0];
+        finalCount.Should().Be(15);
 
         // All reads should have seen a valid count (0 to 15)
         readResults.Should().AllSatisfy(c => c.Should().BeInRange(0, 15));
@@ -530,12 +528,11 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("Writers block readers and vice versa appropriately")]
     public async Task WritersBlockReaders_Appropriately()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var writerStarted = new ManualResetEventSlim(false);
         var writerCanFinish = new ManualResetEventSlim(false);
-        var readerResults = new List<(DateTime time, int count)>();
+        var readerResults = new List<(DateTime time, long count)>();
         var readerLock = new object();
 
         // Start a slow writer that signals when it has the lock
@@ -556,8 +553,8 @@ public class DuckDbRepoDatabaseTests
         {
             for (var j = 0; j < 5; j++)
             {
-                var results = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'");
-                var count = Convert.ToInt32(results[0]["cnt"]);
+                var results = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0));
+                var count = results[0];
                 lock (readerLock)
                 {
                     readerResults.Add((DateTime.UtcNow, count));
@@ -569,8 +566,8 @@ public class DuckDbRepoDatabaseTests
         await Task.WhenAll(new[] { writerTask }.Concat(readerTasks));
 
         // Final state should be 5 documents
-        var finalCount = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'");
-        Convert.ToInt32(finalCount[0]["cnt"]).Should().Be(5);
+        var finalCount = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0))[0];
+        finalCount.Should().Be(5);
 
         // All individual reads should see a consistent count (not partial writes)
         // Each read sees 0, 1, 2, 3, 4, or 5 - never a fractional state
@@ -581,8 +578,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("Concurrent deletes and reads maintain consistency")]
     public async Task ConcurrentDeletesAndReads_MaintainConsistency()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         // First, index 20 documents
         for (var i = 0; i < 20; i++)
@@ -591,7 +587,7 @@ public class DuckDbRepoDatabaseTests
             db.IndexArtifact(uri, CreateTestArtifact($"content {i}"));
         }
 
-        var readResults = new List<int>();
+        var readResults = new List<long>();
         var readLock = new object();
 
         // Delete half while reading
@@ -613,8 +609,8 @@ public class DuckDbRepoDatabaseTests
         {
             tasks.Add(Task.Run(() =>
             {
-                var results = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'");
-                var count = Convert.ToInt32(results[0]["cnt"]);
+                var results = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0));
+                var count = results[0];
                 lock (readLock) { readResults.Add(count); }
             }));
         }
@@ -622,8 +618,8 @@ public class DuckDbRepoDatabaseTests
         await Task.WhenAll(tasks);
 
         // Final count should be 10 (20 - 10 deleted)
-        var finalCount = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'");
-        Convert.ToInt32(finalCount[0]["cnt"]).Should().Be(10);
+        var finalCount = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0))[0];
+        finalCount.Should().Be(10);
 
         // All reads should see valid counts between 10 and 20
         readResults.Should().AllSatisfy(c => c.Should().BeInRange(10, 20));
@@ -637,8 +633,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("Reindex cleans up old child nodes")]
     public void IndexArtifact_ReindexCleansUpOldChildren()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
 
@@ -646,24 +641,23 @@ public class DuckDbRepoDatabaseTests
         var artifact1 = CreateTestArtifactWithChildren(3);
         db.IndexArtifact(uri, artifact1);
 
-        var initialChildCount = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'md_section'");
-        Convert.ToInt32(initialChildCount[0]["cnt"]).Should().Be(3);
+        var initialChildCount = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'md_section'", r => r.GetInt64(0))[0];
+        initialChildCount.Should().Be(3);
 
         // Reindex with 1 child
         var artifact2 = CreateTestArtifactWithChildren(1);
         db.IndexArtifact(uri, artifact2);
 
         // Should only have 1 child now
-        var finalChildCount = db.Query("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'md_section'");
-        Convert.ToInt32(finalChildCount[0]["cnt"]).Should().Be(1, "old children should be deleted on reindex");
+        var finalChildCount = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'md_section'", r => r.GetInt64(0))[0];
+        finalChildCount.Should().Be(1, "old children should be deleted on reindex");
     }
 
     [Test]
     [DisplayName("Reindex cleans up old spans")]
     public void IndexArtifact_ReindexCleansUpOldSpans()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
 
@@ -671,24 +665,23 @@ public class DuckDbRepoDatabaseTests
         var artifact1 = CreateTestArtifactWithSpans(3);
         db.IndexArtifact(uri, artifact1);
 
-        var initialSpanCount = db.Query("SELECT COUNT(*) AS cnt FROM span");
-        Convert.ToInt32(initialSpanCount[0]["cnt"]).Should().Be(3);
+        var initialSpanCount = db.Read("SELECT COUNT(*) AS cnt FROM span", r => r.GetInt64(0))[0];
+        initialSpanCount.Should().Be(3);
 
         // Reindex with 1 span
         var artifact2 = CreateTestArtifactWithSpans(1);
         db.IndexArtifact(uri, artifact2);
 
         // Should only have 1 span now
-        var finalSpanCount = db.Query("SELECT COUNT(*) AS cnt FROM span");
-        Convert.ToInt32(finalSpanCount[0]["cnt"]).Should().Be(1, "old spans should be deleted on reindex");
+        var finalSpanCount = db.Read("SELECT COUNT(*) AS cnt FROM span", r => r.GetInt64(0))[0];
+        finalSpanCount.Should().Be(1, "old spans should be deleted on reindex");
     }
 
     [Test]
     [DisplayName("Reindex cleans up old edges")]
     public void IndexArtifact_ReindexCleansUpOldEdges()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
 
@@ -696,24 +689,23 @@ public class DuckDbRepoDatabaseTests
         var artifact1 = CreateTestArtifactWithReferenceEdges(2);
         db.IndexArtifact(uri, artifact1);
 
-        var initialEdgeCount = db.Query("SELECT COUNT(*) AS cnt FROM edge WHERE type = 'REFERS_TO'");
-        Convert.ToInt32(initialEdgeCount[0]["cnt"]).Should().Be(2);
+        var initialEdgeCount = db.Read("SELECT COUNT(*) AS cnt FROM edge WHERE type = 'REFERS_TO'", r => r.GetInt64(0))[0];
+        initialEdgeCount.Should().Be(2);
 
         // Reindex with 1 edge
         var artifact2 = CreateTestArtifactWithReferenceEdges(1);
         db.IndexArtifact(uri, artifact2);
 
         // Should only have 1 edge now
-        var finalEdgeCount = db.Query("SELECT COUNT(*) AS cnt FROM edge WHERE type = 'REFERS_TO'");
-        Convert.ToInt32(finalEdgeCount[0]["cnt"]).Should().Be(1, "old edges should be deleted on reindex");
+        var finalEdgeCount = db.Read("SELECT COUNT(*) AS cnt FROM edge WHERE type = 'REFERS_TO'", r => r.GetInt64(0))[0];
+        finalEdgeCount.Should().Be(1, "old edges should be deleted on reindex");
     }
 
     [Test]
     [DisplayName("Delete cleans up embeddings")]
     public void DeleteArtifact_CleansUpEmbeddings()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -729,15 +721,15 @@ public class DuckDbRepoDatabaseTests
                 [0.4f, 0.5f, 0.6f], "test-model", 3)
         });
 
-        var embeddingCount = db.Query("SELECT COUNT(*) AS cnt FROM document_embedding");
-        Convert.ToInt32(embeddingCount[0]["cnt"]).Should().Be(2);
+        var embeddingCount = db.Read("SELECT COUNT(*) AS cnt FROM document_embedding", r => r.GetInt64(0))[0];
+        embeddingCount.Should().Be(2);
 
         // Delete the document
         db.DeleteArtifact(uri);
 
         // Embeddings should be gone
-        var finalEmbeddingCount = db.Query("SELECT COUNT(*) AS cnt FROM document_embedding");
-        Convert.ToInt32(finalEmbeddingCount[0]["cnt"]).Should().Be(0, "embeddings should be deleted with document");
+        var finalEmbeddingCount = db.Read("SELECT COUNT(*) AS cnt FROM document_embedding", r => r.GetInt64(0))[0];
+        finalEmbeddingCount.Should().Be(0, "embeddings should be deleted with document");
     }
 
     #endregion
@@ -748,8 +740,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("ReplaceAnnotations preserves annotations from other sources")]
     public void ReplaceAnnotations_PreservesOtherSources()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -771,12 +762,13 @@ public class DuckDbRepoDatabaseTests
         });
 
         // Should have 2 annotations: new one from analyzer-a, original from analyzer-b
-        var rows = db.Query("SELECT source, message FROM annotation ORDER BY source");
+        var rows = db.Read("SELECT source, message FROM annotation ORDER BY source",
+            r => new { Source = r.GetString(0), Message = r.GetString(1) });
         rows.Should().HaveCount(2, "annotations from other sources should be preserved");
-        rows[0]["source"].Should().Be("analyzer-a");
-        rows[0]["message"].Should().Be("Info A (new)");
-        rows[1]["source"].Should().Be("analyzer-b");
-        rows[1]["message"].Should().Be("Error B");
+        rows[0].Source.Should().Be("analyzer-a");
+        rows[0].Message.Should().Be("Info A (new)");
+        rows[1].Source.Should().Be("analyzer-b");
+        rows[1].Message.Should().Be("Error B");
     }
 
     #endregion
@@ -787,8 +779,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("WriteEmbeddings upserts on conflict")]
     public void WriteEmbeddings_UpsertsOnConflict()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -810,17 +801,16 @@ public class DuckDbRepoDatabaseTests
         });
 
         // Should still have only 1 embedding (upserted, not duplicated)
-        var rows = db.Query("SELECT model FROM document_embedding");
+        var rows = db.Read("SELECT model FROM document_embedding", r => r.GetString(0));
         rows.Should().HaveCount(1, "should upsert, not duplicate");
-        rows[0]["model"].Should().Be("model-v2", "should be updated to new model");
+        rows[0].Should().Be("model-v2", "should be updated to new model");
     }
 
     [Test]
     [DisplayName("WriteEmbeddings allows structure and full types to coexist")]
     public void WriteEmbeddings_StructureAndFullCoexist()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -836,10 +826,10 @@ public class DuckDbRepoDatabaseTests
                 [0.4f, 0.5f, 0.6f], "test-model", 3)
         });
 
-        var rows = db.Query("SELECT embedding_type FROM document_embedding ORDER BY embedding_type");
+        var rows = db.Read("SELECT embedding_type FROM document_embedding ORDER BY embedding_type", r => r.GetString(0));
         rows.Should().HaveCount(2);
-        rows[0]["embedding_type"].Should().Be("full");
-        rows[1]["embedding_type"].Should().Be("structure");
+        rows[0].Should().Be("full");
+        rows[1].Should().Be("structure");
     }
 
     #endregion
@@ -850,8 +840,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("IndexArtifact throws on null URI")]
     public void IndexArtifact_ThrowsOnNullUri()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var act = () => db.IndexArtifact(null!, CreateTestArtifact());
 
@@ -862,8 +851,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("IndexArtifact throws on null artifact")]
     public void IndexArtifact_ThrowsOnNullArtifact()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var act = () => db.IndexArtifact(uri, null!);
@@ -875,8 +863,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("DeleteArtifact throws on null URI")]
     public void DeleteArtifact_ThrowsOnNullUri()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var act = () => db.DeleteArtifact(null!);
 
@@ -887,8 +874,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("ReplaceAnnotations throws on null URI")]
     public void ReplaceAnnotations_ThrowsOnNullUri()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var act = () => db.ReplaceAnnotations(null!, new List<Annotation>());
 
@@ -899,8 +885,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("ReplaceAnnotations throws on null annotations")]
     public void ReplaceAnnotations_ThrowsOnNullAnnotations()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var act = () => db.ReplaceAnnotations(uri, null!);
@@ -912,8 +897,7 @@ public class DuckDbRepoDatabaseTests
     [DisplayName("WriteEmbeddings throws on null list")]
     public void WriteEmbeddings_ThrowsOnNullList()
     {
-        using var db = new DuckDbRepoDatabase();
-        db.EnsureSchema();
+        using var db = new DuckDbDataStore();
 
         var act = () => db.WriteEmbeddings(null!);
 
@@ -921,17 +905,13 @@ public class DuckDbRepoDatabaseTests
     }
 
     [Test]
-    [DisplayName("EnsureSchema is idempotent")]
-    public void EnsureSchema_IsIdempotent()
+    [DisplayName("Schema is auto-initialized on construction")]
+    public void Schema_AutoInitialized()
     {
-        using var db = new DuckDbRepoDatabase();
+        using var db = new DuckDbDataStore();
 
-        // Call twice - should not throw
-        db.EnsureSchema();
-        db.EnsureSchema();
-
-        // Verify tables exist
-        var results = db.Query("SELECT COUNT(*) AS cnt FROM node");
+        // Verify tables exist (schema was auto-initialized in constructor)
+        var results = db.Read("SELECT COUNT(*) AS cnt FROM node", r => r.GetInt64(0));
         results.Should().HaveCount(1);
     }
 

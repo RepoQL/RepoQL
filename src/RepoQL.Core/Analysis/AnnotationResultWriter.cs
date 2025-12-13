@@ -1,12 +1,12 @@
 using System.Text.Json.Nodes;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
-using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
+using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Core.Analysis;
 
-public sealed class AnnotationResultWriter(IRepoDatabase db) : IAnalysisResultWriter
+public sealed class AnnotationResultWriter(DuckDbDataStore db) : IAnalysisResultWriter
 {
     public Task WriteAsync(
         string containerUri,

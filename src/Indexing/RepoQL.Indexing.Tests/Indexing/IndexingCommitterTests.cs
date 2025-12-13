@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
+using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing.Commit;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.State;
@@ -25,26 +26,15 @@ public class IndexingCommitterTests
         A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._))
             .Invokes(call => appliedEntry = call.GetArgument<DocumentCatalogEntry>(0));
 
-        var db = A.Fake<IRepoDatabase>();
-        ParsedArtifact? capturedArtifact = null;
-        A.CallTo(() => db.IndexArtifactBatch(A<IReadOnlyList<(RepoUri, ParsedArtifact)>>._))
-            .ReturnsLazily(call =>
-            {
-                var items = call.GetArgument<IReadOnlyList<(RepoUri, ParsedArtifact)>>(0)!;
-                if (items.Count > 0)
-                    capturedArtifact = items[0].Item2;
-                return items.Select(_ => new IndexResult(Guid.NewGuid(), false)).ToList();
-            });
-
+        using var db = new DuckDbDataStore(); // in-memory
         using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
 
         // Act
         await committer.CommitAsync(item, CancellationToken.None);
 
-        // Assert
-        capturedArtifact.Should().NotBeNull();
-        capturedArtifact!.DocumentNode.Should().NotBeNull();
-        capturedArtifact.Annotations.Count.Should().Be(1);
+        // Assert - verify the document was written to the database
+        var doc = db.GetDocumentByUri(item.Uri);
+        doc.Should().NotBeNull("document should be written to database");
 
         appliedEntry.Should().NotBeNull();
         appliedEntry!.Uri.Should().Be(item.Uri);
@@ -62,15 +52,16 @@ public class IndexingCommitterTests
         item.DigestHex = Convert.ToHexString(await item.RawArtifact.Digest.WithCancellation(CancellationToken.None));
         item.MediaType = SemanticMediaType.Parse("text/markdown;kind=markdown.doc");
 
-        var db = A.Fake<IRepoDatabase>();
+        using var db = new DuckDbDataStore(); // in-memory
         var catalog = A.Fake<IDocumentCatalog>();
         using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
 
         // Act
         await committer.CommitAsync(item, CancellationToken.None);
 
-        // Assert
-        A.CallTo(() => db.IndexArtifactBatch(A<IReadOnlyList<(RepoUri, ParsedArtifact)>>._)).MustNotHaveHappened();
+        // Assert - no document should exist (no records to commit)
+        var allNodes = db.GetAllNodes();
+        allNodes.Should().BeEmpty("no records means no write");
         A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._)).MustNotHaveHappened();
     }
 
@@ -81,9 +72,9 @@ public class IndexingCommitterTests
         // Arrange
         var item = await CreatePopulatedItemAsync("file:///repo/doc.md");
 
-        var db = A.Fake<IRepoDatabase>();
-        A.CallTo(() => db.IndexArtifactBatch(A<IReadOnlyList<(RepoUri, ParsedArtifact)>>._))
-            .Throws(new InvalidOperationException("DuckDB failure"));
+        // Create a disposed store to force an error
+        var db = new DuckDbDataStore();
+        db.Dispose();
 
         var catalog = A.Fake<IDocumentCatalog>();
         using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
@@ -91,9 +82,8 @@ public class IndexingCommitterTests
         // Act
         var act = async () => await committer.CommitAsync(item, CancellationToken.None);
 
-        // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("DuckDB failure");
+        // Assert - should throw due to disposed connection
+        await act.Should().ThrowAsync<Exception>();
         A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._)).MustNotHaveHappened();
     }
 

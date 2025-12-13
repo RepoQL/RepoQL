@@ -1,3 +1,4 @@
+using RepoQL.Data.DuckDB;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;

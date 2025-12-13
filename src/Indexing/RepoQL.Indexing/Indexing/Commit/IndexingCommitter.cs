@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
+using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.State;
 
@@ -51,7 +52,7 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
     private const int MaxBatchSize = 64;
     private const int FlushIntervalMs = 100; // 100ms to balance batching vs latency
 
-    private readonly IRepoDatabase _db;
+    private readonly DuckDbDataStore _db;
     private readonly IDocumentCatalog _catalog;
     private readonly ILogger<IndexingCommitter> _logger;
 
@@ -69,7 +70,7 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
     }
 
     public IndexingCommitter(
-        IRepoDatabase db,
+        DuckDbDataStore db,
         IDocumentCatalog catalog,
         ILogger<IndexingCommitter>? logger = null)
     {

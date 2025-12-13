@@ -1,47 +1,54 @@
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
-using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Metrics;
+using System.Text.Json.Nodes;
 using ArtifactModel = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Testing.Indexing;
 
 /// <summary>
-/// Provides an in-memory DuckDB store pre-wired with RepoQL schema for integration tests.
+/// Provides a DuckDB store pre-wired with RepoQL schema for integration tests.
+/// Uses a temp file to allow connection sharing between DuckDbDataStore and ConnectionFactory.
 /// </summary>
 public sealed class DuckDbTestStore : IDisposable
 {
-    public DuckDBConnection Connection { get; }
-    public DuckDbGraphStore GraphStore { get; }
+    public DuckDbDataStore DataStore { get; }
     public IndexingMetrics Metrics { get; }
+    public IDuckDBConnectionFactory ConnectionFactory { get; }
 
-    private DuckDbTestStore(DuckDBConnection connection, DuckDbGraphStore graphStore, IndexingMetrics metrics)
+    private readonly string? _tempDbPath;
+
+    private DuckDbTestStore(DuckDbDataStore dataStore, IndexingMetrics metrics, IDuckDBConnectionFactory connectionFactory, string? tempDbPath)
     {
-        Connection = connection;
-        GraphStore = graphStore;
+        DataStore = dataStore;
         Metrics = metrics;
+        ConnectionFactory = connectionFactory;
+        _tempDbPath = tempDbPath;
     }
 
     public static DuckDbTestStore CreateInMemory()
     {
-        var connection = new DuckDBConnection("Data Source=:memory:");
-        connection.Open();
+        // Use a temp file so that ConnectionFactory can share the same database
+        var tempPath = Path.Combine(Path.GetTempPath(), $"repoql-test-{Guid.NewGuid():N}.duckdb");
 
         var metrics = new IndexingMetrics();
-        RepositoryUserDefinedFunctions.RegisterAll(connection, null);
+        var dataStore = new DuckDbDataStore(
+            path: tempPath,
+            embeddingProvider: null,
+            formatSchemaScripts: null,
+            logger: NullLogger<DuckDbDataStore>.Instance);
 
-        var graph = new DuckDbGraphStore(
-            connection,
-            metrics: metrics,
-            enableExtensions: false,
-            registerUdfs: false,
-            logger: NullLogger<DuckDbGraphStore>.Instance);
-        graph.EnsureSchema();
+        // Force schema initialization by performing a read
+        _ = dataStore.GetAllNodes();
 
-        return new DuckDbTestStore(connection, graph, metrics);
+        // Connection factory shares the same database file
+        var connectionFactory = new DuckDBConnectionFactory($"Data Source={tempPath};ACCESS_MODE=READ_ONLY");
+
+        return new DuckDbTestStore(dataStore, metrics, connectionFactory, tempPath);
     }
 
     public RepoUri SeedDocument(string uri, string mediaType = "text/plain", string text = "seed")
@@ -54,7 +61,6 @@ public sealed class DuckDbTestStore : IDisposable
             MediaType = SemanticMediaType.Parse(mediaType),
             Text = text
         };
-        GraphStore.UpsertArtifact(artifact);
 
         var docNode = new Node
         {
@@ -62,19 +68,31 @@ public sealed class DuckDbTestStore : IDisposable
             Kind = "document",
             Uri = RepoUri.Parse(uri),
             ArtifactId = artifact.Id,
-            Props = new System.Text.Json.Nodes.JsonObject(),
+            Props = new JsonObject(),
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         };
 
-        var saved = GraphStore.UpsertDocumentByUri(docNode.Uri!, docNode);
-        GraphStore.ReplaceDocumentContent(saved.Id, Array.Empty<Node>(), Array.Empty<Span>(), Array.Empty<Edge>());
+        DataStore.IndexArtifact(new ParsedArtifact
+        {
+            Artifact = artifact,
+            DocumentNode = docNode
+        });
+
         return docNode.Uri!;
     }
 
     public void Dispose()
     {
-        GraphStore.Dispose();
-        Connection.Dispose();
+        DataStore.Dispose();
+        Metrics.Dispose();
+
+        // Clean up temp file
+        if (_tempDbPath is not null && File.Exists(_tempDbPath))
+        {
+            try { File.Delete(_tempDbPath); } catch { }
+            // Also try to delete the WAL file
+            try { File.Delete(_tempDbPath + ".wal"); } catch { }
+        }
     }
 }

@@ -1,26 +1,19 @@
-using DuckDB.NET.Data;
 using AwesomeAssertions;
 using System.Text.Json.Nodes;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
-using RepoQL.Metrics;
 using Artifact = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Data.DuckDB.Tests;
 
 public class HybridSearchMacroTests : IDisposable
 {
-    private readonly DuckDBConnection _connection;
-    private readonly DuckDbGraphStore _store;
-    private readonly IndexingMetrics _metrics;
+    private readonly DuckDbDataStore _store;
 
     public HybridSearchMacroTests()
     {
-        _connection = new DuckDBConnection("Data Source=:memory:");
-        _connection.Open();
-        _metrics = new IndexingMetrics();
-        _store = new DuckDbGraphStore(_connection, _metrics);
-        _store.EnsureSchema();
+        _store = new DuckDbDataStore();
 
         // Create sample documents for testing
         CreateSampleDocuments();
@@ -29,8 +22,6 @@ public class HybridSearchMacroTests : IDisposable
     public void Dispose()
     {
         _store?.Dispose();
-        _metrics?.Dispose();
-        _connection?.Dispose();
     }
 
     private void CreateSampleDocuments()
@@ -112,7 +103,6 @@ public class HybridSearchMacroTests : IDisposable
             Structure = summary,
             MediaType = SemanticMediaType.Parse(mediaType)
         };
-        _store.UpsertArtifact(artifact);
 
         var node = new Node
         {
@@ -122,28 +112,19 @@ public class HybridSearchMacroTests : IDisposable
             ArtifactId = artifact.Id,
             Props = new JsonObject()
         };
-        _store.UpsertNode(node);
+
+        _store.IndexArtifact(new ParsedArtifact { Artifact = artifact, DocumentNode = node });
     }
 
     [Test]
     public void HybridSearch_WithoutBoost_ReturnsResults()
     {
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT uri, ROUND(score, 3) AS score
-            FROM hybrid_search('database')
-            ORDER BY score DESC
-            LIMIT 5";
-
-        using var reader = cmd.ExecuteReader();
-        var results = new List<(string uri, double score)>();
-        while (reader.Read())
-        {
-            results.Add((
-                reader.GetString(0),
-                reader.GetDouble(1)
-            ));
-        }
+        var results = _store.Read(
+            @"SELECT uri, ROUND(score, 3) AS score
+              FROM hybrid_search('database')
+              ORDER BY score DESC
+              LIMIT 5",
+            r => (uri: r.GetString(0), score: r.GetDouble(1)));
 
         // Should return database-related documents
         results.Should().NotBeEmpty();
@@ -153,43 +134,21 @@ public class HybridSearchMacroTests : IDisposable
     [Test]
     public void HybridSearch_WithBoostPattern_BoostsMatchingDocs()
     {
-        using var cmd = _connection.CreateCommand();
-
         // First, get results without boost
-        cmd.CommandText = @"
-            SELECT uri, ROUND(score, 3) AS score
-            FROM hybrid_search('database')
-            ORDER BY score DESC
-            LIMIT 5";
-
-        using var reader1 = cmd.ExecuteReader();
-        var resultsWithoutBoost = new List<(string uri, double score)>();
-        while (reader1.Read())
-        {
-            resultsWithoutBoost.Add((
-                reader1.GetString(0),
-                reader1.GetDouble(1)
-            ));
-        }
-        reader1.Close();
+        var resultsWithoutBoost = _store.Read(
+            @"SELECT uri, ROUND(score, 3) AS score
+              FROM hybrid_search('database')
+              ORDER BY score DESC
+              LIMIT 5",
+            r => (uri: r.GetString(0), score: r.GetDouble(1)));
 
         // Now get results with boost pattern
-        cmd.CommandText = @"
-            SELECT uri, ROUND(score, 3) AS score, struct_mentions
-            FROM hybrid_search('database', boost_pattern := 'DuckDB|connection')
-            ORDER BY score DESC
-            LIMIT 5";
-
-        using var reader2 = cmd.ExecuteReader();
-        var resultsWithBoost = new List<(string uri, double score, int mentions)>();
-        while (reader2.Read())
-        {
-            resultsWithBoost.Add((
-                reader2.GetString(0),
-                reader2.GetDouble(1),
-                reader2.GetInt32(2)
-            ));
-        }
+        var resultsWithBoost = _store.Read(
+            @"SELECT uri, ROUND(score, 3) AS score, struct_mentions
+              FROM hybrid_search('database', boost_pattern := 'DuckDB|connection')
+              ORDER BY score DESC
+              LIMIT 5",
+            r => (uri: r.GetString(0), score: r.GetDouble(1), mentions: r.GetInt32(2)));
 
         // The document with "DuckDB" should be boosted and rank higher
         resultsWithBoost.Should().NotBeEmpty();
@@ -203,23 +162,12 @@ public class HybridSearchMacroTests : IDisposable
     [Test]
     public void HybridSearch_WithNegativePattern_DeranksMatchingDocs()
     {
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT uri, ROUND(score, 3) AS score, deranked
-            FROM hybrid_search('index', negative_pattern := '(?i)test')
-            ORDER BY score DESC
-            LIMIT 5";
-
-        using var reader = cmd.ExecuteReader();
-        var results = new List<(string uri, double score, bool deranked)>();
-        while (reader.Read())
-        {
-            results.Add((
-                reader.GetString(0),
-                reader.GetDouble(1),
-                reader.GetBoolean(2)
-            ));
-        }
+        var results = _store.Read(
+            @"SELECT uri, ROUND(score, 3) AS score, deranked
+              FROM hybrid_search('index', negative_pattern := '(?i)test')
+              ORDER BY score DESC
+              LIMIT 5",
+            r => (uri: r.GetString(0), score: r.GetDouble(1), deranked: r.GetBoolean(2)));
 
         // Should return index-related documents
         results.Should().NotBeEmpty();
@@ -252,24 +200,12 @@ public class HybridSearchMacroTests : IDisposable
     [Test]
     public void HybridSearch_WithCombinedBoostAndNegative_AppliesBothFilters()
     {
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT uri, ROUND(score, 3) AS score, struct_mentions, deranked
-            FROM hybrid_search('parser', boost_pattern := 'markdown', negative_pattern := '(?i)test')
-            ORDER BY score DESC
-            LIMIT 8";
-
-        using var reader = cmd.ExecuteReader();
-        var results = new List<(string uri, double score, int mentions, bool deranked)>();
-        while (reader.Read())
-        {
-            results.Add((
-                reader.GetString(0),
-                reader.GetDouble(1),
-                reader.GetInt32(2),
-                reader.GetBoolean(3)
-            ));
-        }
+        var results = _store.Read(
+            @"SELECT uri, ROUND(score, 3) AS score, struct_mentions, deranked
+              FROM hybrid_search('parser', boost_pattern := 'markdown', negative_pattern := '(?i)test')
+              ORDER BY score DESC
+              LIMIT 8",
+            r => (uri: r.GetString(0), score: r.GetDouble(1), mentions: r.GetInt32(2), deranked: r.GetBoolean(3)));
 
         results.Should().NotBeEmpty();
 
@@ -294,12 +230,12 @@ public class HybridSearchMacroTests : IDisposable
 
         // Verify that boosted non-test files rank higher than test files
         var boostedNonTest = results.Where(r => r.mentions > 0 && !r.deranked).ToList();
-        var testFiles = results.Where(r => r.deranked).ToList();
+        var testFilesResult = results.Where(r => r.deranked).ToList();
 
-        if (boostedNonTest.Any() && testFiles.Any())
+        if (boostedNonTest.Any() && testFilesResult.Any())
         {
             var minBoostedScore = boostedNonTest.Min(r => r.score);
-            var maxTestScore = testFiles.Max(r => r.score);
+            var maxTestScore = testFilesResult.Max(r => r.score);
             minBoostedScore.Should().BeGreaterThan(maxTestScore * 0.8,
                 "boosted non-test files should generally rank higher than deranked test files");
         }
@@ -308,21 +244,11 @@ public class HybridSearchMacroTests : IDisposable
     [Test]
     public void HybridSearch_WithScope_FiltersResults()
     {
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = @"
-            SELECT uri, ROUND(score, 3) AS score
-            FROM hybrid_search('parser', scope := 'file:///src/%')
-            ORDER BY score DESC";
-
-        using var reader = cmd.ExecuteReader();
-        var results = new List<(string uri, double score)>();
-        while (reader.Read())
-        {
-            results.Add((
-                reader.GetString(0),
-                reader.GetDouble(1)
-            ));
-        }
+        var results = _store.Read(
+            @"SELECT uri, ROUND(score, 3) AS score
+              FROM hybrid_search('parser', scope := 'file:///src/%')
+              ORDER BY score DESC",
+            r => (uri: r.GetString(0), score: r.GetDouble(1)));
 
         results.Should().NotBeEmpty();
 
