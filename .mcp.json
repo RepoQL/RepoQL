@@ -3,7 +3,7 @@
     "repoql": {
       "type": "stdio",
       "command": "artifacts\\publish\\repoql.exe",
-      "args": []
+      "args": ["mcp"]
     },
     "aspire-dashboard": {
       "type": "http",

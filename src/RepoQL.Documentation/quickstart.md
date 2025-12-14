@@ -17,57 +17,6 @@ Five tables. Everything addressable by URI. Pre-computed summaries save tokens.
 
 ---
 
-## Capsule: XRayFirst
-
-**Invariant**
-Use xray tool for browsing; use query tool only for composition or aggregation.
-
-**Example**
-```
-xray(detail="headline", pattern="**/auth/**")
-xray(detail="summary", keywords="authentication")
-xray(detail="snippet", question="Where is login handled?", limit=5)
-```
-//BOUNDARY: Drop to query tool only when you need JOIN, GROUP BY, regex, or LATERAL.
-
-**Depth**
-- `detail="headline"`: one-line scan (fastest, broadest)
-- `detail="summary"`: structure overview
-- `detail="snippet"`: actual code
-- `scope="object"`: functions/classes; `scope="file"`: documents only
-- NotThis: SQL for basic exploration
-- SeeAlso: `SearchPhases`
-
----
-
-## Capsule: SearchPhases
-
-**Invariant**
-Discovery uses xray tool; homing uses xray+keywords; extraction uses query+regex.
-
-**Example**
-```
--- 1. DISCOVER: what exists? (xray tool)
-xray(detail="headline", question="Where is telemetry tracked?")
-
--- 2. HOME IN: narrow to specifics (xray tool)
-xray(detail="snippet", keywords="TrackEvent", scope="object")
-```
-```sql
--- 3. EXTRACT: get all instances (query tool)
-SELECT uri, regexp_extract_all(text_content, 'TrackEvent\([''"](\w+)[''"]', 1) AS events
-FROM artifact a JOIN node n ON n.artifact_id = a.id
-WHERE n.kind = 'document' AND regexp_matches(text_content, 'TrackEvent\(');
-```
-
-**Depth**
-- Discovery: xray with question (semantic) or pattern (structural)
-- Homing: xray with keywords + scope filters
-- Extraction: query tool with SQL + regex (only phase requiring SQL)
-- NotThis: jumping straight to SQL before using xray
-
----
-
 ## Capsule: Composition
 
 **Invariant**
@@ -268,9 +217,7 @@ Uses: `file_search`, `regexp_extract_all`, `regexp_matches`, `LATERAL snippet`, 
 
 ## Checklist
 
-- [ ] Use xray tool before query tool
-- [ ] Phases: discover (xray) -> home (xray+keywords) -> extract (query+regex)
-- [ ] SQL only for: regex, JOIN, GROUP BY, LATERAL composition
+- [ ] Use xray tool first; query tool for composition/aggregation
 - [ ] Compose with LATERAL; avoid app-side loops
 - [ ] Query edges for relationships, not code parsing
 - [ ] Query annotations for pre-computed facts
