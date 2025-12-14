@@ -1,4 +1,3 @@
-using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
@@ -12,27 +11,25 @@ namespace RepoQL.Testing.Indexing;
 
 /// <summary>
 /// Provides a DuckDB store pre-wired with RepoQL schema for integration tests.
-/// Uses a temp file to allow connection sharing between DuckDbDataStore and ConnectionFactory.
+/// Uses a temp file to support file-based operations.
 /// </summary>
 public sealed class DuckDbTestStore : IDisposable
 {
     public DuckDbDataStore DataStore { get; }
     public IndexingMetrics Metrics { get; }
-    public IDuckDBConnectionFactory ConnectionFactory { get; }
 
     private readonly string? _tempDbPath;
 
-    private DuckDbTestStore(DuckDbDataStore dataStore, IndexingMetrics metrics, IDuckDBConnectionFactory connectionFactory, string? tempDbPath)
+    private DuckDbTestStore(DuckDbDataStore dataStore, IndexingMetrics metrics, string? tempDbPath)
     {
         DataStore = dataStore;
         Metrics = metrics;
-        ConnectionFactory = connectionFactory;
         _tempDbPath = tempDbPath;
     }
 
     public static DuckDbTestStore CreateInMemory()
     {
-        // Use a temp file so that ConnectionFactory can share the same database
+        // Use a temp file to support file-based operations
         var tempPath = Path.Combine(Path.GetTempPath(), $"repoql-test-{Guid.NewGuid():N}.duckdb");
 
         var metrics = new IndexingMetrics();
@@ -45,10 +42,7 @@ public sealed class DuckDbTestStore : IDisposable
         // Force schema initialization by performing a read
         _ = dataStore.GetAllNodes();
 
-        // Connection factory shares the same database file
-        var connectionFactory = new DuckDBConnectionFactory($"Data Source={tempPath};ACCESS_MODE=READ_ONLY");
-
-        return new DuckDbTestStore(dataStore, metrics, connectionFactory, tempPath);
+        return new DuckDbTestStore(dataStore, metrics, tempPath);
     }
 
     public RepoUri SeedDocument(string uri, string mediaType = "text/plain", string text = "seed")

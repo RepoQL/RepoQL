@@ -268,25 +268,60 @@ public static class DuckDbDataStoreExtensions
             else
             {
                 // Full refresh - clear and rebuild
+                // First check for duplicate URIs - this indicates a data integrity issue
+                using var dupCheck = conn.CreateCommand();
+                dupCheck.Transaction = tx;
+                dupCheck.CommandText = """
+                    SELECT uri, COUNT(*) as cnt
+                    FROM node
+                    WHERE kind = 'document' AND uri IS NOT NULL
+                    GROUP BY uri
+                    HAVING COUNT(*) > 1
+                    LIMIT 10;
+                    """;
+                using var dupReader = dupCheck.ExecuteReader();
+                var duplicates = new List<string>();
+                while (dupReader.Read())
+                {
+                    var uri = dupReader.GetString(0);
+                    var count = dupReader.GetInt64(1);
+                    duplicates.Add($"{uri} ({count}x)");
+                }
+                dupReader.Close();
+
+                if (duplicates.Count > 0)
+                {
+                    Console.Error.WriteLine($"[DuckDB] WARNING: Found {duplicates.Count} URIs with duplicate document nodes: {string.Join(", ", duplicates)}");
+                }
+
+                // Use ROW_NUMBER to deduplicate by URI in case multiple document nodes exist for same URI
                 conn.Execute(tx, "DELETE FROM document_search;");
                 conn.Execute(tx, """
                     INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
+                    WITH ranked AS (
+                        SELECT
+                            n.id,
+                            n.uri,
+                            ROW_NUMBER() OVER (PARTITION BY n.uri ORDER BY n.updated_at DESC, n.id) AS rn
+                        FROM node n
+                        WHERE n.kind = 'document' AND n.uri IS NOT NULL
+                    )
                     SELECT
-                        n.id,
-                        n.uri,
-                        LOWER(REPLACE(n.uri, '\', '/')),
+                        r.id,
+                        r.uri,
+                        LOWER(REPLACE(r.uri, '\', '/')),
                         CASE
-                            WHEN POSITION('/' IN REPLACE(n.uri, '\', '/')) > 0
-                            THEN SUBSTRING(REPLACE(n.uri, '\', '/') FROM LENGTH(REPLACE(n.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(n.uri, '\', '/'))) + 2)
-                            ELSE REPLACE(n.uri, '\', '/')
+                            WHEN POSITION('/' IN REPLACE(r.uri, '\', '/')) > 0
+                            THEN SUBSTRING(REPLACE(r.uri, '\', '/') FROM LENGTH(REPLACE(r.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(r.uri, '\', '/'))) + 2)
+                            ELSE REPLACE(r.uri, '\', '/')
                         END,
                         CASE
-                            WHEN POSITION('/' IN REPLACE(n.uri, '\', '/')) > 0
-                            THEN SUBSTRING(REPLACE(n.uri, '\', '/') FROM 1 FOR LENGTH(REPLACE(n.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(n.uri, '\', '/'))))
+                            WHEN POSITION('/' IN REPLACE(r.uri, '\', '/')) > 0
+                            THEN SUBSTRING(REPLACE(r.uri, '\', '/') FROM 1 FOR LENGTH(REPLACE(r.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(r.uri, '\', '/'))))
                             ELSE NULL
                         END
-                    FROM node n
-                    WHERE n.kind = 'document' AND n.uri IS NOT NULL;
+                    FROM ranked r
+                    WHERE r.rn = 1;
                     """);
             }
         });
@@ -774,10 +809,33 @@ public static class DuckDbDataStoreExtensions
 
     private static void BulkInsertEdges(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Edge> edges)
     {
-        const int batchSize = 50; // Edges have many columns
-        for (var offset = 0; offset < edges.Count; offset += batchSize)
+        // Deduplicate composition edges - each child can only have one parent
+        // Keep the first edge for each composition_child_id (DstId when IsComposition=true)
+        var seenCompositionChildren = new HashSet<Guid>();
+        var deduplicatedEdges = new List<Edge>(edges.Count);
+        var duplicateCount = 0;
+        foreach (var edge in edges)
         {
-            var batch = edges.Skip(offset).Take(batchSize).ToList();
+            if (edge.IsComposition && edge.DstId.HasValue)
+            {
+                if (!seenCompositionChildren.Add(edge.DstId.Value))
+                {
+                    duplicateCount++;
+                    continue; // Skip duplicate composition edge
+                }
+            }
+            deduplicatedEdges.Add(edge);
+        }
+
+        if (duplicateCount > 0)
+        {
+            Console.Error.WriteLine($"[DuckDB] WARNING: Skipped {duplicateCount} duplicate composition edges (same child with multiple parents)");
+        }
+
+        const int batchSize = 50; // Edges have many columns
+        for (var offset = 0; offset < deduplicatedEdges.Count; offset += batchSize)
+        {
+            var batch = deduplicatedEdges.Skip(offset).Take(batchSize).ToList();
             var sb = new StringBuilder();
             sb.AppendLine("INSERT INTO edge (id, source_node_id, destination_node_id, destination_uri, type, is_composition, ordinal, scope_document_id, semantic_key, source_span_id, destination_span_id, composition_child_id, properties, created_at) VALUES");
 

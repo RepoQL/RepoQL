@@ -58,6 +58,7 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
 
     // Batching infrastructure
     private readonly object _batchLock = new();
+    private readonly object _flushLock = new(); // Ensures only one flush at a time
     private readonly List<PendingCommit> _pendingItems = new();
     private readonly Timer _flushTimer;
     private volatile bool _disposed;
@@ -155,53 +156,58 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
 
     /// <summary>
     /// Flush all pending items to the database in a single batch.
-    /// Thread-safe - can be called concurrently from timer and CommitAsync.
+    /// Thread-safe - serializes flushes to prevent concurrent database writes.
     /// </summary>
     private void FlushPendingItems()
     {
-        List<PendingCommit> batch;
-
-        lock (_batchLock)
+        // Serialize all flushes - only one can run at a time
+        // This prevents write-write conflicts in DuckDB
+        lock (_flushLock)
         {
-            if (_pendingItems.Count == 0)
-                return;
+            List<PendingCommit> batch;
 
-            batch = new List<PendingCommit>(_pendingItems);
-            _pendingItems.Clear();
-        }
-
-        var sw = Stopwatch.StartNew();
-
-        try
-        {
-            // Batch commit to database
-            var dbItems = batch.Select(p => (p.Item.Uri, p.Artifact)).ToList();
-            _db.IndexArtifactBatch(dbItems);
-
-            // Update catalog and complete all items
-            foreach (var pending in batch)
+            lock (_batchLock)
             {
-                var item = pending.Item;
-                var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
-                var entry = new DocumentCatalogEntry(
-                    item.Uri,
-                    item.DigestHex!,
-                    mediaType!,
-                    item.RawArtifact.PhysicalPath,
-                    item.LastModified);
-                _catalog.ApplyUpsert(entry);
-                pending.Completion.TrySetResult();
+                if (_pendingItems.Count == 0)
+                    return;
+
+                batch = new List<PendingCommit>(_pendingItems);
+                _pendingItems.Clear();
             }
 
-            _logger.LogDebug("Committed batch of {Count} items in {ElapsedMs:F1}ms ({PerItem:F1}ms/item)",
-                batch.Count, sw.Elapsed.TotalMilliseconds, sw.Elapsed.TotalMilliseconds / batch.Count);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Batch commit failed for {Count} items", batch.Count);
-            foreach (var pending in batch)
+            var sw = Stopwatch.StartNew();
+
+            try
             {
-                pending.Completion.TrySetException(ex);
+                // Batch commit to database
+                var dbItems = batch.Select(p => (p.Item.Uri, p.Artifact)).ToList();
+                _db.IndexArtifactBatch(dbItems);
+
+                // Update catalog and complete all items
+                foreach (var pending in batch)
+                {
+                    var item = pending.Item;
+                    var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
+                    var entry = new DocumentCatalogEntry(
+                        item.Uri,
+                        item.DigestHex!,
+                        mediaType!,
+                        item.RawArtifact.PhysicalPath,
+                        item.LastModified);
+                    _catalog.ApplyUpsert(entry);
+                    pending.Completion.TrySetResult();
+                }
+
+                _logger.LogDebug("Committed batch of {Count} items in {ElapsedMs:F1}ms ({PerItem:F1}ms/item)",
+                    batch.Count, sw.Elapsed.TotalMilliseconds, sw.Elapsed.TotalMilliseconds / batch.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Batch commit failed for {Count} items", batch.Count);
+                foreach (var pending in batch)
+                {
+                    pending.Completion.TrySetException(ex);
+                }
             }
         }
     }
@@ -246,21 +252,25 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
         if (batchItems.Count == 0)
             return Task.CompletedTask;
 
-        // Index as batch (bypasses the internal queue for explicit batch calls)
-        var dbItems = batchItems.Select(b => (b.Uri, b.Artifact)).ToList();
-        _db.IndexArtifactBatch(dbItems);
-
-        // Update catalog for all items
-        foreach (var (_, _, item) in batchItems)
+        // Serialize with FlushPendingItems to prevent concurrent database writes
+        lock (_flushLock)
         {
-            var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
-            var entry = new DocumentCatalogEntry(
-                item.Uri,
-                item.DigestHex!,
-                mediaType!,
-                item.RawArtifact.PhysicalPath,
-                item.LastModified);
-            _catalog.ApplyUpsert(entry);
+            // Index as batch (bypasses the internal queue for explicit batch calls)
+            var dbItems = batchItems.Select(b => (b.Uri, b.Artifact)).ToList();
+            _db.IndexArtifactBatch(dbItems);
+
+            // Update catalog for all items
+            foreach (var (_, _, item) in batchItems)
+            {
+                var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
+                var entry = new DocumentCatalogEntry(
+                    item.Uri,
+                    item.DigestHex!,
+                    mediaType!,
+                    item.RawArtifact.PhysicalPath,
+                    item.LastModified);
+                _catalog.ApplyUpsert(entry);
+            }
         }
 
         return Task.CompletedTask;

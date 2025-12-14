@@ -11,6 +11,7 @@ using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
+using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
@@ -26,6 +27,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly IInitialIndexingBarrier barrier;
     private readonly IIndexingCoordinator coordinator;
     private readonly IFileSystemImportService importService;
+    private readonly ICompositeFileSystemManager _mountManager;
     private readonly DocumentPreviewService _previewService;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IEmbeddingProvider? _embeddingProvider;
@@ -43,6 +45,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         IInitialIndexingBarrier barrier,
         IIndexingCoordinator coordinator,
         IFileSystemImportService importService,
+        ICompositeFileSystemManager mountManager,
         DocumentPreviewService previewService,
         IHostApplicationLifetime hostLifetime,
         IEmbeddingProvider? embeddingProvider = null,
@@ -54,6 +57,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         this._embeddingProvider = embeddingProvider;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
+        _mountManager = mountManager ?? throw new ArgumentNullException(nameof(mountManager));
         _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
@@ -117,6 +121,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             }
         }
         catch (OperationCanceledException) { }
+        catch (IOException ex) when (ex.Message.Contains("client reset the request stream", StringComparison.OrdinalIgnoreCase)) { }
         finally { if (!string.IsNullOrWhiteSpace(clientId)) LeaseRegistry.Remove(clientId!); }
 
         var state = context.GetHttpContext().RequestServices.GetRequiredService<HostState>();
@@ -600,76 +605,222 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     public override async Task<ImportResponse> ImportRepository(ImportRequest request, ServerCallContext context)
     {
-        await barrier.InitialScanCompleted.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var uri = request.Uri?.Trim() ?? "";
+        var isRemoval = uri.StartsWith('-');
+        var displayUri = isRemoval ? uri.Substring(1).Trim() : uri;
 
-        if (string.IsNullOrWhiteSpace(request.Uri))
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "uri is required."));
-
-        if (!RepoUri.TryParse(request.Uri, out var repoUri))
-            throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid Repo URI '{request.Uri}'."));
+        _logger.LogInformation("[Import] Starting {Operation} for {Uri}", isRemoval ? "removal" : "import", displayUri);
 
         try
         {
-            await importService.ImportAsync(repoUri!, context.CancellationToken).ConfigureAwait(false);
-        }
-        catch (InvalidOperationException ex)
-        {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
-        }
-        catch (Exception ex)
-        {
-            throw new RpcException(new Status(StatusCode.Internal, ex.Message));
-        }
+            _logger.LogDebug("[Import] Waiting for initial scan barrier...");
+            await barrier.InitialScanCompleted.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+            _logger.LogDebug("[Import] Initial scan barrier passed ({ElapsedMs}ms)", sw.ElapsedMilliseconds);
 
-        var waitStages = ResolveImportStages(request);
-        if (waitStages.Count > 0)
-        {
-            await coordinator.WaitForPipelineAsync(waitStages, waitAll: true, context.CancellationToken).ConfigureAwait(false);
-        }
-
-        // Refresh search projection and embeddings to include newly imported documents
-        var waitForEmbeddings = waitStages.Contains(CoordinatorPipelineStage.Writer); // Writer = SemanticIndexing
-        _db.RefreshSearchProjection(incremental: true);
-
-        if (_embeddingProvider is not null && _embeddingProvider.Enabled)
-        {
-            if (waitForEmbeddings)
+            if (string.IsNullOrWhiteSpace(request.Uri))
             {
-                // SemanticIndexing requested - wait for embeddings to complete
-                try
+                _logger.LogWarning("[Import] Rejected: empty URI");
+                throw new RpcException(new Status(StatusCode.InvalidArgument, "uri is required."));
+            }
+
+            // Handle removal with '-' prefix
+            if (isRemoval)
+            {
+                _logger.LogInformation("[Import] Delegating to removal handler for {Uri}", displayUri);
+                return await RemoveImportAsync(displayUri, context).ConfigureAwait(false);
+            }
+
+            if (!RepoUri.TryParse(uri, out var repoUri))
+            {
+                _logger.LogWarning("[Import] Rejected: invalid URI format '{Uri}'", uri);
+                throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid Repo URI '{uri}'."));
+            }
+
+            _logger.LogInformation("[Import] Parsed URI: scheme={Scheme}, authority={Authority}, path={Path}",
+                repoUri!.Scheme, repoUri.Authority, repoUri.AbsolutePath);
+
+            // Clone/sync the repository
+            _logger.LogDebug("[Import] Starting repository clone/sync...");
+            var importStart = sw.ElapsedMilliseconds;
+            try
+            {
+                await importService.ImportAsync(repoUri, context.CancellationToken).ConfigureAwait(false);
+                _logger.LogInformation("[Import] Clone/sync completed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - importStart);
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.LogError(ex, "[Import] Clone/sync failed with InvalidOperationException after {ElapsedMs}ms", sw.ElapsedMilliseconds - importStart);
+                throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[Import] Clone/sync failed with exception after {ElapsedMs}ms", sw.ElapsedMilliseconds - importStart);
+                throw new RpcException(new Status(StatusCode.Internal, ex.Message));
+            }
+
+            // Wait for pipeline stages
+            var waitStages = ResolveImportStages(request);
+            if (waitStages.Count > 0)
+            {
+                _logger.LogDebug("[Import] Waiting for pipeline stages: {Stages}", string.Join(", ", waitStages));
+                var pipelineStart = sw.ElapsedMilliseconds;
+                await coordinator.WaitForPipelineAsync(waitStages, waitAll: true, context.CancellationToken).ConfigureAwait(false);
+                _logger.LogInformation("[Import] Pipeline wait completed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - pipelineStart);
+            }
+            else
+            {
+                _logger.LogDebug("[Import] No pipeline stages to wait for");
+            }
+
+            // Refresh search projection
+            _logger.LogDebug("[Import] Refreshing search projection...");
+            var searchStart = sw.ElapsedMilliseconds;
+            _db.RefreshSearchProjection(incremental: true);
+            _logger.LogDebug("[Import] Search projection refreshed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - searchStart);
+
+            // Handle embeddings
+            var waitForEmbeddings = waitStages.Contains(CoordinatorPipelineStage.Writer); // Writer = SemanticIndexing
+            if (_embeddingProvider is not null && _embeddingProvider.Enabled)
+            {
+                if (waitForEmbeddings)
                 {
-                    var refresher = new EmbeddingRefresher(_db, _logger as ILogger<EmbeddingRefresher>);
-                    await refresher.RefreshAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
+                    _logger.LogDebug("[Import] Refreshing embeddings (synchronous)...");
+                    var embeddingStart = sw.ElapsedMilliseconds;
+                    try
+                    {
+                        var refresher = new EmbeddingRefresher(_db, _logger as ILogger<EmbeddingRefresher>);
+                        await refresher.RefreshAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
+                        _logger.LogInformation("[Import] Embedding refresh completed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - embeddingStart);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "[Import] Embedding refresh failed after {ElapsedMs}ms", sw.ElapsedMilliseconds - embeddingStart);
+                        throw new RpcException(new Grpc.Core.Status(Grpc.Core.StatusCode.Internal, $"Embedding refresh failed: {ex.Message}"));
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    _logger.LogError(ex, "Embedding refresh failed during import");
-                    throw new RpcException(new Grpc.Core.Status(Grpc.Core.StatusCode.Internal, $"Embedding refresh failed: {ex.Message}"));
+                    _logger.LogDebug("[Import] Scheduling background embedding refresh");
+                    var provider = _embeddingProvider;
+                    var db = _db;
+                    var logger = _logger;
+                    _ = Task.Run(async () =>
+                    {
+                        var bgStart = System.Diagnostics.Stopwatch.StartNew();
+                        try
+                        {
+                            var refresher = new EmbeddingRefresher(db, logger as ILogger<EmbeddingRefresher>);
+                            await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
+                            logger.LogInformation("[Import] Background embedding refresh completed ({ElapsedMs}ms)", bgStart.ElapsedMilliseconds);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "[Import] Background embedding refresh failed after {ElapsedMs}ms", bgStart.ElapsedMilliseconds);
+                        }
+                    });
                 }
             }
             else
             {
-                // No semantic wait - refresh embeddings in background
-                var provider = _embeddingProvider;
-                var db = _db;
-                var logger = _logger;
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        var refresher = new EmbeddingRefresher(db, logger as ILogger<EmbeddingRefresher>);
-                        await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "Background embedding refresh failed");
-                    }
-                });
+                _logger.LogDebug("[Import] Embeddings not enabled, skipping");
             }
+
+            var snapshot = coordinator.GetPipelineStatus();
+            _logger.LogInformation("[Import] Completed successfully for {Uri} in {ElapsedMs}ms", uri, sw.ElapsedMilliseconds);
+            return new ImportResponse { Status = ToProtoStatus(snapshot) };
+        }
+        catch (RpcException)
+        {
+            throw; // Already logged
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("[Import] Cancelled for {Uri} after {ElapsedMs}ms", displayUri, sw.ElapsedMilliseconds);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Import] Unexpected error for {Uri} after {ElapsedMs}ms", displayUri, sw.ElapsedMilliseconds);
+            throw new RpcException(new Status(StatusCode.Internal, $"Import failed: {ex.Message}"));
+        }
+    }
+
+    private Task<ImportResponse> RemoveImportAsync(string uri, ServerCallContext context)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            _logger.LogWarning("[Import:Remove] Rejected: empty URI");
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "URI is required for removal."));
         }
 
+        _logger.LogDebug("[Import:Remove] Searching for mount matching '{Uri}'", uri);
+
+        // Find matching mount by source URI or mount ID pattern
+        var mounts = _db.GetAllMounts();
+        _logger.LogDebug("[Import:Remove] Found {Count} total mounts to search", mounts.Count);
+
+        var matchingMount = mounts.FirstOrDefault(m =>
+            m.SourceUri.Equals(uri, StringComparison.OrdinalIgnoreCase) ||
+            m.Id.Contains(uri.Replace("://", ":"), StringComparison.OrdinalIgnoreCase));
+
+        if (matchingMount is null)
+        {
+            _logger.LogWarning("[Import:Remove] No mount found matching '{Uri}'. Available mounts: {Mounts}",
+                uri, string.Join(", ", mounts.Select(m => m.Id)));
+            throw new RpcException(new Status(StatusCode.NotFound, $"No import found matching: {uri}"));
+        }
+
+        _logger.LogInformation("[Import:Remove] Found mount {MountId} (source: {SourceUri}, local: {LocalPath})",
+            matchingMount.Id, matchingMount.SourceUri, matchingMount.LocalPath);
+
+        // Build URI pattern for matching documents
+        var docPattern = string.IsNullOrEmpty(matchingMount.Authority)
+            ? $"{matchingMount.Scheme}:///{matchingMount.PathPrefix}%"
+            : $"{matchingMount.Scheme}://{matchingMount.Authority}/{matchingMount.PathPrefix}%";
+
+        _logger.LogDebug("[Import:Remove] Querying documents with pattern '{Pattern}'", docPattern);
+
+        // Get all document URIs matching this mount, then delete each using DeleteArtifact
+        var docUris = _db.Read(
+            $"SELECT uri FROM node WHERE kind = 'document' AND uri LIKE '{docPattern.Replace("'", "''")}'",
+            r => r.GetString(0));
+
+        _logger.LogInformation("[Import:Remove] Found {Count} documents to delete", docUris.Count);
+
+        var deleteStart = sw.ElapsedMilliseconds;
+        var deleted = 0;
+        foreach (var docUri in docUris)
+        {
+            if (RepoUri.TryParse(docUri, out var repoUri))
+            {
+                _db.DeleteArtifact(repoUri);
+                deleted++;
+                if (deleted % 100 == 0)
+                {
+                    _logger.LogDebug("[Import:Remove] Deleted {Count}/{Total} documents ({ElapsedMs}ms)",
+                        deleted, docUris.Count, sw.ElapsedMilliseconds - deleteStart);
+                }
+            }
+        }
+        _logger.LogInformation("[Import:Remove] Deleted {Count} documents ({ElapsedMs}ms)",
+            deleted, sw.ElapsedMilliseconds - deleteStart);
+
+        // Delete the mount record
+        _logger.LogDebug("[Import:Remove] Deleting mount record...");
+        _db.DeleteMount(matchingMount.Id);
+
+        // Remove mount from memory
+        _logger.LogDebug("[Import:Remove] Removing mount from memory...");
+        _mountManager.RemoveMount(matchingMount.Id);
+
+        _logger.LogInformation("[Import:Remove] Completed removal of {MountId} ({Count} documents) in {ElapsedMs}ms",
+            matchingMount.Id, deleted, sw.ElapsedMilliseconds);
+
         var snapshot = coordinator.GetPipelineStatus();
-        return new ImportResponse { Status = ToProtoStatus(snapshot) };
+        return Task.FromResult(new ImportResponse { Status = ToProtoStatus(snapshot) });
     }
 
     public override Task<GetPipelineStatusResponse> GetPipelineStatus(GetPipelineStatusRequest request, ServerCallContext context)

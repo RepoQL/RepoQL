@@ -14,9 +14,11 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
     private const string ImportInstructions =
         """
-        Import an external data source (e.g., a GitHub repository) into the current repoql datastore so that it can be queried alongside existing data.
+        Import or remove an external data source (e.g., a GitHub repository) from the current repoql datastore.
 
-        Provide a URI supported by importers such as `github://owner/repo@ref`.
+        To import: Provide a URI such as `github://owner/repo@ref`.
+        To remove: Prefix the URI with `-` (e.g., `-github://owner/repo`) to delete the import and all its indexed data.
+
         Optionally specify which pipeline stage to wait for [Discovery|Indexing|SemanticIndexing|Analysis|Unspecified]. Defaults to SemanticIndexing to ensure embeddings are ready for search. Use Unspecified to return immediately.
         """;
 
@@ -24,14 +26,17 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> ImportAsync(
-        [Description("URI to import (e.g., github://owner/repo@ref).")] string uri,
+        [Description("URI to import (e.g., github://owner/repo@ref). Prefix with '-' to remove an import.")] string uri,
         [Description("Pipeline stage to wait for before returning. Defaults to SemanticIndexing to ensure embeddings are ready; pass Indexing for faster return (hot path only) or Unspecified to return immediately.")] string waitFor = "SemanticIndexing",
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(uri))
             throw new ArgumentException("uri is required", nameof(uri));
 
-        if (TrySetWorkingDirectoryFromPrimaryUri(uri))
+        // Check for removal prefix - server handles this
+        var isRemoval = uri.TrimStart().StartsWith('-');
+
+        if (!isRemoval && TrySetWorkingDirectoryFromPrimaryUri(uri))
         {
             // Repo root provided explicitly; proceed to connect and import.
         }
@@ -46,6 +51,17 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
             var stageSummary = string.Join(", ",
                 status.Stages.Select(s => $"{s.Stage}: busy={s.Busy} queued={s.Queued} inProgress={s.InProgress}"));
+
+            if (isRemoval)
+            {
+                return $"""
+                    Import removed: {uri.Trim().TrimStart('-')}
+
+                    The import and all its indexed data have been deleted.
+
+                    To see remaining imports: SELECT * FROM file_system_mount
+                    """;
+            }
 
             // Extract repository information for query guidance
             var uriPattern = GetUriPattern(uri.Trim());

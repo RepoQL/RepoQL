@@ -173,7 +173,9 @@ internal class McpCommands
                 .WithTools<QueryTool>()
                 .WithTools<XrayTool>()
                 .WithTools<ImportTool>()
+#if DEBUG
                 .WithTools<SelfTestTool>()
+#endif
                 .WithListResourceTemplatesHandler((ctx, ct) =>
                 {
                     ArgumentNullException.ThrowIfNull(ctx.Services);

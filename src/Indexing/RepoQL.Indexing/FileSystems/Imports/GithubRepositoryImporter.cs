@@ -56,15 +56,25 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
     public async Task<CompositeFileSystemMount> ImportAsync(RepoUri source, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(source);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        _logger.LogInformation("[GitHub] Starting import for {Uri}", source.AbsoluteUri);
 
         var spec = ParseSource(source);
+        _logger.LogDebug("[GitHub] Parsed: owner={Owner}, repo={Repo}, ref={Ref}",
+            spec.Owner, spec.Repository, spec.Ref ?? "(default)");
+
         var repoFolderName = string.IsNullOrWhiteSpace(spec.Ref)
             ? spec.Repository
             : $"{spec.Repository}@{SanitizeForPath(spec.Ref)}";
         var targetRoot = Path.Combine(_primary.RootPath, ImportsRoot, spec.Owner, repoFolderName);
+
+        _logger.LogDebug("[GitHub] Target path: {Path}", targetRoot);
         Directory.CreateDirectory(Path.GetDirectoryName(targetRoot)!);
 
+        var cloneStart = sw.ElapsedMilliseconds;
         await CloneOrUpdateAsync(spec, targetRoot, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("[GitHub] Clone/sync completed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - cloneStart);
 
         var fs = new PhysicalFileSystem(
             targetRoot,
@@ -74,6 +84,8 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
 
         var refSuffix = string.IsNullOrWhiteSpace(spec.Ref) ? string.Empty : $"@{spec.Ref}";
         var mountId = $"github:{spec.Owner}/{spec.Repository}{refSuffix}";
+
+        _logger.LogDebug("[GitHub] Creating mount {MountId}", mountId);
         var mount = CompositeFileSystemMount.ForScheme(
             mountId,
             fs,
@@ -85,6 +97,7 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             enableAnalysis: false);
 
         // Persist mount so it survives restarts
+        _logger.LogDebug("[GitHub] Persisting mount record...");
         _db.SaveMount(new FileSystemMountRecord
         {
             Id = mount.Id,
@@ -98,6 +111,9 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             EnableAnalysis = false
         });
 
+        _logger.LogInformation("[GitHub] Import completed for {Owner}/{Repo} in {ElapsedMs}ms",
+            spec.Owner, spec.Repository, sw.ElapsedMilliseconds);
+
         return mount;
     }
 
@@ -106,10 +122,17 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
     /// </summary>
     private async Task CloneOrUpdateAsync(RepositorySpec spec, string targetRoot, CancellationToken ct)
     {
+        _logger.LogDebug("[GitHub] Checking gh CLI availability...");
         EnsureGhAvailable();
+        _logger.LogDebug("[GitHub] gh CLI is available");
 
-        if (!Directory.Exists(targetRoot) || !Directory.EnumerateFileSystemEntries(targetRoot).Any())
+        var isClone = !Directory.Exists(targetRoot) || !Directory.EnumerateFileSystemEntries(targetRoot).Any();
+
+        if (isClone)
         {
+            _logger.LogInformation("[GitHub] Cloning {Owner}/{Repo} (target does not exist or is empty)",
+                spec.Owner, spec.Repository);
+
             var args = new List<string>
             {
                 "repo",
@@ -123,13 +146,18 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             {
                 args.Add("--branch");
                 args.Add(spec.Ref!);
+                _logger.LogDebug("[GitHub] Using branch/ref: {Ref}", spec.Ref);
             }
 
             args.Add("--depth");
             args.Add("1");
+            _logger.LogDebug("[GitHub] Using shallow clone (depth=1)");
+
             await RunGhAsync(args, _primary.RootPath, ct).ConfigureAwait(false);
             return;
         }
+
+        _logger.LogInformation("[GitHub] Syncing existing clone at {Path}", targetRoot);
 
         // Use gh repo sync from within the target directory
         var syncArgs = new List<string>

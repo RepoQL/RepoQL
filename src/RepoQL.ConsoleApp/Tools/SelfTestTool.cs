@@ -4,6 +4,7 @@ using RepoQL.ConsoleApp.Diagnostics;
 
 namespace RepoQL.ConsoleApp.Tools;
 
+#if DEBUG
 [McpServerToolType]
 internal sealed class SelfTestTool(SelfTestRunner runner)
 {
@@ -31,3 +32,4 @@ internal sealed class SelfTestTool(SelfTestRunner runner)
         return await runner.RunAsync(cancellationToken);
     }
 }
+#endif

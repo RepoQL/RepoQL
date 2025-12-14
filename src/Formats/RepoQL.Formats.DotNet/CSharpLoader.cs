@@ -248,6 +248,8 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
         var spans = new List<Span>();
         var edges = new List<Edge>();
         var ordinals = new Dictionary<Guid, int>();
+        var seenCompositionChildren = new HashSet<Guid>();
+        var duplicateCompositionCount = 0;
 
         int NextOrdinal(Guid parentId)
         {
@@ -263,6 +265,14 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
 
         void AddComposition(Guid scopeDocumentId, Guid parentId, Guid childId)
         {
+            // Each child can only have one parent - skip duplicates
+            // This can happen with partial classes across main and generated documents
+            if (!seenCompositionChildren.Add(childId))
+            {
+                duplicateCompositionCount++;
+                return;
+            }
+
             edges.Add(new Edge
             {
                 SrcId = parentId,
@@ -452,6 +462,12 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                 generated.Size,
                 generated.Surface,
                 generated.References);
+        }
+
+        if (duplicateCompositionCount > 0)
+        {
+            _logger.LogWarning("Skipped {Count} duplicate composition edges in {Uri} (same child with multiple parents)",
+                duplicateCompositionCount, document.Uri);
         }
 
         return new Records

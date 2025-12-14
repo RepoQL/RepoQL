@@ -98,12 +98,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton(sp => sp.GetRequiredService<ICompositeFileSystemManager>().FileSystem);
         services.AddSingleton<IMultiFileSystem>(sp => sp.GetRequiredService<CompositeFileSystem>());
 
-        // DuckDB connection string uses the repo root + the repo-relative DB path
-        var cs = RepoIndexingBootstrap.DuckDbConnectionString(resolvedRoot, dbRelPath);
         var dbFileFullPath = Path.Combine(resolvedRoot, dbRelPath);
-
-        // Provide a connection factory for components that need fresh connections
-        services.AddSingleton<IDuckDBConnectionFactory>(_ => new DuckDBConnectionFactory(cs));
 
         services.AddOptions<IndexingEngineOptions>();
         services.AddOptions<RepoqlHostOptions>();
