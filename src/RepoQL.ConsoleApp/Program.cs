@@ -11,7 +11,7 @@ using RepoQL.ConsoleApp.Helpers;
 using ConsoleAppFramework;
 
 // Defaults to 80 :(
-AnsiConsole.Profile.Width = 600;
+AnsiConsole.Profile.Width = 1000;
 
 // Disable ANSI colors when running as MCP server to prevent JSON-RPC corruption
 // (ANSI escape codes in stdout corrupt the JSON protocol)

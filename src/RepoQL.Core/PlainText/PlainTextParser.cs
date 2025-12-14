@@ -25,11 +25,25 @@ internal sealed class PlainTextParser(PlainTextLoader loader, ILogger<PlainTextP
 
         try
         {
+            // Ensure the item has a media type - this is critical for the committer.
+            // If no classifier assigned one and there's no provisional type from the extension,
+            // we assign a fallback so the file is indexed rather than skipped entirely.
+            var resolvedMediaType = item.MediaType
+                ?? item.RawArtifact.ProvisionalMediaType.Value
+                ?? PlainTextLoader.PlainTextMediaType;
+
+            // Set the media type on the item so it propagates to the committer
+            if (item is IndexItem indexItem && indexItem.MediaType is null)
+            {
+                indexItem.MediaType = resolvedMediaType;
+                _logger.LogWarning("Assigned fallback media type {MediaType} to {Uri}", resolvedMediaType, item.Uri);
+            }
+
             var discovered = new DiscoveredArtifact
             {
                 File = item,
                 RepoUri = item.Uri,
-                MediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value ?? PlainTextLoader.PlainTextMediaType
+                MediaType = resolvedMediaType
             };
 
             var documentModel = await _loader.LoadAsync(discovered, token).ConfigureAwait(false);

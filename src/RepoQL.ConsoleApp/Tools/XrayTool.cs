@@ -46,12 +46,11 @@ internal sealed class XrayTool(
         keywords: search terms for hybrid (semantic + lexical) search
           - Questions + boost patterns work best: keywords="How does auth work?" boost="Auth.*,Validate.*"
           - Questions alone find conceptually related content via semantic search
-          - Keywords alone work for precise symbol searches: "ValidateToken JWT"
-          - Combine both approaches: question for context, boost for specific symbols
+          - Control results with patterns to boost or penalize matches
 
         Know the uri(s) of the thing you are a looking for? Use ReadMcpResourceTool - works for objects and files, supports globbing patterns.
 
-        Filter with scope (glob), guide with keywords (semantic). Results ranked by confidence.
+        Filter with scope (glob), guide with keywords (semantic), rank with patterns (regex). Results ranked by confidence.
         </KNOBS>
 
         <PATTERNS>
@@ -80,8 +79,10 @@ internal sealed class XrayTool(
         </EXAMPLES>
 
         <REMEMBER>
-        First use: explore available documentation with tokenBudget=1000, intent=explore, scope=docs://**
-        For finding code: combine question + boost pattern for best results
+        First use: explore available documentation with tokenBudget=1000, intent=explore, scope=docs://** => Broad overview (headlines) - typically one information-dense, compact line per result
+        Discover things related to a concept: tokenBudget=800, intent=explore, scope=**/*.md keywords="Writing documentation" boost="mermaid|human(s)?|capsule(s)?|markdown|report(ing)?.+(findings|issues|bugs|vulnerabilities)" => Low fidelity results (Mostly headlines, sometimes structure)
+        Discover keywords and related concepts: tokenBudget=2000, intent=find, keywords="How does token-based authentication work?" boost="Auth.*|Token.*|Validate.*|Cookie" penalize="(?i)test|mock" => Medium fidelity results (Mostly structure and headlines, sometimes snippets)
+        Once you know what you are looking for: tokenBudget=2500, intent=examine, keywords="JWT token validation flow" boost="Validate.*|Token.*|Auth.*" penalize="(?i)test|mock" => High fidelity results (mostly snippets and structure)
         </REMEMBER>
         """;
 

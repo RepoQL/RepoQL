@@ -167,6 +167,7 @@ public partial class IndexingEngine : IAsyncDisposable
     /// This includes:
     /// <list type="bullet">
     /// <item>Items in <c>_pendingAnalysis</c> waiting for <c>HotPathIdle</c> to dispatch them</item>
+    /// <item>Items in <c>_pendingStructureEmbeddings</c> waiting for structure embedding generation (includes read-only imports)</item>
     /// <item>Epochs currently being processed in <c>ReleaseAnalysisAsync</c> (pruning, vector refresh, analysis enqueue)</item>
     /// </list>
     /// </summary>
@@ -176,6 +177,11 @@ public partial class IndexingEngine : IAsyncDisposable
         {
             var count = Volatile.Read(ref _activeIdleProcessingCount);
             foreach (var backlog in _pendingAnalysis.Values)
+            {
+                count += backlog.Count;
+            }
+            // Also count structure embeddings - these include read-only imports that skip _pendingAnalysis
+            foreach (var backlog in _pendingStructureEmbeddings.Values)
             {
                 count += backlog.Count;
             }
@@ -712,10 +718,13 @@ public partial class IndexingEngine : IAsyncDisposable
                 while (reader.TryRead(out var epoch))
                 {
                     // Check if there's actually work to do for this epoch
+                    // Must check BOTH _pendingAnalysis (non-read-only items) AND _pendingStructureEmbeddings (all items including read-only)
                     bool hasWork;
                     lock (_analysisLock)
                     {
-                        hasWork = _pendingAnalysis.TryGetValue(epoch, out var backlog) && backlog.Count > 0;
+                        var hasAnalysis = _pendingAnalysis.TryGetValue(epoch, out var analysisBacklog) && analysisBacklog.Count > 0;
+                        var hasEmbeddings = _pendingStructureEmbeddings.TryGetValue(epoch, out var embedBacklog) && embedBacklog.Count > 0;
+                        hasWork = hasAnalysis || hasEmbeddings;
                     }
 
                     if (!hasWork)
