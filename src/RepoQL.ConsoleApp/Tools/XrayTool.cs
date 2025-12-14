@@ -41,7 +41,7 @@ internal sealed class XrayTool(
         intent: zoom level
           explore → what's here? (headlines) | Search criteria optional
           find → where is it? (broad context) | Search criteria required
-          read → show me (actual snippets & detailed structure) | Search criteria required
+          examine → I know what I want, show me the code and context (detailed snippets across relevant files) | Search criteria required
 
         keywords: search terms for hybrid (semantic + lexical) search
           - Questions + boost patterns work best: keywords="How does auth work?" boost="Auth.*,Validate.*"
@@ -73,10 +73,10 @@ internal sealed class XrayTool(
         - Explore with focus → tokenBudget=1200, intent=explore, scope=file:///src/**, keywords="How does error handling work?"
         - Find feature → tokenBudget=800, intent=find, keywords="How does authentication validate JWT tokens?"
         - Cross-boundary search → tokenBudget=800, intent=find, keywords="Where is database connection configured?", scope=file:///**/*.json;file:///**/*.yaml;docs://**
-        - Deep dive with boost → tokenBudget=2000, intent=read, keywords="JWT validation flow", boost="Validate.*,Token.*"
+        - Deep dive with boost → tokenBudget=2000, intent=examine, keywords="JWT validation flow", boost="Validate.*,Token.*"
         - Exclude tests → tokenBudget=1500, intent=find, keywords="authentication implementation", penalize="(?i)test|mock"
-        - Understand a module → tokenBudget=2000, intent=read, scope=file:///src/Auth/**, keywords="How does the authentication flow work?"
-        - Read specific file → tokenBudget=1500, intent=read, scope=file:///**/README.md
+        - Understand a module → tokenBudget=2000, intent=examine, scope=file:///src/Auth/**, keywords="How does the authentication flow work?"
+        - Examine specific file → tokenBudget=1500, intent=examine, scope=file:///**/README.md
         </EXAMPLES>
 
         <REMEMBER>
@@ -90,7 +90,7 @@ internal sealed class XrayTool(
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> XrayAsync(
         [Description("Tokens to invest in the response")] int tokenBudget,
-        [Description("Zoom level: explore, find, or read")] Intent intent,
+        [Description("Zoom level: explore, find, or examine")] Intent intent,
         [Description("Where to look (glob pattern), full uri, semicolon delimited list of uris")] string? scope = null,
         [Description("Search terms for hybrid search - full sentences work best (e.g., \"How does JWT token refresh work?\")")] string? keywords = null,
         [Description("Regex patterns to boost matches, comma-separated (e.g., \"Validate.*Token,(?i)auth\")")] string? boost = null,

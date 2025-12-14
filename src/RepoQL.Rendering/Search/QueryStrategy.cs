@@ -66,7 +66,7 @@ public static class QueryStrategy
                 ObjectMode: hasQuestion ? ObjectFetchMode.TopDocumentsOnly : ObjectFetchMode.None),
 
             // Read: Focus on objects when question provided
-            Intent.Read => new QueryPlan(
+            Intent.Examine => new QueryPlan(
                 FetchDocuments: true,
                 FetchObjects: hasQuestion,
                 DocumentLimit: ReadFetchLimit,

@@ -66,7 +66,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         var resp = new RawQueryResponse();
         try
         {
-            var rows = _db.Query(request.Sql);
+            // Substitute parameters into SQL (DuckDbDataStore.Query does not support params)
+            var sql = SubstituteParameters(request.Sql, request.Parameters);
+            var rows = _db.Query(sql);
 
             var limited = request.Limit > 0;
             var take = limited ? rows.Take(request.Limit) : rows;
@@ -92,7 +94,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 resp.Rows.Add(rd);
             }
             resp.RowCount = resp.Rows.Count;
-            resp.Truncated = limited && (first is not null) && (_db.Query(request.Sql).Skip(resp.Rows.Count).Any());
+            resp.Truncated = limited && (first is not null) && (_db.Query(sql).Skip(resp.Rows.Count).Any());
         }
         catch (Exception ex)
         {
@@ -504,6 +506,74 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         };
     }
 
+    /// <summary>
+    /// Substitutes ? placeholders in SQL with properly escaped values from parameters.
+    /// DuckDbDataStore.Query doesn't support parameterized queries, so we inline values.
+    /// </summary>
+    private static string SubstituteParameters(string sql, IList<Value> parameters)
+    {
+        if (parameters.Count == 0)
+            return sql;
+
+        var result = new System.Text.StringBuilder(sql.Length + parameters.Count * 20);
+        var paramIndex = 0;
+
+        for (var i = 0; i < sql.Length; i++)
+        {
+            var c = sql[i];
+
+            // Skip string literals (single quotes)
+            if (c == '\'')
+            {
+                var start = i;
+                i++;
+                while (i < sql.Length)
+                {
+                    if (sql[i] == '\'' && i + 1 < sql.Length && sql[i + 1] == '\'')
+                    {
+                        i += 2; // Skip escaped quote
+                        continue;
+                    }
+                    if (sql[i] == '\'')
+                        break;
+                    i++;
+                }
+                result.Append(sql.AsSpan(start, i - start + 1));
+                continue;
+            }
+
+            // Replace ? with parameter value
+            if (c == '?')
+            {
+                if (paramIndex < parameters.Count)
+                {
+                    result.Append(ToSqlLiteral(parameters[paramIndex]));
+                    paramIndex++;
+                }
+                else
+                {
+                    result.Append('?'); // Not enough params, keep placeholder
+                }
+                continue;
+            }
+
+            result.Append(c);
+        }
+
+        return result.ToString();
+    }
+
+    /// <summary>
+    /// Converts a protobuf Value to a SQL literal string.
+    /// </summary>
+    private static string ToSqlLiteral(Value value) => value.KindCase switch
+    {
+        Value.KindOneofCase.NullValue => "NULL",
+        Value.KindOneofCase.BoolValue => value.BoolValue ? "TRUE" : "FALSE",
+        Value.KindOneofCase.NumberValue => value.NumberValue.ToString(CultureInfo.InvariantCulture),
+        Value.KindOneofCase.StringValue => $"'{value.StringValue.Replace("'", "''")}'",
+        _ => "NULL"
+    };
 
     public override async Task ReindexAll(ReindexRequest request, IServerStreamWriter<ReindexProgress> responseStream, ServerCallContext context)
     {

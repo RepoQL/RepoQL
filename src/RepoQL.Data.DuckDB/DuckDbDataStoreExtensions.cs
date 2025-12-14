@@ -421,7 +421,7 @@ public static class DuckDbDataStoreExtensions
     {
         ArgumentNullException.ThrowIfNull(store);
         return store.Read(
-            $"SELECT id, kind, semantic_key, severity, source, rule_id, message, scope_document_id, target_node_id, target_edge_id, target_span_id, target_uri, data FROM annotation WHERE scope_document_id = '{documentId}'",
+            $"SELECT id, semantic_key, kind, severity, source, rule_id, message, data, scope_document_id, target_node_id, target_edge_id, target_span_id, target_uri, created_at, expires_at FROM annotation WHERE scope_document_id = '{documentId}'",
             r => r.MapToAnnotation());
     }
 
@@ -443,8 +443,113 @@ public static class DuckDbDataStoreExtensions
     {
         ArgumentNullException.ThrowIfNull(store);
         return store.Read(
-            $"SELECT id, kind, semantic_key, severity, source, rule_id, message, scope_document_id, target_node_id, target_edge_id, target_span_id, target_uri, data FROM annotation WHERE id = '{id}'",
+            $"SELECT id, semantic_key, kind, severity, source, rule_id, message, data, scope_document_id, target_node_id, target_edge_id, target_span_id, target_uri, created_at, expires_at FROM annotation WHERE id = '{id}'",
             r => r.MapToAnnotation()).FirstOrDefault();
+    }
+
+    #endregion
+
+    #region File System Mount Methods
+
+    /// <summary>
+    /// Save or update a file system mount record.
+    /// </summary>
+    public static void SaveMount(this DuckDbDataStore store, FileSystemMountRecord mount)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(mount);
+
+        store.WriteTransaction((conn, tx) =>
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO file_system_mount (id, scheme, authority, path_prefix, source_uri, local_path, mounted_at, include_in_enumeration, enable_watching, enable_analysis)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT (id) DO UPDATE SET
+                    scheme = excluded.scheme,
+                    authority = excluded.authority,
+                    path_prefix = excluded.path_prefix,
+                    source_uri = excluded.source_uri,
+                    local_path = excluded.local_path,
+                    mounted_at = excluded.mounted_at,
+                    include_in_enumeration = excluded.include_in_enumeration,
+                    enable_watching = excluded.enable_watching,
+                    enable_analysis = excluded.enable_analysis;
+                """;
+            cmd.AddParameters(
+                mount.Id,
+                mount.Scheme,
+                mount.Authority,
+                mount.PathPrefix,
+                mount.SourceUri,
+                mount.LocalPath,
+                mount.MountedAt ?? DateTimeOffset.UtcNow,
+                mount.IncludeInEnumeration,
+                mount.EnableWatching,
+                mount.EnableAnalysis);
+            cmd.ExecuteNonQuery();
+        });
+    }
+
+    /// <summary>
+    /// Delete a file system mount record by ID.
+    /// </summary>
+    public static bool DeleteMount(this DuckDbDataStore store, string id)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+
+        return store.WriteTransaction((conn, tx) =>
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM file_system_mount WHERE id = ?;";
+            cmd.AddParameters(id);
+            return cmd.ExecuteNonQuery() > 0;
+        });
+    }
+
+    /// <summary>
+    /// Get all persisted file system mounts.
+    /// </summary>
+    public static IReadOnlyList<FileSystemMountRecord> GetAllMounts(this DuckDbDataStore store)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+
+        return store.Read(
+            "SELECT id, scheme, authority, path_prefix, source_uri, local_path, mounted_at, include_in_enumeration, enable_watching, enable_analysis FROM file_system_mount ORDER BY mounted_at",
+            MapToMountRecord);
+    }
+
+    /// <summary>
+    /// Get a single mount by ID.
+    /// </summary>
+    public static FileSystemMountRecord? GetMount(this DuckDbDataStore store, string id)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentException.ThrowIfNullOrWhiteSpace(id);
+
+        return store.Read(
+            $"SELECT id, scheme, authority, path_prefix, source_uri, local_path, mounted_at, include_in_enumeration, enable_watching, enable_analysis FROM file_system_mount WHERE id = '{id}'",
+            MapToMountRecord).FirstOrDefault();
+    }
+
+    private static FileSystemMountRecord MapToMountRecord(IDataRecord r)
+    {
+        return new FileSystemMountRecord
+        {
+            Id = r.GetString(0),
+            Scheme = r.GetString(1),
+            Authority = r.IsDBNull(2) ? null : r.GetString(2),
+            PathPrefix = r.GetString(3),
+            SourceUri = r.GetString(4),
+            LocalPath = r.GetString(5),
+            MountedAt = r.IsDBNull(6) ? null : r.GetDateTime(6),
+            IncludeInEnumeration = r.GetBoolean(7),
+            EnableWatching = r.GetBoolean(8),
+            EnableAnalysis = r.GetBoolean(9)
+        };
     }
 
     #endregion

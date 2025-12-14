@@ -84,6 +84,8 @@ internal class HostCommands(IAnsiConsole console)
         builder.Services.AddRepoIndexer(repo);
         builder.Services.AddGrpc();
         builder.Services.AddSingleton<HostMetrics>();
+        // Restore persisted mounts BEFORE other hosted services start
+        builder.Services.AddHostedService<MountRestorationService>();
         builder.Services.AddHostedService<IdleShutdownHostedService>();
         builder.Services.AddSingleton<InitialIndexingBarrier>();
         builder.Services.AddHostedService(sp => sp.GetRequiredService<InitialIndexingBarrier>());

@@ -78,7 +78,7 @@ public class XrayRenderingEngineTests
         {
             new XrayResult("file:///src/Auth.cs", 80, null, "Auth", null, "code here", "csharp"),
         };
-        var context = new RenderingContext(Intent.Read, TokenBudget: 1000, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Examine, TokenBudget: 1000, Limit: null, HasSearchCriteria: true);
 
         var output = _engine.Render(results, context);
 

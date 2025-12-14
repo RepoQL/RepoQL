@@ -38,7 +38,7 @@ public static class LimitCalculator
         var adjustedLimit = intent switch
         {
             Intent.Explore => (int)(baseLimit * ExploreBreadthMultiplier),
-            Intent.Read => (int)(baseLimit * ReadDepthMultiplier),
+            Intent.Examine => (int)(baseLimit * ReadDepthMultiplier),
             _ => baseLimit
         };
 

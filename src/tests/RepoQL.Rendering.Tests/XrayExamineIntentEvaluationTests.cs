@@ -8,7 +8,7 @@ using RepoQL.Rendering.Tests.TestData;
 
 namespace RepoQL.Rendering.Tests;
 
-public class XrayReadIntentEvaluationTests
+public class XrayExamineIntentEvaluationTests
 {
     /// <summary>
     /// Simulates searching for files related to "utility calculator relevance evidence"
@@ -108,13 +108,13 @@ public static class UtilityCalculator
         distribution.TopTier.Should().Contain(utilityCalculatorResult, "95 confidence is highest");
 
         // Test 2: Limit calculation for Read intent should be lower than Find
-        var readLimit = LimitCalculator.Calculate(distribution, Intent.Read, 2000, results.Length);
+        var readLimit = LimitCalculator.Calculate(distribution, Intent.Examine, 2000, results.Length);
         var findLimit = LimitCalculator.Calculate(distribution, Intent.Find, 2000, results.Length);
         readLimit.Should().BeLessThan(findLimit, "Read intent biases toward depth (fewer items)");
 
         // Test 3: Strategy selection for Read intent should prioritize Rich representation
         var pressure = 500.0 / 2000; // ~0.25 (low pressure)
-        var strategy = StrategySelector.Select(Intent.Read, distribution.Shape, pressure);
+        var strategy = StrategySelector.Select(Intent.Examine, distribution.Shape, pressure);
         // Read intent always prefers Rich for top tier
         strategy.TopTierLevel.Should().Be(Representation.Rich, "Read intent always shows Rich for top tier (code snippets)");
         // Middle tier depends on shape, but should have substance in Read intent
@@ -245,8 +245,8 @@ public static double CalculateEvidenceQuality(bool hasSemanticScore, bool hasNam
         var findStrategy = StrategySelector.Select(Intent.Find, distribution.Shape, 0.3);
 
         // Read intent: Depth (fewer items, but all in Rich)
-        var readLimitCalc = LimitCalculator.Calculate(distribution, Intent.Read, 2000, results.Length);
-        var readStrategy = StrategySelector.Select(Intent.Read, distribution.Shape, 0.3);
+        var readLimitCalc = LimitCalculator.Calculate(distribution, Intent.Examine, 2000, results.Length);
+        var readStrategy = StrategySelector.Select(Intent.Examine, distribution.Shape, 0.3);
 
         // For code understanding work, Read is best because:
         readStrategy.TopTierLevel.Should().Be(Representation.Rich, "Top tier always has code");

@@ -102,7 +102,7 @@ public class StrategySelectorTests
     [DisplayName("Read + Lumpy + Low: Rich top/middle, Minimal bottom")]
     public void Given_ReadLumpyLow_Then_RichRichMinimal()
     {
-        var strategy = StrategySelector.Select(Intent.Read, DistributionShape.Lumpy, pressure: 0.3);
+        var strategy = StrategySelector.Select(Intent.Examine, DistributionShape.Lumpy, pressure: 0.3);
 
         strategy.TopTierLevel.Should().Be(Representation.Rich);
         strategy.MiddleTierLevel.Should().Be(Representation.Rich);
@@ -113,7 +113,7 @@ public class StrategySelectorTests
     [DisplayName("Read + Lumpy + High: Rich top, Omit rest")]
     public void Given_ReadLumpyHigh_Then_RichTopOmitRest()
     {
-        var strategy = StrategySelector.Select(Intent.Read, DistributionShape.Lumpy, pressure: 0.9);
+        var strategy = StrategySelector.Select(Intent.Examine, DistributionShape.Lumpy, pressure: 0.9);
 
         strategy.TopTierLevel.Should().Be(Representation.Rich);
         strategy.OmitMiddle.Should().BeTrue();
@@ -124,7 +124,7 @@ public class StrategySelectorTests
     [DisplayName("Read + Even + Low: Rich top, Standard middle, Minimal bottom")]
     public void Given_ReadEvenLow_Then_RichStandardMinimal()
     {
-        var strategy = StrategySelector.Select(Intent.Read, DistributionShape.Even, pressure: 0.4);
+        var strategy = StrategySelector.Select(Intent.Examine, DistributionShape.Even, pressure: 0.4);
 
         strategy.TopTierLevel.Should().Be(Representation.Rich);
         strategy.MiddleTierLevel.Should().Be(Representation.Standard);
@@ -135,7 +135,7 @@ public class StrategySelectorTests
     [DisplayName("Read + Even + High: Rich top, Compact middle, Minimal bottom")]
     public void Given_ReadEvenHigh_Then_RichCompactMinimal()
     {
-        var strategy = StrategySelector.Select(Intent.Read, DistributionShape.Even, pressure: 0.8);
+        var strategy = StrategySelector.Select(Intent.Examine, DistributionShape.Even, pressure: 0.8);
 
         strategy.TopTierLevel.Should().Be(Representation.Rich);
         strategy.MiddleTierLevel.Should().Be(Representation.Compact);
@@ -175,7 +175,7 @@ public class StrategySelectorTests
         var exploreLumpy = StrategySelector.Select(Intent.Explore, DistributionShape.Lumpy, pressure: 0.3);
         var exploreEven = StrategySelector.Select(Intent.Explore, DistributionShape.Even, pressure: 0.3);
         var findEven = StrategySelector.Select(Intent.Find, DistributionShape.Even, pressure: 0.3);
-        var readEven = StrategySelector.Select(Intent.Read, DistributionShape.Even, pressure: 0.3);
+        var readEven = StrategySelector.Select(Intent.Examine, DistributionShape.Even, pressure: 0.3);
 
         exploreLumpy.BottomTierLevel.Should().Be(Representation.Minimal);
         exploreEven.BottomTierLevel.Should().Be(Representation.Minimal);

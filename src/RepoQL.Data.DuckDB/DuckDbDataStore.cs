@@ -158,6 +158,7 @@ public sealed class DuckDbDataStore : IDisposable
             ExecuteSqlResource("Tables/document_search.sql");
             ExecuteSqlResource("Macros/search.sql");
             ExecuteSqlResource("Macros/hybrid_search.sql");
+            ExecuteSqlResource("Tables/file_system_mount.sql");
 
             foreach (var script in _formatSchemaScripts)
             {

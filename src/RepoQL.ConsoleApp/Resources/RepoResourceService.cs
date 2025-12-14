@@ -32,16 +32,62 @@ internal sealed class RepoResourceService
 
     /// <summary>
     /// MCP handler: List available resource templates.
+    /// Includes the generic document template plus a template for each imported repository mount.
     /// </summary>
-    public ValueTask<ListResourceTemplatesResult> ListTemplatesAsync(
+    public async ValueTask<ListResourceTemplatesResult> ListTemplatesAsync(
         RequestContext<ListResourceTemplatesRequestParams> context,
         CancellationToken cancellationToken)
     {
+        var templates = new List<ResourceTemplate> { DocumentTemplate };
+
+        // Add templates for each persisted mount (e.g., imported GitHub repos)
+        try
+        {
+            var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
+            const string sql = "SELECT id, scheme, authority, path_prefix FROM file_system_mount";
+            var response = await client.ExecuteRawQueryAsync(sql, cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            foreach (var row in response.Rows)
+            {
+                if (row.Values.Count < 4) continue;
+
+                var id = ExtractString(row.Values[0]) ?? "";
+                var scheme = ExtractString(row.Values[1]) ?? "";
+                var authority = ExtractString(row.Values[2]) ?? "";
+                var pathPrefix = ExtractString(row.Values[3]) ?? "";
+
+                if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(scheme)) continue;
+
+                // Build a descriptive URI template for this mount
+                // e.g., github://anthropics/claude-code/{+path}
+                var uriTemplate = string.IsNullOrEmpty(authority)
+                    ? $"{scheme}:///{pathPrefix}/{{+path}}"
+                    : $"{scheme}://{authority}/{pathPrefix}/{{+path}}";
+
+                var displayName = string.IsNullOrEmpty(authority)
+                    ? $"{scheme}:{pathPrefix}"
+                    : $"{scheme}:{authority}/{pathPrefix}";
+
+                templates.Add(new ResourceTemplate
+                {
+                    Name = id,
+                    Title = $"Imported: {displayName}",
+                    Description = $"Browse files from imported {scheme} repository",
+                    UriTemplate = uriTemplate,
+                    MimeType = "text/plain; charset=utf-8"
+                });
+            }
+        }
+        catch
+        {
+            // If mount query fails, still return the base document template
+        }
+
         var result = new ListResourceTemplatesResult
         {
-            ResourceTemplates = [DocumentTemplate]
+            ResourceTemplates = templates
         };
-        return ValueTask.FromResult(result);
+        return result;
     }
 
     /// <summary>

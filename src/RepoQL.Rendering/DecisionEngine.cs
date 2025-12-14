@@ -125,7 +125,7 @@ public static class DecisionEngine
             {
                 Intent.Explore => Representation.Compact,
                 Intent.Find => Representation.Standard,
-                Intent.Read => Representation.Standard,
+                Intent.Examine => Representation.Standard,
                 _ => Representation.Compact
             };
             total += TokenEstimator.Estimate(result, level);

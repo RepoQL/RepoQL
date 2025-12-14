@@ -9,7 +9,7 @@ public class CoreTypesTests
     [DisplayName("Intent enum has expected values")]
     public void Intent_HasExpectedValues()
     {
-        Enum.GetValues<Intent>().Should().BeEquivalentTo([Intent.Explore, Intent.Find, Intent.Read]);
+        Enum.GetValues<Intent>().Should().BeEquivalentTo([Intent.Explore, Intent.Find, Intent.Examine]);
     }
 
     [Test]

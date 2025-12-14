@@ -22,7 +22,7 @@ public static class StrategySelector
         {
             Intent.Explore => SelectExploreStrategy(shape, highPressure),
             Intent.Find => SelectFindStrategy(shape, highPressure),
-            Intent.Read => SelectReadStrategy(shape, highPressure),
+            Intent.Examine => SelectReadStrategy(shape, highPressure),
             _ => throw new ArgumentOutOfRangeException(nameof(intent))
         };
     }

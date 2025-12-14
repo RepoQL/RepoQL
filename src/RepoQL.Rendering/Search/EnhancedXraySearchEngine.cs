@@ -117,7 +117,7 @@ public sealed class EnhancedXraySearchEngine : IEnhancedXraySearchEngine
             return false;
 
         // Enhanced search is most beneficial for Find/Read intents
-        return parameters.Intent is Intent.Find or Intent.Read;
+        return parameters.Intent is Intent.Find or Intent.Examine;
     }
 
     /// <summary>
@@ -438,7 +438,7 @@ public sealed class EnhancedXraySearchEngine : IEnhancedXraySearchEngine
                 JitEmbeddingThreshold = 0.15,
                 MaxObjectsPerDocument = 50
             },
-            Intent.Read => new ObjectSearchConfig
+            Intent.Examine => new ObjectSearchConfig
             {
                 MinProbabilityMass = 0.90,
                 MaxDocumentsToExpand = 10,

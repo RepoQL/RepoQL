@@ -96,7 +96,7 @@ public class DecisionEngineTests
             ResultBuilder.Create(95, snippetLength: 100),
             ResultBuilder.Create(60),
         };
-        var context = new RenderingContext(Intent.Read, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Examine, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -130,7 +130,7 @@ public class DecisionEngineTests
             ResultBuilder.Create(90, snippetLength: 500),
         };
         // Budget too small for two Rich items
-        var context = new RenderingContext(Intent.Read, TokenBudget: 150, Limit: 2, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Examine, TokenBudget: 150, Limit: 2, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 

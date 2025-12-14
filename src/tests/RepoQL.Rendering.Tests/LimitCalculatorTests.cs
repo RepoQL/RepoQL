@@ -86,7 +86,7 @@ public class LimitCalculatorTests
         var results = Enumerable.Range(0, 50).Select(i => ResultBuilder.Create(60)).ToArray();
         var distribution = DistributionAnalyzer.Analyze(results);
 
-        var readLimit = LimitCalculator.Calculate(distribution, Intent.Read, 600, results.Length);
+        var readLimit = LimitCalculator.Calculate(distribution, Intent.Examine, 600, results.Length);
         var findLimit = LimitCalculator.Calculate(distribution, Intent.Find, 600, results.Length);
 
         // Base: 600/40 = 15, Read: 15*0.5 = 7, Find: 15
@@ -112,7 +112,7 @@ public class LimitCalculatorTests
         var results = new[] { ResultBuilder.Create(50) };
         var distribution = DistributionAnalyzer.Analyze(results);
 
-        var limit = LimitCalculator.Calculate(distribution, Intent.Read, 100, results.Length);
+        var limit = LimitCalculator.Calculate(distribution, Intent.Examine, 100, results.Length);
 
         limit.Should().BeGreaterThanOrEqualTo(1);
     }

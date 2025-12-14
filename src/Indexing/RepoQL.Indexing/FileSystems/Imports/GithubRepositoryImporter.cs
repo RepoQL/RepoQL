@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
+using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem.Physical;
 
 namespace RepoQL.Indexing.FileSystems.Imports;
@@ -22,11 +23,16 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
     private static bool _ghAvailable;
 
     private readonly PhysicalFileSystem _primary;
+    private readonly DuckDbDataStore _db;
     private readonly ILogger<GithubRepositoryImporter> _logger;
 
-    public GithubRepositoryImporter(PhysicalFileSystem primaryFileSystem, ILogger<GithubRepositoryImporter> logger)
+    public GithubRepositoryImporter(
+        PhysicalFileSystem primaryFileSystem,
+        DuckDbDataStore db,
+        ILogger<GithubRepositoryImporter> logger)
     {
         _primary = primaryFileSystem ?? throw new ArgumentNullException(nameof(primaryFileSystem));
+        _db = db ?? throw new ArgumentNullException(nameof(db));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -68,7 +74,7 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
 
         var refSuffix = string.IsNullOrWhiteSpace(spec.Ref) ? string.Empty : $"@{spec.Ref}";
         var mountId = $"github:{spec.Owner}/{spec.Repository}{refSuffix}";
-        return CompositeFileSystemMount.ForScheme(
+        var mount = CompositeFileSystemMount.ForScheme(
             mountId,
             fs,
             scheme: "github",
@@ -77,6 +83,22 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             includeInEnumeration: true,
             enableWatching: false,
             enableAnalysis: false);
+
+        // Persist mount so it survives restarts
+        _db.SaveMount(new FileSystemMountRecord
+        {
+            Id = mount.Id,
+            Scheme = "github",
+            Authority = spec.Owner,
+            PathPrefix = spec.Repository,
+            SourceUri = source.AbsoluteUri,
+            LocalPath = targetRoot,
+            IncludeInEnumeration = true,
+            EnableWatching = false,
+            EnableAnalysis = false
+        });
+
+        return mount;
     }
 
     /// <summary>

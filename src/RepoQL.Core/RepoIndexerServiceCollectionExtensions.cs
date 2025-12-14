@@ -414,7 +414,10 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetService<ILogger<IndexingCoordinator>>(),
             sp.GetRequiredService<ICompositeFileSystemManager>()));
 
-        services.AddSingleton<IVirtualFileSystemImporter, GithubRepositoryImporter>();
+        services.AddSingleton<IVirtualFileSystemImporter>(sp => new GithubRepositoryImporter(
+            sp.GetRequiredService<PhysicalFileSystem>(),
+            sp.GetRequiredService<DuckDbDataStore>(),
+            sp.GetRequiredService<ILogger<GithubRepositoryImporter>>()));
         services.AddSingleton<IFileSystemImportService, FileSystemImportService>();
         services.AddHostedService<RepoqlHost>();
 

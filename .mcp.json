@@ -2,7 +2,7 @@
   "mcpServers": {
     "repoql": {
       "type": "stdio",
-      "command": "artifacts\\publish\\RepoQL.McpProxy.exe",
+      "command": "artifacts\\publish\\repoql.exe",
       "args": []
     },
     "aspire-dashboard": {

@@ -19,8 +19,8 @@ public enum Intent
     Find,
 
     /// <summary>
-    /// See code. Depth over breadth.
-    /// Fewer items is fine if they have code.
+    /// I know what I'm looking for - show me the code and context across relevant files.
+    /// Depth over breadth. Fewer items with rich snippets and structure.
     /// </summary>
-    Read
+    Examine
 }

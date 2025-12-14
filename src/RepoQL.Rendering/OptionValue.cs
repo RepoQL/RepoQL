@@ -69,10 +69,10 @@ public static class OptionValue
             (Intent.Find, RepresentationLevel.Rich) => 0.3,
 
             // Read: depth over breadth. Standard and Rich are most valuable for code viewing.
-            (Intent.Read, RepresentationLevel.Minimal) => 0.4,
-            (Intent.Read, RepresentationLevel.Compact) => 0.6,
-            (Intent.Read, RepresentationLevel.Standard) => 0.8,
-            (Intent.Read, RepresentationLevel.Rich) => 0.7,
+            (Intent.Examine, RepresentationLevel.Minimal) => 0.4,
+            (Intent.Examine, RepresentationLevel.Compact) => 0.6,
+            (Intent.Examine, RepresentationLevel.Standard) => 0.8,
+            (Intent.Examine, RepresentationLevel.Rich) => 0.7,
 
             _ => throw new ArgumentOutOfRangeException(nameof(intent), intent, "Unknown intent")
         };
