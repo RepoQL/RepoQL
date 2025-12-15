@@ -82,6 +82,11 @@ public sealed class PhysicalFileSystemWatcher(PhysicalFileSystem store) : FileSy
             if (string.Equals(rel, store.RootPath, StringComparison.OrdinalIgnoreCase))
                 return;
 
+            // Skip internal directories (.repoql, .git) - these don't need indexing
+            // and imports can cause buffer overflows with thousands of file events
+            if (ShouldIgnorePath(rel))
+                return;
+
             var uri = store.ToRepoUri(absPath);
             RaiseChange(new ResourceChange(kind, store.GetFile(uri), uri));
         }
@@ -105,6 +110,10 @@ public sealed class PhysicalFileSystemWatcher(PhysicalFileSystem store) : FileSy
                 return;
             }
 
+            // Skip internal directories (.repoql, .git) - these don't need indexing
+            if (ShouldIgnorePath(oldRel) && ShouldIgnorePath(newRel))
+                return;
+
             var oldUri = store.ToRepoUri(oldAbs);
             var newUri = store.ToRepoUri(newAbs);
             RaiseChange(new ResourceChange(ResourceEvent.Moved, store.GetFile(newUri), newUri, oldUri));
@@ -114,5 +123,20 @@ public sealed class PhysicalFileSystemWatcher(PhysicalFileSystem store) : FileSy
             // Ignore to keep watcher alive
             RaiseError(ex);
         }
+    }
+
+    /// <summary>
+    /// Checks if a relative path should be ignored by the watcher.
+    /// Filters out internal directories that don't need indexing.
+    /// Expects path to be normalized with forward slashes.
+    /// </summary>
+    private static bool ShouldIgnorePath(string relativePath)
+    {
+        // Check for paths starting with .repoql/ or .git/
+        // These are internal directories that shouldn't trigger indexing
+        return relativePath.StartsWith(".repoql/", StringComparison.OrdinalIgnoreCase) ||
+               relativePath.Equals(".repoql", StringComparison.OrdinalIgnoreCase) ||
+               relativePath.StartsWith(".git/", StringComparison.OrdinalIgnoreCase) ||
+               relativePath.Equals(".git", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
@@ -64,10 +63,9 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         _logger.LogDebug("[GitHub] Parsed: owner={Owner}, repo={Repo}, ref={Ref}",
             spec.Owner, spec.Repository, spec.Ref ?? "(default)");
 
-        var repoFolderName = string.IsNullOrWhiteSpace(spec.Ref)
-            ? spec.Repository
-            : $"{spec.Repository}@{SanitizeForPath(spec.Ref)}";
-        var targetRoot = Path.Combine(_primary.RootPath, ImportsRoot, spec.Owner, repoFolderName);
+        // Always use the same folder for a repo regardless of branch
+        // Branch switching is handled via git checkout, not separate clones
+        var targetRoot = Path.Combine(_primary.RootPath, ImportsRoot, spec.Owner, spec.Repository);
 
         _logger.LogDebug("[GitHub] Target path: {Path}", targetRoot);
         Directory.CreateDirectory(Path.GetDirectoryName(targetRoot)!);
@@ -82,8 +80,8 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             uriPrefix: spec.Repository,
             authority: spec.Owner);
 
-        var refSuffix = string.IsNullOrWhiteSpace(spec.Ref) ? string.Empty : $"@{spec.Ref}";
-        var mountId = $"github:{spec.Owner}/{spec.Repository}{refSuffix}";
+        // Mount ID doesn't include ref since we switch branches on the same clone
+        var mountId = $"github:{spec.Owner}/{spec.Repository}";
 
         _logger.LogDebug("[GitHub] Creating mount {MountId}", mountId);
         var mount = CompositeFileSystemMount.ForScheme(
@@ -118,7 +116,8 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
     }
 
     /// <summary>
-    /// Ensures <paramref name="spec"/> is present on disk. Clones via GitHub CLI when missing and uses repo sync for updates.
+    /// Ensures <paramref name="spec"/> is present on disk. Clones via GitHub CLI when missing,
+    /// switches branches via git checkout for existing clones.
     /// </summary>
     private async Task CloneOrUpdateAsync(RepositorySpec spec, string targetRoot, CancellationToken ct)
     {
@@ -126,11 +125,30 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         EnsureGhAvailable();
         _logger.LogDebug("[GitHub] gh CLI is available");
 
-        var isClone = !Directory.Exists(targetRoot) || !Directory.EnumerateFileSystemEntries(targetRoot).Any();
+        // Check if target is a valid git repository (has .git folder)
+        // If directory exists but isn't a valid repo, it's likely a failed previous clone - delete and retry
+        var gitDir = Path.Combine(targetRoot, ".git");
+        var isValidRepo = Directory.Exists(targetRoot) && Directory.Exists(gitDir);
+        var needsClone = !isValidRepo;
 
-        if (isClone)
+        if (needsClone && Directory.Exists(targetRoot))
         {
-            _logger.LogInformation("[GitHub] Cloning {Owner}/{Repo} (target does not exist or is empty)",
+            _logger.LogWarning("[GitHub] Target directory exists but is not a valid git repo (no .git folder). " +
+                "This may be from a failed previous clone. Deleting and re-cloning: {Path}", targetRoot);
+            try
+            {
+                Directory.Delete(targetRoot, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[GitHub] Failed to delete invalid directory: {Path}", targetRoot);
+                throw new InvalidOperationException($"Cannot clean up invalid clone directory: {targetRoot}", ex);
+            }
+        }
+
+        if (needsClone)
+        {
+            _logger.LogInformation("[GitHub] Cloning {Owner}/{Repo}",
                 spec.Owner, spec.Repository);
 
             var args = new List<string>
@@ -157,23 +175,77 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             return;
         }
 
-        _logger.LogInformation("[GitHub] Syncing existing clone at {Path}", targetRoot);
+        // Repo already exists - switch branch if specified, otherwise just pull
+        _logger.LogInformation("[GitHub] Existing clone found at {Path}", targetRoot);
 
-        // Use gh repo sync from within the target directory
-        var syncArgs = new List<string>
-        {
-            "repo",
-            "sync",
-            "--source",
-            $"{spec.Owner}/{spec.Repository}",
-            "--force"
-        };
         if (!string.IsNullOrWhiteSpace(spec.Ref))
         {
-            syncArgs.Add("--branch");
-            syncArgs.Add(spec.Ref!);
+            _logger.LogInformation("[GitHub] Switching to branch/ref: {Ref}", spec.Ref);
+
+            // Fetch all branches first (needed for shallow clones to know about other branches)
+            await RunGitAsync(["fetch", "--all", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
+
+            // Checkout the requested branch
+            await RunGitAsync(["checkout", spec.Ref!], targetRoot, ct).ConfigureAwait(false);
+
+            // Pull latest changes
+            await RunGitAsync(["pull", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
         }
-        await RunGhAsync(syncArgs, targetRoot, ct).ConfigureAwait(false);
+        else
+        {
+            // No specific ref - just pull latest on current branch
+            _logger.LogInformation("[GitHub] Pulling latest changes on current branch");
+            await RunGitAsync(["pull", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Executes a git command.</summary>
+    private async Task RunGitAsync(
+        IReadOnlyList<string> arguments,
+        string workingDirectory,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = workingDirectory
+        };
+
+        foreach (var arg in arguments)
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        process.Exited += (_, _) => tcs.TrySetResult(true);
+
+        _logger.LogDebug("Running git {Args}", string.Join(' ', arguments));
+        if (!process.Start())
+            throw new InvalidOperationException("Failed to start git.");
+
+        using var registration = cancellationToken.Register(() =>
+        {
+            try { if (!process.HasExited) process.Kill(); }
+            catch { /* ignore */ }
+            tcs.TrySetCanceled(cancellationToken);
+        });
+
+        await tcs.Task.ConfigureAwait(false);
+        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"git exited with {process.ExitCode}: {stderr}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(stdout))
+            _logger.LogDebug("{Stdout}", stdout.Trim());
+        if (!string.IsNullOrWhiteSpace(stderr))
+            _logger.LogDebug("{Stderr}", stderr.Trim());
     }
 
     /// <summary>Executes a GitHub CLI command and surfaces stdout/stderr for diagnostics.</summary>
@@ -303,17 +375,6 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         var reference = segment[(atIndex + 1)..];
         segment = segment[..atIndex];
         return reference.Length == 0 ? null : reference;
-    }
-
-    private static string SanitizeForPath(string value)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var builder = new StringBuilder(value.Length);
-        foreach (var ch in value)
-        {
-            builder.Append(invalid.Contains(ch) ? '_' : ch);
-        }
-        return builder.ToString();
     }
 
     private static void EnsureGhAvailable()
