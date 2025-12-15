@@ -203,7 +203,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<PlainTextLoader>();
         services.AddSingleton<GraphQLLoader>();
         services.AddSingleton<GraphQLAnalyzer>();
-        services.AddSingleton<CsProjLoader>(sp => new CsProjLoader(sp.GetRequiredService<ITemplateRenderer>()));
+        services.AddSingleton<CsProjLoader>(sp => new CsProjLoader());
         services.AddSingleton<AppSettingsLoader>(sp => new AppSettingsLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<AppSettingsAnalyzer>();
         services.AddSingleton<SqlLoader>();
@@ -318,6 +318,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 sp.GetRequiredService<IEmbeddingProvider>(),
                 scripts,
                 sp.GetService<ILogger<DuckDbDataStore>>());
+
             return db;
         });
         // In-memory OTEL sink for dashboards/tests

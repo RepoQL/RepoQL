@@ -2,7 +2,7 @@ using System.Globalization;
 using Google.Protobuf.WellKnownTypes;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Protocol;
-using RepoQL.Rendering.Search;
+using RepoQL.Xray.Search;
 
 namespace RepoQL.ConsoleApp.Search;
 

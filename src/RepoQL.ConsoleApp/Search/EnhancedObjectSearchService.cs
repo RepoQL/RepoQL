@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Protocol;
-using RepoQL.Rendering.Search;
+using RepoQL.Xray.Search;
 
 namespace RepoQL.ConsoleApp.Search;
 
@@ -726,4 +726,4 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
     }
 }
 
-// IEnhancedObjectSearchService and EnhancedObjectSearchResult are defined in RepoQL.Rendering.Search
+// IEnhancedObjectSearchService and EnhancedObjectSearchResult are defined in RepoQL.Xray.Search

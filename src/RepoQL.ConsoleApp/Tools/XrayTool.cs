@@ -5,8 +5,8 @@ using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
-using RepoQL.Rendering;
-using RepoQL.Rendering.Search;
+using RepoQL.Xray;
+using RepoQL.Xray.Search;
 
 namespace RepoQL.ConsoleApp.Tools;
 

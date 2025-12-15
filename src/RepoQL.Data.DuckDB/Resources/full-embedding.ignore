@@ -1,0 +1,39 @@
+# Files matching these patterns get structure-only embedding (headline + structure)
+# instead of full-text chunked embedding. This reduces embedding cost for files
+# where semantic search of the full text provides little value.
+
+# Vendored/third-party libraries
+**/wwwroot/lib/**
+**/vendor/**
+**/vendors/**
+**/third_party/**
+**/third-party/**
+**/node_modules/**
+**/bower_components/**
+
+# Minified files
+**/*.min.js
+**/*.min.css
+**/*.min.map
+
+# Bundles and compiled assets
+**/dist/**/*.js
+**/dist/**/*.css
+**/build/**/*.js
+**/build/**/*.css
+**/*.bundle.js
+**/*.bundle.css
+
+# Package lock files (large JSON, low semantic value)
+**/package-lock.json
+**/yarn.lock
+**/pnpm-lock.yaml
+**/composer.lock
+**/Cargo.lock
+**/Gemfile.lock
+**/poetry.lock
+
+# Generated code
+**/*.generated.cs
+**/*.g.cs
+**/*.Designer.cs

@@ -3,8 +3,8 @@ using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Search;
-using RepoQL.Rendering;
-using RepoQL.Rendering.Search;
+using RepoQL.Xray;
+using RepoQL.Xray.Search;
 using RepoQL.Templating;
 using Spectre.Console;
 

@@ -29,7 +29,12 @@ public sealed class EmbeddingRefresher
     private const string FullEmbeddingType = "full";
 
     // Batch size for embedding. Override with REPOQL_EMBED_BATCH_SIZE env var.
-    private const int DefaultEmbeddingBatchSize = 256;
+    // Default is tuned for developer laptops (avoid large [B,T,H] tensor spikes).
+    private const int DefaultEmbeddingBatchSize = 128;
+
+    // How many documents to pull per DB round-trip when building embedding payloads.
+    // Kept intentionally small to bound peak memory (text_content can be large).
+    private const int DefaultDocumentFetchBatchSize = 32;
 
     #endregion
 
@@ -55,29 +60,28 @@ public sealed class EmbeddingRefresher
             return;
 
         var totalDocuments = CountTotalDocuments();
-        var documents = LoadDocumentEmbeddingSources();
-        var docsSkippedAsUpToDate = totalDocuments - documents.Count;
+        var refreshPlan = LoadDocumentRefreshPlan();
+        var docsSkippedAsUpToDate = totalDocuments - refreshPlan.Count;
 
-        if (documents.Count == 0)
+        if (refreshPlan.Count == 0)
         {
             _logger.LogInformation("Semantic indexing complete: all {Total} documents up-to-date", totalDocuments);
             return;
         }
 
         _logger.LogInformation("Semantic indexing: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
-            documents.Count, totalDocuments, docsSkippedAsUpToDate);
+            refreshPlan.Count, totalDocuments, docsSkippedAsUpToDate);
 
-        var workItems = BuildEmbeddingWorkItems(documents);
-        if (workItems.Count == 0)
+        var totalExpectedItems = refreshPlan.Sum(p => p.WorkItemCount);
+        if (totalExpectedItems <= 0)
             return;
 
         var batchSize = GetEffectiveBatchSize(embeddingProvider);
-        var uniqueDocs = workItems.Select(w => w.DocId).Distinct().Count();
-        var totalChunks = workItems.Count;
-        var chunkedDocs = workItems.Where(w => w.ChunkIndex > 0).Select(w => w.DocId).Distinct().Count();
+        var largeDocs = refreshPlan.Count(p => p.IsLarge);
+        var chunkedDocs = refreshPlan.Count(p => !p.IsLarge && p.WorkItemCount > 1);
 
-        _logger.LogInformation("Semantic indexing: {Docs} documents ({Chunks} chunks, {Chunked} chunked)...",
-            uniqueDocs, totalChunks, chunkedDocs);
+        _logger.LogInformation("Semantic indexing: {Docs} documents ({Items} embeddings, {Chunked} chunked, {Large} large)...",
+            refreshPlan.Count, totalExpectedItems, chunkedDocs, largeDocs);
 
         var sw = Stopwatch.StartNew();
 
@@ -86,10 +90,10 @@ public sealed class EmbeddingRefresher
             new BoundedChannelOptions(2) { SingleReader = true, SingleWriter = true });
 
         // Start producer task (runs embedding on background thread)
-        var producerTask = ProduceEmbeddingsAsync(workItems, batchSize, embeddingProvider, channel.Writer, cancellationToken);
+        var producerTask = ProduceEmbeddingsAsync(refreshPlan, batchSize, embeddingProvider, channel.Writer, totalExpectedItems, cancellationToken);
 
         // Consumer: writes to DB on current thread (single-writer architecture)
-        var stats = await ConsumeAndWriteEmbeddingsAsync(channel.Reader, embeddingProvider, totalChunks, cancellationToken).ConfigureAwait(false);
+        var stats = await ConsumeAndWriteEmbeddingsAsync(channel.Reader, embeddingProvider, totalExpectedItems, cancellationToken).ConfigureAwait(false);
 
         // Wait for producer to complete (handles exceptions)
         await producerTask.ConfigureAwait(false);
@@ -146,52 +150,164 @@ public sealed class EmbeddingRefresher
     }
 
     private async Task ProduceEmbeddingsAsync(
-        List<EmbeddingWorkItem> workItems,
+        IReadOnlyList<DocumentRefreshPlanRow> refreshPlan,
         int batchSize,
         IEmbeddingProvider provider,
         ChannelWriter<EmbeddingBatchResult> writer,
+        int totalExpectedItems,
         CancellationToken ct)
     {
-        var totalBatches = (workItems.Count + batchSize - 1) / batchSize;
+        var totalBatches = (totalExpectedItems > 0 && batchSize > 0)
+            ? (totalExpectedItems + batchSize - 1) / batchSize
+            : 0;
+
         var batchNum = 0;
+        var itemsProcessed = 0;
         var overallTimer = Stopwatch.StartNew();
+
+        // We intentionally keep these lists bounded to batchSize so payload strings don't accumulate.
+        var pendingItems = new List<EmbeddingWorkItem>(batchSize);
+        var pendingPayloads = new List<string>(batchSize);
+
+        async Task FlushAsync()
+        {
+            if (pendingItems.Count == 0)
+                return;
+
+            ct.ThrowIfCancellationRequested();
+            batchNum++;
+
+            var items = pendingItems.ToArray();
+            var itemsAfterBatch = itemsProcessed + items.Length;
+            var progress = totalBatches > 0
+                ? new BatchEmbeddingProgress(batchNum, totalBatches, itemsAfterBatch, totalExpectedItems, overallTimer.Elapsed)
+                : default;
+
+            float[]?[] vectors;
+            var batchTimer = Stopwatch.StartNew();
+            try
+            {
+                vectors = await provider.EmbedBatchAsync(pendingPayloads, progress, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                batchTimer.Stop();
+                _logger.LogWarning(ex, "Embedding batch failed (size={BatchSize}, model={Model})", pendingPayloads.Count, provider.Model);
+                vectors = Array.Empty<float[]?>();
+            }
+            batchTimer.Stop();
+
+            itemsProcessed = itemsAfterBatch;
+
+            // Drop payload references immediately (channel result never needs payload text).
+            pendingItems.Clear();
+            pendingPayloads.Clear();
+
+            await writer.WriteAsync(new EmbeddingBatchResult(items, vectors, batchTimer.Elapsed), ct).ConfigureAwait(false);
+        }
 
         try
         {
-            for (var ofs = 0; ofs < workItems.Count; ofs += batchSize)
+            // Process large docs first: avoids pulling large text_content into memory.
+            var largeDocIds = refreshPlan.Where(p => p.IsLarge).Select(p => p.Id).ToArray();
+            for (var ofs = 0; ofs < largeDocIds.Length; ofs += DefaultDocumentFetchBatchSize)
             {
                 ct.ThrowIfCancellationRequested();
-                batchNum++;
+                var len = Math.Min(DefaultDocumentFetchBatchSize, largeDocIds.Length - ofs);
+                var batchIds = largeDocIds.AsSpan(ofs, len).ToArray();
+                var docs = LoadLargeDocumentEmbeddingSources(batchIds);
 
-                var sliceLength = Math.Min(batchSize, workItems.Count - ofs);
-                var sliceItems = new EmbeddingWorkItem[sliceLength];
-                var payloads = new string[sliceLength];
-                for (var i = 0; i < sliceLength; i++)
+                foreach (var doc in docs)
                 {
-                    sliceItems[i] = workItems[ofs + i];
-                    payloads[i] = sliceItems[i].Payload;
-                }
+                    var payload = BuildStructureOnlyEmbeddingText(doc.Headline, doc.Structure);
+                    if (string.IsNullOrWhiteSpace(payload))
+                        continue;
 
-                // Build progress info for this batch
-                var itemsAfterBatch = ofs + sliceLength;
-                var progress = new BatchEmbeddingProgress(batchNum, totalBatches, itemsAfterBatch, workItems.Count, overallTimer.Elapsed);
-
-                float[]?[] vectors;
-                var batchTimer = Stopwatch.StartNew();
-                try
-                {
-                    vectors = await provider.EmbedBatchAsync(payloads, progress, ct).ConfigureAwait(false);
+                    pendingItems.Add(new EmbeddingWorkItem(
+                        doc.Id,
+                        doc.Id,
+                        ChunkIndex: 0,
+                        FullEmbeddingType,
+                        doc.Uri,
+                        DocumentEmbeddingScope,
+                        StartByte: null,
+                        EndByte: null));
+                    pendingPayloads.Add(payload);
+                    if (pendingItems.Count >= batchSize)
+                        await FlushAsync().ConfigureAwait(false);
                 }
-                catch (Exception ex)
-                {
-                    batchTimer.Stop();
-                    _logger.LogWarning(ex, "Embedding batch failed (size={BatchSize}, model={Model})", sliceLength, provider.Model);
-                    vectors = Array.Empty<float[]?>();
-                }
-                batchTimer.Stop();
-
-                await writer.WriteAsync(new EmbeddingBatchResult(sliceItems, vectors, batchTimer.Elapsed), ct).ConfigureAwait(false);
             }
+
+            // Then process normal docs (small + chunked), fetching text in small batches.
+            var textDocIds = refreshPlan.Where(p => !p.IsLarge).Select(p => p.Id).ToArray();
+            for (var ofs = 0; ofs < textDocIds.Length; ofs += DefaultDocumentFetchBatchSize)
+            {
+                ct.ThrowIfCancellationRequested();
+                var len = Math.Min(DefaultDocumentFetchBatchSize, textDocIds.Length - ofs);
+                var batchIds = textDocIds.AsSpan(ofs, len).ToArray();
+                var docs = LoadTextDocumentEmbeddingSources(batchIds);
+
+                foreach (var doc in docs)
+                {
+                    if (string.IsNullOrEmpty(doc.Text))
+                        continue;
+
+                    if (doc.Text.Length <= SmallFileThresholdChars)
+                    {
+                        var payload = BuildDocumentEmbeddingText(doc);
+                        if (string.IsNullOrWhiteSpace(payload))
+                            continue;
+
+                        pendingItems.Add(new EmbeddingWorkItem(
+                            doc.Id,
+                            doc.Id,
+                            ChunkIndex: 0,
+                            FullEmbeddingType,
+                            doc.Uri,
+                            DocumentEmbeddingScope,
+                            StartByte: null,
+                            EndByte: null));
+                        pendingPayloads.Add(payload);
+                        if (pendingItems.Count >= batchSize)
+                            await FlushAsync().ConfigureAwait(false);
+                        continue;
+                    }
+
+                    var chunkRanges = ChunkRanges(doc.Text, ChunkSizeChars, ChunkOverlapChars);
+                    if (chunkRanges.Count == 0)
+                        continue;
+
+                    var preamble = BuildPreamble(doc);
+                    var utf8Offsets = ComputeUtf8ByteOffsets(doc.Text, chunkRanges);
+
+                    for (var i = 0; i < chunkRanges.Count; i++)
+                    {
+                        var (startChar, endChar) = chunkRanges[i];
+                        var chunkText = doc.Text[startChar..endChar];
+                        var payload = string.IsNullOrWhiteSpace(preamble)
+                            ? chunkText
+                            : $"{preamble}\n\n{chunkText}";
+
+                        if (string.IsNullOrWhiteSpace(payload))
+                            continue;
+
+                        pendingItems.Add(new EmbeddingWorkItem(
+                            doc.Id,
+                            doc.Id,
+                            ChunkIndex: i,
+                            FullEmbeddingType,
+                            doc.Uri,
+                            DocumentEmbeddingScope,
+                            StartByte: utf8Offsets[startChar],
+                            EndByte: utf8Offsets[endChar]));
+                        pendingPayloads.Add(payload);
+                        if (pendingItems.Count >= batchSize)
+                            await FlushAsync().ConfigureAwait(false);
+                    }
+                }
+            }
+
+            await FlushAsync().ConfigureAwait(false);
         }
         finally
         {
@@ -320,7 +436,7 @@ public sealed class EmbeddingRefresher
         var throughput = stats.TotalItems == 0 ? 0 : stats.TotalItems / Math.Max(0.001, totalMs / 1000d);
 
         _logger.LogInformation(
-            "Semantic indexing complete: {DocSuccess} documents, {Skipped} skipped | {Batches} batches, {Items} items | embed={EmbedMs:F1}ms ({EmbedPct:F1}%), db={DbMs:F1}ms ({DbPct:F1}%), total={TotalSec:F1}s @ {Throughput:F1} items/s | model={Model}",
+            "Semantic indexing complete: {DocSuccess} embeddings, {Skipped} skipped | {Batches} batches, {Items} items | embed={EmbedMs:F1}ms ({EmbedPct:F1}%), db={DbMs:F1}ms ({DbPct:F1}%), total={TotalSec:F1}s @ {Throughput:F1} items/s | model={Model}",
             stats.DocSuccess,
             stats.DocSkipped,
             stats.Batches,
@@ -344,9 +460,81 @@ public sealed class EmbeddingRefresher
         return (int)(result ?? 0L);
     }
 
-    private Dictionary<Guid, DocumentEmbeddingRow> LoadDocumentEmbeddingSources()
+    private IReadOnlyList<DocumentRefreshPlanRow> LoadDocumentRefreshPlan()
     {
-        const string sql = """
+        var stride = ChunkSizeChars - ChunkOverlapChars;
+        if (stride <= 0) stride = ChunkSizeChars;
+
+        var sql = $"""
+            WITH refreshable AS (
+                SELECT
+                    n.id,
+                    n.uri,
+                    length(a.text_content)       AS char_len,
+                    a.byte_size                  AS byte_len
+                FROM node n
+                         JOIN artifact a ON a.id = n.artifact_id
+                         LEFT JOIN document_embedding de
+                              ON de.doc_id = n.id AND de.scope = '{DocumentEmbeddingScope}' AND de.embedding_type = '{FullEmbeddingType}'
+                WHERE n.kind = 'document'
+                  AND a.text_content IS NOT NULL
+                  AND (de.doc_id IS NULL OR de.updated_at < n.updated_at)
+                  AND (a.media_type LIKE 'text/%'
+                       OR a.media_type LIKE 'application/json%'
+                       OR a.media_type LIKE 'application/xml%'
+                       OR a.media_type LIKE 'application/%yaml%'
+                       OR a.media_type LIKE 'application/javascript%'
+                       OR a.media_type LIKE 'application/typescript%'
+                       OR a.media_type LIKE 'application/%sql%'
+                       OR a.media_type LIKE 'application/graphql%'
+                       OR a.media_type LIKE 'application/toml%'
+                       OR a.media_type LIKE 'application/x-sh%'
+                       OR a.media_type LIKE 'application/x-python%'
+                       OR a.media_type LIKE 'application/x-ruby%'
+                       OR a.media_type LIKE 'application/x-perl%'
+                       OR a.media_type LIKE 'application/x-php%')
+            )
+            SELECT
+                id,
+                uri,
+                CASE WHEN byte_len > {LargeFileThresholdBytes} THEN 1 ELSE 0 END AS is_large,
+                CASE
+                    WHEN byte_len > {LargeFileThresholdBytes} THEN 1
+                    WHEN char_len <= {SmallFileThresholdChars} THEN 1
+                    ELSE CAST(((char_len - {ChunkSizeChars}) + {stride} - 1) / {stride} AS INTEGER) + 1
+                END AS work_items
+            FROM refreshable
+            ORDER BY id;
+            """;
+
+        return _store.Read(sql, record =>
+        {
+            var id = record.GetGuid(0);
+            var uri = record.IsDBNull(1) ? string.Empty : record.GetString(1);
+            var isLargeFromSize = !record.IsDBNull(2) && record.GetInt32(2) != 0;
+            var workItems = record.IsDBNull(3) ? 0 : record.GetInt32(3);
+
+            // Apply structure-only filter: files matching patterns get structure-only embedding
+            // even if they're under the size threshold
+            var isLarge = isLargeFromSize || StructureOnlyFilter.IsStructureOnly(uri);
+
+            // If newly marked as structure-only by pattern (not size), work items = 1
+            if (isLarge && !isLargeFromSize)
+                workItems = 1;
+
+            return new DocumentRefreshPlanRow(id, uri, isLarge, workItems);
+        });
+    }
+
+    private IReadOnlyList<TextDocumentEmbeddingRow> LoadTextDocumentEmbeddingSources(IReadOnlyList<Guid> docIds)
+    {
+        if (docIds.Count == 0)
+            return [];
+
+        var idList = ToUuidListSql(docIds);
+        // Note: Size filtering is done in LoadDocumentRefreshPlan() which also applies pattern-based
+        // structure-only filtering. The docIds passed here are already filtered to non-large documents.
+        var sql = $"""
             SELECT n.id,
                    n.uri,
                    a.text_content,
@@ -355,125 +543,82 @@ public sealed class EmbeddingRefresher
                    a.structure
             FROM node n
                      JOIN artifact a ON a.id = n.artifact_id
-                     LEFT JOIN document_embedding de
-                          ON de.doc_id = n.id AND de.scope = 'document' AND de.embedding_type = 'full'
-            WHERE n.kind = 'document'
-              AND a.text_content IS NOT NULL
-              AND (de.doc_id IS NULL OR de.updated_at < n.updated_at)
-              AND (a.media_type LIKE 'text/%'
-                   OR a.media_type LIKE 'application/json%'
-                   OR a.media_type LIKE 'application/xml%'
-                   OR a.media_type LIKE 'application/%yaml%'
-                   OR a.media_type LIKE 'application/javascript%'
-                   OR a.media_type LIKE 'application/typescript%'
-                   OR a.media_type LIKE 'application/%sql%'
-                   OR a.media_type LIKE 'application/graphql%'
-                   OR a.media_type LIKE 'application/toml%'
-                   OR a.media_type LIKE 'application/x-sh%'
-                   OR a.media_type LIKE 'application/x-python%'
-                   OR a.media_type LIKE 'application/x-ruby%'
-                   OR a.media_type LIKE 'application/x-perl%'
-                   OR a.media_type LIKE 'application/x-php%');
+            WHERE n.id IN ({idList})
+              AND a.text_content IS NOT NULL;
             """;
 
-        var documents = new Dictionary<Guid, DocumentEmbeddingRow>();
-        var results = _store.Read(sql, record =>
+        return _store.Read(sql, record =>
         {
             var id = record.GetGuid(0);
             var uri = record.IsDBNull(1) ? null : record.GetString(1);
             var text = record.IsDBNull(2) ? string.Empty : record.GetString(2);
-            var bytes = Encoding.UTF8.GetBytes(text);
-            return new DocumentEmbeddingRow(
+            return new TextDocumentEmbeddingRow(
                 id,
                 string.IsNullOrWhiteSpace(uri) ? $"repoql://document/{id:D}" : uri!,
                 text,
-                bytes,
                 record.IsDBNull(3) ? null : record.GetString(3),
                 record.IsDBNull(4) ? null : record.GetString(4),
                 record.IsDBNull(5) ? null : record.GetString(5));
         });
-
-        foreach (var doc in results)
-        {
-            documents[doc.Id] = doc;
-        }
-
-        return documents;
     }
 
-    private List<EmbeddingWorkItem> BuildEmbeddingWorkItems(IReadOnlyDictionary<Guid, DocumentEmbeddingRow> documents)
+    private IReadOnlyList<LargeDocumentEmbeddingRow> LoadLargeDocumentEmbeddingSources(IReadOnlyList<Guid> docIds)
     {
-        // Only build document-level embeddings at index time.
-        // Object-level embeddings are generated just-in-time during search.
-        // Small files get a single embedding; large files are chunked with overlap.
-        // Very large files (>250KB) use structure-only embedding to save cost.
-        var work = new List<EmbeddingWorkItem>(documents.Count * 2); // Estimate 2x for chunking
+        if (docIds.Count == 0)
+            return [];
 
-        foreach (var doc in documents.Values)
+        var idList = ToUuidListSql(docIds);
+        // Note: "Large" documents are those marked for structure-only embedding, either by size
+        // or by pattern match (e.g., minified files, vendored libraries). The docIds passed
+        // here are already filtered to large documents in LoadDocumentRefreshPlan().
+        var sql = $"""
+            SELECT n.id,
+                   n.uri,
+                   a.headline,
+                   a.structure
+            FROM node n
+                     JOIN artifact a ON a.id = n.artifact_id
+            WHERE n.id IN ({idList})
+              AND a.text_content IS NOT NULL;
+            """;
+
+        return _store.Read(sql, record =>
         {
-            var byteSize = doc.Utf8Bytes?.Length ?? 0;
-            var textLength = doc.Text?.Length ?? 0;
-
-            if (byteSize > LargeFileThresholdBytes)
-            {
-                // Very large file: use structure-only embedding (or headline+summary if no structure)
-                var payload = BuildStructureOnlyEmbeddingText(doc);
-                if (!string.IsNullOrWhiteSpace(payload))
-                {
-                    work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, 0, FullEmbeddingType, doc.Uri, DocumentEmbeddingScope, payload, null, null));
-                }
-            }
-            else if (textLength <= SmallFileThresholdChars)
-            {
-                // Small file: single embedding covering entire content
-                var payload = BuildDocumentEmbeddingText(doc);
-                if (!string.IsNullOrWhiteSpace(payload))
-                {
-                    work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, 0, FullEmbeddingType, doc.Uri, DocumentEmbeddingScope, payload, null, null));
-                }
-            }
-            else
-            {
-                // Medium file: split into overlapping chunks
-                var chunks = ChunkText(doc.Text!, ChunkSizeChars, ChunkOverlapChars);
-                var preamble = BuildPreamble(doc); // headline + summary for context
-
-                for (var i = 0; i < chunks.Count; i++)
-                {
-                    var (chunkText, startChar, endChar) = chunks[i];
-                    // Prepend preamble to each chunk for semantic context
-                    var payload = string.IsNullOrWhiteSpace(preamble)
-                        ? chunkText
-                        : $"{preamble}\n\n{chunkText}";
-
-                    if (!string.IsNullOrWhiteSpace(payload))
-                    {
-                        // Convert char positions to byte positions for the source text
-                        var startByte = Encoding.UTF8.GetByteCount(doc.Text!.AsSpan(0, startChar));
-                        var endByte = Encoding.UTF8.GetByteCount(doc.Text!.AsSpan(0, endChar));
-                        work.Add(new EmbeddingWorkItem(doc.Id, doc.Id, i, FullEmbeddingType, doc.Uri, DocumentEmbeddingScope, payload, startByte, endByte));
-                    }
-                }
-            }
-        }
-
-        return work;
+            var id = record.GetGuid(0);
+            var uri = record.IsDBNull(1) ? null : record.GetString(1);
+            return new LargeDocumentEmbeddingRow(
+                id,
+                string.IsNullOrWhiteSpace(uri) ? $"repoql://document/{id:D}" : uri!,
+                record.IsDBNull(2) ? null : record.GetString(2),
+                record.IsDBNull(3) ? null : record.GetString(3));
+        });
     }
 
-    private static string BuildStructureOnlyEmbeddingText(DocumentEmbeddingRow doc)
+    private static string ToUuidListSql(IReadOnlyList<Guid> ids)
     {
-        // For very large files, use headline + structure (they contain different data)
+        var sb = new StringBuilder(capacity: ids.Count * 40);
+        for (var i = 0; i < ids.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append('\'').Append(ids[i].ToString("D")).Append("'::UUID");
+        }
+        return sb.ToString();
+    }
+
+    private static string BuildStructureOnlyEmbeddingText(string? headline, string? structure)
+    {
+        // For large files, use headline + structure (they contain different data).
         var parts = new List<string>(2);
-        if (!string.IsNullOrWhiteSpace(doc.Headline))
-            parts.Add(doc.Headline);
-        if (!string.IsNullOrWhiteSpace(doc.Structure))
-            parts.Add(doc.Structure);
+        if (!string.IsNullOrWhiteSpace(headline))
+            parts.Add(headline);
+        if (!string.IsNullOrWhiteSpace(structure))
+            parts.Add(structure);
         return string.Join("\n\n", parts);
     }
 
-    private static string BuildPreamble(DocumentEmbeddingRow doc)
+    private static string BuildPreamble(TextDocumentEmbeddingRow doc)
     {
-        // Build a short preamble from x-ray fields for context in each chunk
+        // Build a short preamble from x-ray fields for context in each chunk.
         var parts = new List<string>(2);
         if (!string.IsNullOrWhiteSpace(doc.Headline))
             parts.Add(doc.Headline);
@@ -482,18 +627,16 @@ public sealed class EmbeddingRefresher
         return string.Join("\n", parts);
     }
 
-    private static List<(string Text, int StartChar, int EndChar)> ChunkText(string text, int chunkSize, int overlap)
+    private static List<(int StartChar, int EndChar)> ChunkRanges(string text, int chunkSize, int overlap)
     {
-        var chunks = new List<(string, int, int)>();
+        var chunks = new List<(int, int)>();
         var stride = chunkSize - overlap;
         if (stride <= 0) stride = chunkSize; // Fallback if overlap >= size
 
         for (var start = 0; start < text.Length; start += stride)
         {
             var end = Math.Min(start + chunkSize, text.Length);
-            chunks.Add((text[start..end], start, end));
-
-            // If we've reached the end, stop
+            chunks.Add((start, end));
             if (end >= text.Length)
                 break;
         }
@@ -501,7 +644,33 @@ public sealed class EmbeddingRefresher
         return chunks;
     }
 
-    private static string BuildDocumentEmbeddingText(DocumentEmbeddingRow doc)
+    private static Dictionary<int, long> ComputeUtf8ByteOffsets(string text, IReadOnlyList<(int StartChar, int EndChar)> chunks)
+    {
+        var positions = new HashSet<int> { 0 };
+        foreach (var (start, end) in chunks)
+        {
+            positions.Add(start);
+            positions.Add(end);
+        }
+
+        var ordered = positions.OrderBy(p => p).ToArray();
+        var map = new Dictionary<int, long>(ordered.Length);
+
+        long bytes = 0;
+        var prev = 0;
+        map[0] = 0;
+        for (var i = 1; i < ordered.Length; i++)
+        {
+            var pos = ordered[i];
+            bytes += Encoding.UTF8.GetByteCount(text.AsSpan(prev, pos - prev));
+            map[pos] = bytes;
+            prev = pos;
+        }
+
+        return map;
+    }
+
+    private static string BuildDocumentEmbeddingText(TextDocumentEmbeddingRow doc)
     {
         return CombineSegments(
             new[] { doc.Headline, doc.Summary, doc.Structure, doc.Text },
@@ -538,13 +707,24 @@ public sealed class EmbeddingRefresher
 
     #region Helper Types and Methods
 
-    private sealed record DocumentEmbeddingRow(
+    private sealed record DocumentRefreshPlanRow(
+        Guid Id,
+        string Uri,
+        bool IsLarge,
+        int WorkItemCount);
+
+    private sealed record TextDocumentEmbeddingRow(
         Guid Id,
         string Uri,
         string Text,
-        byte[] Utf8Bytes,
         string? Headline,
         string? Summary,
+        string? Structure);
+
+    private sealed record LargeDocumentEmbeddingRow(
+        Guid Id,
+        string Uri,
+        string? Headline,
         string? Structure);
 
     private readonly record struct EmbeddingWorkItem(
@@ -554,7 +734,6 @@ public sealed class EmbeddingRefresher
         string EmbeddingType,  // 'structure' or 'full'
         string Uri,
         string Scope,
-        string Payload,
         long? StartByte,
         long? EndByte);
 

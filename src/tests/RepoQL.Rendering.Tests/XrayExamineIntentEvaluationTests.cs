@@ -4,7 +4,7 @@
 /// </summary>
 
 using AwesomeAssertions;
-using RepoQL.Rendering.Tests.TestData;
+using RepoQL.Xray.Tests.TestData;
 
 namespace RepoQL.Rendering.Tests;
 
@@ -24,7 +24,7 @@ public class XrayExamineIntentEvaluationTests
     {
         // Simulate search results for "utility calculator relevance evidence"
         var utilityCalculatorResult = new XrayResult(
-            Uri: "file:///src/RepoQL.Rendering/UtilityCalculator.cs",
+            Uri: "file:///src/RepoQL.Xray/UtilityCalculator.cs",
             Confidence: 95,
             Kind: null,
             Headline: "Calculates utility scores for value-based token allocation with relevance and evidence quality",
@@ -67,7 +67,7 @@ public static class UtilityCalculator
         );
 
         var limitCalculatorResult = new XrayResult(
-            Uri: "file:///src/RepoQL.Rendering/LimitCalculator.cs",
+            Uri: "file:///src/RepoQL.Xray/LimitCalculator.cs",
             Confidence: 72,
             Kind: null,
             Headline: "Calculates optimal limit based on distribution, intent, and token budget",
@@ -84,7 +84,7 @@ public static class UtilityCalculator
         );
 
         var strategyResult = new XrayResult(
-            Uri: "file:///src/RepoQL.Rendering/StrategySelector.cs",
+            Uri: "file:///src/RepoQL.Xray/StrategySelector.cs",
             Confidence: 65,
             Kind: null,
             Headline: "Selects representation strategy based on intent, distribution shape, and token pressure",
@@ -162,7 +162,7 @@ public static class UtilityCalculator
         // Scenario: Agent needs to understand how UtilityCalculator works to implement similar logic elsewhere
 
         var utilityResult = new XrayResult(
-            Uri: "file:///src/RepoQL.Rendering/UtilityCalculator.cs",
+            Uri: "file:///src/RepoQL.Xray/UtilityCalculator.cs",
             Confidence: 95,
             Kind: null,
             Headline: "Calculates utility scores for value-based token allocation with relevance and evidence quality",

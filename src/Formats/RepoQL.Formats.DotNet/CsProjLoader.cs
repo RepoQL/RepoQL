@@ -11,7 +11,7 @@ namespace RepoQL.Formats.DotNet;
 /// Loader + materializer for C# project files (*.csproj).
 /// Produces a document node with child items for TargetFramework(s), PackageReference(s), and ProjectReference(s).
 /// </summary>
-public sealed class CsProjLoader(ITemplateRenderer? renderer = null) : IFormatLoader, IFormatMaterializer
+public sealed class CsProjLoader : IFormatLoader, IFormatMaterializer
 {
     internal const string StateKey = "csproj.state";
 

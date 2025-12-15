@@ -101,7 +101,7 @@
     <ProjectReference Include="..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
     <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
     <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
-    <ProjectReference Include="..\RepoQL.Rendering\RepoQL.Rendering.csproj" />
+    <ProjectReference Include="..\RepoQL.Xray\RepoQL.Xray.csproj" />
   </ItemGroup>
 
     

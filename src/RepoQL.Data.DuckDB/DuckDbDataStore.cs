@@ -28,6 +28,12 @@ public sealed class DuckDbDataStore : IDisposable
     private int _consecutiveFailures;
     private const int MaxConsecutiveFailuresBeforeRecovery = 3;
 
+    /// <summary>
+    /// Indicates that a database recovery occurred and data may have been lost.
+    /// Check this flag on startup or after operations to determine if reindex is needed.
+    /// </summary>
+    public bool RecoveryOccurred { get; private set; }
+
     public DuckDbDataStore(
         string? path = null,
         IEmbeddingProvider? embeddingProvider = null,
@@ -232,26 +238,50 @@ public sealed class DuckDbDataStore : IDisposable
         }
 
         _lock.EnterWriteLock();
+        DuckDBTransaction? tx = null;
         try
         {
-            using var tx = _writer.BeginTransaction();
+            tx = _writer.BeginTransaction();
             work(_writer, tx);
             tx.Commit();
+            tx = null; // Mark as committed so we don't rollback
             Interlocked.Exchange(ref _consecutiveFailures, 0); // Reset on success
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
         {
+            TryRollback(tx);
             HandleFatalError(ex, "WriteTransaction");
             throw;
         }
         catch (DuckDBException ex) when (IsWriteConflictError(ex))
         {
+            TryRollback(tx);
             HandleWriteConflict(ex, "WriteTransaction");
+            throw;
+        }
+        catch (Exception)
+        {
+            TryRollback(tx);
             throw;
         }
         finally
         {
             _lock.ExitWriteLock();
+        }
+    }
+
+    private void TryRollback(DuckDBTransaction? tx)
+    {
+        if (tx is null) return;
+        try
+        {
+            tx.Rollback();
+        }
+        catch (Exception rollbackEx)
+        {
+            // Rollback failed - connection is in inconsistent state, must recover
+            _logger.LogError(rollbackEx, "[DuckDB] Transaction rollback failed - connection corrupted, marking for recovery");
+            _databaseInvalidated = true;
         }
     }
 
@@ -266,22 +296,31 @@ public sealed class DuckDbDataStore : IDisposable
         }
 
         _lock.EnterWriteLock();
+        DuckDBTransaction? tx = null;
         try
         {
-            using var tx = _writer.BeginTransaction();
+            tx = _writer.BeginTransaction();
             var result = work(_writer, tx);
             tx.Commit();
+            tx = null; // Mark as committed so we don't rollback
             Interlocked.Exchange(ref _consecutiveFailures, 0); // Reset on success
             return result;
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
         {
+            TryRollback(tx);
             HandleFatalError(ex, "WriteTransaction<T>");
             throw;
         }
         catch (DuckDBException ex) when (IsWriteConflictError(ex))
         {
+            TryRollback(tx);
             HandleWriteConflict(ex, "WriteTransaction<T>");
+            throw;
+        }
+        catch (Exception)
+        {
+            TryRollback(tx);
             throw;
         }
         finally
@@ -358,7 +397,9 @@ public sealed class DuckDbDataStore : IDisposable
 
             _databaseInvalidated = false;
             _consecutiveFailures = 0;
+            RecoveryOccurred = true;
             _logger.LogInformation("[DuckDB] Database recovery completed successfully in {ElapsedMs}ms", sw.ElapsedMilliseconds);
+            _logger.LogWarning("[DuckDB] Data may have been lost during recovery. A full reindex is recommended.");
         }
         catch (Exception ex)
         {

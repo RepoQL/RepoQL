@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 using AwesomeAssertions;
-using RepoQL.Rendering.Search;
+using RepoQL.Xray.Search;
 
 namespace RepoQL.Rendering.Tests;
 

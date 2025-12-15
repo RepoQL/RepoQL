@@ -207,7 +207,7 @@ public static class DuckDbDataStoreExtensions
         {
             foreach (var e in embeddings)
             {
-                var vector = e.Vector.ToDuckDbArray();
+                var vector = new List<float>(e.Vector);
                 using var cmd = conn.CreateCommand();
                 cmd.Transaction = tx;
                 cmd.CommandText = """

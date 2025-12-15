@@ -732,10 +732,13 @@ public partial class IndexingEngine : IAsyncDisposable
 
                     try
                     {
-                        await ReleaseAnalysisAsync(epoch).ConfigureAwait(false);
-                        // Only update _lastReleasedEpoch if this is a newer epoch
+                        // Update _lastReleasedEpoch BEFORE processing to prevent race condition:
+                        // If ScheduleAnalysis adds items during ReleaseAnalysisAsync, it will see
+                        // that this epoch is being released and re-enqueue it.
                         if (epoch > Interlocked.Read(ref _lastReleasedEpoch))
                             Interlocked.Exchange(ref _lastReleasedEpoch, epoch);
+
+                        await ReleaseAnalysisAsync(epoch).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
                     {

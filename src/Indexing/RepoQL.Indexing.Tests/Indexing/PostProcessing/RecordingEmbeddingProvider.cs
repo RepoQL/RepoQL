@@ -5,6 +5,7 @@ namespace RepoQL.Indexing.Tests.Indexing.PostProcessing;
 internal sealed class RecordingEmbeddingProvider : IEmbeddingProvider
 {
     public int EmbedCount { get; private set; }
+    public List<int> EmbeddedTextLengths { get; } = new();
     public string Model => "test";
     public int Dimension => 4;
     public bool Enabled => true;
@@ -12,6 +13,7 @@ internal sealed class RecordingEmbeddingProvider : IEmbeddingProvider
     public Task<float[]?> EmbedAsync(string text, CancellationToken cancellationToken = default)
     {
         EmbedCount++;
+        EmbeddedTextLengths.Add(text.Length);
         return Task.FromResult<float[]?>(new[] { 0.1f, 0.2f, 0.3f, 0.4f });
     }
 
@@ -24,6 +26,7 @@ internal sealed class RecordingEmbeddingProvider : IEmbeddingProvider
         for (var i = 0; i < texts.Count; i++)
         {
             EmbedCount++;
+            EmbeddedTextLengths.Add(texts[i]?.Length ?? 0);
             batch[i] = new[] { 0.1f, 0.2f, 0.3f, 0.4f };
         }
 
