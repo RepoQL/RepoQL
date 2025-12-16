@@ -1,3 +1,5 @@
+using RepoQL.Xray;
+
 namespace RepoQL.Rendering.Tests.TestData;
 
 /// <summary>
