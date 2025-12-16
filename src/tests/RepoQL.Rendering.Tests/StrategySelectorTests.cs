@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using RepoQL.Xray;
 
 namespace RepoQL.Rendering.Tests;
 
