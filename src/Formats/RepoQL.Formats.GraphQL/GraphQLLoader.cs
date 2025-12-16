@@ -11,55 +11,28 @@ using RepoQL.Templating;
 
 namespace RepoQL.Formats.GraphQL;
 
-public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, ILogger<GraphQLLoader>? logger = null)
+public sealed partial class GraphQLLoader(ILogger<GraphQLLoader>? logger = null)
     : IFormatLoader, IFormatMaterializer
 {
     internal const string StateMetadataKey = "graphql.state";
 
-    private readonly ITemplateRenderer _renderer = renderer ?? new LiquidTemplateRenderer(
+    private readonly LiquidTemplateRenderer _renderer = new(
         assembly: typeof(GraphQLLoader).Assembly,
         resourceRoot: "RepoQL.Formats.GraphQL.Templates");
 
     private ILogger<GraphQLLoader> Logger { get; } = logger ?? NullLogger<GraphQLLoader>.Instance;
 
-    private static readonly SemanticMediaType GraphQLMediaType = SemanticMediaType
-        .Create("text", "graphql")
-        .WithKind("graphql.doc");
-
-    private static readonly HashSet<string> KnownExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".graphql", ".graphqls", ".gql", ".gqls"
-    };
-
     public bool Supports(SemanticMediaType mediaType)
     {
         ArgumentNullException.ThrowIfNull(mediaType);
-        if (string.Equals(mediaType.Kind, GraphQLMediaType.Kind, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return string.Equals(mediaType.Type, GraphQLMediaType.Type, StringComparison.OrdinalIgnoreCase)
-               && string.Equals(mediaType.Subtype, GraphQLMediaType.Subtype, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(mediaType.Kind, GraphQLMediaTypes.GraphQL.Kind, StringComparison.OrdinalIgnoreCase);
     }
 
     public Task<bool> CanLoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(artifact);
-        var name = artifact.File.Name ?? string.Empty;
-        if (KnownExtensions.Any(name.EndsWith))
-        {
-            artifact.MediaType = GraphQLMediaType;
-            return Task.FromResult(true);
-        }
-
-        if (artifact.MediaType is not null &&
-            (string.Equals(artifact.MediaType.Kind, "graphql.doc", StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(artifact.MediaType.Subtype, "graphql", StringComparison.OrdinalIgnoreCase)))
-        {
-            artifact.MediaType = artifact.MediaType.WithKind("graphql.doc");
-            return Task.FromResult(true);
-        }
-
-        return Task.FromResult(false);
+        // Classification is handled by GraphQLClassifier pipeline - this just validates the media type
+        return Task.FromResult(artifact.MediaType is not null && Supports(artifact.MediaType));
     }
 
     public async Task<DocumentModel> LoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default)
@@ -68,7 +41,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
         if (artifact.RepoUri is null)
             throw new InvalidOperationException("RepoUri required for GraphQL loader.");
 
-        var mediaType = artifact.MediaType ?? GraphQLMediaType;
+        var mediaType = artifact.MediaType ?? GraphQLMediaTypes.GraphQL;
 
         var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
             artifact.File,
@@ -201,6 +174,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                 Uri = RepoUri.FromSymbol(document.Uri.Container, opName, opSpan.StartLine, opSpan.EndLine),
                 Props = opProps,
                 Headline = $"{operation.Kind.ToString().ToLowerInvariant()} {operation.Name}".Trim(),
+                Structure = BuildOperationStructure(operation),
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -247,6 +221,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                 Uri = RepoUri.FromSymbol(document.Uri.Container, fragment.Name, fragSpan.StartLine, fragSpan.EndLine),
                 Props = props,
                 Headline = $"fragment {fragment.Name} on {fragment.TypeCondition}",
+                Structure = BuildFragmentStructure(fragment),
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -290,6 +265,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                 Uri = RepoUri.FromSymbol(document.Uri.Container, type.Name, typeSpan.StartLine, typeSpan.EndLine),
                 Props = props,
                 Headline = typeHeadline,
+                Structure = BuildTypeStructure(type),
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -384,6 +360,7 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
                 Uri = RepoUri.FromSymbol(document.Uri.Container, $"@{directive.Name}", dirSpan.StartLine, dirSpan.EndLine),
                 Props = props,
                 Headline = $"directive @{directive.Name}" + (directive.IsRepeatable ? " repeatable" : ""),
+                Structure = BuildDirectiveStructure(directive),
                 CreatedAt = now,
                 UpdatedAt = now
             });
@@ -605,6 +582,101 @@ public sealed partial class GraphQLLoader(ITemplateRenderer? renderer = null, IL
             ScopeDocumentId = scopeDocumentId,
             CreatedAt = timestamp
         };
+
+    private static string BuildOperationStructure(GraphQLOperationInfo op)
+    {
+        var sb = new StringBuilder();
+        if (op.Variables.Count > 0)
+        {
+            sb.AppendLine("Variables:");
+            foreach (var v in op.Variables.Take(12))
+                sb.AppendLine($"  • ${v.Name}: {v.Type}{(v.IsNonNull ? "!" : "")}{(v.HasDefaultValue ? " (default)" : "")}");
+            if (op.Variables.Count > 12)
+                sb.AppendLine($"  … and {op.Variables.Count - 12} more");
+        }
+        if (op.TopLevelFields.Count > 0)
+        {
+            sb.AppendLine("Fields:");
+            foreach (var f in op.TopLevelFields.Take(12))
+                sb.AppendLine($"  • {f}");
+            if (op.TopLevelFields.Count > 12)
+                sb.AppendLine($"  … and {op.TopLevelFields.Count - 12} more");
+        }
+        if (op.FragmentUsages.Count > 0)
+        {
+            sb.AppendLine("Fragments:");
+            foreach (var f in op.FragmentUsages.Take(8))
+                sb.AppendLine($"  • ...{f.Name}");
+            if (op.FragmentUsages.Count > 8)
+                sb.AppendLine($"  … and {op.FragmentUsages.Count - 8} more");
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildFragmentStructure(GraphQLFragmentInfo frag)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"Type condition: {frag.TypeCondition}");
+        if (frag.FragmentUsages.Count > 0)
+        {
+            sb.AppendLine("Uses fragments:");
+            foreach (var f in frag.FragmentUsages.Take(8))
+                sb.AppendLine($"  • ...{f.Name}");
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildTypeStructure(GraphQLTypeInfo type)
+    {
+        var sb = new StringBuilder();
+        if (type.Implements.Count > 0)
+        {
+            sb.AppendLine($"Implements: {string.Join(", ", type.Implements)}");
+        }
+        if (type.Fields.Count > 0)
+        {
+            sb.AppendLine("Fields:");
+            foreach (var f in type.Fields.Take(20))
+            {
+                var deprecated = f.IsDeprecated ? " (deprecated)" : "";
+                sb.AppendLine($"  • {f.Name}: {f.Type}{deprecated}");
+            }
+            if (type.Fields.Count > 20)
+                sb.AppendLine($"  … and {type.Fields.Count - 20} more");
+        }
+        if (type.EnumValues.Count > 0)
+        {
+            sb.AppendLine("Values:");
+            foreach (var v in type.EnumValues.Take(20))
+            {
+                var deprecated = v.IsDeprecated ? " (deprecated)" : "";
+                sb.AppendLine($"  • {v.Name}{deprecated}");
+            }
+            if (type.EnumValues.Count > 20)
+                sb.AppendLine($"  … and {type.EnumValues.Count - 20} more");
+        }
+        if (type.UnionMembers.Count > 0)
+        {
+            sb.AppendLine("Members:");
+            foreach (var m in type.UnionMembers.Take(20))
+                sb.AppendLine($"  • {m}");
+            if (type.UnionMembers.Count > 20)
+                sb.AppendLine($"  … and {type.UnionMembers.Count - 20} more");
+        }
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildDirectiveStructure(GraphQLDirectiveInfo dir)
+    {
+        var sb = new StringBuilder();
+        if (dir.Locations.Count > 0)
+            sb.AppendLine($"Locations: {string.Join(", ", dir.Locations)}");
+        if (dir.ArgumentCount > 0)
+            sb.AppendLine($"Arguments: {dir.ArgumentCount}");
+        if (dir.IsRepeatable)
+            sb.AppendLine("Repeatable: yes");
+        return sb.ToString().TrimEnd();
+    }
 
     [LoggerMessage(LogLevel.Warning, "GraphQL loader failed to sniff file '{Name}'")]
     private static partial void LogFailedToSniffFile(ILogger logger, Exception ex, string name);

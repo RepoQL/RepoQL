@@ -1,0 +1,10 @@
+Name: {{ file_name }}
+Namespace: {{ namespace }}
+{% if classes.size > 0 %}Classes: {% for c in classes %}{{ c.name }}{% if c.extends %} extends {{ c.extends }}{% endif %}{% if c.implements.size > 0 %} implements {{ c.implements | join: ", " }}{% endif %}{% unless forloop.last %}, {% endunless %}{% endfor %}
+{% endif %}{% if interfaces.size > 0 %}Interfaces: {% for i in interfaces %}{{ i.name }}{% unless forloop.last %}, {% endunless %}{% endfor %}
+{% endif %}{% if traits.size > 0 %}Traits: {% for t in traits %}{{ t.name }}{% unless forloop.last %}, {% endunless %}{% endfor %}
+{% endif %}{% if enums.size > 0 %}Enums: {% for e in enums %}{{ e.name }}{% unless forloop.last %}, {% endunless %}{% endfor %}
+{% endif %}{% if uses.size > 0 %}Uses: {{ uses | join: ", " }}
+{% endif %}{% if all_methods.size > 0 %}Methods: {{ all_methods | join: ", " }}
+{% endif %}{% if all_properties.size > 0 %}Properties: {{ all_properties | join: ", " }}
+{% endif %}

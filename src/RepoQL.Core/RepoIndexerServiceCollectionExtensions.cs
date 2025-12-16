@@ -25,6 +25,7 @@ using RepoQL.Formats.DotNet;
 using RepoQL.Formats.GraphQL;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
+using RepoQL.Formats.PHP;
 using RepoQL.Formats.TypeScript;
 using RepoQL.Formats.Sql;
 using RepoQL.Indexing.FileSystems;
@@ -185,6 +186,7 @@ public static class RepoIndexerServiceCollectionExtensions
 
         services.AddMarkdownFormat();
         services.AddTypeScriptFormat();
+        services.AddPHPFormat();
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjAnalyzer>();
@@ -201,8 +203,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IFormatSchemaProvider>(sp => sp.GetRequiredService<CSharpLoader>());
         services.AddSingleton<CSharpAnalyzer>();
         services.AddSingleton<PlainTextLoader>();
-        services.AddSingleton<GraphQLLoader>();
-        services.AddSingleton<GraphQLAnalyzer>();
+        services.AddGraphQLFormat();
         services.AddSingleton<CsProjLoader>(sp => new CsProjLoader());
         services.AddSingleton<AppSettingsLoader>(sp => new AppSettingsLoader(sp.GetRequiredService<ITemplateRenderer>()));
         services.AddSingleton<AppSettingsAnalyzer>();
@@ -218,17 +219,6 @@ public static class RepoIndexerServiceCollectionExtensions
                 analyzer,
                 loader,
                 new[] { "mermaid", "mmd" });
-        });
-        services.AddSingleton<FormatDescriptor>(sp =>
-        {
-            var loader = sp.GetRequiredService<GraphQLLoader>();
-            var analyzer = sp.GetRequiredService<GraphQLAnalyzer>();
-            return new FormatDescriptor(
-                SemanticMediaType.Create("text", "graphql").WithKind("graphql.doc"),
-                loader,
-                analyzer,
-                loader,
-                new[] { "graphql", "gql" });
         });
         services.AddSingleton<FormatDescriptor>(sp =>
         {

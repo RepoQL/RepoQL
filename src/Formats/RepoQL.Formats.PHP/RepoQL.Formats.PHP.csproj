@@ -8,18 +8,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="GraphQL-Parser" Version="9.5.0" />
+    <PackageReference Include="TreeSitter.DotNet" Version="1.1.1" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.5" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
-    <ProjectReference Include="..\..\RepoQL.Templating\RepoQL.Templating.csproj" />
-    <ProjectReference Include="..\..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
+    <EmbeddedResource Include="Templates\**\*.liquid" />
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Templates\**\*.liquid" />
+    <ProjectReference Include="..\..\RepoQL.Templating\RepoQL.Templating.csproj" />
+    <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
   </ItemGroup>
 
 </Project>

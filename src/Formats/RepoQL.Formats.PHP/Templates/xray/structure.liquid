@@ -1,0 +1,24 @@
+{% if namespace != "(global)" %}namespace {{ namespace }}
+{% endif %}
+{% for u in uses %}use {{ u }}
+{% endfor %}
+{% for c in classes %}
+{{ c.accessibility | default: "public" }}{% if c.is_abstract %} abstract{% endif %}{% if c.is_final %} final{% endif %} class {{ c.name }}{% if c.extends %} extends {{ c.extends }}{% endif %}{% if c.implements.size > 0 %} implements {{ c.implements | join: ", " }}{% endif %}
+{% for p in c.properties %}  {{ p.accessibility | default: "public" }}{% if p.type %} {{ p.type }}{% endif %} {{ p.name }}
+{% endfor %}{% for m in c.methods %}  {{ m.accessibility | default: "public" }}{% if m.is_static %} static{% endif %} function {{ m.name }}({% for param in m.parameters %}{{ param }}{% unless forloop.last %}, {% endunless %}{% endfor %}){% if m.return_type %}: {{ m.return_type }}{% endif %}
+{% endfor %}{% endfor %}
+{% for i in interfaces %}
+interface {{ i.name }}{% if i.extends.size > 0 %} extends {{ i.extends | join: ", " }}{% endif %}
+{% for m in i.methods %}  function {{ m }}()
+{% endfor %}{% endfor %}
+{% for t in traits %}
+trait {{ t.name }}
+{% for m in t.methods %}  function {{ m }}()
+{% endfor %}{% endfor %}
+{% for e in enums %}
+enum {{ e.name }}{% if e.backed_type %}: {{ e.backed_type }}{% endif %}
+{% for case in e.cases %}  case {{ case }}
+{% endfor %}{% endfor %}
+{% for f in functions %}
+function {{ f.name }}({% for param in f.parameters %}{{ param }}{% unless forloop.last %}, {% endunless %}{% endfor %}){% if f.return_type %}: {{ f.return_type }}{% endif %}
+{% endfor %}
