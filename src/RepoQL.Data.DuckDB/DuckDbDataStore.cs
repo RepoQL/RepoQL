@@ -17,7 +17,7 @@ public sealed class DuckDbDataStore : IDisposable
     private readonly string? _path;
     private DuckDBConnection _reader;
     private DuckDBConnection _writer;
-    private readonly ReaderWriterLockSlim _lock = new();
+    private readonly SemaphoreSlim _lock = new(1, 1); // DuckDB connections aren't thread-safe for concurrent commands
     private readonly ILogger _logger;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
@@ -174,7 +174,7 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
-        _lock.EnterReadLock();
+        _lock.Wait();
         try
         {
             using var cmd = _reader.CreateCommand();
@@ -192,7 +192,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.ExitReadLock();
+            _lock.Release();
         }
     }
 
@@ -206,7 +206,7 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
-        _lock.EnterReadLock();
+        _lock.Wait();
         try
         {
             using var cmd = _reader.CreateCommand();
@@ -223,7 +223,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.ExitReadLock();
+            _lock.Release();
         }
     }
 
@@ -237,7 +237,7 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
-        _lock.EnterWriteLock();
+        _lock.Wait();
         DuckDBTransaction? tx = null;
         try
         {
@@ -266,7 +266,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.ExitWriteLock();
+            _lock.Release();
         }
     }
 
@@ -295,7 +295,7 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
-        _lock.EnterWriteLock();
+        _lock.Wait();
         DuckDBTransaction? tx = null;
         try
         {
@@ -325,7 +325,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.ExitWriteLock();
+            _lock.Release();
         }
     }
 
@@ -336,7 +336,7 @@ public sealed class DuckDbDataStore : IDisposable
     {
         if (!_databaseInvalidated) return;
 
-        _lock.EnterWriteLock();
+        _lock.Wait();
         try
         {
             if (!_databaseInvalidated) return; // Double-check after acquiring lock
@@ -346,7 +346,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.ExitWriteLock();
+            _lock.Release();
         }
     }
 
@@ -508,14 +508,14 @@ public sealed class DuckDbDataStore : IDisposable
     {
         if (_schemaInitialized) return;
 
-        _lock.EnterWriteLock();
+        _lock.Wait();
         try
         {
             EnsureSchemaInternal();
         }
         finally
         {
-            _lock.ExitWriteLock();
+            _lock.Release();
         }
     }
 
@@ -627,7 +627,7 @@ public sealed class DuckDbDataStore : IDisposable
     /// </summary>
     public void ForceHealthCheck()
     {
-        _lock.EnterWriteLock();
+        _lock.Wait();
         try
         {
             _logger.LogDebug("[DuckDB] Performing forced health check...");
@@ -649,7 +649,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.ExitWriteLock();
+            _lock.Release();
         }
     }
 
@@ -660,7 +660,7 @@ public sealed class DuckDbDataStore : IDisposable
 
         _logger.LogDebug("[DuckDB] Disposing data store...");
 
-        _lock.EnterWriteLock();
+        _lock.Wait();
         try
         {
             if (!_isInMemory)
@@ -676,7 +676,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.ExitWriteLock();
+            _lock.Release();
             _lock.Dispose();
         }
     }
