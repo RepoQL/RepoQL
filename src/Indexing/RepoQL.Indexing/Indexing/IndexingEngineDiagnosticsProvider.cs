@@ -1,4 +1,5 @@
 using RepoQL.Contracts.Diagnostics;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Indexing.Indexing.PostProcessing;
 
 namespace RepoQL.Indexing.Indexing;
@@ -36,9 +37,11 @@ public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProv
             AnalysisActive = analysisSnapshot.InProgress,
             WriterPending = 0, // DuckDbDataStore uses synchronous writes
             WriterTotal = 0, // DuckDbDataStore uses synchronous writes
-            EmbedEnabled = _engine.VectorCoordinator is not NullVectorIndexCoordinator,
-            EmbedLastEpoch = _engine.VectorCoordinator is VectorIndexCoordinator vic
-                ? vic.GetLastRefreshedEpoch()
+            EmbedMode = _engine.VectorCoordinator is VectorIndexCoordinator vic
+                ? vic.GetEmbeddingMode().ToString()
+                : EmbeddingMode.None.ToString(),
+            EmbedLastEpoch = _engine.VectorCoordinator is VectorIndexCoordinator vic2
+                ? vic2.GetLastRefreshedEpoch()
                 : 0,
             LastError = _engine.LastError
         };

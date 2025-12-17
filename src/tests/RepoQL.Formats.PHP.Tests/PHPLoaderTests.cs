@@ -12,7 +12,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Recognizes .php and .phtml extensions")]
     public async Task CanLoadAsync_RecognizesPhpExtensions()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
 
         using var php = CreateArtifact("sample.php", "<?php class Foo {}");
         using var phtml = CreateArtifact("sample.phtml", "<?php echo 'hello'; ?>");
@@ -32,7 +32,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses class with methods and properties")]
     public async Task LoadAndMaterialize_EmitsClassWithMembers()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         namespace App\Services;
@@ -76,7 +76,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses interface with methods")]
     public async Task LoadAndMaterialize_EmitsInterface()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         namespace App\Contracts;
@@ -103,7 +103,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses trait with methods")]
     public async Task LoadAndMaterialize_EmitsTrait()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         trait Loggable {
@@ -130,7 +130,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses PHP 8.1 enum with cases")]
     public async Task LoadAndMaterialize_EmitsEnum()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         enum Status: string {
@@ -157,7 +157,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses standalone functions")]
     public async Task LoadAndMaterialize_EmitsFunctions()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         function calculateTotal(array $items): float {
@@ -182,7 +182,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates HAS_PART edges for composition")]
     public async Task Materialize_CreatesCompositionEdges()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         class Service {
@@ -203,7 +203,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates EXTENDS edge for class inheritance")]
     public async Task Materialize_CreatesExtendsEdge()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         class BaseService {}
@@ -224,7 +224,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates IMPLEMENTS edges for interfaces")]
     public async Task Materialize_CreatesImplementsEdges()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         interface Countable {}
@@ -245,7 +245,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates USES_TRAIT edges")]
     public async Task Materialize_CreatesUsesTraitEdges()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         trait Loggable {}
@@ -267,7 +267,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Generates X-ray headline with method names")]
     public async Task Materialize_GeneratesXrayHeadline()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         namespace App;
@@ -292,7 +292,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Generates X-ray structure without truncation")]
     public async Task Materialize_GeneratesXrayStructure()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         namespace App\Services;
@@ -320,7 +320,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Handles abstract and final class modifiers")]
     public async Task LoadAndMaterialize_HandlesClassModifiers()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         abstract class BaseHandler {
@@ -349,7 +349,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates spans with correct line numbers")]
     public async Task Materialize_CreatesSpansWithLineNumbers()
     {
-        using var scope = CreateLoader();
+        var scope = CreateLoader();
         const string source = """
         <?php
         class Service {
@@ -365,6 +365,19 @@ public sealed class PHPLoaderTests
         records.Spans.All(s => s.StartLine >= 1).Should().BeTrue("line numbers should be 1-based");
         records.Spans.All(s => s.EndLine >= s.StartLine).Should().BeTrue("end line should be >= start line");
         records.Spans.All(s => s.EndByte > s.StartByte).Should().BeTrue("end byte should be > start byte");
+    }
+
+    [Test]
+    [DisplayName("ANTLR client parses namespace correctly")]
+    public void AntlrClient_ParsesNamespace()
+    {
+        var client = new PHPAntlrClient();
+        var result = client.Parse("<?php\nnamespace App\\Services;\nclass Foo {}");
+
+        result.Namespace.Should().NotBeNull();
+        result.Namespace.Should().Be(@"App\Services");
+        result.Classes.Should().HaveCount(1);
+        result.Classes[0].Namespace.Should().Be(@"App\Services");
     }
 
     private static LoaderScope CreateLoader()
@@ -391,7 +404,7 @@ public sealed class PHPLoaderTests
         return new ArtifactScope(artifact, tempDir, provider);
     }
 
-    private sealed class LoaderScope : IDisposable
+    private sealed class LoaderScope
     {
         public LoaderScope(PHPLoader loader)
         {
@@ -399,11 +412,6 @@ public sealed class PHPLoaderTests
         }
 
         public PHPLoader Loader { get; }
-
-        public void Dispose()
-        {
-            Loader.Dispose();
-        }
     }
 
     private sealed class ArtifactScope : IDisposable

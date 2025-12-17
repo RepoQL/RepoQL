@@ -8,6 +8,7 @@ using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Data.DuckDB;
+using static RepoQL.Contracts.Embeddings.EmbeddingModeExtensions;
 
 namespace RepoQL.Indexing.Indexing.PostProcessing;
 
@@ -27,6 +28,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private readonly IVectorIndexRefresher _refresher;
     private readonly DuckDbDataStore? _db;
     private readonly IEmbeddingProvider? _embeddingProvider;
+    private readonly EmbeddingMode _embeddingMode;
     private readonly ILogger<VectorIndexCoordinator> _logger;
     private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
     private long _lastRefreshedEpoch = long.MinValue;
@@ -42,8 +44,9 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     public VectorIndexCoordinator(
         DuckDbDataStore database,
         IEmbeddingProvider embeddingProvider,
+        EmbeddingMode embeddingMode = EmbeddingMode.Full,
         ILogger<VectorIndexCoordinator>? logger = null)
-        : this(new DuckDbVectorIndexRefresher(database, embeddingProvider), database, embeddingProvider, logger)
+        : this(new DuckDbVectorIndexRefresher(database, embeddingProvider, embeddingMode), database, embeddingProvider, embeddingMode, logger)
     {
     }
 
@@ -51,11 +54,13 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         IVectorIndexRefresher refresher,
         DuckDbDataStore? db = null,
         IEmbeddingProvider? embeddingProvider = null,
+        EmbeddingMode embeddingMode = EmbeddingMode.Full,
         ILogger<VectorIndexCoordinator>? logger = null)
     {
         _refresher = refresher ?? throw new ArgumentNullException(nameof(refresher));
         _db = db;
         _embeddingProvider = embeddingProvider;
+        _embeddingMode = embeddingMode;
         _logger = logger ?? NullLogger<VectorIndexCoordinator>.Instance;
     }
 
@@ -109,6 +114,13 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     {
         if (items.Count == 0)
             return;
+
+        // Check embedding mode - structure embeddings require at least StructureOnly mode
+        if (!_embeddingMode.IncludesStructure())
+        {
+            _logger.LogDebug("Structure embedding skipped: mode={Mode}", _embeddingMode);
+            return;
+        }
 
         if (_db is null || _embeddingProvider is null || !_embeddingProvider.Enabled)
         {
@@ -260,4 +272,9 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     /// Gets whether the coordinator needs a refresh (e.g., due to deletes).
     /// </summary>
     public bool GetNeedsRefresh() => _needsRefresh;
+
+    /// <summary>
+    /// Gets the current embedding mode.
+    /// </summary>
+    public EmbeddingMode GetEmbeddingMode() => _embeddingMode;
 }

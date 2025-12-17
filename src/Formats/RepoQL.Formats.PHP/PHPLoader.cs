@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -7,11 +8,11 @@ using RepoQL.Templating;
 
 namespace RepoQL.Formats.PHP;
 
-public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IDisposable
+public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer
 {
     private ILogger<PHPLoader> Logger { get; }
     private readonly ITemplateRenderer? _renderer;
-    private readonly PHPTreeSitterClient _client;
+    private readonly PHPAntlrClient _client;
 
     private const string StateMetadataKey = "php.state";
 
@@ -21,7 +22,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IDis
         _renderer = renderer ?? new LiquidTemplateRenderer(
             assembly: typeof(PHPLoader).Assembly,
             resourceRoot: "RepoQL.Formats.PHP.Templates");
-        _client = new PHPTreeSitterClient();
+        _client = new PHPAntlrClient();
     }
 
     public bool Supports(SemanticMediaType mediaType)
@@ -374,10 +375,30 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IDis
             Kind = PHPNodeKinds.Class,
             ArtifactId = artifactId,
             Props = props,
-            Headline = $"class {classInfo.Name}",
+            Headline = BuildClassHeadline(classInfo),
             CreatedAt = now,
             UpdatedAt = now
         };
+    }
+
+    private static string BuildClassHeadline(PHPClassInfo classInfo)
+    {
+        // Format: "abstract class MyClass extends BaseClass implements IFoo, IBar"
+        var sb = new StringBuilder();
+        if (classInfo.IsAbstract)
+            sb.Append("abstract ");
+        if (classInfo.IsFinal)
+            sb.Append("final ");
+        sb.Append("class ").Append(classInfo.Name);
+
+        if (!string.IsNullOrEmpty(classInfo.Extends))
+            sb.Append(" extends ").Append(classInfo.Extends);
+        if (classInfo.Implements.Count > 0)
+            sb.Append(" implements ").Append(string.Join(", ", classInfo.Implements.Take(3)));
+        if (classInfo.Implements.Count > 3)
+            sb.Append("...");
+
+        return sb.ToString();
     }
 
     private static Node CreateInterfaceNode(PHPInterfaceInfo ifaceInfo, Guid docId, Guid artifactId, DocumentModel document, DateTimeOffset now)
@@ -390,13 +411,17 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IDis
         if (!string.IsNullOrEmpty(ifaceInfo.Namespace))
             props[PHPPropertyKeys.QualifiedName] = $"{ifaceInfo.Namespace}\\{ifaceInfo.Name}";
 
+        var headline = ifaceInfo.Extends.Count > 0
+            ? $"interface {ifaceInfo.Name} extends {string.Join(", ", ifaceInfo.Extends.Take(3))}{(ifaceInfo.Extends.Count > 3 ? "..." : "")}"
+            : $"interface {ifaceInfo.Name}";
+
         return new Node
         {
             Id = Guid.NewGuid(),
             Kind = PHPNodeKinds.Interface,
             ArtifactId = artifactId,
             Props = props,
-            Headline = $"interface {ifaceInfo.Name}",
+            Headline = headline,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -436,13 +461,17 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IDis
         if (!string.IsNullOrEmpty(enumInfo.BackedType))
             props[PHPPropertyKeys.BackedType] = enumInfo.BackedType;
 
+        var headline = !string.IsNullOrEmpty(enumInfo.BackedType)
+            ? $"enum {enumInfo.Name}: {enumInfo.BackedType}"
+            : $"enum {enumInfo.Name}";
+
         return new Node
         {
             Id = Guid.NewGuid(),
             Kind = PHPNodeKinds.Enum,
             ArtifactId = artifactId,
             Props = props,
-            Headline = $"enum {enumInfo.Name}",
+            Headline = headline,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -649,11 +678,6 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IDis
         var ap = Uri.UnescapeDataString(uri.AbsolutePath);
         var slash = ap.LastIndexOf('/') >= 0 ? ap[(ap.LastIndexOf('/') + 1)..] : ap;
         return string.IsNullOrEmpty(slash) ? uri.AbsoluteUri : slash;
-    }
-
-    public void Dispose()
-    {
-        _client.Dispose();
     }
 
     [LoggerMessage(LogLevel.Warning, "Failed to render X-ray template")]

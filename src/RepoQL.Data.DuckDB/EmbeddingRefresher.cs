@@ -39,11 +39,13 @@ public sealed class EmbeddingRefresher
     #endregion
 
     private readonly DuckDbDataStore _store;
+    private readonly EmbeddingMode _embeddingMode;
     private readonly ILogger<EmbeddingRefresher> _logger;
 
-    public EmbeddingRefresher(DuckDbDataStore store, ILogger<EmbeddingRefresher>? logger = null)
+    public EmbeddingRefresher(DuckDbDataStore store, EmbeddingMode embeddingMode = EmbeddingMode.Full, ILogger<EmbeddingRefresher>? logger = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _embeddingMode = embeddingMode;
         _logger = logger ?? NullLogger<EmbeddingRefresher>.Instance;
     }
 
@@ -465,6 +467,11 @@ public sealed class EmbeddingRefresher
         var stride = ChunkSizeChars - ChunkOverlapChars;
         if (stride <= 0) stride = ChunkSizeChars;
 
+        // In Hybrid mode, we also need to know if structure exists
+        var structureCheck = _embeddingMode.IsHybrid()
+            ? ", CASE WHEN a.structure IS NOT NULL AND length(a.structure) > 0 THEN 1 ELSE 0 END AS has_structure"
+            : ", 0 AS has_structure";
+
         var sql = $"""
             WITH refreshable AS (
                 SELECT
@@ -472,6 +479,7 @@ public sealed class EmbeddingRefresher
                     n.uri,
                     length(a.text_content)       AS char_len,
                     a.byte_size                  AS byte_len
+                    {structureCheck}
                 FROM node n
                          JOIN artifact a ON a.id = n.artifact_id
                          LEFT JOIN document_embedding de
@@ -502,7 +510,8 @@ public sealed class EmbeddingRefresher
                     WHEN byte_len > {LargeFileThresholdBytes} THEN 1
                     WHEN char_len <= {SmallFileThresholdChars} THEN 1
                     ELSE CAST(((char_len - {ChunkSizeChars}) + {stride} - 1) / {stride} AS INTEGER) + 1
-                END AS work_items
+                END AS work_items,
+                has_structure
             FROM refreshable
             ORDER BY id;
             """;
@@ -513,13 +522,21 @@ public sealed class EmbeddingRefresher
             var uri = record.IsDBNull(1) ? string.Empty : record.GetString(1);
             var isLargeFromSize = !record.IsDBNull(2) && record.GetInt32(2) != 0;
             var workItems = record.IsDBNull(3) ? 0 : record.GetInt32(3);
+            var hasStructure = !record.IsDBNull(4) && record.GetInt32(4) != 0;
 
             // Apply structure-only filter: files matching patterns get structure-only embedding
             // even if they're under the size threshold
             var isLarge = isLargeFromSize || StructureOnlyFilter.IsStructureOnly(uri);
 
+            // Hybrid mode: if structure exists, use structure-only embedding
+            if (_embeddingMode.IsHybrid() && hasStructure)
+            {
+                isLarge = true;
+                workItems = 1;
+            }
+
             // If newly marked as structure-only by pattern (not size), work items = 1
-            if (isLarge && !isLargeFromSize)
+            if (isLarge && !isLargeFromSize && !hasStructure)
                 workItems = 1;
 
             return new DocumentRefreshPlanRow(id, uri, isLarge, workItems);

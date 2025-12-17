@@ -104,15 +104,28 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddOptions<IndexingEngineOptions>();
         services.AddOptions<RepoqlHostOptions>();
 
-        // Embeddings provider (local only). Enabled by default; disable via REPOQL_EMBED_ENABLED=0
+        // Embedding mode: controls resource usage for constrained hardware
+        // REPOQL_EMBED_MODE: none|structure|full (default: full)
+        // Legacy REPOQL_EMBED_ENABLED=0 maps to mode=none
+        var embeddingMode = EmbeddingModeExtensions.ParseEmbeddingMode(
+            Environment.GetEnvironmentVariable("REPOQL_EMBED_MODE"));
+
+        // Legacy: REPOQL_EMBED_ENABLED=0 forces None mode
+        if (string.Equals(Environment.GetEnvironmentVariable("REPOQL_EMBED_ENABLED"), "0", StringComparison.Ordinal))
+            embeddingMode = EmbeddingMode.None;
+
+        services.AddSingleton(new EmbeddingModeOptions(embeddingMode));
+
+        // Embeddings provider (local only)
         services.AddSingleton<IEmbeddingProvider>(sp =>
         {
             var lf = sp.GetService<ILoggerFactory>();
             var log = lf?.CreateLogger("RepoQL.Embeddings");
-            var disabled = string.Equals(Environment.GetEnvironmentVariable("REPOQL_EMBED_ENABLED"), "0", StringComparison.Ordinal);
-            if (disabled)
+            var mode = sp.GetRequiredService<EmbeddingModeOptions>().Mode;
+
+            if (mode == EmbeddingMode.None)
             {
-                log?.LogInformation("Embedding provider: disabled via REPOQL_EMBED_ENABLED=0");
+                log?.LogInformation("Embedding provider: disabled (mode=None)");
                 return new DisabledEmbeddingProvider();
             }
 
@@ -330,6 +343,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IVectorIndexCoordinator>(sp => new VectorIndexCoordinator(
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IEmbeddingProvider>(),
+            sp.GetRequiredService<EmbeddingModeOptions>().Mode,
             sp.GetService<ILogger<VectorIndexCoordinator>>()));
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
             sp.GetRequiredService<DuckDbDataStore>(),

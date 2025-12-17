@@ -52,7 +52,7 @@ internal class DuckDbVectorIndexRefresherTests
 
         database.IndexArtifact(documentNode.Uri, parsedArtifact);
 
-        var refresher = new DuckDbVectorIndexRefresher(database, provider, NullLogger<DuckDbVectorIndexRefresher>.Instance);
+        var refresher = new DuckDbVectorIndexRefresher(database, provider, logger: NullLogger<DuckDbVectorIndexRefresher>.Instance);
 
         await refresher.RefreshAsync(CancellationToken.None);
 
@@ -104,7 +104,7 @@ internal class DuckDbVectorIndexRefresherTests
 
         database.IndexArtifact(documentNode.Uri, parsedArtifact);
 
-        var refresher = new DuckDbVectorIndexRefresher(database, provider, NullLogger<DuckDbVectorIndexRefresher>.Instance);
+        var refresher = new DuckDbVectorIndexRefresher(database, provider, logger: NullLogger<DuckDbVectorIndexRefresher>.Instance);
         await refresher.RefreshAsync(CancellationToken.None);
 
         // Chunking uses chunkSize=1500, overlap=150 => stride=1350 => 3 chunks for 3000 chars.
@@ -184,7 +184,7 @@ internal class DuckDbVectorIndexRefresherTests
 
         database.IndexArtifact(documentNode.Uri, parsedArtifact);
 
-        var refresher = new DuckDbVectorIndexRefresher(database, provider, NullLogger<DuckDbVectorIndexRefresher>.Instance);
+        var refresher = new DuckDbVectorIndexRefresher(database, provider, logger: NullLogger<DuckDbVectorIndexRefresher>.Instance);
         await refresher.RefreshAsync(CancellationToken.None);
 
         provider.EmbedCount.Should().Be(1);

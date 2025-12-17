@@ -31,6 +31,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly DocumentPreviewService _previewService;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IEmbeddingProvider? _embeddingProvider;
+    private readonly EmbeddingMode _embeddingMode;
     private readonly ILogger<RepoQlServiceImpl> _logger;
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -48,6 +49,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         ICompositeFileSystemManager mountManager,
         DocumentPreviewService previewService,
         IHostApplicationLifetime hostLifetime,
+        EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
         ILogger<RepoQlServiceImpl>? logger = null)
     {
@@ -55,6 +57,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
         this.barrier = barrier ?? throw new ArgumentNullException(nameof(barrier));
         this._embeddingProvider = embeddingProvider;
+        _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
         _mountManager = mountManager ?? throw new ArgumentNullException(nameof(mountManager));
@@ -689,7 +692,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     var embeddingStart = sw.ElapsedMilliseconds;
                     try
                     {
-                        var refresher = new EmbeddingRefresher(_db, _logger as ILogger<EmbeddingRefresher>);
+                        var refresher = new EmbeddingRefresher(_db, _embeddingMode, _logger as ILogger<EmbeddingRefresher>);
                         await refresher.RefreshAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
                         _logger.LogInformation("[Import] Embedding refresh completed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - embeddingStart);
                     }
@@ -705,12 +708,13 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     var provider = _embeddingProvider;
                     var db = _db;
                     var logger = _logger;
+                    var embeddingMode = _embeddingMode;
                     _ = Task.Run(async () =>
                     {
                         var bgStart = System.Diagnostics.Stopwatch.StartNew();
                         try
                         {
-                            var refresher = new EmbeddingRefresher(db, logger as ILogger<EmbeddingRefresher>);
+                            var refresher = new EmbeddingRefresher(db, embeddingMode, logger as ILogger<EmbeddingRefresher>);
                             await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
                             logger.LogInformation("[Import] Background embedding refresh completed ({ElapsedMs}ms)", bgStart.ElapsedMilliseconds);
                         }

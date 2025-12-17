@@ -637,48 +637,36 @@ public static class DuckDbDataStoreExtensions
         var lc = uri.Container.AbsoluteUri.ToLowerInvariant();
         var uriStr = uri.Container.AbsoluteUri;
 
-        // Check if exists
-        using var check = conn.CreateCommand();
-        check.Transaction = tx;
-        check.CommandText = "SELECT id FROM node WHERE container_uri_lowercase = ?;";
-        check.AddParameters(lc);
-        using var reader = check.ExecuteReader();
+        // Atomic upsert using INSERT ... ON CONFLICT ... DO UPDATE
+        // This avoids race conditions from check-then-insert pattern
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (container_uri_lowercase) DO UPDATE SET
+                kind = excluded.kind,
+                uri = excluded.uri,
+                artifact_id = excluded.artifact_id,
+                span_id = excluded.span_id,
+                properties = excluded.properties,
+                headline = excluded.headline,
+                structure = excluded.structure,
+                updated_at = excluded.updated_at
+            RETURNING id;
+            """;
+        cmd.AddParameters(document.Id, document.Kind, uriStr, lc, document.ArtifactId, document.SpanId,
+            document.Props.ToJsonString(), document.Headline, document.Structure,
+            document.CreatedAt.UtcDateTime, document.UpdatedAt.UtcDateTime);
 
+        using var reader = cmd.ExecuteReader();
         if (reader.Read())
         {
             var id = reader.GetGuid(0);
-            reader.Close();
-
-            // Update existing
-            using var upd = conn.CreateCommand();
-            upd.Transaction = tx;
-            upd.CommandText = """
-                UPDATE node
-                SET kind=?, uri=?, container_uri_lowercase=?, artifact_id=?, span_id=?, properties=?, headline=?, structure=?, updated_at=?
-                WHERE id=?;
-                """;
-            upd.AddParameters(document.Kind, uriStr, lc, document.ArtifactId, document.SpanId,
-                document.Props.ToJsonString(), document.Headline, document.Structure,
-                document.UpdatedAt.UtcDateTime, id);
-            upd.ExecuteNonQuery();
-
             return document with { Id = id };
         }
 
-        reader.Close();
-
-        // Insert new
-        using var ins = conn.CreateCommand();
-        ins.Transaction = tx;
-        ins.CommandText = """
-            INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-            """;
-        ins.AddParameters(document.Id, document.Kind, uriStr, lc, document.ArtifactId, document.SpanId,
-            document.Props.ToJsonString(), document.Headline, document.Structure,
-            document.CreatedAt.UtcDateTime, document.UpdatedAt.UtcDateTime);
-        ins.ExecuteNonQuery();
-
+        // Fallback (should not happen with RETURNING)
         return document;
     }
 

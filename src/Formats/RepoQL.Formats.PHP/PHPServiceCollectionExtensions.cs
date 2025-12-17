@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Indexing.Hosting;
 
@@ -8,7 +9,11 @@ public static class PHPServiceCollectionExtensions
 {
     public static IServiceCollection AddPHPFormat(this IServiceCollection services)
     {
-        services.AddSingleton<PHPLoader>();
+        // Explicitly pass null for renderer so PHPLoader creates its own with PHP templates
+        // (prevents DI from injecting the global ITemplateRenderer which has wrong templates)
+        services.AddSingleton<PHPLoader>(sp => new PHPLoader(
+            renderer: null,
+            logger: sp.GetService<ILogger<PHPLoader>>()));
 
         services.AddSingleton<FormatDescriptor>(sp =>
         {

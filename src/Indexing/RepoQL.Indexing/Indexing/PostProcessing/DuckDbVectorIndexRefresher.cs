@@ -14,21 +14,31 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
 {
     private readonly EmbeddingRefresher _refresher;
     private readonly IEmbeddingProvider _embeddingProvider;
+    private readonly EmbeddingMode _embeddingMode;
     private readonly ILogger<DuckDbVectorIndexRefresher> _logger;
 
     public DuckDbVectorIndexRefresher(
         DuckDbDataStore dataStore,
         IEmbeddingProvider embeddingProvider,
+        EmbeddingMode embeddingMode = EmbeddingMode.Full,
         ILogger<DuckDbVectorIndexRefresher>? logger = null)
     {
         if (dataStore is null) throw new ArgumentNullException(nameof(dataStore));
         _embeddingProvider = embeddingProvider ?? throw new ArgumentNullException(nameof(embeddingProvider));
+        _embeddingMode = embeddingMode;
         _logger = logger ?? NullLogger<DuckDbVectorIndexRefresher>.Instance;
-        _refresher = new EmbeddingRefresher(dataStore, logger as ILogger<EmbeddingRefresher>);
+        _refresher = new EmbeddingRefresher(dataStore, embeddingMode, logger as ILogger<EmbeddingRefresher>);
     }
 
     public async Task RefreshAsync(CancellationToken cancellationToken)
     {
+        // Full embeddings require Full or Hybrid mode
+        if (!_embeddingMode.IncludesFull() && !_embeddingMode.IsHybrid())
+        {
+            _logger.LogDebug("Full embedding refresh skipped - mode={Mode}", _embeddingMode);
+            return;
+        }
+
         if (!_embeddingProvider.Enabled)
         {
             _logger.LogInformation("Embedding refresh skipped - provider disabled (model={Model}).", _embeddingProvider.Model);

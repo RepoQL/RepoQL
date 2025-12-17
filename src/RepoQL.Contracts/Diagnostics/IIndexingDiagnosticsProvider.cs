@@ -59,8 +59,8 @@ public record IndexingDiagnosticsSnapshot
     /// <summary>Total write operations processed since startup.</summary>
     public required long WriterTotal { get; init; }
 
-    /// <summary>Whether embedding generation is enabled.</summary>
-    public required bool EmbedEnabled { get; init; }
+    /// <summary>Embedding mode: None, StructureOnly, or Full.</summary>
+    public required string EmbedMode { get; init; }
 
     /// <summary>Last epoch for which embeddings were refreshed.</summary>
     public required long EmbedLastEpoch { get; init; }
@@ -121,7 +121,7 @@ public static class IndexingDiagnostics
             $"analysis_active: {snapshot.AnalysisActive}",
             $"writer_pending: {snapshot.WriterPending}",
             $"writer_total: {snapshot.WriterTotal}",
-            $"embed_enabled: {snapshot.EmbedEnabled}",
+            $"embed_mode: {snapshot.EmbedMode}",
             $"embed_last_epoch: {snapshot.EmbedLastEpoch}",
             $"last_error: {snapshot.LastError ?? "null"}",
             $"query_embed_provider: {_queryEmbedProvider ?? "null"}",
