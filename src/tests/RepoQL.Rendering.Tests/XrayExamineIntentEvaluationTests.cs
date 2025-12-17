@@ -4,7 +4,8 @@
 /// </summary>
 
 using AwesomeAssertions;
-using RepoQL.Xray.Tests.TestData;
+using RepoQL.Rendering.Tests.TestData;
+using RepoQL.Xray;
 
 namespace RepoQL.Rendering.Tests;
 
