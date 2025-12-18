@@ -1,16 +1,21 @@
 @page "/status"
 @inject RepoQlConnectionManager ConnectionManager
 @inject HostStatusStore HostStatusStore
+@inject OperationsService OperationsService
 @implements IDisposable
 
-<PageTitle>Host Status</PageTitle>
+<PageTitle>Operations Dashboard</PageTitle>
 
-<h1>Host Status</h1>
+<h1>Operations Dashboard</h1>
 
+@* Connection Status *@
 <div class="card status-card">
     <dl>
         <dt>Connection</dt>
-        <dd>@_connectionState.Description (@(_connectionState.IsConnected ? "online" : "offline"))</dd>
+        <dd>
+            <span class="@ConnectionBadgeClass">@(_connectionState.IsConnected ? "Online" : "Offline")</span>
+            @_connectionState.Description
+        </dd>
         <dt>Host Check</dt>
         <dd>@_hostStatus.Message</dd>
         <dt>Last Updated</dt>
@@ -18,17 +23,473 @@
     </dl>
 </div>
 
+@* Pipeline Status Panel *@
+<div class="card" style="margin-top: 1.5rem;">
+    <h2 style="margin-top: 0;">Pipeline Status</h2>
+
+    @if (_pipelineStatus is null)
+    {
+        <p class="loading">Loading pipeline status...</p>
+    }
+    else
+    {
+        <div class="pipeline-stages">
+            @foreach (var stage in _pipelineStatus.Stages)
+            {
+                var stageName = GetStageName(stage.Stage);
+                var stageClass = GetStageClass(stage);
+                <div class="pipeline-stage @stageClass">
+                    <div class="stage-name">@stageName</div>
+                    <div class="stage-status">
+                        @if (stage.Busy)
+                        {
+                            <span class="badge badge-busy">Busy</span>
+                        }
+                        else
+                        {
+                            <span class="badge badge-idle">Idle</span>
+                        }
+                    </div>
+                    <div class="stage-details">
+                        <span title="Queued">Q: @stage.Queued</span>
+                        <span title="In Progress">P: @stage.InProgress</span>
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div style="margin-top: 1rem; font-size: 0.85rem; color: #64748b;">
+            @if (_pipelineStatus.Reindexing)
+            {
+                <span class="badge badge-warning">Reindexing</span>
+            }
+            @if (_pipelineStatus.WriterPending)
+            {
+                <span class="badge badge-warning" style="margin-left: 0.5rem;">Writer Pending</span>
+            }
+            <span style="margin-left: 1rem;">Captured: @_pipelineStatus.CapturedAt.ToDateTime().ToLocalTime().ToString("HH:mm:ss")</span>
+        </div>
+    }
+</div>
+
+@* Operations Control Panel *@
+<div class="card" style="margin-top: 1.5rem;">
+    <h2 style="margin-top: 0;">Operations</h2>
+
+    <div class="operations-controls">
+        <div class="operation-group">
+            <h3>Reindex All Files</h3>
+            <p class="operation-desc">Re-scan and re-index all files in the repository.</p>
+            <div class="operation-buttons">
+                <button class="btn primary" @onclick="StartReindexAsync" disabled="@(!_connectionState.IsConnected || _operationState.Status != OperationStatus.Idle)">
+                    Reindex All
+                </button>
+                @if (_operationState.Status == OperationStatus.Reindexing)
+                {
+                    <button class="btn secondary" @onclick="CancelOperation">Cancel</button>
+                }
+            </div>
+        </div>
+
+        <div class="operation-group">
+            <h3>Import Repository</h3>
+            <p class="operation-desc">Import an external repository (e.g., github://owner/repo).</p>
+            <div class="import-form">
+                <input type="text" @bind="_importUri" placeholder="github://owner/repo" class="import-input"
+                       disabled="@(!_connectionState.IsConnected || _operationState.Status != OperationStatus.Idle)" />
+                <select @bind="_importWaitStage" class="import-select"
+                        disabled="@(!_connectionState.IsConnected || _operationState.Status != OperationStatus.Idle)">
+                    <option value="@PipelineStage.Unspecified">Immediate (don't wait)</option>
+                    <option value="@PipelineStage.Discovery">Wait for Discovery</option>
+                    <option value="@PipelineStage.Indexing">Wait for Indexing</option>
+                    <option value="@PipelineStage.SemanticIndexing">Wait for Semantic (default)</option>
+                </select>
+                <button class="btn primary" @onclick="StartImportAsync"
+                        disabled="@(!_connectionState.IsConnected || _operationState.Status != OperationStatus.Idle || string.IsNullOrWhiteSpace(_importUri))">
+                    Import
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@* Live Progress Panel *@
+@if (_operationState.Status != OperationStatus.Idle)
+{
+    <div class="card progress-card" style="margin-top: 1.5rem;">
+        <h2 style="margin-top: 0;">
+            @if (_operationState.Status == OperationStatus.Reindexing)
+            {
+                <text>Reindexing Progress</text>
+            }
+            else if (_operationState.Status == OperationStatus.Importing)
+            {
+                <text>Import Progress</text>
+            }
+            else if (_operationState.Status == OperationStatus.Error)
+            {
+                <text>Operation Error</text>
+            }
+        </h2>
+
+        <div class="progress-content">
+            <div class="progress-message">@_operationState.Message</div>
+
+            @if (_operationState.Status == OperationStatus.Reindexing && _operationState.TotalItems > 0)
+            {
+                <MudProgressLinear Value="@_operationState.PercentComplete" Color="Color.Primary" Rounded="true" Size="Size.Large" />
+                <div class="progress-stats">
+                    <span>@_operationState.ProcessedItems / @_operationState.TotalItems items</span>
+                    <span>@_operationState.PercentComplete%</span>
+                </div>
+            }
+            else if (_operationState.Status == OperationStatus.Reindexing)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Primary" Rounded="true" Size="Size.Large" />
+            }
+            else if (_operationState.Status == OperationStatus.Importing)
+            {
+                <MudProgressLinear Indeterminate="true" Color="Color.Secondary" Rounded="true" Size="Size.Large" />
+                @if (!string.IsNullOrEmpty(_operationState.TargetUri))
+                {
+                    <div class="progress-stats">Importing: @_operationState.TargetUri</div>
+                }
+            }
+            else if (_operationState.Status == OperationStatus.Error)
+            {
+                <div class="error-callout">@_operationState.Message</div>
+            }
+        </div>
+    </div>
+}
+
+@* Diagnostics Panel *@
+<div class="card" style="margin-top: 1.5rem;">
+    <h2 style="margin-top: 0;">Diagnostics</h2>
+
+    @if (_diagnostics is null)
+    {
+        <p class="loading">Loading diagnostics...</p>
+    }
+    else if (_diagnosticsError is not null)
+    {
+        <div class="error-callout">@_diagnosticsError</div>
+    }
+    else
+    {
+        <div class="diagnostics-grid">
+            <div class="diag-item">
+                <span class="diag-label">Hot Path Depth</span>
+                <span class="diag-value">@GetDiagValue("hot_path_depth", "0")</span>
+            </div>
+            <div class="diag-item">
+                <span class="diag-label">Idle Pending</span>
+                <span class="diag-value">@GetDiagValue("idle_pending", "0")</span>
+            </div>
+            <div class="diag-item">
+                <span class="diag-label">Analysis Depth</span>
+                <span class="diag-value">@GetDiagValue("analysis_depth", "0")</span>
+            </div>
+            <div class="diag-item">
+                <span class="diag-label">Writer Pending</span>
+                <span class="diag-value">@GetDiagValue("writer_pending", "0")</span>
+            </div>
+            <div class="diag-item">
+                <span class="diag-label">Query Embedding</span>
+                <span class="diag-value">
+                    @if (GetDiagValue("query_embed_enabled", "false") == "True")
+                    {
+                        <span class="badge badge-online">Enabled</span>
+                    }
+                    else
+                    {
+                        <span class="badge badge-offline">Disabled</span>
+                    }
+                </span>
+            </div>
+        </div>
+
+        <button class="btn secondary" style="margin-top: 1rem;" @onclick="RefreshDiagnosticsAsync">
+            Refresh Diagnostics
+        </button>
+    }
+</div>
+
+<style>
+    .pipeline-stages {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .pipeline-stage {
+        flex: 1;
+        min-width: 140px;
+        padding: 1rem;
+        border-radius: 10px;
+        background-color: #f8fafc;
+        border: 2px solid #e2e8f0;
+        text-align: center;
+    }
+
+    .pipeline-stage.busy {
+        border-color: #f59e0b;
+        background-color: #fefce8;
+    }
+
+    .pipeline-stage.idle {
+        border-color: #22c55e;
+        background-color: #f0fdf4;
+    }
+
+    .stage-name {
+        font-weight: 600;
+        font-size: 0.95rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .stage-status {
+        margin-bottom: 0.5rem;
+    }
+
+    .stage-details {
+        font-size: 0.8rem;
+        color: #64748b;
+        display: flex;
+        gap: 0.75rem;
+        justify-content: center;
+    }
+
+    .badge-busy {
+        background-color: #f59e0b;
+        color: #1f2937;
+    }
+
+    .badge-idle {
+        background-color: #22c55e;
+        color: white;
+    }
+
+    .operations-controls {
+        display: grid;
+        gap: 1.5rem;
+    }
+
+    .operation-group h3 {
+        margin: 0 0 0.35rem 0;
+        font-size: 1rem;
+    }
+
+    .operation-desc {
+        font-size: 0.9rem;
+        color: #64748b;
+        margin: 0 0 0.75rem 0;
+    }
+
+    .operation-buttons {
+        display: flex;
+        gap: 0.75rem;
+    }
+
+    .import-form {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+    }
+
+    .import-input {
+        flex: 1;
+        min-width: 200px;
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid #cbd5f0;
+    }
+
+    .import-input:focus {
+        outline: none;
+        border-color: #245dc1;
+        box-shadow: 0 0 0 3px rgba(36, 93, 193, 0.15);
+    }
+
+    .import-select {
+        padding: 0.5rem 0.75rem;
+        border-radius: 8px;
+        border: 1px solid #cbd5f0;
+        background-color: white;
+    }
+
+    .progress-card {
+        background-color: #fefce8;
+        border: 1px solid #fde047;
+    }
+
+    .progress-content {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .progress-message {
+        font-weight: 500;
+        color: #1f2937;
+    }
+
+    .progress-stats {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.85rem;
+        color: #64748b;
+    }
+
+    .diagnostics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+    }
+
+    .diag-item {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+        padding: 0.75rem;
+        background-color: #f8fafc;
+        border-radius: 8px;
+    }
+
+    .diag-label {
+        font-size: 0.8rem;
+        color: #64748b;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .diag-value {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #1f2937;
+    }
+</style>
+
 @code {
     private RepoQlConnectionManager.ConnectionState _connectionState = RepoQlConnectionManager.ConnectionState.Create(false, "Not connected");
     private HostStatusSnapshot _hostStatus = HostStatusSnapshot.Offline("Waiting for host status");
+    private OperationState _operationState = OperationState.Idle();
+    private PipelineStatus? _pipelineStatus;
+    private Dictionary<string, string>? _diagnostics;
+    private string? _diagnosticsError;
+    private string _importUri = "";
+    private PipelineStage _importWaitStage = PipelineStage.SemanticIndexing;
+    private System.Timers.Timer? _refreshTimer;
+    private CancellationTokenSource _cts = new();
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         _connectionState = ConnectionManager.State;
         _hostStatus = HostStatusStore.Snapshot;
+        _operationState = OperationsService.CurrentState;
 
         ConnectionManager.StateChanged += OnConnectionStateChanged;
         HostStatusStore.SnapshotChanged += OnHostStatusChanged;
+        OperationsService.StateChanged += OnOperationStateChanged;
+
+        // Start periodic refresh
+        _refreshTimer = new System.Timers.Timer(5000);
+        _refreshTimer.Elapsed += async (s, e) => await RefreshStatusAsync();
+        _refreshTimer.Start();
+
+        // Initial load
+        await RefreshStatusAsync();
+        await RefreshDiagnosticsAsync();
+    }
+
+    private async Task RefreshStatusAsync()
+    {
+        if (!_connectionState.IsConnected) return;
+
+        try
+        {
+            _pipelineStatus = await OperationsService.GetPipelineStatusAsync(_cts.Token);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception)
+        {
+            // Ignore errors during refresh
+        }
+    }
+
+    private async Task RefreshDiagnosticsAsync()
+    {
+        if (!_connectionState.IsConnected)
+        {
+            _diagnosticsError = "Not connected to host";
+            return;
+        }
+
+        try
+        {
+            var client = await ConnectionManager.GetClientAsync(_cts.Token);
+            var result = await client.ExecuteRawQueryAsync("SELECT indexing_diagnostics() as diag", cancellationToken: _cts.Token);
+
+            if (result.Rows.Count > 0)
+            {
+                var text = result.Rows[0].Values.FirstOrDefault()?.StringValue ?? "";
+                _diagnostics = ParseKeyValueText(text);
+                _diagnosticsError = null;
+            }
+            else
+            {
+                _diagnosticsError = "No diagnostics available";
+            }
+        }
+        catch (Exception ex)
+        {
+            _diagnosticsError = ex.Message;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task StartReindexAsync()
+    {
+        try
+        {
+            await foreach (var progress in OperationsService.StartReindexAsync(clear: false, _cts.Token))
+            {
+                // Progress updates handled via StateChanged event
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // User cancelled
+        }
+        catch (Exception)
+        {
+            // Error handled via StateChanged event
+        }
+    }
+
+    private async Task StartImportAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_importUri)) return;
+
+        try
+        {
+            await OperationsService.ImportRepositoryAsync(_importUri, _importWaitStage, _cts.Token);
+            _importUri = ""; // Clear on success
+        }
+        catch (OperationCanceledException)
+        {
+            // User cancelled
+        }
+        catch (Exception)
+        {
+            // Error handled via StateChanged event
+        }
+    }
+
+    private void CancelOperation()
+    {
+        OperationsService.CancelCurrentOperation();
     }
 
     private void OnConnectionStateChanged(object? sender, RepoQlConnectionManager.ConnectionState state)
@@ -43,9 +504,52 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
+    private void OnOperationStateChanged(object? sender, OperationState state)
+    {
+        _operationState = state;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private string ConnectionBadgeClass => _connectionState.IsConnected ? "badge badge-online" : "badge badge-offline";
+
+    private static string GetStageName(PipelineStage stage) => stage switch
+    {
+        PipelineStage.Discovery => "Discovery",
+        PipelineStage.Indexing => "Indexing",
+        PipelineStage.SemanticIndexing => "Semantic",
+        PipelineStage.Analysis => "Analysis",
+        _ => "Unknown"
+    };
+
+    private static string GetStageClass(StageStatus stage) =>
+        stage.Busy || stage.Queued > 0 || stage.InProgress > 0 ? "busy" : "idle";
+
+    private static Dictionary<string, string> ParseKeyValueText(string text)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var colonIndex = line.IndexOf(':');
+            if (colonIndex > 0)
+            {
+                var key = line[..colonIndex].Trim();
+                var value = line[(colonIndex + 1)..].Trim();
+                result[key] = value;
+            }
+        }
+        return result;
+    }
+
+    private string GetDiagValue(string key, string defaultValue) =>
+        _diagnostics?.TryGetValue(key, out var value) == true ? value : defaultValue;
+
     public void Dispose()
     {
         ConnectionManager.StateChanged -= OnConnectionStateChanged;
         HostStatusStore.SnapshotChanged -= OnHostStatusChanged;
+        OperationsService.StateChanged -= OnOperationStateChanged;
+        _refreshTimer?.Dispose();
+        _cts.Cancel();
+        _cts.Dispose();
     }
 }

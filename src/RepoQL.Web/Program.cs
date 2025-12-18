@@ -9,6 +9,7 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddSingleton<RepoQlConnectionManager>();
 builder.Services.AddSingleton<HostStatusStore>();
+builder.Services.AddSingleton<OperationsService>();
 builder.Services.AddHostedService<HostStatusService>();
 builder.Services.AddScoped<SqlExecutionService>();
 builder.Services.AddScoped<DocumentExplorerService>();

@@ -1,0 +1,132 @@
+@inject OperationsService OperationsService
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="pipeline-status-bar @GetStatusClass()" @onclick="NavigateToStatus" title="Click to view Operations Dashboard">
+    @if (_state.Status == OperationStatus.Reindexing)
+    {
+        <span class="status-icon">
+            <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Warning" />
+        </span>
+        <span class="status-text">Reindexing: @_state.Message</span>
+        @if (_state.TotalItems > 0)
+        {
+            <span class="status-progress">@_state.PercentComplete%</span>
+        }
+    }
+    else if (_state.Status == OperationStatus.Importing)
+    {
+        <span class="status-icon">
+            <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Secondary" />
+        </span>
+        <span class="status-text">Importing...</span>
+    }
+    else if (_state.Status == OperationStatus.Error)
+    {
+        <span class="status-icon error-icon">!</span>
+        <span class="status-text">Error</span>
+    }
+    else
+    {
+        <span class="status-icon idle-icon"></span>
+        <span class="status-text">Idle</span>
+    }
+</div>
+
+<style>
+    .pipeline-status-bar {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.3rem 0.75rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+    }
+
+    .pipeline-status-bar:hover {
+        filter: brightness(1.1);
+    }
+
+    .pipeline-status-bar.idle {
+        background-color: rgba(34, 197, 94, 0.2);
+        color: #86efac;
+    }
+
+    .pipeline-status-bar.busy {
+        background-color: rgba(245, 158, 11, 0.25);
+        color: #fde047;
+    }
+
+    .pipeline-status-bar.error {
+        background-color: rgba(239, 68, 68, 0.25);
+        color: #fca5a5;
+    }
+
+    .status-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+    }
+
+    .idle-icon::before {
+        content: '';
+        display: block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: #22c55e;
+    }
+
+    .error-icon {
+        color: #ef4444;
+        font-weight: bold;
+    }
+
+    .status-text {
+        max-width: 150px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .status-progress {
+        font-weight: 600;
+    }
+</style>
+
+@code {
+    private OperationState _state = OperationState.Idle();
+
+    protected override void OnInitialized()
+    {
+        _state = OperationsService.CurrentState;
+        OperationsService.StateChanged += OnStateChanged;
+    }
+
+    private void OnStateChanged(object? sender, OperationState state)
+    {
+        _state = state;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void NavigateToStatus()
+    {
+        Navigation.NavigateTo("/status");
+    }
+
+    private string GetStatusClass() => _state.Status switch
+    {
+        OperationStatus.Reindexing or OperationStatus.Importing => "busy",
+        OperationStatus.Error => "error",
+        _ => "idle"
+    };
+
+    public void Dispose()
+    {
+        OperationsService.StateChanged -= OnStateChanged;
+    }
+}

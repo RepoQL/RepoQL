@@ -1,11 +1,102 @@
 @page "/"
 @inject StatsService StatsService
 @inject NavigationManager Navigation
+@inject OperationsService OperationsService
 @implements IDisposable
 
 <PageTitle>Overview</PageTitle>
 
 <h1>Repository Overview</h1>
+
+@* Status Banner *@
+@if (_operationState.Status != OperationStatus.Idle)
+{
+    <div class="status-banner @GetBannerClass()">
+        <div class="banner-content">
+            @if (_operationState.Status == OperationStatus.Reindexing)
+            {
+                <span class="banner-icon"><MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Warning" /></span>
+                <span class="banner-text">
+                    <strong>Reindexing:</strong> @_operationState.Message
+                    @if (_operationState.TotalItems > 0)
+                    {
+                        <span class="banner-progress">(@_operationState.PercentComplete%)</span>
+                    }
+                </span>
+            }
+            else if (_operationState.Status == OperationStatus.Importing)
+            {
+                <span class="banner-icon"><MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Secondary" /></span>
+                <span class="banner-text"><strong>Importing:</strong> @_operationState.TargetUri</span>
+            }
+            else if (_operationState.Status == OperationStatus.Error)
+            {
+                <span class="banner-text error"><strong>Error:</strong> @_operationState.Message</span>
+            }
+        </div>
+        <MudButton Size="Size.Small" Variant="Variant.Outlined" OnClick="NavigateToStatus">View Details</MudButton>
+    </div>
+}
+else
+{
+    <div class="status-banner idle">
+        <div class="banner-content">
+            <span class="banner-text">Pipeline idle</span>
+        </div>
+        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary" OnClick="NavigateToStatus">Operations Dashboard</MudButton>
+    </div>
+}
+
+<style>
+    .status-banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1rem;
+        border-radius: 10px;
+        margin-bottom: 1.5rem;
+    }
+
+    .status-banner.idle {
+        background-color: #f0fdf4;
+        border: 1px solid #86efac;
+    }
+
+    .status-banner.busy {
+        background-color: #fefce8;
+        border: 1px solid #fde047;
+    }
+
+    .status-banner.error {
+        background-color: #fef2f2;
+        border: 1px solid #fca5a5;
+    }
+
+    .banner-content {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .banner-icon {
+        display: flex;
+        align-items: center;
+    }
+
+    .banner-text {
+        font-size: 0.9rem;
+        color: #1f2937;
+    }
+
+    .banner-text.error {
+        color: #dc2626;
+    }
+
+    .banner-progress {
+        margin-left: 0.5rem;
+        font-weight: 600;
+    }
+</style>
 
 @if (_loading)
 {
@@ -224,11 +315,32 @@ else
     private List<AnnotationStat> _annotations = new();
     private HealthCheckResults _healthChecks = new(Array.Empty<HealthCheck>());
     private CancellationTokenSource? _loadCts;
+    private OperationState _operationState = OperationState.Idle();
 
     protected override async Task OnInitializedAsync()
     {
+        _operationState = OperationsService.CurrentState;
+        OperationsService.StateChanged += OnOperationStateChanged;
         await LoadDataAsync();
     }
+
+    private void OnOperationStateChanged(object? sender, OperationState state)
+    {
+        _operationState = state;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void NavigateToStatus()
+    {
+        Navigation.NavigateTo("/status");
+    }
+
+    private string GetBannerClass() => _operationState.Status switch
+    {
+        OperationStatus.Reindexing or OperationStatus.Importing => "busy",
+        OperationStatus.Error => "error",
+        _ => "idle"
+    };
 
     private async Task LoadDataAsync()
     {
@@ -318,6 +430,7 @@ else
 
     void IDisposable.Dispose()
     {
+        OperationsService.StateChanged -= OnOperationStateChanged;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
     }
