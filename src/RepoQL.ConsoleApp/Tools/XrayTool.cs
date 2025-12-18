@@ -214,7 +214,7 @@ internal sealed class XrayTool(
                     var idlePending = values.TryGetValue("idle_pending", out var ip) ? int.Parse(ip) : 0;
                     var analysisDepth = values.TryGetValue("analysis_depth", out var ad) ? int.Parse(ad) : 0;
                     var writerPending = values.TryGetValue("writer_pending", out var wp) ? int.Parse(wp) : 0;
-                    var embedEnabled = values.TryGetValue("embed_enabled", out var ee) && bool.Parse(ee);
+                    var embedEnabled = values.TryGetValue("query_embed_enabled", out var ee) && bool.Parse(ee);
 
                     return IndexerStatus.FromDiagnostics(hotPathDepth, idlePending, analysisDepth, writerPending, elapsedMs, embedEnabled);
                 }
