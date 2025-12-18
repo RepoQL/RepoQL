@@ -8,7 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <EmbeddedResource Include="**\*.md" />
+        <EmbeddedResource Include="**/*.md" />
     </ItemGroup>
     
     <ItemGroup>
