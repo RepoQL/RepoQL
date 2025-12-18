@@ -467,9 +467,10 @@ public sealed class EmbeddingRefresher
         var stride = ChunkSizeChars - ChunkOverlapChars;
         if (stride <= 0) stride = ChunkSizeChars;
 
-        // In Hybrid mode, we also need to know if structure exists
+        // In Hybrid mode, we need to know if meaningful x-ray data exists (headline OR structure with actual content)
+        // This ensures we only use structure-only embedding when there's actual content to embed
         var structureCheck = _embeddingMode.IsHybrid()
-            ? ", CASE WHEN a.structure IS NOT NULL AND length(a.structure) > 0 THEN 1 ELSE 0 END AS has_structure"
+            ? ", CASE WHEN (a.headline IS NOT NULL AND length(trim(a.headline)) > 0) OR (a.structure IS NOT NULL AND length(trim(a.structure)) > 0) THEN 1 ELSE 0 END AS has_structure"
             : ", 0 AS has_structure";
 
         var sql = $"""
