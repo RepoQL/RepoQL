@@ -14,8 +14,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Templates\**\*.liquid" />
-    <EmbeddedResource Include="Schema\**\*.sql" />
+    <EmbeddedResource Include="Templates/**/*.liquid" />
+    <EmbeddedResource Include="Schema/**/*.sql" />
   </ItemGroup>
 
     <ItemGroup>
