@@ -21,6 +21,7 @@
     <ProjectReference Include="..\Formats\RepoQL.Formats.GraphQL\RepoQL.Formats.GraphQL.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.TypeScript\RepoQL.Formats.TypeScript.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.PHP\RepoQL.Formats.PHP.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.Terraform\RepoQL.Formats.Terraform.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Sql\RepoQL.Formats.Sql.csproj" />
     <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
     <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />

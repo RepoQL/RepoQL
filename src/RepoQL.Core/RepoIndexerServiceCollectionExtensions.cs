@@ -26,6 +26,7 @@ using RepoQL.Formats.GraphQL;
 using RepoQL.Formats.Markdown;
 using RepoQL.Formats.Mermaid;
 using RepoQL.Formats.PHP;
+using RepoQL.Formats.Terraform;
 using RepoQL.Formats.TypeScript;
 using RepoQL.Formats.Sql;
 using RepoQL.Indexing.FileSystems;
@@ -200,6 +201,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddMarkdownFormat();
         services.AddTypeScriptFormat();
         services.AddPHPFormat();
+        services.AddTerraformFormat();
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjAnalyzer>();

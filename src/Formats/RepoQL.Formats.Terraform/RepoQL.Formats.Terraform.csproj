@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantCulture>true</InvariantCulture>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Antlr4.Runtime.Standard" Version="4.13.1" />
+    <PackageReference Include="Antlr4BuildTasks" Version="12.8.0" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Antlr4 Include="Grammar\terraform.g4">
+      <Listener>false</Listener>
+      <Visitor>true</Visitor>
+    </Antlr4>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
+  </ItemGroup>
+
+</Project>
