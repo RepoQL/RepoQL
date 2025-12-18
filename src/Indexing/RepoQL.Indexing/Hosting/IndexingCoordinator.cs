@@ -203,6 +203,13 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 stuckTimer.Restart();
                 lastQueueDepth = currentDepth;
             }
+            // If idle processing is active (e.g., embedding), work is happening even if depth doesn't change.
+            // Only applies to stages that include idle processing in their depth (Parsing, Analysis, Writer).
+            else if (stage != CoordinatorPipelineStage.Discovery && _engine.ActiveIdleProcessingCount > 0)
+            {
+                // Reset timer - embedding or other idle processing is actively running
+                stuckTimer.Restart();
+            }
             else if (stuckTimer.Elapsed > MaxQueueDrainWait)
             {
                 // No progress for MaxQueueDrainWait - timeout to prevent infinite wait
