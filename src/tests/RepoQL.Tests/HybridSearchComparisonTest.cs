@@ -3,7 +3,7 @@ using RepoQL.Data.DuckDB;
 namespace RepoQL.Tests;
 
 /// <summary>
-/// Manual test to compare hybrid_search vs file_search on the real RepoQL codebase.
+/// Manual test to compare search vs search on the real RepoQL codebase.
 /// Run this with: dotnet run -- --treenode-filter "/*/*/*/HybridSearchComparison*"
 /// </summary>
 internal class HybridSearchComparisonTest
@@ -69,10 +69,10 @@ internal class HybridSearchComparisonTest
 
     private static void CompareRecall(DuckDbDataStore store, string query)
     {
-        var fileSearchSql = $"SELECT uri FROM file_search('{query}') LIMIT 20";
+        var fileSearchSql = $"SELECT uri FROM search('{query}') LIMIT 20";
         var hybridSearchSql = $@"
-            WITH fs AS (SELECT uri FROM file_search('{query}') LIMIT 20),
-                 hs AS (SELECT uri, source FROM hybrid_search('{query}') LIMIT 20)
+            WITH fs AS (SELECT uri FROM search('{query}') LIMIT 20),
+                 hs AS (SELECT uri, source FROM search('{query}') LIMIT 20)
             SELECT hs.uri, hs.source,
                    CASE WHEN fs.uri IS NOT NULL THEN 'both' ELSE 'hybrid_only' END AS found_by
             FROM hs
@@ -82,13 +82,13 @@ internal class HybridSearchComparisonTest
         var fileSearchResults = store.Query(fileSearchSql).ToList();
         var comparisonResults = store.Query(hybridSearchSql).ToList();
 
-        Console.WriteLine($"file_search found: {fileSearchResults.Count} documents");
-        Console.WriteLine($"hybrid_search found: {comparisonResults.Count} documents");
+        Console.WriteLine($"search found: {fileSearchResults.Count} documents");
+        Console.WriteLine($"search found: {comparisonResults.Count} documents");
 
         var hybridOnly = comparisonResults.Where(r => r["found_by"]?.ToString() == "hybrid_only").ToList();
         if (hybridOnly.Any())
         {
-            Console.WriteLine($"\n✓ hybrid_search found {hybridOnly.Count} additional documents:");
+            Console.WriteLine($"\n✓ search found {hybridOnly.Count} additional documents:");
             foreach (var row in hybridOnly.Take(5))
             {
                 var uri = row["uri"]?.ToString() ?? "";
@@ -109,13 +109,13 @@ internal class HybridSearchComparisonTest
 
     private static void CompareKnownItem(DuckDbDataStore store, string query)
     {
-        var fileSearchSql = $"SELECT uri, ROUND(score, 3) AS score FROM file_search('{query}') LIMIT 3";
-        var hybridSearchSql = $"SELECT uri, ROUND(score, 3) AS score, source FROM hybrid_search('{query}') LIMIT 3";
+        var fileSearchSql = $"SELECT uri, ROUND(score, 3) AS score FROM search('{query}') LIMIT 3";
+        var hybridSearchSql = $"SELECT uri, ROUND(score, 3) AS score, source FROM search('{query}') LIMIT 3";
 
         var fileSearchResults = store.Query(fileSearchSql).ToList();
         var hybridSearchResults = store.Query(hybridSearchSql).ToList();
 
-        Console.WriteLine("file_search results:");
+        Console.WriteLine("search results:");
         foreach (var row in fileSearchResults)
         {
             var uri = row["uri"]?.ToString() ?? "";
@@ -124,7 +124,7 @@ internal class HybridSearchComparisonTest
             Console.WriteLine($"  {score,6} - {filename}");
         }
 
-        Console.WriteLine("\nhybrid_search results:");
+        Console.WriteLine("\nsearch results:");
         foreach (var row in hybridSearchResults)
         {
             var uri = row["uri"]?.ToString() ?? "";
@@ -144,7 +144,7 @@ internal class HybridSearchComparisonTest
             }
             else
             {
-                Console.WriteLine($"\n⚠️  Different top results: file_search='{fsTop}', hybrid_search='{hsTop}'");
+                Console.WriteLine($"\n⚠️  Different top results: search='{fsTop}', search='{hsTop}'");
             }
         }
     }
@@ -153,7 +153,7 @@ internal class HybridSearchComparisonTest
     {
         var sql = $@"
             SELECT uri, source, struct_mentions, body_mentions, ROUND(score, 3) AS score
-            FROM hybrid_search('{query}', enable_body_rescue := TRUE)
+            FROM search('{query}', enable_body_rescue := TRUE)
             LIMIT 10";
 
         var results = store.Query(sql).ToList();

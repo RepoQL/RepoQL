@@ -1,24 +1,17 @@
 using System.ComponentModel;
-using System.Diagnostics;
-using System.Text.RegularExpressions;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Xray;
-using RepoQL.Xray.Search;
 
 namespace RepoQL.ConsoleApp.Tools;
 
 [McpServerToolType]
 internal sealed class XrayTool(
-    IXraySearchEngine searchEngine,
-    IXrayRenderingEngine renderingEngine,
     RepoQlClientProvider clientProvider,
     SelfTestRunner selfTestRunner)
 {
-    private readonly IXraySearchEngine _searchEngine = searchEngine ?? throw new ArgumentNullException(nameof(searchEngine));
-    private readonly IXrayRenderingEngine _renderingEngine = renderingEngine ?? throw new ArgumentNullException(nameof(renderingEngine));
     private readonly RepoQlClientProvider _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
     private readonly SelfTestRunner _selfTestRunner = selfTestRunner ?? throw new ArgumentNullException(nameof(selfTestRunner));
 
@@ -99,11 +92,6 @@ internal sealed class XrayTool(
         [Description("Cap results shown - used with token budget to decide how things are displayed. Leave blank to have xray optimize it.")] int? limit = null,
         CancellationToken cancellationToken = default)
     {
-        // Parse and validate pattern parameters
-        var boostPatterns = ParsePatternStrings(boost);
-        var penalizePatterns = ParsePatternStrings(penalize);
-        var patternStrings = boostPatterns;
-
         if (tokenBudget <= 0)
             return "Error: tokenBudget must be a positive integer.";
 
@@ -112,7 +100,7 @@ internal sealed class XrayTool(
         var isRepeatRequest = _lastRequestSignature == requestSignature;
 
         // Check if indexer is ready before executing
-        var preStatus = await GetIndexerStatusAsync(0, cancellationToken).ConfigureAwait(false);
+        var preStatus = await GetIndexerStatusAsync(cancellationToken).ConfigureAwait(false);
         var needsIndex = preStatus.IndexPending > 0;
         var needsSemantic = !string.IsNullOrWhiteSpace(keywords) && !preStatus.SemanticReady;
 
@@ -141,21 +129,35 @@ internal sealed class XrayTool(
         // Clear the pending request now that we're executing
         _lastRequestSignature = null;
 
-        // Build search parameters (limit is not passed - it only affects display, not search)
-        var searchParams = new SearchParameters(
-            Scope: scope,
-            Question: keywords,
-            Patterns: patternStrings,
-            Intent: intent,
-            PenalizePatterns: penalizePatterns.Count > 0 ? penalizePatterns : null
-        );
+        // Map intent to proto enum
+        var protoIntent = intent switch
+        {
+            Intent.Explore => XrayIntent.Explore,
+            Intent.Find => XrayIntent.Find,
+            Intent.Examine => XrayIntent.Examine,
+            _ => XrayIntent.Explore
+        };
 
-        // Execute two-phase search with timing
-        var sw = Stopwatch.StartNew();
-        SearchEngineResult searchResult;
+        // Execute via server
         try
         {
-            searchResult = await _searchEngine.SearchAsync(searchParams, cancellationToken).ConfigureAwait(false);
+            var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
+            var response = await client.XrayAsync(
+                tokenBudget,
+                protoIntent,
+                scope,
+                keywords,
+                boost,
+                penalize,
+                limit,
+                cancellationToken).ConfigureAwait(false);
+
+            if (!response.Success)
+            {
+                return $"Error: {response.Error}";
+            }
+
+            return response.RenderedOutput;
         }
         catch (Exception ex)
         {
@@ -167,35 +169,9 @@ internal sealed class XrayTool(
             }
             return $"Error: Search failed. {ExtractErrorMessage(ex)}";
         }
-        sw.Stop();
-
-        // Get indexer status with timing
-        var indexerStatus = await GetIndexerStatusAsync(sw.ElapsedMilliseconds, cancellationToken).ConfigureAwait(false);
-
-        if (searchResult.Results.Count == 0)
-        {
-            var noResults = string.IsNullOrWhiteSpace(keywords)
-                ? $"No results found in scope: {scope ?? "(all)"}"
-                : $"No results matching '{keywords}' in scope: {scope ?? "(all)"}";
-            return $"{noResults}\n\n{RepresentationFormatter.FormatStatusFooter(indexerStatus)}";
-        }
-
-        // Convert to rendering types
-        var xrayResults = searchResult.Results.Select(r => ConvertToXrayResult(r)).ToList();
-
-        var hasSearchCriteria = !string.IsNullOrWhiteSpace(keywords) || patternStrings.Count > 0;
-        var context = new RenderingContext(
-            Intent: intent,
-            TokenBudget: tokenBudget,
-            Limit: limit,
-            HasSearchCriteria: hasSearchCriteria,
-            IndexerStatus: indexerStatus
-        );
-
-        return _renderingEngine.Render(xrayResults, context);
     }
 
-    private async Task<IndexerStatus> GetIndexerStatusAsync(long elapsedMs, CancellationToken ct)
+    private async Task<IndexerStatus> GetIndexerStatusAsync(CancellationToken ct)
     {
         try
         {
@@ -216,7 +192,7 @@ internal sealed class XrayTool(
                     var writerPending = values.TryGetValue("writer_pending", out var wp) ? int.Parse(wp) : 0;
                     var embedEnabled = values.TryGetValue("query_embed_enabled", out var ee) && bool.Parse(ee);
 
-                    return IndexerStatus.FromDiagnostics(hotPathDepth, idlePending, analysisDepth, writerPending, elapsedMs, embedEnabled);
+                    return IndexerStatus.FromDiagnostics(hotPathDepth, idlePending, analysisDepth, writerPending, 0, embedEnabled);
                 }
             }
         }
@@ -225,7 +201,7 @@ internal sealed class XrayTool(
             // Fall back to unknown status on any error
         }
 
-        return new IndexerStatus(0, false, false, elapsedMs);
+        return new IndexerStatus(0, false, false, 0);
     }
 
     private static Dictionary<string, string> ParseKeyValueText(string text)
@@ -242,58 +218,6 @@ internal sealed class XrayTool(
             }
         }
         return result;
-    }
-
-    #region Parameter Parsing
-
-    private static List<string> ParsePatternStrings(string? patterns)
-    {
-        if (string.IsNullOrWhiteSpace(patterns))
-            return [];
-
-        var result = new List<string>();
-        foreach (var pattern in patterns.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            // Validate pattern is parseable before adding
-            try
-            {
-                _ = new Regex(pattern, RegexOptions.None, TimeSpan.FromMilliseconds(100));
-                result.Add(pattern);
-            }
-            catch (RegexParseException)
-            {
-                // Skip invalid patterns
-            }
-        }
-        return result;
-    }
-
-    #endregion
-
-    #region Helpers
-
-    /// <summary>
-    /// Convert a SearchResult to XrayResult, including child objects recursively.
-    /// </summary>
-    private static XrayResult ConvertToXrayResult(SearchResult result)
-    {
-        IReadOnlyList<XrayResult>? childObjects = null;
-        if (result.ChildObjects is { Count: > 0 })
-        {
-            childObjects = result.ChildObjects.Select(ConvertToXrayResult).ToList();
-        }
-
-        return new XrayResult(
-            Uri: result.Uri,
-            Confidence: result.Confidence,
-            Kind: result.Scope == SearchScope.Symbol ? result.Kind : null,
-            Headline: result.Headline,
-            Structure: result.Structure,
-            Snippet: result.Snippet,
-            Lang: result.Lang,
-            SemanticType: result.SemanticType,
-            ChildObjects: childObjects
-        );
     }
 
     private static string ExtractErrorMessage(Exception ex)
@@ -314,6 +238,4 @@ internal sealed class XrayTool(
 
         return ex.Message;
     }
-
-    #endregion
 }

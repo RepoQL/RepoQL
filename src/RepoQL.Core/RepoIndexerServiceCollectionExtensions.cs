@@ -331,6 +331,7 @@ public static class RepoIndexerServiceCollectionExtensions
         // In-memory OTEL sink for dashboards/tests
         services.AddSingleton<InMemoryMetricsSink>(_ => new InMemoryMetricsSink("RepoQL.Indexing"));
         services.AddSingleton<InMemoryRateProvider>(sp => new InMemoryRateProvider(sp.GetRequiredService<InMemoryMetricsSink>()));
+        services.AddSingleton<StageMetricsListener>();
 
         services.AddSingleton<IDocumentCatalogDataSource>(sp => new DuckDbDocumentCatalogDataSource(
             sp.GetRequiredService<DuckDbDataStore>(),
@@ -354,9 +355,7 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<IDocumentCatalog>(),
             sp.GetService<ILogger<IndexingCommitter>>()));
 
-        services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, CSharpClassifier>();
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CSharpParser>();
-        services.AddSingleton<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>, MarkdownClassifier>();
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CsProjParser>();
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, SlnParser>();
         // Catch-all parser should run last in the parsing pipeline

@@ -7,11 +7,11 @@ using Artifact = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Data.DuckDB.Tests;
 
-public class HybridSearchMacroTests : IDisposable
+public class SearchMacroTests : IDisposable
 {
     private readonly DuckDbDataStore _store;
 
-    public HybridSearchMacroTests()
+    public SearchMacroTests()
     {
         _store = new DuckDbDataStore();
 
@@ -121,7 +121,7 @@ public class HybridSearchMacroTests : IDisposable
     {
         var results = _store.Read(
             @"SELECT uri, ROUND(score, 3) AS score
-              FROM hybrid_search('database')
+              FROM search('database')
               ORDER BY score DESC
               LIMIT 5",
             r => (uri: r.GetString(0), score: r.GetDouble(1)));
@@ -137,7 +137,7 @@ public class HybridSearchMacroTests : IDisposable
         // First, get results without boost
         var resultsWithoutBoost = _store.Read(
             @"SELECT uri, ROUND(score, 3) AS score
-              FROM hybrid_search('database')
+              FROM search('database')
               ORDER BY score DESC
               LIMIT 5",
             r => (uri: r.GetString(0), score: r.GetDouble(1)));
@@ -145,7 +145,7 @@ public class HybridSearchMacroTests : IDisposable
         // Now get results with boost pattern
         var resultsWithBoost = _store.Read(
             @"SELECT uri, ROUND(score, 3) AS score, struct_mentions
-              FROM hybrid_search('database', boost_pattern := 'DuckDB|connection')
+              FROM search('database', boost_pattern := 'DuckDB|connection')
               ORDER BY score DESC
               LIMIT 5",
             r => (uri: r.GetString(0), score: r.GetDouble(1), mentions: r.GetInt32(2)));
@@ -164,7 +164,7 @@ public class HybridSearchMacroTests : IDisposable
     {
         var results = _store.Read(
             @"SELECT uri, ROUND(score, 3) AS score, deranked
-              FROM hybrid_search('index', negative_pattern := '(?i)test')
+              FROM search('index', negative_pattern := '(?i)test')
               ORDER BY score DESC
               LIMIT 5",
             r => (uri: r.GetString(0), score: r.GetDouble(1), deranked: r.GetBoolean(2)));
@@ -202,7 +202,7 @@ public class HybridSearchMacroTests : IDisposable
     {
         var results = _store.Read(
             @"SELECT uri, ROUND(score, 3) AS score, struct_mentions, deranked
-              FROM hybrid_search('parser', boost_pattern := 'markdown', negative_pattern := '(?i)test')
+              FROM search('parser', boost_pattern := 'markdown', negative_pattern := '(?i)test')
               ORDER BY score DESC
               LIMIT 8",
             r => (uri: r.GetString(0), score: r.GetDouble(1), mentions: r.GetInt32(2), deranked: r.GetBoolean(3)));
@@ -246,7 +246,7 @@ public class HybridSearchMacroTests : IDisposable
     {
         var results = _store.Read(
             @"SELECT uri, ROUND(score, 3) AS score
-              FROM hybrid_search('parser', scope := 'file:///src/%')
+              FROM search('parser', scope := 'file:///src/%')
               ORDER BY score DESC",
             r => (uri: r.GetString(0), score: r.GetDouble(1)));
 

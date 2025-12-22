@@ -914,4 +914,84 @@ public sealed class RepoQlClient : IRepoQlClient
             var response = await client.PreviewDocumentAsync(request, cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
             return response;
         }, cancellationToken);
+
+    public Task<XrayResponse> XrayAsync(
+        int tokenBudget,
+        XrayIntent intent,
+        string? scope = null,
+        string? keywords = null,
+        string? boost = null,
+        string? penalize = null,
+        int? limit = null,
+        CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            var request = new Contracts.XrayRequest
+            {
+                TokenBudget = tokenBudget,
+                Intent = intent
+            };
+
+            if (!string.IsNullOrWhiteSpace(scope))
+                request.Scope = scope;
+            if (!string.IsNullOrWhiteSpace(keywords))
+                request.Keywords = keywords;
+            if (!string.IsNullOrWhiteSpace(boost))
+                request.Boost = boost;
+            if (!string.IsNullOrWhiteSpace(penalize))
+                request.Penalize = penalize;
+            if (limit.HasValue)
+                request.Limit = limit.Value;
+
+            var response = await client.XrayAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            return response;
+        }, cancellationToken);
+
+    public async IAsyncEnumerable<StatusEvent> WatchStatusAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var attempt = 0;
+        while (true)
+        {
+            await EnsureConnectedAsync(forceReconnect: attempt > 0, cancellationToken).ConfigureAwait(false);
+            var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
+            // No deadline for status stream - it should run indefinitely
+            using var call = client.WatchStatus(new WatchStatusRequest(), cancellationToken: cancellationToken);
+            var emitted = false;
+            Exception? failure = null;
+
+            while (true)
+            {
+                bool moved;
+                try
+                {
+                    moved = await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                    break;
+                }
+
+                if (!moved)
+                {
+                    yield break;
+                }
+
+                emitted = true;
+                yield return call.ResponseStream.Current;
+            }
+
+            if (failure != null && !emitted && attempt == 0 && _mode == ConnectionMode.Managed && ShouldAttemptReconnect(failure))
+            {
+                DisposeChannel();
+                attempt++;
+                continue;
+            }
+
+            if (failure != null)
+                throw failure;
+
+            yield break;
+        }
+    }
 }

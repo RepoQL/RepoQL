@@ -368,6 +368,64 @@ internal sealed class StatsService
         return new HealthCheckResults(checks);
     }
 
+    /// <summary>
+    /// Gets the overall X-ray coverage percentage (files with headline/summary/structure).
+    /// </summary>
+    public async Task<int> GetXrayCoverageAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var client = await _connectionManager.GetClientAsync(cancellationToken).ConfigureAwait(false);
+
+            var result = await client.ExecuteRawQueryAsync(
+                """
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE headline IS NOT NULL OR summary IS NOT NULL OR structure IS NOT NULL) as with_xray
+                FROM artifact
+                """,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            if (result.Rows.Count > 0)
+            {
+                var total = GetLong(result.Rows[0], result.Columns, "total");
+                var withXray = GetLong(result.Rows[0], result.Columns, "with_xray");
+                return total > 0 ? (int)(withXray * 100 / total) : 0;
+            }
+            return 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Checks if embeddings are available (at least some documents have embeddings).
+    /// </summary>
+    public async Task<bool> AreEmbeddingsReadyAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var client = await _connectionManager.GetClientAsync(cancellationToken).ConfigureAwait(false);
+
+            var result = await client.ExecuteRawQueryAsync(
+                "SELECT COUNT(*) > 0 as ready FROM document_embedding LIMIT 1",
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+
+            if (result.Rows.Count > 0)
+            {
+                var value = result.Rows[0].Values[0];
+                return value.BoolValue || value.NumberValue > 0;
+            }
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static string GetString(RowData row, IList<ColumnSchema> columns, string name)
     {
         var idx = FindColumnIndex(columns, name);

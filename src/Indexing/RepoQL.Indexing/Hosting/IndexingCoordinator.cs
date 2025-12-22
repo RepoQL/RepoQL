@@ -101,18 +101,32 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         var discoverySnapshot = _engine.GetHotPathQueueSnapshot();
         var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
 
+        // Stage breakdown:
+        // - Discovery: Files being enumerated from disk (mount indexing)
+        // - Parsing: Hot path queue (classification → parsing → single-file analysis)
+        // - Analysis: Multi-file analysis queue
+        // - Writer: Idle processing (embeddings, vector refresh)
+        var mountIndexing = Volatile.Read(ref _activeMountIndexing);
+        var pendingIdleProcessing = _engine.GetPendingIdleProcessingCount();
+        var activeIdleProcessing = _engine.ActiveIdleProcessingCount;
+
+        var hotPathActive =
+            _engine.GetActiveCount(IndexingState.ClassificationBusy) +
+            _engine.GetActiveCount(IndexingState.ParsingBusy) +
+            _engine.GetActiveCount(IndexingState.SingleFileAnalysisBusy);
+
         var stages = new List<PipelineStageStatusSnapshot>(capacity: 4)
         {
             new(
                 CoordinatorPipelineStage.Discovery,
-                _engine.GetActiveCount(IndexingState.ClassificationBusy) > 0,
-                discoverySnapshot.Queued,
-                _engine.GetActiveCount(IndexingState.ClassificationBusy)),
+                mountIndexing > 0,
+                mountIndexing,
+                mountIndexing > 0 ? 1 : 0),  // Show 1 active when enumerating
             new(
                 CoordinatorPipelineStage.Parsing,
-                (_engine.GetActiveCount(IndexingState.ParsingBusy) + _engine.GetActiveCount(IndexingState.SingleFileAnalysisBusy)) > 0,
+                hotPathActive > 0,
                 discoverySnapshot.Queued,
-                _engine.GetActiveCount(IndexingState.ParsingBusy) + _engine.GetActiveCount(IndexingState.SingleFileAnalysisBusy)),
+                hotPathActive),
             new(
                 CoordinatorPipelineStage.Analysis,
                 (_engine.GetActiveCount(IndexingState.MultiFileAnalysisBusy) + _engine.GetActiveCount(IndexingState.IndexRebuildBusy)) > 0,
@@ -120,9 +134,9 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 _engine.GetActiveCount(IndexingState.MultiFileAnalysisBusy) + _engine.GetActiveCount(IndexingState.IndexRebuildBusy)),
             new(
                 CoordinatorPipelineStage.Writer,
-                false,  // Sync writes = never busy
-                0,      // No queue
-                0)      // No in-progress
+                activeIdleProcessing > 0,
+                pendingIdleProcessing,
+                activeIdleProcessing)
         };
 
         return new PipelineStatusSnapshot(
@@ -186,13 +200,10 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
             // After state indicates idle, verify queue is also empty
             // This handles the race between enqueue and worker pickup
             var currentDepth = GetQueueDepthForStage(stage);
-            if (currentDepth <= 0)
+
+            // Success: workers idle and queue empty
+            if (currentDepth == 0)
             {
-                // For Writer stage, also wait for the writer to flush
-                if (stage == CoordinatorPipelineStage.Writer)
-                {
-                    await WaitForWriterIdleAsync(cancellationToken).ConfigureAwait(false);
-                }
                 return;
             }
 
@@ -412,28 +423,32 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         {
             yield return progress;
         }
+        _db.TryCheckpoint(); // Checkpoint after hot path to persist indexed artifacts
 
         await foreach (var progress in TrackPruningAsync(epoch, total, cancellationToken).ConfigureAwait(false))
         {
             yield return progress;
         }
+        _db.TryCheckpoint(); // Checkpoint after pruning
 
         await foreach (var progress in TrackVectorRefreshAsync(epoch, total, cancellationToken).ConfigureAwait(false))
         {
             yield return progress;
         }
+        _db.TryCheckpoint(); // Checkpoint after structure embeddings
 
         await foreach (var progress in TrackMultiFileAnalysisAsync(epoch, total, cancellationToken).ConfigureAwait(false))
         {
             yield return progress;
         }
+        _db.TryCheckpoint(); // Checkpoint after analysis
 
         await foreach (var progress in TrackIndexRebuildAsync(epoch, total, cancellationToken).ConfigureAwait(false))
         {
             yield return progress;
         }
-
-        await WaitForWriterIdleAsync(cancellationToken).ConfigureAwait(false);
+        _db.TryCheckpoint(); // Checkpoint after full embeddings
+        
         var completedTimer = Stopwatch.StartNew();
         var completedActivity = StartPhaseActivity(CoordinatorReindexPhase.Completed, epoch, total);
         var completed = false;
@@ -453,12 +468,6 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         {
             CompletePhaseActivity(completedActivity, completedTimer, completed);
         }
-    }
-
-    private Task WaitForWriterIdleAsync(CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("Writer is using sync mode - no flush needed");
-        return Task.CompletedTask;
     }
 
     private async IAsyncEnumerable<ReindexProgressSnapshot> TrackHotPathAsync(

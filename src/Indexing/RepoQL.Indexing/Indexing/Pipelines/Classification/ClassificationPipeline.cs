@@ -39,6 +39,19 @@ namespace RepoQL.Indexing.Indexing.Pipelines.Classification;
 public class ClassificationPipeline(IEnumerable<IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>> processors, ILogger<ClassificationPipeline>? logger = null)
     : PipelinePhase<IDiscoveredArtifact, SemanticMediaType?>("Classification", processors, logger)
 {
+    public override async Task<PipelineResult> ProcessItemAsync(IDiscoveredArtifact item, CancellationToken cancellationToken)
+    {
+        var result = await base.ProcessItemAsync(item, cancellationToken).ConfigureAwait(false);
+
+        // Apply ProvisionalMediaType fallback if no classifier set MediaType
+        if (item is IndexItem indexItem && indexItem.MediaType is null)
+        {
+            indexItem.MediaType = indexItem.RawArtifact.ProvisionalMediaType.Value;
+        }
+
+        return result;
+    }
+
     protected override Task ApplyResultAsync(IndexItem item, SemanticMediaType? result, CancellationToken cancellationToken = default)
     {
         item.MediaType = result;

@@ -13,6 +13,79 @@ namespace RepoQL.Data.DuckDB;
 /// </summary>
 public static class DuckDbDataStoreExtensions
 {
+    #region URI Normalization
+
+    /// <summary>
+    /// Normalize a URI string for storage. Removes problematic characters, validates format,
+    /// and ensures consistency to prevent constraint violations.
+    /// </summary>
+    private static string NormalizeUri(string? uri)
+    {
+        if (string.IsNullOrEmpty(uri))
+            return uri ?? string.Empty;
+
+        // Remove newlines (LF, CR), null bytes, and other control characters
+        var sb = new StringBuilder(uri.Length);
+        foreach (var c in uri)
+        {
+            // Skip control characters (0x00-0x1F) except tab which might be in some URIs
+            if (c < 0x20 && c != '\t')
+                continue;
+            sb.Append(c);
+        }
+        var normalized = sb.ToString().Trim();
+
+        // Validate: URI should not be empty after normalization
+        if (normalized.Length == 0)
+            throw new ArgumentException($"URI is empty after normalization. Original length: {uri.Length}");
+
+        // Validate: URI should have a scheme
+        var schemeEnd = normalized.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd < 1)
+            throw new ArgumentException($"URI missing or invalid scheme. Got: '{Truncate(normalized, 100)}'");
+
+        // Validate: For file:// URIs, reject absolute Windows paths (must be repo-relative)
+        if (normalized.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+        {
+            var path = normalized[8..]; // After "file:///"
+            if (path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':')
+            {
+                throw new ArgumentException(
+                    $"file:// URI must be repo-relative, not absolute. Got drive letter '{path[0]}:' in: '{Truncate(normalized, 100)}'");
+            }
+        }
+
+        // Normalize: Remove duplicate slashes in path (but not in scheme)
+        var pathStart = schemeEnd + 3;
+        if (pathStart < normalized.Length)
+        {
+            var scheme = normalized[..pathStart];
+            var path = normalized[pathStart..];
+
+            // Replace multiple consecutive slashes with single slash
+            while (path.Contains("//"))
+                path = path.Replace("//", "/");
+
+            normalized = scheme + path;
+        }
+
+        return normalized;
+    }
+
+    private static string Truncate(string s, int maxLength)
+        => s.Length <= maxLength ? s : s[..(maxLength - 3)] + "...";
+
+    /// <summary>
+    /// Normalize a RepoUri for storage.
+    /// </summary>
+    private static string NormalizeUri(RepoUri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        return NormalizeUri(uri.ToString());
+    }
+
+    #endregion
+
     #region Public Write Methods
 
     /// <summary>
@@ -242,27 +315,32 @@ public static class DuckDbDataStoreExtensions
             if (incremental)
             {
                 // Only insert documents that are missing from the projection
+                // Use REPLACE to strip newlines (chr(10), chr(13)) since TRIM only removes spaces
                 conn.Execute(tx, """
                     INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
+                    WITH clean AS (
+                        SELECT n.id, TRIM(REPLACE(REPLACE(n.uri, chr(10), ''), chr(13), '')) AS uri
+                        FROM node n
+                        WHERE n.kind = 'document' AND n.uri IS NOT NULL
+                    )
                     SELECT
-                        n.id,
-                        n.uri,
-                        LOWER(REPLACE(n.uri, '\', '/')),
+                        c.id,
+                        c.uri,
+                        LOWER(REPLACE(c.uri, '\', '/')),
                         CASE
-                            WHEN POSITION('/' IN REPLACE(n.uri, '\', '/')) > 0
-                            THEN SUBSTRING(REPLACE(n.uri, '\', '/') FROM LENGTH(REPLACE(n.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(n.uri, '\', '/'))) + 2)
-                            ELSE REPLACE(n.uri, '\', '/')
+                            WHEN POSITION('/' IN REPLACE(c.uri, '\', '/')) > 0
+                            THEN SUBSTRING(REPLACE(c.uri, '\', '/') FROM LENGTH(REPLACE(c.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(c.uri, '\', '/'))) + 2)
+                            ELSE REPLACE(c.uri, '\', '/')
                         END,
                         CASE
-                            WHEN POSITION('/' IN REPLACE(n.uri, '\', '/')) > 0
-                            THEN SUBSTRING(REPLACE(n.uri, '\', '/') FROM 1 FOR LENGTH(REPLACE(n.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(n.uri, '\', '/'))))
+                            WHEN POSITION('/' IN REPLACE(c.uri, '\', '/')) > 0
+                            THEN SUBSTRING(REPLACE(c.uri, '\', '/') FROM 1 FOR LENGTH(REPLACE(c.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(c.uri, '\', '/'))))
                             ELSE NULL
                         END
-                    FROM node n
-                    WHERE n.kind = 'document'
-                      AND n.uri IS NOT NULL
-                      AND NOT EXISTS (SELECT 1 FROM document_search ds WHERE ds.doc_id = n.id)
-                    ON CONFLICT (doc_id) DO NOTHING;
+                    FROM clean c
+                    WHERE NOT EXISTS (SELECT 1 FROM document_search ds WHERE ds.doc_id = c.id)
+                      AND NOT EXISTS (SELECT 1 FROM document_search ds WHERE ds.uri = c.uri)
+                    ON CONFLICT DO NOTHING;
                     """);
             }
             else
@@ -295,17 +373,11 @@ public static class DuckDbDataStoreExtensions
                 }
 
                 // Use ROW_NUMBER to deduplicate by URI in case multiple document nodes exist for same URI
+                // TRIM normalizes URIs with trailing whitespace/newlines to prevent duplicate conflicts
+                // ON CONFLICT handles any edge cases that slip through
                 conn.Execute(tx, "DELETE FROM document_search;");
                 conn.Execute(tx, """
                     INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
-                    WITH ranked AS (
-                        SELECT
-                            n.id,
-                            n.uri,
-                            ROW_NUMBER() OVER (PARTITION BY n.uri ORDER BY n.updated_at DESC, n.id) AS rn
-                        FROM node n
-                        WHERE n.kind = 'document' AND n.uri IS NOT NULL
-                    )
                     SELECT
                         r.id,
                         r.uri,
@@ -320,23 +392,35 @@ public static class DuckDbDataStoreExtensions
                             THEN SUBSTRING(REPLACE(r.uri, '\', '/') FROM 1 FOR LENGTH(REPLACE(r.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(r.uri, '\', '/'))))
                             ELSE NULL
                         END
-                    FROM ranked r
-                    WHERE r.rn = 1;
+                    FROM (
+                        SELECT
+                            n.id,
+                            TRIM(REPLACE(REPLACE(n.uri, chr(10), ''), chr(13), '')) AS uri,
+                            ROW_NUMBER() OVER (PARTITION BY TRIM(REPLACE(REPLACE(n.uri, chr(10), ''), chr(13), '')) ORDER BY n.updated_at DESC, n.id) AS rn
+                        FROM node n
+                        WHERE n.kind = 'document' AND n.uri IS NOT NULL
+                    ) r
+                    WHERE r.rn = 1
+                    ON CONFLICT (uri) DO NOTHING;
                     """);
             }
         });
     }
 
     /// <summary>
-    /// Execute a query and return results as dictionary rows.
+    /// Execute a read-only query and return results as dictionary rows.
     /// Used for dynamic SQL execution (MCP queries, CLI).
+    /// Uses DuckDB's read-only transaction mode to enforce that no writes can occur,
+    /// regardless of what SQL is passed. This is enforced at the database engine level.
     /// </summary>
     public static IReadOnlyList<IReadOnlyDictionary<string, object?>> Query(this DuckDbDataStore store, string sql)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(sql);
 
-        return store.Read(sql, reader =>
+        // Use ReadUntrusted which wraps the query in a read-only transaction
+        // DuckDB enforces this at the engine level - any write attempt will fail
+        return store.ReadUntrusted(sql, reader =>
         {
             var dict = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
             for (var i = 0; i < reader.FieldCount; i++)
@@ -440,8 +524,9 @@ public static class DuckDbDataStoreExtensions
                     structure = excluded.structure,
                     updated_at = excluded.updated_at;
                 """;
-            var containerLc = node.Uri?.Container.AbsoluteUri.ToLowerInvariant();
-            cmd.AddParameters(node.Id, node.Kind, node.Uri?.AbsoluteUri, containerLc,
+            var uriStr = node.Uri is not null ? NormalizeUri(node.Uri) : null;
+            var containerLc = uriStr?.ToLowerInvariant();
+            cmd.AddParameters(node.Id, node.Kind, uriStr, containerLc,
                 node.ArtifactId, node.SpanId, node.Props?.ToJsonString(),
                 node.Headline, node.Structure, node.CreatedAt, node.UpdatedAt);
             cmd.ExecuteNonQuery();
@@ -634,19 +719,24 @@ public static class DuckDbDataStoreExtensions
 
     private static Node UpsertDocumentByUri(DuckDBConnection conn, DuckDBTransaction tx, RepoUri uri, Node document)
     {
-        var lc = uri.Container.AbsoluteUri.ToLowerInvariant();
-        var uriStr = uri.Container.AbsoluteUri;
+        var uriStr = NormalizeUri(uri.Container.AbsoluteUri);
+        var lc = uriStr.ToLowerInvariant();
+
+        // Clean up any orphaned row with same URI but different id
+        // This handles dirty startup scenarios where deterministic IDs may differ from stored IDs
+        conn.Execute(tx, "DELETE FROM node WHERE container_uri_lowercase = ? AND id != ?;", lc, document.Id);
 
         // Atomic upsert using INSERT ... ON CONFLICT ... DO UPDATE
-        // This avoids race conditions from check-then-insert pattern
+        // Handle conflicts on id (primary key) since deterministic IDs may match existing rows
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (container_uri_lowercase) DO UPDATE SET
+            ON CONFLICT (id) DO UPDATE SET
                 kind = excluded.kind,
                 uri = excluded.uri,
+                container_uri_lowercase = excluded.container_uri_lowercase,
                 artifact_id = excluded.artifact_id,
                 span_id = excluded.span_id,
                 properties = excluded.properties,
@@ -776,7 +866,7 @@ public static class DuckDbDataStoreExtensions
                 sb.Append($"(${p + 1},${p + 2},${p + 3},${p + 4},${p + 5},${p + 6},${p + 7},${p + 8},${p + 9},${p + 10},${p + 11})");
 
                 var node = batch[i];
-                var uriStr = node.Uri?.AbsoluteUri;
+                var uriStr = node.Uri is not null ? NormalizeUri(node.Uri) : null;
                 cmd.Parameters.Add(new DuckDBParameter { Value = node.Id });
                 cmd.Parameters.Add(new DuckDBParameter { Value = node.Kind });
                 cmd.Parameters.Add(new DuckDBParameter { Value = uriStr ?? (object)DBNull.Value });
@@ -838,10 +928,11 @@ public static class DuckDbDataStoreExtensions
 
                 var edge = batch[i];
                 var compositionChildId = edge.IsComposition ? edge.DstId : (Guid?)null;
+                var dstUriStr = edge.DstUri is not null ? NormalizeUri(edge.DstUri.ToString()) : null;
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.Id });
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.SrcId });
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.DstId });
-                cmd.Parameters.Add(new DuckDBParameter { Value = edge.DstUri?.ToString() ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = dstUriStr ?? (object)DBNull.Value });
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.Type });
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.IsComposition });
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.Ordinal });
@@ -853,6 +944,24 @@ public static class DuckDbDataStoreExtensions
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.Props.ToJsonString() ?? (object)DBNull.Value });
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.CreatedAt.UtcDateTime });
             }
+
+            // Handle conflicts on composition_child_id - orphaned edges from previous sessions
+            // may have the same child ID if using deterministic GUIDs
+            sb.AppendLine();
+            sb.AppendLine(@"ON CONFLICT (composition_child_id) DO UPDATE SET
+    id = excluded.id,
+    source_node_id = excluded.source_node_id,
+    destination_node_id = excluded.destination_node_id,
+    destination_uri = excluded.destination_uri,
+    type = excluded.type,
+    is_composition = excluded.is_composition,
+    ordinal = excluded.ordinal,
+    scope_document_id = excluded.scope_document_id,
+    semantic_key = excluded.semantic_key,
+    source_span_id = excluded.source_span_id,
+    destination_span_id = excluded.destination_span_id,
+    properties = excluded.properties,
+    created_at = excluded.created_at");
 
             cmd.CommandText = sb.ToString();
             cmd.ExecuteNonQuery();
@@ -921,7 +1030,7 @@ public static class DuckDbDataStoreExtensions
 
     private static void UpsertDocumentSearch(DuckDBConnection conn, DuckDBTransaction tx, Guid docId, RepoUri uri)
     {
-        var uriStr = uri.Container.AbsoluteUri;
+        var uriStr = NormalizeUri(uri.Container.AbsoluteUri);
         var normalized = uriStr.Replace('\\', '/');
         var searchKey = normalized.ToLowerInvariant();
 
@@ -932,6 +1041,14 @@ public static class DuckDbDataStoreExtensions
         // Extract dirname (everything before last slash)
         var dirname = lastSlash > 0 ? normalized[..lastSlash] : null;
 
+        // Delete any existing row with same URI but different doc_id (handles ID changes)
+        using var deleteCmd = conn.CreateCommand();
+        deleteCmd.Transaction = tx;
+        deleteCmd.CommandText = "DELETE FROM document_search WHERE uri = ? AND doc_id != ?;";
+        deleteCmd.AddParameters(uriStr, docId);
+        deleteCmd.ExecuteNonQuery();
+
+        // Insert or update by doc_id
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
@@ -994,4 +1111,5 @@ public static class DuckDbDataStoreExtensions
     }
 
     #endregion
+
 }

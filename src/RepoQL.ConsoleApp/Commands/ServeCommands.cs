@@ -16,9 +16,12 @@ using OpenTelemetry.Trace;
 using RepoQL.Contracts;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Host;
+using RepoQL.ConsoleApp.Search;
 using RepoQL.Core;
 using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
+using RepoQL.Xray;
+using RepoQL.Xray.Search;
 using Spectre.Console;
 using ConsoleAppFramework;
 using Microsoft.Extensions.Configuration;
@@ -34,11 +37,10 @@ internal class HostCommands(IAnsiConsole console)
         repository ??= cwd;
         var repo = ProgramHelpers.ResolveRepo(repository);
 
-        if (!implicitStart)
-        {
-            await TryShutdownExistingHostAsync(repo, CancellationToken.None).ConfigureAwait(false);
-            await WaitForRepositoryAvailabilityAsync(repo, TimeSpan.FromSeconds(45), CancellationToken.None).ConfigureAwait(false);
-        }
+        // Always try to shutdown existing host to prevent multiple hosts writing to the same database
+        // This prevents write-write conflicts from concurrent access
+        await TryShutdownExistingHostAsync(repo, CancellationToken.None).ConfigureAwait(false);
+        await WaitForRepositoryAvailabilityAsync(repo, TimeSpan.FromSeconds(45), CancellationToken.None).ConfigureAwait(false);
         var builder = WebApplication.CreateSlimBuilder([]);
         builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -82,6 +84,13 @@ internal class HostCommands(IAnsiConsole console)
         });
         builder.WebHost.ConfigureKestrel(options => { GrpcServerHelper.ConfigureUnixSocket(options, repo); });
         builder.Services.AddRepoIndexer(repo);
+
+        // Search services for XrayOrchestrator (server-side, using DuckDbDataStore directly)
+        builder.Services.AddSingleton<IDocumentSearchService, DocumentSearchService>();
+        builder.Services.AddSingleton<IObjectSearchService, ObjectSearchService>();
+        builder.Services.AddSingleton<IXraySearchEngine, XraySearchEngine>();
+        builder.Services.AddSingleton<XrayOrchestrator>();
+
         builder.Services.AddGrpc();
         builder.Services.AddSingleton<HostMetrics>();
         // Restore persisted mounts BEFORE other hosted services start
@@ -91,6 +100,7 @@ internal class HostCommands(IAnsiConsole console)
         builder.Services.AddHostedService(sp => sp.GetRequiredService<InitialIndexingBarrier>());
         builder.Services.AddSingleton<IInitialIndexingBarrier>(sp => sp.GetRequiredService<InitialIndexingBarrier>());
         builder.Services.AddSingleton<IQueryBarrier, QueryBarrier>();
+        builder.Services.AddSingleton<StatusEventAggregator>();
         builder.Services.AddHostedService<PipelineHealthPublisher>();
 
         var app = builder.Build();

@@ -91,7 +91,8 @@ public sealed class PhysicalFileSystem(
         {
             RecurseSubdirectories = true,
             IgnoreInaccessible = true,
-            AttributesToSkip = FileAttributes.Hidden | FileAttributes.System
+            // Skip hidden, system, and symlinks (ReparsePoint) to avoid indexing the same content twice
+            AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint
         };
 
         // Enumerate all files recursively

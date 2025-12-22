@@ -49,7 +49,7 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
         // Step 0: Normalize query - compile regexes, precompute query embedding, detect intent
         var signals = await NormalizeQueryAsync(question, cancellationToken).ConfigureAwait(false);
 
-        // Step 1: Document selection via hybrid_search
+        // Step 1: Document selection via search
         var documentCandidates = await GetDocumentCandidatesAsync(
             client, signals, scope, boostPattern, penalizePattern, config, cancellationToken).ConfigureAwait(false);
 
@@ -218,7 +218,7 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
     }
 
     /// <summary>
-    /// Get document candidates using hybrid_search macro.
+    /// Get document candidates using search macro.
     /// </summary>
     private async Task<List<DocumentExpansionCandidate>> GetDocumentCandidatesAsync(
         IRepoQlClient client,
@@ -229,7 +229,7 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
         ObjectSearchConfig config,
         CancellationToken cancellationToken)
     {
-        // Build scope LIKE pattern for hybrid_search
+        // Build scope LIKE pattern for search
         var scopeLike = !string.IsNullOrWhiteSpace(scope) && scope != "%"
             ? ConvertGlobToLike(scope)
             : null;
@@ -241,7 +241,7 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
         var boostParam = !string.IsNullOrWhiteSpace(boostPattern) ? $"${paramIndex++}" : "NULL";
         var penalizeParam = !string.IsNullOrWhiteSpace(penalizePattern) ? $"${paramIndex++}" : "NULL";
 
-        // Use hybrid_search for document selection with boost/penalize patterns
+        // Use search for document selection with boost/penalize patterns
         var sql = $"""
             SELECT
                 uri,
@@ -254,7 +254,7 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
                 body_mentions,
                 deranked,
                 score
-            FROM hybrid_search(
+            FROM search(
                 {keywordsParam},
                 scope := {scopeParam},
                 boost_pattern := {boostParam},
@@ -294,8 +294,8 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
                     CumulativeProbability: 0.0, // Computed later
                     Headline: ExtractString(values[1]),
                     Structure: ExtractString(values[2]),
-                    Lang: null, // Not returned by hybrid_search
-                    SemanticType: null, // Not returned by hybrid_search
+                    Lang: null, // Not returned by search
+                    SemanticType: null, // Not returned by search
                     Source: ExtractString(values[3]) ?? "unknown",
                     SemanticScore: ExtractDouble(values[4]) ?? 0.0,
                     Bm25Score: ExtractDouble(values[5]) ?? 0.0,
@@ -309,7 +309,7 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "hybrid_search query failed, falling back to empty results");
+            _logger.LogWarning(ex, "search query failed, falling back to empty results");
             return [];
         }
     }

@@ -64,8 +64,8 @@ Multiple URI schemes unified under single interface:
 
 ```sql
 xray_documents()                                      -- Document inventory
-file_search('auth', question := 'JWT refresh?', k := 10)  -- Semantic search
-search('ProcessRequest', k := 10) WHERE scope='object'    -- Symbol search
+search('auth JWT refresh', k := 10)                   -- Semantic search (documents)
+search('config', scope := 'file:///src/%', k := 10)  -- Scoped search
 snippet('file:///path#line=42', 3)                    -- Code preview
 annotations_for(uri, 'lint', 'warning')               -- Diagnostics
 ```
@@ -95,8 +95,8 @@ annotations_for(uri, 'lint', 'warning')               -- Diagnostics
 |------|----------|
 | Add new file format | Create `src/Formats/RepoQL.Formats.X/` with Classifier + Parser. Follow Markdown or TypeScript as templates. |
 | Add lint rule | Emit `annotation` with `kind='lint'`, `severity`, `rule_id`, `message`, target span/node |
-| Query without reading files | Use `xray_documents()`, `file_search()`, `snippet()` - structure is pre-indexed |
-| Find a symbol | `search('ClassName', k := 10) WHERE scope='object'` returns URIs with line numbers |
+| Query without reading files | Use `xray_documents()`, `search()`, `snippet()` - structure is pre-indexed |
+| Find a symbol | Use `_search_candidates('ClassName', k := 10) WHERE scope='object'` or xray with keywords |
 | Propose architecture change | Read `docs/RepoqlDesign.md` first. Extend via views/macros/UDFs, never new base tables. |
 
 ## Key Documentation

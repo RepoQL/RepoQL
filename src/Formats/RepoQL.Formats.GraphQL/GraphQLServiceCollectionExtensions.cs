@@ -23,7 +23,6 @@ public static class GraphQLServiceCollectionExtensions
                 ["graphql", "graphqls", "gql", "gqls"]);
         });
 
-        services.AddIndexingProcessor<GraphQLClassifier>();
         services.AddIndexingProcessor<GraphQLDocumentParser>();
 
         return services;

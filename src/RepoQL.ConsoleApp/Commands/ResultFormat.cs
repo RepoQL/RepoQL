@@ -13,5 +13,10 @@ public enum ResultFormat
     /// <summary>
     ///    Great for piping - json elements, one per line
     /// </summary>
-    JsonLD
+    JsonLD,
+    /// <summary>
+    ///    Token-Oriented Object Notation - compact, LLM-friendly tabular format
+    ///    with ~40% fewer tokens than JSON. Default for MCP tools.
+    /// </summary>
+    Toon
 }

@@ -112,4 +112,31 @@ public interface IRepoQlClient : IAsyncDisposable
 
     public IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, TimeSpan? timeout = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Execute an xray query and return both structured results and pre-rendered output.
+    /// </summary>
+    /// <param name="tokenBudget">Maximum tokens to invest in the response.</param>
+    /// <param name="intent">Search intent (zoom level).</param>
+    /// <param name="scope">Optional scope filter (glob pattern or URI).</param>
+    /// <param name="keywords">Optional search keywords for semantic search.</param>
+    /// <param name="boost">Optional comma-separated regex patterns to boost matches.</param>
+    /// <param name="penalize">Optional comma-separated regex patterns to de-rank matches.</param>
+    /// <param name="limit">Optional max results to show (null = auto-calculate).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<XrayResponse> XrayAsync(
+        int tokenBudget,
+        XrayIntent intent,
+        string? scope = null,
+        string? keywords = null,
+        string? boost = null,
+        string? penalize = null,
+        int? limit = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stream real-time status events from the server. Replaces polling for live dashboard updates.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token to stop the stream.</param>
+    IAsyncEnumerable<StatusEvent> WatchStatusAsync(CancellationToken cancellationToken = default);
 }

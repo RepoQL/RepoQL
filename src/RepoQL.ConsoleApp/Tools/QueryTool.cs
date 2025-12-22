@@ -18,10 +18,12 @@ internal class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRun
                                              </CONCEPT>
                                              
                                              <PURPOSE>
+                                                 - Inventory the contents of a repository
                                                  - Find structures in files with semantic search, avoid reading files you don't need to
                                                  - Understand contents of files without token waste (Structure, relationships, dependencies, technologies)
                                                  - See linting errors across many file types (annotations)
                                                  - Understand "what uses this?" and "What links to this?" and "What breaks if I change this?"
+                                                 - Perform complex analysis, regex extraction etc with all the power and flexability of SQL
                                              </PURPOSE>
                                              
                                              <CONTEXT>
@@ -62,12 +64,10 @@ internal class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRun
                                                  SELECT * FROM xray_documents()  -- inventory
                                                  SELECT * FROM snippet('file:///path#line=42', 3)  -- preview
 
-                                                 -- Files: file_search(keywords, question := ..., k)
-                                                 SELECT uri, score FROM file_search('auth', question := 'How refresh JWTs?', k := 10)
-
-                                                 -- Objects (functions/classes/headings): search(q, k) WHERE scope='object'
-                                                 SELECT uri, symbol, kind, line_start FROM search('ProcessRequest', k := 10) WHERE scope = 'object'
-                                                 SELECT uri, scope, symbol FROM search('error handling', k := 30)  -- mixed
+                                                 -- Document search: search(keywords, scope, boost_pattern, k)
+                                                 SELECT uri, score FROM search('auth JWT refresh', k := 10)
+                                                 SELECT uri, score FROM search('config', scope := 'file:///src/%')
+                                                 SELECT uri, score FROM search('parser', boost_pattern := 'markdown', negative_pattern := '(?i)test')
 
                                                  SELECT * FROM annotations WHERE severity = 'error'  -- diagnostics
                                              </ESSENTIAL_MACROS>
@@ -75,7 +75,7 @@ internal class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRun
                                              Docs at docs:///quickstart.md, docs:///advanced-search.md
 
                                              <SEARCH_TIPS>
-                                             file_search(keywords, question, k) → documents. search(q, k) → documents + objects
+                                             search(keywords, scope, boost_pattern, k) → documents. search(q, k) → documents + objects
                                              - scope='document': files. scope='object': functions/classes/headings (URIs have #symbol=Foo&line=N)
                                              - Symbol exact match: 4.0 BM25. Objects get 5% boost.
                                              - dense_score NULL → embeddings loading (check: SELECT COUNT(*) FROM document_embedding)
@@ -90,7 +90,7 @@ internal class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRun
                                                    n.uri, /* e.g. docs:///querying-markdown.md*/
                                                    a.headline, /* Querying Markdown with RepoQL — querying-markdown.md | markdown.doc | 5725 | 151 lines | lang: sql | topics: Core Schema Mapping, Markdown Views, Markdown-Specific UDFs & Macros*/
                                                    a.summary, /* Most important details of contents, format depends on mime, < 10 lines */
-                                                   a.structure /* Expanded details of contents, format depends on mime, < 25 lines */
+                                                   a.structure /* Expanded details of contents, format depends on mime */
                                                FROM node AS n /* node = file contents, usually 1:1 with artifact */
                                                JOIN artifact AS a ON n.artifact_id = a.id /* artifact = node container (usually file) */
                                                WHERE n.kind = 'document' 
@@ -127,7 +127,7 @@ internal class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRun
                                              ```postgresql
                                              WITH search_results AS (
                                                  SELECT uri, score
-                                             FROM file_search('navigation loading', question := 'Why does the progress bar stick?', k := 3)
+                                             FROM search('navigation loading progress bar', k := 3)
                                                )
                                                SELECT
                                                  sr.uri,
@@ -139,7 +139,7 @@ internal class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRun
                                                     LATERAL snippet(sr.uri, 2) AS sn
                                                ORDER BY sr.score DESC, sn.line_number;
                                                /*
-                                               - file_search(keywords, question := ...) combines lexical + semantic (k := 3 limits results).
+                                               - search(keywords, ...) combines lexical + semantic (k := 3 limits results).
                                                - snippet(uri, 2) returns two lines of context around each match; is_focus marks the focal line.
                                                - Order by score DESC to get best matches first.
                                                */
@@ -167,23 +167,15 @@ internal class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRun
                                                ' \
                                                | column -t -s $'\t'
                                              ```
-                                             
-                                             TL;DR: xray_documents() for inventory, file_search() for documents, search() WHERE scope='object' for functions/classes, snippet() for preview. Read docs:///quickstart.md first.
                                                
                                              <INSTRUCTION>
                                              
-                                             **DO NOW:**
-                                             
-                                             - [ ] List embedded RepoQL documentation 
-                                               _So that you know what you don't know_
-                                             - [ ] List all markdown docs in repo + headlines
-                                               *So that you know what repository docs are available to you. Vital to your success in completing future tasks*
-                                             - [ ] Read `docs:///quickstart.md`
-                                               *Before attempting complex queries*
+                                             - Use Xray for anything you can - it will always use less tokens than Query
+                                             - Use ReadMcpResourceTool when you want to read content and you know the URI
+                                             - Use query when you need more control or your needs are complex
+                                             - Remember that you can import additional repositories if you need more context
                                              
                                              </INSTRUCTION>
-                                             
-                                             Do the above before attempting any non-trivial work.
                                              """;
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "query"), Description(QueryInstructions)]
@@ -205,7 +197,7 @@ internal class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRun
 
         try
         {
-            var result = await queryExecutor.ExecuteAsync(sql, maxRows, ResultFormat.JsonLD, cancel).ConfigureAwait(false);
+            var result = await queryExecutor.ExecuteAsync(sql, maxRows, ResultFormat.Toon, cancel).ConfigureAwait(false);
             return string.Join(Environment.NewLine, result.Lines);
         }
         catch (Exception ex)

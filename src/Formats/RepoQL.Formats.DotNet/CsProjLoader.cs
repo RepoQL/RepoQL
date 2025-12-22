@@ -240,12 +240,16 @@ public sealed class CsProjLoader : IFormatLoader, IFormatMaterializer
         };
 
         // Create reference edges to referenced projects
+        // Use URI-based path resolution to stay repo-relative (not filesystem-based which would pick up CWD drive letter)
         var edges = new List<Edge>();
-        var baseDir = Path.GetDirectoryName(document.Uri.Container.LocalPath) ?? "";
+        var docPath = document.Uri.Container.AbsolutePath; // e.g., /src/Foo/Foo.csproj
+        var baseDir = docPath[..docPath.LastIndexOf('/')];  // e.g., /src/Foo
         foreach (var pr in state.ProjectRefs)
         {
-            var targetPath = Path.GetFullPath(Path.Combine(baseDir, pr.Include.Replace('\\', '/')));
-            var targetUri = RepoUri.Parse(new Uri(targetPath).AbsoluteUri);
+            // Normalize backslashes and resolve relative path
+            var relPath = pr.Include.Replace('\\', '/');
+            var targetPath = ResolveRelativePath(baseDir, relPath);
+            var targetUri = RepoUri.Parse($"file://{targetPath}");
             edges.Add(new Edge
             {
                 Id = Guid.NewGuid(),
@@ -397,5 +401,31 @@ public sealed class CsProjLoader : IFormatLoader, IFormatMaterializer
         if (refs.Count > limit)
             text += ", …";
         return text;
+    }
+
+    /// <summary>
+    /// Resolves a relative path against a base directory path, handling .. and . segments.
+    /// Works purely on path strings without touching the filesystem.
+    /// </summary>
+    private static string ResolveRelativePath(string baseDir, string relativePath)
+    {
+        // Start with base directory segments
+        var segments = new List<string>(baseDir.Split('/', StringSplitOptions.RemoveEmptyEntries));
+
+        // Process each segment of the relative path
+        foreach (var segment in relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == "..")
+            {
+                if (segments.Count > 0)
+                    segments.RemoveAt(segments.Count - 1);
+            }
+            else if (segment != ".")
+            {
+                segments.Add(segment);
+            }
+        }
+
+        return "/" + string.Join("/", segments);
     }
 }

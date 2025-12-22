@@ -30,7 +30,7 @@ public class IndexingEngineOptions
     /// Number of concurrent workers for hot-path processing (Classification → Parsing → Analysis → Commit).
     /// Default: <see cref="Environment.ProcessorCount"/>.
     /// </summary>
-    public int IndexingWorkers { get; init; } = Environment.ProcessorCount;
+    public int IndexingWorkers { get; init; } = Environment.ProcessorCount * 2;
 
     /// <summary>
     /// Maximum capacity of the hot-path work queue. Backpressure applied when full.

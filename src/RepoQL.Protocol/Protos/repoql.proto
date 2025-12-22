@@ -45,6 +45,12 @@ service RepoQL {
 
   // Run the hot-path pipeline for a single document without persisting results.
   rpc PreviewDocument(PreviewDocumentRequest) returns (PreviewDocumentResponse);
+
+  // Execute an xray query returning both structured results and pre-rendered output.
+  rpc Xray(XrayRequest) returns (XrayResponse);
+
+  // Stream real-time status events. Replaces polling for live dashboard updates.
+  rpc WatchStatus(WatchStatusRequest) returns (stream StatusEvent);
 }
 
 // ----- Raw query -----
@@ -228,10 +234,23 @@ enum ReindexPhase {
 
 enum PipelineStage {
   PIPELINE_STAGE_UNSPECIFIED = 0;
+  // Legacy stages (for backward compatibility with WaitForPipeline/Import)
   PIPELINE_STAGE_DISCOVERY = 1;
   PIPELINE_STAGE_INDEXING = 2;
   PIPELINE_STAGE_SEMANTIC_INDEXING = 3;
   PIPELINE_STAGE_ANALYSIS = 4;
+  // Granular hot path stages
+  PIPELINE_STAGE_DISCOVER = 10;
+  PIPELINE_STAGE_FILTER = 11;
+  PIPELINE_STAGE_CLASSIFY = 12;
+  PIPELINE_STAGE_PARSE = 13;
+  PIPELINE_STAGE_XRAY = 14;
+  PIPELINE_STAGE_COMMIT = 15;
+  // Granular idle processing stages
+  PIPELINE_STAGE_PRUNE = 20;
+  PIPELINE_STAGE_STRUCT_EMBED = 21;
+  PIPELINE_STAGE_VECTOR_REFRESH = 22;
+  PIPELINE_STAGE_MULTI_FILE_ANALYSIS = 23;
 }
 
 message WaitForPipelineRequest {
@@ -276,6 +295,21 @@ message StageStatus {
   bool busy = 2;
   uint32 queued = 3;
   uint32 in_progress = 4;
+
+  // Timing metrics
+  double avg_duration_ms = 5;        // EMA of item latency
+  double peak_duration_ms = 6;       // Max in current/last run
+  int64 processed_total = 7;         // Cumulative processed
+  double throughput_per_sec = 8;     // Items/sec (rolling)
+
+  // Sparkline data (last 20 samples)
+  repeated double latency_samples = 9;   // For latency sparkline
+  repeated uint32 queue_samples = 10;    // For burndown sparkline
+
+  // Phase tracking (for idle stats)
+  google.protobuf.Timestamp last_active = 11;   // When phase ended
+  double last_run_duration_sec = 12;            // How long the run took
+  int64 last_run_items = 13;                    // Items in last run
 }
 
 message ShutdownHostRequest {
@@ -377,4 +411,206 @@ message PreviewDocumentResponse {
   string digest_hex = 4;
   PreviewRecords records = 5;
   repeated PreviewStageTiming stages = 6;
+}
+
+// ----- Xray: semantic search with structured + rendered output -----
+
+message XrayRequest {
+  // Maximum tokens to invest in the response.
+  int32 token_budget = 1;
+  // Search intent (zoom level).
+  XrayIntent intent = 2;
+  // Scope filter (glob pattern or URI).
+  string scope = 3;
+  // Search keywords for semantic search.
+  string keywords = 4;
+  // Comma-separated regex patterns to boost matches.
+  string boost = 5;
+  // Comma-separated regex patterns to de-rank matches.
+  string penalize = 6;
+  // Max results to show (0 = auto-calculate).
+  int32 limit = 7;
+}
+
+enum XrayIntent {
+  XRAY_INTENT_UNSPECIFIED = 0;
+  XRAY_INTENT_EXPLORE = 1;
+  XRAY_INTENT_FIND = 2;
+  XRAY_INTENT_EXAMINE = 3;
+}
+
+message XrayResponse {
+  // True if the query executed successfully.
+  bool success = 1;
+  // Error message if success is false.
+  string error = 2;
+  // Pre-rendered markdown output for display/MCP.
+  string rendered_output = 3;
+  // Structured results for programmatic use.
+  repeated XrayResultItem results = 4;
+  // True if results were truncated due to token budget.
+  bool truncated = 5;
+  // Current indexer status with readiness info.
+  XrayIndexerStatus status = 6;
+}
+
+message XrayResultItem {
+  // File or symbol URI.
+  string uri = 1;
+  // Confidence score 1-100.
+  int32 confidence = 2;
+  // Kind (e.g., "class", "method") - only for symbols.
+  string kind = 3;
+  // One-line summary.
+  string headline = 4;
+  // Outline/hierarchy.
+  string structure = 5;
+  // Code excerpt.
+  string snippet = 6;
+  // Language hint for code fence.
+  string lang = 7;
+  // Semantic type for grouping.
+  string semantic_type = 8;
+  // Nested child objects.
+  repeated XrayResultItem children = 9;
+}
+
+message XrayIndexerStatus {
+  // Number of items pending indexing (>0 means incomplete).
+  int32 index_pending = 1;
+  // True if semantic search (embeddings) is ready.
+  bool semantic_ready = 2;
+  // Convenience: true when index_pending==0 && (no keywords || semantic_ready).
+  bool ready = 3;
+  // Query elapsed time in milliseconds.
+  int64 elapsed_ms = 4;
+}
+
+// ----- WatchStatus: real-time status streaming -----
+
+message WatchStatusRequest {
+  // Reserved for future filters (e.g., event types to subscribe to).
+}
+
+message StatusEvent {
+  // Event timestamp.
+  google.protobuf.Timestamp timestamp = 1;
+  // Event payload - one of the following.
+  oneof event {
+    PipelineStatusEvent pipeline = 2;
+    IndexingActivityEvent activity = 3;
+    HealthEvent health = 4;
+    StatsSnapshotEvent stats = 5;
+  }
+}
+
+message PipelineStatusEvent {
+  // Per-stage status (legacy, for backward compatibility).
+  repeated StageStatus stages = 1;
+  // True if a reindex operation is in progress.
+  bool reindexing = 2;
+  // True if writer has pending work.
+  bool writer_pending = 3;
+  // Convenience: true when all stages idle and no pending work.
+  bool ready = 4;
+
+  // Granular hot path status (new).
+  HotPathStatus hot_path = 10;
+  // Granular idle processing status (new).
+  IdleProcessingStatus idle_processing = 11;
+}
+
+// Hot path: Discover -> Filter -> Classify -> Parse -> XRay -> Commit
+message HotPathStatus {
+  // True if any hot path work is in progress.
+  bool active = 1;
+  // Total items queued across hot path.
+  int32 queued = 2;
+  // Total items currently being processed.
+  int32 in_progress = 3;
+  // Current throughput (files/sec).
+  double throughput_per_sec = 4;
+  // Per-stage metrics.
+  repeated StageStatus stages = 10;
+}
+
+// Idle processing: Prune -> Struct Embed -> Vector Refresh -> Analysis
+message IdleProcessingStatus {
+  // True if idle processing is in progress.
+  bool active = 1;
+  // Current phase being processed.
+  string current_phase = 2;
+  // Items processed in current phase.
+  int32 progress = 3;
+  // Total items to process in current phase.
+  int32 total = 4;
+  // Average duration per item in current phase.
+  double avg_duration_ms = 5;
+  // When idle processing last completed.
+  google.protobuf.Timestamp last_run = 10;
+  // Duration of last complete run.
+  double last_run_duration_sec = 11;
+  // Items processed in last run.
+  int64 last_run_items = 12;
+  // Per-stage metrics.
+  repeated StageStatus stages = 20;
+}
+
+message IndexingActivityEvent {
+  // Type of activity.
+  IndexingActivityType type = 1;
+  // File URI being processed (if applicable).
+  string uri = 2;
+  // Human-readable description.
+  string message = 3;
+  // Items remaining in queue for this stage.
+  int32 queued_count = 4;
+  // Items processed in this batch.
+  int32 processed_count = 5;
+}
+
+enum IndexingActivityType {
+  INDEXING_ACTIVITY_UNSPECIFIED = 0;
+  INDEXING_ACTIVITY_FILE_CHANGED = 1;
+  INDEXING_ACTIVITY_FILE_DISCOVERED = 2;
+  INDEXING_ACTIVITY_FILE_PARSED = 3;
+  INDEXING_ACTIVITY_FILE_ANALYZED = 4;
+  INDEXING_ACTIVITY_EMBEDDINGS_GENERATED = 5;
+  INDEXING_ACTIVITY_BATCH_COMPLETE = 6;
+  INDEXING_ACTIVITY_IDLE = 7;
+}
+
+message HealthEvent {
+  // Type of health event.
+  HealthEventType type = 1;
+  // Human-readable message.
+  string message = 2;
+  // Severity level.
+  HealthSeverity severity = 3;
+}
+
+enum HealthEventType {
+  HEALTH_EVENT_UNSPECIFIED = 0;
+  HEALTH_EVENT_CONNECTED = 1;
+  HEALTH_EVENT_DISCONNECTED = 2;
+  HEALTH_EVENT_WARNING = 3;
+  HEALTH_EVENT_ERROR = 4;
+}
+
+enum HealthSeverity {
+  HEALTH_SEVERITY_UNSPECIFIED = 0;
+  HEALTH_SEVERITY_INFO = 1;
+  HEALTH_SEVERITY_WARNING = 2;
+  HEALTH_SEVERITY_ERROR = 3;
+}
+
+message StatsSnapshotEvent {
+  // Total files indexed.
+  int64 total_files = 1;
+  // Total nodes in the graph.
+  int64 total_nodes = 2;
+  // Percentage of files with xray coverage (headline/summary).
+  int32 xray_coverage_percent = 3;
+  // True if embeddings are ready for semantic search.
+  bool embeddings_ready = 4;
 }

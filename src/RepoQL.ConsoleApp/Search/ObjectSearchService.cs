@@ -1,7 +1,4 @@
-using System.Globalization;
-using Google.Protobuf.WellKnownTypes;
-using RepoQL.ConsoleApp.Helpers;
-using RepoQL.Protocol;
+using RepoQL.Data.DuckDB;
 using RepoQL.Xray.Search;
 
 namespace RepoQL.ConsoleApp.Search;
@@ -11,40 +8,30 @@ namespace RepoQL.ConsoleApp.Search;
 /// </summary>
 internal sealed class ObjectSearchService : IObjectSearchService
 {
-    private readonly RepoQlClientProvider _clientProvider;
+    private readonly DuckDbDataStore _db;
 
-    public ObjectSearchService(RepoQlClientProvider clientProvider)
+    public ObjectSearchService(DuckDbDataStore db)
     {
-        _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
+        _db = db ?? throw new ArgumentNullException(nameof(db));
     }
 
-    /// <summary>
-    /// Score threshold for "strong" document matches that warrant embedding search.
-    /// </summary>
-    private const double StrongMatchThreshold = 0.4;
-
-    public async Task<IReadOnlyList<ObjectMatch>> SearchInDocumentsAsync(
+    public Task<IReadOnlyList<ObjectMatch>> SearchInDocumentsAsync(
         IReadOnlyList<string> documentUris,
         string? question,
         int objectsPerDocument,
         CancellationToken cancellationToken)
     {
         if (documentUris.Count == 0)
-            return [];
+            return Task.FromResult<IReadOnlyList<ObjectMatch>>([]);
 
-        var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
         var hasQuestion = !string.IsNullOrWhiteSpace(question);
-
         var results = new List<ObjectMatch>();
-
-        // Track how many objects we found per document via embedding search
         var objectCountByDoc = new Dictionary<string, int>();
 
-        // For strong matches with a question, do ONE embedding search across all documents
+        // For strong matches with a question, do embedding search
         if (hasQuestion)
         {
-            var allObjects = await SearchObjectsInDocumentsAsync(
-                client, documentUris, question!, objectsPerDocument, cancellationToken).ConfigureAwait(false);
+            var allObjects = SearchObjectsInDocuments(documentUris, question!, objectsPerDocument);
 
             foreach (var obj in allObjects)
             {
@@ -61,15 +48,12 @@ internal sealed class ObjectSearchService : IObjectSearchService
 
         if (docsNeedingMore.Count > 0)
         {
-            // Calculate how many more objects we need per document
             var remainingPerDoc = docsNeedingMore.ToDictionary(
                 u => u,
                 u => objectCountByDoc.TryGetValue(u, out var count) ? objectsPerDocument - count : objectsPerDocument);
 
-            var fallbackObjects = await GetObjectsByPositionAsync(
-                client, docsNeedingMore, objectsPerDocument, cancellationToken).ConfigureAwait(false);
+            var fallbackObjects = GetObjectsByPosition(docsNeedingMore, objectsPerDocument);
 
-            // Filter out objects we already have and respect per-doc limits
             var existingUris = results.Select(r => r.Uri).ToHashSet();
             foreach (var obj in fallbackObjects)
             {
@@ -84,28 +68,21 @@ internal sealed class ObjectSearchService : IObjectSearchService
             }
         }
 
-        return results;
+        return Task.FromResult<IReadOnlyList<ObjectMatch>>(results);
     }
 
-    /// <summary>
-    /// Search for objects across multiple documents using a single embedding search.
-    /// Returns top objects per document, respecting the objectsPerDocument limit.
-    /// </summary>
-    private async Task<List<ObjectMatch>> SearchObjectsInDocumentsAsync(
-        IRepoQlClient client,
+    private List<ObjectMatch> SearchObjectsInDocuments(
         IReadOnlyList<string> documentUris,
         string question,
-        int objectsPerDocument,
-        CancellationToken cancellationToken)
+        int objectsPerDocument)
     {
         if (documentUris.Count == 0)
             return [];
 
-        // Build URI pattern filter for all documents
-        var uriPatterns = string.Join(" OR ", documentUris.Select((u, i) => $"s.uri LIKE ${i + 2}"));
-        var totalLimit = documentUris.Count * objectsPerDocument * 2; // 2x buffer for ranking
+        var escapedQuestion = EscapeSql(question);
+        var uriPatterns = string.Join(" OR ", documentUris.Select(u => $"s.uri LIKE '{EscapeSql(u)}#%'"));
+        var totalLimit = documentUris.Count * objectsPerDocument * 2;
 
-        // Single search query covering all documents
         var sql = $"""
             WITH search_results AS (
                 SELECT
@@ -121,7 +98,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     s.mime as semantic_type,
                     s.score,
                     split_part(s.uri, '#', 1) as document_uri
-                FROM search($1, k := {Math.Max(50, totalLimit)}) s
+                FROM _search_candidates('{escapedQuestion}', k := {Math.Max(50, totalLimit)}) s
                 WHERE s.scope = 'object'
                   AND ({uriPatterns})
             ),
@@ -136,26 +113,16 @@ internal sealed class ObjectSearchService : IObjectSearchService
             ORDER BY score DESC
             """;
 
-        var parameters = new List<object?> { question };
-        foreach (var docUri in documentUris)
-        {
-            parameters.Add(EscapeSql(docUri) + "#%");
-        }
-
         try
         {
-            var response = await client.ExecuteRawQueryAsync(
-                sql, parameters.ToArray(), null, cancellationToken).ConfigureAwait(false);
-
             var results = new List<ObjectMatch>();
-            foreach (var row in response.Rows)
-            {
-                var values = row.Values;
-                if (values.Count < 12) continue;
+            var rows = _db.Query(sql);
 
-                var uri = ExtractString(values[0]);
-                var kind = ExtractString(values[2]);
-                var docUri = ExtractString(values[11]);
+            foreach (var row in rows)
+            {
+                var uri = row.GetValueOrDefault("uri")?.ToString();
+                var kind = row.GetValueOrDefault("kind")?.ToString();
+                var docUri = row.GetValueOrDefault("document_uri")?.ToString();
 
                 if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(kind) || string.IsNullOrWhiteSpace(docUri))
                     continue;
@@ -164,15 +131,15 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     Uri: uri,
                     DocumentUri: docUri,
                     Kind: kind,
-                    Symbol: ExtractString(values[1]),
-                    Headline: ExtractString(values[3]),
-                    Structure: ExtractString(values[4]),
-                    Snippet: ExtractString(values[5]),
-                    LineStart: ExtractInt(values[6]) ?? 1,
-                    LineEnd: ExtractInt(values[7]) ?? 1,
-                    Lang: ExtractString(values[8]),
-                    SemanticType: ExtractString(values[9]),
-                    Score: ExtractDouble(values[10]) ?? 0.5
+                    Symbol: row.GetValueOrDefault("symbol")?.ToString(),
+                    Headline: row.GetValueOrDefault("headline")?.ToString(),
+                    Structure: row.GetValueOrDefault("structure")?.ToString(),
+                    Snippet: row.GetValueOrDefault("snippet")?.ToString(),
+                    LineStart: Convert.ToInt32(row.GetValueOrDefault("line_start") ?? 1),
+                    LineEnd: Convert.ToInt32(row.GetValueOrDefault("line_end") ?? 1),
+                    Lang: row.GetValueOrDefault("lang")?.ToString(),
+                    SemanticType: row.GetValueOrDefault("semantic_type")?.ToString(),
+                    Score: Convert.ToDouble(row.GetValueOrDefault("score") ?? 0.5)
                 ));
             }
 
@@ -180,19 +147,13 @@ internal sealed class ObjectSearchService : IObjectSearchService
         }
         catch
         {
-            // If search fails, return empty - will fall back to position-based
             return [];
         }
     }
 
-    /// <summary>
-    /// Get objects from documents by position (fallback when embedding search finds nothing).
-    /// </summary>
-    private async Task<List<ObjectMatch>> GetObjectsByPositionAsync(
-        IRepoQlClient client,
+    private List<ObjectMatch> GetObjectsByPosition(
         IReadOnlyList<string> documentUris,
-        int objectsPerDocument,
-        CancellationToken cancellationToken)
+        int objectsPerDocument)
     {
         if (documentUris.Count == 0)
             return [];
@@ -239,17 +200,14 @@ internal sealed class ObjectSearchService : IObjectSearchService
             ORDER BY document_uri, line_start
             """;
 
-        var response = await client.ExecuteRawQueryAsync(sql, [], null, cancellationToken).ConfigureAwait(false);
-
         var results = new List<ObjectMatch>();
-        foreach (var row in response.Rows)
-        {
-            var values = row.Values;
-            if (values.Count < 12) continue;
+        var rows = _db.Query(sql);
 
-            var uri = ExtractString(values[0]);
-            var docUri = ExtractString(values[1]);
-            var kind = ExtractString(values[2]);
+        foreach (var row in rows)
+        {
+            var uri = row.GetValueOrDefault("uri")?.ToString();
+            var docUri = row.GetValueOrDefault("document_uri")?.ToString();
+            var kind = row.GetValueOrDefault("kind")?.ToString();
 
             if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(docUri) || string.IsNullOrWhiteSpace(kind))
                 continue;
@@ -258,15 +216,15 @@ internal sealed class ObjectSearchService : IObjectSearchService
                 Uri: uri,
                 DocumentUri: docUri,
                 Kind: kind,
-                Symbol: ExtractString(values[3]),
-                Headline: ExtractString(values[4]),
-                Structure: ExtractString(values[5]),
-                Snippet: ExtractString(values[6]),
-                LineStart: ExtractInt(values[7]) ?? 1,
-                LineEnd: ExtractInt(values[8]) ?? 1,
-                Lang: ExtractString(values[9]),
-                SemanticType: ExtractString(values[10]),
-                Score: ExtractDouble(values[11]) ?? 0.5
+                Symbol: row.GetValueOrDefault("symbol")?.ToString(),
+                Headline: row.GetValueOrDefault("headline")?.ToString(),
+                Structure: row.GetValueOrDefault("structure")?.ToString(),
+                Snippet: row.GetValueOrDefault("snippet")?.ToString(),
+                LineStart: Convert.ToInt32(row.GetValueOrDefault("line_start") ?? 1),
+                LineEnd: Convert.ToInt32(row.GetValueOrDefault("line_end") ?? 1),
+                Lang: row.GetValueOrDefault("lang")?.ToString(),
+                SemanticType: row.GetValueOrDefault("semantic_type")?.ToString(),
+                Score: Convert.ToDouble(row.GetValueOrDefault("score") ?? 0.5)
             ));
         }
 
@@ -274,32 +232,4 @@ internal sealed class ObjectSearchService : IObjectSearchService
     }
 
     private static string EscapeSql(string value) => value.Replace("'", "''");
-
-    private static string? ExtractString(Value value) =>
-        value.KindCase switch
-        {
-            Value.KindOneofCase.StringValue => value.StringValue,
-            Value.KindOneofCase.NumberValue => value.NumberValue.ToString(CultureInfo.InvariantCulture),
-            Value.KindOneofCase.BoolValue => value.BoolValue ? "true" : "false",
-            _ => null
-        };
-
-    private static int? ExtractInt(Value value)
-    {
-        var str = ExtractString(value);
-        return !string.IsNullOrWhiteSpace(str) && int.TryParse(str, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : null;
-    }
-
-    private static double? ExtractDouble(Value value)
-    {
-        if (value.KindCase == Value.KindOneofCase.NumberValue)
-            return value.NumberValue;
-
-        var str = ExtractString(value);
-        return !string.IsNullOrWhiteSpace(str) && double.TryParse(str, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : null;
-    }
 }

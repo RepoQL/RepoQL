@@ -40,10 +40,10 @@ internal class ConfidenceScoringTests
         {
             try
             {
-                // Execute file_search query
+                // Execute search query
                 var sql = $@"
                     SELECT uri, score
-                    FROM file_search('', question := '{query.Replace("'", "''")}', k := 5)
+                    FROM search('{query.Replace("'", "''")}', k := 5)
                     WHERE uri LIKE 'file:///%'
                     ORDER BY score DESC
                     LIMIT 1";

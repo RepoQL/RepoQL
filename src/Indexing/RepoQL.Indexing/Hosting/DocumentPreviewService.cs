@@ -32,27 +32,18 @@ public sealed record DocumentPreviewResult(
 /// <summary>
 /// Executes the hot-path pipeline for a single artifact without writing to the database.
 /// </summary>
-public sealed class DocumentPreviewService
+public sealed class DocumentPreviewService(
+    CompositeFileSystem fileSystem,
+    ClassificationPipeline classification,
+    ParsingPipeline parsing,
+    SingleFileAnalysisPipeline singleFile,
+    ILogger<DocumentPreviewService>? logger = null)
 {
-    private readonly CompositeFileSystem _fileSystem;
-    private readonly ClassificationPipeline _classification;
-    private readonly ParsingPipeline _parsing;
-    private readonly SingleFileAnalysisPipeline _singleFile;
-    private readonly ILogger<DocumentPreviewService> _logger;
-
-    public DocumentPreviewService(
-        CompositeFileSystem fileSystem,
-        ClassificationPipeline classification,
-        ParsingPipeline parsing,
-        SingleFileAnalysisPipeline singleFile,
-        ILogger<DocumentPreviewService>? logger = null)
-    {
-        _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
-        _classification = classification ?? throw new ArgumentNullException(nameof(classification));
-        _parsing = parsing ?? throw new ArgumentNullException(nameof(parsing));
-        _singleFile = singleFile ?? throw new ArgumentNullException(nameof(singleFile));
-        _logger = logger ?? NullLogger<DocumentPreviewService>.Instance;
-    }
+    private readonly CompositeFileSystem _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
+    private readonly ClassificationPipeline _classification = classification ?? throw new ArgumentNullException(nameof(classification));
+    private readonly ParsingPipeline _parsing = parsing ?? throw new ArgumentNullException(nameof(parsing));
+    private readonly SingleFileAnalysisPipeline _singleFile = singleFile ?? throw new ArgumentNullException(nameof(singleFile));
+    private readonly ILogger<DocumentPreviewService> _logger = logger ?? NullLogger<DocumentPreviewService>.Instance;
 
     public async Task<DocumentPreviewResult> PreviewAsync(DocumentPreviewRequest request, CancellationToken cancellationToken)
     {

@@ -14,6 +14,7 @@ using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
+using RepoQL.Xray;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoStageStatus = RepoQL.Contracts.StageStatus;
@@ -32,6 +33,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly EmbeddingMode _embeddingMode;
+    private readonly XrayOrchestrator _xrayOrchestrator;
+    private readonly StatusEventAggregator _statusAggregator;
     private readonly ILogger<RepoQlServiceImpl> _logger;
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -49,6 +52,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         ICompositeFileSystemManager mountManager,
         DocumentPreviewService previewService,
         IHostApplicationLifetime hostLifetime,
+        XrayOrchestrator xrayOrchestrator,
+        StatusEventAggregator statusAggregator,
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
         ILogger<RepoQlServiceImpl>? logger = null)
@@ -63,6 +68,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _mountManager = mountManager ?? throw new ArgumentNullException(nameof(mountManager));
         _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
+        _xrayOrchestrator = xrayOrchestrator ?? throw new ArgumentNullException(nameof(xrayOrchestrator));
+        _statusAggregator = statusAggregator ?? throw new ArgumentNullException(nameof(statusAggregator));
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
     }
 
@@ -908,4 +915,179 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             _ => CoordinatorPipelineStage.Discovery
         };
 
+    public override async Task<Contracts.XrayResponse> Xray(Contracts.XrayRequest request, ServerCallContext context)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            // Get indexer status via SQL
+            var status = await GetIndexerStatusAsync(0, context.CancellationToken).ConfigureAwait(false);
+
+            // Map intent
+            var intent = request.Intent switch
+            {
+                Contracts.XrayIntent.Explore => Intent.Explore,
+                Contracts.XrayIntent.Find => Intent.Find,
+                Contracts.XrayIntent.Examine => Intent.Examine,
+                _ => Intent.Explore
+            };
+
+            // Build query
+            var query = new XrayQuery(
+                TokenBudget: request.TokenBudget,
+                Intent: intent,
+                Scope: string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope,
+                Keywords: string.IsNullOrWhiteSpace(request.Keywords) ? null : request.Keywords,
+                Boost: string.IsNullOrWhiteSpace(request.Boost) ? null : request.Boost,
+                Penalize: string.IsNullOrWhiteSpace(request.Penalize) ? null : request.Penalize,
+                Limit: request.Limit > 0 ? request.Limit : null
+            );
+
+            // Execute via orchestrator
+            var result = await _xrayOrchestrator.ExecuteAsync(query, status, context.CancellationToken).ConfigureAwait(false);
+            sw.Stop();
+
+            // Update status with elapsed time
+            var hasKeywords = !string.IsNullOrWhiteSpace(request.Keywords);
+            var isReady = status.IndexPending == 0 && (!hasKeywords || status.SemanticReady);
+
+            // Build response
+            var response = new Contracts.XrayResponse
+            {
+                Success = true,
+                RenderedOutput = result.RenderedOutput,
+                Truncated = result.Truncated,
+                Status = new Contracts.XrayIndexerStatus
+                {
+                    IndexPending = status.IndexPending,
+                    SemanticReady = status.SemanticReady,
+                    Ready = isReady,
+                    ElapsedMs = sw.ElapsedMilliseconds
+                }
+            };
+
+            // Map structured results
+            foreach (var xrayResult in result.Results)
+            {
+                response.Results.Add(ToProtoXrayResult(xrayResult));
+            }
+
+            return response;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Xray query failed");
+            return new Contracts.XrayResponse
+            {
+                Success = false,
+                Error = ex.Message
+            };
+        }
+    }
+
+    /// <summary>
+    /// Stream real-time status events to the client. Replaces polling for live dashboard updates.
+    /// </summary>
+    public override async Task WatchStatus(
+        WatchStatusRequest request,
+        IServerStreamWriter<StatusEvent> responseStream,
+        ServerCallContext context)
+    {
+        _logger.LogDebug("Client subscribed to status stream");
+
+        try
+        {
+            await foreach (var evt in _statusAggregator.WatchAsync(context.CancellationToken).ConfigureAwait(false))
+            {
+                await responseStream.WriteAsync(evt, context.CancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Client disconnected - normal
+            _logger.LogDebug("Client disconnected from status stream");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Status stream error");
+            throw;
+        }
+    }
+
+    private async Task<IndexerStatus> GetIndexerStatusAsync(long elapsedMs, CancellationToken ct)
+    {
+        try
+        {
+            var rows = _db.Query("SELECT indexing_diagnostics() as diag");
+            var text = rows.FirstOrDefault()?.TryGetValue("diag", out var val) == true ? val?.ToString() : null;
+
+            if (!string.IsNullOrEmpty(text))
+            {
+                var values = ParseKeyValueText(text);
+
+                var hotPathDepth = values.TryGetValue("hot_path_depth", out var hp) && int.TryParse(hp, out var hpv) ? hpv : 0;
+                var idlePending = values.TryGetValue("idle_pending", out var ip) && int.TryParse(ip, out var ipv) ? ipv : 0;
+                var analysisDepth = values.TryGetValue("analysis_depth", out var ad) && int.TryParse(ad, out var adv) ? adv : 0;
+                var writerPending = values.TryGetValue("writer_pending", out var wp) && int.TryParse(wp, out var wpv) ? wpv : 0;
+                var embedEnabled = values.TryGetValue("query_embed_enabled", out var ee) && bool.TryParse(ee, out var eev) && eev;
+
+                return IndexerStatus.FromDiagnostics(hotPathDepth, idlePending, analysisDepth, writerPending, elapsedMs, embedEnabled);
+            }
+        }
+        catch
+        {
+            // Fall back to unknown status on any error
+        }
+
+        return new IndexerStatus(0, false, false, elapsedMs);
+    }
+
+    private static Dictionary<string, string> ParseKeyValueText(string text)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var colonIndex = line.IndexOf(':');
+            if (colonIndex > 0)
+            {
+                var key = line[..colonIndex].Trim();
+                var value = line[(colonIndex + 1)..].Trim();
+                result[key] = value;
+            }
+        }
+        return result;
+    }
+
+    private static Contracts.XrayResultItem ToProtoXrayResult(XrayResult result)
+    {
+        var item = new Contracts.XrayResultItem
+        {
+            Uri = result.Uri,
+            Confidence = result.Confidence
+        };
+
+        if (!string.IsNullOrEmpty(result.Kind))
+            item.Kind = result.Kind;
+        if (!string.IsNullOrEmpty(result.Headline))
+            item.Headline = result.Headline;
+        if (!string.IsNullOrEmpty(result.Structure))
+            item.Structure = result.Structure;
+        if (!string.IsNullOrEmpty(result.Snippet))
+            item.Snippet = result.Snippet;
+        if (!string.IsNullOrEmpty(result.Lang))
+            item.Lang = result.Lang;
+        if (!string.IsNullOrEmpty(result.SemanticType))
+            item.SemanticType = result.SemanticType;
+
+        if (result.ChildObjects is { Count: > 0 })
+        {
+            foreach (var child in result.ChildObjects)
+            {
+                item.Children.Add(ToProtoXrayResult(child));
+            }
+        }
+
+        return item;
+    }
 }

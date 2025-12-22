@@ -31,8 +31,8 @@ internal class SearchProjectionTests
         rows.Any(r => string.Equals(r["uri"]?.ToString(), docUri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)).Should().BeTrue();
 
         var searchRows = store.RawQuery(
-            "SELECT uri, score, bm25n, fuzzn FROM file_search('sample', k := 5, max_cand := 100)").ToList();
-        searchRows.Should().NotBeEmpty("file_search should yield at least one candidate");
+            "SELECT uri, score, bm25_score, sem_score FROM search('sample', k := 5)").ToList();
+        searchRows.Should().NotBeEmpty("search should yield at least one candidate");
         var hit = searchRows.First(r => string.Equals(r["uri"]?.ToString(), docUri.AbsoluteUri, StringComparison.OrdinalIgnoreCase));
         Convert.ToDouble(hit["score"]).Should().BeGreaterThan(0d);
 

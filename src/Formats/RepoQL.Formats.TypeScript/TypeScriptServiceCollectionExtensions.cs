@@ -61,7 +61,6 @@ public static class TypeScriptServiceCollectionExtensions
                 new[] { "jsx" });
         });
 
-        services.AddIndexingProcessor<TypeScriptClassifier>();
         services.AddIndexingProcessor<TypeScriptParser>();
 
         return services;

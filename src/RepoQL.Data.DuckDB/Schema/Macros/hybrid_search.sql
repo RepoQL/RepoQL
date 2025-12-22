@@ -1,23 +1,23 @@
--- Hybrid search: literal keywords for semantic/BM25 retrieval + regex-based boosting/deranking.
+-- Primary search function: semantic/BM25 retrieval + regex-based boosting/deranking.
 -- Rescue is cheap by default (headline+structure). Enable body rescue for maximum recall.
 --
 -- Parameters:
---   keywords          - literal keywords for search() (required)
+--   keywords          - literal keywords for searching (required)
 --   scope             - SQL LIKE pattern for doc URIs; NULL/'' => all docs
 --   boost_pattern     - regex used for boosting + rescue (optional, derived from keywords if not provided)
 --   negative_pattern  - regex used for de-ranking (optional)
---   k                 - max candidates from search()
+--   k                 - max candidates
 --   sem_threshold     - min semantic score for tier 1
 --   bm25_threshold    - min BM25 score for tier 2
 --   derank_factor     - multiplier when negative_pattern matches (0.5 = half score)
---   enable_body_rescue - TRUE => scan bodies to rescue docs missed by search() (expensive)
+--   enable_body_rescue - TRUE => scan bodies to rescue docs missed (expensive)
 --
 -- Example usage:
---   SELECT * FROM hybrid_search('database connection') LIMIT 10;
---   SELECT * FROM hybrid_search('parser', boost_pattern := 'markdown|yaml', negative_pattern := '(?i)test');
---   SELECT * FROM hybrid_search('config', scope := 'file:///src/%');
+--   SELECT * FROM search('database connection') LIMIT 10;
+--   SELECT * FROM search('parser', boost_pattern := 'markdown|yaml', negative_pattern := '(?i)test');
+--   SELECT * FROM search('config', scope := 'file:///src/%');
 
-CREATE OR REPLACE MACRO hybrid_search(
+CREATE OR REPLACE MACRO search(
     keywords,
     scope := NULL,
     boost_pattern := NULL,
@@ -75,7 +75,7 @@ search_rows AS (
         split_part(uri, '#', 1) AS doc_uri,
         doc_semn,
         bm25_score
-    FROM search((SELECT kw FROM cfg), k := k)
+    FROM _search_candidates((SELECT kw FROM cfg), k := k)
 ),
 search_docs AS (
     SELECT

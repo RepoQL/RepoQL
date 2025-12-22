@@ -26,7 +26,6 @@ public static class PHPServiceCollectionExtensions
                 new[] { "php" });
         });
 
-        services.AddIndexingProcessor<PHPClassifier>();
         services.AddIndexingProcessor<PHPParser>();
 
         return services;

@@ -71,14 +71,14 @@ internal class ResourceCommands
             """ :
             """
             WITH s AS (
-                             SELECT doc_id, uri, score FROM file_search(?, k := 100000, max_cand := 5000, question := ?)
+                             SELECT uri, headline, structure, score FROM search(?, k := 100000)
                            )
-                           SELECT n.uri, a.headline, a.summary, a.structure
+                           SELECT s.uri, s.headline, a.summary, s.structure
                            FROM s
-                           JOIN node n ON n.id = s.doc_id
+                           JOIN node n ON n.uri = s.uri AND n.kind = 'document'
                            JOIN artifact a ON a.id = n.artifact_id
                            WHERE {WHERE_CLAUSE}
-                           ORDER BY s.score DESC, length(n.uri)
+                           ORDER BY s.score DESC, length(s.uri)
             """;
         sql = sql.Replace("{WHERE_CLAUSE}", string.Join(" AND ", whereClauses));
 
@@ -89,9 +89,9 @@ internal class ResourceCommands
         }
         else
         {
-            var keywordParam = keywordsText ?? string.Empty;
-            object? questionParam = string.IsNullOrEmpty(questionText) ? null : questionText;
-            parameters = [keywordParam, questionParam, .. whereParameters];
+            // Combine keywords and question for the new search() API
+            var combined = string.Join(" ", new[] { keywordsText, questionText }.Where(s => !string.IsNullOrWhiteSpace(s)));
+            parameters = [combined, .. whereParameters];
         }
 
         var result = await client.ExecuteRawQueryAsync(sql, parameters, null, cancel);

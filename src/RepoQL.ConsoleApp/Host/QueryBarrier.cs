@@ -15,7 +15,7 @@ namespace RepoQL.ConsoleApp.Host;
 /// This ensures basic structural data (nodes, edges, spans) is consistent.
 /// </para>
 /// <para>
-/// Semantic queries (those using file_search, object_search, search(), related(),
+/// Semantic queries (those using search(), related(), _search_candidates(),
 /// or document_embedding) additionally wait for vector refresh to complete.
 /// This ensures embedding data is available for similarity scoring.
 /// </para>
@@ -35,9 +35,8 @@ public sealed partial class QueryBarrier : IQueryBarrier
     // Patterns that indicate semantic search usage
     private static readonly string[] SemanticIndicators =
     [
-        "file_search",
-        "object_search",
         "search(",
+        "_search_candidates(",
         "related(",
         "document_embedding",
         "embed_text",

@@ -25,14 +25,14 @@ public enum EmbeddingMode
 
     /// <summary>
     /// Only structure embeddings (headlines, file structure) are generated.
-    /// Enables file_search() for document-level semantic search.
+    /// Enables search() for document-level semantic search with structure scoring.
     /// Use when: Limited hardware but want basic semantic search.
     /// </summary>
     StructureOnly = 1,
 
     /// <summary>
     /// Full embeddings including content chunks.
-    /// Enables both file_search() and search() with full semantic capabilities.
+    /// Enables search() with full semantic capabilities including chunk-level scoring.
     /// Use when: Good hardware, full semantic search needed.
     /// </summary>
     Full = 2,

@@ -53,10 +53,13 @@ public static class ClassificationExtensions
         Add("text/plain;kind=code.objcpp", ".mm");
         Add("text/plain;kind=code.python", ".py", ".pyi");
         Add("text/plain;kind=code.ruby", ".rb", ".erb", ".rhtml");
-        Add("text/plain;kind=code.javascript", ".js", ".mjs", ".cjs", ".jsx");
-        Add("text/plain;kind=code.typescript", ".ts", ".tsx", ".d.ts");
+        Add("text/plain;kind=code.javascript", ".js", ".mjs", ".cjs");
+        Add("text/plain;kind=code.javascript.react", ".jsx");
+        Add("text/plain;kind=code.typescript", ".ts", ".d.ts");
+        Add("text/plain;kind=code.typescript.react", ".tsx");
         Add("text/plain;kind=code.coffeescript", ".coffee");
-        Add("text/plain;kind=code.php", ".php", ".phtml");
+        Add("text/plain;kind=code.php", ".php", ".php3", ".php4", ".php5", ".php7", ".phps", ".inc");
+        Add("text/plain;kind=code.php.template", ".phtml");
         Add("text/plain;kind=code.perl", ".pl", ".pm", ".t");
         Add("text/plain;kind=code.r", ".r", ".rmd");
         Add("text/plain;kind=code.julia", ".jl");
@@ -142,7 +145,10 @@ public static class ClassificationExtensions
         Add("text/plain;kind=template.generic", ".tmpl", ".tpl", ".eta", ".soy", ".latte", ".mako", ".mjml", ".tmpl", ".tpl");
         Add("text/plain;kind=template.jinja", ".j2", ".jinja");
         Add("application/xslt+xml", ".xsl", ".xslt");
-        Add("text/css", ".css", ".scss", ".sass", ".less", ".styl", ".pcss", ".postcss", ".sss");
+        Add("text/css;kind=code.css", ".css");
+        Add("text/css;kind=code.scss", ".scss", ".sass");
+        Add("text/css;kind=code.less", ".less");
+        Add("text/css", ".styl", ".pcss", ".postcss", ".sss");
         Add("application/json;kind=source-map", ".map");
         Add("font/woff", ".woff");
 
@@ -175,7 +181,7 @@ public static class ClassificationExtensions
         Add("application/vnd.ms-visio.drawing", ".vsdx");
         Add("application/xmind", ".xmind");
         Add("text/plain;kind=diagram.plantuml", ".puml", ".wsd", ".iuml", ".pu", ".uml");
-        Add("text/plain;kind=diagram.mermaid", ".mermaid");
+        Add("text/plain;kind=mermaid.doc", ".mermaid", ".mmd");
         Add("text/csv", ".csv");
         Add("text/tab-separated-values", ".tsv");
         Add("text/plain;kind=data.psv", ".psv");
@@ -235,7 +241,7 @@ public static class ClassificationExtensions
         Add("text/plain;kind=schema.protobuf", ".proto");
         Add("text/plain;kind=schema.avdl", ".avdl");
         Add("application/json;kind=schema.avro", ".avsc");
-        Add("application/graphql", ".graphql", ".gql");
+        Add("application/graphql;kind=graphql.doc", ".graphql", ".gql");
         Add("text/plain;kind=query.sql", ".sql", ".psql", ".pgsql", ".mysql", ".dsql", ".hql", ".cql", ".sparql", ".cypher", ".gremlin", ".mongo");
         Add("application/vnd.sqlite3", ".sqlite");
         Add("application/octet-stream;kind=data.db", ".db");
@@ -252,7 +258,8 @@ public static class ClassificationExtensions
         Add("application/vnd.ubjson", ".ubjson");
         Add("application/ion", ".ion");
         Add("text/plain;kind=config.hcl", ".hcl", ".hcl2", ".nomad", ".pkr.hcl");
-        Add("text/plain;kind=config.terraform", ".tf", ".tfvars");
+        Add("text/plain;kind=code.terraform", ".tf");
+        Add("text/plain;kind=code.terraform.vars", ".tfvars");
         Add("text/plain;kind=config.cue", ".cue");
         Add("text/plain;kind=config.dhall", ".dhall");
         Add("text/plain;kind=config.sample", ".sample");

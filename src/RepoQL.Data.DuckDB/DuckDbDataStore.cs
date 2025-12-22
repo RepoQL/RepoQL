@@ -1,5 +1,6 @@
 using System.Data;
 using DuckDB.NET.Data;
+using DuckDB.NET.Native;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
@@ -15,8 +16,7 @@ namespace RepoQL.Data.DuckDB;
 public sealed class DuckDbDataStore : IDisposable
 {
     private readonly string? _path;
-    private DuckDBConnection _reader;
-    private DuckDBConnection _writer;
+    private DuckDBConnection _connection = null!; // Initialized in InitializeConnections
     private readonly SemaphoreSlim _lock = new(1, 1); // DuckDB connections aren't thread-safe for concurrent commands
     private readonly ILogger _logger;
     private readonly IEmbeddingProvider? _embeddingProvider;
@@ -44,7 +44,7 @@ public sealed class DuckDbDataStore : IDisposable
         _logger = logger ?? NullLogger<DuckDbDataStore>.Instance;
         _embeddingProvider = embeddingProvider;
         _formatSchemaScripts = formatSchemaScripts?.ToArray() ?? [];
-        _isInMemory = path is null || path == ":memory:";
+        _isInMemory = path is null or ":memory:";
 
         _logger.LogDebug("[DuckDB] Initializing data store (path={Path}, inMemory={IsInMemory})",
             _isInMemory ? ":memory:" : path, _isInMemory);
@@ -59,10 +59,9 @@ public sealed class DuckDbDataStore : IDisposable
         if (_isInMemory)
         {
             _logger.LogDebug("[DuckDB] Opening in-memory database");
-            _writer = new DuckDBConnection("Data Source=:memory:");
-            _writer.Open();
-            ApplyConnectionConfiguration(_writer);
-            _reader = _writer;
+            _connection = new DuckDBConnection("Data Source=:memory:");
+            _connection.Open();
+            ApplyConnectionConfiguration(_connection);
         }
         else
         {
@@ -82,24 +81,22 @@ public sealed class DuckDbDataStore : IDisposable
 
             try
             {
-                _writer = new DuckDBConnection($"Data Source={_path};ACCESS_MODE=READ_WRITE");
-                _writer.Open();
-                ApplyConnectionConfiguration(_writer);
-                _logger.LogDebug("[DuckDB] Writer connection opened");
+                _connection = new DuckDBConnection($"Data Source={_path};ACCESS_MODE=READ_WRITE");
+                _connection.Open();
+                ApplyConnectionConfiguration(_connection);
+                _logger.LogDebug("[DuckDB] Connection opened");
 
-                _reader = new DuckDBConnection($"Data Source={_path};ACCESS_MODE=READ_ONLY");
-                _reader.Open();
-                ApplyConnectionConfiguration(_reader);
-                _logger.LogDebug("[DuckDB] Reader connection opened");
+                // Check for suspiciously large WAL that may indicate corruption from prior crash
+                ValidateWalState();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[DuckDB] Failed to open database connections for {Path}", _path);
+                _logger.LogError(ex, "[DuckDB] Failed to open database connection for {Path}", _path);
                 throw;
             }
         }
 
-        _logger.LogDebug("[DuckDB] Connections initialized in {ElapsedMs}ms", sw.ElapsedMilliseconds);
+        _logger.LogDebug("[DuckDB] Connection initialized in {ElapsedMs}ms", sw.ElapsedMilliseconds);
     }
 
     /// <summary>
@@ -177,7 +174,7 @@ public sealed class DuckDbDataStore : IDisposable
         _lock.Wait();
         try
         {
-            using var cmd = _reader.CreateCommand();
+            using var cmd = _connection.CreateCommand();
             cmd.CommandText = sql;
             using var reader = cmd.ExecuteReader();
             var results = new List<T>();
@@ -188,6 +185,59 @@ public sealed class DuckDbDataStore : IDisposable
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
         {
             HandleFatalError(ex, "Read");
+            throw;
+        }
+        catch (DuckDBException ex) when (IsWriteConflictError(ex))
+        {
+            // Write conflicts can occur during reads when DuckDB applies WAL entries
+            HandleWriteConflict(ex, "Read");
+            throw;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Execute a query from an untrusted source (e.g., MCP client) in a read-only transaction.
+    /// DuckDB enforces at the engine level that no writes can occur, regardless of SQL content.
+    /// </summary>
+    public IReadOnlyList<T> ReadUntrusted<T>(string sql, Func<IDataRecord, T> map)
+    {
+        EnsureSchema();
+
+        if (_databaseInvalidated)
+        {
+            CheckAndRecoverIfNeeded();
+        }
+
+        _lock.Wait();
+        try
+        {
+            // Start a read-only transaction - DuckDB will reject any write attempts
+            _connection.Execute("BEGIN TRANSACTION READ ONLY;");
+            try
+            {
+                using var cmd = _connection.CreateCommand();
+                cmd.CommandText = sql;
+                using var reader = cmd.ExecuteReader();
+                var results = new List<T>();
+                while (reader.Read())
+                    results.Add(map(reader));
+
+                _connection.Execute("COMMIT;");
+                return results;
+            }
+            catch
+            {
+                try { _connection.Execute("ROLLBACK;"); } catch { /* ignore rollback errors */ }
+                throw;
+            }
+        }
+        catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
+        {
+            HandleFatalError(ex, "ReadUntrusted");
             throw;
         }
         finally
@@ -209,7 +259,7 @@ public sealed class DuckDbDataStore : IDisposable
         _lock.Wait();
         try
         {
-            using var cmd = _reader.CreateCommand();
+            using var cmd = _connection.CreateCommand();
             cmd.CommandText = sql;
             var result = cmd.ExecuteScalar();
             if (result is null or DBNull) return default;
@@ -219,6 +269,11 @@ public sealed class DuckDbDataStore : IDisposable
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
         {
             HandleFatalError(ex, "ReadScalar");
+            throw;
+        }
+        catch (DuckDBException ex) when (IsWriteConflictError(ex))
+        {
+            HandleWriteConflict(ex, "ReadScalar");
             throw;
         }
         finally
@@ -241,8 +296,8 @@ public sealed class DuckDbDataStore : IDisposable
         DuckDBTransaction? tx = null;
         try
         {
-            tx = _writer.BeginTransaction();
-            work(_writer, tx);
+            tx = _connection.BeginTransaction();
+            work(_connection, tx);
             tx.Commit();
             tx = null; // Mark as committed so we don't rollback
             Interlocked.Exchange(ref _consecutiveFailures, 0); // Reset on success
@@ -277,6 +332,10 @@ public sealed class DuckDbDataStore : IDisposable
         {
             tx.Rollback();
         }
+        catch (DuckDBException ex) when (ex.ErrorType == DuckDBErrorType.Transaction && ex.ErrorCode == 10)
+        {
+            // No transaction active
+        }
         catch (Exception rollbackEx)
         {
             // Rollback failed - connection is in inconsistent state, must recover
@@ -299,8 +358,8 @@ public sealed class DuckDbDataStore : IDisposable
         DuckDBTransaction? tx = null;
         try
         {
-            tx = _writer.BeginTransaction();
-            var result = work(_writer, tx);
+            tx = _connection.BeginTransaction();
+            var result = work(_connection, tx);
             tx.Commit();
             tx = null; // Mark as committed so we don't rollback
             Interlocked.Exchange(ref _consecutiveFailures, 0); // Reset on success
@@ -360,12 +419,10 @@ public sealed class DuckDbDataStore : IDisposable
 
         try
         {
-            // Close existing connections
-            _logger.LogDebug("[DuckDB] Closing existing connections...");
-            try { _writer?.Close(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error closing writer"); }
-            try { if (!_isInMemory) _reader?.Close(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error closing reader"); }
-            try { _writer?.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing writer"); }
-            try { if (!_isInMemory) _reader?.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing reader"); }
+            // Close existing connection (reader == writer, so only close once)
+            _logger.LogDebug("[DuckDB] Closing existing connection...");
+            try { _connection?.Close(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error closing connection"); }
+            try { _connection?.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing connection"); }
 
             // For file-based databases, check if we need to delete corrupted files
             if (!_isInMemory && _path is not null)
@@ -416,6 +473,73 @@ public sealed class DuckDbDataStore : IDisposable
     }
 
     /// <summary>
+    /// Validates WAL state on startup and ensures clean database state.
+    /// Aggressively checkpoints and verifies WAL is empty to prevent read conflicts.
+    /// </summary>
+    private void ValidateWalState()
+    {
+        if (_isInMemory || _path is null) return;
+
+        var walPath = _path + ".wal";
+        if (!File.Exists(walPath)) return;
+
+        var walInfo = new FileInfo(walPath);
+        _logger.LogDebug("[DuckDB] WAL file exists on startup: {Size:N0} bytes", walInfo.Length);
+
+        // Try to abort any stale transaction from a previous crashed session
+        try
+        {
+            _connection.Execute("ROLLBACK;");
+            _logger.LogDebug("[DuckDB] Rolled back stale transaction on startup");
+        }
+        catch (DuckDBException)
+        {
+            // No active transaction - this is the expected case
+        }
+
+        // Checkpoint to flush WAL to main database file
+        try
+        {
+            _connection.Execute("CHECKPOINT;");
+            _logger.LogDebug("[DuckDB] Startup checkpoint completed");
+        }
+        catch (DuckDBException ex)
+        {
+            _logger.LogWarning(ex, "[DuckDB] Startup checkpoint failed");
+        }
+
+        // After checkpoint, WAL should be minimal (just headers, typically < 4KB)
+        // If it's still substantial, the WAL has problematic entries that can't be cleanly applied
+        // Delete it to prevent read conflicts from "applying buffered appends"
+        walInfo.Refresh();
+        if (walInfo.Exists && walInfo.Length > 4096)
+        {
+            _logger.LogWarning(
+                "[DuckDB] WAL still has {Size:N0} bytes after checkpoint. " +
+                "Deleting to prevent read conflicts. Some data may be lost.",
+                walInfo.Length);
+
+            // Close connection, delete WAL, reinitialize
+            try { _connection.Close(); } catch { /* ignore */ }
+            try { _connection.Dispose(); } catch { /* ignore */ }
+
+            File.Delete(walPath);
+
+            // Reinitialize connection
+            _connection = new DuckDBConnection($"Data Source={_path};ACCESS_MODE=READ_WRITE");
+            _connection.Open();
+            ApplyConnectionConfiguration(_connection);
+            RecoveryOccurred = true;
+
+            _logger.LogInformation("[DuckDB] Reinitialized connection after WAL cleanup");
+        }
+        else
+        {
+            _logger.LogInformation("[DuckDB] Startup WAL validation complete");
+        }
+    }
+
+    /// <summary>
     /// Detects if an exception indicates a fatal database error that invalidates the database.
     /// </summary>
     private static bool IsFatalDatabaseError(DuckDBException ex)
@@ -423,6 +547,7 @@ public sealed class DuckDbDataStore : IDisposable
         var message = ex.Message ?? "";
         return message.Contains("database has been invalidated", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("FATAL Error", StringComparison.OrdinalIgnoreCase) ||
+               message.Contains("INTERNAL Error", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("previous fatal error", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -492,15 +617,21 @@ public sealed class DuckDbDataStore : IDisposable
         _logger.LogError(ex,
             "[DuckDB] WRITE-WRITE CONFLICT during {Operation} (consecutive failures: {Failures}). " +
             "Conflicting key: {ConflictingKey}. " +
-            "This usually indicates concurrent modifications to the same record. " +
+            "This usually indicates WAL corruption or concurrent access issues. " +
             "The database will be marked as invalidated for recovery.",
             operation, failures, conflictingKey);
 
-        // Write-write conflicts can leave the database in an invalid state
-        if (message.Contains("FATAL", StringComparison.OrdinalIgnoreCase))
+        // Write-write conflicts during reads indicate WAL/database corruption
+        // INTERNAL errors are DuckDB assertion failures that require recovery
+        var isRead = operation.StartsWith("Read", StringComparison.Ordinal);
+        var isInternalError = message.Contains("INTERNAL Error", StringComparison.OrdinalIgnoreCase);
+        var isFatalError = message.Contains("FATAL", StringComparison.OrdinalIgnoreCase);
+
+        if (isRead || isInternalError || isFatalError)
         {
             _databaseInvalidated = true;
-            _logger.LogWarning("[DuckDB] Database invalidated due to fatal write conflict. Will attempt recovery on next operation.");
+            _logger.LogWarning("[DuckDB] Database invalidated due to {Reason}. Will attempt recovery on next operation.",
+                isInternalError ? "internal error" : isRead ? "conflict during read" : "fatal error");
         }
     }
 
@@ -530,14 +661,14 @@ public sealed class DuckDbDataStore : IDisposable
         {
             if (!_isInMemory)
             {
-                _writer.Execute("SET wal_autocheckpoint = '256MB';");
-                _logger.LogDebug("[DuckDB] WAL autocheckpoint set to 256MB");
+                _connection.Execute("SET wal_autocheckpoint = '16MB';");
+                _logger.LogDebug("[DuckDB] WAL autocheckpoint set to 16MB");
             }
 
-            _writer.Execute("CREATE TABLE IF NOT EXISTS repo_metadata(key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);");
+            _connection.Execute("CREATE TABLE IF NOT EXISTS repo_metadata(key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);");
 
             _logger.LogDebug("[DuckDB] Registering UDFs on writer connection...");
-            RepositoryUserDefinedFunctions.RegisterAll(_writer, _embeddingProvider);
+            RepositoryUserDefinedFunctions.RegisterAll(_connection, _embeddingProvider);
 
             var schemaScripts = new[]
             {
@@ -575,7 +706,7 @@ public sealed class DuckDbDataStore : IDisposable
             {
                 try
                 {
-                    _writer.Execute(script.Sql);
+                    _connection.Execute(script.Sql);
                 }
                 catch (Exception ex)
                 {
@@ -589,10 +720,40 @@ public sealed class DuckDbDataStore : IDisposable
             if (!_isInMemory)
             {
                 _logger.LogDebug("[DuckDB] Registering UDFs on reader connection...");
-                RepositoryUserDefinedFunctions.RegisterAll(_reader, _embeddingProvider);
+                RepositoryUserDefinedFunctions.RegisterAll(_connection, _embeddingProvider);
             }
 
             _schemaInitialized = true;
+
+            // Checkpoint WAL on startup to flush any uncommitted entries from previous session
+            // This prevents write-write conflicts caused by stale WAL state
+            if (!_isInMemory)
+            {
+                try
+                {
+                    _connection.Execute("CHECKPOINT;");
+                    _logger.LogDebug("[DuckDB] Startup checkpoint completed");
+                }
+                catch (DuckDBException ex)
+                {
+                    _logger.LogWarning(ex, "[DuckDB] Startup checkpoint failed - may have stale WAL entries");
+                }
+            }
+
+            // Verify database is healthy after schema initialization
+            try
+            {
+                using var cmd = _connection.CreateCommand();
+                cmd.CommandText = "SELECT COUNT(*) FROM node LIMIT 1";
+                cmd.ExecuteScalar();
+            }
+            catch (DuckDBException ex) when (IsFatalDatabaseError(ex) || IsWriteConflictError(ex))
+            {
+                _logger.LogError(ex, "[DuckDB] Database health check failed on startup");
+                _databaseInvalidated = true;
+                AttemptRecovery();
+            }
+
             _logger.LogInformation("[DuckDB] Schema initialization completed in {ElapsedMs}ms", sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
@@ -609,43 +770,30 @@ public sealed class DuckDbDataStore : IDisposable
         using var stream = typeof(DuckDbDataStore).Assembly.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"Resource '{resourceName}' not found.");
         using var reader = new StreamReader(stream);
-        _writer.Execute(reader.ReadToEnd());
+        _connection.Execute(reader.ReadToEnd());
     }
 
     /// <summary>
-    /// Gets whether the database is currently in an invalidated state.
+    /// Attempts a WAL checkpoint. Safe to call frequently - will not throw on failure.
+    /// Use this at natural boundaries (e.g., after indexing phases) to prevent WAL accumulation.
     /// </summary>
-    public bool IsInvalidated => _databaseInvalidated;
-
-    /// <summary>
-    /// Gets the number of consecutive failures since the last successful operation.
-    /// </summary>
-    public int ConsecutiveFailures => _consecutiveFailures;
-
-    /// <summary>
-    /// Forces a database health check and recovery attempt if needed.
-    /// </summary>
-    public void ForceHealthCheck()
+    /// <returns>True if checkpoint succeeded, false otherwise.</returns>
+    public bool TryCheckpoint()
     {
+        if (_isInMemory) return true;
+        if (_databaseInvalidated) return false;
+
         _lock.Wait();
         try
         {
-            _logger.LogDebug("[DuckDB] Performing forced health check...");
-
-            try
-            {
-                // Try a simple query to check if the database is healthy
-                using var cmd = _writer.CreateCommand();
-                cmd.CommandText = "SELECT 1";
-                cmd.ExecuteScalar();
-                _logger.LogDebug("[DuckDB] Health check passed");
-            }
-            catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
-            {
-                _logger.LogWarning(ex, "[DuckDB] Health check failed, database is in fatal state");
-                _databaseInvalidated = true;
-                AttemptRecovery();
-            }
+            _connection.Execute("CHECKPOINT;");
+            _logger.LogDebug("[DuckDB] Checkpoint completed");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[DuckDB] Checkpoint failed");
+            return false;
         }
         finally
         {
@@ -663,14 +811,24 @@ public sealed class DuckDbDataStore : IDisposable
         _lock.Wait();
         try
         {
-            if (!_isInMemory)
+            // Checkpoint WAL before closing to ensure clean state on next startup
+            if (!_isInMemory && !_databaseInvalidated)
             {
-                try { _reader?.Dispose(); }
-                catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing reader connection"); }
+                try
+                {
+                    _logger.LogDebug("[DuckDB] Checkpointing WAL before shutdown...");
+                    _connection.Execute("CHECKPOINT;");
+                    _logger.LogDebug("[DuckDB] WAL checkpoint completed");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[DuckDB] Failed to checkpoint WAL on shutdown - next startup may need recovery");
+                }
             }
 
-            try { _writer?.Dispose(); }
-            catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing writer connection"); }
+            // Note: _connection == _connection, so only dispose once
+            try { _connection?.Dispose(); }
+            catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing connection"); }
 
             _logger.LogDebug("[DuckDB] Data store disposed");
         }

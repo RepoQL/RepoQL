@@ -73,7 +73,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                 Stages: {stageSummary}
 
                 To query the imported content, use:
-                - File search: SELECT uri, score FROM file_search('keywords', question := 'your question', k := 10) WHERE uri LIKE '{uriPattern}%'
+                - File search: SELECT uri, score FROM search('keywords', scope := '{uriPattern}%', k := 10)
                 - Xray scan: Use pattern="{uriPattern}/**/*" with the xray tool
                 - Document list: SELECT document_uri, file_name, headline FROM xray_documents() WHERE document_uri LIKE '{uriPattern}%'
 

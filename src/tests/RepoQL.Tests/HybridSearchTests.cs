@@ -12,13 +12,13 @@ using NodeModel = RepoQL.Contracts.Models.Node;
 namespace RepoQL.Tests;
 
 /// <summary>
-/// Tests for hybrid_search macro, verifying recall improvements via rescue features
+/// Tests for search macro, verifying recall improvements via rescue features
 /// (outline rescue and optional body rescue).
 /// </summary>
-internal class HybridSearchTests
+internal class SearchTests
 {
     [Test]
-    public void HybridSearch_OutlineRescue_FindsDocsInStructureOnly()
+    public void Search_OutlineRescue_FindsDocsInStructureOnly()
     {
         // Arrange: Create documents where "config" appears in different places
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
@@ -52,10 +52,10 @@ internal class HybridSearchTests
 
         // Act: Compare searches
         var hybridOutline = store.RawQuery(
-            "SELECT uri, source, struct_mentions, body_mentions FROM hybrid_search('config', enable_body_rescue := FALSE) LIMIT 20").ToList();
+            "SELECT uri, source, struct_mentions, body_mentions FROM search('config', enable_body_rescue := FALSE) LIMIT 20").ToList();
 
         var hybridBody = store.RawQuery(
-            "SELECT uri, source, struct_mentions, body_mentions FROM hybrid_search('config', enable_body_rescue := TRUE) LIMIT 20").ToList();
+            "SELECT uri, source, struct_mentions, body_mentions FROM search('config', enable_body_rescue := TRUE) LIMIT 20").ToList();
 
         // Assert: Verify rescue behavior
         var outlineUris = hybridOutline.Select(r => r["uri"]?.ToString()).ToHashSet();
@@ -66,7 +66,7 @@ internal class HybridSearchTests
     }
 
     [Test]
-    public void HybridSearch_BodyRescue_FindsDocsInBodyOnly()
+    public void Search_BodyRescue_FindsDocsInBodyOnly()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
         using var store = new DuckDbDataStore(dbPath);
@@ -91,10 +91,10 @@ internal class HybridSearchTests
 
         // Act
         var withBodyRescue = store.RawQuery(
-            "SELECT uri, source, body_mentions FROM hybrid_search('validation', enable_body_rescue := TRUE) LIMIT 20").ToList();
+            "SELECT uri, source, body_mentions FROM search('validation', enable_body_rescue := TRUE) LIMIT 20").ToList();
 
         var withoutBodyRescue = store.RawQuery(
-            "SELECT uri, source, body_mentions FROM hybrid_search('validation', enable_body_rescue := FALSE) LIMIT 20").ToList();
+            "SELECT uri, source, body_mentions FROM search('validation', enable_body_rescue := FALSE) LIMIT 20").ToList();
 
         // Assert
         var bodyUris = withBodyRescue.Select(r => r["uri"]?.ToString()).ToHashSet();
@@ -102,7 +102,7 @@ internal class HybridSearchTests
     }
 
     [Test]
-    public void HybridSearch_BoostPattern_RanksMatchesHigher()
+    public void Search_BoostPattern_RanksMatchesHigher()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
         using var store = new DuckDbDataStore(dbPath);
@@ -127,7 +127,7 @@ internal class HybridSearchTests
 
         // Act: Search with boost pattern for JWT
         var results = store.RawQuery(
-            "SELECT uri, score, struct_mentions FROM hybrid_search('authentication', boost_pattern := 'JWT') ORDER BY score DESC LIMIT 10").ToList();
+            "SELECT uri, score, struct_mentions FROM search('authentication', boost_pattern := 'JWT') ORDER BY score DESC LIMIT 10").ToList();
 
         // Assert: JWT doc should rank higher due to boost
         results.Should().NotBeEmpty();
@@ -136,7 +136,7 @@ internal class HybridSearchTests
     }
 
     [Test]
-    public void HybridSearch_NegativePattern_DeranksMatches()
+    public void Search_NegativePattern_DeranksMatches()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
         using var store = new DuckDbDataStore(dbPath);
@@ -161,7 +161,7 @@ internal class HybridSearchTests
 
         // Act: Search with negative pattern for test
         var results = store.RawQuery(
-            "SELECT uri, score, deranked FROM hybrid_search('parser', negative_pattern := '(?i)test') ORDER BY score DESC LIMIT 10").ToList();
+            "SELECT uri, score, deranked FROM search('parser', negative_pattern := '(?i)test') ORDER BY score DESC LIMIT 10").ToList();
 
         // Assert: Source doc should rank higher, test doc should be deranked
         results.Should().NotBeEmpty();

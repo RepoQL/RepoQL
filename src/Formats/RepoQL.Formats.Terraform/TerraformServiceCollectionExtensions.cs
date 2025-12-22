@@ -23,7 +23,6 @@ public static class TerraformServiceCollectionExtensions
                 ["tf", "tfvars"]);
         });
 
-        services.AddIndexingProcessor<TerraformClassifier>();
         services.AddIndexingProcessor<TerraformParser>();
 
         return services;

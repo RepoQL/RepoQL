@@ -26,7 +26,7 @@ LATERAL joins expand each result row with context or related data in one query.
 ```sql
 -- Search + code context
 SELECT f.uri, s.line_number, s.text
-FROM file_search('auth', k := 5) f,
+FROM search('auth', k := 5) f,
      LATERAL snippet(f.uri, 2) s
 WHERE s.is_focus;
 ```
@@ -165,8 +165,8 @@ One query demonstrating all patterns - starts with semantic search, then extract
 ```sql
 WITH candidates AS (
   -- SEMANTIC SEARCH: find relevant files first
-  SELECT uri, doc_id, score AS search_score
-  FROM file_search('error handling', question := 'Where are errors handled?', k := 20)
+  SELECT uri, score AS search_score
+  FROM search('error handling', k := 20)
 ),
 extracted AS (
   -- REGEX EXTRACTION + JSON on candidates only
@@ -178,7 +178,7 @@ extracted AS (
     regexp_extract_all(a.text_content, '(TODO|FIXME|HACK):\s*(.+)', 0) AS raw_tasks,
     length(regexp_extract_all(a.text_content, 'TODO|FIXME|HACK', 0)) AS task_count
   FROM candidates c
-  JOIN node n ON n.id = c.doc_id
+  JOIN node n ON n.uri = c.uri AND n.kind = 'document'
   JOIN artifact a ON n.artifact_id = a.id
   WHERE regexp_matches(a.text_content, 'TODO|FIXME|HACK')
 ),
@@ -211,7 +211,7 @@ ORDER BY search_score DESC, task_count DESC, line_number
 LIMIT 20;
 ```
 
-Uses: `file_search`, `regexp_extract_all`, `regexp_matches`, `LATERAL snippet`, `FILTER`, `QUALIFY`, `GROUP BY ALL`, `EXCLUDE`, `list_transform`, `->>'$.key'`, edges, annotations.
+Uses: `search`, `regexp_extract_all`, `regexp_matches`, `LATERAL snippet`, `FILTER`, `QUALIFY`, `GROUP BY ALL`, `EXCLUDE`, `list_transform`, `->>'$.key'`, edges, annotations.
 
 ---
 
