@@ -389,6 +389,30 @@ public sealed class DuckDbDataStore : IDisposable
     }
 
     /// <summary>
+    /// Executes raw SQL statements (for macro registration from external sources).
+    /// Use sparingly - prefer WriteTransaction for transactional safety.
+    /// </summary>
+    public void ExecuteRaw(string sql)
+    {
+        EnsureSchema();
+
+        if (_databaseInvalidated)
+        {
+            CheckAndRecoverIfNeeded();
+        }
+
+        _lock.Wait();
+        try
+        {
+            _connection.Execute(sql);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
     /// Checks if the database is in an invalidated state and attempts recovery.
     /// </summary>
     private void CheckAndRecoverIfNeeded()
@@ -685,6 +709,9 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/glob_match.sql",
                 "Tables/document_embedding.sql",
                 "Views/repo_index.sql",
+                "Views/files.sql",
+                "Views/types.sql",
+                "Views/functions.sql",
                 "Macros/snippet.sql",
                 "Macros/node_primary_fragment.sql",
                 "Macros/xray_documents.sql",

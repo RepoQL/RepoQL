@@ -117,30 +117,36 @@ public static class DuckDbDataStoreExtensions
             var existingDoc = GetDocumentByUri(conn, tx, uri);
             var isUpdate = existingDoc is not null;
 
-            // 2. Upsert artifact
+            // 2. If updating, clean up old content BEFORE upserting (handles ID changes)
+            if (existingDoc is not null)
+            {
+                CleanupDocumentContent(conn, tx, existingDoc.Id);
+            }
+
+            // 3. Upsert artifact
             var savedArtifact = UpsertArtifact(conn, tx, artifact.Artifact);
 
-            // 3. Create document node with artifact ID
+            // 4. Create document node with artifact ID
             var docNode = artifact.DocumentNode with { ArtifactId = savedArtifact.Id };
 
-            // 4. Upsert document
+            // 5. Upsert document
             var savedDoc = UpsertDocumentByUri(conn, tx, uri, docNode);
 
-            // 5. Remap children with correct artifact IDs
+            // 6. Remap children with correct artifact IDs
             var children = artifact.Children.Select(c =>
                 c with { ArtifactId = c.ArtifactId == artifact.Artifact.Id ? savedArtifact.Id : c.ArtifactId }
             ).ToList();
 
-            // 6. Remap spans with document ID
+            // 7. Remap spans with document ID
             var spans = artifact.Spans.Select(s => s with { DocumentId = savedDoc.Id }).ToList();
 
-            // 7. Remap edges with scope document ID
+            // 8. Remap edges with scope document ID
             var edges = artifact.Edges.Select(e => e with { ScopeDocumentId = savedDoc.Id }).ToList();
 
-            // 8. Replace document content
-            ReplaceDocumentContent(conn, tx, savedDoc.Id, children, spans, edges);
+            // 9. Insert new document content
+            InsertDocumentContent(conn, tx, children, spans, edges);
 
-            // 9. Upsert document_search projection
+            // 10. Upsert document_search projection
             UpsertDocumentSearch(conn, tx, savedDoc.Id, uri);
 
             return new IndexResult(savedDoc.Id, isUpdate);
@@ -167,30 +173,36 @@ public static class DuckDbDataStoreExtensions
                 var existingDoc = GetDocumentByUri(conn, tx, uri);
                 var isUpdate = existingDoc is not null;
 
-                // 2. Upsert artifact
+                // 2. If updating, clean up old content BEFORE upserting (handles ID changes)
+                if (existingDoc is not null)
+                {
+                    CleanupDocumentContent(conn, tx, existingDoc.Id);
+                }
+
+                // 3. Upsert artifact
                 var savedArtifact = UpsertArtifact(conn, tx, artifact.Artifact);
 
-                // 3. Create document node with artifact ID
+                // 4. Create document node with artifact ID
                 var docNode = artifact.DocumentNode with { ArtifactId = savedArtifact.Id };
 
-                // 4. Upsert document
+                // 5. Upsert document
                 var savedDoc = UpsertDocumentByUri(conn, tx, uri, docNode);
 
-                // 5. Remap children with correct artifact IDs
+                // 6. Remap children with correct artifact IDs
                 var children = artifact.Children.Select(c =>
                     c with { ArtifactId = c.ArtifactId == artifact.Artifact.Id ? savedArtifact.Id : c.ArtifactId }
                 ).ToList();
 
-                // 6. Remap spans with document ID
+                // 7. Remap spans with document ID
                 var spans = artifact.Spans.Select(s => s with { DocumentId = savedDoc.Id }).ToList();
 
-                // 7. Remap edges with scope document ID
+                // 8. Remap edges with scope document ID
                 var edges = artifact.Edges.Select(e => e with { ScopeDocumentId = savedDoc.Id }).ToList();
 
-                // 8. Replace document content
-                ReplaceDocumentContent(conn, tx, savedDoc.Id, children, spans, edges);
+                // 9. Insert new document content
+                InsertDocumentContent(conn, tx, children, spans, edges);
 
-                // 9. Upsert document_search projection
+                // 10. Upsert document_search projection
                 UpsertDocumentSearch(conn, tx, savedDoc.Id, uri);
 
                 results.Add(new IndexResult(savedDoc.Id, isUpdate));
@@ -760,7 +772,11 @@ public static class DuckDbDataStoreExtensions
         return document;
     }
 
-    private static void ReplaceDocumentContent(DuckDBConnection conn, DuckDBTransaction tx, Guid documentId, IReadOnlyList<Node> children, IReadOnlyList<Span> spans, IReadOnlyList<Edge> edges)
+    /// <summary>
+    /// Clean up all content (spans, edges, child nodes) for a document.
+    /// Called before upserting to handle document ID changes on reindex.
+    /// </summary>
+    private static void CleanupDocumentContent(DuckDBConnection conn, DuckDBTransaction tx, Guid documentId)
     {
         // Collect existing composition subtree (child nodes to delete)
         var childNodesToDelete = new HashSet<Guid>();
@@ -791,15 +807,20 @@ public static class DuckDbDataStoreExtensions
                 queue.Enqueue(r.GetGuid(0));
         }
 
-        // ALWAYS delete spans and edges scoped to this document (even if no children)
-        // This ensures stale content is removed on reindex
+        // Delete spans and edges scoped to this document
         conn.Execute(tx, "DELETE FROM span WHERE document_id = ?;", documentId);
         conn.Execute(tx, "DELETE FROM edge WHERE scope_document_id = ?;", documentId);
 
         // Delete old child nodes
         foreach (var id in childNodesToDelete)
             conn.Execute(tx, "DELETE FROM node WHERE id = ?;", id);
+    }
 
+    /// <summary>
+    /// Insert new document content (spans, edges, child nodes).
+    /// </summary>
+    private static void InsertDocumentContent(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Node> children, IReadOnlyList<Span> spans, IReadOnlyList<Edge> edges)
+    {
         // Bulk insert spans (much faster than individual inserts)
         if (spans.Count > 0)
             BulkInsertSpans(conn, tx, spans);
@@ -890,8 +911,10 @@ public static class DuckDbDataStoreExtensions
         // Deduplicate composition edges - each child can only have one parent
         // Keep the first edge for each composition_child_id (DstId when IsComposition=true)
         var seenCompositionChildren = new HashSet<Guid>();
-        var deduplicatedEdges = new List<Edge>(edges.Count);
+        var compositionEdges = new List<Edge>();
+        var referenceEdges = new List<Edge>();
         var duplicateCount = 0;
+
         foreach (var edge in edges)
         {
             if (edge.IsComposition && edge.DstId.HasValue)
@@ -901,8 +924,12 @@ public static class DuckDbDataStoreExtensions
                     duplicateCount++;
                     continue; // Skip duplicate composition edge
                 }
+                compositionEdges.Add(edge);
             }
-            deduplicatedEdges.Add(edge);
+            else
+            {
+                referenceEdges.Add(edge);
+            }
         }
 
         if (duplicateCount > 0)
@@ -910,10 +937,21 @@ public static class DuckDbDataStoreExtensions
             Console.Error.WriteLine($"[DuckDB] WARNING: Skipped {duplicateCount} duplicate composition edges (same child with multiple parents)");
         }
 
+        // Insert composition edges with ON CONFLICT handling (for deterministic IDs)
+        if (compositionEdges.Count > 0)
+            BulkInsertEdgesBatch(conn, tx, compositionEdges, useConflictHandling: true);
+
+        // Insert reference edges without ON CONFLICT (NULL composition_child_id can't conflict)
+        if (referenceEdges.Count > 0)
+            BulkInsertEdgesBatch(conn, tx, referenceEdges, useConflictHandling: false);
+    }
+
+    private static void BulkInsertEdgesBatch(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Edge> edges, bool useConflictHandling)
+    {
         const int batchSize = 50; // Edges have many columns
-        for (var offset = 0; offset < deduplicatedEdges.Count; offset += batchSize)
+        for (var offset = 0; offset < edges.Count; offset += batchSize)
         {
-            var batch = deduplicatedEdges.Skip(offset).Take(batchSize).ToList();
+            var batch = edges.Skip(offset).Take(batchSize).ToList();
             var sb = new StringBuilder();
             sb.AppendLine("INSERT INTO edge (id, source_node_id, destination_node_id, destination_uri, type, is_composition, ordinal, scope_document_id, semantic_key, source_span_id, destination_span_id, composition_child_id, properties, created_at) VALUES");
 
@@ -945,10 +983,12 @@ public static class DuckDbDataStoreExtensions
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.CreatedAt.UtcDateTime });
             }
 
-            // Handle conflicts on composition_child_id - orphaned edges from previous sessions
-            // may have the same child ID if using deterministic GUIDs
-            sb.AppendLine();
-            sb.AppendLine(@"ON CONFLICT (composition_child_id) DO UPDATE SET
+            // Only use ON CONFLICT for composition edges - reference edges have NULL composition_child_id
+            // which can cause false conflicts in some DuckDB versions
+            if (useConflictHandling)
+            {
+                sb.AppendLine();
+                sb.AppendLine(@"ON CONFLICT (composition_child_id) DO UPDATE SET
     id = excluded.id,
     source_node_id = excluded.source_node_id,
     destination_node_id = excluded.destination_node_id,
@@ -962,6 +1002,7 @@ public static class DuckDbDataStoreExtensions
     destination_span_id = excluded.destination_span_id,
     properties = excluded.properties,
     created_at = excluded.created_at");
+            }
 
             cmd.CommandText = sb.ToString();
             cmd.ExecuteNonQuery();

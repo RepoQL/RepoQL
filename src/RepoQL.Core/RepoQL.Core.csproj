@@ -27,11 +27,11 @@
     <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
     <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
     <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
+    <ProjectReference Include="..\RepoQL.Mcp.Client\RepoQL.Mcp.Client.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="0.22.0" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.5" />
   </ItemGroup>
 
     <ItemGroup>

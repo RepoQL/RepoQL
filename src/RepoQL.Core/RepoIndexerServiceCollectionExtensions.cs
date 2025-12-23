@@ -44,6 +44,7 @@ using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Indexing.Indexing.State;
 using RepoQL.Metrics;
 using RepoQL.Templating;
+using RepoQL.Mcp.Client;
 
 namespace RepoQL.Core;
 
@@ -328,6 +329,15 @@ public static class RepoIndexerServiceCollectionExtensions
 
             return db;
         });
+
+        // MCP client integration - connects to external MCP servers and exposes their tools via SQL
+        services.AddSingleton(sp =>
+        {
+            var logger = sp.GetService<ILogger<McpClientRegistry>>();
+            return McpClientRegistry.CreateFromDirectory(resolvedRoot, selfServerName: "repoql", logger);
+        });
+        services.AddHostedService<McpHostedService>();
+
         // In-memory OTEL sink for dashboards/tests
         services.AddSingleton<InMemoryMetricsSink>(_ => new InMemoryMetricsSink("RepoQL.Indexing"));
         services.AddSingleton<InMemoryRateProvider>(sp => new InMemoryRateProvider(sp.GetRequiredService<InMemoryMetricsSink>()));

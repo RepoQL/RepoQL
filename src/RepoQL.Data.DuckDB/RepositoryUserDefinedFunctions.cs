@@ -18,6 +18,16 @@ public static class RepositoryUserDefinedFunctions
     // Static holder for the embedding provider - avoids closure issues with DuckDB UDFs
     private static RepoQL.Contracts.Embeddings.IEmbeddingProvider? _embeddingProvider;
 
+    // Static holder for external tool caller - enables calling external services from SQL UDFs
+    private static Func<string, string, string?, string>? _externalToolCaller;
+
+    /// <summary>
+    /// Sets an external tool caller function for use by _mcp_call_internal UDF.
+    /// Signature: (serverName, toolName, paramsJson) => resultJson
+    /// </summary>
+    public static void SetExternalToolCaller(Func<string, string, string?, string>? caller)
+        => _externalToolCaller = caller;
+
     /// <summary>
     ///     Registers all scalar UDFs on the provided open connection.
     /// </summary>
@@ -948,6 +958,83 @@ public static class RepositoryUserDefinedFunctions
             },
             isPureFunction: false
         );
+
+        // ------------------- External Tool Integration UDF -------------------
+
+        // _mcp_call_internal(server, tool, params_json) -> result_json
+        // Internal UDF called by generated macros. Returns JSON result or error JSON.
+        // The actual implementation is injected via SetExternalToolCaller().
+        // IMPORTANT: params_json must be non-NULL (use '{}' for no params) - DuckDB skips UDF when all args are NULL
+        // Usage: SELECT _mcp_call_internal('aspire-dashboard', 'list_resources', '{}')
+        connection.RegisterScalarFunction<string, string, string, string>(
+            "_mcp_call_internal",
+            (readers, writer, n) =>
+            {
+                // Safely access readers - check bounds first
+                if (readers.Count < 2)
+                {
+                    for (ulong i = 0; i < n; i++)
+                        writer.WriteValue($"{{\"error\": \"Invalid reader count: {readers.Count}\"}}", i);
+                    return;
+                }
+
+                var serverReader = readers[0];
+                var toolReader = readers[1];
+                // Third parameter may not exist if all calls pass NULL
+                var paramsReader = readers.Count > 2 ? readers[2] : null;
+
+                for (ulong i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        // Validate required parameters
+                        if (!serverReader.IsValid(i) || !toolReader.IsValid(i))
+                        {
+                            writer.WriteValue("{\"error\": \"Server and tool names are required\"}", i);
+                            continue;
+                        }
+
+                        var server = serverReader.GetValue<string>(i);
+                        var tool = toolReader.GetValue<string>(i);
+
+                        if (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(tool))
+                        {
+                            writer.WriteValue("{\"error\": \"Server and tool names cannot be empty\"}", i);
+                            continue;
+                        }
+
+                        // Check if external tool caller is configured
+                        if (_externalToolCaller is null)
+                        {
+                            writer.WriteValue("{\"error\": \"External tool caller not configured\"}", i);
+                            continue;
+                        }
+
+                        // Get optional parameters JSON (safely handle missing reader)
+                        string? paramsJson = null;
+                        if (paramsReader is not null && paramsReader.IsValid(i))
+                        {
+                            paramsJson = paramsReader.GetValue<string>(i);
+                        }
+
+                        // Call the external tool
+                        var result = _externalToolCaller(server, tool, paramsJson);
+                        // Ensure we never write null - DuckDB would convert to SQL NULL
+                        writer.WriteValue(result ?? "{\"error\": \"Callback returned null\"}", i);
+                    }
+                    catch (Exception ex)
+                    {
+                        writer.WriteValue($"{{\"error\": \"{EscapeJsonString(ex.Message)}\"}}", i);
+                    }
+                }
+            },
+            isPureFunction: false // External side effects
+        );
+    }
+
+    private static string EscapeJsonString(string s)
+    {
+        return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
     }
 
     // ------------------- private helpers -------------------
