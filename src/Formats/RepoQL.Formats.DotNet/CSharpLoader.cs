@@ -336,18 +336,21 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                     ["is_record"] = type.IsRecord
                 };
                 if (!string.IsNullOrWhiteSpace(type.BaseType))
-                    typeProps["base_type"] = type.BaseType;
+                    typeProps["extends"] = type.BaseType;
                 if (type.Interfaces.Count > 0)
                 {
-                    var interfaces = new JsonArray();
+                    var implements = new JsonArray();
                     foreach (var iface in type.Interfaces)
                     {
-                        interfaces.Add((JsonNode?)JsonValue.Create(iface));
+                        implements.Add((JsonNode?)JsonValue.Create(iface));
                     }
-                    typeProps["interfaces"] = interfaces;
+                    typeProps["implements"] = implements;
                 }
                 if (!string.IsNullOrEmpty(type.SymbolKey))
                     typeProps["symbol_key"] = type.SymbolKey;
+
+                var signature = BuildTypeHeadline(type);
+                typeProps["signature"] = signature;
 
                 nodes.Add(new Node
                 {
@@ -356,7 +359,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                     SpanId = type.SpanId,
                     Uri = RepoUri.FromSymbol(uri.Container, type.QualifiedName, type.Span.StartLine, type.Span.EndLine),
                     Props = typeProps,
-                    Headline = BuildTypeHeadline(type),
+                    Headline = signature,
                     Structure = BuildTypeStructure(type, membersByType)
                 });
 

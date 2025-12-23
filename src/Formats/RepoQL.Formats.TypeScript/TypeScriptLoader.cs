@@ -162,22 +162,46 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             var declNodeId = Guid.NewGuid();
             var declHeadline = BuildDeclHeadline(decl);
             var declStructure = BuildDeclStructure(decl);
+
+            // Use typescript.type for class/interface, ts_decl_{kind} for others
+            var isType = decl.DeclKind is "class" or "interface";
+            var nodeKind = isType ? "typescript.type" : $"ts_decl_{decl.DeclKind}";
+
+            var props = new JsonObject
+            {
+                ["name"] = declName,
+                ["kind"] = decl.DeclKind
+            };
+
+            if (isType)
+            {
+                // Standard type properties for cross-language compatibility
+                props["qualified_name"] = declName;
+                props["namespace"] = string.Empty;  // TS uses modules, not namespaces
+                props["accessibility"] = decl.IsExported ? "export" : "internal";
+                props["signature"] = declHeadline;
+            }
+            else
+            {
+                // Legacy properties for non-type declarations
+                props["decl_kind"] = decl.DeclKind;
+                props["is_exported"] = decl.IsExported;
+                props["export_kind"] = decl.ExportKind;
+            }
+
+            // Optional properties
+            if (decl.IsComponent)
+                props["is_component"] = true;
+
             nodes.Add(new Node
             {
                 Id = declNodeId,
-                Kind = $"ts_decl_{decl.DeclKind}",
+                Kind = nodeKind,
                 SpanId = spanId,
                 Uri = string.IsNullOrEmpty(declName)
                     ? RepoUri.FromLines(document.Uri.Container, span.StartLine, span.EndLine)
                     : RepoUri.FromSymbol(document.Uri.Container, declName, span.StartLine, span.EndLine),
-                Props = new JsonObject
-                {
-                    ["name"] = declName,
-                    ["decl_kind"] = decl.DeclKind,
-                    ["is_exported"] = decl.IsExported,
-                    ["export_kind"] = decl.ExportKind,
-                    ["is_component"] = decl.IsComponent
-                },
+                Props = props,
                 Headline = declHeadline,
                 Structure = declStructure,
                 CreatedAt = now,
