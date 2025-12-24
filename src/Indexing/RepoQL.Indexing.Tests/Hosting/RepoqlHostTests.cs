@@ -50,6 +50,7 @@ internal class RepoqlHostTests
 
         var host = new RepoqlHost(composite, sink.Handler, options, NullLogger<RepoqlHost>.Instance);
         await host.StartAsync(CancellationToken.None);
+        await host.WaitForStartupAsync();
 
         primary.AddOrUpdateText("docs/new-file.md", "hello");
 

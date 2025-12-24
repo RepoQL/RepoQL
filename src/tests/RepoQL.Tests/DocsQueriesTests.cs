@@ -31,6 +31,10 @@ internal class DocsQueriesTests
 
         await repo.WaitForIdleAsync();
 
+        // Extra wait to ensure all pipeline stages complete
+        await Task.Delay(500);
+        await repo.WaitForIdleAsync();
+
         var store = repo.Store;
 
         var list = store.RawQuery(

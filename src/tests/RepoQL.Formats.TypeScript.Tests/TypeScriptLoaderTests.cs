@@ -56,9 +56,11 @@ internal sealed class TypeScriptLoaderTests
         var docNode = records.Nodes.First(n => n.Kind == "document");
         docNode.Props["media_type"]!.ToString().Should().Contain("code.typescript");
 
-        var declKinds = records.Nodes.Where(n => n.Kind.StartsWith("ts_decl_")).Select(n => n.Kind).ToList();
-        declKinds.Should().Contain("ts_decl_interface");
-        declKinds.Should().Contain("ts_decl_class");
+        // Classes and interfaces use typescript.type for cross-language compatibility
+        var typeNodes = records.Nodes.Where(n => n.Kind == "typescript.type").ToList();
+        typeNodes.Should().HaveCount(2, "interface and class should both be typescript.type");
+        typeNodes.Select(n => n.Props["kind"]?.ToString()).Should().Contain("interface");
+        typeNodes.Select(n => n.Props["kind"]?.ToString()).Should().Contain("class");
     }
 
     [Test]

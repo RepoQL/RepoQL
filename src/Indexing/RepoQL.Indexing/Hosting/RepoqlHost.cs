@@ -34,6 +34,7 @@ public sealed class RepoqlHost : BackgroundService
     private Task? _dirtyScanLoop;
     private volatile bool _dirty;
     private int _activeEnqueue;
+    private readonly TaskCompletionSource _startupComplete = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public RepoqlHost(
         CompositeFileSystem fileSystem,
@@ -61,6 +62,12 @@ public sealed class RepoqlHost : BackgroundService
         _logger = logger ?? NullLogger<RepoqlHost>.Instance;
     }
 
+    /// <summary>
+    /// Waits until the host has completed its startup sequence (full scan and/or watcher initialization).
+    /// </summary>
+    internal Task WaitForStartupAsync(CancellationToken cancellationToken = default)
+        => _startupComplete.Task.WaitAsync(cancellationToken);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Log mounted file systems at startup for debugging
@@ -82,6 +89,8 @@ public sealed class RepoqlHost : BackgroundService
         {
             await StartWatcherAsync(stoppingToken).ConfigureAwait(false);
         }
+
+        _startupComplete.TrySetResult();
 
         _dirtyScanLoop = Task.Run(() => DirtyScanLoopAsync(stoppingToken), CancellationToken.None);
 

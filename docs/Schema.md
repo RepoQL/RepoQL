@@ -224,6 +224,76 @@ CREATE INDEX IF NOT EXISTS document_embedding_model_idx ON document_embedding(mo
 
 ---
 
+## High-Level Views
+
+Abstraction views over the canonical schema for common query patterns. **Prefer these over raw table queries.**
+
+### `files`
+
+File-level metadata for all indexed documents.
+
+| Column | Description |
+|--------|-------------|
+| `uri`, `file_uri` | Document URI |
+| `source` | Origin scheme (`file://`, `github://org/repo`, `docs://`) |
+| `path`, `name`, `extension` | Path components |
+| `lang` | Language from media type |
+| `lines` | Line count |
+| `error_count`, `warning_count` | Annotation counts |
+| `headline`, `summary`, `structure` | X-ray summaries |
+| `node_id`, `artifact_id` | Join keys |
+
+```sql
+-- Find all TypeScript files with errors
+SELECT name, error_count FROM files WHERE lang = 'typescript' AND error_count > 0;
+```
+
+### `types`
+
+Type declarations (classes, interfaces, structs, enums) across languages.
+
+| Column | Description |
+|--------|-------------|
+| `uri`, `file_uri`, `file_name` | Location |
+| `name`, `qualified_name` | Type identity |
+| `type_kind` | class, interface, struct, enum, etc. |
+| `namespace`, `visibility` | Scope and access |
+| `extends`, `implements` | Inheritance |
+| `signature`, `headline`, `structure` | Summaries |
+| `lang` | Language (csharp, typescript, etc.) |
+| `node_id`, `span_id` | Join keys |
+
+```sql
+-- Find all classes that implement IDisposable
+SELECT qualified_name, file_name FROM types WHERE implements LIKE '%IDisposable%';
+```
+
+### `functions`
+
+Callable entities (methods, functions, constructors) across languages.
+
+| Column | Description |
+|--------|-------------|
+| `uri`, `file_uri`, `file_name` | Location |
+| `name`, `qualified_name` | Function identity |
+| `function_kind` | method, function, constructor |
+| `declaring_type` | Parent type (null for standalone) |
+| `visibility`, `signature` | Access and full signature |
+| `return_type`, `parameters` | Type information |
+| `is_static`, `is_async` | Modifiers |
+| `lang` | Language |
+| `node_id`, `span_id` | Join keys |
+
+```sql
+-- Find all async methods in a class
+SELECT name, signature FROM functions WHERE declaring_type = 'MyService' AND is_async;
+
+-- Find all public static methods
+SELECT qualified_name, return_type FROM functions WHERE visibility = 'public' AND is_static;
+```
+
+---
+
 ## Invariants
 
 * **Document uniqueness**: exactly one `node` per container URI (case-insensitive).

@@ -222,7 +222,6 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         private readonly SemaphoreSlim _initialization = new(1, 1);
         private readonly SemaphoreSlim _compilationGate = new(1, 1);
         private readonly SemaphoreSlim _analyzerGate = new(1, 1);
-        private readonly Dictionary<string, Guid> _filePathToDocumentId = new(StringComparer.OrdinalIgnoreCase);
         private MSBuildWorkspace? _workspace;
         private Project? _project;
         private Compilation? _compilationWithGenerators;
@@ -268,8 +267,6 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             CancellationToken cancellationToken)
         {
             var normalizedPath = Path.GetFullPath(filePath);
-            _filePathToDocumentId[normalizedPath] = surface.DocumentId;
-
             var document = project.Documents.FirstOrDefault(d =>
                 !string.IsNullOrWhiteSpace(d.FilePath) &&
                 Path.GetFullPath(d.FilePath!).Equals(normalizedPath, StringComparison.OrdinalIgnoreCase));
@@ -292,8 +289,7 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
                 semanticModel,
                 declarations.DeclaredNodeIds,
                 lineMap,
-                surface.DocumentId,
-                _filePathToDocumentId);
+                surface.DocumentId);
             collector.Visit(root);
 
             var diagnostics = new List<CSharpDiagnostic>();
@@ -431,7 +427,7 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             driver = driver.RunGeneratorsAndUpdateCompilation(csharpCompilation, out var updatedCompilation, out var generatorDiagnostics, cancellationToken);
             var runResult = driver.GetRunResult();
 
-            var generatedDocs = await BuildGeneratedDocumentsAsync(project, updatedCompilation, runResult, _filePathToDocumentId, cancellationToken).ConfigureAwait(false);
+            var generatedDocs = await BuildGeneratedDocumentsAsync(project, updatedCompilation, runResult, cancellationToken).ConfigureAwait(false);
 
             return (updatedCompilation, generatedDocs, generatorDiagnostics);
         }
@@ -601,7 +597,6 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             Project project,
             Compilation compilation,
             GeneratorDriverRunResult runResult,
-            IReadOnlyDictionary<string, Guid> filePathToDocumentId,
             CancellationToken cancellationToken)
         {
             if (runResult.GeneratedTrees.Length == 0)
@@ -647,8 +642,7 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
                         semanticModel,
                         walker.DeclaredNodeIds,
                         lineMap,
-                        documentId,
-                        filePathToDocumentId);
+                        documentId);
                     collector.Visit(csharpRoot);
 
                     var diagnostics = new List<CSharpDiagnostic>();

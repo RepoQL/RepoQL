@@ -11,7 +11,6 @@ internal sealed class SymbolReferenceCollector : CSharpSyntaxWalker
     private readonly IReadOnlyDictionary<SyntaxNode, Guid> _declaredNodeIds;
     private readonly TextLineMap _lineMap;
     private readonly Guid _documentId;
-    private readonly IReadOnlyDictionary<string, Guid>? _filePathToDocumentId;
     private readonly List<CSharpSymbolReference> _references = new();
     private readonly Dictionary<SyntaxNode, Guid?> _ownerCache = new(ReferenceEqualityComparer.Instance);
 
@@ -19,15 +18,13 @@ internal sealed class SymbolReferenceCollector : CSharpSyntaxWalker
         SemanticModel semanticModel,
         IReadOnlyDictionary<SyntaxNode, Guid> declaredNodeIds,
         TextLineMap lineMap,
-        Guid documentId,
-        IReadOnlyDictionary<string, Guid>? filePathToDocumentId = null)
+        Guid documentId)
         : base(SyntaxWalkerDepth.Node)
     {
         _semanticModel = semanticModel;
         _declaredNodeIds = declaredNodeIds;
         _lineMap = lineMap;
         _documentId = documentId;
-        _filePathToDocumentId = filePathToDocumentId;
     }
 
     public IReadOnlyList<CSharpSymbolReference> References => _references;
@@ -85,51 +82,13 @@ internal sealed class SymbolReferenceCollector : CSharpSyntaxWalker
 
     private Guid? TryResolveTargetNodeId(ISymbol symbol)
     {
+        // Only resolve references to symbols declared in the current document
         foreach (var syntaxReference in symbol.DeclaringSyntaxReferences)
         {
             var syntax = syntaxReference.GetSyntax();
-            var tree = syntax.SyntaxTree;
-            var path = tree?.FilePath;
-            if (string.IsNullOrWhiteSpace(path))
-                continue;
-
-            // Try to use the existing document ID from the mapping first
-            Guid documentId;
-            if (_filePathToDocumentId is not null)
-            {
-                var normalizedPath = System.IO.Path.GetFullPath(path);
-                if (_filePathToDocumentId.TryGetValue(normalizedPath, out var mappedId))
-                {
-                    documentId = mappedId;
-                }
-                else
-                {
-                    // Fall back to computing from URI if not in mapping
-                    var uri = CSharpLoader.GetRepoUriFromPath(path);
-                    documentId = CSharpIdFactory.CreateDocumentId(uri);
-                }
-            }
-            else
-            {
-                // No mapping available, compute from URI
-                var uri = CSharpLoader.GetRepoUriFromPath(path);
-                documentId = CSharpIdFactory.CreateDocumentId(uri);
-            }
-
-            var category = GetCategory(symbol);
-            return CSharpIdFactory.CreateNodeId(documentId, category, syntax.Span);
+            if (_declaredNodeIds.TryGetValue(syntax, out var nodeId))
+                return nodeId;
         }
         return null;
     }
-
-    private static string GetCategory(ISymbol symbol) => symbol switch
-    {
-        INamespaceSymbol => "namespace",
-        INamedTypeSymbol => "type",
-        IMethodSymbol => "member",
-        IPropertySymbol => "member",
-        IFieldSymbol => "member",
-        IEventSymbol => "member",
-        _ => "member"
-    };
 }

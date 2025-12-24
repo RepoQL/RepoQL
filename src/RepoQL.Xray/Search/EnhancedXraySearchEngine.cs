@@ -450,11 +450,11 @@ public sealed class EnhancedXraySearchEngine : IEnhancedXraySearchEngine
             Intent.Explore => new ObjectSearchConfig
             {
                 MinProbabilityMass = 0.75,
-                MaxDocumentsToExpand = 20,
-                MinDocumentsToExpand = 5,
-                MaxJitEmbeddings = 20,
-                JitEmbeddingThreshold = 0.20,
-                MaxObjectsPerDocument = 40
+                MaxDocumentsToExpand = 0,  // Explore: files only, no object expansion
+                MinDocumentsToExpand = 0,
+                MaxJitEmbeddings = 0,      // No JIT embedding for Explore
+                JitEmbeddingThreshold = 1.0,
+                MaxObjectsPerDocument = 0
             },
             _ => new ObjectSearchConfig() // Use defaults
         };
