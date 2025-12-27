@@ -841,10 +841,8 @@ public partial class IndexingEngine : IAsyncDisposable
             using (ActivitySource.StartActivity("vector_refresh_phase", ActivityKind.Internal))
             {
                 var vectorTimer = Stopwatch.StartNew();
-                foreach (var item in pendingItems)
-                {
-                    await VectorCoordinator.ApplyAsync(item, Shutdown.Token).ConfigureAwait(false);
-                }
+                if (pendingItems.Length > 0)
+                    await VectorCoordinator.ApplyAsync(pendingItems[0], Shutdown.Token).ConfigureAwait(false);
                 vectorTimer.Stop();
                 Metrics?.IdlePhaseDuration.Record(vectorTimer.Elapsed.TotalMilliseconds, new TagList
                 {

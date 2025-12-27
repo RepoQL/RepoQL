@@ -21,51 +21,61 @@ public sealed class HashedEmbeddingProvider : IEmbeddingProvider
 
     public Task<float[]?> EmbedAsync(string text, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult<float[]?>(EmbedCore(text));
+    }
+
+    public Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+    {
+        if (texts is null || texts.Count == 0)
+            return Task.FromResult(Array.Empty<float[]?>());
+
+        var results = new float[]?[texts.Count];
+        for (var index = 0; index < texts.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            results[index] = EmbedCore(texts[index]);
+        }
+        return Task.FromResult(results);
+    }
+
+    private float[] EmbedCore(string text)
+    {
         var vec = new float[Dimension];
         if (string.IsNullOrWhiteSpace(text))
-            return Task.FromResult<float[]?>(vec);
+            return vec;
 
         var span = text.AsSpan();
         var i = 0;
         while (i < span.Length)
         {
-            // skip non-alnum
             while (i < span.Length && !IsTokenChar(span[i])) i++;
             var start = i;
             while (i < span.Length && IsTokenChar(span[i])) i++;
-            if (i > start)
-            {
-                var token = span.Slice(start, i - start);
-                var idx = (int)(Hash64Lower(token) % (uint)Dimension);
-                if (idx < 0) idx = -idx;
-                vec[idx] += 1f;
-            }
+            if (i <= start)
+                continue;
+
+            var token = span.Slice(start, i - start);
+            var idx = (int)(Hash64Lower(token) % (uint)Dimension);
+            if (idx < 0) idx = -idx;
+            vec[idx] += 1f;
         }
 
-        // L2 normalize
-        var ss = vec.Aggregate<float, double>(0, (current, t) => current + t * t);
+        double sumSquares = 0;
+        for (var index = 0; index < vec.Length; index++)
+        {
+            var value = vec[index];
+            sumSquares += (double)value * value;
+        }
 
-        var norm = (float)Math.Sqrt(ss);
-        if (!(norm > 0)) 
-            return Task.FromResult<float[]?>(vec);
+        var norm = (float)Math.Sqrt(sumSquares);
+        if (!(norm > 0))
+            return vec;
+
         for (var d = 0; d < vec.Length; d++) vec[d] /= norm;
-        return Task.FromResult<float[]?>(vec);
+        return vec;
 
         static bool IsTokenChar(char c) => char.IsLetterOrDigit(c) || c == '_' || c == '-';
-    }
-
-    public async Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
-    {
-        if (texts is null || texts.Count == 0)
-            return Array.Empty<float[]?>();
-
-        var results = new float[]?[texts.Count];
-        for (var i = 0; i < texts.Count; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            results[i] = await EmbedAsync(texts[i], cancellationToken).ConfigureAwait(false);
-        }
-        return results;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -84,4 +94,3 @@ public sealed class HashedEmbeddingProvider : IEmbeddingProvider
         return (uint)(h ^ (h >> 32));
     }
 }
-

@@ -288,16 +288,48 @@ public static class DuckDbDataStoreExtensions
         if (embeddings.Count == 0)
             return;
 
+        const int paramsPerRow = 11;
+        const int defaultBatchSize = 128; // keeps SQL+parameter count bounded
+
         store.WriteTransaction((conn, tx) =>
         {
-            foreach (var e in embeddings)
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+
+            for (var offset = 0; offset < embeddings.Count; offset += defaultBatchSize)
             {
-                var vector = new List<float>(e.Vector);
-                using var cmd = conn.CreateCommand();
-                cmd.Transaction = tx;
-                cmd.CommandText = """
+                cmd.Parameters.Clear();
+
+                var batchCount = Math.Min(defaultBatchSize, embeddings.Count - offset);
+                var sb = new StringBuilder(capacity: 512 + (batchCount * 128));
+                sb.AppendLine("""
                     INSERT INTO document_embedding(doc_id, node_id, chunk_index, embedding_type, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    VALUES
+                    """);
+
+                for (var i = 0; i < batchCount; i++)
+                {
+                    if (i > 0) sb.AppendLine(",");
+
+                    var paramBase = i * paramsPerRow;
+                    sb.Append($"(?{paramBase + 1},?{paramBase + 2},?{paramBase + 3},?{paramBase + 4},?{paramBase + 5},?{paramBase + 6},?{paramBase + 7},?{paramBase + 8},?{paramBase + 9},?{paramBase + 10},?{paramBase + 11},CURRENT_TIMESTAMP)");
+
+                    var e = embeddings[offset + i];
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.DocumentId });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.NodeId });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.ChunkIndex });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.EmbeddingType });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.Uri });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.Scope });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.Model });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.Dimension });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = new List<float>(e.Vector) });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.StartByte ?? (object)DBNull.Value });
+                    cmd.Parameters.Add(new DuckDBParameter { Value = e.EndByte ?? (object)DBNull.Value });
+                }
+
+                sb.AppendLine("""
+
                     ON CONFLICT(doc_id, node_id, chunk_index, embedding_type) DO UPDATE SET
                         uri=excluded.uri,
                         scope=excluded.scope,
@@ -307,9 +339,9 @@ public static class DuckDbDataStoreExtensions
                         start_byte=excluded.start_byte,
                         end_byte=excluded.end_byte,
                         updated_at=excluded.updated_at;
-                    """;
-                cmd.AddParameters(e.DocumentId, e.NodeId, e.ChunkIndex, e.EmbeddingType,
-                    e.Uri, e.Scope, e.Model, e.Dimension, vector, e.StartByte, e.EndByte);
+                    """);
+
+                cmd.CommandText = sb.ToString();
                 cmd.ExecuteNonQuery();
             }
         });
@@ -577,6 +609,38 @@ public static class DuckDbDataStoreExtensions
         return store.Read(
             $"SELECT id, semantic_key, kind, severity, source, rule_id, message, data, scope_document_id, target_node_id, target_edge_id, target_span_id, target_uri, created_at, expires_at FROM annotation WHERE id = '{id}'",
             r => r.MapToAnnotation()).FirstOrDefault();
+    }
+
+    #endregion
+
+    #region Metadata Methods
+
+    /// <summary>
+    /// Gets a metadata value from the repo_metadata table.
+    /// </summary>
+    public static string? GetMetadata(this DuckDbDataStore store, string key)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(key);
+
+        var escapedKey = key.Replace("'", "''");
+        return store.ReadScalar<string>($"SELECT value FROM repo_metadata WHERE key = '{escapedKey}'");
+    }
+
+    /// <summary>
+    /// Sets a metadata value in the repo_metadata table (insert or update).
+    /// </summary>
+    public static void SetMetadata(this DuckDbDataStore store, string key, string value)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(value);
+
+        var escapedKey = key.Replace("'", "''");
+        var escapedValue = value.Replace("'", "''");
+        store.ExecuteRaw(
+            $"INSERT INTO repo_metadata (key, value) VALUES ('{escapedKey}', '{escapedValue}') " +
+            "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()");
     }
 
     #endregion

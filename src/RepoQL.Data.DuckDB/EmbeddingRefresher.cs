@@ -61,6 +61,28 @@ public sealed class EmbeddingRefresher
         if (embeddingProvider is null || !embeddingProvider.Enabled)
             return;
 
+        // Check for embedding model mismatch (different dimensions would corrupt search)
+        var storedModel = _store.GetMetadata("embedding_model");
+        var currentModel = $"{embeddingProvider.Model}:{embeddingProvider.Dimension}";
+
+        if (storedModel is null)
+        {
+            // First run - store the current model
+            _store.SetMetadata("embedding_model", currentModel);
+            _logger.LogInformation("Embedding model set: {Model}", currentModel);
+        }
+        else if (storedModel != currentModel)
+        {
+            _logger.LogWarning(
+                "Embedding model mismatch! Stored: {Stored}, Current: {Current}. " +
+                "Run 'repoql reindex' to regenerate embeddings with the new model.",
+                storedModel, currentModel);
+            // Clear existing embeddings to force full regeneration
+            ClearAllEmbeddings();
+            _store.SetMetadata("embedding_model", currentModel);
+            _logger.LogInformation("Cleared existing embeddings. Full re-embedding will occur.");
+        }
+
         var totalDocuments = CountTotalDocuments();
         var refreshPlan = LoadDocumentRefreshPlan();
         var docsSkippedAsUpToDate = totalDocuments - refreshPlan.Count;
@@ -125,6 +147,22 @@ public sealed class EmbeddingRefresher
         {
             _logger.LogInformation("Removed {Count} dangling embeddings", deletedCount);
         }
+    }
+
+    /// <summary>
+    /// Clears all embeddings (used when embedding model changes and dimensions are incompatible).
+    /// </summary>
+    public void ClearAllEmbeddings()
+    {
+        var deletedCount = _store.WriteTransaction((conn, tx) =>
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = "DELETE FROM document_embedding";
+            return cmd.ExecuteNonQuery();
+        });
+
+        _logger.LogInformation("Cleared {Count} embeddings due to model change", deletedCount);
     }
 
     #endregion
@@ -664,22 +702,41 @@ public sealed class EmbeddingRefresher
 
     private static Dictionary<int, long> ComputeUtf8ByteOffsets(string text, IReadOnlyList<(int StartChar, int EndChar)> chunks)
     {
-        var positions = new HashSet<int> { 0 };
-        foreach (var (start, end) in chunks)
+        if (chunks.Count == 0)
+            return new Dictionary<int, long>(1) { { 0, 0 } };
+
+        var boundaries = new List<int>(chunks.Count * 2 + 1) { 0 };
+        var lastAdded = 0;
+        var si = 0;
+        var ei = 0;
+        while (si < chunks.Count || ei < chunks.Count)
         {
-            positions.Add(start);
-            positions.Add(end);
+            int next;
+            if (ei >= chunks.Count || (si < chunks.Count && chunks[si].StartChar <= chunks[ei].EndChar))
+            {
+                next = chunks[si].StartChar;
+                si++;
+            }
+            else
+            {
+                next = chunks[ei].EndChar;
+                ei++;
+            }
+
+            if (next == lastAdded)
+                continue;
+
+            boundaries.Add(next);
+            lastAdded = next;
         }
 
-        var ordered = positions.OrderBy(p => p).ToArray();
-        var map = new Dictionary<int, long>(ordered.Length);
-
+        var map = new Dictionary<int, long>(boundaries.Count);
         long bytes = 0;
         var prev = 0;
         map[0] = 0;
-        for (var i = 1; i < ordered.Length; i++)
+        for (var i = 1; i < boundaries.Count; i++)
         {
-            var pos = ordered[i];
+            var pos = boundaries[i];
             bytes += Encoding.UTF8.GetByteCount(text.AsSpan(prev, pos - prev));
             map[pos] = bytes;
             prev = pos;

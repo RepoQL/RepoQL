@@ -247,6 +247,38 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
+    [DisplayName("WriteEmbeddings supports batched inserts")]
+    public void WriteEmbeddings_InsertsMoreThanOneBatch()
+    {
+        using var db = new DuckDbDataStore();
+
+        var uri = RepoUri.Parse("file:///test/doc.md")!;
+        var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
+
+        var embeddings = new List<DocumentEmbedding>(capacity: 200);
+        for (var i = 0; i < 200; i++)
+        {
+            embeddings.Add(new DocumentEmbedding(
+                indexResult.DocumentId,
+                indexResult.DocumentId,
+                ChunkIndex: i,
+                DocumentEmbedding.TypeFull,
+                uri.Container.AbsoluteUri,
+                DocumentEmbedding.ScopeDocument,
+                [0.1f, 0.2f, 0.3f],
+                "test-model",
+                Dimension: 3,
+                StartByte: i * 10L,
+                EndByte: (i * 10L) + 10L));
+        }
+
+        db.WriteEmbeddings(embeddings);
+
+        var count = db.Read("SELECT COUNT(*) AS cnt FROM document_embedding", r => r.GetInt64(0))[0];
+        count.Should().Be(200);
+    }
+
+    [Test]
     [DisplayName("IndexArtifact writes edges with all fields")]
     public void IndexArtifact_WritesEdgesWithAllFields()
     {

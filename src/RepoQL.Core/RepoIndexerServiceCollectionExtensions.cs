@@ -117,9 +117,18 @@ public static class RepoIndexerServiceCollectionExtensions
         if (string.Equals(Environment.GetEnvironmentVariable("REPOQL_EMBED_ENABLED"), "0", StringComparison.Ordinal))
             embeddingMode = EmbeddingMode.None;
 
+        // Check for OpenRouter API key - if present, use cloud embeddings and force "full" mode
+        var openRouterKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
+        var useOpenRouter = !string.IsNullOrWhiteSpace(openRouterKey);
+        if (useOpenRouter && embeddingMode != EmbeddingMode.None)
+        {
+            // Cloud embeddings should use full mode for best quality
+            embeddingMode = EmbeddingMode.Full;
+        }
+
         services.AddSingleton(new EmbeddingModeOptions(embeddingMode));
 
-        // Embeddings provider (local only)
+        // Embeddings provider: OpenRouter (cloud) if API key present, otherwise local ONNX
         services.AddSingleton<IEmbeddingProvider>(sp =>
         {
             var lf = sp.GetService<ILoggerFactory>();
@@ -132,6 +141,16 @@ public static class RepoIndexerServiceCollectionExtensions
                 return new DisabledEmbeddingProvider();
             }
 
+            // Use OpenRouter cloud embeddings if API key is present
+            if (useOpenRouter)
+            {
+                log?.LogInformation("Embedding provider: using OpenRouter (e5-large-v2, 1024 dims, mode=Full)");
+                return new RepoQL.LLM.Client.OpenRouterEmbeddingProvider(
+                    apiKey: openRouterKey,
+                    logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterEmbeddingProvider>>());
+            }
+
+            // No API key - use local ONNX embeddings
             // Prefer explicit ONNX model path via env
             var onnxPath = Environment.GetEnvironmentVariable("REPOQL_EMBED_MODEL_PATH");
             var maxTokens = 256;

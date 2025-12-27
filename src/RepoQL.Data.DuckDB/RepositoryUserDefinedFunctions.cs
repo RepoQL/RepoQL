@@ -21,12 +21,30 @@ public static class RepositoryUserDefinedFunctions
     // Static holder for external tool caller - enables calling external services from SQL UDFs
     private static Func<string, string, string?, string>? _externalToolCaller;
 
+    // Static holders for LLM callbacks - enables LLM-powered UDFs
+    private static Func<string, string, int, string>? _llmSummarizeCaller;
+    private static Func<string, string, string>? _llmExtractCaller;
+
     /// <summary>
     /// Sets an external tool caller function for use by _mcp_call_internal UDF.
     /// Signature: (serverName, toolName, paramsJson) => resultJson
     /// </summary>
     public static void SetExternalToolCaller(Func<string, string, string?, string>? caller)
         => _externalToolCaller = caller;
+
+    /// <summary>
+    /// Sets the LLM summarize caller function for use by _llm_summarize_internal UDF.
+    /// Signature: (jsonData, intent, maxTokens) => summary
+    /// </summary>
+    public static void SetLlmSummarizeCaller(Func<string, string, int, string>? caller)
+        => _llmSummarizeCaller = caller;
+
+    /// <summary>
+    /// Sets the LLM extract caller function for use by _llm_extract_internal UDF.
+    /// Signature: (jsonData, intent) => markdownReport
+    /// </summary>
+    public static void SetLlmExtractCaller(Func<string, string, string>? caller)
+        => _llmExtractCaller = caller;
 
     /// <summary>
     ///     Registers all scalar UDFs on the provided open connection.
@@ -1029,6 +1047,106 @@ public static class RepositoryUserDefinedFunctions
                 }
             },
             isPureFunction: false // External side effects
+        );
+
+        // ------------------- LLM Integration UDFs -------------------
+
+        // _llm_summarize_internal(json_data, intent, max_tokens) -> text
+        // Internal UDF called by llm_summarize macro. Returns summary text.
+        // The actual implementation is injected via SetLlmSummarizeCaller().
+        connection.RegisterScalarFunction<string, string, int, string>(
+            "_llm_summarize_internal",
+            (readers, writer, n) =>
+            {
+                if (readers.Count < 3)
+                {
+                    for (ulong i = 0; i < n; i++)
+                        writer.WriteValue("Error: Invalid reader count for _llm_summarize_internal", i);
+                    return;
+                }
+
+                var jsonReader = readers[0];
+                var intentReader = readers[1];
+                var tokensReader = readers[2];
+
+                for (ulong i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        if (!jsonReader.IsValid(i) || !intentReader.IsValid(i))
+                        {
+                            writer.WriteValue("Error: json_data and intent are required", i);
+                            continue;
+                        }
+
+                        if (_llmSummarizeCaller is null)
+                        {
+                            writer.WriteValue("LLM not configured (set OPENROUTER_API_KEY)", i);
+                            continue;
+                        }
+
+                        var json = jsonReader.GetValue<string>(i);
+                        var intent = intentReader.GetValue<string>(i);
+                        var maxTokens = tokensReader.IsValid(i) ? tokensReader.GetValue<int>(i) : 500;
+
+                        var result = _llmSummarizeCaller(json, intent, maxTokens);
+                        writer.WriteValue(result ?? "No response from LLM", i);
+                    }
+                    catch (Exception ex)
+                    {
+                        writer.WriteValue($"Error: {ex.Message}", i);
+                    }
+                }
+            },
+            isPureFunction: false // External side effects (LLM API call)
+        );
+
+        // _llm_extract_internal(json_data, intent) -> markdown_text
+        // Internal UDF called by llm_extract macro. Returns markdown report with snippets.
+        // The actual implementation is injected via SetLlmExtractCaller().
+        connection.RegisterScalarFunction<string, string, string>(
+            "_llm_extract_internal",
+            (readers, writer, n) =>
+            {
+                if (readers.Count < 2)
+                {
+                    for (ulong i = 0; i < n; i++)
+                        writer.WriteValue("Error: Invalid reader count for _llm_extract_internal", i);
+                    return;
+                }
+
+                var jsonReader = readers[0];
+                var intentReader = readers[1];
+
+                for (ulong i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        if (!jsonReader.IsValid(i) || !intentReader.IsValid(i))
+                        {
+                            writer.WriteValue("Error: json_data and intent are required", i);
+                            continue;
+                        }
+
+                        if (_llmExtractCaller is null)
+                        {
+                            writer.WriteValue("LLM not configured (set OPENROUTER_API_KEY)", i);
+                            continue;
+                        }
+
+                        var json = jsonReader.GetValue<string>(i);
+                        var intent = intentReader.GetValue<string>(i);
+
+                        var result = _llmExtractCaller(json, intent);
+                        writer.WriteValue(result ?? "No response from LLM", i);
+                    }
+                    catch (Exception ex)
+                    {
+                        writer.WriteValue($"Error: {ex.Message}", i);
+                    }
+                }
+            },
+            isPureFunction: false // External side effects (LLM API call)
         );
     }
 
