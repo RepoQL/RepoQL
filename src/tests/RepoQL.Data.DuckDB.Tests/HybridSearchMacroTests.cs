@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
+using RepoQL.Embeddings;
 using Artifact = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Data.DuckDB.Tests;
@@ -262,5 +263,140 @@ public class SearchMacroTests : IDisposable
         // Should not contain test files
         results.Should().NotContain(r => r.uri.Contains("tests/"),
             "scope should exclude test directory");
+    }
+}
+
+public class SearchMacroEmbeddingDimensionTests : IDisposable
+{
+    private readonly DuckDbDataStore _store;
+    private const int QueryDimension = 3;
+    private readonly string _uriGood = "file:///docs/good.md";
+    private readonly string _uriBad = "file:///docs/bad.md";
+
+    public SearchMacroEmbeddingDimensionTests()
+    {
+        var provider = new HashedEmbeddingProvider(QueryDimension, modelName: "test-hash-3");
+        _store = new DuckDbDataStore(embeddingProvider: provider);
+
+        var docGood = CreateDocument(
+            _uriGood,
+            mediaType: "text/markdown",
+            headline: "Good",
+            summary: "Document about database connections",
+            content: "# Good\nDatabase connections and setup."
+        );
+
+        var docBad = CreateDocument(
+            _uriBad,
+            mediaType: "text/markdown",
+            headline: "Bad",
+            summary: "Another document about database connections",
+            content: "# Bad\nDatabase connections and setup."
+        );
+
+        // Seed embeddings: one matches the query dimension, one is mismatched.
+        // The search macro should ignore the mismatched embeddings (instead of failing cosine similarity).
+        _store.WriteEmbeddings(new List<DocumentEmbedding>
+        {
+            new(
+                DocumentId: docGood,
+                NodeId: docGood,
+                ChunkIndex: 0,
+                EmbeddingType: DocumentEmbedding.TypeStructure,
+                Uri: _uriGood,
+                Scope: DocumentEmbedding.ScopeDocument,
+                Vector: new float[] { 1f, 0f, 0f },
+                Model: provider.Model,
+                Dimension: QueryDimension),
+            new(
+                DocumentId: docGood,
+                NodeId: docGood,
+                ChunkIndex: 0,
+                EmbeddingType: DocumentEmbedding.TypeFull,
+                Uri: _uriGood,
+                Scope: DocumentEmbedding.ScopeDocument,
+                Vector: new float[] { 0f, 1f, 0f },
+                Model: provider.Model,
+                Dimension: QueryDimension,
+                StartByte: 0,
+                EndByte: 10),
+
+            // Mismatched dimension embeddings for the second doc (both structure and full).
+            new(
+                DocumentId: docBad,
+                NodeId: docBad,
+                ChunkIndex: 0,
+                EmbeddingType: DocumentEmbedding.TypeStructure,
+                Uri: _uriBad,
+                Scope: DocumentEmbedding.ScopeDocument,
+                Vector: new float[] { 1f, 0f, 0f, 0f, 0f },
+                Model: "other-model",
+                Dimension: 5),
+            new(
+                DocumentId: docBad,
+                NodeId: docBad,
+                ChunkIndex: 0,
+                EmbeddingType: DocumentEmbedding.TypeFull,
+                Uri: _uriBad,
+                Scope: DocumentEmbedding.ScopeDocument,
+                Vector: new float[] { 0f, 1f, 0f, 0f, 0f },
+                Model: "other-model",
+                Dimension: 5,
+                StartByte: 0,
+                EndByte: 10)
+        });
+    }
+
+    public void Dispose()
+    {
+        _store?.Dispose();
+    }
+
+    private Guid CreateDocument(string uri, string mediaType, string headline, string summary, string content)
+    {
+        var artifact = new Artifact
+        {
+            Id = Guid.NewGuid(),
+            Digest = $"digest-{uri}",
+            Size = content.Length,
+            Text = content,
+            Headline = headline,
+            Summary = summary,
+            Structure = summary,
+            MediaType = SemanticMediaType.Parse(mediaType)
+        };
+
+        var nodeId = Guid.NewGuid();
+        var node = new Node
+        {
+            Id = nodeId,
+            Kind = "document",
+            Uri = RepoUri.TryParse(uri, out var parsedUri) ? parsedUri : null,
+            ArtifactId = artifact.Id,
+            Props = new JsonObject()
+        };
+
+        _store.IndexArtifact(new ParsedArtifact { Artifact = artifact, DocumentNode = node });
+        return nodeId;
+    }
+
+    [Test]
+    public void Search_WithMixedEmbeddingDimensions_DoesNotThrow()
+    {
+        var mismatched = _store.Read(
+            $"SELECT COUNT(*) FROM document_embedding WHERE dim <> {QueryDimension}",
+            r => r.GetInt64(0))[0];
+        mismatched.Should().BeGreaterThan(0, "test setup should include mismatched-dimension embeddings");
+
+        var results = _store.Read(
+            @"SELECT uri, ROUND(score, 3) AS score
+              FROM search('database')
+              ORDER BY score DESC
+              LIMIT 5",
+            r => (uri: r.GetString(0), score: r.GetDouble(1)));
+
+        results.Should().NotBeEmpty();
+        results.Select(r => r.uri).Should().Contain(_uriGood);
+        results.Select(r => r.uri).Should().Contain(_uriBad);
     }
 }

@@ -20,6 +20,7 @@
     <ItemGroup>
       <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
       <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
+      <ProjectReference Include="..\RepoQL.Xray\RepoQL.Xray.csproj" />
     </ItemGroup>
 
     <ItemGroup>

@@ -344,7 +344,8 @@ public static class RepoIndexerServiceCollectionExtensions
                 dbFileFullPath,
                 sp.GetRequiredService<IEmbeddingProvider>(),
                 scripts,
-                sp.GetService<ILogger<DuckDbDataStore>>());
+                sp.GetService<ILogger<DuckDbDataStore>>(),
+                sp);  // Pass IServiceProvider for UDF service resolution
 
             return db;
         });

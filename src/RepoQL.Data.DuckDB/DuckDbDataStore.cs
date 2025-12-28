@@ -1,6 +1,7 @@
 using System.Data;
 using DuckDB.NET.Data;
 using DuckDB.NET.Native;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
@@ -17,11 +18,16 @@ public sealed class DuckDbDataStore : IDisposable
 {
     private readonly string? _path;
     private DuckDBConnection _connection = null!; // Initialized in InitializeConnections
+    private DuckDBConnection? _reentrantConnection; // Secondary read-only connection for UDF callbacks
+    private readonly object _reentrantConnectionLock = new();
     private readonly SemaphoreSlim _lock = new(1, 1); // DuckDB connections aren't thread-safe for concurrent commands
     private readonly ILogger _logger;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
     private readonly bool _isInMemory;
+    private readonly IServiceProvider? _serviceProvider;
+    private static readonly AsyncLocal<IServiceScope?> _currentScope = new();
+    private static readonly AsyncLocal<bool> _inQueryContext = new();
     private bool _schemaInitialized;
     private bool _disposed;
     private bool _databaseInvalidated;
@@ -34,17 +40,47 @@ public sealed class DuckDbDataStore : IDisposable
     /// </summary>
     public bool RecoveryOccurred { get; private set; }
 
+    /// <summary>
+    /// Executes an action within a DI scope, making services available to UDFs via GetService.
+    /// </summary>
+    public T WithScope<T>(Func<T> action)
+    {
+        if (_serviceProvider is null)
+            return action();
+
+        using var scope = _serviceProvider.CreateScope();
+        var previous = _currentScope.Value;
+        _currentScope.Value = scope;
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            _currentScope.Value = previous;
+        }
+    }
+
+    /// <summary>
+    /// Resolves a service from the current AsyncLocal scope.
+    /// Used by UDFs to access services like XrayOrchestrator.
+    /// </summary>
+    public static T? GetService<T>() where T : class
+        => _currentScope.Value?.ServiceProvider.GetService<T>();
+
     public DuckDbDataStore(
         string? path = null,
         IEmbeddingProvider? embeddingProvider = null,
         IEnumerable<FormatSqlScript>? formatSchemaScripts = null,
-        ILogger<DuckDbDataStore>? logger = null)
+        ILogger<DuckDbDataStore>? logger = null,
+        IServiceProvider? serviceProvider = null)
     {
         _path = path;
         _logger = logger ?? NullLogger<DuckDbDataStore>.Instance;
         _embeddingProvider = embeddingProvider;
         _formatSchemaScripts = formatSchemaScripts?.ToArray() ?? [];
         _isInMemory = path is null or ":memory:";
+        _serviceProvider = serviceProvider;
 
         _logger.LogDebug("[DuckDB] Initializing data store (path={Path}, inMemory={IsInMemory})",
             _isInMemory ? ":memory:" : path, _isInMemory);
@@ -171,16 +207,30 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
+        // Detect reentrant calls (e.g., from UDFs that query the database)
+        // If already in a query context, use secondary connection to avoid deadlock
+        if (_inQueryContext.Value)
+        {
+            return ExecuteReentrantRead(sql, map);
+        }
+
         _lock.Wait();
         try
         {
-            using var cmd = _connection.CreateCommand();
-            cmd.CommandText = sql;
-            using var reader = cmd.ExecuteReader();
-            var results = new List<T>();
-            while (reader.Read())
-                results.Add(map(reader));
-            return results;
+            // Set up DI scope for UDFs that need service resolution
+            using var scope = _serviceProvider?.CreateScope();
+            var previousScope = _currentScope.Value;
+            _currentScope.Value = scope;
+            _inQueryContext.Value = true;
+            try
+            {
+                return ExecuteRead(sql, map);
+            }
+            finally
+            {
+                _currentScope.Value = previousScope;
+                _inQueryContext.Value = false;
+            }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
         {
@@ -199,6 +249,72 @@ public sealed class DuckDbDataStore : IDisposable
         }
     }
 
+    private IReadOnlyList<T> ExecuteRead<T>(string sql, Func<IDataRecord, T> map)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = sql;
+        using var reader = cmd.ExecuteReader();
+        var results = new List<T>();
+        while (reader.Read())
+            results.Add(map(reader));
+        return results;
+    }
+
+    /// <summary>
+    /// Gets or creates a secondary read-only connection for reentrant queries (e.g., from UDFs).
+    /// This connection is separate from the primary connection to avoid deadlocks.
+    /// </summary>
+    private DuckDBConnection GetReentrantConnection()
+    {
+        if (_reentrantConnection is not null)
+            return _reentrantConnection;
+
+        lock (_reentrantConnectionLock)
+        {
+            if (_reentrantConnection is not null)
+                return _reentrantConnection;
+
+            _logger.LogDebug("[DuckDB] Creating secondary read-only connection for reentrant queries");
+
+            if (_isInMemory)
+            {
+                // For in-memory databases, we can't create a second connection to the same database
+                // Fall back to the primary connection (caller must handle potential issues)
+                _logger.LogWarning("[DuckDB] In-memory database doesn't support reentrant connection; using primary");
+                return _connection;
+            }
+
+            var connStr = $"Data Source={_path}";
+            _reentrantConnection = new DuckDBConnection(connStr);
+            _reentrantConnection.Open();
+
+            return _reentrantConnection;
+        }
+    }
+
+    private IReadOnlyList<T> ExecuteReentrantRead<T>(string sql, Func<IDataRecord, T> map)
+    {
+        var conn = GetReentrantConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        using var reader = cmd.ExecuteReader();
+        var results = new List<T>();
+        while (reader.Read())
+            results.Add(map(reader));
+        return results;
+    }
+
+    private T? ExecuteReentrantScalar<T>(string sql)
+    {
+        var conn = GetReentrantConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        var result = cmd.ExecuteScalar();
+        if (result is null or DBNull) return default;
+        if (result is T typed) return typed;
+        return (T)Convert.ChangeType(result, typeof(T));
+    }
+
     /// <summary>
     /// Execute a query from an untrusted source (e.g., MCP client) in a read-only transaction.
     /// DuckDB enforces at the engine level that no writes can occur, regardless of SQL content.
@@ -212,27 +328,40 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
+        // Detect reentrant calls - use secondary connection to avoid deadlock
+        if (_inQueryContext.Value)
+        {
+            return ExecuteReentrantRead(sql, map);
+        }
+
         _lock.Wait();
         try
         {
-            // Start a read-only transaction - DuckDB will reject any write attempts
-            _connection.Execute("BEGIN TRANSACTION READ ONLY;");
+            // Set up DI scope for UDFs that need service resolution
+            using var scope = _serviceProvider?.CreateScope();
+            var previousScope = _currentScope.Value;
+            _currentScope.Value = scope;
+            _inQueryContext.Value = true;
             try
             {
-                using var cmd = _connection.CreateCommand();
-                cmd.CommandText = sql;
-                using var reader = cmd.ExecuteReader();
-                var results = new List<T>();
-                while (reader.Read())
-                    results.Add(map(reader));
-
-                _connection.Execute("COMMIT;");
-                return results;
+                // Start a read-only transaction - DuckDB will reject any write attempts
+                _connection.Execute("BEGIN TRANSACTION READ ONLY;");
+                try
+                {
+                    var results = ExecuteRead(sql, map);
+                    _connection.Execute("COMMIT;");
+                    return results;
+                }
+                catch
+                {
+                    try { _connection.Execute("ROLLBACK;"); } catch { /* ignore rollback errors */ }
+                    throw;
+                }
             }
-            catch
+            finally
             {
-                try { _connection.Execute("ROLLBACK;"); } catch { /* ignore rollback errors */ }
-                throw;
+                _currentScope.Value = previousScope;
+                _inQueryContext.Value = false;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
@@ -256,15 +385,29 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
+        // Detect reentrant calls - use secondary connection to avoid deadlock
+        if (_inQueryContext.Value)
+        {
+            return ExecuteReentrantScalar<T>(sql);
+        }
+
         _lock.Wait();
         try
         {
-            using var cmd = _connection.CreateCommand();
-            cmd.CommandText = sql;
-            var result = cmd.ExecuteScalar();
-            if (result is null or DBNull) return default;
-            if (result is T typed) return typed;
-            return (T)Convert.ChangeType(result, typeof(T));
+            // Set up DI scope for UDFs that need service resolution
+            using var scope = _serviceProvider?.CreateScope();
+            var previousScope = _currentScope.Value;
+            _currentScope.Value = scope;
+            _inQueryContext.Value = true;
+            try
+            {
+                return ExecuteScalar<T>(sql);
+            }
+            finally
+            {
+                _currentScope.Value = previousScope;
+                _inQueryContext.Value = false;
+            }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
         {
@@ -280,6 +423,16 @@ public sealed class DuckDbDataStore : IDisposable
         {
             _lock.Release();
         }
+    }
+
+    private T? ExecuteScalar<T>(string sql)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = sql;
+        var result = cmd.ExecuteScalar();
+        if (result is null or DBNull) return default;
+        if (result is T typed) return typed;
+        return (T)Convert.ChangeType(result, typeof(T));
     }
 
     public void WriteTransaction(Action<DuckDBConnection, DuckDBTransaction> work)
@@ -689,8 +842,6 @@ public sealed class DuckDbDataStore : IDisposable
                 _logger.LogDebug("[DuckDB] WAL autocheckpoint set to 16MB");
             }
 
-            _connection.Execute("CREATE TABLE IF NOT EXISTS repo_metadata(key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);");
-
             _logger.LogDebug("[DuckDB] Registering UDFs on writer connection...");
             RepositoryUserDefinedFunctions.RegisterAll(_connection, _embeddingProvider);
 
@@ -720,7 +871,11 @@ public sealed class DuckDbDataStore : IDisposable
                 "Tables/document_search.sql",
                 "Macros/search.sql",
                 "Macros/hybrid_search.sql",
-                "Tables/file_system_mount.sql"
+                "Tables/file_system_mount.sql",
+                "Macros/llm_summarize.sql",
+                "Macros/llm_extract.sql",
+                "Macros/xray.sql",
+                "Macros/xray_structured.sql"
             };
 
             foreach (var script in schemaScripts)
@@ -853,7 +1008,11 @@ public sealed class DuckDbDataStore : IDisposable
                 }
             }
 
-            // Note: _connection == _connection, so only dispose once
+            // Dispose reentrant connection if created
+            try { _reentrantConnection?.Dispose(); }
+            catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing reentrant connection"); }
+
+            // Dispose primary connection
             try { _connection?.Dispose(); }
             catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing connection"); }
 

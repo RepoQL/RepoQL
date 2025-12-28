@@ -291,6 +291,9 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 
     private void LogBatchProgress(BatchEmbeddingProgress progress, int batchSize, TimeSpan batchTime)
     {
+        if (!_logger.IsEnabled(LogLevel.Information))
+            return;
+
         var perItemMs = batchSize == 0 ? 0 : batchTime.TotalMilliseconds / batchSize;
 
         if (progress.TotalBatches > 0)
@@ -316,139 +319,177 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         }
     }
 
-    private async Task<float[]?> RunAndPostprocessAsync(IReadOnlyCollection<NamedOnnxValue> inputs, CancellationToken ct)
+    private Task<float[]?> RunAndPostprocessAsync(IReadOnlyCollection<NamedOnnxValue> inputs, CancellationToken ct)
     {
         try
         {
-            using var results = await Task.Run(() => _session!.Run(inputs), ct).ConfigureAwait(false);
-            var outVal = results.First(v => v.Name == _outputName);
+            ct.ThrowIfCancellationRequested();
 
-            // Prefer DenseTensor for fast buffer access
-            if (outVal.Value is DenseTensor<float> t)
+            using var results = _session!.Run(inputs);
             {
-                switch (t.Rank)
+                DisposableNamedOnnxValue? outVal = null;
+                foreach (var v in results)
                 {
-                    case 3: // [1,T,H] -> CLS at [0,0,:]
+                    if (v.Name == _outputName)
                     {
-                        var dims = t.Dimensions;
-                        var H = dims[2];
-                        Dimension = H;
-                        var vec = new float[H];
-                        var span = t.Buffer.Span;
-                        span.Slice(0, H).CopyTo(vec); // first H floats
-                        L2NormalizeInPlace(vec);
-                        return vec;
-                    }
-                    case 2: // [1,H]
-                    {
-                        var H = t.Dimensions[1];
-                        Dimension = H;
-                        var vec = new float[H];
-                        var span = t.Buffer.Span;
-                        span.Slice(0, H).CopyTo(vec);
-                        L2NormalizeInPlace(vec);
-                        return vec;
-                    }
-                    default:
-                    {
-                        var vec = t.ToArray();
-                        if (vec.Length != Dimension) Dimension = vec.Length;
-                        L2NormalizeInPlace(vec);
-                        return vec;
+                        outVal = v;
+                        break;
                     }
                 }
+
+                if (outVal is null)
+                {
+                    _logger.LogWarning("ONNX output {Name} not found", _outputName);
+                    return Task.FromResult<float[]?>(null);
+                }
+
+                // Prefer DenseTensor for fast buffer access
+                if (outVal.Value is DenseTensor<float> t)
+                {
+                    switch (t.Rank)
+                    {
+                        case 3: // [1,T,H] -> CLS at [0,0,:]
+                        {
+                            var dims = t.Dimensions;
+                            var H = dims[2];
+                            Dimension = H;
+                            var vec = new float[H];
+                            var span = t.Buffer.Span;
+                            span.Slice(0, H).CopyTo(vec); // first H floats
+                            L2NormalizeInPlace(vec);
+                            return Task.FromResult<float[]?>(vec);
+                        }
+                        case 2: // [1,H]
+                        {
+                            var H = t.Dimensions[1];
+                            Dimension = H;
+                            var vec = new float[H];
+                            var span = t.Buffer.Span;
+                            span.Slice(0, H).CopyTo(vec);
+                            L2NormalizeInPlace(vec);
+                            return Task.FromResult<float[]?>(vec);
+                        }
+                        default:
+                        {
+                            var vec = t.ToArray();
+                            if (vec.Length != Dimension) Dimension = vec.Length;
+                            L2NormalizeInPlace(vec);
+                            return Task.FromResult<float[]?>(vec);
+                        }
+                    }
+                }
+                else if (outVal.Value is IEnumerable<float> seq)
+                {
+                    var vec = seq is float[] a ? a : seq.ToArray();
+                    if (vec.Length != Dimension) Dimension = vec.Length;
+                    L2NormalizeInPlace(vec);
+                    return Task.FromResult<float[]?>(vec);
+                }
+
+                _logger.LogWarning("Unexpected output type {Type}", outVal.Value?.GetType().FullName ?? "<null>");
+                return Task.FromResult<float[]?>(null);
             }
-            else if (outVal.Value is IEnumerable<float> seq)
-            {
-                var vec = seq is float[] a ? a : seq.ToArray();
-                if (vec.Length != Dimension) Dimension = vec.Length;
-                L2NormalizeInPlace(vec);
-                return vec;
-            }
-            _logger.LogWarning("Unexpected output type {Type}", outVal.Value?.GetType().FullName ?? "<null>");
-            return null;
         }
-        catch (OperationCanceledException) { return null; }
+        catch (OperationCanceledException) { return Task.FromResult<float[]?>(null); }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Embedding inference failed");
-            return null;
+            return Task.FromResult<float[]?>(null);
         }
     }
 
-    private async Task<float[]?[]> RunAndPostprocessBatchAsync(IReadOnlyCollection<NamedOnnxValue> inputs, int batch, CancellationToken ct)
+    private Task<float[]?[]> RunAndPostprocessBatchAsync(IReadOnlyCollection<NamedOnnxValue> inputs, int batch, CancellationToken ct)
     {
         try
         {
+            ct.ThrowIfCancellationRequested();
+
             var inferenceTimer = System.Diagnostics.Stopwatch.StartNew();
-            using var results = await Task.Run(() => _session!.Run(inputs), ct).ConfigureAwait(false);
+            using var results = _session!.Run(inputs);
             inferenceTimer.Stop();
 
             var postprocessTimer = System.Diagnostics.Stopwatch.StartNew();
-            var outVal = results.First(v => v.Name == _outputName);
-
-            if (outVal.Value is DenseTensor<float> t)
             {
-                if (t.Rank == 3) // [B,T,H] -> CLS [b,0,:]
+                DisposableNamedOnnxValue? outVal = null;
+                foreach (var v in results)
                 {
-                    var dims = t.Dimensions;
-                    int B = dims[0], T = dims[1], H = dims[2];
-                    if (B != batch) _logger.LogWarning("Output batch {B} != input {I}", B, batch);
-                    Dimension = H;
-
-                    var span = t.Buffer.Span;
-                    var stride = T * H;
-                    var arr = new float[B][];
-                    for (var b = 0; b < B; b++)
+                    if (v.Name == _outputName)
                     {
-                        var vec = new float[H];
-                        span.Slice(b * stride, H).CopyTo(vec); // first token for sample b
-                        L2NormalizeInPlace(vec);
-                        arr[b] = vec;
+                        outVal = v;
+                        break;
                     }
-                    postprocessTimer.Stop();
-                    _logger.LogDebug("ONNX batch timing: inference={InferenceMs:F1}ms, postprocess={PostprocessMs:F1}ms",
-                        inferenceTimer.Elapsed.TotalMilliseconds, postprocessTimer.Elapsed.TotalMilliseconds);
-                    return arr!;
                 }
-                else if (t.Rank == 2) // [B,H]
-                {
-                    var dims = t.Dimensions;
-                    int B = dims[0], H = dims[1];
-                    if (B != batch) _logger.LogWarning("Output batch {B} != input {I}", B, batch);
-                    Dimension = H;
 
-                    var arr = new float[B][];
-                    var span = t.Buffer.Span;
-                    for (var b = 0; b < B; b++)
-                    {
-                        var vec = new float[H];
-                        span.Slice(b * H, H).CopyTo(vec);
-                        L2NormalizeInPlace(vec);
-                        arr[b] = vec;
-                    }
-                    postprocessTimer.Stop();
-                    _logger.LogDebug("ONNX batch timing: inference={InferenceMs:F1}ms, postprocess={PostprocessMs:F1}ms",
-                        inferenceTimer.Elapsed.TotalMilliseconds, postprocessTimer.Elapsed.TotalMilliseconds);
-                    return arr!;
-                }
-                else
+                if (outVal is null)
                 {
                     postprocessTimer.Stop();
-                    _logger.LogWarning("Unexpected output rank {Rank}", t.Rank);
-                    return Enumerable.Range(0, batch).Select(_ => (float[]?)null).ToArray();
+                    _logger.LogWarning("ONNX output {Name} not found", _outputName);
+                    return Task.FromResult(new float[]?[batch]);
                 }
+
+                if (outVal.Value is DenseTensor<float> t)
+                {
+                    if (t.Rank == 3) // [B,T,H] -> CLS [b,0,:]
+                    {
+                        var dims = t.Dimensions;
+                        int B = dims[0], T = dims[1], H = dims[2];
+                        if (B != batch) _logger.LogWarning("Output batch {B} != input {I}", B, batch);
+                        Dimension = H;
+
+                        var span = t.Buffer.Span;
+                        var stride = T * H;
+                        var arr = new float[B][];
+                        for (var b = 0; b < B; b++)
+                        {
+                            var vec = new float[H];
+                            span.Slice(b * stride, H).CopyTo(vec); // first token for sample b
+                            L2NormalizeInPlace(vec);
+                            arr[b] = vec;
+                        }
+                        postprocessTimer.Stop();
+                        _logger.LogDebug("ONNX batch timing: inference={InferenceMs:F1}ms, postprocess={PostprocessMs:F1}ms",
+                            inferenceTimer.Elapsed.TotalMilliseconds, postprocessTimer.Elapsed.TotalMilliseconds);
+                        return Task.FromResult<float[]?[]>(arr!);
+                    }
+                    else if (t.Rank == 2) // [B,H]
+                    {
+                        var dims = t.Dimensions;
+                        int B = dims[0], H = dims[1];
+                        if (B != batch) _logger.LogWarning("Output batch {B} != input {I}", B, batch);
+                        Dimension = H;
+
+                        var arr = new float[B][];
+                        var span = t.Buffer.Span;
+                        for (var b = 0; b < B; b++)
+                        {
+                            var vec = new float[H];
+                            span.Slice(b * H, H).CopyTo(vec);
+                            L2NormalizeInPlace(vec);
+                            arr[b] = vec;
+                        }
+                        postprocessTimer.Stop();
+                        _logger.LogDebug("ONNX batch timing: inference={InferenceMs:F1}ms, postprocess={PostprocessMs:F1}ms",
+                            inferenceTimer.Elapsed.TotalMilliseconds, postprocessTimer.Elapsed.TotalMilliseconds);
+                        return Task.FromResult<float[]?[]>(arr!);
+                    }
+                    else
+                    {
+                        postprocessTimer.Stop();
+                        _logger.LogWarning("Unexpected output rank {Rank}", t.Rank);
+                        return Task.FromResult(new float[]?[batch]);
+                    }
+                }
+
+                postprocessTimer.Stop();
+                _logger.LogWarning("Unexpected output type {Type}", outVal.Value?.GetType().FullName ?? "<null>");
+                return Task.FromResult(new float[]?[batch]);
             }
-
-            postprocessTimer.Stop();
-            _logger.LogWarning("Unexpected output type {Type}", outVal.Value?.GetType().FullName ?? "<null>");
-            return Enumerable.Range(0, batch).Select(_ => (float[]?)null).ToArray();
         }
-        catch (OperationCanceledException) { return Enumerable.Range(0, batch).Select(_ => (float[]?)null).ToArray(); }
+        catch (OperationCanceledException) { return Task.FromResult(new float[]?[batch]); }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Batch embedding inference failed");
-            return Enumerable.Range(0, batch).Select(_ => (float[]?)null).ToArray();
+            return Task.FromResult(new float[]?[batch]);
         }
     }
 

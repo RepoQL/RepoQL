@@ -1,4 +1,7 @@
+using System.Diagnostics;
+using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.DependencyInjection;
+using RepoQL.Contracts;
 using Projects;
 using RepoQL.Orchestrator;
 
@@ -8,8 +11,141 @@ builder.Services.AddHealthChecks()
     .AddCheck<RepoQlHostHealthCheck>("repoql-host");
 
 var host = builder.AddProject<RepoQL_ConsoleApp>("host", options => options.LaunchProfileName = "host")
-    .WithHealthCheck("repoql-host");
+    .WithHealthCheck("repoql-host")
+    .WithCommand(
+        name: "reset_repoql_directory",
+        displayName: "Reset .repoql and restart",
+        executeCommand: async context =>
+        {
+            try
+            {
+                var ct = context.CancellationToken;
+                var resourceCommands = context.ServiceProvider.GetRequiredService<ResourceCommandService>();
+
+                var repoRoot = ResolveRepoRoot();
+                var repoqlDir = Path.Combine(repoRoot, ".repoql");
+
+                var stopResult = await resourceCommands.ExecuteCommandAsync(
+                        context.ResourceName,
+                        KnownResourceCommands.StopCommand,
+                        ct)
+                    .ConfigureAwait(false);
+
+                if (stopResult.Canceled)
+                    return CommandResults.Canceled();
+                if (!stopResult.Success)
+                    return stopResult.ErrorMessage is { Length: > 0 }
+                        ? CommandResults.Failure($"Failed to stop host: {stopResult.ErrorMessage}")
+                        : CommandResults.Failure("Failed to stop host.");
+
+                await DeleteDirectoryWithRetriesAsync(repoqlDir, timeout: TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+
+                var startResult = await resourceCommands.ExecuteCommandAsync(
+                        context.ResourceName,
+                        KnownResourceCommands.StartCommand,
+                        ct)
+                    .ConfigureAwait(false);
+
+                if (startResult.Canceled)
+                    return CommandResults.Canceled();
+                if (!startResult.Success)
+                    return startResult.ErrorMessage is { Length: > 0 }
+                        ? CommandResults.Failure($"Failed to start host: {startResult.ErrorMessage}")
+                        : CommandResults.Failure("Failed to start host.");
+
+                return CommandResults.Success();
+            }
+            catch (OperationCanceledException)
+            {
+                return CommandResults.Canceled();
+            }
+            catch (Exception ex)
+            {
+                return CommandResults.Failure(ex);
+            }
+        },
+        commandOptions: new CommandOptions
+        {
+            Description = "Stops the RepoQL host, deletes the repository-local .repoql directory, then restarts the host.",
+            ConfirmationMessage = "This will delete the entire .repoql directory for the repository (index DB, imports, UI state). Continue?",
+            IconName = "Delete",
+            IsHighlighted = true
+        });
 builder.AddProject<RepoQL_Web>("web")
     .WaitFor(host);
 
 builder.Build().Run();
+
+static string ResolveRepoRoot()
+{
+    var explicitWorkingDirectory = Environment.GetEnvironmentVariable("REPOQL_CWD");
+    if (!string.IsNullOrWhiteSpace(explicitWorkingDirectory) &&
+        !explicitWorkingDirectory.Contains('{') &&
+        Directory.Exists(explicitWorkingDirectory))
+    {
+        return RepoLocator.FindRepoRoot(explicitWorkingDirectory);
+    }
+
+    return RepoLocator.FindRepoRoot();
+}
+
+static async Task DeleteDirectoryWithRetriesAsync(string path, TimeSpan timeout, CancellationToken cancellationToken)
+{
+    if (!Directory.Exists(path))
+        return;
+
+    var sw = Stopwatch.StartNew();
+    while (true)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        try
+        {
+            MakeDirectoryDeletable(path);
+            Directory.Delete(path, recursive: true);
+            return;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            if (sw.Elapsed >= timeout)
+                throw;
+            await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken).ConfigureAwait(false);
+        }
+    }
+}
+
+static void MakeDirectoryDeletable(string directory)
+{
+    if (!Directory.Exists(directory))
+        return;
+
+    try
+    {
+        foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        {
+            try { File.SetAttributes(file, FileAttributes.Normal); }
+            catch { /* best-effort */ }
+        }
+
+        foreach (var dir in Directory.EnumerateDirectories(directory, "*", SearchOption.AllDirectories))
+        {
+            try
+            {
+                var attributes = File.GetAttributes(dir);
+                if ((attributes & FileAttributes.ReadOnly) != 0)
+                {
+                    File.SetAttributes(dir, attributes & ~FileAttributes.ReadOnly);
+                }
+            }
+            catch { /* best-effort */ }
+        }
+    }
+    catch
+    {
+        // best-effort; deletion will retry and surface failures if persistent
+    }
+}

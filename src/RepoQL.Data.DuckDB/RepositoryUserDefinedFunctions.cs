@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using RepoQL.Contracts;
+using RepoQL.Xray;
 
 #pragma warning disable DuckDBNET001
 
@@ -1148,11 +1149,253 @@ public static class RepositoryUserDefinedFunctions
             },
             isPureFunction: false // External side effects (LLM API call)
         );
+
+        // _xray_internal(keywords, intent, options_json) -> formatted_text
+        // Internal UDF called by xray macro. Returns TOON-formatted xray output.
+        // Resolves XrayOrchestrator from DI via DuckDbDataStore.GetService<T>().
+        // options_json contains: tokens (int), scope, boost, penalize
+        connection.RegisterScalarFunction<string, string, string, string>(
+            "_xray_internal",
+            (readers, writer, n) =>
+            {
+                for (ulong i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        if (readers.Count < 2)
+                        {
+                            writer.WriteValue($"Error: Invalid reader count {readers.Count}", i);
+                            continue;
+                        }
+
+                        var keywordsReader = readers[0];
+                        var intentReader = readers[1];
+                        var optionsReader = readers.Count > 2 ? readers[2] : null;
+
+                        var keywords = keywordsReader.IsValid(i) ? keywordsReader.GetValue<string>(i) : "(no keywords)";
+                        var intentStr = intentReader.IsValid(i) ? intentReader.GetValue<string>(i) : "Find";
+
+                        // Parse options JSON for tokens, scope, boost, penalize
+                        int tokens = 1000;
+
+                        var orchestrator = DuckDbDataStore.GetService<XrayOrchestrator>();
+                        if (orchestrator is null)
+                        {
+                            writer.WriteValue($"Error: XrayOrchestrator not available. keywords={keywords}, tokens={tokens}, intent={intentStr}", i);
+                            continue;
+                        }
+
+                        // Parse options JSON for tokens, scope, boost, penalize
+                        string? scope = null, boost = null, penalize = null;
+                        if (optionsReader is not null && optionsReader.IsValid(i))
+                        {
+                            var optionsJson = optionsReader.GetValue<string>(i);
+                            if (!string.IsNullOrWhiteSpace(optionsJson))
+                            {
+                                try
+                                {
+                                    var opts = System.Text.Json.JsonDocument.Parse(optionsJson);
+                                    if (opts.RootElement.TryGetProperty("tokens", out var t) && t.TryGetInt32(out var tok)) tokens = tok;
+                                    if (opts.RootElement.TryGetProperty("scope", out var s)) scope = s.GetString();
+                                    if (opts.RootElement.TryGetProperty("boost", out var b)) boost = b.GetString();
+                                    if (opts.RootElement.TryGetProperty("penalize", out var p)) penalize = p.GetString();
+                                }
+                                catch { /* Ignore JSON parse errors */ }
+                            }
+                        }
+
+                        var intent = intentStr?.ToLowerInvariant() switch
+                        {
+                            "explore" => Intent.Explore,
+                            "examine" => Intent.Examine,
+                            _ => Intent.Find
+                        };
+
+                        var query = new XrayQuery(
+                            TokenBudget: tokens,
+                            Intent: intent,
+                            Scope: scope,
+                            Keywords: keywords,
+                            Boost: boost,
+                            Penalize: penalize,
+                            Limit: null  // Let token budget + distribution decide
+                        );
+
+                        // Use a default IndexerStatus since we can't easily query diagnostics from within a UDF
+                        var status = new IndexerStatus(0, true, true, 0);
+
+                        var result = orchestrator.ExecuteAsync(query, status, CancellationToken.None)
+                            .GetAwaiter().GetResult();
+
+                        writer.WriteValue(result.RenderedOutput ?? "(empty result)", i);
+                    }
+                    catch (Exception ex)
+                    {
+                        writer.WriteValue($"Error: {ex.GetType().Name}: {ex.Message}", i);
+                    }
+                }
+            },
+            isPureFunction: false // External side effects (search engine calls)
+        );
+
+        // _xray_structured_internal(keywords, intent, options_json) -> JSON array
+        // Internal UDF called by xray_structured table macro. Returns JSON array of results.
+        // Resolves XrayOrchestrator from DI via DuckDbDataStore.GetService<T>().
+        // options_json contains: tokens (int), scope, boost, penalize
+        connection.RegisterScalarFunction<string, string, string, string>(
+            "_xray_structured_internal",
+            (readers, writer, n) =>
+            {
+                for (ulong i = 0; i < n; i++)
+                {
+                    try
+                    {
+                        if (readers.Count < 2)
+                        {
+                            writer.WriteValue("[]", i);
+                            continue;
+                        }
+
+                        var keywordsReader = readers[0];
+                        var intentReader = readers[1];
+                        var optionsReader = readers.Count > 2 ? readers[2] : null;
+
+                        var keywords = keywordsReader.IsValid(i) ? keywordsReader.GetValue<string>(i) : null;
+                        var intentStr = intentReader.IsValid(i) ? intentReader.GetValue<string>(i) : "Find";
+
+                        // Parse options JSON for tokens, scope, boost, penalize
+                        int tokens = 1000;
+                        string? scope = null, boost = null, penalize = null;
+                        if (optionsReader is not null && optionsReader.IsValid(i))
+                        {
+                            var optionsJson = optionsReader.GetValue<string>(i);
+                            if (!string.IsNullOrWhiteSpace(optionsJson))
+                            {
+                                try
+                                {
+                                    var opts = System.Text.Json.JsonDocument.Parse(optionsJson);
+                                    if (opts.RootElement.TryGetProperty("tokens", out var t) && t.TryGetInt32(out var tok)) tokens = tok;
+                                    if (opts.RootElement.TryGetProperty("scope", out var s)) scope = s.GetString();
+                                    if (opts.RootElement.TryGetProperty("boost", out var b)) boost = b.GetString();
+                                    if (opts.RootElement.TryGetProperty("penalize", out var p)) penalize = p.GetString();
+                                }
+                                catch { /* Ignore JSON parse errors */ }
+                            }
+                        }
+
+                        var orchestrator = DuckDbDataStore.GetService<XrayOrchestrator>();
+                        if (orchestrator is null)
+                        {
+                            writer.WriteValue("[]", i);
+                            continue;
+                        }
+
+                        var intent = intentStr?.ToLowerInvariant() switch
+                        {
+                            "explore" => Intent.Explore,
+                            "examine" => Intent.Examine,
+                            _ => Intent.Find
+                        };
+
+                        var query = new XrayQuery(
+                            TokenBudget: tokens,
+                            Intent: intent,
+                            Scope: scope,
+                            Keywords: keywords,
+                            Boost: boost,
+                            Penalize: penalize,
+                            Limit: null
+                        );
+
+                        var status = new IndexerStatus(0, true, true, 0);
+                        var result = orchestrator.ExecuteAsync(query, status, CancellationToken.None)
+                            .GetAwaiter().GetResult();
+
+                        // Convert results to JSON array
+                        var jsonArray = SerializeXrayResultsToJson(result.Results);
+                        writer.WriteValue(jsonArray, i);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Return empty array on error to avoid breaking queries
+                        writer.WriteValue($"[]", i);
+                    }
+                }
+            },
+            isPureFunction: false
+        );
+    }
+
+    /// <summary>
+    /// Serialize xray results to a JSON array for structured output.
+    /// Flattens the hierarchy - documents with their child objects as separate rows.
+    /// </summary>
+    private static string SerializeXrayResultsToJson(IReadOnlyList<XrayResult> results)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append('[');
+        bool first = true;
+
+        void WriteResult(XrayResult r, string? parentUri, int depth)
+        {
+            if (!first) sb.Append(',');
+            first = false;
+
+            sb.Append('{');
+            sb.Append($"\"uri\":\"{EscapeJsonString(r.Uri)}\",");
+            sb.Append($"\"confidence\":{r.Confidence},");
+            sb.Append($"\"kind\":{(r.Kind is null ? "null" : $"\"{EscapeJsonString(r.Kind)}\"")},");
+            sb.Append($"\"headline\":{(r.Headline is null ? "null" : $"\"{EscapeJsonString(r.Headline)}\"")},");
+            sb.Append($"\"structure\":{(r.Structure is null ? "null" : $"\"{EscapeJsonString(r.Structure)}\"")},");
+            sb.Append($"\"snippet\":{(r.Snippet is null ? "null" : $"\"{EscapeJsonString(r.Snippet)}\"")},");
+            sb.Append($"\"lang\":{(r.Lang is null ? "null" : $"\"{EscapeJsonString(r.Lang)}\"")},");
+            sb.Append($"\"semantic_type\":{(r.SemanticType is null ? "null" : $"\"{EscapeJsonString(r.SemanticType)}\"")},");
+            sb.Append($"\"parent_uri\":{(parentUri is null ? "null" : $"\"{EscapeJsonString(parentUri)}\"")},");
+            sb.Append($"\"depth\":{depth}");
+            sb.Append('}');
+
+            // Recurse into children
+            if (r.ChildObjects is { Count: > 0 })
+            {
+                foreach (var child in r.ChildObjects)
+                {
+                    WriteResult(child, r.Uri, depth + 1);
+                }
+            }
+        }
+
+        foreach (var r in results)
+        {
+            WriteResult(r, null, 0);
+        }
+
+        sb.Append(']');
+        return sb.ToString();
     }
 
     private static string EscapeJsonString(string s)
     {
-        return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+        var sb = new StringBuilder(s.Length);
+        foreach (var c in s)
+        {
+            switch (c)
+            {
+                case '\\': sb.Append("\\\\"); break;
+                case '"': sb.Append("\\\""); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                case '\t': sb.Append("\\t"); break;
+                case '\b': sb.Append("\\b"); break;
+                case '\f': sb.Append("\\f"); break;
+                default:
+                    if (c < 32)
+                        sb.Append($"\\u{(int)c:X4}");
+                    else
+                        sb.Append(c);
+                    break;
+            }
+        }
+        return sb.ToString();
     }
 
     // ------------------- private helpers -------------------

@@ -198,6 +198,7 @@ structure_sem AS (
              JOIN filtered ri ON ri.node_id = de.node_id
     WHERE de.scope = 'document'
       AND de.embedding_type = 'structure'
+      AND de.dim = array_length(qv.qjson::FLOAT[])
       AND qv.qjson IS NOT NULL
 ),
 -- Full-text embeddings: score all chunks to find best match within each document
@@ -214,6 +215,7 @@ full_text_chunks AS (
              JOIN filtered ri ON ri.node_id = de.node_id
     WHERE de.scope = 'document'
       AND de.embedding_type = 'full'
+      AND de.dim = array_length(qv.qjson::FLOAT[])
       AND qv.qjson IS NOT NULL
 ),
 -- Aggregate full-text to best chunk per document

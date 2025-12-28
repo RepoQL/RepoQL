@@ -842,7 +842,16 @@ public partial class IndexingEngine : IAsyncDisposable
             {
                 var vectorTimer = Stopwatch.StartNew();
                 if (pendingItems.Length > 0)
-                    await VectorCoordinator.ApplyAsync(pendingItems[0], Shutdown.Token).ConfigureAwait(false);
+                {
+                    var latest = pendingItems[0];
+                    for (var i = 1; i < pendingItems.Length; i++)
+                    {
+                        if (pendingItems[i].Epoch > latest.Epoch)
+                            latest = pendingItems[i];
+                    }
+
+                    await VectorCoordinator.ApplyAsync(latest, Shutdown.Token).ConfigureAwait(false);
+                }
                 vectorTimer.Stop();
                 Metrics?.IdlePhaseDuration.Record(vectorTimer.Elapsed.TotalMilliseconds, new TagList
                 {
