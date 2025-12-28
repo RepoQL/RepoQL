@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Data.DuckDB.UdfFramework;
 
 namespace RepoQL.Data.DuckDB;
 
@@ -26,6 +27,7 @@ public sealed class DuckDbDataStore : IDisposable
     private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
     private readonly bool _isInMemory;
     private readonly IServiceProvider? _serviceProvider;
+    private readonly UdfRegistry _udfRegistry;
     private static readonly AsyncLocal<IServiceScope?> _currentScope = new();
     private static readonly AsyncLocal<bool> _inQueryContext = new();
     private bool _schemaInitialized;
@@ -81,6 +83,8 @@ public sealed class DuckDbDataStore : IDisposable
         _formatSchemaScripts = formatSchemaScripts?.ToArray() ?? [];
         _isInMemory = path is null or ":memory:";
         _serviceProvider = serviceProvider;
+        // Always create UdfRegistry - it handles missing serviceProvider gracefully
+        _udfRegistry = new UdfRegistry(serviceProvider);
 
         _logger.LogDebug("[DuckDB] Initializing data store (path={Path}, inMemory={IsInMemory})",
             _isInMemory ? ":memory:" : path, _isInMemory);
@@ -845,6 +849,18 @@ public sealed class DuckDbDataStore : IDisposable
             _logger.LogDebug("[DuckDB] Registering UDFs on writer connection...");
             RepositoryUserDefinedFunctions.RegisterAll(_connection, _embeddingProvider);
 
+            // Register attribute-based UDFs via the framework
+            _logger.LogDebug("[DuckDB] Discovering and registering framework UDFs...");
+            _udfRegistry.DiscoverAndRegister(_connection);
+
+            // Execute auto-generated macros for framework UDFs
+            var macrosSql = _udfRegistry.GenerateMacrosSql();
+            if (!string.IsNullOrWhiteSpace(macrosSql))
+            {
+                _connection.Execute(macrosSql);
+                _logger.LogDebug("[DuckDB] Framework UDF macros applied");
+            }
+
             var schemaScripts = new[]
             {
                 "Tables/artifact.sql",
@@ -903,6 +919,7 @@ public sealed class DuckDbDataStore : IDisposable
             {
                 _logger.LogDebug("[DuckDB] Registering UDFs on reader connection...");
                 RepositoryUserDefinedFunctions.RegisterAll(_connection, _embeddingProvider);
+                // Note: Framework UDFs already registered above, no need to re-register
             }
 
             _schemaInitialized = true;
