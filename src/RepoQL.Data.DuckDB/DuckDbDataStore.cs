@@ -888,8 +888,6 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/search.sql",
                 "Macros/hybrid_search.sql",
                 "Tables/file_system_mount.sql",
-                "Macros/llm_summarize.sql",
-                "Macros/llm_extract.sql",
                 "Macros/xray.sql",
                 "Macros/xray_structured.sql"
             };

@@ -128,6 +128,19 @@ public static class RepoIndexerServiceCollectionExtensions
 
         services.AddSingleton(new EmbeddingModeOptions(embeddingMode));
 
+        // LLM provider: OpenRouter (cloud) if API key present, otherwise disabled
+        services.AddSingleton<ILlmProvider>(sp =>
+        {
+            if (!useOpenRouter)
+            {
+                return new DisabledLlmProvider();
+            }
+
+            return new RepoQL.LLM.Client.OpenRouterLlmProvider(
+                apiKey: openRouterKey,
+                logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterLlmProvider>>());
+        });
+
         // Embeddings provider: OpenRouter (cloud) if API key present, otherwise local ONNX
         services.AddSingleton<IEmbeddingProvider>(sp =>
         {

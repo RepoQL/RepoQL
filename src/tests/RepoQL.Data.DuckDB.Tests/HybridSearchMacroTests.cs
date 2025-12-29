@@ -1,7 +1,9 @@
 using AwesomeAssertions;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Embeddings;
 using Artifact = RepoQL.Contracts.Models.Artifact;
@@ -10,11 +12,17 @@ namespace RepoQL.Data.DuckDB.Tests;
 
 public class SearchMacroTests : IDisposable
 {
+    private readonly ServiceProvider _serviceProvider;
     private readonly DuckDbDataStore _store;
 
     public SearchMacroTests()
     {
-        _store = new DuckDbDataStore();
+        var services = new ServiceCollection();
+        services.AddSingleton<IEmbeddingProvider>(new TestEmbeddingProvider());
+        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IMcpToolCaller?>(_ => null);
+        _serviceProvider = services.BuildServiceProvider();
+        _store = new DuckDbDataStore(serviceProvider: _serviceProvider);
 
         // Create sample documents for testing
         CreateSampleDocuments();
@@ -23,6 +31,17 @@ public class SearchMacroTests : IDisposable
     public void Dispose()
     {
         _store?.Dispose();
+        _serviceProvider?.Dispose();
+    }
+
+    private class TestEmbeddingProvider : IEmbeddingProvider
+    {
+        public bool Enabled => true;
+        public string Model => "test-model";
+        public int Dimension => 384;
+        public Task<float[]?> EmbedAsync(string text, CancellationToken ct = default) => Task.FromResult<float[]?>(null);
+        public Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
     }
 
     private void CreateSampleDocuments()
@@ -268,6 +287,7 @@ public class SearchMacroTests : IDisposable
 
 public class SearchMacroEmbeddingDimensionTests : IDisposable
 {
+    private readonly ServiceProvider _serviceProvider;
     private readonly DuckDbDataStore _store;
     private const int QueryDimension = 3;
     private readonly string _uriGood = "file:///docs/good.md";
@@ -276,7 +296,12 @@ public class SearchMacroEmbeddingDimensionTests : IDisposable
     public SearchMacroEmbeddingDimensionTests()
     {
         var provider = new HashedEmbeddingProvider(QueryDimension, modelName: "test-hash-3");
-        _store = new DuckDbDataStore(embeddingProvider: provider);
+        var services = new ServiceCollection();
+        services.AddSingleton<IEmbeddingProvider>(provider);
+        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IMcpToolCaller?>(_ => null);
+        _serviceProvider = services.BuildServiceProvider();
+        _store = new DuckDbDataStore(embeddingProvider: provider, serviceProvider: _serviceProvider);
 
         var docGood = CreateDocument(
             _uriGood,
@@ -350,6 +375,7 @@ public class SearchMacroEmbeddingDimensionTests : IDisposable
     public void Dispose()
     {
         _store?.Dispose();
+        _serviceProvider?.Dispose();
     }
 
     private Guid CreateDocument(string uri, string mediaType, string headline, string summary, string content)

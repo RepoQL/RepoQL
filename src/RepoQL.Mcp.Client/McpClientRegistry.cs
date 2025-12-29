@@ -9,14 +9,16 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ModelContextProtocol.Authentication;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Mcp.Client;
 
 /// <summary>
 /// Manages MCP client connections with async startup support.
 /// Thread-safe, caches connections, excludes self-references.
+/// Implements IMcpToolCaller for SQL UDF integration.
 /// </summary>
-public sealed class McpClientRegistry : IAsyncDisposable
+public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
 {
     private readonly IReadOnlyDictionary<string, McpServerConfig> _configs;
     private readonly ConcurrentDictionary<string, IMcpClient> _clients = new();

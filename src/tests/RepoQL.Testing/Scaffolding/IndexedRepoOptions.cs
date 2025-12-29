@@ -1,7 +1,9 @@
 ﻿using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Core;
 using RepoQL.Core.Analysis;
@@ -34,6 +36,12 @@ public sealed class IndexedRepoOptions
     public bool RunFullScanOnStartup { get; set; }
     public IndexingEngineOptions? EngineOptions { get; set; }
     public Func<DuckDbDataStore, IAnalysisResultWriter?>? CreateAnalysisWriter { get; set; } = db => new AnnotationResultWriter(db);
+
+    /// <summary>
+    /// Service provider for UDF dependencies. If null, a default test provider is created.
+    /// </summary>
+    public IServiceProvider? ServiceProvider { get; set; }
+
     public IList<FormatDescriptor> Formats { get; } = new List<FormatDescriptor>();
     public IList<CompositeFileSystemMount> AdditionalMounts { get; } = new List<CompositeFileSystemMount>();
 
@@ -101,6 +109,28 @@ public sealed class IndexedRepoOptions
 
     internal IHasher ResolveHasher()
         => Hasher ?? new XxHasher();
+
+    internal IServiceProvider ResolveServiceProvider()
+        => ServiceProvider ?? CreateDefaultTestServiceProvider();
+
+    private static IServiceProvider CreateDefaultTestServiceProvider()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IEmbeddingProvider>(new DisabledTestEmbeddingProvider());
+        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IMcpToolCaller?>(_ => null);
+        return services.BuildServiceProvider();
+    }
+
+    private sealed class DisabledTestEmbeddingProvider : IEmbeddingProvider
+    {
+        public bool Enabled => false;
+        public string Model => "test-disabled";
+        public int Dimension => 384;
+        public Task<float[]?> EmbedAsync(string text, CancellationToken ct = default) => Task.FromResult<float[]?>(null);
+        public Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+    }
 
     private sealed class LabelClassifier : IFileClassifier
     {

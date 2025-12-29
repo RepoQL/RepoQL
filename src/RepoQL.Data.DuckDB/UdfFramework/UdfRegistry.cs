@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -13,6 +14,11 @@ namespace RepoQL.Data.DuckDB.UdfFramework;
 /// <summary>
 /// Discovers, registers, and manages UDFs marked with framework attributes.
 /// </summary>
+/// <remarks>
+/// UDF classes in the UdfImplementations namespace are preserved during IL trimming
+/// via ILLink.Descriptors.xml. To add a new UDF class, just create it with [UdfClass]
+/// attribute - no additional configuration needed.
+/// </remarks>
 public class UdfRegistry
 {
     private readonly IServiceProvider? _serviceProvider;
@@ -27,7 +33,9 @@ public class UdfRegistry
 
     /// <summary>
     /// Discover and register all UDFs from loaded assemblies.
+    /// Types are preserved during trimming via ILLink.Descriptors.xml.
     /// </summary>
+    [RequiresUnreferencedCode("UDF discovery uses reflection. Types are preserved via ILLink.Descriptors.xml.")]
     public void DiscoverAndRegister(DuckDBConnection connection)
     {
         var assemblies = AppDomain.CurrentDomain.GetAssemblies().Where(a => !a.IsDynamic).ToList();
@@ -37,7 +45,7 @@ public class UdfRegistry
             .SelectMany(a =>
             {
                 try { return a.GetTypes(); }
-                catch { return Array.Empty<Type>(); }
+                catch { return []; }
             })
             .Where(t => t.GetCustomAttribute<UdfClassAttribute>() != null)
             .ToList();
@@ -46,26 +54,35 @@ public class UdfRegistry
 
         foreach (var type in udfClasses)
         {
-            _logger.LogInformation("[UdfRegistry] Registering UDF class: {TypeName}", type.FullName);
-
-            foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-            {
-                var scalarAttr = method.GetCustomAttribute<ScalarUdfAttribute>();
-                if (scalarAttr != null)
-                {
-                    RegisterScalarUdf(connection, type, method, scalarAttr);
-                    continue;
-                }
-
-                var structuredAttr = method.GetCustomAttribute<StructuredUdfAttribute>();
-                if (structuredAttr != null)
-                {
-                    RegisterStructuredUdf(connection, type, method, structuredAttr);
-                }
-            }
+            RegisterUdfClass(connection, type);
         }
 
         _logger.LogInformation("[UdfRegistry] Registered {Count} UDFs from framework", _registrations.Count);
+    }
+
+    /// <summary>
+    /// Register all UDF methods from a single class.
+    /// </summary>
+    [RequiresUnreferencedCode("UDF registration uses reflection.")]
+    private void RegisterUdfClass(DuckDBConnection connection, Type type)
+    {
+        _logger.LogInformation("[UdfRegistry] Registering UDF class: {TypeName}", type.FullName);
+
+        foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
+        {
+            var scalarAttr = method.GetCustomAttribute<ScalarUdfAttribute>();
+            if (scalarAttr != null)
+            {
+                RegisterScalarUdf(connection, type, method, scalarAttr);
+                continue;
+            }
+
+            var structuredAttr = method.GetCustomAttribute<StructuredUdfAttribute>();
+            if (structuredAttr != null)
+            {
+                RegisterStructuredUdf(connection, type, method, structuredAttr);
+            }
+        }
     }
 
     private void RegisterScalarUdf(DuckDBConnection conn, Type classType, MethodInfo method, ScalarUdfAttribute attr)
@@ -91,43 +108,66 @@ public class UdfRegistry
     private void RegisterWithDuckDb(DuckDBConnection conn, string name, Type classType,
                                      MethodInfo method, ParameterInfo[] parameters, bool isPure, bool isStructured)
     {
-        // DuckDB.NET limitation: max 3 type parameters (3 inputs or 2 inputs + 1 output for scalar)
-        // We always use 3 string parameters: (required1, required2_or_intent, optionsJson)
-        // Macro packs additional parameters into optionsJson
+        // DuckDB.NET requires at least one parameter for UDFs.
+        // For "parameterless" functions, use a dummy param with [UdfDefault("''")].
+        if (parameters.Length == 0)
+        {
+            throw new InvalidOperationException(
+                $"UDF '{name}': DuckDB.NET doesn't support parameterless UDFs. " +
+                $"Add a dummy parameter with [UdfDefault(\"''\")].");
+        }
 
-        conn.RegisterScalarFunction<string, string, string, string>(
+        RegisterParameterizedUdf(conn, name, classType, method, parameters, isPure, isStructured);
+    }
+
+    private void RegisterParameterizedUdf(DuckDBConnection conn, string name, Type classType,
+                                           MethodInfo method, ParameterInfo[] parameters, bool isPure, bool isStructured)
+    {
+        // DuckDB.NET requires matching type parameters to actual SQL parameter count.
+        // Route to appropriate overload based on method parameter count.
+        // For 3+ params, we use JSON packing (macro handles this).
+        var paramCount = parameters.Length;
+
+        if (paramCount == 1)
+        {
+            RegisterUdf1Param(conn, name, classType, method, parameters, isPure, isStructured);
+        }
+        else if (paramCount == 2)
+        {
+            RegisterUdf2Params(conn, name, classType, method, parameters, isPure, isStructured);
+        }
+        else
+        {
+            RegisterUdf3Params(conn, name, classType, method, parameters, isPure, isStructured);
+        }
+    }
+
+    private void RegisterUdf1Param(DuckDBConnection conn, string name, Type classType,
+                                    MethodInfo method, ParameterInfo[] parameters, bool isPure, bool isStructured)
+    {
+        conn.RegisterScalarFunction<string, string>(
             name,
             (readers, writer, n) =>
             {
-                if (_serviceProvider is null)
-                    throw new InvalidOperationException($"UDF '{name}': IServiceProvider required. Pass serviceProvider to DuckDbDataStore constructor.");
-
-                // Create scoped instance once per batch for efficiency
-                using var scope = _serviceProvider.CreateScope();
-                object instance;
                 try
                 {
-                    instance = ActivatorUtilities.CreateInstance(scope.ServiceProvider, classType);
-                }
-                catch (Exception ex)
-                {
-                    throw new InvalidOperationException($"UDF '{name}': Failed to create instance of {classType.Name}: {ex.Message}", ex);
-                }
+                    if (_serviceProvider is null)
+                        throw new InvalidOperationException($"UDF '{name}': IServiceProvider required. Pass serviceProvider to DuckDbDataStore constructor.");
 
-                for (ulong i = 0; i < n; i++)
-                {
-                    try
+                    using var scope = _serviceProvider.CreateScope();
+                    var instance = ActivatorUtilities.CreateInstance(scope.ServiceProvider, classType);
+
+                    for (ulong i = 0; i < n; i++)
                     {
-                        // Read parameters with auto NULL handling
-                        var args = ReadParameters(readers, parameters, i);
+                        var args = new object?[parameters.Length];
+                        if (parameters.Length > 0 && readers.Count > 0)
+                            args[0] = readers[0].IsValid(i) ? readers[0].GetValue<string>(i) : null;
 
-                        // Invoke method
                         var result = method.Invoke(instance, args);
 
                         // Write result
                         if (isStructured && result is System.Collections.IEnumerable enumerable)
                         {
-                            // Serialize to JSON array for json_each expansion
                             var jsonArray = SerializeEnumerable(enumerable);
                             writer.WriteValue(jsonArray, i);
                         }
@@ -144,84 +184,176 @@ public class UdfRegistry
                             writer.WriteValue(result.ToString() ?? "", i);
                         }
                     }
-                    catch (TargetInvocationException ex) when (ex.InnerException != null)
-                    {
-                        // Throw DuckDB exception with UDF context
-                        throw new InvalidOperationException($"UDF '{name}': {ex.InnerException.Message}", ex.InnerException);
-                    }
-                    catch (Exception ex)
-                    {
-                        throw new InvalidOperationException($"UDF '{name}': {ex.Message}", ex);
-                    }
+                }
+                catch (TargetInvocationException ex) when (ex.InnerException != null)
+                {
+                    throw new InvalidOperationException($"UDF '{name}': {ex.InnerException.Message}", ex.InnerException);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"UDF '{name}': {ex.Message}", ex);
                 }
             },
             isPureFunction: isPure
         );
     }
 
-    private static object?[] ReadParameters(dynamic readers, ParameterInfo[] parameters, ulong rowIndex)
+    private void RegisterUdf2Params(DuckDBConnection conn, string name, Type classType,
+                                     MethodInfo method, ParameterInfo[] parameters, bool isPure, bool isStructured)
     {
-        var args = new object?[parameters.Length];
-        int readerCount = readers.Count;
-
-        // DuckDB.NET limitation: max 3 params. First 2 are direct, 3rd is JSON options.
-        // Method signature is the contract - param names beyond index 1 are extracted from JSON.
-
-        // Read first 2 params directly from DuckDB
-        for (int p = 0; p < Math.Min(2, parameters.Length); p++)
-        {
-            if (p < readerCount)
+        conn.RegisterScalarFunction<string, string, string>(
+            name,
+            (readers, writer, n) =>
             {
-                dynamic reader = readers[p];
-                args[p] = reader.IsValid(rowIndex) ? reader.GetValue<string>(rowIndex) : null;
-            }
-        }
-
-        // If we have more than 2 params, deserialize from JSON options (3rd DuckDB param)
-        if (parameters.Length > 2 && readerCount > 2)
-        {
-            dynamic optionsReader = readers[2];
-            if (optionsReader.IsValid(rowIndex))
-            {
-                var json = optionsReader.GetValue<string>(rowIndex);
-                if (!string.IsNullOrWhiteSpace(json))
+                try
                 {
-                    try
+                    if (_serviceProvider is null)
+                        throw new InvalidOperationException($"UDF '{name}': IServiceProvider required. Pass serviceProvider to DuckDbDataStore constructor.");
+
+                    using var scope = _serviceProvider.CreateScope();
+                    var instance = ActivatorUtilities.CreateInstance(scope.ServiceProvider, classType);
+
+                    for (ulong i = 0; i < n; i++)
                     {
-                        using var doc = JsonDocument.Parse(json);
-                        var root = doc.RootElement;
+                        var args = new object?[parameters.Length];
+                        if (parameters.Length > 0 && readers.Count > 0)
+                            args[0] = readers[0].IsValid(i) ? readers[0].GetValue<string>(i) : null;
+                        if (parameters.Length > 1 && readers.Count > 1)
+                            args[1] = readers[1].IsValid(i) ? readers[1].GetValue<string>(i) : null;
 
-                        // Extract values for params 2+ by name
-                        for (int p = 2; p < parameters.Length; p++)
+                        var result = method.Invoke(instance, args);
+
+                        // Write result
+                        if (isStructured && result is System.Collections.IEnumerable enumerable)
                         {
-                            var param = parameters[p];
-                            var paramName = param.Name!;
-                            JsonElement prop;
+                            var jsonArray = SerializeEnumerable(enumerable);
+                            writer.WriteValue(jsonArray, i);
+                        }
+                        else if (result is string str)
+                        {
+                            writer.WriteValue(str, i);
+                        }
+                        else if (result is null)
+                        {
+                            writer.WriteNull(i);
+                        }
+                        else
+                        {
+                            writer.WriteValue(result.ToString() ?? "", i);
+                        }
+                    }
+                }
+                catch (TargetInvocationException ex) when (ex.InnerException != null)
+                {
+                    throw new InvalidOperationException($"UDF '{name}': {ex.InnerException.Message}", ex.InnerException);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"UDF '{name}': {ex.Message}", ex);
+                }
+            },
+            isPureFunction: isPure
+        );
+    }
 
-                            // Try original name first, then snake_case
-                            if (root.TryGetProperty(paramName, out prop) && prop.ValueKind != JsonValueKind.Null)
+    private void RegisterUdf3Params(DuckDBConnection conn, string name, Type classType,
+                                     MethodInfo method, ParameterInfo[] parameters, bool isPure, bool isStructured)
+    {
+        conn.RegisterScalarFunction<string, string, string, string>(
+            name,
+            (readers, writer, n) =>
+            {
+                try
+                {
+                    if (_serviceProvider is null)
+                        throw new InvalidOperationException($"UDF '{name}': IServiceProvider required. Pass serviceProvider to DuckDbDataStore constructor.");
+
+                    using var scope = _serviceProvider.CreateScope();
+                    var instance = ActivatorUtilities.CreateInstance(scope.ServiceProvider, classType);
+
+                    for (ulong i = 0; i < n; i++)
+                    {
+                        var args = new object?[parameters.Length];
+
+                        // First 2 params from DuckDB directly
+                        if (parameters.Length > 0 && readers.Count > 0)
+                            args[0] = readers[0].IsValid(i) ? readers[0].GetValue<string>(i) : null;
+                        if (parameters.Length > 1 && readers.Count > 1)
+                            args[1] = readers[1].IsValid(i) ? readers[1].GetValue<string>(i) : null;
+
+                        // 3rd+ params from JSON (if we have 3+ method params and 3rd DuckDB param exists)
+                        if (parameters.Length > 2 && readers.Count > 2 && readers[2].IsValid(i))
+                        {
+                            var json = readers[2].GetValue<string>(i);
+                            if (!string.IsNullOrWhiteSpace(json))
                             {
-                                args[p] = ConvertJsonValue(prop, param.ParameterType);
-                            }
-                            else
-                            {
-                                var snakeName = UdfHelpers.ToSnakeCase(paramName);
-                                if (snakeName != paramName && root.TryGetProperty(snakeName, out prop) && prop.ValueKind != JsonValueKind.Null)
+                                try
                                 {
-                                    args[p] = ConvertJsonValue(prop, param.ParameterType);
+                                    using var doc = JsonDocument.Parse(json);
+                                    var root = doc.RootElement;
+
+                                    for (int p = 2; p < parameters.Length; p++)
+                                    {
+                                        var param = parameters[p];
+                                        var paramName = param.Name!;
+
+                                        if (root.TryGetProperty(paramName, out var prop) && prop.ValueKind != JsonValueKind.Null)
+                                        {
+                                            args[p] = ConvertJsonValue(prop, param.ParameterType);
+                                        }
+                                        else
+                                        {
+                                            var snakeName = UdfHelpers.ToSnakeCase(paramName);
+                                            if (snakeName != paramName && root.TryGetProperty(snakeName, out prop) && prop.ValueKind != JsonValueKind.Null)
+                                            {
+                                                args[p] = ConvertJsonValue(prop, param.ParameterType);
+                                            }
+                                        }
+                                    }
+                                }
+                                catch
+                                {
+                                    // Ignore JSON parse errors - leave params as null/default
                                 }
                             }
                         }
-                    }
-                    catch
-                    {
-                        // Ignore JSON parse errors - leave params as null/default
+
+                        // Apply [UdfDefault] values for any remaining null args
+                        ApplyDefaults(args, parameters);
+
+                        var result = method.Invoke(instance, args);
+
+                        // Write result
+                        if (isStructured && result is System.Collections.IEnumerable enumerable)
+                        {
+                            var jsonArray = SerializeEnumerable(enumerable);
+                            writer.WriteValue(jsonArray, i);
+                        }
+                        else if (result is string str)
+                        {
+                            writer.WriteValue(str, i);
+                        }
+                        else if (result is null)
+                        {
+                            writer.WriteNull(i);
+                        }
+                        else
+                        {
+                            writer.WriteValue(result.ToString() ?? "", i);
+                        }
                     }
                 }
-            }
-        }
-
-        return args;
+                catch (TargetInvocationException ex) when (ex.InnerException != null)
+                {
+                    throw new InvalidOperationException($"UDF '{name}': {ex.InnerException.Message}", ex.InnerException);
+                }
+                catch (Exception ex)
+                {
+                    throw new InvalidOperationException($"UDF '{name}': {ex.Message}", ex);
+                }
+            },
+            isPureFunction: isPure
+        );
     }
 
     private static object? ConvertJsonValue(JsonElement element, Type targetType)
@@ -244,6 +376,76 @@ public class UdfRegistry
     {
         var items = enumerable.Cast<object>();
         return UdfHelpers.SerializeToJsonArray(items);
+    }
+
+    /// <summary>
+    /// Apply [UdfDefault] values for any remaining null args with non-nullable types.
+    /// </summary>
+    private static void ApplyDefaults(object?[] args, ParameterInfo[] parameters)
+    {
+        for (int i = 0; i < parameters.Length; i++)
+        {
+            if (args[i] != null) continue;
+
+            var param = parameters[i];
+            var paramType = param.ParameterType;
+
+            // For nullable types, null is fine
+            if (!paramType.IsValueType || Nullable.GetUnderlyingType(paramType) != null)
+                continue;
+
+            // For non-nullable value types, we need a default
+            var defaultAttr = param.GetCustomAttribute<UdfDefaultAttribute>();
+            if (defaultAttr != null)
+            {
+                args[i] = ParseSqlDefault(defaultAttr.SqlDefault, paramType);
+            }
+            else
+            {
+                // Use type's default value as fallback
+                args[i] = Activator.CreateInstance(paramType);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Parse a SQL default value literal to a C# value.
+    /// </summary>
+    private static object? ParseSqlDefault(string sqlDefault, Type targetType)
+    {
+        // Remove quotes for string defaults like "'Find'" -> "Find"
+        var trimmed = sqlDefault.Trim();
+
+        // Handle NULL
+        if (trimmed.Equals("NULL", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        // Handle quoted strings
+        if (trimmed.StartsWith("'") && trimmed.EndsWith("'"))
+        {
+            var unquoted = trimmed[1..^1].Replace("''", "'"); // SQL escaping
+            return ConvertToType(unquoted, targetType);
+        }
+
+        // Handle numeric/boolean literals
+        return ConvertToType(trimmed, targetType);
+    }
+
+    private static object? ConvertToType(string value, Type targetType)
+    {
+        var underlying = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+        return underlying switch
+        {
+            Type t when t == typeof(string) => value,
+            Type t when t == typeof(int) => int.TryParse(value, out var i) ? i : 0,
+            Type t when t == typeof(long) => long.TryParse(value, out var l) ? l : 0L,
+            Type t when t == typeof(double) => double.TryParse(value, out var d) ? d : 0.0,
+            Type t when t == typeof(float) => float.TryParse(value, out var f) ? f : 0f,
+            Type t when t == typeof(bool) => value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                                              value.Equals("1", StringComparison.Ordinal),
+            _ => value
+        };
     }
 
     /// <summary>
@@ -300,9 +502,10 @@ public class UdfRegistry
             else
                 paramDefs.Add(paramName);
 
-            // First 2 params go direct, rest go in JSON
+            // First 2 params go direct (cast to VARCHAR since all UDFs use string params),
+            // rest go in JSON
             if (udfArgs.Count < 2)
-                udfArgs.Add(paramName);
+                udfArgs.Add($"{paramName}::VARCHAR");
             else
                 jsonFields.Add($"'{paramName}', {paramName}");
         }

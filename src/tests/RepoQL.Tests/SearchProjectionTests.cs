@@ -2,8 +2,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using ArtifactModel = RepoQL.Contracts.Models.Artifact;
@@ -13,11 +15,30 @@ namespace RepoQL.Tests;
 
 internal class SearchProjectionTests
 {
+    private static IServiceProvider CreateTestServiceProvider()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IEmbeddingProvider>(new DisabledTestEmbeddingProvider());
+        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IMcpToolCaller?>(_ => null);
+        return services.BuildServiceProvider();
+    }
+
+    private sealed class DisabledTestEmbeddingProvider : IEmbeddingProvider
+    {
+        public bool Enabled => false;
+        public string Model => "test-disabled";
+        public int Dimension => 384;
+        public Task<float[]?> EmbedAsync(string text, CancellationToken ct = default) => Task.FromResult<float[]?>(null);
+        public Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+    }
+
     [Test]
     public void RefreshSearchProjection_PopulatesDocumentSearch()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-search-{Guid.NewGuid():N}.duckdb");
-        using var store = new DuckDbDataStore(dbPath);
+        using var store = new DuckDbDataStore(dbPath, serviceProvider: CreateTestServiceProvider());
 
         var docUri = RepoUri.Parse("file:///docs/sample.md");
         var otherUri = RepoUri.Parse("file:///docs/guide.md");
@@ -46,7 +67,7 @@ internal class SearchProjectionTests
     public void RefreshSearchProjection_UpdatedDocumentReflectsInSearch()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-search-update-{Guid.NewGuid():N}.duckdb");
-        using var store = new DuckDbDataStore(dbPath);
+        using var store = new DuckDbDataStore(dbPath, serviceProvider: CreateTestServiceProvider());
 
         var uri = RepoUri.Parse("file:///src/doc.md");
 

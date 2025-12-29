@@ -43,10 +43,7 @@ public sealed class McpHostedService : IHostedService
                 return;
             }
 
-            // 3. Wire up the callback for _mcp_call_internal UDF
-            RepositoryUserDefinedFunctions.SetExternalToolCaller(_registry.CallToolSync);
-
-            // 4. Generate and execute macros
+            // 3. Generate and execute macros (McpClientRegistry implements IMcpToolCaller for UDF integration)
             var sql = McpMacroGenerator.GenerateMacros(tools);
             _store.ExecuteRaw(sql);
 

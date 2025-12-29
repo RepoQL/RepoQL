@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  IL Linker configuration for preserving UDF classes during trimming.
+
+  The UDF framework uses reflection to discover and register classes marked with [UdfClass].
+  Without this file, the IL trimmer strips these types because they're only accessed via reflection.
+
+  To add a new UDF class: just add it to the UdfImplementations namespace with [UdfClass] attribute.
+  It will be automatically preserved and discovered.
+-->
+<linker>
+  <assembly fullname="RepoQL.Data.DuckDB">
+    <!-- Preserve all UDF implementation classes -->
+    <type fullname="RepoQL.Data.DuckDB.UdfImplementations.*" preserve="all" />
+
+    <!-- Preserve UDF framework attributes (needed for reflection) -->
+    <type fullname="RepoQL.Data.DuckDB.UdfFramework.UdfClassAttribute" preserve="all" />
+    <type fullname="RepoQL.Data.DuckDB.UdfFramework.ScalarUdfAttribute" preserve="all" />
+    <type fullname="RepoQL.Data.DuckDB.UdfFramework.StructuredUdfAttribute" preserve="all" />
+    <type fullname="RepoQL.Data.DuckDB.UdfFramework.UdfDefaultAttribute" preserve="all" />
+  </assembly>
+</linker>

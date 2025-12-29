@@ -2,8 +2,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
+using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using ArtifactModel = RepoQL.Contracts.Models.Artifact;
@@ -17,12 +19,31 @@ namespace RepoQL.Tests;
 /// </summary>
 internal class SearchTests
 {
+    private static IServiceProvider CreateTestServiceProvider()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IEmbeddingProvider>(new DisabledTestEmbeddingProvider());
+        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IMcpToolCaller?>(_ => null);
+        return services.BuildServiceProvider();
+    }
+
+    private sealed class DisabledTestEmbeddingProvider : IEmbeddingProvider
+    {
+        public bool Enabled => false;
+        public string Model => "test-disabled";
+        public int Dimension => 384;
+        public Task<float[]?> EmbedAsync(string text, CancellationToken ct = default) => Task.FromResult<float[]?>(null);
+        public Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+    }
+
     [Test]
     public void Search_OutlineRescue_FindsDocsInStructureOnly()
     {
         // Arrange: Create documents where "config" appears in different places
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
-        using var store = new DuckDbDataStore(dbPath);
+        using var store = new DuckDbDataStore(dbPath, serviceProvider: CreateTestServiceProvider());
 
         // Document with "config" in structure but weak semantic match
         var structureDoc = RepoUri.Parse("file:///docs/api-reference.md");
@@ -69,7 +90,7 @@ internal class SearchTests
     public void Search_BodyRescue_FindsDocsInBodyOnly()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
-        using var store = new DuckDbDataStore(dbPath);
+        using var store = new DuckDbDataStore(dbPath, serviceProvider: CreateTestServiceProvider());
 
         // Document with "validation" only in body
         var bodyOnlyDoc = RepoUri.Parse("file:///docs/testing.md");
@@ -105,7 +126,7 @@ internal class SearchTests
     public void Search_BoostPattern_RanksMatchesHigher()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
-        using var store = new DuckDbDataStore(dbPath);
+        using var store = new DuckDbDataStore(dbPath, serviceProvider: CreateTestServiceProvider());
 
         // Document with boost pattern match
         var boostedDoc = RepoUri.Parse("file:///src/auth/jwt-handler.ts");
@@ -139,7 +160,7 @@ internal class SearchTests
     public void Search_NegativePattern_DeranksMatches()
     {
         var dbPath = Path.Combine(Path.GetTempPath(), $"repoql-hybrid-{Guid.NewGuid():N}.duckdb");
-        using var store = new DuckDbDataStore(dbPath);
+        using var store = new DuckDbDataStore(dbPath, serviceProvider: CreateTestServiceProvider());
 
         // Test file (should be deranked)
         var testDoc = RepoUri.Parse("file:///tests/parser-tests.cs");

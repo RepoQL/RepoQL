@@ -1,10 +1,8 @@
 using DuckDB.NET.Data;
 using System.Buffers;
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using RepoQL.Contracts;
-using RepoQL.Xray;
 
 #pragma warning disable DuckDBNET001
 
@@ -16,37 +14,6 @@ namespace RepoQL.Data.DuckDB;
 /// </summary>
 public static class RepositoryUserDefinedFunctions
 {
-    // Static holder for the embedding provider - avoids closure issues with DuckDB UDFs
-    private static RepoQL.Contracts.Embeddings.IEmbeddingProvider? _embeddingProvider;
-
-    // Static holder for external tool caller - enables calling external services from SQL UDFs
-    private static Func<string, string, string?, string>? _externalToolCaller;
-
-    // Static holders for LLM callbacks - enables LLM-powered UDFs
-    private static Func<string, string, int, string>? _llmSummarizeCaller;
-    private static Func<string, string, string>? _llmExtractCaller;
-
-    /// <summary>
-    /// Sets an external tool caller function for use by _mcp_call_internal UDF.
-    /// Signature: (serverName, toolName, paramsJson) => resultJson
-    /// </summary>
-    public static void SetExternalToolCaller(Func<string, string, string?, string>? caller)
-        => _externalToolCaller = caller;
-
-    /// <summary>
-    /// Sets the LLM summarize caller function for use by _llm_summarize_internal UDF.
-    /// Signature: (jsonData, intent, maxTokens) => summary
-    /// </summary>
-    public static void SetLlmSummarizeCaller(Func<string, string, int, string>? caller)
-        => _llmSummarizeCaller = caller;
-
-    /// <summary>
-    /// Sets the LLM extract caller function for use by _llm_extract_internal UDF.
-    /// Signature: (jsonData, intent) => markdownReport
-    /// </summary>
-    public static void SetLlmExtractCaller(Func<string, string, string>? caller)
-        => _llmExtractCaller = caller;
-
     /// <summary>
     ///     Registers all scalar UDFs on the provided open connection.
     /// </summary>
@@ -54,10 +21,6 @@ public static class RepositoryUserDefinedFunctions
         DuckDBConnection connection,
         RepoQL.Contracts.Embeddings.IEmbeddingProvider? embeddingProvider)
     {
-        // Always update the static provider reference (may be called multiple times with different providers)
-        if (embeddingProvider is not null)
-            _embeddingProvider = embeddingProvider;
-
         if (ScalarFunctionExists(connection, "repository_uri_container"))
             return;
 
@@ -818,88 +781,6 @@ public static class RepositoryUserDefinedFunctions
             isPureFunction: true
         );
 
-        // embed_status() -> Key-value format showing runtime embedding provider state (no JSON, survives IL trimming)
-        connection.RegisterScalarFunction<string>(
-            "embed_status",
-            (writer, n) =>
-            {
-                var providerType = _embeddingProvider?.GetType().Name ?? "null";
-                var enabled = _embeddingProvider?.Enabled ?? false;
-                var model = _embeddingProvider?.Model ?? "null";
-                var dimension = _embeddingProvider?.Dimension ?? 0;
-
-                var status = $"provider_type: {providerType}\nenabled: {enabled}\nmodel: {model}\ndimension: {dimension}";
-                for (ulong i = 0; i < n; i++)
-                    writer.WriteValue(status, i);
-            },
-            isPureFunction: false
-        );
-
-        // embed_text(text) -> array string for embedding (use ::FLOAT[] to cast)
-        connection.RegisterScalarFunction<string, string>(
-            "embed_text",
-            (readers, writer, n) =>
-            {
-                if (_embeddingProvider is null || !_embeddingProvider.Enabled)
-                {
-                    for (ulong i = 0; i < n; i++)
-                        writer.WriteNull(i);
-                    return;
-                }
-
-                var r = readers[0];
-                var textsToEmbed = new List<string>();
-                var indexMap = new List<ulong>();
-
-                for (ulong i = 0; i < n; i++)
-                {
-                    if (!r.IsValid(i)) continue;
-                    var text = r.GetValue<string>(i);
-                    if (string.IsNullOrEmpty(text)) continue;
-                    textsToEmbed.Add(text);
-                    indexMap.Add(i);
-                }
-
-                if (textsToEmbed.Count == 0)
-                {
-                    for (ulong i = 0; i < n; i++)
-                        writer.WriteNull(i);
-                    return;
-                }
-
-                float[]?[] vectors;
-                try
-                {
-                    vectors = _embeddingProvider.EmbedBatchAsync(textsToEmbed, CancellationToken.None).GetAwaiter().GetResult();
-                }
-                catch
-                {
-                    for (ulong i = 0; i < n; i++)
-                        writer.WriteNull(i);
-                    return;
-                }
-
-                // Build a map of successful embeddings
-                var resultMap = new Dictionary<ulong, string>();
-                for (var batchIdx = 0; batchIdx < vectors.Length; batchIdx++)
-                {
-                    var vec = vectors[batchIdx];
-                    if (vec is not null)
-                        resultMap[indexMap[batchIdx]] = SerializeFloatArray(vec);
-                }
-
-                // Write each position exactly once
-                for (ulong i = 0; i < n; i++)
-                {
-                    if (resultMap.TryGetValue(i, out var json))
-                        writer.WriteValue(json, i);
-                    else
-                        writer.WriteNull(i);
-                }
-            },
-            isPureFunction: false
-        );
-
         // cosine_similarity_json(vecA, vecB) -> double (0..1), returns 0 if any invalid
         connection.RegisterScalarFunction<string, string, double>(
             "cosine_similarity_json",
@@ -942,239 +823,6 @@ public static class RepositoryUserDefinedFunctions
             isPureFunction: true
         );
 
-        // ------------------- Diagnostics UDF -------------------
-
-        // indexing_diagnostics() -> Key-value format with indexing pipeline state (no JSON, survives IL trimming)
-        connection.RegisterScalarFunction<string>(
-            "indexing_diagnostics",
-            (writer, n) =>
-            {
-                var text = RepoQL.Contracts.Diagnostics.IndexingDiagnostics.GetDiagnosticsText();
-                for (ulong i = 0; i < n; i++)
-                {
-                    writer.WriteValue(text, i);
-                }
-            },
-            isPureFunction: false // State changes between calls
-        );
-
-        // indexing_queue() -> JSON array of queued items
-        // Usage: SELECT * FROM (SELECT unnest(from_json(indexing_queue(), '["json"]')) as item)
-        // Or simpler: SELECT json_extract(value, '$.uri') as uri, ... FROM (SELECT unnest(indexing_queue()::json[]) as value)
-        connection.RegisterScalarFunction<string>(
-            "indexing_queue",
-            (writer, n) =>
-            {
-                var items = RepoQL.Contracts.Diagnostics.IndexingDiagnostics.GetQueuedItems();
-                var json = System.Text.Json.JsonSerializer.Serialize(items, new System.Text.Json.JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.SnakeCaseLower
-                });
-                for (ulong i = 0; i < n; i++)
-                {
-                    writer.WriteValue(json, i);
-                }
-            },
-            isPureFunction: false
-        );
-
-        // ------------------- External Tool Integration UDF -------------------
-
-        // _mcp_call_internal(server, tool, params_json) -> result_json
-        // Internal UDF called by generated macros. Returns JSON result or error JSON.
-        // The actual implementation is injected via SetExternalToolCaller().
-        // IMPORTANT: params_json must be non-NULL (use '{}' for no params) - DuckDB skips UDF when all args are NULL
-        // Usage: SELECT _mcp_call_internal('aspire-dashboard', 'list_resources', '{}')
-        connection.RegisterScalarFunction<string, string, string, string>(
-            "_mcp_call_internal",
-            (readers, writer, n) =>
-            {
-                // Safely access readers - check bounds first
-                if (readers.Count < 2)
-                {
-                    for (ulong i = 0; i < n; i++)
-                        writer.WriteValue($"{{\"error\": \"Invalid reader count: {readers.Count}\"}}", i);
-                    return;
-                }
-
-                var serverReader = readers[0];
-                var toolReader = readers[1];
-                // Third parameter may not exist if all calls pass NULL
-                var paramsReader = readers.Count > 2 ? readers[2] : null;
-
-                for (ulong i = 0; i < n; i++)
-                {
-                    try
-                    {
-                        // Validate required parameters
-                        if (!serverReader.IsValid(i) || !toolReader.IsValid(i))
-                        {
-                            writer.WriteValue("{\"error\": \"Server and tool names are required\"}", i);
-                            continue;
-                        }
-
-                        var server = serverReader.GetValue<string>(i);
-                        var tool = toolReader.GetValue<string>(i);
-
-                        if (string.IsNullOrWhiteSpace(server) || string.IsNullOrWhiteSpace(tool))
-                        {
-                            writer.WriteValue("{\"error\": \"Server and tool names cannot be empty\"}", i);
-                            continue;
-                        }
-
-                        // Check if external tool caller is configured
-                        if (_externalToolCaller is null)
-                        {
-                            writer.WriteValue("{\"error\": \"External tool caller not configured\"}", i);
-                            continue;
-                        }
-
-                        // Get optional parameters JSON (safely handle missing reader)
-                        string? paramsJson = null;
-                        if (paramsReader is not null && paramsReader.IsValid(i))
-                        {
-                            paramsJson = paramsReader.GetValue<string>(i);
-                        }
-
-                        // Call the external tool
-                        var result = _externalToolCaller(server, tool, paramsJson);
-                        // Ensure we never write null - DuckDB would convert to SQL NULL
-                        writer.WriteValue(result ?? "{\"error\": \"Callback returned null\"}", i);
-                    }
-                    catch (Exception ex)
-                    {
-                        writer.WriteValue($"{{\"error\": \"{EscapeJsonString(ex.Message)}\"}}", i);
-                    }
-                }
-            },
-            isPureFunction: false // External side effects
-        );
-
-        // ------------------- LLM Integration UDFs -------------------
-
-        // _llm_summarize_internal(json_data, intent, max_tokens) -> text
-        // Internal UDF called by llm_summarize macro. Returns summary text.
-        // The actual implementation is injected via SetLlmSummarizeCaller().
-        connection.RegisterScalarFunction<string, string, int, string>(
-            "_llm_summarize_internal",
-            (readers, writer, n) =>
-            {
-                if (readers.Count < 3)
-                {
-                    for (ulong i = 0; i < n; i++)
-                        writer.WriteValue("Error: Invalid reader count for _llm_summarize_internal", i);
-                    return;
-                }
-
-                var jsonReader = readers[0];
-                var intentReader = readers[1];
-                var tokensReader = readers[2];
-
-                for (ulong i = 0; i < n; i++)
-                {
-                    try
-                    {
-                        if (!jsonReader.IsValid(i) || !intentReader.IsValid(i))
-                        {
-                            writer.WriteValue("Error: json_data and intent are required", i);
-                            continue;
-                        }
-
-                        if (_llmSummarizeCaller is null)
-                        {
-                            writer.WriteValue("LLM not configured (set OPENROUTER_API_KEY)", i);
-                            continue;
-                        }
-
-                        var json = jsonReader.GetValue<string>(i);
-                        var intent = intentReader.GetValue<string>(i);
-                        var maxTokens = tokensReader.IsValid(i) ? tokensReader.GetValue<int>(i) : 500;
-
-                        var result = _llmSummarizeCaller(json, intent, maxTokens);
-                        writer.WriteValue(result ?? "No response from LLM", i);
-                    }
-                    catch (Exception ex)
-                    {
-                        writer.WriteValue($"Error: {ex.Message}", i);
-                    }
-                }
-            },
-            isPureFunction: false // External side effects (LLM API call)
-        );
-
-        // _llm_extract_internal(json_data, intent) -> markdown_text
-        // Internal UDF called by llm_extract macro. Returns markdown report with snippets.
-        // The actual implementation is injected via SetLlmExtractCaller().
-        connection.RegisterScalarFunction<string, string, string>(
-            "_llm_extract_internal",
-            (readers, writer, n) =>
-            {
-                if (readers.Count < 2)
-                {
-                    for (ulong i = 0; i < n; i++)
-                        writer.WriteValue("Error: Invalid reader count for _llm_extract_internal", i);
-                    return;
-                }
-
-                var jsonReader = readers[0];
-                var intentReader = readers[1];
-
-                for (ulong i = 0; i < n; i++)
-                {
-                    try
-                    {
-                        if (!jsonReader.IsValid(i) || !intentReader.IsValid(i))
-                        {
-                            writer.WriteValue("Error: json_data and intent are required", i);
-                            continue;
-                        }
-
-                        if (_llmExtractCaller is null)
-                        {
-                            writer.WriteValue("LLM not configured (set OPENROUTER_API_KEY)", i);
-                            continue;
-                        }
-
-                        var json = jsonReader.GetValue<string>(i);
-                        var intent = intentReader.GetValue<string>(i);
-
-                        var result = _llmExtractCaller(json, intent);
-                        writer.WriteValue(result ?? "No response from LLM", i);
-                    }
-                    catch (Exception ex)
-                    {
-                        writer.WriteValue($"Error: {ex.Message}", i);
-                    }
-                }
-            },
-            isPureFunction: false // External side effects (LLM API call)
-        );
-
-    }
-
-    private static string EscapeJsonString(string s)
-    {
-        var sb = new StringBuilder(s.Length);
-        foreach (var c in s)
-        {
-            switch (c)
-            {
-                case '\\': sb.Append("\\\\"); break;
-                case '"': sb.Append("\\\""); break;
-                case '\n': sb.Append("\\n"); break;
-                case '\r': sb.Append("\\r"); break;
-                case '\t': sb.Append("\\t"); break;
-                case '\b': sb.Append("\\b"); break;
-                case '\f': sb.Append("\\f"); break;
-                default:
-                    if (c < 32)
-                        sb.Append($"\\u{(int)c:X4}");
-                    else
-                        sb.Append(c);
-                    break;
-            }
-        }
-        return sb.ToString();
     }
 
     // ------------------- private helpers -------------------
@@ -1263,25 +911,6 @@ public static class RepositoryUserDefinedFunctions
             return arr;
         }
         catch { return null; }
-    }
-
-    /// <summary>
-    /// Serializes float array to JSON array format [1.0,2.0,...].
-    /// Use result::FLOAT[] in SQL to convert back.
-    /// </summary>
-    private static string SerializeFloatArray(float[] vec)
-    {
-        if (vec == null || vec.Length == 0) return "[]";
-
-        var sb = new StringBuilder(vec.Length * 10 + 2); // Pre-size for efficiency
-        sb.Append('[');
-        for (var i = 0; i < vec.Length; i++)
-        {
-            if (i > 0) sb.Append(',');
-            sb.Append(vec[i].ToString(System.Globalization.CultureInfo.InvariantCulture));
-        }
-        sb.Append(']');
-        return sb.ToString();
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

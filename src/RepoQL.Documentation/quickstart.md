@@ -215,10 +215,10 @@ Uses: `search`, `regexp_extract_all`, `regexp_matches`, `LATERAL snippet`, `FILT
 
 ---
 
-## Checklist
+## Key Patterns
 
-- [ ] Use xray tool first; query tool for composition/aggregation
-- [ ] Compose with LATERAL; avoid app-side loops
-- [ ] Query edges for relationships, not code parsing
-- [ ] Query annotations for pre-computed facts
-- [ ] Check for domain views before manual joins
+- `xray()` for token-budgeted exploration; `search()` for ranked retrieval
+- `LATERAL` composes functions: search → snippet, search → annotations
+- `edge` table encodes relationships (CALLS, IMPORTS, REFERS_TO)
+- `annotations` view has pre-computed diagnostics and metrics
+- Format-specific views (markdown_headings, csharp_types) simplify queries

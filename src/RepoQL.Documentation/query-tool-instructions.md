@@ -49,26 +49,30 @@ annotation(id, kind, severity, source, message, data[JSON], scope_document_id, t
 </SCHEMA>
 
 <ESSENTIAL_MACROS>
-SELECT * FROM xray_documents()  -- inventory
-SELECT * FROM snippet('file:///path#line=42', 3)  -- preview
+SELECT * FROM xray_documents()  -- document inventory with summaries
+SELECT * FROM snippet('file:///path#line=42', 3)  -- code preview with context
 
--- Files: file_search(keywords, question := ..., k)
-SELECT uri, score FROM file_search('auth', question := 'How refresh JWTs?', k := 10)
+-- Semantic + lexical search
+SELECT uri, score FROM search('auth JWT refresh', k := 10)
+SELECT uri, score FROM search('config', scope := 'file:///src/%')  -- scoped
 
--- Objects (functions/classes/headings): search(q, k) WHERE scope='object'
-SELECT uri, symbol, kind, line_start FROM search('ProcessRequest', k := 10) WHERE scope = 'object'
-SELECT uri, scope, symbol FROM search('error handling', k := 30)  -- mixed
+-- Symbol lookup (functions/classes)
+SELECT uri, symbol, kind, line_start FROM _search_candidates('ProcessRequest', k := 10) WHERE scope = 'object'
 
-SELECT * FROM annotations WHERE severity = 'error'  -- diagnostics
+-- Diagnostics
+SELECT * FROM annotations WHERE severity = 'error'
+
+-- LLM-powered summarization
+SELECT llm_summarize(json_data, 'What patterns exist?', 300)
 </ESSENTIAL_MACROS>
 
-Docs at docs:///quickstart.md, docs:///advanced-search.md
+Docs at docs:///quickstart.md, docs:///sql-reference.md, docs:///advanced-search.md
 
 <SEARCH_TIPS>
-file_search(keywords, question, k) → documents. search(q, k) → documents + objects
-- scope='document': files. scope='object': functions/classes/headings (URIs have #symbol=Foo&line=N)
-- Symbol exact match: 4.0 BM25. Objects get 5% boost.
-- dense_score NULL → embeddings loading (check: SELECT COUNT(*) FROM document_embedding)
+search(keywords, scope, k) → ranked documents with semantic + BM25 scoring
+_search_candidates(q, k) → documents + objects (use WHERE scope='object' for symbols)
+- Symbol exact match scores 4.0 BM25
+- dense_score NULL → embeddings still loading
 </SEARCH_TIPS>
 
 ## Examples
@@ -117,7 +121,7 @@ Do this before starting work so that you know what documentation exists
 ```postgresql
 WITH search_results AS (
     SELECT uri, score
-    FROM file_search('navigation loading', question := 'Why does the loading bar hang?', k := 3)
+    FROM search('navigation loading', k := 3)
   )
   SELECT
     sr.uri,
@@ -129,10 +133,9 @@ WITH search_results AS (
        LATERAL snippet(sr.uri, 2) AS sn
   ORDER BY sr.score DESC, sn.line_number;
   /*
-  - file_search(keywords, question := ...) does the lexical + semantic lookup (k := 3 keeps the top three hits).
-  - snippet(uri, 2) returns two lines of context around each match; is_focus marks the snippet's focal line.
-  - Ordering by score first keeps the best semantic hits at the top, then list the snippet lines in-order.
-  Tweak the search phrase, k, or context window to suit your needs.
+  - search(keywords, k) does semantic + BM25 lookup (k := 3 keeps top 3)
+  - snippet(uri, 2) returns 2 lines of context; is_focus marks focal lines
+  - Order by score DESC for best matches first
   */
 ```
 
@@ -159,17 +162,17 @@ repoql query "WITH gql_headings AS (SELECT heading_uri, document_uri, text FROM 
   | column -t -s $'\t'
 ```
 
-<INSTRUCTION>
+<USEFUL_FIRST_QUERIES>
 
-**DO NOW:**
+-- Discover embedded RepoQL documentation
+SELECT n.uri, a.headline FROM node n JOIN artifact a ON n.artifact_id = a.id
+WHERE n.kind = 'document' AND n.uri LIKE 'docs://%' ORDER BY n.uri;
 
-- [ ] List embedded RepoQL documentation 
-  _So that you know what you don't know_
-- [ ] List all markdown docs in repo + headlines
-  *So that you know what repository docs are available to you. Vital to your success in completing future tasks*
-- [ ] Read `docs:///quickstart.md`
-  *Before attempting complex queries*
+-- Discover repository documentation
+SELECT n.uri, a.headline FROM node n JOIN artifact a ON n.artifact_id = a.id
+WHERE n.kind = 'document' AND a.media_type LIKE '%markdown%' ORDER BY n.uri;
 
-</INSTRUCTION>
+-- Full reference at docs:///sql-reference.md
+-- SQL patterns at docs:///quickstart.md
 
-Do the above before attempting any non-trivial work.
+</USEFUL_FIRST_QUERIES>

@@ -1,4 +1,4 @@
-namespace RepoQL.LLM.Client;
+namespace RepoQL.Contracts;
 
 /// <summary>
 /// Interface for LLM-powered operations on repository data.

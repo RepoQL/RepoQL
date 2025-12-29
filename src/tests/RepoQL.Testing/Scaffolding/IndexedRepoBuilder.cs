@@ -147,11 +147,13 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 .ToList();
 
             // Create unified database interface for indexing operations
+            var serviceProvider = options.ResolveServiceProvider();
             database = new DuckDbDataStore(
                 databasePath,
                 embeddingProvider: null,
                 formatSchemaScripts: formatScripts,
-                logger: loggerFactory.CreateLogger<DuckDbDataStore>());
+                logger: loggerFactory.CreateLogger<DuckDbDataStore>(),
+                serviceProvider: serviceProvider);
 
             analysisWriter = options.CreateAnalysisWriter?.Invoke(database);
 

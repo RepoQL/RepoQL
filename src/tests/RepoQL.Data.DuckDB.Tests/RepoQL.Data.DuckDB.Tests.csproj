@@ -15,6 +15,7 @@
         <PackageReference Include="AwesomeAssertions" Version="9.2.1" />
         <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.1.0" />
         <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
     </ItemGroup>
 
     <ItemGroup>
