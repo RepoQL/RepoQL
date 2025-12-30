@@ -43,8 +43,8 @@ public class ClassificationPipeline(IEnumerable<IAsyncPipeline<IDiscoveredArtifa
     {
         var result = await base.ProcessItemAsync(item, cancellationToken).ConfigureAwait(false);
 
-        // Apply ProvisionalMediaType fallback if no classifier set MediaType
-        if (item is IndexItem indexItem && indexItem.MediaType is null)
+        // Apply ProvisionalMediaType fallback only after successful classification.
+        if (result == PipelineResult.Success && item is IndexItem indexItem && indexItem.MediaType is null)
         {
             indexItem.MediaType = indexItem.RawArtifact.ProvisionalMediaType.Value;
         }

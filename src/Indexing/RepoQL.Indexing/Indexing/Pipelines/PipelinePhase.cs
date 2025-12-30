@@ -53,7 +53,7 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
             var (result, status) = await InvokeProcessorAsync(0, item, cancellationToken).ConfigureAwait(false);
             if (status == PipelineResult.Success && result != null)
                 await ApplyResultAsync((item as IndexItem)!, result, cancellationToken);
-            return PipelineResult.Success;
+            return status;
         }
         catch (OperationCanceledException)
         {
