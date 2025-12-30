@@ -131,11 +131,74 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
         var timer = Stopwatch.StartNew();
 
-        // Build structure payloads from items that have document nodes
-        var workItems = new List<(Guid DocId, Guid NodeId, string Uri, string Payload)>(items.Count);
-        var withRecords = 0;
-        var withArtifacts = 0;
-        var withDocNodes = 0;
+        // Pre-count candidates to keep progress reporting accurate.
+        var totalWorkItems = CountStructureEmbeddingCandidates(items, out var withRecords, out var withArtifacts, out var withDocNodes);
+
+        _logger.LogInformation("Structure embedding: {Total} items, {WithRecords} with records, {WithArtifacts} with artifacts, {WithDocNodes} with docNodes, {WorkItems} work items",
+            items.Count, withRecords, withArtifacts, withDocNodes, totalWorkItems);
+
+        if (totalWorkItems == 0)
+        {
+            _logger.LogDebug("No structure embeddings to generate");
+            return;
+        }
+
+        _logger.LogInformation("Generating {Count} structure embeddings...", totalWorkItems);
+
+        // Generate embeddings in batches and write each batch immediately.
+        var totalWritten = 0;
+        var totalBatches = (totalWorkItems + StructureEmbeddingBatchSize - 1) / StructureEmbeddingBatchSize;
+        var batchNum = 0;
+        var itemsProcessed = 0;
+
+        using var structureActivity = IndexingEngine.ActivitySource.StartActivity("repoql.embedding.structure", ActivityKind.Internal);
+        structureActivity?.SetTag("items", totalWorkItems);
+        structureActivity?.SetTag("batches", totalBatches);
+        structureActivity?.SetTag("model", _embeddingProvider.Model);
+
+        var batch = new List<StructureWorkItem>(StructureEmbeddingBatchSize);
+        foreach (var item in items)
+        {
+            if (!TryBuildStructureWorkItem(item, out var work))
+                continue;
+
+            batch.Add(work);
+            if (batch.Count < StructureEmbeddingBatchSize)
+                continue;
+
+            batchNum++;
+            itemsProcessed += batch.Count;
+            totalWritten += await EmbedStructureBatchAsync(batch, batchNum, totalBatches, itemsProcessed, totalWorkItems, timer, cancellationToken)
+                .ConfigureAwait(false);
+            batch.Clear();
+        }
+
+        if (batch.Count > 0)
+        {
+            batchNum++;
+            itemsProcessed += batch.Count;
+            totalWritten += await EmbedStructureBatchAsync(batch, batchNum, totalBatches, itemsProcessed, totalWorkItems, timer, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        timer.Stop();
+        _logger.LogInformation("Structure embeddings complete: {Count} embeddings in {Time}",
+            totalWritten, timer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond));
+    }
+
+    private readonly record struct StructureWorkItem(Guid DocId, Guid NodeId, string Uri, string Payload);
+
+    private static int CountStructureEmbeddingCandidates(
+        IReadOnlyList<IndexItem> items,
+        out int withRecords,
+        out int withArtifacts,
+        out int withDocNodes)
+    {
+        var total = 0;
+        withRecords = 0;
+        withArtifacts = 0;
+        withDocNodes = 0;
+
         foreach (var item in items)
         {
             var records = item.Records;
@@ -145,115 +208,115 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             var artifact = artifacts is { Length: > 0 } ? artifacts[0] : null;
             if (artifact is not null) withArtifacts++;
 
-            Node? docNode = null;
-            var nodes = records?.Nodes;
-            if (nodes is { Length: > 0 })
-            {
-                for (var i = 0; i < nodes.Length; i++)
-                {
-                    var n = nodes[i];
-                    if (n.Kind == "document")
-                    {
-                        docNode = n;
-                        break;
-                    }
-                }
-            }
+            var docNode = FindDocumentNode(records?.Nodes);
             if (docNode is not null) withDocNodes++;
 
-            if (artifact is null || docNode is null)
+            if (artifact is not null && docNode is not null)
+                total++;
+        }
+
+        return total;
+    }
+
+    private static bool TryBuildStructureWorkItem(IndexItem item, out StructureWorkItem work)
+    {
+        work = default;
+        var records = item.Records;
+        var artifacts = records?.Artifacts;
+        var artifact = artifacts is { Length: > 0 } ? artifacts[0] : null;
+        if (artifact is null)
+            return false;
+
+        var docNode = FindDocumentNode(records?.Nodes);
+        if (docNode is null)
+            return false;
+
+        var payload = BuildStructurePayload(item.Uri.ToString(), artifact.Headline, artifact.Structure);
+        if (string.IsNullOrWhiteSpace(payload))
+            return false;
+
+        work = new StructureWorkItem(docNode.Id, docNode.Id, item.Uri.ToString(), payload);
+        return true;
+    }
+
+    private static Node? FindDocumentNode(Node[]? nodes)
+    {
+        if (nodes is null || nodes.Length == 0)
+            return null;
+
+        for (var i = 0; i < nodes.Length; i++)
+        {
+            var n = nodes[i];
+            if (n.Kind == "document")
+                return n;
+        }
+
+        return null;
+    }
+
+    private async Task<int> EmbedStructureBatchAsync(
+        IReadOnlyList<StructureWorkItem> batch,
+        int batchNumber,
+        int totalBatches,
+        int itemsProcessed,
+        int totalItems,
+        Stopwatch timer,
+        CancellationToken cancellationToken)
+    {
+        var batchCount = batch.Count;
+        var payloads = new string[batchCount];
+        for (var i = 0; i < batchCount; i++)
+            payloads[i] = batch[i].Payload;
+
+        var progress = new BatchEmbeddingProgress(batchNumber, totalBatches, itemsProcessed, totalItems, timer.Elapsed);
+
+        var batchTimer = Stopwatch.StartNew();
+        float[]?[] vectors;
+        using (var batchActivity = IndexingEngine.ActivitySource.StartActivity("repoql.embedding.structure.batch", ActivityKind.Internal))
+        {
+            batchActivity?.SetTag("batch", batchNumber);
+            batchActivity?.SetTag("total_batches", totalBatches);
+            batchActivity?.SetTag("size", batchCount);
+
+            vectors = await _embeddingProvider!.EmbedBatchAsync(payloads, progress, cancellationToken).ConfigureAwait(false);
+        }
+        batchTimer.Stop();
+
+        var percentComplete = (int)(itemsProcessed * 100.0 / totalItems);
+        var eta = progress.EstimatedRemaining;
+        var etaStr = eta.HasValue && eta.Value > TimeSpan.Zero
+            ? $", ETA {eta.Value.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Second)}"
+            : "";
+        _logger.LogInformation("Structure embeddings: {Batch}/{Total} ({Percent}%) - {BatchSize} items in {Time}{Eta}",
+            batchNumber, totalBatches, percentComplete, batchCount,
+            batchTimer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond), etaStr);
+
+        var documentEmbeddings = new List<DocumentEmbedding>(batchCount);
+        for (var i = 0; i < batchCount; i++)
+        {
+            var vec = (vectors != null && i < vectors.Length) ? vectors[i] : null;
+            if (vec is null || vec.Length == 0)
                 continue;
 
-            var payload = BuildStructurePayload(item.Uri.ToString(), artifact.Headline, artifact.Structure);
-            if (!string.IsNullOrWhiteSpace(payload))
-            {
-                workItems.Add((docNode.Id, docNode.Id, item.Uri.ToString(), payload));
-            }
+            var work = batch[i];
+            documentEmbeddings.Add(new DocumentEmbedding(
+                work.DocId,
+                work.NodeId,
+                ChunkIndex: 0, // structure embeddings are always chunk 0
+                DocumentEmbedding.TypeStructure,
+                work.Uri,
+                DocumentEmbedding.ScopeDocument,
+                vec,
+                _embeddingProvider!.Model,
+                _embeddingProvider!.Dimension));
         }
 
-        _logger.LogInformation("Structure embedding: {Total} items, {WithRecords} with records, {WithArtifacts} with artifacts, {WithDocNodes} with docNodes, {WorkItems} work items",
-            items.Count, withRecords, withArtifacts, withDocNodes, workItems.Count);
-
-        if (workItems.Count == 0)
+        if (documentEmbeddings.Count > 0)
         {
-            _logger.LogDebug("No structure embeddings to generate");
-            return;
+            _db!.WriteEmbeddings(documentEmbeddings);
         }
 
-        _logger.LogInformation("Generating {Count} structure embeddings...", workItems.Count);
-
-        // Generate embeddings in batches and write each batch immediately.
-        var totalWritten = 0;
-        var totalBatches = (workItems.Count + StructureEmbeddingBatchSize - 1) / StructureEmbeddingBatchSize;
-        var batchNum = 0;
-
-        using var structureActivity = IndexingEngine.ActivitySource.StartActivity("repoql.embedding.structure", ActivityKind.Internal);
-        structureActivity?.SetTag("items", workItems.Count);
-        structureActivity?.SetTag("batches", totalBatches);
-        structureActivity?.SetTag("model", _embeddingProvider.Model);
-
-        for (var offset = 0; offset < workItems.Count; offset += StructureEmbeddingBatchSize)
-        {
-            batchNum++;
-            var batchCount = Math.Min(StructureEmbeddingBatchSize, workItems.Count - offset);
-            var payloads = new string[batchCount];
-            for (var i = 0; i < batchCount; i++)
-                payloads[i] = workItems[offset + i].Payload;
-
-            var itemsAfterBatch = offset + batchCount;
-            var progress = new BatchEmbeddingProgress(batchNum, totalBatches, itemsAfterBatch, workItems.Count, timer.Elapsed);
-
-            var batchTimer = Stopwatch.StartNew();
-            float[]?[] vectors;
-            using (var batchActivity = IndexingEngine.ActivitySource.StartActivity("repoql.embedding.structure.batch", ActivityKind.Internal))
-            {
-                batchActivity?.SetTag("batch", batchNum);
-                batchActivity?.SetTag("total_batches", totalBatches);
-                batchActivity?.SetTag("size", batchCount);
-
-                vectors = await _embeddingProvider.EmbedBatchAsync(payloads, progress, cancellationToken).ConfigureAwait(false);
-            }
-            batchTimer.Stop();
-
-            var percentComplete = (int)(itemsAfterBatch * 100.0 / workItems.Count);
-            var eta = progress.EstimatedRemaining;
-            var etaStr = eta.HasValue && eta.Value > TimeSpan.Zero
-                ? $", ETA {eta.Value.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Second)}"
-                : "";
-            _logger.LogInformation("Structure embeddings: {Batch}/{Total} ({Percent}%) - {BatchSize} items in {Time}{Eta}",
-                batchNum, totalBatches, percentComplete, batchCount,
-                batchTimer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond), etaStr);
-
-            var documentEmbeddings = new List<DocumentEmbedding>(batchCount);
-            for (var i = 0; i < batchCount; i++)
-            {
-                var vec = (vectors != null && i < vectors.Length) ? vectors[i] : null;
-                if (vec is null || vec.Length == 0)
-                    continue;
-
-                var work = workItems[offset + i];
-                documentEmbeddings.Add(new DocumentEmbedding(
-                    work.DocId,
-                    work.NodeId,
-                    ChunkIndex: 0, // structure embeddings are always chunk 0
-                    DocumentEmbedding.TypeStructure,
-                    work.Uri,
-                    DocumentEmbedding.ScopeDocument,
-                    vec,
-                    _embeddingProvider.Model,
-                    _embeddingProvider.Dimension));
-            }
-
-            if (documentEmbeddings.Count > 0)
-            {
-                _db.WriteEmbeddings(documentEmbeddings);
-                totalWritten += documentEmbeddings.Count;
-            }
-        }
-
-        timer.Stop();
-        _logger.LogInformation("Structure embeddings complete: {Count} embeddings in {Time}",
-            totalWritten, timer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond));
+        return documentEmbeddings.Count;
     }
 
     private static string BuildStructurePayload(string uri, string? headline, string? structure)
