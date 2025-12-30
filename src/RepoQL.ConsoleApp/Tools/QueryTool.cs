@@ -227,10 +227,10 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
             var requestSignature = $"{sql.Trim()}|{maxRows}|{tokenBudget}";
             var isRepeatRequest = _lastBudgetExceededQuery == requestSignature;
 
+            var result = await queryExecutor.ExecuteAsync(sql, maxRows, ResultFormat.Toon, cancel).ConfigureAwait(false);
+
             // Clear the stored query - it's either being repeated (confirmed) or a new query
             _lastBudgetExceededQuery = null;
-
-            var result = await queryExecutor.ExecuteAsync(sql, maxRows, ResultFormat.Toon, cancel).ConfigureAwait(false);
             var output = string.Join(Environment.NewLine, result.Lines);
 
             // Check token budget (only if budget is set and this is not a repeat request)
