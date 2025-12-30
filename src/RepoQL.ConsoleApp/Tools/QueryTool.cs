@@ -6,12 +6,18 @@ using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Resources;
+using RepoQL.Xray;
 
 namespace RepoQL.ConsoleApp.Tools;
 
 [McpServerToolType]
 internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRunner, RepoResourceService resourceService)
 {
+    /// <summary>
+    /// Track the last query that exceeded token budget for "repeat to confirm" pattern.
+    /// </summary>
+    private static string? _lastBudgetExceededQuery;
+
     private const string QueryInstructions = """
                                              <CONCEPT>
                                                  Query is very powerful and allows you to do complex analysis and retrieval with all the power of DuckDB
@@ -187,6 +193,7 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
     public async Task<string> Query(
         [Description("DuckDB-style SQL to execute. Pass ':diagnostics:' to run diagnostics. Pass 'read:<uri>' for raw content, or 'read:<uri> // <question>' to summarize with LLM.")] string sql,
         [Description("Maximum number of rows to include when formatting the response.")] int maxRows = 500,
+        [Description("Optional token budget. If response exceeds budget, returns guidance to repeat query for full results or use llm_summarize. Set to 0 for unlimited.")] int tokenBudget = 0,
         CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(sql))
@@ -215,8 +222,31 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
 
         try
         {
+            // Check if this is a repeat of a query that previously exceeded budget
+            // Include all parameters in signature so changing maxRows/tokenBudget doesn't bypass the check
+            var requestSignature = $"{sql.Trim()}|{maxRows}|{tokenBudget}";
+            var isRepeatRequest = _lastBudgetExceededQuery == requestSignature;
+
+            // Clear the stored query - it's either being repeated (confirmed) or a new query
+            _lastBudgetExceededQuery = null;
+
             var result = await queryExecutor.ExecuteAsync(sql, maxRows, ResultFormat.Toon, cancel).ConfigureAwait(false);
-            return string.Join(Environment.NewLine, result.Lines);
+            var output = string.Join(Environment.NewLine, result.Lines);
+
+            // Check token budget (only if budget is set and this is not a repeat request)
+            if (tokenBudget > 0 && !isRepeatRequest)
+            {
+                var estimatedTokens = TokenEstimator.EstimateTokens(output);
+                if (estimatedTokens > tokenBudget)
+                {
+                    // Store this query so next identical call bypasses the check
+                    _lastBudgetExceededQuery = requestSignature;
+
+                    return FormatBudgetExceededMessage(result.TotalRowCount, estimatedTokens, tokenBudget);
+                }
+            }
+
+            return output;
         }
         catch (Exception ex)
         {
@@ -232,6 +262,24 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
             // For user input errors (SQL syntax, etc.), just return the message
             return ex.Message;
         }
+    }
+
+    /// <summary>
+    /// Format the message returned when a query exceeds the token budget.
+    /// </summary>
+    private static string FormatBudgetExceededMessage(long rowCount, int estimatedTokens, int tokenBudget)
+    {
+        return $"""
+            Response exceeds token budget: {estimatedTokens:N0} tokens (budget: {tokenBudget:N0}), {rowCount:N0} rows.
+
+            Options:
+            1. **Repeat the query exactly** to receive the full result (budget will be bypassed for this query)
+            2. **Adjust your query** to return fewer results:
+               - Add a LIMIT clause to reduce rows
+               - Use more specific WHERE conditions
+               - Select fewer columns
+               - Wrap with `llm_summarize((SELECT to_json(list(t)) FROM (...) t), 'your question')` if full fidelity is not required
+            """;
     }
 
     private async Task<string> ReadWithGuidanceAsync(string uri, string guidance, CancellationToken cancel)
