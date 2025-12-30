@@ -173,6 +173,12 @@ internal sealed class RepoResourceService
     public Task<TextResourceContents> FetchResourceAsync(string resourceUri, CancellationToken cancellationToken = default)
         => FetchResourceContentAsync(resourceUri, cancellationToken);
 
+    public async Task<List<TextResourceContents>> FetchGlobAsync(string globUri, CancellationToken cancellationToken = default)
+    {
+        var contents = await FetchGlobContentsAsync(globUri, cancellationToken).ConfigureAwait(false);
+        return contents.OfType<TextResourceContents>().ToList();
+    }
+
     private async Task<TextResourceContents> FetchResourceContentAsync(string uriString, CancellationToken cancellationToken)
     {
         if (!RepoUri.TryParse(uriString, out var repoUri))
