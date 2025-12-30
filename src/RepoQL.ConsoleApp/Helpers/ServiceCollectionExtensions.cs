@@ -16,7 +16,6 @@ internal static class ServiceCollectionExtensions
     public static IServiceCollection AddRepoQlConsoleServices(this IServiceCollection services, bool prewarmClient = true)
     {
         services.AddSingleton<IAnsiConsole>(_ => AnsiConsole.Console);
-        services.AddSingleton<IResultFormatter, UnstructuredFormatter>();
         services.AddSingleton<IResultFormatter, JsonLDFormatter>();
         services.AddSingleton<IResultFormatter, ToonFormatter>();
         services.AddSingleton<ResultFormatterFactory>();

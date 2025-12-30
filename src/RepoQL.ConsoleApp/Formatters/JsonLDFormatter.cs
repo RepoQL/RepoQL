@@ -8,7 +8,7 @@ namespace RepoQL.ConsoleApp.Formatters;
 
 public class JsonLDFormatter : IResultFormatter
 {
-    public ResultFormat Format => ResultFormat.JsonLD;
+    public ResultFormat Format => ResultFormat.JsonLine;
 
     public Task<string[]> FormatAsync(RawQueryResponse result, int maxRows = 100, long? totalRowCount = null, CancellationToken cancellationToken = default)
     {

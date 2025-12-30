@@ -27,7 +27,7 @@ internal sealed class QueryExecutor
         RawQueryResponse result;
         long? total = null;
 
-        if (format == ResultFormat.Unstructured)
+        if (format == ResultFormat.Toon)
         {
             result = await client.ExecuteRawQueryAsync(sql, cancellationToken: cancellationToken).ConfigureAwait(false);
             total = result.RowCount;
