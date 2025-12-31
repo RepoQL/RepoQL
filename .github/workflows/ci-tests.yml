@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 20
     env:
       ARTIFACTS_PATH: ${{ github.workspace }}/artifacts/tests
+      TEST_RID: linux-x64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -42,6 +43,8 @@ jobs:
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
       - name: Restore
         run: dotnet restore
+      - name: Build (Release)
+        run: dotnet build RepoQL.sln -c Release -r "$TEST_RID" -p:SelfContained=false --nologo
       - name: Run tests with coverage
         id: test
         run: |
@@ -70,6 +73,9 @@ jobs:
             dotnet run \
               --project "$project" \
               --configuration Release \
+              --no-build \
+              -r "$TEST_RID" \
+              -p:SelfContained=false \
               -- \
               --coverage \
               --coverage-output-format cobertura \
