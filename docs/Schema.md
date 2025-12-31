@@ -174,28 +174,6 @@ CREATE INDEX IF NOT EXISTS annotation_target_span_id_index ON annotation(target_
 COMMENT ON TABLE annotation IS 'Out-of-band facts (lint, outline, metrics, hints) scoped to a document and optionally targeting a node, edge, span, or explicit URI.';
 ```
 
-### `document_search`
-
-Denormalized search surface for fast lexical/fuzzy queries. Each row mirrors one document node and is regenerated on every commit, so the table stays in lockstep with `node`.
-
-```sql
-CREATE TABLE IF NOT EXISTS document_search (
-  doc_id     UUID PRIMARY KEY,
-  uri        TEXT NOT NULL,
-  search_key TEXT NOT NULL,  -- lower-cased path + symbol tokens
-  basename   TEXT,
-  dirname    TEXT,
-  FOREIGN KEY (doc_id) REFERENCES node(id)
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS document_search_uri_idx   ON document_search(uri);
-CREATE INDEX        IF NOT EXISTS document_search_search_idx ON document_search(search_key);
-CREATE INDEX        IF NOT EXISTS document_search_basename_idx ON document_search(basename);
-CREATE INDEX        IF NOT EXISTS document_search_dirname_idx  ON document_search(dirname);
-```
-
-> **Lifecycle:** the indexing engine truncates/rewrites `document_search` inside the same transaction that updates the owning document. Foreign-key enforcement ensures no stale search rows linger after deletes or prunes.
-
 ### `document_embedding`
 
 Vector store for semantic search (both document-level and object-level embeddings). Rows reference the owning document (`doc_id`) and the specific node (`node_id`) whose text produced the embedding.

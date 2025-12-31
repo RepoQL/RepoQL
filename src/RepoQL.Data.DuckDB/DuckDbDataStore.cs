@@ -884,7 +884,6 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/xray_documents.sql",
                 "Macros/xray_items.sql",
                 "Macros/xray_lines.sql",
-                "Tables/document_search.sql",
                 "Macros/search.sql",
                 "Macros/hybrid_search.sql",
                 "Tables/file_system_mount.sql",

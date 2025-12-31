@@ -69,8 +69,6 @@ internal class SearchTests
             "## Components\n- Frontend\n- Backend\n- Database",
             "The system follows a three-tier architecture with clear separation of concerns."));
 
-        store.RefreshSearchProjection(incremental: false);
-
         // Act: Compare searches
         var hybridOutline = store.RawQuery(
             "SELECT uri, source, struct_mentions, body_mentions FROM search('config', enable_body_rescue := FALSE) LIMIT 20").ToList();
@@ -108,8 +106,6 @@ internal class SearchTests
             "## Validation\n- Required fields\n- Format checks",
             "This document covers form handling patterns."));
 
-        store.RefreshSearchProjection(incremental: false);
-
         // Act
         var withBodyRescue = store.RawQuery(
             "SELECT uri, source, body_mentions FROM search('validation', enable_body_rescue := TRUE) LIMIT 20").ToList();
@@ -144,8 +140,6 @@ internal class SearchTests
             "## Sessions",
             "Manages user sessions for the authentication system."));
 
-        store.RefreshSearchProjection(incremental: false);
-
         // Act: Search with boost pattern for JWT
         var results = store.RawQuery(
             "SELECT uri, score, struct_mentions FROM search('authentication', boost_pattern := 'JWT') ORDER BY score DESC LIMIT 10").ToList();
@@ -177,8 +171,6 @@ internal class SearchTests
             "Parser Implementation",
             "## Parser",
             "Core parser implementation for processing input files."));
-
-        store.RefreshSearchProjection(incremental: false);
 
         // Act: Search with negative pattern for test
         var results = store.RawQuery(

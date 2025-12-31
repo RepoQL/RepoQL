@@ -146,9 +146,6 @@ public static class DuckDbDataStoreExtensions
             // 9. Insert new document content
             InsertDocumentContent(conn, tx, children, spans, edges);
 
-            // 10. Upsert document_search projection
-            UpsertDocumentSearch(conn, tx, savedDoc.Id, uri);
-
             return new IndexResult(savedDoc.Id, isUpdate);
         });
     }
@@ -201,9 +198,6 @@ public static class DuckDbDataStoreExtensions
 
                 // 9. Insert new document content
                 InsertDocumentContent(conn, tx, children, spans, edges);
-
-                // 10. Upsert document_search projection
-                UpsertDocumentSearch(conn, tx, savedDoc.Id, uri);
 
                 results.Add(new IndexResult(savedDoc.Id, isUpdate));
             }
@@ -341,110 +335,6 @@ public static class DuckDbDataStoreExtensions
 
                 cmd.CommandText = sb.ToString();
                 cmd.ExecuteNonQuery();
-            }
-        });
-    }
-
-    /// <summary>
-    /// Refresh the search projection for all documents.
-    /// </summary>
-    public static void RefreshSearchProjection(this DuckDbDataStore store, bool incremental = false)
-    {
-        ArgumentNullException.ThrowIfNull(store);
-
-        store.WriteTransaction((conn, tx) =>
-        {
-            if (incremental)
-            {
-                // Only insert documents that are missing from the projection
-                // Use REPLACE to strip newlines (chr(10), chr(13)) since TRIM only removes spaces
-                conn.Execute(tx, """
-                    INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
-                    WITH clean AS (
-                        SELECT n.id, TRIM(REPLACE(REPLACE(n.uri, chr(10), ''), chr(13), '')) AS uri
-                        FROM node n
-                        WHERE n.kind = 'document' AND n.uri IS NOT NULL
-                    )
-                    SELECT
-                        c.id,
-                        c.uri,
-                        LOWER(REPLACE(c.uri, '\', '/')),
-                        CASE
-                            WHEN POSITION('/' IN REPLACE(c.uri, '\', '/')) > 0
-                            THEN SUBSTRING(REPLACE(c.uri, '\', '/') FROM LENGTH(REPLACE(c.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(c.uri, '\', '/'))) + 2)
-                            ELSE REPLACE(c.uri, '\', '/')
-                        END,
-                        CASE
-                            WHEN POSITION('/' IN REPLACE(c.uri, '\', '/')) > 0
-                            THEN SUBSTRING(REPLACE(c.uri, '\', '/') FROM 1 FOR LENGTH(REPLACE(c.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(c.uri, '\', '/'))))
-                            ELSE NULL
-                        END
-                    FROM clean c
-                    WHERE NOT EXISTS (SELECT 1 FROM document_search ds WHERE ds.doc_id = c.id)
-                      AND NOT EXISTS (SELECT 1 FROM document_search ds WHERE ds.uri = c.uri)
-                    ON CONFLICT DO NOTHING;
-                    """);
-            }
-            else
-            {
-                // Full refresh - clear and rebuild
-                // First check for duplicate URIs - this indicates a data integrity issue
-                using var dupCheck = conn.CreateCommand();
-                dupCheck.Transaction = tx;
-                dupCheck.CommandText = """
-                    SELECT uri, COUNT(*) as cnt
-                    FROM node
-                    WHERE kind = 'document' AND uri IS NOT NULL
-                    GROUP BY uri
-                    HAVING COUNT(*) > 1
-                    LIMIT 10;
-                    """;
-                using var dupReader = dupCheck.ExecuteReader();
-                var duplicates = new List<string>();
-                while (dupReader.Read())
-                {
-                    var uri = dupReader.GetString(0);
-                    var count = dupReader.GetInt64(1);
-                    duplicates.Add($"{uri} ({count}x)");
-                }
-                dupReader.Close();
-
-                if (duplicates.Count > 0)
-                {
-                    Console.Error.WriteLine($"[DuckDB] WARNING: Found {duplicates.Count} URIs with duplicate document nodes: {string.Join(", ", duplicates)}");
-                }
-
-                // Use ROW_NUMBER to deduplicate by URI in case multiple document nodes exist for same URI
-                // TRIM normalizes URIs with trailing whitespace/newlines to prevent duplicate conflicts
-                // ON CONFLICT handles any edge cases that slip through
-                conn.Execute(tx, "DELETE FROM document_search;");
-                conn.Execute(tx, """
-                    INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
-                    SELECT
-                        r.id,
-                        r.uri,
-                        LOWER(REPLACE(r.uri, '\', '/')),
-                        CASE
-                            WHEN POSITION('/' IN REPLACE(r.uri, '\', '/')) > 0
-                            THEN SUBSTRING(REPLACE(r.uri, '\', '/') FROM LENGTH(REPLACE(r.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(r.uri, '\', '/'))) + 2)
-                            ELSE REPLACE(r.uri, '\', '/')
-                        END,
-                        CASE
-                            WHEN POSITION('/' IN REPLACE(r.uri, '\', '/')) > 0
-                            THEN SUBSTRING(REPLACE(r.uri, '\', '/') FROM 1 FOR LENGTH(REPLACE(r.uri, '\', '/')) - POSITION('/' IN REVERSE(REPLACE(r.uri, '\', '/'))))
-                            ELSE NULL
-                        END
-                    FROM (
-                        SELECT
-                            n.id,
-                            TRIM(REPLACE(REPLACE(n.uri, chr(10), ''), chr(13), '')) AS uri,
-                            ROW_NUMBER() OVER (PARTITION BY TRIM(REPLACE(REPLACE(n.uri, chr(10), ''), chr(13), '')) ORDER BY n.updated_at DESC, n.id) AS rn
-                        FROM node n
-                        WHERE n.kind = 'document' AND n.uri IS NOT NULL
-                    ) r
-                    WHERE r.rn = 1
-                    ON CONFLICT (uri) DO NOTHING;
-                    """);
             }
         });
     }
@@ -1099,42 +989,6 @@ public static class DuckDbDataStoreExtensions
         cmd.ExecuteNonQuery();
     }
 
-    private static void UpsertDocumentSearch(DuckDBConnection conn, DuckDBTransaction tx, Guid docId, RepoUri uri)
-    {
-        var uriStr = NormalizeUri(uri.Container.AbsoluteUri);
-        var normalized = uriStr.Replace('\\', '/');
-        var searchKey = normalized.ToLowerInvariant();
-
-        // Extract basename (last path component)
-        var lastSlash = normalized.LastIndexOf('/');
-        var basename = lastSlash >= 0 ? normalized[(lastSlash + 1)..] : normalized;
-
-        // Extract dirname (everything before last slash)
-        var dirname = lastSlash > 0 ? normalized[..lastSlash] : null;
-
-        // Delete any existing row with same URI but different doc_id (handles ID changes)
-        using var deleteCmd = conn.CreateCommand();
-        deleteCmd.Transaction = tx;
-        deleteCmd.CommandText = "DELETE FROM document_search WHERE uri = ? AND doc_id != ?;";
-        deleteCmd.AddParameters(uriStr, docId);
-        deleteCmd.ExecuteNonQuery();
-
-        // Insert or update by doc_id
-        using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT INTO document_search (doc_id, uri, search_key, basename, dirname)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT (doc_id) DO UPDATE SET
-                uri = excluded.uri,
-                search_key = excluded.search_key,
-                basename = excluded.basename,
-                dirname = excluded.dirname;
-            """;
-        cmd.AddParameters(docId, uriStr, searchKey, basename, dirname);
-        cmd.ExecuteNonQuery();
-    }
-
     private static void DeleteSubtree(DuckDBConnection conn, DuckDBTransaction tx, Guid rootId)
     {
         // Collect subtree
@@ -1158,10 +1012,7 @@ public static class DuckDbDataStoreExtensions
             }
         }
 
-        // Delete in order: document_search, document_embedding, annotations, edges, spans, nodes
-        foreach (var id in toDelete)
-            conn.Execute(tx, "DELETE FROM document_search WHERE doc_id = ?;", id);
-
+        // Delete in order: document_embedding, annotations, edges, spans, nodes
         foreach (var id in toDelete)
             conn.Execute(tx, "DELETE FROM document_embedding WHERE doc_id = ?;", id);
 

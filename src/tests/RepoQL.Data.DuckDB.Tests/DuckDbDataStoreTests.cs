@@ -45,7 +45,7 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
-    [DisplayName("IndexArtifact inserts new document and populates search projection")]
+    [DisplayName("IndexArtifact inserts new document")]
     public void IndexArtifact_InsertsNewDocument()
     {
         using var db = new DuckDbDataStore();
@@ -63,10 +63,6 @@ public class DuckDbDataStoreTests
         rows.Should().HaveCount(1);
         rows[0].Should().Contain("test/doc.md");
 
-        // Verify search projection
-        var searchRows = db.Read("SELECT basename FROM document_search", r => r.GetString(0));
-        searchRows.Should().HaveCount(1);
-        searchRows[0].Should().Be("doc.md");
     }
 
     [Test]
@@ -91,8 +87,8 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
-    [DisplayName("DeleteArtifact removes document and cleans up search projection")]
-    public void DeleteArtifact_RemovesDocumentAndSearchProjection()
+    [DisplayName("DeleteArtifact removes document")]
+    public void DeleteArtifact_RemovesDocument()
     {
         using var db = new DuckDbDataStore();
 
@@ -104,8 +100,6 @@ public class DuckDbDataStoreTests
         deleted.Should().BeTrue();
 
         db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0))[0]
-            .Should().Be(0L);
-        db.Read("SELECT COUNT(*) AS cnt FROM document_search", r => r.GetInt64(0))[0]
             .Should().Be(0L);
     }
 

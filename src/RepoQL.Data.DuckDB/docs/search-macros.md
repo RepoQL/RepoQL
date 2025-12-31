@@ -23,20 +23,15 @@ RepoQL search combines three scoring strategies into a unified ranking:
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Why `repo_index` Instead of FTS
+### Why `repo_index`
 
-The search macros query the `repo_index` VIEW rather than using DuckDB's FTS extension on `document_search`. Here's why:
+The search macros query the `repo_index` view because it unifies document and object scope, exposes real content fields, and carries the metadata needed for the scoring pipeline.
 
-| Requirement | `repo_index` + custom scoring | `document_search` + FTS |
-|-------------|------------------------------|------------------------|
-| Search objects (functions/classes) | ✅ Has both `document` and `object` scope | ❌ Documents only |
-| Search code content | ✅ `body` field with actual code | ❌ Path components only |
-| Semantic similarity | ✅ `embedding` column for cosine similarity | ❌ No embeddings |
-| Fuzzy subsequence matching | ✅ `match_score()` UDF | ❌ Token-based BM25 only |
-| Symbol exact-match boost | ✅ Custom heuristics (4.0 for exact) | ❌ No special handling |
-| Multi-chunk documents | ✅ Scores all chunks, takes MAX | ❌ N/A |
-
-The `document_search` table exists for data integrity (tracks document URIs for cleanup) but is not used for search queries.
+Key capabilities:
+- Search documents and objects from one surface.
+- Use `body`, `headline`, and `structure` for lexical/fuzzy matching instead of path-only tokens.
+- Apply semantic similarity with embeddings and chunk-aware scoring.
+- Apply subsequence matching and symbol-aware boosts.
 
 ### Data Model
 

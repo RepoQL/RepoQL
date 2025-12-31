@@ -250,7 +250,12 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
             var prompt = $"""
                 {guidance}
 
-                IMPORTANT: Cite evidence with URIs in this exact format: {baseUri}#line=START,END (e.g. #line=42,45 not #lines=42-45)
+                If nuances exist (things I might not know, tangential context), surface them. If the question isn't answerable from this content, say so concisely and note what's missing if known. Be concise.
+
+                YOU MUST cite every claim as a clickable URI.
+                Format: {baseUri}#line=N,M
+                Correct: {baseUri}#line=42,50
+                Wrong: {baseUri}#42,50 (missing "line=")
                 """;
 
             var escapedContent = numberedContent.Replace("'", "''", StringComparison.Ordinal);

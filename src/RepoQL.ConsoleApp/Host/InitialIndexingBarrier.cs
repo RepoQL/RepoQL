@@ -1,20 +1,16 @@
-using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.Indexing.Hosting;
-using RepoQL.Data.DuckDB;
 
 namespace RepoQL.ConsoleApp.Host;
 
 internal sealed class InitialIndexingBarrier(
     IIndexingCoordinator coordinator,
-    DuckDbDataStore db,
     ILogger<InitialIndexingBarrier>? logger = null)
     : BackgroundService, IInitialIndexingBarrier
 {
     private readonly TaskCompletionSource<bool> _tcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ILogger<InitialIndexingBarrier> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<InitialIndexingBarrier>.Instance;
-    private static readonly ActivitySource Activity = new("RepoQL.Host");
 
     public Task InitialScanCompleted => _tcs.Task;
 
@@ -23,25 +19,7 @@ internal sealed class InitialIndexingBarrier(
         try
         {
             await coordinator.WaitForIdleAsync(stoppingToken).ConfigureAwait(false);
-            try
-            {
-                using var span = Activity.StartActivity("repoql.search.refresh");
-                span?.SetTag("repoql.search.refresh.phase", "initial");
-                span?.SetTag("repoql.search.refresh.trigger", "barrier");
-                var sw = Stopwatch.StartNew();
-                db.RefreshSearchProjection(incremental: false);
-                sw.Stop();
-                _logger.LogInformation("Initial search refresh completed in {DurationMs} ms", (long)sw.Elapsed.TotalMilliseconds);
-                span?.SetTag("otel.status_code", "OK");
-                span?.SetTag("repoql.search.refresh.duration_ms", sw.Elapsed.TotalMilliseconds);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Initial search refresh failed; continuing");
-                var span = System.Diagnostics.Activity.Current;
-                span?.SetTag("otel.status_code", "ERROR");
-                span?.SetTag("otel.status_description", ex.Message);
-            }
+            _logger.LogInformation("Initial indexing completed");
             _tcs.TrySetResult(true);
         }
         catch (OperationCanceledException)

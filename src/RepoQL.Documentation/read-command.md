@@ -28,6 +28,7 @@ query("read:docs:///quickstart.md // list all SQL macros mentioned")
 - All URI schemes: `file:///`, `docs:///`, `github://`
 - Fragments: `#line=10,20`, `#symbol=Name`, `#char=0,500`
 - Globs expand and concatenate matches
-- `// comment` triggers `llm_summarize()` with comment as intent
+- `// question` triggers LLM analysis with citations in `#line=X,Y` format
+- LLM surfaces nuances and tangential context; flags unanswerable queries
 - Requires `OPENROUTER_API_KEY` for LLM features
 - SeeAlso: `snippet()`, `search()`, `llm_summarize()`

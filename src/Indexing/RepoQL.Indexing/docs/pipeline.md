@@ -69,7 +69,7 @@ Each pipeline stage is wrapped by `StageContext`, which accepts `(busyFlag, idle
 - Assert catalog behavior with `CatalogInvocationPlan`.
 - Assert pipeline activity with `PipelineInvocationPlan`.
 - For idle/post-index tests, gate the parser stage and coordinate via `TaskCompletionSource` *only* when the exact sequence matters.
-- For DuckDB-dependent tests, use `DuckDbTestStore` (no file system) and assert via `GraphAssertionHarness`. Be mindful of the current schema (e.g., no FK constraints on `document_embedding` or `document_search`). Tests should verify the delete path clears derived tables explicitly.
+- For DuckDB-dependent tests, use `DuckDbTestStore` (no file system) and assert via `GraphAssertionHarness`. Be mindful of the current schema (e.g., no FK constraints on `document_embedding`). Tests should verify the delete path clears derived tables explicitly.
 
 ## 7. Extension Points
 - **New single-file analyzers**: extend `SingleFileAnalysisPipeline` constructor, register processors in DI, add harness tests.

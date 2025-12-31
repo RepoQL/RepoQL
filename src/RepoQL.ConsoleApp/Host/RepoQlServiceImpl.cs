@@ -683,12 +683,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 _logger.LogDebug("[Import] No pipeline stages to wait for");
             }
 
-            // Refresh search projection
-            _logger.LogDebug("[Import] Refreshing search projection...");
-            var searchStart = sw.ElapsedMilliseconds;
-            _db.RefreshSearchProjection(incremental: true);
-            _logger.LogDebug("[Import] Search projection refreshed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - searchStart);
-
             // Handle embeddings
             var waitForEmbeddings = waitStages.Contains(CoordinatorPipelineStage.Writer); // Writer = SemanticIndexing
             if (_embeddingProvider is not null && _embeddingProvider.Enabled)

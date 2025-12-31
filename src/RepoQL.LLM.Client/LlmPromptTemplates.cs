@@ -22,11 +22,13 @@ public static class LlmPromptTemplates
             ```
 
             ## Instructions
-            Provide a concise summary (~{maxTokens} tokens max) that:
-            1. Directly addresses what the caller hoped to find
-            2. Highlights the most relevant findings from the data
-            3. Notes any gaps or limitations in what was found
-            4. Uses specific URIs/names from the results as references
+            Provide a concise summary (~{maxTokens} tokens max) that directly addresses the caller's intent.
+
+            If nuances exist (things the caller might not know, tangential context), surface them. If the question isn't answerable from this data, say so concisely and note what's missing if known.
+
+            YOU MUST cite every claim using URIs from the results. For line references use format: uri#line=N,M
+            Correct: file:///src/Foo.cs#line=42,50
+            Wrong: file:///src/Foo.cs#42,50 (missing "line=")
 
             Keep the summary actionable and grounded in the actual data.
             Do not use markdown headers. Write in clear, flowing prose.
@@ -52,10 +54,12 @@ public static class LlmPromptTemplates
             ## Instructions
             Review the query results and produce a markdown report highlighting the most relevant items.
 
+            If nuances exist (things the caller might not know, tangential context), surface them. If the question isn't answerable from this data, say so concisely and note what's missing if known.
+
             ## Output Format
             For each relevant finding:
 
-            <uri>
+            <uri>#line=N,M
             ```
             <relevant code or structure from the data>
             ```
@@ -89,6 +93,8 @@ public static class LlmPromptTemplates
                - The tool accepts a URI (e.g., `file:///src/Auth.cs` or `file:///src/Auth.cs#line=42`)
                - Optionally specify `context_lines` (default 5) for lines around the target
             3. After gathering code, produce a markdown report
+
+            If nuances exist (things the caller might not know, tangential context), surface them. If the question isn't answerable from this data, say so concisely and note what's missing if known.
 
             ## Output Format
             For each relevant finding, output:
