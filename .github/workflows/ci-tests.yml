@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 20
     env:
       ARTIFACTS_PATH: ${{ github.workspace }}/artifacts/tests
+      TEST_OUTPUT_PATH: ${{ github.workspace }}/artifacts/tests/shared-output
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -42,8 +43,36 @@ jobs:
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
       - name: Restore
         run: dotnet restore
-      - name: Build (Release)
-        run: dotnet build RepoQL.sln --configuration Release --no-restore --nologo
+      - name: Build test projects (Release)
+        run: |
+          set -euo pipefail
+
+          TEST_OUTPUT_DIR="${{ env.TEST_OUTPUT_PATH }}"
+          mkdir -p "$TEST_OUTPUT_DIR"
+
+          mapfile -t test_projects < <(find src -path "*/tests/*.Tests.csproj" -type f | sort)
+          echo "Found ${#test_projects[@]} test project(s) under src/**/tests"
+          if [[ "${#test_projects[@]}" -eq 0 ]]; then
+            echo "No test projects found under src/**/tests" >&2
+            exit 1
+          fi
+
+          for project in "${test_projects[@]}"; do
+            project_dir="$(dirname "$project")"
+            first_source=$(find "$project_dir" -maxdepth 5 -name '*.cs' -type f | head -n1)
+            if [[ -z "$first_source" ]]; then
+              echo "Skipping $project (no test sources detected)"
+              continue
+            fi
+
+            echo "Building test project: $project"
+            dotnet build \
+              "$project" \
+              --configuration Release \
+              --no-restore \
+              --nologo \
+              -p:OutputPath="$TEST_OUTPUT_DIR/"
+          done
       - name: Run tests with coverage
         id: test
         run: |
@@ -73,6 +102,7 @@ jobs:
               --project "$project" \
               --configuration Release \
               --no-build \
+              -p:OutputPath="$TEST_OUTPUT_DIR/" \
               -- \
               --coverage \
               --coverage-output-format cobertura \
