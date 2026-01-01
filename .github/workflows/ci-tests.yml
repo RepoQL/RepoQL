@@ -42,7 +42,17 @@ jobs:
           dotnet tool install --global dotnet-coverage
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
       - name: Restore
-        run: dotnet restore
+        run: |
+          set -euo pipefail
+
+          mapfile -t test_projects < <(dotnet sln RepoQL.sln list | awk '/\.Tests\.csproj$/ {print}' | sort)
+          echo "Found ${#test_projects[@]} test project(s) in RepoQL.sln"
+          if [[ "${#test_projects[@]}" -eq 0 ]]; then
+            echo "No test projects found in RepoQL.sln" >&2
+            exit 1
+          fi
+
+          dotnet restore "${test_projects[@]}"
       - name: Build test projects (Release)
         run: |
           set -euo pipefail
@@ -50,10 +60,10 @@ jobs:
           TEST_OUTPUT_DIR="${{ env.TEST_OUTPUT_PATH }}"
           mkdir -p "$TEST_OUTPUT_DIR"
 
-          mapfile -t test_projects < <(find src -path "*/tests/*.Tests.csproj" -type f | sort)
-          echo "Found ${#test_projects[@]} test project(s) under src/**/tests"
+          mapfile -t test_projects < <(dotnet sln RepoQL.sln list | awk '/\.Tests\.csproj$/ {print}' | sort)
+          echo "Found ${#test_projects[@]} test project(s) in RepoQL.sln"
           if [[ "${#test_projects[@]}" -eq 0 ]]; then
-            echo "No test projects found under src/**/tests" >&2
+            echo "No test projects found in RepoQL.sln" >&2
             exit 1
           fi
 
@@ -79,13 +89,14 @@ jobs:
           set -euo pipefail
 
           ARTIFACTS_DIR="${{ env.ARTIFACTS_PATH }}"
-          rm -rf "$ARTIFACTS_DIR"
+          TEST_OUTPUT_DIR="${{ env.TEST_OUTPUT_PATH }}"
+          rm -rf "$ARTIFACTS_DIR/coverage" "$ARTIFACTS_DIR/test-results"
           mkdir -p "$ARTIFACTS_DIR/coverage" "$ARTIFACTS_DIR/test-results"
 
-          mapfile -t test_projects < <(find src -path "*/tests/*.Tests.csproj" -type f | sort)
-          echo "Found ${#test_projects[@]} test project(s) under src/**/tests"
+          mapfile -t test_projects < <(dotnet sln RepoQL.sln list | awk '/\.Tests\.csproj$/ {print}' | sort)
+          echo "Found ${#test_projects[@]} test project(s) in RepoQL.sln"
           if [[ "${#test_projects[@]}" -eq 0 ]]; then
-            echo "No test projects found under src/**/tests" >&2
+            echo "No test projects found in RepoQL.sln" >&2
             exit 1
           fi
 
