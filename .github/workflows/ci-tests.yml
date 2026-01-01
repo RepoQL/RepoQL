@@ -42,17 +42,7 @@ jobs:
           dotnet tool install --global dotnet-coverage
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
       - name: Restore
-        run: |
-          set -euo pipefail
-
-          mapfile -t test_projects < <(dotnet sln RepoQL.sln list | awk '/\.Tests\.csproj$/ {print}' | sort)
-          echo "Found ${#test_projects[@]} test project(s) in RepoQL.sln"
-          if [[ "${#test_projects[@]}" -eq 0 ]]; then
-            echo "No test projects found in RepoQL.sln" >&2
-            exit 1
-          fi
-
-          dotnet restore "${test_projects[@]}"
+        run: dotnet restore RepoQL.sln --nologo
       - name: Build test projects (Release)
         run: |
           set -euo pipefail
