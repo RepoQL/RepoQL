@@ -23,7 +23,7 @@ namespace RepoQL.Indexing.Indexing.PostProcessing;
 /// </remarks>
 public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposable
 {
-    private const int StructureEmbeddingBatchSize = 128;
+    private const int StructureEmbeddingBatchSize = 100;
     private static readonly int RefreshConcurrency = GetRefreshConcurrency();
     private readonly IVectorIndexRefresher _refresher;
     private readonly DuckDbDataStore? _db;

@@ -29,8 +29,8 @@ public sealed class EmbeddingRefresher
     private const string FullEmbeddingType = "full";
 
     // Batch size for embedding. Override with REPOQL_EMBED_BATCH_SIZE env var.
-    // Default is tuned for developer laptops (avoid large [B,T,H] tensor spikes).
-    private const int DefaultEmbeddingBatchSize = 128;
+    // Default aligns with OpenRouter's 100-item API limit to avoid split batches.
+    private const int DefaultEmbeddingBatchSize = 100;
 
     // How many documents to pull per DB round-trip when building embedding payloads.
     // Kept intentionally small to bound peak memory (text_content can be large).
