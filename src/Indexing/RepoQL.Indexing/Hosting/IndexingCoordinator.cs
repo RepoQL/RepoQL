@@ -448,6 +448,8 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
             yield return progress;
         }
         _db.TryCheckpoint(); // Checkpoint after full embeddings
+
+        await WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
         
         var completedTimer = Stopwatch.StartNew();
         var completedActivity = StartPhaseActivity(CoordinatorReindexPhase.Completed, epoch, total);
