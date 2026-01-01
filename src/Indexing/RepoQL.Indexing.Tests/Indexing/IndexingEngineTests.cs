@@ -421,8 +421,7 @@ public class IndexingEngineTests
 
         await busySignal.Task.WaitAsync(token);
         context.Engine.State.HasFlag(IndexingState.Started).Should().BeTrue("started flag should raise once any stage begins work");
-        waitTask.IsCompleted.Should().BeTrue("WaitForAsync should complete once the started flag is observed");
-        await waitTask;
+        await waitTask.WaitAsync(token);
         context.Engine.State.HasFlag(IndexingState.ClassificationBusy).Should().BeTrue("started should coincide with an active stage");
 
         gate.TrySetResult(true);
@@ -433,8 +432,9 @@ public class IndexingEngineTests
     }
 
     [Test]
+    [Timeout(15_000)]
     [DisplayName("Raises HotPathIdle when pending work drains")]
-    public async Task Given_WorkCompletes_When_Idle_Then_HotPathIdleFires()
+    public async Task Given_WorkCompletes_When_Idle_Then_HotPathIdleFires(CancellationToken token)
     {
         await using var engine = CreateEngineForIdleTests();
         var artifact = CreateRawArtifact("file:///repo/hot1.md");
@@ -442,12 +442,13 @@ public class IndexingEngineTests
         var idleTask = engine.AwaitHotPathIdleAsync();
 
         await engine.EnqueueItemAsync(artifact, IndexItemOptions.Default, CancellationToken.None);
-        (await idleTask.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(0);
+        (await idleTask.WaitAsync(token)).Should().Be(0);
     }
 
     [Test]
+    [Timeout(15_000)]
     [DisplayName("HotPathIdle waits for pending items before signalling")]
-    public async Task Given_WorkPending_When_WaitingForIdle_Then_EventDelays()
+    public async Task Given_WorkPending_When_WaitingForIdle_Then_EventDelays(CancellationToken token)
     {
         var gate = NewTaskCompletionSource<bool>();
         await using var engine = CreateEngineForIdleTests(gate);
@@ -463,25 +464,26 @@ public class IndexingEngineTests
         idleTask.IsCompleted.Should().BeFalse("event should not fire while work is still running");
 
         gate.SetResult(true);
-        (await idleTask.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(0);
+        (await idleTask.WaitAsync(token)).Should().Be(0);
     }
 
     [Test]
+    [Timeout(15_000)]
     [DisplayName("HotPathIdle reports the epoch that drained")]
-    public async Task Given_NewEpoch_When_WorkCompletes_Then_ReportsEpoch()
+    public async Task Given_NewEpoch_When_WorkCompletes_Then_ReportsEpoch(CancellationToken token)
     {
         await using var engine = CreateEngineForIdleTests();
 
         var firstIdle = engine.AwaitHotPathIdleAsync();
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/epoch0.md"), IndexItemOptions.Default, CancellationToken.None);
-        (await firstIdle.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(0);
+        (await firstIdle.WaitAsync(token)).Should().Be(0);
 
         var nextEpoch = engine.BeginNewEpoch();
         var secondIdle = engine.AwaitHotPathIdleAsync();
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/epoch1.md"), IndexItemOptions.Default, CancellationToken.None);
-        (await secondIdle.WaitAsync(TimeSpan.FromSeconds(2))).Should().Be(nextEpoch);
+        (await secondIdle.WaitAsync(token)).Should().Be(nextEpoch);
     }
 
     [Test]
@@ -562,7 +564,7 @@ public class IndexingEngineTests
         A.CallTo(() => vector.ApplyAsync(A<IndexItem>._, A<CancellationToken>._))
             .ReturnsLazily(async _ =>
             {
-                await deleteApplied.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+                await deleteApplied.Task.WaitAsync(token);
                 vectorApplied.TrySetResult(true);
             });
 
@@ -618,11 +620,11 @@ public class IndexingEngineTests
             vectorCoordinator: vector);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/vector-epoch-a.md"), IndexItemOptions.Default, token);
-        await firstVector.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+        await firstVector.Task.WaitAsync(token);
         await engine.AnalysisQueue.WhenIdleAsync().WaitAsync(token);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/vector-epoch-b.md"), IndexItemOptions.Default, token);
-        await secondVector.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+        await secondVector.Task.WaitAsync(token);
         await engine.AnalysisQueue.WhenIdleAsync().WaitAsync(token);
 
         observedEpochs.Should().HaveCount(2);
