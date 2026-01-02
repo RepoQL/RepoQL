@@ -85,7 +85,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         }
         catch (Exception ex)
         {
-            await Console.Error.WriteLineAsync(ex.ToString());
+            await Console.Error.WriteLineAsync(ex.Message);
 
             // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))
