@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 
 namespace RepoQL.Contracts;
 
@@ -34,7 +35,7 @@ namespace RepoQL.Contracts;
 /// </example>
 /// </summary>
 [SuppressMessage("Naming", "CA1720:Identifier contains type name")]
-public sealed class RepoUri : Uri
+public sealed class RepoUri : Uri, IEquatable<RepoUri>
 {
     /// <summary>Parsed, structured fragment and helpers.</summary>
     public Location Loc { get; }
@@ -46,6 +47,106 @@ public sealed class RepoUri : Uri
     {
         Loc = loc;
     }
+
+    public bool Equals(RepoUri? other)
+    {
+        if (ReferenceEquals(this, other))
+            return true;
+        if (other is null)
+            return false;
+        return UriEquals(other);
+    }
+
+    public override bool Equals(object? obj)
+    {
+        if (ReferenceEquals(this, obj))
+            return true;
+        if (obj is RepoUri otherRepo)
+            return Equals(otherRepo);
+        if (obj is Uri otherUri)
+            return UriEquals(otherUri);
+        return false;
+    }
+
+    public override int GetHashCode()
+        => StringComparer.OrdinalIgnoreCase.GetHashCode(AbsoluteUri);
+
+    public static bool operator ==(RepoUri? left, RepoUri? right)
+        => ReferenceEquals(left, right) || left is not null && left.Equals(right);
+
+    public static bool operator !=(RepoUri? left, RepoUri? right)
+        => !(left == right);
+
+    private bool UriEquals(Uri other)
+        => StringComparer.OrdinalIgnoreCase.Equals(AbsoluteUri, other.AbsoluteUri);
+
+    /// <summary>
+    /// Normalize a URI string for storage and comparison. Removes control characters,
+    /// trims whitespace, validates scheme, and collapses duplicate path slashes.
+    /// </summary>
+    public static string Normalize(string? uri)
+    {
+        if (string.IsNullOrEmpty(uri))
+            return uri ?? string.Empty;
+
+        // Remove newlines (LF, CR), null bytes, and other control characters
+        var sb = new StringBuilder(uri.Length);
+        foreach (var c in uri)
+        {
+            // Skip control characters (0x00-0x1F) except tab which might be in some URIs
+            if (c < 0x20 && c != '\t')
+                continue;
+            sb.Append(c);
+        }
+        var normalized = sb.ToString().Trim();
+
+        // Validate: URI should not be empty after normalization
+        if (normalized.Length == 0)
+            throw new ArgumentException($"URI is empty after normalization. Original length: {uri.Length}");
+
+        // Validate: URI should have a scheme
+        var schemeEnd = normalized.IndexOf("://", StringComparison.Ordinal);
+        if (schemeEnd < 1)
+            throw new ArgumentException($"URI missing or invalid scheme. Got: '{Truncate(normalized, 100)}'");
+
+        // Validate: For file:// URIs, reject absolute Windows paths (must be repo-relative)
+        if (normalized.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+        {
+            var path = normalized[8..]; // After "file:///"
+            if (path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':')
+            {
+                throw new ArgumentException(
+                    $"file:// URI must be repo-relative, not absolute. Got drive letter '{path[0]}:' in: '{Truncate(normalized, 100)}'");
+            }
+        }
+
+        // Normalize: Remove duplicate slashes in path (but not in scheme)
+        var pathStart = schemeEnd + 3;
+        if (pathStart < normalized.Length)
+        {
+            var scheme = normalized[..pathStart];
+            var path = normalized[pathStart..];
+
+            // Replace multiple consecutive slashes with single slash
+            while (path.Contains("//", StringComparison.Ordinal))
+                path = path.Replace("//", "/", StringComparison.Ordinal);
+
+            normalized = scheme + path;
+        }
+
+        return normalized;
+    }
+
+    public static string Normalize(RepoUri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        return Normalize(uri.ToString());
+    }
+
+    public string NormalizedContainer => Normalize(Container.AbsoluteUri);
+
+    private static string Truncate(string s, int maxLength)
+        => s.Length <= maxLength ? s : s[..(maxLength - 3)] + "...";
 
     public static RepoUri Create(Uri container, Location loc = new())
     {
