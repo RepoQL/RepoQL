@@ -19,7 +19,8 @@ public static class RepresentationFormatter
     }
 
     /// <summary>
-    /// Format a result at Compact level (uri + headline on single line).
+    /// Format a result at Compact level (uri + headline).
+    /// Note: Children are now handled separately via nested decisions in OutputComposer.
     /// </summary>
     public static string FormatCompact(XrayResult result, bool showConfidence)
     {
@@ -33,13 +34,12 @@ public static class RepresentationFormatter
             sb.Append(headline);
         }
 
-        AppendChildObjects(sb, result, Representation.Compact, showConfidence);
-
         return sb.ToString();
     }
 
     /// <summary>
     /// Format a result at Standard level (uri + headline + structure).
+    /// Note: Children are now handled separately via nested decisions in OutputComposer.
     /// </summary>
     public static string FormatStandard(XrayResult result, bool showConfidence)
     {
@@ -59,13 +59,12 @@ public static class RepresentationFormatter
             sb.Append(result.Structure);
         }
 
-        AppendChildObjects(sb, result, Representation.Standard, showConfidence);
-
         return sb.ToString();
     }
 
     /// <summary>
-    /// Format a result at Rich level (uri + snippet, no headline).
+    /// Format a result at Rich level (uri + snippet).
+    /// Note: Children are now handled separately via nested decisions in OutputComposer.
     /// </summary>
     public static string FormatRich(XrayResult result, bool showConfidence)
     {
@@ -84,8 +83,6 @@ public static class RepresentationFormatter
                 sb.Append('\n');
             sb.Append("```");
         }
-
-        AppendChildObjects(sb, result, Representation.Rich, showConfidence);
 
         return sb.ToString();
     }
@@ -194,12 +191,12 @@ public static class RepresentationFormatter
     }
 
     /// <summary>
-    /// Format the status footer showing indexer state and timing.
+    /// Format the status footer showing indexer state, timing, and token usage.
     /// </summary>
-    public static string FormatStatusFooter(IndexerStatus status)
+    public static string FormatStatusFooter(IndexerStatus status, int? tokenCount = null)
     {
-        // Format: [42ms | index: ready | semantic: ready]
-        // Or if busy: [42ms | index: 5 pending | semantic: pending]
+        // Format: [1.5k tok | 42ms | index: ready | semantic: ready]
+        // Or if busy: [1.2k tok | 42ms | index: 5 pending | semantic: pending]
         var indexStatus = status.IndexPending > 0
             ? $"{status.IndexPending} pending"
             : "ready";
@@ -212,7 +209,24 @@ public static class RepresentationFormatter
         else
             semanticStatus = "pending";
 
-        return $"[{status.ElapsedMs}ms | index: {indexStatus} | semantic: {semanticStatus}]";
+        var tokenPart = tokenCount.HasValue
+            ? $"{FormatTokenCount(tokenCount.Value)} | "
+            : "";
+
+        return $"[{tokenPart}{status.ElapsedMs}ms | index: {indexStatus} | semantic: {semanticStatus}]";
+    }
+
+    /// <summary>
+    /// Format token count as a human-readable quantity (e.g., "1.5k tok").
+    /// </summary>
+    private static string FormatTokenCount(int tokens)
+    {
+        return tokens switch
+        {
+            < 1000 => $"{tokens} tok",
+            < 10000 => $"{tokens / 1000.0:F1}k tok",
+            _ => $"{tokens / 1000.0:F0}k tok"
+        };
     }
 
     /// <summary>
@@ -258,43 +272,5 @@ public static class RepresentationFormatter
         return slashIndex >= 0 && slashIndex < trimmed.Length - 1
             ? trimmed[(slashIndex + 1)..]
             : trimmed;
-    }
-
-    /// <summary>
-    /// Append child objects (if any) with proper indentation.
-    /// Each child is rendered at the specified representation level with 2-space indent.
-    /// </summary>
-    private static void AppendChildObjects(
-        StringBuilder sb,
-        XrayResult result,
-        Representation level,
-        bool showConfidence)
-    {
-        if (result.ChildObjects is null || result.ChildObjects.Count == 0)
-            return;
-
-        foreach (var child in result.ChildObjects)
-        {
-            sb.Append('\n');
-
-            // Format the child at the appropriate level
-            var childFormatted = level switch
-            {
-                Representation.Compact => FormatCompact(child, showConfidence),
-                Representation.Standard => FormatStandard(child, showConfidence),
-                Representation.Rich => FormatRich(child, showConfidence),
-                _ => FormatCompact(child, showConfidence)
-            };
-
-            // Indent each line of the child with 2 spaces
-            var lines = childFormatted.Split('\n');
-            for (var i = 0; i < lines.Length; i++)
-            {
-                if (i > 0)
-                    sb.Append('\n');
-                if (!string.IsNullOrWhiteSpace(lines[i]))
-                    sb.Append("  ").Append(lines[i]);
-            }
-        }
     }
 }

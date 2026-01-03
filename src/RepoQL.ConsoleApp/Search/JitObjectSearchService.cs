@@ -66,9 +66,23 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
         _logger.LogDebug("Selected {Count} documents for expansion from {Total} candidates",
             selectedDocs.Count, documentCandidates.Count);
 
-        // Step 2: Get cheap object candidates from selected documents
+        // Step 1.5: Get chunk scores for selected documents
+        var chunksByDoc = GetChunkScores(selectedDocs.Select(d => d.DocumentUri), signals);
+
+        // Update documents with their high-scoring chunks
+        selectedDocs = selectedDocs.Select(d => d with
+        {
+            HighScoringChunks = chunksByDoc.TryGetValue(d.DocumentUri, out var chunks)
+                ? chunks
+                : []
+        }).ToList();
+
+        _logger.LogDebug("Found {ChunkCount} high-scoring chunks across {DocCount} documents",
+            chunksByDoc.Values.Sum(c => c.Count), chunksByDoc.Count);
+
+        // Step 2: Get object candidates - prioritize those near high-scoring chunks
         var docUris = selectedDocs.Select(d => d.DocumentUri).ToList();
-        var candidates = GetObjectCandidates(docUris, signals, config);
+        var candidates = GetObjectCandidatesNearChunks(docUris, chunksByDoc, signals, config);
 
         if (candidates.Count == 0)
         {
@@ -288,6 +302,101 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
     private static string EscapeSqlString(string value)
         => $"'{value.Replace("'", "''")}'";
 
+    /// <summary>
+    /// Get chunk-level scores for proximity-based object selection.
+    /// Queries document_embedding to find line ranges of high-scoring chunks.
+    /// </summary>
+    private Dictionary<string, List<ChunkScore>> GetChunkScores(
+        IEnumerable<string> documentUris,
+        NormalizedQuerySignals signals)
+    {
+        var uriList = documentUris.ToList();
+        if (uriList.Count == 0 || signals.QueryEmbedding is null)
+            return new Dictionary<string, List<ChunkScore>>();
+
+        // Build URI list for SQL
+        var uriListSql = string.Join(",", uriList.Select(u => $"'{EscapeSql(u)}'"));
+
+        // Query chunks with their semantic scores against the query
+        // Note: Chunks have byte ranges but no spans with line numbers,
+        // so we estimate line numbers from byte positions using document stats
+        var sql = $"""
+            WITH query_vec AS (
+                SELECT {FormatVector(signals.QueryEmbedding)} AS vec
+            ),
+            doc_info AS (
+                SELECT
+                    n.id AS doc_id,
+                    n.uri AS doc_uri,
+                    LENGTH(a.text_content) AS total_bytes,
+                    ARRAY_LENGTH(STRING_SPLIT(a.text_content, CHR(10))) AS line_count
+                FROM node n
+                JOIN artifact a ON a.id = n.artifact_id
+                WHERE n.uri IN ({uriListSql})
+            ),
+            chunk_scores AS (
+                SELECT
+                    di.doc_uri,
+                    de.chunk_index,
+                    -- Estimate start/end lines from byte positions
+                    GREATEST(1, CAST(de.start_byte * di.line_count / NULLIF(di.total_bytes, 0) AS INTEGER)) AS start_line,
+                    GREATEST(1, CAST(de.end_byte * di.line_count / NULLIF(di.total_bytes, 0) AS INTEGER)) AS end_line,
+                    array_cosine_similarity(de.embedding, q.vec) AS chunk_score
+                FROM document_embedding de
+                JOIN doc_info di ON di.doc_id = de.doc_id
+                CROSS JOIN query_vec q
+                WHERE de.scope = 'document'
+                  AND de.start_byte IS NOT NULL
+            )
+            SELECT doc_uri, chunk_index, start_line, end_line, chunk_score
+            FROM chunk_scores
+            WHERE chunk_score > 0.3
+            ORDER BY doc_uri, chunk_score DESC
+            """;
+
+        try
+        {
+            var result = new Dictionary<string, List<ChunkScore>>();
+            var rows = _store.Query(sql);
+
+            foreach (var row in rows)
+            {
+                var uri = row.GetValueOrDefault("doc_uri")?.ToString();
+                if (string.IsNullOrWhiteSpace(uri)) continue;
+
+                var startLine = Convert.ToInt32(row.GetValueOrDefault("start_line") ?? 1);
+                var endLine = Convert.ToInt32(row.GetValueOrDefault("end_line") ?? startLine + 50);
+                var score = Convert.ToDouble(row.GetValueOrDefault("chunk_score") ?? 0.5);
+
+                if (!result.TryGetValue(uri, out var chunks))
+                {
+                    chunks = [];
+                    result[uri] = chunks;
+                }
+
+                chunks.Add(new ChunkScore(startLine, endLine, score));
+            }
+
+            _logger.LogDebug("Retrieved chunk scores for {DocCount} documents, {TotalChunks} chunks",
+                result.Count, result.Values.Sum(c => c.Count));
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get chunk scores, falling back to position-based selection");
+            return new Dictionary<string, List<ChunkScore>>();
+        }
+    }
+
+    /// <summary>
+    /// Format a float array as a DuckDB array literal.
+    /// </summary>
+    private static string FormatVector(float[] vector)
+    {
+        var values = string.Join(",", vector.Select(v => v.ToString("G9", CultureInfo.InvariantCulture)));
+        return $"[{values}]::FLOAT[{vector.Length}]";
+    }
 
     /// <summary>
     /// Apply softmax selection to get documents to expand based on probability mass.
@@ -431,6 +540,145 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
             _logger.LogWarning(ex, "hybrid_object_candidates query failed");
             return [];
         }
+    }
+
+    /// <summary>
+    /// Get object candidates prioritizing those near high-scoring chunks.
+    /// Instead of position-based selection, we get more objects and filter by chunk proximity.
+    /// </summary>
+    private List<ObjectCandidate> GetObjectCandidatesNearChunks(
+        IReadOnlyList<string> documentUris,
+        Dictionary<string, List<ChunkScore>> chunksByDoc,
+        NormalizedQuerySignals signals,
+        ObjectSearchConfig config)
+    {
+        if (documentUris.Count == 0)
+            return [];
+
+        // If we have no chunks, fall back to standard object selection
+        if (chunksByDoc.Count == 0)
+        {
+            _logger.LogDebug("No chunks available, falling back to position-based object selection");
+            return GetObjectCandidates(documentUris, signals, config);
+        }
+
+        // Get MORE objects from SQL (3x the normal limit) to ensure we capture chunk-proximate ones
+        var expandedLimit = config.MaxObjectsPerDocument * 3;
+
+        var uriArray = "[" + string.Join(",", documentUris.Select(u => $"'{EscapeSql(u)}'")) + "]";
+
+        var sql = $"""
+            SELECT
+                node_id,
+                uri,
+                document_uri,
+                kind,
+                symbol,
+                headline,
+                structure,
+                body,
+                line_start,
+                line_end,
+                lang,
+                semantic_type,
+                name_hit_score,
+                regex_mentions
+            FROM hybrid_object_candidates(
+                {uriArray}::VARCHAR[],
+                keywords := {EscapeSqlString(signals.RawQuery)},
+                max_per_doc := {expandedLimit}
+            )
+            """;
+
+        List<ObjectCandidate> allCandidates;
+        try
+        {
+            allCandidates = _store.Read(sql, r =>
+            {
+                var nodeId = r.IsDBNull(0) ? null : r.GetGuid(0).ToString();
+                var uri = r.IsDBNull(1) ? null : r.GetString(1);
+                var docUri = r.IsDBNull(2) ? null : r.GetString(2);
+                var kind = r.IsDBNull(3) ? null : r.GetString(3);
+
+                if (string.IsNullOrWhiteSpace(nodeId) || string.IsNullOrWhiteSpace(uri) ||
+                    string.IsNullOrWhiteSpace(docUri) || string.IsNullOrWhiteSpace(kind))
+                    return null;
+
+                var candidate = new ObjectCandidate
+                {
+                    NodeId = nodeId,
+                    Uri = uri,
+                    DocumentUri = docUri,
+                    Kind = kind,
+                    Symbol = r.IsDBNull(4) ? null : r.GetString(4),
+                    Headline = r.IsDBNull(5) ? null : r.GetString(5),
+                    Structure = r.IsDBNull(6) ? null : r.GetString(6),
+                    Body = r.IsDBNull(7) ? null : r.GetString(7),
+                    LineStart = r.IsDBNull(8) ? 1 : r.GetInt32(8),
+                    LineEnd = r.IsDBNull(9) ? 1 : r.GetInt32(9),
+                    StartByte = null,
+                    EndByte = null,
+                    Lang = r.IsDBNull(10) ? null : r.GetString(10),
+                    SemanticType = r.IsDBNull(11) ? null : r.GetString(11),
+                    NameHitScore = r.IsDBNull(12) ? 0.0 : Convert.ToDouble(r.GetValue(12)),
+                    RegexHitScore = (r.IsDBNull(13) ? 0 : Convert.ToInt32(r.GetValue(13))) * 0.1
+                };
+
+                candidate.TypePriorScore = config.TypePriors.TryGetValue(kind, out var prior)
+                    ? prior
+                    : config.DefaultTypePrior;
+
+                return candidate;
+            }).Where(c => c != null).Cast<ObjectCandidate>().ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Chunk-based object query failed");
+            return [];
+        }
+
+        if (allCandidates.Count == 0)
+            return [];
+
+        // Score each candidate by chunk overlap
+        foreach (var candidate in allCandidates)
+        {
+            if (chunksByDoc.TryGetValue(candidate.DocumentUri, out var chunks) && chunks.Count > 0)
+            {
+                // Find best chunk overlap
+                var bestOverlap = 0.0;
+                foreach (var chunk in chunks)
+                {
+                    var overlap = CalculateOverlap(candidate.LineStart, candidate.LineEnd, chunk.StartLine, chunk.EndLine);
+                    var weightedOverlap = overlap * chunk.Score;
+                    if (weightedOverlap > bestOverlap)
+                        bestOverlap = weightedOverlap;
+                }
+                candidate.ChunkOverlapScore = bestOverlap;
+            }
+            else
+            {
+                candidate.ChunkOverlapScore = 0.0;
+            }
+        }
+
+        // Sort by combined score (chunk overlap + name hit) and take top N per document
+        var selectedCandidates = new List<ObjectCandidate>();
+        var candidatesByDoc = allCandidates.GroupBy(c => c.DocumentUri);
+
+        foreach (var group in candidatesByDoc)
+        {
+            var sorted = group
+                .OrderByDescending(c => c.ChunkOverlapScore * 2.0 + c.NameHitScore + c.RegexHitScore * 0.5)
+                .Take(config.MaxObjectsPerDocument)
+                .ToList();
+            selectedCandidates.AddRange(sorted);
+        }
+
+        _logger.LogDebug("Selected {Count} objects from {Total} candidates based on chunk proximity",
+            selectedCandidates.Count, allCandidates.Count);
+
+        return selectedCandidates;
     }
 
     /// <summary>

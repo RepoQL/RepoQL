@@ -82,24 +82,25 @@ public sealed class XrayOrchestrator
         // De-duplicate: remove top-level results that already appear as children of other results
         xrayResults = DeduplicateResults(xrayResults);
 
-        // Build rendering context
         var hasSearchCriteria = !string.IsNullOrWhiteSpace(query.Keywords) || boostPatterns.Count > 0;
-        var context = new RenderingContext(
-            Intent: query.Intent,
-            TokenBudget: query.TokenBudget,
-            Limit: query.Limit,
-            HasSearchCriteria: hasSearchCriteria,
-            IndexerStatus: status
-        );
 
-        // Get decisions (gives us truncation info)
-        var decisionResult = DecisionEngine.Decide(xrayResults, context);
+        // Hierarchical token allocation (files compete first, then children within each file)
+        var decisions = ValueBasedAllocator.Allocate(xrayResults, query.TokenBudget, query.Intent);
+
+        // Apply limit if specified
+        var limitedDecisions = query.Limit.HasValue && query.Limit.Value > 0
+            ? decisions.Take(query.Limit.Value).ToList()
+            : decisions;
+
+        // Calculate omitted count for truncation info
+        var omittedCount = xrayResults.Count - limitedDecisions.Count;
+        var decisionResult = new DecisionResult(limitedDecisions, omittedCount, null);
 
         // Compose output
         var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status);
 
         // Determine truncation
-        var truncated = decisionResult.OmittedCount > 0;
+        var truncated = omittedCount > 0;
 
         return new XrayExecutionResult(renderedOutput, xrayResults, truncated);
     }

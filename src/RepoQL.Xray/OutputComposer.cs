@@ -28,8 +28,8 @@ public static class OutputComposer
         for (var i = 0; i < decisionResult.Decisions.Count; i++)
         {
             var decision = decisionResult.Decisions[i];
-            var formatted = RepresentationFormatter.Format(decision, showConfidence);
-            var isMultiline = IsMultiline(decision);
+            var formatted = FormatWithChildren(decision, showConfidence, indent: 0);
+            var isMultiline = IsMultiline(decision) || decision.ChildDecisions is { Count: > 0 };
 
             // Add blank line before multi-line items (except first)
             if (i > 0 && (previousWasMultiline || isMultiline))
@@ -59,10 +59,27 @@ public static class OutputComposer
             sb.Append('\n');
             if (previousWasMultiline || decisionResult.OmittedCount > 0)
                 sb.Append('\n');
-            sb.Append(RepresentationFormatter.FormatStatusFooter(indexerStatus));
+
+            var totalTokens = CalculateTotalTokens(decisionResult.Decisions);
+            sb.Append(RepresentationFormatter.FormatStatusFooter(indexerStatus, totalTokens));
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Calculate total tokens for all decisions including children.
+    /// </summary>
+    private static int CalculateTotalTokens(IReadOnlyList<RenderingDecision> decisions)
+    {
+        var total = 0;
+        foreach (var decision in decisions)
+        {
+            total += decision.EstimatedTokens;
+            if (decision.ChildDecisions is { Count: > 0 })
+                total += CalculateTotalTokens(decision.ChildDecisions);
+        }
+        return total;
     }
 
     /// <summary>
@@ -77,5 +94,50 @@ public static class OutputComposer
             Representation.Rich => !string.IsNullOrEmpty(decision.Result.Snippet),
             _ => false
         };
+    }
+
+    /// <summary>
+    /// Format a decision and its children recursively, with proper indentation.
+    /// </summary>
+    private static string FormatWithChildren(RenderingDecision decision, bool showConfidence, int indent)
+    {
+        var sb = new StringBuilder();
+        var indentStr = new string(' ', indent * 2);
+
+        // Format this decision at its assigned level
+        var formatted = RepresentationFormatter.Format(decision, showConfidence);
+
+        // Apply indentation to each line
+        var lines = formatted.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            if (i > 0)
+                sb.Append('\n');
+            if (!string.IsNullOrWhiteSpace(lines[i]))
+                sb.Append(indentStr).Append(lines[i]);
+            else if (indent == 0)
+                sb.Append(lines[i]); // Preserve empty lines at top level
+        }
+
+        // Recursively format children with increased indent
+        if (decision.ChildDecisions is { Count: > 0 })
+        {
+            foreach (var child in decision.ChildDecisions)
+            {
+                sb.Append('\n');
+                sb.Append(FormatWithChildren(child, showConfidence, indent + 1));
+            }
+        }
+
+        // Show omitted children indicator if any were filtered out
+        if (decision.OmittedChildrenCount > 0)
+        {
+            sb.Append('\n');
+            var childIndentStr = new string(' ', (indent + 1) * 2);
+            sb.Append(childIndentStr);
+            sb.Append($"[+{decision.OmittedChildrenCount} more]");
+        }
+
+        return sb.ToString();
     }
 }

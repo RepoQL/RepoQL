@@ -923,6 +923,8 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
         {
             Id = spanId,
             DocumentId = documentId,
+            StartByte = span.StartChar,
+            EndByte = span.EndChar,
             StartLine = span.StartLine,
             StartColumn = span.StartColumn,
             EndLine = span.EndLine,
