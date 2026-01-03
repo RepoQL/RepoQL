@@ -117,12 +117,12 @@ public static class RepoIndexerServiceCollectionExtensions
         if (string.Equals(Environment.GetEnvironmentVariable("REPOQL_EMBED_ENABLED"), "0", StringComparison.Ordinal))
             embeddingMode = EmbeddingMode.None;
 
-        // Check for OpenRouter API key - if present, use cloud embeddings and force "full" mode
+        // Check for OpenRouter API key - used for LLM provider
         var openRouterKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
         var useOpenRouter = !string.IsNullOrWhiteSpace(openRouterKey);
-        if (useOpenRouter && embeddingMode != EmbeddingMode.None)
+        if (embeddingMode != EmbeddingMode.None)
         {
-            // Cloud embeddings should use full mode for best quality
+            // Always use full mode for best quality
             embeddingMode = EmbeddingMode.Full;
         }
 
@@ -217,6 +217,58 @@ public static class RepoIndexerServiceCollectionExtensions
             if (int.TryParse(dimEnv, out var parsed) && parsed > 0) dim = parsed;
             log?.LogInformation("Embedding provider: using hashed fallback with dim={Dim}", dim);
             return new HashedEmbeddingProvider(dim);
+        });
+
+        // Local ONNX embedding provider for fast interactive search (JIT embeddings)
+        services.AddKeyedSingleton<IEmbeddingProvider>("local", (sp, _) =>
+        {
+            var lf = sp.GetService<ILoggerFactory>();
+            var log = lf?.CreateLogger("RepoQL.Embeddings.Local");
+            var mode = sp.GetRequiredService<EmbeddingModeOptions>().Mode;
+
+            if (mode == EmbeddingMode.None)
+            {
+                log?.LogDebug("Local embedding provider: disabled (mode=None)");
+                return new DisabledEmbeddingProvider();
+            }
+
+            // Always use local ONNX for speed
+            var onnxPath = Environment.GetEnvironmentVariable("REPOQL_EMBED_MODEL_PATH");
+            var maxTokens = 256;
+            if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_MAX_TOKENS"), out var mt) && mt > 0) maxTokens = mt;
+
+            if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
+            {
+                var onnx = new OnnxEmbeddingProvider(onnxPath, sp.GetService<ILogger<OnnxEmbeddingProvider>>()!, maxTokens);
+                if (onnx.Enabled)
+                {
+                    log?.LogInformation("Local embedding provider: using ONNX from explicit path");
+                    return onnx;
+                }
+                onnx.Dispose();
+                log?.LogError("Local embedding provider: ONNX from explicit path failed to initialize");
+                throw new InvalidOperationException($"Failed to initialize ONNX embedding provider from {onnxPath}");
+            }
+
+            // Load shipped model
+            var baseDir = AppContext.BaseDirectory;
+            var shipped = Path.Combine(baseDir, "Embeddings", "Model", "embedding_model.onnx");
+            log?.LogInformation("Local embedding provider: looking for ONNX at {Path} (baseDir={BaseDir})", shipped, baseDir);
+            if (File.Exists(shipped))
+            {
+                var onnx = new OnnxEmbeddingProvider(shipped, sp.GetService<ILogger<OnnxEmbeddingProvider>>()!, maxTokens);
+                if (onnx.Enabled)
+                {
+                    log?.LogInformation("Local embedding provider: using shipped ONNX model from {Path}", shipped);
+                    return onnx;
+                }
+                onnx.Dispose();
+                log?.LogWarning("Local embedding provider: ONNX model at {Path} failed to initialize, returning disabled", shipped);
+                return new DisabledEmbeddingProvider();
+            }
+
+            log?.LogWarning("Local embedding provider: no ONNX model found at {Path}, returning disabled", shipped);
+            return new DisabledEmbeddingProvider();
         });
 
         services.AddSingleton<IAnalysisResultWriter, AnnotationResultWriter>();

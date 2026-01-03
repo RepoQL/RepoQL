@@ -1,41 +1,44 @@
+using System.Data;
 using System.Globalization;
 using System.Text.RegularExpressions;
-using Google.Protobuf.WellKnownTypes;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts.Embeddings;
-using RepoQL.Protocol;
+using RepoQL.Data.DuckDB;
 using RepoQL.Xray.Search;
 
 namespace RepoQL.ConsoleApp.Search;
 
 /// <summary>
-/// Enhanced object search service implementing the full algorithm:
+/// JIT (Just-In-Time) object search service implementing the full algorithm:
 /// 1. Query normalization (compile regexes, detect intent, precompute query embedding)
 /// 2. Softmax document selection with intent-dependent temperature
 /// 3. Cheap candidate scoring (name hits, regex hits, chunk overlap, type priors)
 /// 4. JIT embedding planning based on expected value
 /// 5. Final scoring with intent-dependent weights
+///
+/// Uses local ONNX to compute both query and object embeddings at search time,
+/// ensuring self-consistent similarity comparisons.
 /// </summary>
-internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
+internal sealed class JitObjectSearchService : IJitObjectSearchService
 {
-    private readonly RepoQlClientProvider _clientProvider;
+    private readonly DuckDbDataStore _store;
     private readonly IEmbeddingProvider? _embeddingProvider;
-    private readonly ILogger<EnhancedObjectSearchService> _logger;
+    private readonly ILogger<JitObjectSearchService> _logger;
 
-    public EnhancedObjectSearchService(
-        RepoQlClientProvider clientProvider,
-        IEmbeddingProvider? embeddingProvider = null,
-        ILogger<EnhancedObjectSearchService>? logger = null)
+    public JitObjectSearchService(
+        DuckDbDataStore store,
+        [FromKeyedServices("local")] IEmbeddingProvider? embeddingProvider = null,
+        ILogger<JitObjectSearchService>? logger = null)
     {
-        _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
+        _store = store ?? throw new ArgumentNullException(nameof(store));
         _embeddingProvider = embeddingProvider;
-        _logger = logger ?? NullLogger<EnhancedObjectSearchService>.Instance;
+        _logger = logger ?? NullLogger<JitObjectSearchService>.Instance;
     }
 
     /// <inheritdoc/>
-    public async Task<EnhancedObjectSearchResult> SearchAsync(
+    public async Task<JitObjectSearchResult> SearchAsync(
         string? question,
         string? scope,
         string? boostPattern,
@@ -44,19 +47,17 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
         JitEmbeddingCache jitCache,
         CancellationToken cancellationToken)
     {
-        var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-
         // Step 0: Normalize query - compile regexes, precompute query embedding, detect intent
         var signals = await NormalizeQueryAsync(question, cancellationToken).ConfigureAwait(false);
 
         // Step 1: Document selection via search
-        var documentCandidates = await GetDocumentCandidatesAsync(
-            client, signals, scope, boostPattern, penalizePattern, config, cancellationToken).ConfigureAwait(false);
+        var documentCandidates = GetDocumentCandidates(
+            signals, scope, boostPattern, penalizePattern, config);
 
         if (documentCandidates.Count == 0)
         {
             _logger.LogDebug("No document candidates found for query: {Query}", question);
-            return new EnhancedObjectSearchResult([], [], signals);
+            return new JitObjectSearchResult([], [], signals);
         }
 
         // Apply softmax selection to get documents to expand
@@ -67,13 +68,12 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
 
         // Step 2: Get cheap object candidates from selected documents
         var docUris = selectedDocs.Select(d => d.DocumentUri).ToList();
-        var candidates = await GetObjectCandidatesAsync(
-            client, docUris, signals, config, cancellationToken).ConfigureAwait(false);
+        var candidates = GetObjectCandidates(docUris, signals, config);
 
         if (candidates.Count == 0)
         {
             _logger.LogDebug("No object candidates found in selected documents");
-            return new EnhancedObjectSearchResult(selectedDocs, [], signals);
+            return new JitObjectSearchResult(selectedDocs, [], signals);
         }
 
         // Apply chunk overlap scores from document search
@@ -104,7 +104,7 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
 
         AssignConfidenceScores(sortedCandidates);
 
-        return new EnhancedObjectSearchResult(selectedDocs, sortedCandidates, signals);
+        return new JitObjectSearchResult(selectedDocs, sortedCandidates, signals);
     }
 
     /// <summary>
@@ -220,26 +220,17 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
     /// <summary>
     /// Get document candidates using search macro.
     /// </summary>
-    private async Task<List<DocumentExpansionCandidate>> GetDocumentCandidatesAsync(
-        IRepoQlClient client,
+    private List<DocumentExpansionCandidate> GetDocumentCandidates(
         NormalizedQuerySignals signals,
         string? scope,
         string? boostPattern,
         string? penalizePattern,
-        ObjectSearchConfig config,
-        CancellationToken cancellationToken)
+        ObjectSearchConfig config)
     {
         // Build scope LIKE pattern for search
         var scopeLike = !string.IsNullOrWhiteSpace(scope) && scope != "%"
             ? ConvertGlobToLike(scope)
             : null;
-
-        // Build parameter placeholders for patterns
-        var paramIndex = 1;
-        var keywordsParam = $"${paramIndex++}";
-        var scopeParam = scopeLike != null ? $"${paramIndex++}" : "NULL";
-        var boostParam = !string.IsNullOrWhiteSpace(boostPattern) ? $"${paramIndex++}" : "NULL";
-        var penalizeParam = !string.IsNullOrWhiteSpace(penalizePattern) ? $"${paramIndex++}" : "NULL";
 
         // Use search for document selection with boost/penalize patterns
         var sql = $"""
@@ -255,57 +246,34 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
                 deranked,
                 score
             FROM search(
-                {keywordsParam},
-                scope := {scopeParam},
-                boost_pattern := {boostParam},
-                negative_pattern := {penalizeParam},
+                {EscapeSqlString(signals.RawQuery)},
+                scope := {(scopeLike != null ? EscapeSqlString(scopeLike) : "NULL")},
+                boost_pattern := {(!string.IsNullOrWhiteSpace(boostPattern) ? EscapeSqlString(boostPattern) : "NULL")},
+                negative_pattern := {(!string.IsNullOrWhiteSpace(penalizePattern) ? EscapeSqlString(penalizePattern) : "NULL")},
                 k := {config.MaxDocumentsToExpand * 3}
             )
             ORDER BY score DESC
             LIMIT {config.MaxDocumentsToExpand * 2}
             """;
 
-        var parameters = new List<object?> { signals.RawQuery };
-        if (scopeLike != null)
-            parameters.Add(scopeLike);
-        if (!string.IsNullOrWhiteSpace(boostPattern))
-            parameters.Add(boostPattern);
-        if (!string.IsNullOrWhiteSpace(penalizePattern))
-            parameters.Add(penalizePattern);
-
         try
         {
-            var response = await client.ExecuteRawQueryAsync(
-                sql, parameters.ToArray(), null, cancellationToken).ConfigureAwait(false);
-
-            var candidates = new List<DocumentExpansionCandidate>();
-            foreach (var row in response.Rows)
-            {
-                var values = row.Values;
-                if (values.Count < 10) continue;
-
-                var uri = ExtractString(values[0]);
-                if (string.IsNullOrWhiteSpace(uri)) continue;
-
-                candidates.Add(new DocumentExpansionCandidate(
-                    DocumentUri: uri,
-                    DocumentScore: ExtractDouble(values[9]) ?? 0.0,
-                    SoftmaxProbability: 0.0, // Computed later
-                    CumulativeProbability: 0.0, // Computed later
-                    Headline: ExtractString(values[1]),
-                    Structure: ExtractString(values[2]),
-                    Lang: null, // Not returned by search
-                    SemanticType: null, // Not returned by search
-                    Source: ExtractString(values[3]) ?? "unknown",
-                    SemanticScore: ExtractDouble(values[4]) ?? 0.0,
-                    Bm25Score: ExtractDouble(values[5]) ?? 0.0,
-                    StructMentions: ExtractInt(values[6]) ?? 0,
-                    BodyMentions: ExtractInt(values[7]) ?? 0,
-                    HighScoringChunks: [] // Filled later if needed
-                ));
-            }
-
-            return candidates;
+            return _store.Read(sql, r => new DocumentExpansionCandidate(
+                DocumentUri: r.GetString(0),
+                DocumentScore: r.IsDBNull(9) ? 0.0 : r.GetDouble(9),
+                SoftmaxProbability: 0.0, // Computed later
+                CumulativeProbability: 0.0, // Computed later
+                Headline: r.IsDBNull(1) ? null : r.GetString(1),
+                Structure: r.IsDBNull(2) ? null : r.GetString(2),
+                Lang: null, // Not returned by search
+                SemanticType: null, // Not returned by search
+                Source: r.IsDBNull(3) ? "unknown" : r.GetString(3),
+                SemanticScore: r.IsDBNull(4) ? 0.0 : r.GetDouble(4),
+                Bm25Score: r.IsDBNull(5) ? 0.0 : r.GetDouble(5),
+                StructMentions: r.IsDBNull(6) ? 0 : r.GetInt32(6),
+                BodyMentions: r.IsDBNull(7) ? 0 : r.GetInt32(7),
+                HighScoringChunks: [] // Filled later if needed
+            )).ToList();
         }
         catch (Exception ex)
         {
@@ -313,6 +281,13 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
             return [];
         }
     }
+
+    /// <summary>
+    /// Escape a string for SQL (single quotes).
+    /// </summary>
+    private static string EscapeSqlString(string value)
+        => $"'{value.Replace("'", "''")}'";
+
 
     /// <summary>
     /// Apply softmax selection to get documents to expand based on probability mass.
@@ -375,12 +350,10 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
     /// <summary>
     /// Get object candidates from selected documents using hybrid_object_candidates macro.
     /// </summary>
-    private async Task<List<ObjectCandidate>> GetObjectCandidatesAsync(
-        IRepoQlClient client,
+    private List<ObjectCandidate> GetObjectCandidates(
         IReadOnlyList<string> documentUris,
         NormalizedQuerySignals signals,
-        ObjectSearchConfig config,
-        CancellationToken cancellationToken)
+        ObjectSearchConfig config)
     {
         if (documentUris.Count == 0)
             return [];
@@ -406,30 +379,24 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
                 regex_mentions
             FROM hybrid_object_candidates(
                 {uriArray}::VARCHAR[],
-                keywords := $1,
+                keywords := {EscapeSqlString(signals.RawQuery)},
                 max_per_doc := {config.MaxObjectsPerDocument}
             )
             """;
 
         try
         {
-            var response = await client.ExecuteRawQueryAsync(
-                sql, [signals.RawQuery], null, cancellationToken).ConfigureAwait(false);
-
-            var candidates = new List<ObjectCandidate>();
-            foreach (var row in response.Rows)
+            return _store.Read(sql, r =>
             {
-                var values = row.Values;
-                if (values.Count < 14) continue;
-
-                var nodeId = ExtractString(values[0]);
-                var uri = ExtractString(values[1]);
-                var docUri = ExtractString(values[2]);
-                var kind = ExtractString(values[3]);
+                // node_id is a UUID/GUID, convert to string
+                var nodeId = r.IsDBNull(0) ? null : r.GetGuid(0).ToString();
+                var uri = r.IsDBNull(1) ? null : r.GetString(1);
+                var docUri = r.IsDBNull(2) ? null : r.GetString(2);
+                var kind = r.IsDBNull(3) ? null : r.GetString(3);
 
                 if (string.IsNullOrWhiteSpace(nodeId) || string.IsNullOrWhiteSpace(uri) ||
                     string.IsNullOrWhiteSpace(docUri) || string.IsNullOrWhiteSpace(kind))
-                    continue;
+                    return null;
 
                 var candidate = new ObjectCandidate
                 {
@@ -437,18 +404,18 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
                     Uri = uri,
                     DocumentUri = docUri,
                     Kind = kind,
-                    Symbol = ExtractString(values[4]),
-                    Headline = ExtractString(values[5]),
-                    Structure = ExtractString(values[6]),
-                    Body = ExtractString(values[7]),
-                    LineStart = ExtractInt(values[8]) ?? 1,
-                    LineEnd = ExtractInt(values[9]) ?? 1,
+                    Symbol = r.IsDBNull(4) ? null : r.GetString(4),
+                    Headline = r.IsDBNull(5) ? null : r.GetString(5),
+                    Structure = r.IsDBNull(6) ? null : r.GetString(6),
+                    Body = r.IsDBNull(7) ? null : r.GetString(7),
+                    LineStart = r.IsDBNull(8) ? 1 : r.GetInt32(8),
+                    LineEnd = r.IsDBNull(9) ? 1 : r.GetInt32(9),
                     StartByte = null, // Not returned by macro
                     EndByte = null, // Not returned by macro
-                    Lang = ExtractString(values[10]),
-                    SemanticType = ExtractString(values[11]),
-                    NameHitScore = ExtractDouble(values[12]) ?? 0.0,
-                    RegexHitScore = (ExtractInt(values[13]) ?? 0) * 0.1 // Normalize regex mentions
+                    Lang = r.IsDBNull(10) ? null : r.GetString(10),
+                    SemanticType = r.IsDBNull(11) ? null : r.GetString(11),
+                    NameHitScore = r.IsDBNull(12) ? 0.0 : Convert.ToDouble(r.GetValue(12)),
+                    RegexHitScore = (r.IsDBNull(13) ? 0 : Convert.ToInt32(r.GetValue(13))) * 0.1 // Normalize regex mentions
                 };
 
                 // Apply type prior
@@ -456,10 +423,8 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
                     ? prior
                     : config.DefaultTypePrior;
 
-                candidates.Add(candidate);
-            }
-
-            return candidates;
+                return candidate;
+            }).Where(c => c != null).Cast<ObjectCandidate>().ToList();
         }
         catch (Exception ex)
         {
@@ -587,6 +552,9 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
 
     /// <summary>
     /// Compute JIT embeddings for selected candidates.
+    /// First checks persistent storage, then session cache, then computes missing.
+    /// Newly computed embeddings are persisted for future searches.
+    /// Adds telemetry tags to Activity.Current for observability.
     /// </summary>
     private async Task ComputeJitEmbeddingsAsync(
         List<ObjectCandidate> candidates,
@@ -594,27 +562,213 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
         JitEmbeddingCache cache,
         CancellationToken cancellationToken)
     {
+        var activity = System.Diagnostics.Activity.Current;
+        activity?.SetTag("jit.objects_selected", candidates.Count);
+
         if (_embeddingProvider?.Enabled != true || signals.QueryEmbedding is null)
             return;
 
-        // Prepare texts for embedding (use headline + structure for efficiency)
-        var texts = candidates.Select(c =>
+        var model = _embeddingProvider.Model;
+        var dim = _embeddingProvider.Dimension;
+
+        // Step 1: Check persistent storage for existing embeddings
+        var loadSw = System.Diagnostics.Stopwatch.StartNew();
+        var persistedEmbeddings = LoadPersistedObjectEmbeddings(
+            candidates.Select(c => c.NodeId).ToList(), model, dim);
+        loadSw.Stop();
+
+        // Apply persisted embeddings
+        var needsComputation = new List<ObjectCandidate>();
+        foreach (var candidate in candidates)
+        {
+            if (persistedEmbeddings.TryGetValue(candidate.NodeId, out var embedding))
+            {
+                candidate.JitEmbedding = embedding;
+                candidate.SemanticScore = CosineSimilarity(signals.QueryEmbedding, embedding);
+                _logger.LogTrace("Using persisted embedding for {NodeId}", candidate.NodeId);
+            }
+            else
+            {
+                needsComputation.Add(candidate);
+            }
+        }
+
+        var loadedFromStorage = persistedEmbeddings.Count;
+        activity?.SetTag("jit.loaded_from_storage", loadedFromStorage);
+        activity?.SetTag("jit.load_time_ms", loadSw.ElapsedMilliseconds);
+
+        if (needsComputation.Count == 0)
+        {
+            _logger.LogDebug("All {Count} embeddings found in persistent storage", candidates.Count);
+            activity?.SetTag("jit.computed_fresh", 0);
+            return;
+        }
+
+        _logger.LogDebug("{Persisted} embeddings from storage, {Remaining} need computation",
+            loadedFromStorage, needsComputation.Count);
+
+        // Step 2: Compute missing embeddings (session cache handles deduplication)
+        var computeSw = System.Diagnostics.Stopwatch.StartNew();
+        var texts = needsComputation.Select(c =>
             $"{c.Headline ?? ""} {c.Structure ?? ""}".Trim()).ToList();
 
-        // Use cache for batch embedding
         var embeddings = cache.GetOrComputeBatch(
             texts,
             batch => _embeddingProvider.EmbedBatchAsync(batch, cancellationToken).GetAwaiter().GetResult());
+        computeSw.Stop();
 
-        // Compute semantic scores
-        for (var i = 0; i < candidates.Count; i++)
+        // Apply computed embeddings and collect for persistence
+        var toPersist = new List<(ObjectCandidate Candidate, float[] Embedding)>();
+        for (var i = 0; i < needsComputation.Count; i++)
         {
-            candidates[i].JitEmbedding = embeddings[i];
+            var candidate = needsComputation[i];
+            candidate.JitEmbedding = embeddings[i];
 
             if (embeddings[i] is not null)
             {
-                candidates[i].SemanticScore = CosineSimilarity(signals.QueryEmbedding, embeddings[i]!);
+                candidate.SemanticScore = CosineSimilarity(signals.QueryEmbedding, embeddings[i]!);
+                toPersist.Add((candidate, embeddings[i]!));
             }
+        }
+
+        activity?.SetTag("jit.computed_fresh", toPersist.Count);
+        activity?.SetTag("jit.compute_time_ms", computeSw.ElapsedMilliseconds);
+
+        // Step 3: Persist newly computed embeddings (fire-and-forget, don't block search)
+        if (toPersist.Count > 0)
+        {
+            var toPersistCount = toPersist.Count;
+            activity?.SetTag("jit.persisted_to_storage", toPersistCount);
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    PersistObjectEmbeddings(toPersist, model, dim);
+                    _logger.LogDebug("Persisted {Count} object embeddings", toPersistCount);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to persist object embeddings");
+                }
+            }, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Load persisted object embeddings from database.
+    /// </summary>
+    private Dictionary<string, float[]> LoadPersistedObjectEmbeddings(
+        IReadOnlyList<string> nodeIds,
+        string model,
+        int dim)
+    {
+        if (nodeIds.Count == 0)
+            return new Dictionary<string, float[]>();
+
+        try
+        {
+            // Build IN clause with proper escaping
+            var nodeIdList = string.Join(",", nodeIds.Select(id => $"'{EscapeSql(id)}'"));
+
+            var sql = $"""
+                SELECT node_id::TEXT, embedding
+                FROM document_embedding
+                WHERE scope = 'object'
+                  AND node_id::TEXT IN ({nodeIdList})
+                  AND model = {EscapeSqlString(model)}
+                  AND dim = {dim}
+                """;
+
+            var result = new Dictionary<string, float[]>();
+            var rows = _store.Read(sql, r =>
+            {
+                var nodeId = r.IsDBNull(0) ? null : r.GetString(0);
+                if (string.IsNullOrWhiteSpace(nodeId)) return (null, null);
+
+                // Read embedding as array
+                var embeddingObj = r.GetValue(1);
+                if (embeddingObj is IList<object> list)
+                {
+                    var embedding = new float[list.Count];
+                    for (var i = 0; i < list.Count; i++)
+                    {
+                        embedding[i] = Convert.ToSingle(list[i]);
+                    }
+                    return (nodeId, embedding);
+                }
+                return (nodeId, null);
+            });
+
+            foreach (var (nodeId, embedding) in rows)
+            {
+                if (nodeId != null && embedding != null)
+                    result[nodeId] = embedding;
+            }
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load persisted object embeddings");
+            return new Dictionary<string, float[]>();
+        }
+    }
+
+    /// <summary>
+    /// Persist newly computed object embeddings to database.
+    /// </summary>
+    private void PersistObjectEmbeddings(
+        IReadOnlyList<(ObjectCandidate Candidate, float[] Embedding)> items,
+        string model,
+        int dim)
+    {
+        if (items.Count == 0)
+            return;
+
+        try
+        {
+            // Use INSERT ... ON CONFLICT to handle duplicates gracefully
+            // Build a VALUES clause for batch insert
+            var valuesClauses = new List<string>();
+            var now = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+
+            foreach (var (candidate, embedding) in items)
+            {
+                var embeddingJson = "[" + string.Join(",", embedding.Select(f => f.ToString(CultureInfo.InvariantCulture))) + "]";
+
+                valuesClauses.Add($"""
+                    (
+                        (SELECT n.id FROM node n WHERE n.uri = '{EscapeSql(candidate.DocumentUri)}' LIMIT 1),
+                        '{EscapeSql(candidate.NodeId)}'::UUID,
+                        0,
+                        'structure',
+                        '{EscapeSql(candidate.Uri)}',
+                        'object',
+                        '{EscapeSql(model)}',
+                        {dim},
+                        {embeddingJson}::FLOAT[],
+                        {candidate.StartByte?.ToString() ?? "NULL"},
+                        {candidate.EndByte?.ToString() ?? "NULL"},
+                        '{now}'::TIMESTAMP
+                    )
+                    """);
+            }
+
+            var sql = $"""
+                INSERT INTO document_embedding
+                    (doc_id, node_id, chunk_index, embedding_type, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
+                VALUES {string.Join(",\n", valuesClauses)}
+                ON CONFLICT (doc_id, node_id, chunk_index, embedding_type)
+                DO UPDATE SET
+                    embedding = EXCLUDED.embedding,
+                    updated_at = EXCLUDED.updated_at
+                """;
+
+            _store.Read<int>(sql, _ => 0); // Execute as query (returns no rows)
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to persist {Count} object embeddings", items.Count);
         }
     }
 
@@ -696,34 +850,6 @@ internal sealed class EnhancedObjectSearchService : IEnhancedObjectSearchService
     }
 
     private static string EscapeSql(string value) => value.Replace("'", "''");
-
-    private static string? ExtractString(Value value) =>
-        value.KindCase switch
-        {
-            Value.KindOneofCase.StringValue => value.StringValue,
-            Value.KindOneofCase.NumberValue => value.NumberValue.ToString(CultureInfo.InvariantCulture),
-            Value.KindOneofCase.BoolValue => value.BoolValue ? "true" : "false",
-            _ => null
-        };
-
-    private static int? ExtractInt(Value value)
-    {
-        var str = ExtractString(value);
-        return !string.IsNullOrWhiteSpace(str) && int.TryParse(str, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : null;
-    }
-
-    private static double? ExtractDouble(Value value)
-    {
-        if (value.KindCase == Value.KindOneofCase.NumberValue)
-            return value.NumberValue;
-
-        var str = ExtractString(value);
-        return !string.IsNullOrWhiteSpace(str) && double.TryParse(str, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : null;
-    }
 }
 
-// IEnhancedObjectSearchService and EnhancedObjectSearchResult are defined in RepoQL.Xray.Search
+// IJitObjectSearchService and JitObjectSearchResult are defined in RepoQL.Xray.Search

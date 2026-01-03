@@ -938,9 +938,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 Limit: request.Limit > 0 ? request.Limit : null
             );
 
-            // Execute via orchestrator
-            var result = await _xrayOrchestrator.ExecuteAsync(query, status, context.CancellationToken).ConfigureAwait(false);
-            sw.Stop();
+            // Execute via orchestrator (pass stopwatch for accurate timing in output)
+            var result = await _xrayOrchestrator.ExecuteAsync(query, status, context.CancellationToken, sw).ConfigureAwait(false);
 
             // Update status with elapsed time
             var hasKeywords = !string.IsNullOrWhiteSpace(request.Keywords);

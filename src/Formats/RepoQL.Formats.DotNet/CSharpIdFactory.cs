@@ -19,8 +19,9 @@ internal static class CSharpIdFactory
                 nameof(uri));
         }
 
-        // Use Container.AbsoluteUri to match database storage (UpsertDocumentByUri)
-        return DeterministicGuid.Create("csharp.document", uri.Container.AbsoluteUri.ToLowerInvariant());
+        // Normalize to match database storage (UpsertDocumentByUri)
+        var normalized = RepoUri.Normalize(uri.Container.AbsoluteUri);
+        return DeterministicGuid.Create("csharp.document", normalized.ToLowerInvariant());
     }
 
     public static Guid CreateNodeId(Guid documentId, string category, TextSpan span)

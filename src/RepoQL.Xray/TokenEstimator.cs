@@ -22,7 +22,7 @@ public static class TokenEstimator
     }
 
     /// <summary>
-    /// Estimate tokens for Compact representation (uri + headline).
+    /// Estimate tokens for Compact representation (uri + headline + children).
     /// </summary>
     public static int EstimateCompact(XrayResult result)
     {
@@ -35,22 +35,38 @@ public static class TokenEstimator
         tokens += 1; // newline
         tokens += EstimateTokens(result.Headline);
         tokens += 2; // overhead
+
+        // Recursively estimate child objects
+        tokens += EstimateChildObjects(result, Representation.Compact);
+
         return tokens;
     }
 
     /// <summary>
-    /// Estimate tokens for Standard representation (uri + headline + structure).
+    /// Estimate tokens for Standard representation (uri + headline + structure + children).
     /// </summary>
     public static int EstimateStandard(XrayResult result)
     {
-        var tokens = EstimateCompact(result);
+        // Base: confidence + kind badge + uri + headline + overhead
+        var tokens = 0;
+        tokens += 2; // confidence "XX% "
+        if (result.Kind != null)
+            tokens += EstimateTokens($"[{result.Kind}] ");
+        tokens += EstimateTokens(result.Uri);
+        tokens += 1; // newline
+        tokens += EstimateTokens(result.Headline);
+        tokens += 2; // overhead
         tokens += 1; // newline before structure
         tokens += EstimateTokens(result.Structure);
+
+        // Recursively estimate child objects
+        tokens += EstimateChildObjects(result, Representation.Standard);
+
         return tokens;
     }
 
     /// <summary>
-    /// Estimate tokens for Rich representation (uri + snippet, no headline).
+    /// Estimate tokens for Rich representation (uri + snippet + children).
     /// </summary>
     public static int EstimateRich(XrayResult result)
     {
@@ -65,6 +81,10 @@ public static class TokenEstimator
         tokens += 1; // newline
         tokens += EstimateTokens(result.Snippet);
         tokens += 2; // code fence closer + trailing newline
+
+        // Recursively estimate child objects
+        tokens += EstimateChildObjects(result, Representation.Rich);
+
         return tokens;
     }
 
@@ -90,5 +110,27 @@ public static class TokenEstimator
     {
         // "... and N more (X%-Y%)" or "... and N more"
         return hasConfidence ? 8 : 4;
+    }
+
+    /// <summary>
+    /// Estimate tokens for child objects at a given representation level.
+    /// Mirrors RepresentationFormatter.AppendChildObjects which indents each child.
+    /// </summary>
+    private static int EstimateChildObjects(XrayResult result, Representation level)
+    {
+        if (result.ChildObjects is null || result.ChildObjects.Count == 0)
+            return 0;
+
+        var tokens = 0;
+        foreach (var child in result.ChildObjects)
+        {
+            tokens += 1; // newline before child
+            tokens += Estimate(child, level);
+            // Indentation adds ~0.5 tokens per line (2 spaces), but varies by content.
+            // Rough estimate: 1 token per child for indentation overhead
+            tokens += 1;
+        }
+
+        return tokens;
     }
 }

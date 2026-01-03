@@ -658,4 +658,26 @@ public class RepoQLUriTests
     }
 
     #endregion
+
+    #region Normalization Tests
+
+    [Test]
+    public async Task Normalize_RemovesControlCharsAndDuplicateSlashes()
+    {
+        var input = "file:///docs//proposals/implemented/Grammars.md\r\n";
+        var normalized = RepoUri.Normalize(input);
+
+        await Assert.That(normalized).IsEqualTo("file:///docs/proposals/implemented/Grammars.md");
+    }
+
+    [Test]
+    public async Task Normalize_RejectsAbsoluteWindowsFileUri()
+    {
+        var input = "file:///C:/repo/file.txt";
+
+        await Assert.That(() => RepoUri.Normalize(input))
+            .Throws<ArgumentException>();
+    }
+
+    #endregion
 }

@@ -42,6 +42,8 @@ public sealed class DuckDbDataStore : IDisposable
     /// </summary>
     public bool RecoveryOccurred { get; private set; }
 
+    internal ILogger Logger => _logger;
+
     /// <summary>
     /// Executes an action within a DI scope, making services available to UDFs via GetService.
     /// </summary>
@@ -723,7 +725,7 @@ public sealed class DuckDbDataStore : IDisposable
     /// <summary>
     /// Detects if an exception indicates a fatal database error that invalidates the database.
     /// </summary>
-    private static bool IsFatalDatabaseError(DuckDBException ex)
+    private static bool IsFatalDatabaseError(DuckDBException ex) 
     {
         var message = ex.Message ?? "";
         return message.Contains("database has been invalidated", StringComparison.OrdinalIgnoreCase) ||

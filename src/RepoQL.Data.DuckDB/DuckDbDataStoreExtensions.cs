@@ -1,6 +1,7 @@
 using System.Data;
 using System.Text;
 using DuckDB.NET.Data;
+using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
@@ -21,59 +22,8 @@ public static class DuckDbDataStoreExtensions
     /// </summary>
     private static string NormalizeUri(string? uri)
     {
-        if (string.IsNullOrEmpty(uri))
-            return uri ?? string.Empty;
-
-        // Remove newlines (LF, CR), null bytes, and other control characters
-        var sb = new StringBuilder(uri.Length);
-        foreach (var c in uri)
-        {
-            // Skip control characters (0x00-0x1F) except tab which might be in some URIs
-            if (c < 0x20 && c != '\t')
-                continue;
-            sb.Append(c);
-        }
-        var normalized = sb.ToString().Trim();
-
-        // Validate: URI should not be empty after normalization
-        if (normalized.Length == 0)
-            throw new ArgumentException($"URI is empty after normalization. Original length: {uri.Length}");
-
-        // Validate: URI should have a scheme
-        var schemeEnd = normalized.IndexOf("://", StringComparison.Ordinal);
-        if (schemeEnd < 1)
-            throw new ArgumentException($"URI missing or invalid scheme. Got: '{Truncate(normalized, 100)}'");
-
-        // Validate: For file:// URIs, reject absolute Windows paths (must be repo-relative)
-        if (normalized.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
-        {
-            var path = normalized[8..]; // After "file:///"
-            if (path.Length >= 2 && char.IsLetter(path[0]) && path[1] == ':')
-            {
-                throw new ArgumentException(
-                    $"file:// URI must be repo-relative, not absolute. Got drive letter '{path[0]}:' in: '{Truncate(normalized, 100)}'");
-            }
-        }
-
-        // Normalize: Remove duplicate slashes in path (but not in scheme)
-        var pathStart = schemeEnd + 3;
-        if (pathStart < normalized.Length)
-        {
-            var scheme = normalized[..pathStart];
-            var path = normalized[pathStart..];
-
-            // Replace multiple consecutive slashes with single slash
-            while (path.Contains("//"))
-                path = path.Replace("//", "/");
-
-            normalized = scheme + path;
-        }
-
-        return normalized;
+        return RepoUri.Normalize(uri);
     }
-
-    private static string Truncate(string s, int maxLength)
-        => s.Length <= maxLength ? s : s[..(maxLength - 3)] + "...";
 
     /// <summary>
     /// Normalize a RepoUri for storage.
@@ -130,7 +80,7 @@ public static class DuckDbDataStoreExtensions
             var docNode = artifact.DocumentNode with { ArtifactId = savedArtifact.Id };
 
             // 5. Upsert document
-            var savedDoc = UpsertDocumentByUri(conn, tx, uri, docNode);
+            var savedDoc = UpsertDocumentByUri(conn, tx, uri, docNode, store.Logger);
 
             // 6. Remap children with correct artifact IDs
             var children = artifact.Children.Select(c =>
@@ -144,7 +94,7 @@ public static class DuckDbDataStoreExtensions
             var edges = artifact.Edges.Select(e => e with { ScopeDocumentId = savedDoc.Id }).ToList();
 
             // 9. Insert new document content
-            InsertDocumentContent(conn, tx, children, spans, edges);
+            InsertDocumentContent(conn, tx, children, spans, edges, store.Logger);
 
             return new IndexResult(savedDoc.Id, isUpdate);
         });
@@ -183,7 +133,7 @@ public static class DuckDbDataStoreExtensions
                 var docNode = artifact.DocumentNode with { ArtifactId = savedArtifact.Id };
 
                 // 5. Upsert document
-                var savedDoc = UpsertDocumentByUri(conn, tx, uri, docNode);
+                var savedDoc = UpsertDocumentByUri(conn, tx, uri, docNode, store.Logger);
 
                 // 6. Remap children with correct artifact IDs
                 var children = artifact.Children.Select(c =>
@@ -197,7 +147,7 @@ public static class DuckDbDataStoreExtensions
                 var edges = artifact.Edges.Select(e => e with { ScopeDocumentId = savedDoc.Id }).ToList();
 
                 // 9. Insert new document content
-                InsertDocumentContent(conn, tx, children, spans, edges);
+                InsertDocumentContent(conn, tx, children, spans, edges, store.Logger);
 
                 results.Add(new IndexResult(savedDoc.Id, isUpdate));
             }
@@ -373,7 +323,7 @@ public static class DuckDbDataStoreExtensions
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(uri);
 
-        var lc = uri.Container.AbsoluteUri.ToLowerInvariant();
+        var lc = NormalizeUri(uri.Container.AbsoluteUri).ToLowerInvariant();
         return store.Read(
             $"SELECT id, kind, uri, artifact_id, span_id, properties, headline, structure, created_at, updated_at FROM node WHERE container_uri_lowercase = '{lc}'",
             r => r.MapToNode()).FirstOrDefault();
@@ -427,7 +377,7 @@ public static class DuckDbDataStoreExtensions
         ArgumentNullException.ThrowIfNull(uri);
         ArgumentNullException.ThrowIfNull(document);
 
-        return store.WriteTransaction((conn, tx) => UpsertDocumentByUri(conn, tx, uri, document));
+        return store.WriteTransaction((conn, tx) => UpsertDocumentByUri(conn, tx, uri, document, store.Logger));
     }
 
     /// <summary>
@@ -610,7 +560,7 @@ public static class DuckDbDataStoreExtensions
 
     private static Node? GetDocumentByUri(DuckDBConnection conn, DuckDBTransaction tx, RepoUri uri)
     {
-        var lc = uri.Container.AbsoluteUri.ToLowerInvariant();
+        var lc = NormalizeUri(uri.Container.AbsoluteUri).ToLowerInvariant();
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = "SELECT id, kind, uri, artifact_id, span_id, properties, headline, structure, created_at, updated_at FROM node WHERE container_uri_lowercase = ?;";
@@ -649,14 +599,123 @@ public static class DuckDbDataStoreExtensions
         return artifact;
     }
 
-    private static Node UpsertDocumentByUri(DuckDBConnection conn, DuckDBTransaction tx, RepoUri uri, Node document)
+    private static Node UpsertDocumentByUri(
+        DuckDBConnection conn,
+        DuckDBTransaction tx,
+        RepoUri uri,
+        Node document,
+        ILogger logger)
     {
         var uriStr = NormalizeUri(uri.Container.AbsoluteUri);
         var lc = uriStr.ToLowerInvariant();
+        List<(Guid Id, string Kind, string? Uri)>? preDelete = null;
+        List<(Guid Id, string Kind, string? Uri)>? postDelete = null;
+        List<(Guid Id, string Kind, string? Uri)>? postFailure = null;
+
+        List<(Guid Id, string Kind, string? Uri)> ReadConflicts()
+        {
+            using var probe = conn.CreateCommand();
+            probe.Transaction = tx;
+            probe.CommandText = "SELECT id, kind, uri FROM node WHERE container_uri_lowercase = ?;";
+            probe.AddParameters(lc);
+
+            using var reader = probe.ExecuteReader();
+            var rows = new List<(Guid, string, string?)>();
+            while (reader.Read())
+            {
+                rows.Add((
+                    reader.GetGuid(0),
+                    reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2)
+                ));
+            }
+            return rows;
+        }
+
+        List<(Guid Id, string Kind, string? Uri)>? ReadConflictsOutside()
+        {
+            try
+            {
+                var dataSource = TryGetDataSource(conn.ConnectionString);
+                if (string.IsNullOrWhiteSpace(dataSource))
+                    return null;
+
+                if (string.Equals(dataSource, ":memory:", StringComparison.OrdinalIgnoreCase))
+                    return null;
+
+                using var alt = new DuckDBConnection($"Data Source={dataSource};ACCESS_MODE=READ_ONLY");
+                alt.Open();
+                using var probe = alt.CreateCommand();
+                probe.CommandText = "SELECT id, kind, uri FROM node WHERE container_uri_lowercase = ?;";
+                probe.Parameters.Add(new DuckDBParameter(lc));
+
+                using var reader = probe.ExecuteReader();
+                var rows = new List<(Guid, string, string?)>();
+                while (reader.Read())
+                {
+                    rows.Add((
+                        reader.GetGuid(0),
+                        reader.GetString(1),
+                        reader.IsDBNull(2) ? null : reader.GetString(2)
+                    ));
+                }
+                return rows;
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "[DuckDB] uri-conflict external-read failed");
+                return null;
+            }
+        }
+
+        static string? TryGetDataSource(string? connectionString)
+        {
+            if (string.IsNullOrWhiteSpace(connectionString))
+                return null;
+
+            foreach (var part in connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = part.Trim();
+                if (trimmed.StartsWith("Data Source=", StringComparison.OrdinalIgnoreCase))
+                    return trimmed["Data Source=".Length..].Trim();
+                if (trimmed.StartsWith("DataSource=", StringComparison.OrdinalIgnoreCase))
+                    return trimmed["DataSource=".Length..].Trim();
+            }
+
+            return null;
+        }
+
+        void LogConflict(string stage, IReadOnlyList<(Guid Id, string Kind, string? Uri)> rows, Exception ex)
+        {
+            var pid = Environment.ProcessId;
+            var tid = Environment.CurrentManagedThreadId;
+            logger.LogError(ex,
+                "[DuckDB] URI conflict {Stage} pid={Pid} tid={Tid} docId={DocId} lc={Lc} uri={Uri}",
+                stage, pid, tid, document.Id, lc, uriStr);
+
+            if (preDelete is not null)
+                DumpRows("pre-delete", preDelete);
+            if (postDelete is not null)
+                DumpRows("post-delete", postDelete);
+            if (postFailure is not null)
+                DumpRows("post-failure", postFailure);
+
+            DumpRows("current", rows);
+        }
+
+        void DumpRows(string label, IReadOnlyList<(Guid Id, string Kind, string? Uri)> rows)
+        {
+            logger.LogWarning("[DuckDB] uri-conflict {Label} count={Count}", label, rows.Count);
+            foreach (var row in rows)
+                logger.LogWarning("[DuckDB] uri-conflict {Label} id={Id} kind={Kind} uri={Uri}",
+                    label, row.Id, row.Kind, row.Uri ?? string.Empty);
+        }
 
         // Clean up any orphaned row with same URI but different id
         // This handles dirty startup scenarios where deterministic IDs may differ from stored IDs
+        preDelete = ReadConflicts();
         conn.Execute(tx, "DELETE FROM node WHERE container_uri_lowercase = ? AND id != ?;", lc, document.Id);
+        postDelete = ReadConflicts();
 
         // Atomic upsert using INSERT ... ON CONFLICT ... DO UPDATE
         // Handle conflicts on id (primary key) since deterministic IDs may match existing rows
@@ -681,11 +740,21 @@ public static class DuckDbDataStoreExtensions
             document.Props.ToJsonString(), document.Headline, document.Structure,
             document.CreatedAt.UtcDateTime, document.UpdatedAt.UtcDateTime);
 
-        using var reader = cmd.ExecuteReader();
-        if (reader.Read())
+        try
         {
-            var id = reader.GetGuid(0);
-            return document with { Id = id };
+            using var reader = cmd.ExecuteReader();
+            if (reader.Read())
+            {
+                var id = reader.GetGuid(0);
+                return document with { Id = id };
+            }
+        }
+        catch (DuckDBException ex)
+        {
+            var rows = postDelete ?? preDelete ?? new List<(Guid, string, string?)>();
+            postFailure = ReadConflictsOutside();
+            LogConflict("insert-failed", rows, ex);
+            throw;
         }
 
         // Fallback (should not happen with RETURNING)
@@ -739,7 +808,13 @@ public static class DuckDbDataStoreExtensions
     /// <summary>
     /// Insert new document content (spans, edges, child nodes).
     /// </summary>
-    private static void InsertDocumentContent(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Node> children, IReadOnlyList<Span> spans, IReadOnlyList<Edge> edges)
+    private static void InsertDocumentContent(
+        DuckDBConnection conn,
+        DuckDBTransaction tx,
+        IReadOnlyList<Node> children,
+        IReadOnlyList<Span> spans,
+        IReadOnlyList<Edge> edges,
+        ILogger? logger)
     {
         // Bulk insert spans (much faster than individual inserts)
         if (spans.Count > 0)
@@ -751,7 +826,7 @@ public static class DuckDbDataStoreExtensions
 
         // Bulk insert edges
         if (edges.Count > 0)
-            BulkInsertEdges(conn, tx, edges);
+            BulkInsertEdges(conn, tx, edges, logger);
     }
 
     private static void BulkInsertSpans(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Span> spans)
@@ -826,7 +901,7 @@ public static class DuckDbDataStoreExtensions
         }
     }
 
-    private static void BulkInsertEdges(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Edge> edges)
+    private static void BulkInsertEdges(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Edge> edges, ILogger? logger)
     {
         // Deduplicate composition edges - each child can only have one parent
         // Keep the first edge for each composition_child_id (DstId when IsComposition=true)
@@ -854,7 +929,9 @@ public static class DuckDbDataStoreExtensions
 
         if (duplicateCount > 0)
         {
-            Console.Error.WriteLine($"[DuckDB] WARNING: Skipped {duplicateCount} duplicate composition edges (same child with multiple parents)");
+            logger?.LogWarning(
+                "[DuckDB] Skipped {Count} duplicate composition edges (same child with multiple parents)",
+                duplicateCount);
         }
 
         // Insert composition edges with ON CONFLICT handling (for deterministic IDs)

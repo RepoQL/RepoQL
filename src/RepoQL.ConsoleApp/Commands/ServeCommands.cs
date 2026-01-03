@@ -18,6 +18,8 @@ using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.ConsoleApp.Search;
 using RepoQL.Core;
+using RepoQL.Contracts.Embeddings;
+using RepoQL.Data.DuckDB;
 using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
 using RepoQL.Xray;
@@ -89,7 +91,18 @@ internal class HostCommands(IAnsiConsole console)
         builder.Services.AddSingleton<IDocumentSearchService, DocumentSearchService>();
         builder.Services.AddSingleton<IObjectSearchService, ObjectSearchService>();
         builder.Services.AddSingleton<IXraySearchEngine, XraySearchEngine>();
-        builder.Services.AddSingleton<XrayOrchestrator>();
+        // JIT object search uses local ONNX for fast JIT embeddings
+        builder.Services.AddSingleton<IJitObjectSearchService>(sp =>
+        {
+            var store = sp.GetRequiredService<DuckDbDataStore>();
+            var embeddingProvider = sp.GetKeyedService<IEmbeddingProvider>("local");
+            var logger = sp.GetService<ILogger<JitObjectSearchService>>();
+            return new JitObjectSearchService(store, embeddingProvider, logger);
+        });
+        builder.Services.AddSingleton(sp => new XrayOrchestrator(
+            sp.GetRequiredService<IXraySearchEngine>(),
+            sp.GetService<IJitObjectSearchService>()
+        ));
 
         builder.Services.AddGrpc();
         builder.Services.AddSingleton<HostMetrics>();
@@ -286,7 +299,7 @@ internal class HostCommands(IAnsiConsole console)
             if (!File.Exists(dbPath))
                 return true;
 
-            using var stream = new FileStream(dbPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var stream = new FileStream(dbPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             return true;
         }
         catch (IOException ex) when (IsSharingViolation(ex))

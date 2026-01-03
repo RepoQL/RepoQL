@@ -1142,14 +1142,17 @@ public partial class IndexingEngine : IAsyncDisposable
                 return true;
             if (x is null || y is null)
                 return false;
-            return x.Uri == y.Uri && x.Options == y.Options;
+            var xKey = RepoUri.Normalize(x.Uri.Container.AbsoluteUri);
+            var yKey = RepoUri.Normalize(y.Uri.Container.AbsoluteUri);
+            return StringComparer.OrdinalIgnoreCase.Equals(xKey, yKey) && x.Options == y.Options;
         }
 
         public int GetHashCode(IndexItem obj)
         {
             if (obj is null)
                 return 0;
-            return HashCode.Combine(obj.Uri, obj.Options);
+            var key = RepoUri.Normalize(obj.Uri.Container.AbsoluteUri).ToLowerInvariant();
+            return HashCode.Combine(key, obj.Options);
         }
     }
 

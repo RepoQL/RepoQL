@@ -50,4 +50,30 @@ public static class ResultBuilder
     /// </summary>
     public static XrayResult ObjectResult(int confidence, string kind = "method", int snippetLength = 200)
         => Create(confidence, headlineLength: 50, structureLength: null, snippetLength: snippetLength, kind: kind);
+
+    /// <summary>
+    /// Create a document result with child objects.
+    /// </summary>
+    public static XrayResult DocumentWithChildren(
+        int confidence,
+        int childCount,
+        int headlineLength = 50,
+        int childHeadlineLength = 30)
+    {
+        var children = Enumerable.Range(1, childCount)
+            .Select(i => Create(confidence - i * 5, childHeadlineLength, kind: "method", uri: $"file:///test/file{confidence}.cs#method{i}"))
+            .ToList();
+
+        return new XrayResult(
+            Uri: $"file:///test/file{confidence}.cs",
+            Confidence: confidence,
+            Kind: null,
+            Headline: headlineLength > 0 ? new string('h', headlineLength) : null,
+            Structure: null,
+            Snippet: null,
+            Lang: null,
+            SemanticType: null,
+            ChildObjects: children
+        );
+    }
 }

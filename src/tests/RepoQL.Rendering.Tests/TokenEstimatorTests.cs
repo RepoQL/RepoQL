@@ -148,4 +148,51 @@ public class TokenEstimatorTests
 
         withConf.Should().BeGreaterThan(withoutConf);
     }
+
+    [Test]
+    [DisplayName("Compact representation includes child objects in estimate")]
+    public void Given_ResultWithChildren_When_EstimateCompact_Then_IncludesChildren()
+    {
+        var withoutChildren = ResultBuilder.Document(80, headlineLength: 40);
+        var withChildren = ResultBuilder.DocumentWithChildren(80, childCount: 3, headlineLength: 40);
+
+        var tokensWithout = TokenEstimator.EstimateCompact(withoutChildren);
+        var tokensWith = TokenEstimator.EstimateCompact(withChildren);
+
+        // 3 children should add significant tokens
+        tokensWith.Should().BeGreaterThan(tokensWithout + 30, "3 children should add at least 30 tokens");
+    }
+
+    [Test]
+    [DisplayName("Standard representation includes child objects in estimate")]
+    public void Given_ResultWithChildren_When_EstimateStandard_Then_IncludesChildren()
+    {
+        var withoutChildren = ResultBuilder.Document(80, headlineLength: 40);
+        var withChildren = ResultBuilder.DocumentWithChildren(80, childCount: 5, headlineLength: 40);
+
+        var tokensWithout = TokenEstimator.EstimateStandard(withoutChildren);
+        var tokensWith = TokenEstimator.EstimateStandard(withChildren);
+
+        // 5 children should add significant tokens
+        tokensWith.Should().BeGreaterThan(tokensWithout + 50, "5 children should add at least 50 tokens");
+    }
+
+    [Test]
+    [DisplayName("Child object estimation scales with child count")]
+    public void Given_VaryingChildCounts_When_EstimateCompact_Then_ScalesLinearly()
+    {
+        var with2Children = ResultBuilder.DocumentWithChildren(80, childCount: 2, headlineLength: 40);
+        var with4Children = ResultBuilder.DocumentWithChildren(80, childCount: 4, headlineLength: 40);
+        var with8Children = ResultBuilder.DocumentWithChildren(80, childCount: 8, headlineLength: 40);
+
+        var tokens2 = TokenEstimator.EstimateCompact(with2Children);
+        var tokens4 = TokenEstimator.EstimateCompact(with4Children);
+        var tokens8 = TokenEstimator.EstimateCompact(with8Children);
+
+        // More children = more tokens, roughly linear scaling
+        tokens4.Should().BeGreaterThan(tokens2);
+        tokens8.Should().BeGreaterThan(tokens4);
+        // 8 children should be roughly 4x the child contribution of 2 children
+        (tokens8 - tokens2).Should().BeGreaterThan((int)((tokens4 - tokens2) * 1.5));
+    }
 }

@@ -202,7 +202,7 @@ ORDER BY score DESC;
 
 -- Fetch raw object candidates from selected documents for second-pass object search.
 -- Does NOT compute final scores - just retrieves object metadata with cheap features.
--- The C# EnhancedObjectSearchService handles scoring, JIT embedding planning, and final ranking.
+-- The C# JitObjectSearchService handles scoring, JIT embedding planning, and final ranking.
 --
 -- Parameters:
 --   doc_uris          - Array of document URIs to fetch objects from
