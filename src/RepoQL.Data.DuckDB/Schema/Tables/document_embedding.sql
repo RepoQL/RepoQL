@@ -19,3 +19,6 @@ CREATE INDEX IF NOT EXISTS document_embedding_uri_idx ON document_embedding(uri)
 CREATE INDEX IF NOT EXISTS document_embedding_model_idx ON document_embedding(model);
 CREATE INDEX IF NOT EXISTS document_embedding_doc_chunk_idx ON document_embedding(doc_id, chunk_index);
 CREATE INDEX IF NOT EXISTS document_embedding_type_idx ON document_embedding(embedding_type);
+
+-- Composite index for search queries: covers (scope, embedding_type) filter + node_id join
+CREATE INDEX IF NOT EXISTS document_embedding_search_idx ON document_embedding(scope, embedding_type, node_id, dim);

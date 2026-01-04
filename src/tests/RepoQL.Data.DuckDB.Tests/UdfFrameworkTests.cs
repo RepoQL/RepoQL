@@ -42,6 +42,8 @@ public class UdfFrameworkTests : IDisposable
         public string Model => "disabled";
         public Task<string> SummarizeAsync(string jsonData, string intent, int maxTokens = 500, CancellationToken ct = default)
             => Task.FromResult("LLM disabled");
+        public Task<LlmSummaryResult> SummarizeWithReasoningAsync(string jsonData, string intent, int maxTokens = 500, CancellationToken ct = default)
+            => Task.FromResult(new LlmSummaryResult("LLM disabled"));
         public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
             => Task.FromResult("LLM disabled");
     }

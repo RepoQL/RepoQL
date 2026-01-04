@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Humanizer;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -24,6 +25,8 @@ namespace RepoQL.Embeddings;
 /// </remarks>
 public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 {
+    private static readonly ActivitySource ActivitySource = new("RepoQL.Embeddings.Onnx");
+
     private InferenceSession? _session;
     private readonly ILogger<OnnxEmbeddingProvider> _logger;
     private readonly string _inputIdsName = "";
@@ -132,6 +135,11 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     /// <summary>Encode one text to a normalized embedding. Returns null on error.</summary>
     public async Task<float[]?> EmbedAsync(string text, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("onnx.embed", ActivityKind.Internal);
+        activity?.SetTag("embed.provider", "onnx");
+        activity?.SetTag("embed.model", Model);
+        activity?.SetTag("embed.count", 1);
+
         if (!Enabled) return null;
         var enc = _tokenizer!.Encode(text, _maxSeqLen);
         if (enc.Truncated) _logger.LogDebug("Input truncated to max_len={Max}", _maxSeqLen);
@@ -185,6 +193,11 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     /// </summary>
     public async Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
     {
+        using var activity = ActivitySource.StartActivity("onnx.embed_batch", ActivityKind.Internal);
+        activity?.SetTag("embed.provider", "onnx");
+        activity?.SetTag("embed.model", Model);
+        activity?.SetTag("embed.count", texts?.Count ?? 0);
+
         if (!Enabled || texts is null || texts.Count == 0) return [];
         var batch = texts.Count;
         var totalTimer = System.Diagnostics.Stopwatch.StartNew();

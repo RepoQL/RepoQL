@@ -67,7 +67,7 @@ internal class MarkdownXrayTests
                          && n.Props?["text"]?.GetValue<string>() == "Features");
 
         headingNode.Headline.Should().Be("H2 · Features");
-        headingNode.Structure.Should().Contain("Line");
-        headingNode.Structure.Should().Contain("#features");
+        // Structure is empty for a heading with no child headings or code blocks
+        headingNode.Structure.Should().BeEmpty();
     }
 }

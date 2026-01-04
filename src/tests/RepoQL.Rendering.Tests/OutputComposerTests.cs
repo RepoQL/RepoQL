@@ -33,7 +33,7 @@ public class OutputComposerTests
 
         var output = OutputComposer.Compose(result, showConfidence: true);
 
-        output.Should().Be(" 85% file:///src/Auth.cs\nAuth service");
+        output.Should().Be(" 85% file:///src/Auth.cs\n  Auth service");
     }
 
     [Test]
@@ -56,9 +56,9 @@ public class OutputComposerTests
         // Should have only single newline between items
         output.Should().Be(
             " 90% file:///a.cs\n" +
-            "A\n" +
+            "  A\n" +
             " 80% file:///b.cs\n" +
-            "B");
+            "  B");
     }
 
     [Test]
@@ -215,7 +215,7 @@ public class OutputComposerTests
 
         var output = OutputComposer.Compose(result, showConfidence: true, indexerStatus);
 
-        output.Should().Contain("[150ms | index: 5 pending | semantic: pending]");
+        output.Should().Contain("150 ms | index: 5 pending | semantic: pending]");
     }
 
     [Test]
@@ -233,6 +233,6 @@ public class OutputComposerTests
 
         var output = OutputComposer.Compose(result, showConfidence: true, indexerStatus);
 
-        output.Should().Contain("[50ms | index: ready | semantic: ready]");
+        output.Should().Contain("50 ms | index: ready | semantic: ready]");
     }
 }

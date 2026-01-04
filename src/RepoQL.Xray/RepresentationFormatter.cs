@@ -31,6 +31,9 @@ public static class RepresentationFormatter
         if (headline != null)
         {
             sb.Append('\n');
+            // Align with content after confidence score (5 chars: "100% ")
+            if (showConfidence)
+                sb.Append("  ");
             sb.Append(headline);
         }
 
@@ -46,17 +49,29 @@ public static class RepresentationFormatter
         var sb = new StringBuilder();
         AppendHeader(sb, result, showConfidence);
 
+        // Alignment prefix for continuation lines when confidence is shown
+        var alignPrefix = showConfidence ? "  " : "";
+
         var headline = GetSingleLineHeadline(result);
         if (headline != null)
         {
             sb.Append('\n');
+            sb.Append(alignPrefix);
             sb.Append(headline);
         }
 
         if (!string.IsNullOrEmpty(result.Structure))
         {
             sb.Append('\n');
-            sb.Append(result.Structure);
+            // Apply alignment to each line of structure
+            var structureLines = result.Structure.Split('\n');
+            for (var i = 0; i < structureLines.Length; i++)
+            {
+                if (i > 0)
+                    sb.Append('\n');
+                sb.Append(alignPrefix);
+                sb.Append(structureLines[i]);
+            }
         }
 
         return sb.ToString();
@@ -213,7 +228,9 @@ public static class RepresentationFormatter
             ? $"{FormatTokenCount(tokenCount.Value)} | "
             : "";
 
-        return $"[{tokenPart}{status.ElapsedMs}ms | index: {indexStatus} | semantic: {semanticStatus}]";
+        var duration = FormatDuration(status.ElapsedMs);
+
+        return $"[{tokenPart}{duration} | index: {indexStatus} | semantic: {semanticStatus}]";
     }
 
     /// <summary>
@@ -226,6 +243,21 @@ public static class RepresentationFormatter
             < 1000 => $"{tokens} tok",
             < 10000 => $"{tokens / 1000.0:F1}k tok",
             _ => $"{tokens / 1000.0:F0}k tok"
+        };
+    }
+
+    /// <summary>
+    /// Format duration as a concise human-readable string (e.g., "1.2 s", "150 ms").
+    /// </summary>
+    private static string FormatDuration(long milliseconds)
+    {
+        return milliseconds switch
+        {
+            < 1000 => $"{milliseconds} ms",
+            < 10000 => $"{milliseconds / 1000.0:F1} s",
+            < 60000 => $"{milliseconds / 1000.0:F0} s",
+            < 3600000 => $"{milliseconds / 60000.0:F1} min",
+            _ => $"{milliseconds / 3600000.0:F1} hr"
         };
     }
 

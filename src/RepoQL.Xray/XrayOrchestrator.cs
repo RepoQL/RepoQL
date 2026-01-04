@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using RepoQL.Contracts;
 using RepoQL.Xray.Search;
 
 namespace RepoQL.Xray;
@@ -11,13 +12,21 @@ public sealed class XrayOrchestrator
 {
     private readonly IXraySearchEngine _searchEngine;
     private readonly IJitObjectSearchService? _jitService;
+    private readonly ILlmProvider? _llmProvider;
+
+    /// <summary>
+    /// Minimum token budget for Understand intent to ensure sufficient context for LLM synthesis.
+    /// </summary>
+    private const int UnderstandMinBudget = 3000;
 
     public XrayOrchestrator(
         IXraySearchEngine searchEngine,
-        IJitObjectSearchService? jitService = null)
+        IJitObjectSearchService? jitService = null,
+        ILlmProvider? llmProvider = null)
     {
         _searchEngine = searchEngine ?? throw new ArgumentNullException(nameof(searchEngine));
         _jitService = jitService;
+        _llmProvider = llmProvider;
     }
 
     /// <summary>
@@ -37,6 +46,42 @@ public sealed class XrayOrchestrator
         if (query.TokenBudget <= 0)
             throw new ArgumentException("tokenBudget must be a positive integer.", nameof(query));
 
+        // Handle Understand intent: check LLM provider and auto-scale budget
+        var isUnderstand = query.Intent == Intent.Understand;
+        if (isUnderstand)
+        {
+            if (_llmProvider is null || !_llmProvider.Enabled)
+            {
+                // LLM not configured - return error with guidance
+                var errorMsg = """
+                    LLM not configured. The 'understand' intent requires an LLM provider.
+
+                    Set OPENROUTER_API_KEY environment variable to enable LLM synthesis.
+
+                    Alternatively, use intent=examine for detailed structured results.
+                    """;
+                return new XrayExecutionResult(errorMsg, [], Truncated: false);
+            }
+
+            if (string.IsNullOrWhiteSpace(query.Keywords))
+            {
+                var errorMsg = """
+                    Keywords required for 'understand' intent. The keywords become the question for LLM synthesis.
+
+                    Example: xray(tokenBudget=2000, intent=understand, keywords="How does authentication work?")
+                    """;
+                return new XrayExecutionResult(errorMsg, [], Truncated: false);
+            }
+        }
+
+        // Auto-scale budget for Understand intent
+        var effectiveBudget = isUnderstand
+            ? Math.Max(query.TokenBudget, UnderstandMinBudget)
+            : query.TokenBudget;
+
+        // For Understand, we use Find behavior internally for search/allocation
+        var searchIntent = isUnderstand ? Intent.Find : query.Intent;
+
         // Parse patterns
         var boostPatterns = ParsePatterns(query.Boost);
         var penalizePatterns = ParsePatterns(query.Penalize);
@@ -46,7 +91,8 @@ public sealed class XrayOrchestrator
             Scope: query.Scope,
             Question: query.Keywords,
             Patterns: boostPatterns,
-            Intent: query.Intent,
+            Intent: searchIntent,
+            TokenBudget: effectiveBudget,
             PenalizePatterns: penalizePatterns.Count > 0 ? penalizePatterns : null
         );
 
@@ -85,7 +131,7 @@ public sealed class XrayOrchestrator
         var hasSearchCriteria = !string.IsNullOrWhiteSpace(query.Keywords) || boostPatterns.Count > 0;
 
         // Hierarchical token allocation (files compete first, then children within each file)
-        var decisions = ValueBasedAllocator.Allocate(xrayResults, query.TokenBudget, query.Intent);
+        var decisions = ValueBasedAllocator.Allocate(xrayResults, effectiveBudget, searchIntent);
 
         // Apply limit if specified
         var limitedDecisions = query.Limit.HasValue && query.Limit.Value > 0
@@ -102,7 +148,82 @@ public sealed class XrayOrchestrator
         // Determine truncation
         var truncated = omittedCount > 0;
 
+        // If Understand intent, synthesize via LLM
+        if (isUnderstand && _llmProvider is not null)
+        {
+            // Re-render with LLM-friendly token budget (50k tokens ~= 200k chars for context)
+            const int llmTokenBudget = 50_000;
+            var llmDecisions = ValueBasedAllocator.Allocate(xrayResults, llmTokenBudget, Intent.Examine);
+            var llmDecisionResult = new DecisionResult(llmDecisions, 0, null);
+            var llmOutput = OutputComposer.Compose(llmDecisionResult, hasSearchCriteria, status);
+
+            var synthesized = await SynthesizeUnderstandingAsync(
+                llmOutput,
+                query.Keywords!,
+                status,
+                cancellationToken).ConfigureAwait(false);
+            return new XrayExecutionResult(synthesized, xrayResults, truncated);
+        }
+
         return new XrayExecutionResult(renderedOutput, xrayResults, truncated);
+    }
+
+    /// <summary>
+    /// Synthesize understanding from xray output using LLM.
+    /// </summary>
+    private async Task<string> SynthesizeUnderstandingAsync(
+        string xrayOutput,
+        string question,
+        IndexerStatus status,
+        CancellationToken ct)
+    {
+        // The xray output becomes the context, the keywords become the question
+        var intent = $"""
+            Answer this question based on the codebase information provided: {question}
+
+            Requirements:
+            - Quote actual code verbatim when describing implementations - never paraphrase into pseudocode
+            - Cite every claim with file:// URIs (include #line=N,M for specific code)
+            - Omit anything you cannot directly verify from the provided context
+            - Be honest when you have insufficient information
+            - Less is more - make every token earn its place
+
+            Structure your response as:
+            1. **Answer** - Direct, concise answer to the question
+            2. **Derivation** - Show your working: the key evidence you found and the logical steps connecting it to your conclusions
+            """;
+
+        try
+        {
+            var result = await _llmProvider!.SummarizeAsync(
+                xrayOutput,
+                intent,
+                maxTokens: 1000,
+                ct).ConfigureAwait(false);
+
+            var footer = RepresentationFormatter.FormatStatusFooter(status);
+
+            return $"""
+                ## Understanding: {question}
+
+                {result}
+
+                ---
+                
+                {footer}
+                """;
+        }
+        catch (Exception ex)
+        {
+            // Fall back to structured output on LLM failure
+            return $"""
+                LLM synthesis failed: {ex.Message}
+
+                Falling back to structured results:
+
+                {xrayOutput}
+                """;
+        }
     }
 
     /// <summary>

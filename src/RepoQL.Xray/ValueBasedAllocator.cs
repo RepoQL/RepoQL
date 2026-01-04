@@ -81,9 +81,10 @@ public static class ValueBasedAllocator
     /// </summary>
     private static double GetIntentModifier(Intent intent) => intent switch
     {
-        Intent.Examine => 1.2,  // Concentrate on top results
-        Intent.Find => 1.0,     // Balanced
-        Intent.Explore => 0.8,  // Flatten distribution
+        Intent.Examine => 1.2,       // Concentrate on top results
+        Intent.Find => 1.0,          // Balanced
+        Intent.Explore => 0.8,       // Flatten distribution
+        Intent.Understand => 1.1,    // Balanced but focused - LLM needs context not noise
         _ => 1.0
     };
 
@@ -92,12 +93,14 @@ public static class ValueBasedAllocator
     /// Explore: fewer children (breadth over depth)
     /// Find: moderate children
     /// Examine: more children (depth over breadth)
+    /// Understand: moderate depth - LLM needs context not noise
     /// </summary>
     private static int GetMaxChildrenForIntent(Intent intent) => intent switch
     {
         Intent.Explore => 3,
         Intent.Find => 5,
         Intent.Examine => 8,
+        Intent.Understand => 6,
         _ => 5
     };
 
@@ -153,7 +156,7 @@ public static class ValueBasedAllocator
             foreach (var item in items)
             {
                 var allocation = (int)(fileBudget * item.ExpectedValue / totalEV);
-                item.Level = PickBestFit(item.Result, allocation);
+                item.Level = PickBestFit(item.Result, allocation, intent);
                 item.Tokens = TokenEstimator.Estimate(item.Result, item.Level);
             }
         }
@@ -210,8 +213,9 @@ public static class ValueBasedAllocator
 
     /// <summary>
     /// Pick the richest representation that fits within the token allocation.
+    /// Minimal (no URI) is only used for Explore; Find/Examine/Understand use Compact as floor.
     /// </summary>
-    private static Representation PickBestFit(XrayResult result, int allocation)
+    private static Representation PickBestFit(XrayResult result, int allocation, Intent intent)
     {
         if (TokenEstimator.EstimateRich(result) <= allocation)
             return Representation.Rich;
@@ -219,7 +223,9 @@ public static class ValueBasedAllocator
             return Representation.Standard;
         if (TokenEstimator.EstimateCompact(result) <= allocation)
             return Representation.Compact;
-        return Representation.Minimal;
+
+        // Minimal (no URI) only for Explore - URI is high-value for Find/Examine/Understand
+        return intent == Intent.Explore ? Representation.Minimal : Representation.Compact;
     }
 
     /// <summary>

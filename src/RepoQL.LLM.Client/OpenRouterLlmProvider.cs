@@ -13,9 +13,9 @@ namespace RepoQL.LLM.Client;
 public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
 {
     private const string Endpoint = "https://openrouter.ai/api/v1/chat/completions";
-    private const string DefaultModel = "moonshotai/kimi-k2";
+    private const string DefaultModel = "@preset/understand";
     private const int MaxToolCalls = 3;
-    private const int DefaultTimeoutSeconds = 60;
+    private const int DefaultTimeoutSeconds = 120;  // Longer for thinking models
 
     private readonly HttpClient _httpClient;
     private readonly string _apiKey;
@@ -68,8 +68,18 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         int maxTokens = 500,
         CancellationToken ct = default)
     {
+        var result = await SummarizeWithReasoningAsync(jsonData, intent, maxTokens, ct);
+        return result.Content;
+    }
+
+    public async Task<LlmSummaryResult> SummarizeWithReasoningAsync(
+        string jsonData,
+        string intent,
+        int maxTokens = 500,
+        CancellationToken ct = default)
+    {
         if (!Enabled)
-            return "LLM not configured (set OPENROUTER_API_KEY environment variable)";
+            return new LlmSummaryResult("LLM not configured (set OPENROUTER_API_KEY environment variable)");
 
         try
         {
@@ -82,12 +92,21 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
             };
             var response = await CallApiAsync(messages, tools: null, ct);
 
-            return response.Content ?? "No response from LLM";
+            // Extract reasoning trace if available
+            string? reasoning = response.ReasoningContent;
+            if (string.IsNullOrEmpty(reasoning) && response.ReasoningDetails.HasValue)
+            {
+                reasoning = ExtractReasoningText(response.ReasoningDetails.Value);
+            }
+
+            return new LlmSummaryResult(
+                response.Content ?? "No response from LLM",
+                reasoning);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in SummarizeAsync");
-            return $"Error: {ex.Message}";
+            _logger.LogError(ex, "Error in SummarizeWithReasoningAsync");
+            return new LlmSummaryResult($"Error: {ex.Message}");
         }
     }
 
@@ -299,8 +318,8 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         var request = new JsonObject
         {
             ["model"] = _model,
-            ["messages"] = messagesClone,
-            ["max_tokens"] = 4096
+            ["messages"] = messagesClone
+            // temperature, max_tokens, include_reasoning controlled by OpenRouter preset
         };
 
         // Add tools if provided
@@ -349,6 +368,7 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
 
         var choice = choices[0];
         string? responseContent = null;
+        string? reasoningContent = null;
         List<ToolCall>? toolCalls = null;
         JsonElement? reasoningDetails = null;
         JsonElement? rawMessage = null;
@@ -360,6 +380,12 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
 
             if (message.TryGetProperty("content", out var contentProp) && contentProp.ValueKind == JsonValueKind.String)
                 responseContent = contentProp.GetString();
+
+            // Capture reasoning content for thinking models (Kimi K2, etc.)
+            if (message.TryGetProperty("reasoning_content", out var rc))
+                reasoningContent = ExtractReasoningText(rc);
+            else if (message.TryGetProperty("reasoning", out var r))
+                reasoningContent = ExtractReasoningText(r);
 
             // Capture reasoning_details for Gemini/reasoning models - must be preserved for tool calls
             if (message.TryGetProperty("reasoning_details", out var rd))
@@ -392,6 +418,7 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
             Content = responseContent,
             ToolCalls = toolCalls,
             ReasoningDetails = reasoningDetails,
+            ReasoningContent = reasoningContent,
             RawMessage = rawMessage
         };
     }
@@ -400,6 +427,34 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
     {
         if (_ownsHttpClient)
             _httpClient.Dispose();
+    }
+
+    /// <summary>
+    /// Extract reasoning text from various formats (string, array of objects with text field).
+    /// </summary>
+    private static string? ExtractReasoningText(JsonElement element)
+    {
+        // String format - return directly
+        if (element.ValueKind == JsonValueKind.String)
+            return element.GetString();
+
+        // Array format (Kimi K2 thinking): [{"type":"reasoning.text","text":"..."},...]
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            var parts = new List<string>();
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.TryGetProperty("text", out var textProp) && textProp.ValueKind == JsonValueKind.String)
+                {
+                    var text = textProp.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        parts.Add(text);
+                }
+            }
+            return parts.Count > 0 ? string.Join("\n\n", parts) : null;
+        }
+
+        return null;
     }
 
     #region Internal Types
@@ -412,6 +467,10 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         /// Raw reasoning details from Gemini/other reasoning models - must be preserved for tool calls.
         /// </summary>
         public JsonElement? ReasoningDetails { get; set; }
+        /// <summary>
+        /// Reasoning content text for thinking models (Kimi K2, etc.)
+        /// </summary>
+        public string? ReasoningContent { get; set; }
         /// <summary>
         /// The raw assistant message element - used to preserve all fields for multi-turn.
         /// </summary>

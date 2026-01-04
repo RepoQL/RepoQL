@@ -60,6 +60,13 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
             return new JitObjectSearchResult([], [], signals);
         }
 
+        // When document expansion is disabled, return document-level results only
+        if (config.MaxDocumentsToExpand == 0)
+        {
+            _logger.LogDebug("Document expansion disabled, returning {Count} document candidates", documentCandidates.Count);
+            return new JitObjectSearchResult(documentCandidates, [], signals);
+        }
+
         // Apply softmax selection to get documents to expand
         var selectedDocs = SelectDocumentsViaSoftmax(documentCandidates, signals, config);
 
@@ -311,18 +318,20 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
         NormalizedQuerySignals signals)
     {
         var uriList = documentUris.ToList();
-        if (uriList.Count == 0 || signals.QueryEmbedding is null)
+        if (uriList.Count == 0 || string.IsNullOrWhiteSpace(signals.RawQuery))
             return new Dictionary<string, List<ChunkScore>>();
 
         // Build URI list for SQL
         var uriListSql = string.Join(",", uriList.Select(u => $"'{EscapeSql(u)}'"));
+        var escapedQuery = EscapeSql(signals.RawQuery);
 
         // Query chunks with their semantic scores against the query
         // Note: Chunks have byte ranges but no spans with line numbers,
         // so we estimate line numbers from byte positions using document stats
+        // Use embed_text() UDF to ensure query embedding matches document embedding dimension
         var sql = $"""
             WITH query_vec AS (
-                SELECT {FormatVector(signals.QueryEmbedding)} AS vec
+                SELECT embed_text('{escapedQuery}')::FLOAT[] AS vec
             ),
             doc_info AS (
                 SELECT
@@ -341,7 +350,7 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
                     -- Estimate start/end lines from byte positions
                     GREATEST(1, CAST(de.start_byte * di.line_count / NULLIF(di.total_bytes, 0) AS INTEGER)) AS start_line,
                     GREATEST(1, CAST(de.end_byte * di.line_count / NULLIF(di.total_bytes, 0) AS INTEGER)) AS end_line,
-                    array_cosine_similarity(de.embedding, q.vec) AS chunk_score
+                    list_cosine_similarity(de.embedding, q.vec) AS chunk_score
                 FROM document_embedding de
                 JOIN doc_info di ON di.doc_id = de.doc_id
                 CROSS JOIN query_vec q
@@ -391,11 +400,12 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
 
     /// <summary>
     /// Format a float array as a DuckDB array literal.
+    /// Uses FLOAT[] without explicit size for compatibility with list_cosine_similarity.
     /// </summary>
     private static string FormatVector(float[] vector)
     {
         var values = string.Join(",", vector.Select(v => v.ToString("G9", CultureInfo.InvariantCulture)));
-        return $"[{values}]::FLOAT[{vector.Length}]";
+        return $"[{values}]::FLOAT[]";
     }
 
     /// <summary>

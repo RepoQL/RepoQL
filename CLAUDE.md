@@ -36,6 +36,15 @@ Everyone else is trying to build AI instead of conventional software. RepoQL lev
 3. **TUnit, not xUnit**: Tests use `[Test]` not `[Fact]`, `[Arguments]` not `[InlineData]`. `dotnet test` works for running all tests, but use `dotnet run` for filtering specific tests. Wrong attributes = tests silently not discovered. 
 4. **AwesomeAssertions, not FluentAssertions**: Same API (`using AwesomeAssertions;`), different package. FluentAssertions has license restrictions.
 
+**RepoQL's design should follow this same composability principle as it espouses.** 
+
+It should be composed of atomic pieces of functionality, that are aggregated together by a hierarchy of classes to do more and more complex things. You should need the word "and" very seldom when describing the purpose of a class.
+
+All classes must have an XML doc comment with a summary containing whatever other explanation needed and:
+- Purpose: Why the class exists, and what it offers to the wider system
+- Complexity: An accounting of the complexity contained in the class, why it is necessary, and how the rest of the system is protected from this complexity (complexity sandwich)
+
+
 ## Build and Test
 
 ```bash
@@ -145,8 +154,8 @@ CLI and MCP server share the same core. Use CLI for local debugging/reindexing; 
 
 ## Testing changes
 
-RepoQL is a complex project and it is necessary that we have great tests in place to make maintaining it feasible as it grows in complexity.
-It is designed to be extremely testable - almost all of it can be run entirely in memory - and this is not by mistake. Generally speaking if we add ANY functionality it must have test coverage. In the indexer particularly bugs are very very expensive, and ideally we would have 100% code coverage there. Tread carefully.
+RepoQL is a complex project, and it is necessary that we have great tests in place to make maintaining it feasible as it grows in complexity.
+RepoQL is designed to be extremely testable - almost all of it can be run entirely in memory - and this is not by mistake. Generally speaking if we add ANY functionality it must have test coverage. In the indexer particularly bugs are very very expensive, and ideally we would have 100% code coverage there. Tread carefully.
 
 ### Live testing workflows
 

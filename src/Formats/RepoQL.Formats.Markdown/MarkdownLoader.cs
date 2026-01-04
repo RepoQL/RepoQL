@@ -380,7 +380,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                     ["slug"] = heading.Slug
                 },
                 Headline = BuildHeadingHeadline(heading),
-                Structure = BuildHeadingStructure(heading),
+                Structure = BuildHeadingStructure(heading, state.Surface),
                 CreatedAt = now,
                 UpdatedAt = now
             };
@@ -684,20 +684,40 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
         return $"{prefix} · {text.Trim()}";
     }
 
-    private static string BuildHeadingStructure(HeadingInfo heading)
+    private static string BuildHeadingStructure(HeadingInfo heading, MarkdownSurface surface)
     {
-        var startLine = heading.SectionSpan.StartLine;
-        var endLine = heading.SectionSpan.EndLine;
-        var lineInfo = startLine == endLine
-            ? $"Line {startLine}"
-            : $"Lines {startLine}-{endLine}";
+        var parts = new List<string>();
 
-        if (!string.IsNullOrWhiteSpace(heading.Slug))
+        // Find direct child headings (one level deeper, within this section)
+        var childHeadings = surface.Headings
+            .Where(h => h.Level == heading.Level + 1 &&
+                        h.SectionSpan.StartLine >= heading.SectionSpan.StartLine &&
+                        h.SectionSpan.EndLine <= heading.SectionSpan.EndLine)
+            .Take(4)
+            .Select(h => h.Text.Trim())
+            .ToList();
+
+        if (childHeadings.Count > 0)
         {
-            return $"{lineInfo} | anchor #{heading.Slug}";
+            var remaining = surface.Headings.Count(h =>
+                h.Level == heading.Level + 1 &&
+                h.SectionSpan.StartLine >= heading.SectionSpan.StartLine &&
+                h.SectionSpan.EndLine <= heading.SectionSpan.EndLine) - childHeadings.Count;
+
+            var subheadingText = string.Join(", ", childHeadings);
+            if (remaining > 0)
+                subheadingText += $", +{remaining} more";
+            parts.Add(subheadingText);
         }
 
-        return lineInfo;
+        // Count code blocks in this section
+        var codeBlockCount = surface.CodeBlocks.Count(cb =>
+            cb.Span.StartLine >= heading.SectionSpan.StartLine &&
+            cb.Span.EndLine <= heading.SectionSpan.EndLine);
+        if (codeBlockCount > 0)
+            parts.Add($"{codeBlockCount} code");
+
+        return string.Join(" | ", parts);
     }
 
     private sealed record XrayMetadata(

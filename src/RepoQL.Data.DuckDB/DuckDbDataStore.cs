@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics;
 using DuckDB.NET.Data;
 using DuckDB.NET.Native;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +18,8 @@ namespace RepoQL.Data.DuckDB;
 /// </summary>
 public sealed class DuckDbDataStore : IDisposable
 {
+    private static readonly ActivitySource ActivitySource = new("RepoQL.DuckDB");
+
     private readonly string? _path;
     private DuckDBConnection _connection = null!; // Initialized in InitializeConnections
     private DuckDBConnection? _reentrantConnection; // Secondary read-only connection for UDF callbacks
@@ -257,12 +260,18 @@ public sealed class DuckDbDataStore : IDisposable
 
     private IReadOnlyList<T> ExecuteRead<T>(string sql, Func<IDataRecord, T> map)
     {
+        using var activity = ActivitySource.StartActivity("duckdb.query", ActivityKind.Client);
+        activity?.SetTag("db.system", "duckdb");
+        activity?.SetTag("db.statement", sql.Length > 200 ? sql[..200] + "..." : sql);
+
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = sql;
         using var reader = cmd.ExecuteReader();
         var results = new List<T>();
         while (reader.Read())
             results.Add(map(reader));
+
+        activity?.SetTag("db.row_count", results.Count);
         return results;
     }
 
@@ -300,6 +309,10 @@ public sealed class DuckDbDataStore : IDisposable
 
     private IReadOnlyList<T> ExecuteReentrantRead<T>(string sql, Func<IDataRecord, T> map)
     {
+        using var activity = ActivitySource.StartActivity("duckdb.query.reentrant", ActivityKind.Client);
+        activity?.SetTag("db.system", "duckdb");
+        activity?.SetTag("db.statement", sql.Length > 200 ? sql[..200] + "..." : sql);
+
         var conn = GetReentrantConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
@@ -307,11 +320,17 @@ public sealed class DuckDbDataStore : IDisposable
         var results = new List<T>();
         while (reader.Read())
             results.Add(map(reader));
+
+        activity?.SetTag("db.row_count", results.Count);
         return results;
     }
 
     private T? ExecuteReentrantScalar<T>(string sql)
     {
+        using var activity = ActivitySource.StartActivity("duckdb.scalar.reentrant", ActivityKind.Client);
+        activity?.SetTag("db.system", "duckdb");
+        activity?.SetTag("db.statement", sql.Length > 200 ? sql[..200] + "..." : sql);
+
         var conn = GetReentrantConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;

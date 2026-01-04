@@ -1,6 +1,11 @@
 namespace RepoQL.Contracts;
 
 /// <summary>
+/// Result from LLM summarization including optional reasoning trace.
+/// </summary>
+public record LlmSummaryResult(string Content, string? Reasoning = null);
+
+/// <summary>
 /// Interface for LLM-powered operations on repository data.
 /// </summary>
 public interface ILlmProvider
@@ -24,6 +29,15 @@ public interface ILlmProvider
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Text summary addressing the caller's intent.</returns>
     Task<string> SummarizeAsync(
+        string jsonData,
+        string intent,
+        int maxTokens = 500,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Summarize with reasoning trace for transparency/verification.
+    /// </summary>
+    Task<LlmSummaryResult> SummarizeWithReasoningAsync(
         string jsonData,
         string intent,
         int maxTokens = 500,

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
@@ -21,6 +22,8 @@ namespace RepoQL.Data.DuckDB.UdfFramework;
 /// </remarks>
 public class UdfRegistry
 {
+    private static readonly ActivitySource ActivitySource = new("RepoQL.UdfFramework");
+
     private readonly IServiceProvider? _serviceProvider;
     private readonly ILogger<UdfRegistry> _logger;
     private readonly List<UdfRegistration> _registrations = new();
@@ -149,6 +152,10 @@ public class UdfRegistry
             name,
             (readers, writer, n) =>
             {
+                using var activity = ActivitySource.StartActivity($"udf.{name}", ActivityKind.Internal);
+                activity?.SetTag("udf.name", name);
+                activity?.SetTag("udf.row_count", n);
+
                 try
                 {
                     if (_serviceProvider is null)
@@ -205,6 +212,10 @@ public class UdfRegistry
             name,
             (readers, writer, n) =>
             {
+                using var activity = ActivitySource.StartActivity($"udf.{name}", ActivityKind.Internal);
+                activity?.SetTag("udf.name", name);
+                activity?.SetTag("udf.row_count", n);
+
                 try
                 {
                     if (_serviceProvider is null)
@@ -263,6 +274,10 @@ public class UdfRegistry
             name,
             (readers, writer, n) =>
             {
+                using var activity = ActivitySource.StartActivity($"udf.{name}", ActivityKind.Internal);
+                activity?.SetTag("udf.name", name);
+                activity?.SetTag("udf.row_count", n);
+
                 try
                 {
                     if (_serviceProvider is null)

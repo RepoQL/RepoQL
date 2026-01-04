@@ -45,7 +45,13 @@ internal sealed class XrayTool(
           Keywords: Required (to focus on specific aspects)
           Example tasks: "Show me the validation logic in AuthService.cs"
 
-        WORKFLOW: Almost always progress Explore → Find → Examine
+        UNDERSTAND - "I want a synthesized explanation"
+          Use when: You need a prose explanation, not structured results
+          Output: **Answer** (concise findings) + **Derivation** (evidence and reasoning with citations)
+          Keywords: Required (becomes the question for LLM synthesis)
+          Example tasks: "Explain how auth works", "What's the data flow for X?"
+
+        WORKFLOW: Almost always progress Explore → Find → Examine (→ Understand for synthesis)
           1. EXPLORE first to discover what exists and learn vocabulary
           2. FIND to locate specific implementations using discovered terms
           3. EXAMINE to read detailed code in the files you found
@@ -99,12 +105,14 @@ internal sealed class XrayTool(
         - Understand architecture → intent=explore, scope=file:///src/**, keywords="How is this organized?"
         - Find a feature → intent=find, keywords="Where is caching implemented?"
         - Debug specific code → intent=examine, scope=file:///path/to/file.cs, keywords="error handling"
+        - Get synthesized explanation → intent=understand, keywords="How does authentication work?"
         </EXAMPLES>
 
         <REMEMBER>
         Start with EXPLORE when you don't know the codebase vocabulary yet.
         Use FIND once you know what concepts/terms to search for.
         Use EXAMINE only after FIND has shown you which files matter.
+        Use UNDERSTAND when you want a prose explanation synthesized by LLM.
         Each intent serves a different knowledge state - don't skip steps.
         </REMEMBER>
         """;
@@ -114,7 +122,7 @@ internal sealed class XrayTool(
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> XrayAsync(
         [Description("Tokens to invest in the response")] int tokenBudget,
-        [Description("Zoom level: explore, find, or examine")] Intent intent,
+        [Description("What you are trying to do - see INTENT_SELECTION")] Intent intent,
         [Description("Where to look (glob pattern), full uri, semicolon delimited list of uris")] string? scope = null,
         [Description("Search terms for hybrid search - full sentences work best (e.g., \"How does JWT token refresh work?\")")] string? keywords = null,
         [Description("Regex patterns to boost matches, comma-separated (e.g., \"Validate.*Token,(?i)auth\")")] string? boost = null,
@@ -165,6 +173,7 @@ internal sealed class XrayTool(
             Intent.Explore => XrayIntent.Explore,
             Intent.Find => XrayIntent.Find,
             Intent.Examine => XrayIntent.Examine,
+            Intent.Understand => XrayIntent.Understand,
             _ => XrayIntent.Explore
         };
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB.UdfFramework;
@@ -7,10 +8,19 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// <summary>
 /// UDF class for embedding operations.
 /// Provides functions to embed text and check embedding provider status.
+/// Includes query-level caching to avoid redundant embedding calls for the same text.
 /// </summary>
 [UdfClass]
 public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
 {
+    /// <summary>
+    /// Cache for embeddings to avoid redundant API calls.
+    /// Key is (text, model), value is (embedding result, timestamp).
+    /// Cache entries expire after 60 seconds.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, (string? Result, DateTime Timestamp)> EmbeddingCache = new();
+    private static readonly TimeSpan CacheExpiry = TimeSpan.FromSeconds(60);
+    private const int MaxCacheSize = 100;
     /// <summary>
     /// Returns status information about the embedding provider.
     /// </summary>
@@ -33,6 +43,7 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
     /// Embeds text and returns a JSON array of floats representing the embedding vector.
     /// Returns null if the embedding provider is not configured or if embedding fails.
     /// Use ::FLOAT[] in SQL to cast the result.
+    /// Results are cached for 60 seconds to avoid redundant API calls.
     /// </summary>
     [ScalarUdf("embed_text", Description = "Embed text and return JSON array of floats (use ::FLOAT[] to cast)")]
     public string? EmbedText(string text)
@@ -47,10 +58,26 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
             return null;
         }
 
-        float[]?[] vectors;
+        // Create cache key including model to handle provider changes
+        var cacheKey = $"{embeddingProvider.Model}:{text}";
+
+        // Check cache first
+        if (EmbeddingCache.TryGetValue(cacheKey, out var cached))
+        {
+            if (DateTime.UtcNow - cached.Timestamp < CacheExpiry)
+            {
+                return cached.Result;
+            }
+            // Expired - remove it
+            EmbeddingCache.TryRemove(cacheKey, out _);
+        }
+
+        float[]? vector;
         try
         {
-            vectors = embeddingProvider.EmbedBatchAsync([text], CancellationToken.None)
+            // Use single-item API instead of batch - avoids padding overhead
+            // (batch pads to 256 tokens, single uses actual token count)
+            vector = embeddingProvider.EmbedAsync(text, CancellationToken.None)
                 .GetAwaiter().GetResult();
         }
         catch
@@ -58,12 +85,29 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
             return null;
         }
 
-        if (vectors.Length == 0 || vectors[0] is null)
+        if (vector is null)
         {
             return null;
         }
 
-        return SerializeFloatArray(vectors[0]!);
+        var result = SerializeFloatArray(vector);
+
+        // Cache the result (with basic size limit)
+        if (EmbeddingCache.Count >= MaxCacheSize)
+        {
+            // Simple eviction: clear oldest entries
+            var cutoff = DateTime.UtcNow - CacheExpiry;
+            foreach (var key in EmbeddingCache.Keys)
+            {
+                if (EmbeddingCache.TryGetValue(key, out var entry) && entry.Timestamp < cutoff)
+                {
+                    EmbeddingCache.TryRemove(key, out _);
+                }
+            }
+        }
+
+        EmbeddingCache[cacheKey] = (result, DateTime.UtcNow);
+        return result;
     }
 
     /// <summary>

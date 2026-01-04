@@ -98,7 +98,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatCompact(result, showConfidence: true);
 
-        output.Should().Be(" 85% file:///src/Auth.cs\nAuth service");
+        output.Should().Be(" 85% file:///src/Auth.cs\n  Auth service");
     }
 
     [Test]
@@ -134,7 +134,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatCompact(result, showConfidence: true);
 
-        output.Should().Be(" 90% [method] file:///src/Auth.cs#line=42\nValidateToken");
+        output.Should().Be(" 90% [method] file:///src/Auth.cs#line=42\n  ValidateToken");
     }
 
     [Test]
@@ -152,7 +152,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatCompact(result, showConfidence: true);
 
-        output.Should().Be(" 85% file:///src/Auth.cs\nFirst line");
+        output.Should().Be(" 85% file:///src/Auth.cs\n  First line");
     }
 
     [Test]
@@ -190,7 +190,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatStandard(result, showConfidence: true);
 
-        output.Should().Be(" 85% file:///src/Auth.cs\nAuthController - 8 endpoints\n- Login, Logout\n- Register");
+        output.Should().Be(" 85% file:///src/Auth.cs\n  AuthController - 8 endpoints\n  - Login, Logout\n  - Register");
     }
 
     [Test]
@@ -208,7 +208,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatStandard(result, showConfidence: true);
 
-        output.Should().Be(" 70% file:///src/Auth.cs\nAuth module");
+        output.Should().Be(" 70% file:///src/Auth.cs\n  Auth module");
     }
 
     // Rich format tests
@@ -319,7 +319,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatStatusFooter(status);
 
-        output.Should().Be("[150ms | index: 5 pending | semantic: pending]");
+        output.Should().Be("[150 ms | index: 5 pending | semantic: pending]");
     }
 
     [Test]
@@ -330,7 +330,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatStatusFooter(status);
 
-        output.Should().Be("[50ms | index: ready | semantic: ready]");
+        output.Should().Be("[50 ms | index: ready | semantic: ready]");
     }
 
     [Test]
@@ -341,7 +341,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatStatusFooter(status);
 
-        output.Should().Be("[30ms | index: ready | semantic: disabled]");
+        output.Should().Be("[30 ms | index: ready | semantic: disabled]");
     }
 
     [Test]

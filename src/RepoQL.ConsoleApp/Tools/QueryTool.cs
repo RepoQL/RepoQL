@@ -70,7 +70,7 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
                                              </SCHEMA>
                                              
                                              <ESSENTIAL_MACROS>
-                                                 SELECT * FROM xray_documents()  -- inventory
+                                                 SELECT * FROM Files  -- inventory
                                                  SELECT * FROM snippet('file:///path#line=42', 3)  -- preview
 
                                                  -- Document search: search(keywords, scope, boost_pattern, k)

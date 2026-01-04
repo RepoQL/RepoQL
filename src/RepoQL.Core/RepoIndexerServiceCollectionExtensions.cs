@@ -157,7 +157,7 @@ public static class RepoIndexerServiceCollectionExtensions
             // Use OpenRouter cloud embeddings if API key is present
             if (useOpenRouter)
             {
-                log?.LogInformation("Embedding provider: using OpenRouter (e5-large-v2, 1024 dims, mode=Full)");
+                log?.LogInformation("Embedding provider: using OpenRouter (all-MiniLM-L6-v2, 384 dims, mode=Full)");
                 return new RepoQL.LLM.Client.OpenRouterEmbeddingProvider(
                     apiKey: openRouterKey,
                     logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterEmbeddingProvider>>());
@@ -405,6 +405,8 @@ public static class RepoIndexerServiceCollectionExtensions
                 .Where(s => !string.IsNullOrWhiteSpace(s.Sql))
                 .ToList();
 
+            // Use primary embedding provider for embed_text() UDF - ensures query embeddings
+            // match document embeddings for consistent similarity comparison in search() macro.
             var db = new DuckDbDataStore(
                 dbFileFullPath,
                 sp.GetRequiredService<IEmbeddingProvider>(),

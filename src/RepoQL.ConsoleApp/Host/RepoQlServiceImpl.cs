@@ -1,5 +1,9 @@
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
@@ -61,7 +65,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _db = db ?? throw new ArgumentNullException(nameof(db));
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
         this.barrier = barrier ?? throw new ArgumentNullException(nameof(barrier));
-        this._embeddingProvider = embeddingProvider;
+        _embeddingProvider = embeddingProvider;
         _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
@@ -359,7 +363,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     SpanId = node.SpanId?.ToString() ?? string.Empty,
                     Headline = node.Headline ?? string.Empty,
                     Structure = node.Structure ?? string.Empty,
-                    PropsJson = JsonSerializer.Serialize(node.Props ?? new System.Text.Json.Nodes.JsonObject(), PreviewJsonOptions)
+                    PropsJson = JsonSerializer.Serialize(node.Props ?? new JsonObject(), PreviewJsonOptions)
                 });
             }
         }
@@ -398,7 +402,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     DstId = edge.DstId.ToString(),
                     SrcSpanId = edge.SrcSpanId?.ToString() ?? string.Empty,
                     DstSpanId = edge.DstSpanId?.ToString() ?? string.Empty,
-                    PropsJson = JsonSerializer.Serialize(edge.Props ?? new System.Text.Json.Nodes.JsonObject(), PreviewJsonOptions)
+                    PropsJson = JsonSerializer.Serialize(edge.Props ?? new JsonObject(), PreviewJsonOptions)
                 });
             }
         }
@@ -428,8 +432,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         return DateTime.UtcNow;
     }
 
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "JSON serialization for dynamic data structures; fallback serialization")]
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "JSON serialization for dynamic data structures; fallback serialization")]
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "JSON serialization for dynamic data structures; fallback serialization")]
+    [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "JSON serialization for dynamic data structures; fallback serialization")]
     private static string SerializeToJson(object obj)
     {
         return JsonSerializer.Serialize(obj, PreviewJsonOptions);
@@ -493,7 +497,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         int i => Value.ForNumber(i),
         uint ui => Value.ForNumber(ui),
         long l => Value.ForNumber(l),
-        ulong ul => Value.ForNumber((double)ul),
+        ulong ul => Value.ForNumber(ul),
         float f => Value.ForNumber(f),
         double d => Value.ForNumber(d),
         decimal dec => Value.ForNumber((double)dec),
@@ -530,7 +534,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         if (parameters.Count == 0)
             return sql;
 
-        var result = new System.Text.StringBuilder(sql.Length + parameters.Count * 20);
+        var result = new StringBuilder(sql.Length + parameters.Count * 20);
         var paramIndex = 0;
 
         for (var i = 0; i < sql.Length; i++)
@@ -615,7 +619,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     public override async Task<ImportResponse> ImportRepository(ImportRequest request, ServerCallContext context)
     {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var sw = Stopwatch.StartNew();
         var uri = request.Uri?.Trim() ?? "";
         var isRemoval = uri.StartsWith('-');
         var displayUri = isRemoval ? uri.Substring(1).Trim() : uri;
@@ -700,7 +704,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "[Import] Embedding refresh failed after {ElapsedMs}ms", sw.ElapsedMilliseconds - embeddingStart);
-                        throw new RpcException(new Grpc.Core.Status(Grpc.Core.StatusCode.Internal, $"Embedding refresh failed: {ex.Message}"));
+                        throw new RpcException(new Status(StatusCode.Internal, $"Embedding refresh failed: {ex.Message}"));
                     }
                 }
                 else
@@ -712,7 +716,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     var embeddingMode = _embeddingMode;
                     _ = Task.Run(async () =>
                     {
-                        var bgStart = System.Diagnostics.Stopwatch.StartNew();
+                        var bgStart = Stopwatch.StartNew();
                         try
                         {
                             var refresher = new EmbeddingRefresher(db, embeddingMode, logger as ILogger<EmbeddingRefresher>);
@@ -753,7 +757,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     private Task<ImportResponse> RemoveImportAsync(string uri, ServerCallContext context)
     {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var sw = Stopwatch.StartNew();
 
         if (string.IsNullOrWhiteSpace(uri))
         {
@@ -909,9 +913,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             _ => CoordinatorPipelineStage.Discovery
         };
 
-    public override async Task<Contracts.XrayResponse> Xray(Contracts.XrayRequest request, ServerCallContext context)
+    public override async Task<XrayResponse> Xray(XrayRequest request, ServerCallContext context)
     {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var sw = Stopwatch.StartNew();
 
         try
         {
@@ -921,9 +925,10 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             // Map intent
             var intent = request.Intent switch
             {
-                Contracts.XrayIntent.Explore => Intent.Explore,
-                Contracts.XrayIntent.Find => Intent.Find,
-                Contracts.XrayIntent.Examine => Intent.Examine,
+                XrayIntent.Explore => Intent.Explore,
+                XrayIntent.Find => Intent.Find,
+                XrayIntent.Examine => Intent.Examine,
+                XrayIntent.Understand => Intent.Understand,
                 _ => Intent.Explore
             };
 
@@ -946,12 +951,12 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             var isReady = status.IndexPending == 0 && (!hasKeywords || status.SemanticReady);
 
             // Build response
-            var response = new Contracts.XrayResponse
+            var response = new XrayResponse
             {
                 Success = true,
                 RenderedOutput = result.RenderedOutput,
                 Truncated = result.Truncated,
-                Status = new Contracts.XrayIndexerStatus
+                Status = new XrayIndexerStatus
                 {
                     IndexPending = status.IndexPending,
                     SemanticReady = status.SemanticReady,
@@ -971,7 +976,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Xray query failed");
-            return new Contracts.XrayResponse
+            return new XrayResponse
             {
                 Success = false,
                 Error = ex.Message
@@ -1052,9 +1057,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         return result;
     }
 
-    private static Contracts.XrayResultItem ToProtoXrayResult(XrayResult result)
+    private static XrayResultItem ToProtoXrayResult(XrayResult result)
     {
-        var item = new Contracts.XrayResultItem
+        var item = new XrayResultItem
         {
             Uri = result.Uri,
             Confidence = result.Confidence

@@ -101,7 +101,8 @@ internal class HostCommands(IAnsiConsole console)
         });
         builder.Services.AddSingleton(sp => new XrayOrchestrator(
             sp.GetRequiredService<IXraySearchEngine>(),
-            sp.GetService<IJitObjectSearchService>()
+            sp.GetService<IJitObjectSearchService>(),
+            sp.GetService<ILlmProvider>()
         ));
 
         builder.Services.AddGrpc();

@@ -22,5 +22,12 @@ public enum Intent
     /// I know what I'm looking for - show me the code and context across relevant files.
     /// Depth over breadth. Fewer items with rich snippets and structure.
     /// </summary>
-    Examine
+    Examine,
+
+    /// <summary>
+    /// Synthesize understanding. Runs high-budget xray then summarizes via LLM.
+    /// Returns prose explanation with citations, not structured results.
+    /// Keywords become the question for LLM synthesis.
+    /// </summary>
+    Understand
 }

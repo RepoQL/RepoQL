@@ -437,6 +437,7 @@ enum XrayIntent {
   XRAY_INTENT_EXPLORE = 1;
   XRAY_INTENT_FIND = 2;
   XRAY_INTENT_EXAMINE = 3;
+  XRAY_INTENT_UNDERSTAND = 4;
 }
 
 message XrayResponse {

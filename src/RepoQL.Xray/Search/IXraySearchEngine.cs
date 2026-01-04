@@ -55,7 +55,7 @@ public sealed class XraySearchEngine : IXraySearchEngine
 
     /// <summary>
     /// Determine whether to use JIT object search based on parameters and availability.
-    /// JIT search is used when: service is available, question is provided, and intent is Find/Examine.
+    /// JIT search is used when: service is available, question is provided, and intent is Find/Examine/Understand.
     /// </summary>
     private static bool ShouldUseJitSearch(SearchParameters parameters, IJitObjectSearchService? jitService)
     {
@@ -65,8 +65,8 @@ public sealed class XraySearchEngine : IXraySearchEngine
         if (string.IsNullOrWhiteSpace(parameters.Question))
             return false;
 
-        // JIT search is most beneficial for Find/Examine intents
-        return parameters.Intent is Intent.Find or Intent.Examine;
+        // JIT search is most beneficial for Find/Examine/Understand intents
+        return parameters.Intent is Intent.Find or Intent.Examine or Intent.Understand;
     }
 
     /// <summary>
@@ -78,7 +78,7 @@ public sealed class XraySearchEngine : IXraySearchEngine
         JitEmbeddingCache jitCache,
         CancellationToken cancellationToken)
     {
-        var config = GetJitSearchConfig(parameters.Intent);
+        var config = GetJitSearchConfig(parameters.Intent, parameters.TokenBudget);
 
         var boostPattern = parameters.Patterns.Count > 0
             ? string.Join(",", parameters.Patterns)
@@ -352,25 +352,30 @@ public sealed class XraySearchEngine : IXraySearchEngine
         return range <= 0 ? 50 : (int)(10 + 90 * (doc.DocumentScore - minScore) / range);
     }
 
-    private static ObjectSearchConfig GetJitSearchConfig(Intent intent)
+    private static ObjectSearchConfig GetJitSearchConfig(Intent intent, int tokenBudget)
     {
+        // Scale JIT embeddings based on token budget
+        // Rough heuristic: ~50 tokens per object displayed, so budget/50 gives approximate object count
+        // But we also want to search a bit more than we display for ranking quality
+        var budgetScale = Math.Clamp(tokenBudget / 1500.0, 0.2, 1.5);
+
         return intent switch
         {
             Intent.Find => new ObjectSearchConfig
             {
                 MinProbabilityMass = 0.85,
-                MaxDocumentsToExpand = 15,
+                MaxDocumentsToExpand = Math.Max(3, (int)(15 * budgetScale)),
                 MinDocumentsToExpand = 3,
-                MaxJitEmbeddings = 30,
+                MaxJitEmbeddings = Math.Max(5, (int)(30 * budgetScale)),
                 JitEmbeddingThreshold = 0.15,
                 MaxObjectsPerDocument = 50
             },
             Intent.Examine => new ObjectSearchConfig
             {
                 MinProbabilityMass = 0.90,
-                MaxDocumentsToExpand = 10,
+                MaxDocumentsToExpand = Math.Max(2, (int)(10 * budgetScale)),
                 MinDocumentsToExpand = 2,
-                MaxJitEmbeddings = 40,
+                MaxJitEmbeddings = Math.Max(5, (int)(40 * budgetScale)),
                 JitEmbeddingThreshold = 0.12,
                 MaxObjectsPerDocument = 60
             },
@@ -382,6 +387,16 @@ public sealed class XraySearchEngine : IXraySearchEngine
                 MaxJitEmbeddings = 0,
                 JitEmbeddingThreshold = 1.0,
                 MaxObjectsPerDocument = 0
+            },
+            // Understand uses Find-like behavior but with broader coverage for LLM synthesis
+            Intent.Understand => new ObjectSearchConfig
+            {
+                MinProbabilityMass = 0.85,
+                MaxDocumentsToExpand = Math.Max(3, (int)(12 * budgetScale)),
+                MinDocumentsToExpand = 3,
+                MaxJitEmbeddings = Math.Max(5, (int)(35 * budgetScale)),
+                JitEmbeddingThreshold = 0.15,
+                MaxObjectsPerDocument = 50
             },
             _ => new ObjectSearchConfig()
         };
