@@ -101,6 +101,9 @@ jobs:
         with:
           dotnet-version: '10.0.x'
           include-prerelease: true
+      - name: Set USERPROFILE for Antlr4BuildTasks (macOS/Linux)
+        if: runner.os != 'Windows'
+        run: echo "USERPROFILE=$HOME" >> $GITHUB_ENV
       - name: Restore
         run: dotnet restore
       - name: Publish ${{ matrix.rid }} binary
