@@ -2,4 +2,14 @@
 <Project ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <!-- Include all the target files under /build -->
     <Import Project="$(BuildExtensionsDirectory)*.targets"/>
+
+    <!-- Fix Antlr4BuildTasks using USERPROFILE which doesn't exist on macOS/Linux.
+         This must be in Directory.Build.targets (not .props) to override the
+         defaults set by Antlr4BuildTasks.targets which is imported via NuGet. -->
+    <ItemDefinitionGroup>
+        <Antlr4>
+            <AntlrToolJarDownloadDir>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.m2/</AntlrToolJarDownloadDir>
+            <JavaDownloadDirectory>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.jre/</JavaDownloadDirectory>
+        </Antlr4>
+    </ItemDefinitionGroup>
 </Project>

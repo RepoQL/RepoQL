@@ -22,12 +22,4 @@
     <!-- Include all the target files under /build -->
     <Import Project="$(BuildExtensionsDirectory)*.props"/>
 
-    <!-- Fix Antlr4BuildTasks using USERPROFILE which doesn't exist on macOS/Linux -->
-    <ItemDefinitionGroup>
-        <Antlr4>
-            <AntlrToolJarDownloadDir>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.m2/</AntlrToolJarDownloadDir>
-            <JavaDownloadDirectory>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.jre/</JavaDownloadDirectory>
-        </Antlr4>
-    </ItemDefinitionGroup>
-
 </Project>
