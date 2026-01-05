@@ -1,16 +1,24 @@
+using LLMSharp.Anthropic.Tokenizer;
+
 namespace RepoQL.Xray;
 
 /// <summary>
 /// Estimates token counts for text and representation levels.
-/// Uses a simple heuristic (chars/4) that can be upgraded to a real tokenizer later.
+/// Uses the official Claude BPE tokenizer from LLMSharp.Anthropic.Tokenizer.
+///
+/// Purpose: Provides accurate token counts for budget-based output rendering decisions.
+/// Complexity: Wraps the ClaudeTokenizer which loads BPE rank maps from embedded resources on first use.
+/// The rest of the system is protected from this complexity via a simple static interface.
 /// </summary>
 public static class TokenEstimator
 {
+    private static readonly Lazy<ClaudeTokenizer> Tokenizer = new(() => new ClaudeTokenizer());
+
     /// <summary>
-    /// Estimate tokens for a string using chars/4 heuristic.
+    /// Count tokens for a string using the Claude BPE tokenizer.
     /// </summary>
     public static int EstimateTokens(string? text)
-        => string.IsNullOrEmpty(text) ? 0 : (text.Length + 3) / 4;
+        => string.IsNullOrEmpty(text) ? 0 : Tokenizer.Value.CountTokens(text);
 
     /// <summary>
     /// Estimate tokens for Minimal representation (headline only).
