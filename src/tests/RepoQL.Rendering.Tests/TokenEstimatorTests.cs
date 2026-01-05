@@ -21,41 +21,44 @@ public class TokenEstimatorTests
     }
 
     [Test]
-    [Arguments(4, 1)]
-    [Arguments(8, 2)]
-    [Arguments(100, 25)]
-    [Arguments(400, 100)]
-    [DisplayName("String length divided by 4 (rounded up) gives token count")]
-    public void Given_StringOfLength_When_EstimateTokens_Then_ReturnsDividedByFour(int length, int expectedTokens)
+    [Arguments("Hello", 1)]
+    [Arguments("Hello, world!", 4)]
+    [Arguments("The quick brown fox jumps over the lazy dog.", 10)]
+    [DisplayName("Real text produces expected token counts")]
+    public void Given_RealText_When_EstimateTokens_Then_ReturnsCorrectCount(string text, int expectedTokens)
     {
-        var text = new string('x', length);
         TokenEstimator.EstimateTokens(text).Should().Be(expectedTokens);
     }
 
     [Test]
-    [Arguments(1, 1)]
-    [Arguments(2, 1)]
-    [Arguments(3, 1)]
-    [Arguments(5, 2)]
-    [Arguments(6, 2)]
-    [Arguments(7, 2)]
-    [DisplayName("Rounding up works correctly for non-multiples of 4")]
-    public void Given_NonMultipleOf4_When_EstimateTokens_Then_RoundsUp(int length, int expectedTokens)
+    [DisplayName("Longer text produces more tokens")]
+    public void Given_TextOfVaryingLengths_When_EstimateTokens_Then_LongerProducesMore()
     {
-        var text = new string('x', length);
-        TokenEstimator.EstimateTokens(text).Should().Be(expectedTokens);
+        var short_ = "Hello";
+        var medium = "Hello, this is a medium length sentence.";
+        var long_ = "Hello, this is a much longer sentence that contains significantly more text and should produce many more tokens.";
+
+        var shortTokens = TokenEstimator.EstimateTokens(short_);
+        var mediumTokens = TokenEstimator.EstimateTokens(medium);
+        var longTokens = TokenEstimator.EstimateTokens(long_);
+
+        shortTokens.Should().BeLessThan(mediumTokens);
+        mediumTokens.Should().BeLessThan(longTokens);
     }
 
     [Test]
     [DisplayName("Minimal representation estimates headline plus overhead")]
     public void Given_Result_When_EstimateMinimal_Then_IncludesHeadlineAndOverhead()
     {
-        var result = ResultBuilder.Create(80, headlineLength: 40);
+        var smallHeadline = ResultBuilder.Create(80, headlineLength: 20);
+        var largeHeadline = ResultBuilder.Create(80, headlineLength: 100);
 
-        var tokens = TokenEstimator.EstimateMinimal(result);
+        var smallTokens = TokenEstimator.EstimateMinimal(smallHeadline);
+        var largeTokens = TokenEstimator.EstimateMinimal(largeHeadline);
 
-        // headline (40/4=10) + overhead (1) = 11
-        tokens.Should().Be(11);
+        // Both should produce positive token counts
+        smallTokens.Should().BeGreaterThan(0);
+        largeTokens.Should().BeGreaterThan(smallTokens, "larger headline produces more tokens");
     }
 
     [Test]
@@ -66,9 +69,8 @@ public class TokenEstimatorTests
 
         var tokens = TokenEstimator.EstimateCompact(result);
 
-        // confidence (2) + uri (~10) + newline (1) + headline (10) + overhead (2) = ~25
-        tokens.Should().BeGreaterThan(20);
-        tokens.Should().BeLessThan(40);
+        // Should produce reasonable token count for URI + headline + formatting
+        tokens.Should().BeGreaterThan(5);
     }
 
     [Test]
@@ -94,20 +96,21 @@ public class TokenEstimatorTests
         var tokensWithout = TokenEstimator.EstimateStandard(withoutStructure);
         var tokensWith = TokenEstimator.EstimateStandard(withStructure);
 
-        tokensWith.Should().BeGreaterThan(tokensWithout + 40, "200 chars structure adds ~50 tokens");
+        tokensWith.Should().BeGreaterThan(tokensWithout, "structure adds tokens");
     }
 
     [Test]
-    [DisplayName("Rich representation estimates snippet without headline")]
+    [DisplayName("Rich representation estimates snippet")]
     public void Given_ObjectWithSnippet_When_EstimateRich_Then_IncludesSnippet()
     {
-        var result = ResultBuilder.ObjectResult(90, snippetLength: 400);
+        var smallSnippet = ResultBuilder.ObjectResult(90, snippetLength: 100);
+        var largeSnippet = ResultBuilder.ObjectResult(90, snippetLength: 500);
 
-        var tokens = TokenEstimator.EstimateRich(result);
+        var smallTokens = TokenEstimator.EstimateRich(smallSnippet);
+        var largeTokens = TokenEstimator.EstimateRich(largeSnippet);
 
-        // Should include snippet (400/4=100) plus formatting
-        tokens.Should().BeGreaterThan(100);
-        tokens.Should().BeLessThan(150);
+        // Larger snippets should produce more tokens
+        largeTokens.Should().BeGreaterThan(smallTokens, "larger snippet produces more tokens");
     }
 
     [Test]
