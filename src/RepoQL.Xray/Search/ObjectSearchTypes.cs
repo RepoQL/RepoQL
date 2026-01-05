@@ -65,6 +65,13 @@ public sealed class ObjectCandidate
     public required string? Headline { get; init; }
     public required string? Structure { get; init; }
     public required string? Body { get; init; }
+
+    /// <summary>
+    /// Actual source code snippet from the file. Populated after scoring for top results.
+    /// Falls back to Body if not populated.
+    /// </summary>
+    public string? Snippet { get; set; }
+
     public required int LineStart { get; init; }
     public required int LineEnd { get; init; }
     public required int? StartByte { get; init; }

@@ -125,6 +125,10 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
 
         AssignConfidenceScores(sortedCandidates);
 
+        // Populate actual source code snippets for top results
+        // FileGrouper.MaxSnippetsPerFile * MaxDocumentsToExpand gives rough upper bound
+        PopulateSnippets(sortedCandidates, config.MaxDocumentsToExpand * 5);
+
         return new JitObjectSearchResult(selectedDocs, sortedCandidates, signals);
     }
 
@@ -489,7 +493,7 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
                 symbol,
                 headline,
                 structure,
-                body,
+                substr(COALESCE(headline || E'\n\n' || structure, headline, structure, ''), 1, 640) as body,
                 line_start,
                 line_end,
                 lang,
@@ -586,7 +590,7 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
                 symbol,
                 headline,
                 structure,
-                body,
+                substr(COALESCE(headline || E'\n\n' || structure, headline, structure, ''), 1, 640) as body,
                 line_start,
                 line_end,
                 lang,
@@ -1108,6 +1112,62 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
     }
 
     private static string EscapeSql(string value) => value.Replace("'", "''");
+
+    /// <summary>
+    /// Fetch actual source code snippets for the top-scoring objects.
+    /// Uses the snippet() macro to extract lines from the file content.
+    /// </summary>
+    private void PopulateSnippets(List<ObjectCandidate> candidates, int maxSnippets)
+    {
+        if (candidates.Count == 0) return;
+
+        // Only fetch snippets for top N candidates (they'll be shown with code)
+        var topCandidates = candidates.Take(maxSnippets).ToList();
+        if (topCandidates.Count == 0) return;
+
+        try
+        {
+            // Group by document to batch queries
+            var byDocument = topCandidates.GroupBy(c => c.DocumentUri).ToList();
+
+            foreach (var docGroup in byDocument)
+            {
+                var docUri = docGroup.Key;
+                foreach (var candidate in docGroup)
+                {
+                    try
+                    {
+                        // Build a clean URI with ONLY line fragment - avoid symbol fragments
+                        // which cause the snippet macro to use symbol lookup (often fails)
+                        if (candidate.LineStart <= 0)
+                            continue;
+
+                        var lineFragment = candidate.LineEnd > candidate.LineStart
+                            ? $"#line={candidate.LineStart},{candidate.LineEnd}"
+                            : $"#line={candidate.LineStart}";
+                        var snippetUri = candidate.DocumentUri + lineFragment;
+
+                        var sql = $"SELECT string_agg(text, chr(10) ORDER BY line_number) FROM snippet('{EscapeSql(snippetUri)}', 0)";
+                        var snippet = _store.Read(sql, r => r.IsDBNull(0) ? null : r.GetString(0)).FirstOrDefault();
+
+                        if (!string.IsNullOrWhiteSpace(snippet))
+                        {
+                            candidate.Snippet = snippet;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Failed to fetch snippet for {Uri}", candidate.Uri);
+                        // Leave Snippet as null, will fall back to Body
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to populate snippets");
+        }
+    }
 }
 
 // IJitObjectSearchService and JitObjectSearchResult are defined in RepoQL.Xray.Search

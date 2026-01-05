@@ -33,6 +33,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
     private long _lastRefreshedEpoch = long.MinValue;
     private volatile bool _needsRefresh;
+    private VssIndexManager? _vssIndexManager;
 
     private static int GetRefreshConcurrency()
     {
@@ -340,6 +341,27 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             return string.Concat(relativeUri, "\n\n", structure);
 
         return string.Concat(relativeUri, "\n\n", headline, "\n\n", structure);
+    }
+
+    public async Task RefreshVssIndexAsync(CancellationToken cancellationToken)
+    {
+        if (_db is null)
+        {
+            _logger.LogDebug("VSS index refresh skipped: no database");
+            return;
+        }
+
+        // Lazily create the VSS index manager
+        _vssIndexManager ??= new VssIndexManager(_db);
+
+        try
+        {
+            await _vssIndexManager.RefreshIndexesAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "VSS index refresh failed");
+        }
     }
 
     public void Dispose()

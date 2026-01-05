@@ -204,7 +204,7 @@ public sealed class XraySearchEngine : IXraySearchEngine
                         Symbol: obj.Symbol,
                         Headline: obj.Headline,
                         Structure: obj.Structure,
-                        Snippet: obj.Body,
+                        Snippet: obj.Snippet ?? obj.Body,  // Prefer actual snippet, fall back to body
                         LineStart: obj.LineStart,
                         LineEnd: obj.LineEnd,
                         Lang: obj.Lang,
@@ -291,7 +291,7 @@ public sealed class XraySearchEngine : IXraySearchEngine
                     Symbol: obj.Symbol,
                     Headline: obj.Headline,
                     Structure: obj.Structure,
-                    Snippet: obj.Body,
+                    Snippet: obj.Snippet ?? obj.Body,  // Prefer actual snippet, fall back to body
                     LineStart: obj.LineStart,
                     LineEnd: obj.LineEnd,
                     Lang: obj.Lang,

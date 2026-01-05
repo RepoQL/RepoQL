@@ -301,6 +301,63 @@ public static class RepositoryUserDefinedFunctions
             true
         );
 
+        // matches_glob(uri, pattern_spec, ignore_case, default_scheme) -> bool?
+        // Supports semicolon-delimited patterns and negative patterns with ! prefix.
+        // Returns TRUE for NULL/blank patterns (matches everything).
+        connection.RegisterScalarFunction<string, string, bool, string, bool>(
+            "matches_glob",
+            (readers, writer, rowCount) =>
+            {
+                var uriReader = readers[0];
+                var patternReader = readers[1];
+                var ignoreReader = readers[2];
+                var defaultSchemeReader = readers[3];
+
+                for (ulong rowIndex = 0; rowIndex < rowCount; rowIndex++)
+                {
+                    var uri = uriReader.IsValid(rowIndex) ? uriReader.GetValue<string>(rowIndex) : null;
+
+                    // Handle NULL/blank URI - return NULL (three-valued logic)
+                    if (string.IsNullOrWhiteSpace(uri))
+                    {
+                        writer.WriteNull(rowIndex);
+                        continue;
+                    }
+
+                    // Handle NULL/blank pattern - return TRUE (matches everything)
+                    // Check IsValid first - if false, the SQL value is NULL
+                    if (!patternReader.IsValid(rowIndex))
+                    {
+                        writer.WriteValue(true, rowIndex);
+                        continue;
+                    }
+
+                    var patternSpec = patternReader.GetValue<string>(rowIndex);
+                    if (string.IsNullOrWhiteSpace(patternSpec))
+                    {
+                        writer.WriteValue(true, rowIndex);
+                        continue;
+                    }
+
+                    var ignoreCase = ignoreReader.IsValid(rowIndex) ? ignoreReader.GetValue<bool>(rowIndex) : true;
+                    var defaultScheme = defaultSchemeReader.IsValid(rowIndex)
+                        ? defaultSchemeReader.GetValue<string>(rowIndex)
+                        : "file:///";
+
+                    var matched = UriPatternMatcher.Matches(uri, patternSpec, ignoreCase, defaultScheme);
+                    if (matched is null)
+                    {
+                        writer.WriteNull(rowIndex);
+                    }
+                    else
+                    {
+                        writer.WriteValue(matched.Value, rowIndex);
+                    }
+                }
+            },
+            true
+        );
+
         // ------------------- Fragment builders -------------------
 
         connection.RegisterScalarFunction<int, int, string>(

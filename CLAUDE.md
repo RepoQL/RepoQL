@@ -161,5 +161,6 @@ RepoQL is designed to be extremely testable - almost all of it can be run entire
 
 **Fast path (server changes)**: Use the Aspire MCP to restart the host - it supports hot reload. Use `mcp__aspire-dashboard__execute_resource_command` to restart the relevant resource. This avoids the full publish cycle.
 
-**Full deploy (CLI or structural changes)**: Run `deploy.ps1`, which kills all running copies, publishes, and copies to the MCP server location. Ask the user to reconnect via `/mcp` afterward.
+**Full deploy (CLI/MCP/GRPC changes)**: Run `deploy.ps1`, which kills all running copies, publishes, and copies to the MCP server location. Ask the user to reconnect via `/mcp` afterward.
 
+If you run deploy it will kill any running instances of RepoQL on your machine - if aspire is available you should start the host there before asking the user to reconnect so that the telemetry is available

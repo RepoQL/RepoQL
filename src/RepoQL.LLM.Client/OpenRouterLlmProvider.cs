@@ -141,6 +141,38 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         }
     }
 
+    public async Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
+    {
+        if (!Enabled)
+            return question; // Fallback to original
+
+        try
+        {
+            var prompt = $"""
+                Extract search keywords from this question. Return ONLY space-separated keywords, no explanation.
+                Include technical terms, class names, function names that might appear in code.
+
+                Question: {question}
+
+                Keywords:
+                """;
+
+            var messages = new JsonArray
+            {
+                new JsonObject { ["role"] = "user", ["content"] = prompt }
+            };
+            var response = await CallApiAsync(messages, tools: null, ct);
+
+            var keywords = response.Content?.Trim();
+            return string.IsNullOrWhiteSpace(keywords) ? question : keywords;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Keyword extraction failed, using original question");
+            return question; // Fallback to original
+        }
+    }
+
     private static object[] BuildToolDefinitions()
     {
         return

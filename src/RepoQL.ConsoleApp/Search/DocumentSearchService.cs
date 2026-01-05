@@ -22,10 +22,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
         CancellationToken cancellationToken)
     {
         var hasQuestion = !string.IsNullOrWhiteSpace(question);
-
-        // Split scope by semicolons to support multiple patterns
-        var scopePatterns = scope?.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [];
-        var hasScope = scopePatterns.Length > 0;
+        var hasScope = !string.IsNullOrWhiteSpace(scope);
 
         string sql;
 
@@ -34,8 +31,9 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             var escapedQuestion = EscapeSql(question!);
 
             // Build scope parameter for hybrid_search (uses SQL LIKE pattern)
+            // Note: search() still uses LIKE pattern; matches_glob used for explore mode
             var scopeParam = hasScope
-                ? $", scope := '{EscapeSql(scopePatterns[0])}'"
+                ? $", scope := '{EscapeSql(scope!.Split(';')[0])}'"
                 : "";
 
             // Use search for semantic + lexical search
@@ -45,7 +43,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                     hs.uri,
                     hs.headline,
                     hs.structure,
-                    ri.body as snippet,
+                    substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
                     ri.lang,
                     ri.mime as semantic_type,
                     hs.score,
@@ -58,23 +56,24 @@ internal sealed class DocumentSearchService : IDocumentSearchService
         }
         else if (hasScope)
         {
-            // Build scope WHERE clause
-            var scopeWhereClause = BuildScopeWhereClause("ri.uri", scopePatterns);
+            var escapedScope = EscapeSql(scope!);
 
             // Explore mode - scope only, no semantic search
+            // Uses matches_glob for semicolon-delimited patterns and negative patterns (!prefix)
             sql = $"""
                 SELECT
                     ri.uri,
                     ri.headline,
                     ri.structure,
-                    ri.body as snippet,
+                    substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
                     ri.lang,
                     ri.mime as semantic_type,
                     0.5 as score,
                     ri.doc_id
                 FROM repo_index ri
                 WHERE ri.scope = 'document'
-                  {scopeWhereClause.Replace("WHERE", "AND")}
+                  AND (matches_glob(ri.uri, '{escapedScope}', TRUE, 'file:///') IS TRUE
+                       OR matches_glob(ri.uri, '{escapedScope}', TRUE, 'docs:///') IS TRUE)
                 ORDER BY ri.mtime DESC, ri.uri
                 LIMIT {limit}
                 """;
@@ -87,7 +86,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                     ri.uri,
                     ri.headline,
                     ri.structure,
-                    ri.body as snippet,
+                    substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
                     ri.lang,
                     ri.mime as semantic_type,
                     0.5 as score,
@@ -198,26 +197,6 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             // If chunk query fails, return empty - proximity boosting will be skipped
             return new Dictionary<string, IReadOnlyList<ChunkScore>>();
         }
-    }
-
-    /// <summary>
-    /// Build WHERE clause for scope patterns, supporting semicolon-delimited lists.
-    /// </summary>
-    private static string BuildScopeWhereClause(string columnName, string[] scopePatterns)
-    {
-        if (scopePatterns.Length == 0)
-            return "";
-
-        // Build OR conditions for each scope pattern, trying both file:/// and docs:/// schemes
-        var conditions = new List<string>();
-        foreach (var pattern in scopePatterns)
-        {
-            var escaped = EscapeSql(pattern);
-            conditions.Add($"glob_match({columnName}, '{escaped}', default_scheme := 'file:///')");
-            conditions.Add($"glob_match({columnName}, '{escaped}', default_scheme := 'docs:///')");
-        }
-
-        return $"WHERE ({string.Join(" OR ", conditions)})";
     }
 
     private static string EscapeSql(string value) => value.Replace("'", "''");

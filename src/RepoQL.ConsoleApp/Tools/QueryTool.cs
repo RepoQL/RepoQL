@@ -246,7 +246,15 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
                 }
             }
 
-            return output;
+            // Append status footer with timing and token count
+            var status = new IndexerStatus(
+                result.IndexPending,
+                result.SemanticReady,
+                result.SemanticEnabled,
+                result.ExecutionTimeMs);
+            var tokens = TokenEstimator.EstimateTokens(output);
+            var footer = RepresentationFormatter.FormatStatusFooter(status, tokens);
+            return $"{output}\n{footer}";
         }
         catch (Exception ex)
         {

@@ -172,7 +172,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     ri.symbol,
                     ri.headline,
                     ri.structure,
-                    ri.body as snippet,
+                    substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
                     ri.line_start,
                     ri.line_end,
                     ri.lang,

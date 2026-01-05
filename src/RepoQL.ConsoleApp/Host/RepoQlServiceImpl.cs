@@ -82,6 +82,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         // No barrier - queries execute immediately with whatever data is available.
         // XrayTool handles "call again to wait" pattern for semantic readiness.
         var resp = new RawQueryResponse();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             // Substitute parameters into SQL (DuckDbDataStore.Query does not support params)
@@ -117,6 +118,18 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         catch (Exception ex)
         {
             throw new RpcException(new Status(StatusCode.Internal, ex.Message));
+        }
+        finally
+        {
+            sw.Stop();
+            resp.ExecutionTimeMs = sw.ElapsedMilliseconds;
+
+            // Populate indexer status
+            var status = coordinator.GetPipelineStatus();
+            var pending = status.Stages.Sum(s => s.Queued + s.InProgress);
+            resp.IndexPending = pending;
+            resp.SemanticEnabled = _embeddingMode != EmbeddingMode.None;
+            resp.SemanticReady = resp.SemanticEnabled && pending == 0;
         }
         return Task.FromResult(resp);
     }

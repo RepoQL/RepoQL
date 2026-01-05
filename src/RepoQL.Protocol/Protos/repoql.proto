@@ -85,6 +85,14 @@ message RawQueryResponse {
   int64 row_count = 3;
   // True when the server applied a limit and results were truncated.
   bool truncated = 4;
+  // Query execution time in milliseconds.
+  int64 execution_time_ms = 5;
+  // Number of files pending indexing (0 = ready).
+  int32 index_pending = 6;
+  // True if semantic embeddings are enabled.
+  bool semantic_enabled = 7;
+  // True if semantic index is ready (embeddings complete).
+  bool semantic_ready = 8;
 }
 
 message RawQueryRow {

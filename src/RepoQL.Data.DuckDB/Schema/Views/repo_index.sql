@@ -17,18 +17,9 @@ WITH document_rows AS (
         CAST(NULL AS INTEGER) AS line_end,
         COALESCE(NULLIF(doc.headline, ''), NULLIF(art.headline, '')) AS headline,
         COALESCE(NULLIF(doc.structure, ''), NULLIF(art.structure, '')) AS structure,
-        NULLIF(
-            trim(
-                concat_ws(
-                    '\n\n',
-                    NULLIF(doc.headline, ''),
-                    NULLIF(doc.structure, ''),
-                    NULLIF(art.summary, ''),
-                    NULLIF(substr(art.text_content, 1, 4000), '')
-                )
-            ),
-            ''
-        ) AS body,
+        -- Body removed - lexical search joins to artifact.text_content directly for position() checks
+        -- This avoids materializing body for all rows while enabling full-text position matching
+        CAST(NULL AS VARCHAR) AS body,
         'document' AS scope,
         de.embedding,
         doc.updated_at AS mtime,
@@ -80,36 +71,8 @@ object_rows AS (
             repository_uri_file_name(doc.uri)
         ) AS headline,
         NULLIF(child.structure, '') AS structure,
-        -- High-value body: combine metadata (headline/summary/docstring) with code
-        -- This helps embeddings and lexical search see both description and implementation
-        NULLIF(
-            trim(
-                concat_ws(
-                    E'\n\n',
-                    -- Metadata first (high-value for semantic understanding)
-                    NULLIF(child.headline, ''),
-                    json_extract_string(child.properties, '$.summary'),
-                    json_extract_string(child.properties, '$.docstring'),
-                    NULLIF(child.structure, ''),
-                    -- Then the actual code lines when available
-                    CASE
-                        WHEN art.text_content IS NOT NULL
-                             AND span.start_line IS NOT NULL
-                             AND span.end_line IS NOT NULL
-                        THEN array_to_string(
-                            list_slice(
-                                string_split(art.text_content, chr(10)),
-                                span.start_line,
-                                span.end_line
-                            ),
-                            chr(10)
-                        )
-                        ELSE NULL
-                    END
-                )
-            ),
-            ''
-        ) AS body,
+        -- Objects don't have body (too expensive to compute) - rely on semantic search
+        CAST(NULL AS VARCHAR) AS body,
         'object' AS scope,
         de.embedding,
         child.updated_at AS mtime,

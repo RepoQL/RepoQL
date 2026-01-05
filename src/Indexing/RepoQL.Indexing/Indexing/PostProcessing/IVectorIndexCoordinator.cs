@@ -13,6 +13,12 @@ public interface IVectorIndexCoordinator
     /// Called during hot path idle to enable immediate semantic search.
     /// </summary>
     Task GenerateStructureEmbeddingsAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Refreshes VSS (Vector Similarity Search) HNSW indexes for fast approximate nearest neighbor search.
+    /// Called during idle processing after embeddings are generated.
+    /// </summary>
+    Task RefreshVssIndexAsync(CancellationToken cancellationToken);
 }
 
 public sealed class NullVectorIndexCoordinator : IVectorIndexCoordinator
@@ -34,6 +40,11 @@ public sealed class NullVectorIndexCoordinator : IVectorIndexCoordinator
     }
 
     public Task GenerateStructureEmbeddingsAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+
+    public Task RefreshVssIndexAsync(CancellationToken cancellationToken)
     {
         return Task.CompletedTask;
     }

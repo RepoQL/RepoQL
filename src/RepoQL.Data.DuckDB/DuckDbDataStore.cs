@@ -166,13 +166,16 @@ public sealed class DuckDbDataStore : IDisposable
         var limit = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT") ?? "8GB";
         ExecSetting(connection, $"SET memory_limit='{limit}';");
 
-        // Disable object cache - defaults to 80% of RAM which is far too aggressive
-        ExecSetting(connection, "SET enable_object_cache=false;");
+        // Enable object cache for single-reader scenarios (caches parsed expressions, schema metadata)
+        // Safe since we have few concurrent requests
+        ExecSetting(connection, "SET enable_object_cache=true;");
 
         // Disable insertion order preservation to reduce memory overhead
         ExecSetting(connection, "SET preserve_insertion_order=false;");
 
-        var threads = Environment.GetEnvironmentVariable("DUCKDB_THREADS") ?? "1";
+        // Use multiple threads for parallel query execution
+        // With few concurrent requests, each query can utilize more cores
+        var threads = Environment.GetEnvironmentVariable("DUCKDB_THREADS") ?? "4";
         ExecSetting(connection, $"SET threads={threads};");
 
         // Return freed memory to OS more aggressively (default 128MB holds too long)
@@ -882,6 +885,19 @@ public sealed class DuckDbDataStore : IDisposable
                 _logger.LogDebug("[DuckDB] Framework UDF macros applied");
             }
 
+            // Load VSS extension for HNSW vector similarity search
+            // This must happen AFTER UDF registration to avoid conflicts with DuckDB's internal function registration
+            try
+            {
+                _connection.Execute("INSTALL vss;");
+                _connection.Execute("LOAD vss;");
+                _logger.LogDebug("[DuckDB] VSS extension loaded for HNSW search");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[DuckDB] VSS extension not available - falling back to linear search");
+            }
+
             var schemaScripts = new[]
             {
                 "Tables/artifact.sql",
@@ -896,6 +912,7 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/annotations_all.sql",
                 "Macros/glob_match.sql",
                 "Tables/document_embedding.sql",
+                "Tables/vss_indexes.sql",
                 "Views/repo_index.sql",
                 "Views/files.sql",
                 "Views/types.sql",
@@ -905,6 +922,10 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/xray_documents.sql",
                 "Macros/xray_items.sql",
                 "Macros/xray_lines.sql",
+                "Macros/search_helpers.sql",
+                "Macros/search_lexical.sql",
+                "Macros/search_semantic.sql",
+                "Macros/search_debug.sql",
                 "Macros/search.sql",
                 "Macros/hybrid_search.sql",
                 "Tables/file_system_mount.sql",

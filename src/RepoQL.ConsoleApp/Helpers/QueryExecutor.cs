@@ -40,6 +40,12 @@ internal sealed class QueryExecutor
         var formatter = _formatterFactory.GetFormatter(format);
         var lines = await formatter.FormatAsync(result, maxRows, total, cancellationToken).ConfigureAwait(false);
 
-        return new QueryExecutionResult(lines, total ?? result.RowCount);
+        return new QueryExecutionResult(
+            lines,
+            total ?? result.RowCount,
+            result.ExecutionTimeMs,
+            result.IndexPending,
+            result.SemanticEnabled,
+            result.SemanticReady);
     }
 }

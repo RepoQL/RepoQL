@@ -859,6 +859,18 @@ public partial class IndexingEngine : IAsyncDisposable
                 });
             }
 
+            // VSS HNSW index refresh phase (rebuilds in-memory HNSW indexes for fast semantic search)
+            using (ActivitySource.StartActivity("vss_index_phase", ActivityKind.Internal))
+            {
+                var vssTimer = Stopwatch.StartNew();
+                await VectorCoordinator.RefreshVssIndexAsync(Shutdown.Token).ConfigureAwait(false);
+                vssTimer.Stop();
+                Metrics?.IdlePhaseDuration.Record(vssTimer.Elapsed.TotalMilliseconds, new TagList
+                {
+                    { "phase", "vss_index" }
+                });
+            }
+
             // Multi-file analysis enqueue phase
             using (ActivitySource.StartActivity("multi_file_analysis_phase", ActivityKind.Internal))
             {

@@ -13,4 +13,7 @@ public sealed class DisabledLlmProvider : ILlmProvider
 
     public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
         => Task.FromResult("LLM not configured (set OPENROUTER_API_KEY)");
+
+    public Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
+        => Task.FromResult(string.Empty);
 }

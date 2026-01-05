@@ -86,10 +86,24 @@ public sealed class XrayOrchestrator
         var boostPatterns = ParsePatterns(query.Boost);
         var penalizePatterns = ParsePatterns(query.Penalize);
 
+        // For Understand intent, extract optimized search keywords from the question
+        var searchKeywords = query.Keywords;
+        if (isUnderstand && _llmProvider is not null && !string.IsNullOrWhiteSpace(query.Keywords))
+        {
+            try
+            {
+                searchKeywords = await _llmProvider.ExtractKeywordsAsync(query.Keywords, cancellationToken);
+            }
+            catch
+            {
+                // Fallback to original keywords on failure
+            }
+        }
+
         // Build search parameters
         var searchParams = new SearchParameters(
             Scope: query.Scope,
-            Question: query.Keywords,
+            Question: searchKeywords,
             Patterns: boostPatterns,
             Intent: searchIntent,
             TokenBudget: effectiveBudget,

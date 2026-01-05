@@ -57,4 +57,13 @@ public interface ILlmProvider
         string intent,
         Func<string, int, string> readUri,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Extract search keywords from a natural language question.
+    /// Returns space-separated keywords optimized for semantic search.
+    /// </summary>
+    /// <param name="question">The natural language question to extract keywords from.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Space-separated keywords, or the original question if extraction fails.</returns>
+    Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default);
 }

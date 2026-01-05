@@ -46,6 +46,8 @@ public class UdfFrameworkTests : IDisposable
             => Task.FromResult(new LlmSummaryResult("LLM disabled"));
         public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
             => Task.FromResult("LLM disabled");
+        public Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
+            => Task.FromResult(string.Empty);
     }
 
     [Test]

@@ -211,7 +211,7 @@ ORDER BY score DESC;
 --   max_per_doc       - Maximum objects per document
 --
 -- Returns object candidates with:
---   - Basic metadata (uri, kind, symbol, headline, structure, body, line range)
+--   - Basic metadata (uri, kind, symbol, headline, structure, line range)
 --   - name_hit_score: How well the object name matches query keywords
 --   - regex_mentions: Count of boost pattern matches in headline+structure
 
@@ -253,7 +253,6 @@ raw_objects AS (
         ri.symbol_key,
         ri.headline,
         ri.structure,
-        ri.body,
         ri.line_start,
         ri.line_end,
         ri.lang,
@@ -276,7 +275,6 @@ candidates AS (
         ro.symbol,
         ro.headline,
         ro.structure,
-        ro.body,
         ro.line_start,
         ro.line_end,
         ro.lang,
@@ -307,7 +305,6 @@ SELECT
     symbol,
     headline,
     structure,
-    body,
     line_start,
     line_end,
     lang,
