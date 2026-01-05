@@ -2,4 +2,18 @@
 <Project ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <!-- Include all the target files under /build -->
     <Import Project="$(BuildExtensionsDirectory)*.targets"/>
+
+    <!-- Fix Antlr4BuildTasks which uses USERPROFILE (doesn't exist on macOS/Linux).
+         This must be in Directory.Build.targets to override Antlr4BuildTasks.targets defaults.
+         Use HOME on Unix, USERPROFILE on Windows. ItemGroup Update overrides existing metadata. -->
+    <PropertyGroup>
+        <_AntlrHome Condition="'$(USERPROFILE)' != ''">$(USERPROFILE)</_AntlrHome>
+        <_AntlrHome Condition="'$(_AntlrHome)' == '' AND '$(HOME)' != ''">$(HOME)</_AntlrHome>
+    </PropertyGroup>
+    <ItemGroup Condition="'$(_AntlrHome)' != ''">
+        <Antlr4 Update="@(Antlr4)">
+            <AntlrToolJarDownloadDir>$(_AntlrHome)/.m2/</AntlrToolJarDownloadDir>
+            <JavaDownloadDirectory>$(_AntlrHome)/.jre/</JavaDownloadDirectory>
+        </Antlr4>
+    </ItemGroup>
 </Project>
