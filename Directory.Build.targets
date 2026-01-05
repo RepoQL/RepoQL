@@ -4,16 +4,19 @@
     <Import Project="$(BuildExtensionsDirectory)*.targets"/>
 
     <!-- Fix Antlr4BuildTasks which uses USERPROFILE (doesn't exist on macOS/Linux).
-         This must be in Directory.Build.targets to override Antlr4BuildTasks.targets defaults.
-         Use HOME on Unix, USERPROFILE on Windows. ItemGroup Update overrides existing metadata. -->
-    <PropertyGroup>
-        <_AntlrHome Condition="'$(USERPROFILE)' != ''">$(USERPROFILE)</_AntlrHome>
-        <_AntlrHome Condition="'$(_AntlrHome)' == '' AND '$(HOME)' != ''">$(HOME)</_AntlrHome>
-    </PropertyGroup>
-    <ItemGroup Condition="'$(_AntlrHome)' != ''">
-        <Antlr4 Update="@(Antlr4)">
-            <AntlrToolJarDownloadDir>$(_AntlrHome)/.m2/</AntlrToolJarDownloadDir>
-            <JavaDownloadDirectory>$(_AntlrHome)/.jre/</JavaDownloadDirectory>
-        </Antlr4>
-    </ItemGroup>
+         Use a Target to set paths at runtime before Antlr4Compile runs. -->
+    <Target Name="FixAntlr4Paths" BeforeTargets="Antlr4Compile" Condition="'@(Antlr4)' != ''">
+        <PropertyGroup>
+            <_AntlrHome Condition="'$(USERPROFILE)' != ''">$(USERPROFILE)</_AntlrHome>
+            <_AntlrHome Condition="'$(_AntlrHome)' == ''">$([System.Environment]::GetEnvironmentVariable('HOME'))</_AntlrHome>
+        </PropertyGroup>
+        <ItemGroup Condition="'$(_AntlrHome)' != ''">
+            <Antlr4 Update="@(Antlr4)">
+                <AntlrToolJarDownloadDir>$([System.IO.Path]::Combine('$(_AntlrHome)', '.m2'))</AntlrToolJarDownloadDir>
+                <JavaDownloadDirectory>$([System.IO.Path]::Combine('$(_AntlrHome)', '.jre'))</JavaDownloadDirectory>
+            </Antlr4>
+        </ItemGroup>
+        <Message Importance="high" Text="Antlr4 paths set to: $([System.IO.Path]::Combine('$(_AntlrHome)', '.m2'))" Condition="'$(_AntlrHome)' != ''" />
+        <Warning Text="Could not determine home directory for Antlr4BuildTasks" Condition="'$(_AntlrHome)' == ''" />
+    </Target>
 </Project>
