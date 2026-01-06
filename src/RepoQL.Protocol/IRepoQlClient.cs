@@ -24,11 +24,13 @@ public interface IRepoQlClient : IAsyncDisposable
     /// <param name="sql">SQL text. May reference positional parameters (e.g., '?').</param>
     /// <param name="parameters">Values to bind positionally to parameters in the SQL (0..n-1).</param>
     /// <param name="rowLimit">Optional maximum number of rows to return. <c>null</c> or 0 means no limit.</param>
+    /// <param name="tokenBudget">Optional token budget. If exceeded and SQL contains a comment, server may LLM-summarize. 0 = unlimited.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task<RawQueryResponse> ExecuteRawQueryAsync(
         string sql,
         IEnumerable<object?>? parameters = null,
         int? rowLimit = null,
+        int tokenBudget = 0,
         CancellationToken cancellationToken = default);
 
     /// <summary>

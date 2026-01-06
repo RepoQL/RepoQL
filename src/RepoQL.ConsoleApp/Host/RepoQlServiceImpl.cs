@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.RegularExpressions;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
@@ -36,6 +37,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly DocumentPreviewService _previewService;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IEmbeddingProvider? _embeddingProvider;
+    private readonly ILlmProvider? _llmProvider;
     private readonly EmbeddingMode _embeddingMode;
     private readonly XrayOrchestrator _xrayOrchestrator;
     private readonly StatusEventAggregator _statusAggregator;
@@ -60,12 +62,14 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         StatusEventAggregator statusAggregator,
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
+        ILlmProvider? llmProvider = null,
         ILogger<RepoQlServiceImpl>? logger = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
         this.barrier = barrier ?? throw new ArgumentNullException(nameof(barrier));
         _embeddingProvider = embeddingProvider;
+        _llmProvider = llmProvider;
         _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
@@ -77,7 +81,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
     }
 
-    public override Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
+    public override async Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
     {
         // No barrier - queries execute immediately with whatever data is available.
         // XrayTool handles "call again to wait" pattern for semantic readiness.
@@ -114,6 +118,47 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             }
             resp.RowCount = resp.Rows.Count;
             resp.Truncated = limited && (first is not null) && (_db.Query(sql).Skip(resp.Rows.Count).Any());
+
+            // Check token budget and potentially summarize
+            if (request.TokenBudget > 0 && resp.Rows.Count > 0)
+            {
+                var formatted = FormatResponseForTokenEstimation(resp);
+                var estimatedTokens = TokenEstimator.EstimateTokens(formatted);
+
+                if (estimatedTokens > request.TokenBudget)
+                {
+                    var intent = ExtractSqlComment(request.Sql);
+
+                    if (!string.IsNullOrWhiteSpace(intent) && _llmProvider is { Enabled: true })
+                    {
+                        try
+                        {
+                            var originalRowCount = resp.RowCount;
+                            var summary = await _llmProvider.SummarizeAsync(
+                                formatted,
+                                intent,
+                                maxTokens: request.TokenBudget,
+                                context.CancellationToken).ConfigureAwait(false);
+
+                            // Replace response with summarized version
+                            resp.Rows.Clear();
+                            resp.Columns.Clear();
+                            resp.Columns.Add(new ColumnSchema { Name = "summary", DbType = "VARCHAR" });
+                            var summaryRow = new RowData();
+                            summaryRow.Values.Add(Value.ForString(summary));
+                            resp.Rows.Add(summaryRow);
+                            resp.RowCount = 1;
+                            resp.Summarized = true;
+                            resp.OriginalRowCount = originalRowCount;
+                        }
+                        catch (Exception ex)
+                        {
+                            // LLM failed - log and return original response
+                            _logger.LogWarning(ex, "LLM summarization failed, returning original response");
+                        }
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {
@@ -131,7 +176,50 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             resp.SemanticEnabled = _embeddingMode != EmbeddingMode.None;
             resp.SemanticReady = resp.SemanticEnabled && pending == 0;
         }
-        return Task.FromResult(resp);
+        return resp;
+    }
+
+    /// <summary>
+    /// Extract user intent from SQL comment (-- or /* */).
+    /// </summary>
+    private static string? ExtractSqlComment(string sql)
+    {
+        // Single-line comment: -- comment
+        var singleLine = Regex.Match(sql, @"--\s*(.+?)(?:\r?\n|$)");
+        if (singleLine.Success)
+            return singleLine.Groups[1].Value.Trim();
+
+        // Block comment: /* comment */
+        var block = Regex.Match(sql, @"/\*\s*([\s\S]*?)\s*\*/");
+        if (block.Success)
+            return block.Groups[1].Value.Trim();
+
+        return null;
+    }
+
+    /// <summary>
+    /// Format response as text for token estimation.
+    /// </summary>
+    private static string FormatResponseForTokenEstimation(RawQueryResponse resp)
+    {
+        var sb = new StringBuilder();
+        var colNames = resp.Columns.Select(c => c.Name).ToArray();
+        sb.AppendLine(string.Join("\t", colNames));
+
+        foreach (var row in resp.Rows)
+        {
+            var values = row.Values.Select(v => v.KindCase switch
+            {
+                Value.KindOneofCase.StringValue => v.StringValue,
+                Value.KindOneofCase.NumberValue => v.NumberValue.ToString(CultureInfo.InvariantCulture),
+                Value.KindOneofCase.BoolValue => v.BoolValue.ToString(),
+                Value.KindOneofCase.NullValue => "NULL",
+                _ => v.ToString()
+            });
+            sb.AppendLine(string.Join("\t", values));
+        }
+
+        return sb.ToString();
     }
 
     public override async Task<ClientLeaseSummary> HoldClientLease(IAsyncStreamReader<ClientLeaseBeat> requestStream, ServerCallContext context)

@@ -62,6 +62,9 @@ message RawQueryRequest {
   repeated google.protobuf.Value parameters = 2;
   // Optional row limit; 0 means no explicit limit.
   int32 limit = 3;
+  // Token budget for response. If exceeded and SQL contains a comment, server may LLM-summarize.
+  // Default 0 means unlimited.
+  int32 token_budget = 4;
 }
 
 message ColumnSchema {
@@ -93,6 +96,10 @@ message RawQueryResponse {
   bool semantic_enabled = 7;
   // True if semantic index is ready (embeddings complete).
   bool semantic_ready = 8;
+  // True if response was LLM-summarized due to exceeding token budget.
+  bool summarized = 9;
+  // Original row count before summarization (only set when summarized=true).
+  int64 original_row_count = 10;
 }
 
 message RawQueryRow {

@@ -20,7 +20,8 @@ internal sealed class QueryExecutor
         string sql,
         int maxRows,
         ResultFormat format,
-        CancellationToken cancellationToken)
+        int tokenBudget = 0,
+        CancellationToken cancellationToken = default)
     {
         var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
 
@@ -29,12 +30,12 @@ internal sealed class QueryExecutor
 
         if (format == ResultFormat.Toon)
         {
-            result = await client.ExecuteRawQueryAsync(sql, cancellationToken: cancellationToken).ConfigureAwait(false);
+            result = await client.ExecuteRawQueryAsync(sql, tokenBudget: tokenBudget, cancellationToken: cancellationToken).ConfigureAwait(false);
             total = result.RowCount;
         }
         else
         {
-            result = await client.ExecuteRawQueryAsync(sql, parameters: null, rowLimit: maxRows, cancellationToken: cancellationToken).ConfigureAwait(false);
+            result = await client.ExecuteRawQueryAsync(sql, parameters: null, rowLimit: maxRows, tokenBudget: tokenBudget, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
         var formatter = _formatterFactory.GetFormatter(format);
@@ -46,6 +47,8 @@ internal sealed class QueryExecutor
             result.ExecutionTimeMs,
             result.IndexPending,
             result.SemanticEnabled,
-            result.SemanticReady);
+            result.SemanticReady,
+            result.Summarized,
+            result.OriginalRowCount);
     }
 }

@@ -650,10 +650,11 @@ public sealed class RepoQlClient : IRepoQlClient
         string sql,
         IEnumerable<object?>? parameters = null,
         int? rowLimit = null,
+        int tokenBudget = 0,
         CancellationToken cancellationToken = default)
         => InvokeWithReconnectAsync(async (client, ct) =>
         {
-            var req = BuildRawQueryRequest(sql, parameters, rowLimit);
+            var req = BuildRawQueryRequest(sql, parameters, rowLimit, tokenBudget);
             var deadline = ComputeDeadline();
             return await client.ExecuteRawQueryAsync(req, deadline: deadline, cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
         }, cancellationToken);
@@ -732,12 +733,13 @@ public sealed class RepoQlClient : IRepoQlClient
         return ValueTask.CompletedTask;
     }
 
-    private static RawQueryRequest BuildRawQueryRequest(string sql, IEnumerable<object?>? parameters, int? rowLimit)
+    private static RawQueryRequest BuildRawQueryRequest(string sql, IEnumerable<object?>? parameters, int? rowLimit, int tokenBudget = 0)
     {
         var req = new RawQueryRequest
         {
             Sql = sql,
-            Limit = rowLimit.GetValueOrDefault(0)
+            Limit = rowLimit.GetValueOrDefault(0),
+            TokenBudget = tokenBudget
         };
         foreach (var p in parameters ?? [])
             req.Parameters.Add(ToValue(p));

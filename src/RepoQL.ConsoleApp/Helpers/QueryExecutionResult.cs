@@ -6,4 +6,6 @@ internal readonly record struct QueryExecutionResult(
     long ExecutionTimeMs,
     int IndexPending,
     bool SemanticEnabled,
-    bool SemanticReady);
+    bool SemanticReady,
+    bool Summarized = false,
+    long OriginalRowCount = 0);

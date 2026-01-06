@@ -210,7 +210,7 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
     public async Task<string> Query(
         [Description("DuckDB-style SQL to execute. Pass ':diagnostics:' to run diagnostics. Pass 'read:<uri>' for raw content, or 'read:<uri> // <question>' to summarize with LLM.")] string sql,
         [Description("Maximum number of rows to include when formatting the response.")] int maxRows = 500,
-        [Description("Optional token budget. If response exceeds budget, returns guidance to repeat query for full results or use llm_summarize. Set to 0 for unlimited.")] int tokenBudget = 0,
+        [Description("Token budget for response. If exceeded and SQL contains a comment (intent), server may LLM-summarize. Client checks result and offers repeat-to-confirm if still too large.")] int tokenBudget = 15_000,
         CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(sql))
@@ -244,13 +244,13 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
             var requestSignature = $"{sql.Trim()}|{maxRows}|{tokenBudget}";
             var isRepeatRequest = _lastBudgetExceededQuery == requestSignature;
 
-            var result = await queryExecutor.ExecuteAsync(sql, maxRows, ResultFormat.Toon, cancel).ConfigureAwait(false);
+            var result = await queryExecutor.ExecuteAsync(sql, maxRows, ResultFormat.Toon, tokenBudget, cancel).ConfigureAwait(false);
 
             // Clear the stored query - it's either being repeated (confirmed) or a new query
             _lastBudgetExceededQuery = null;
             var output = string.Join(Environment.NewLine, result.Lines);
 
-            // Check token budget (only if budget is set and this is not a repeat request)
+            // Check token budget (even after server summarization - summary might still exceed)
             if (tokenBudget > 0 && !isRepeatRequest)
             {
                 var estimatedTokens = TokenEstimator.EstimateTokens(output);
@@ -259,8 +259,18 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
                     // Store this query so next identical call bypasses the check
                     _lastBudgetExceededQuery = requestSignature;
 
-                    return FormatBudgetExceededMessage(result.TotalRowCount, estimatedTokens, tokenBudget);
+                    return FormatBudgetExceededMessage(
+                        result.Summarized ? result.OriginalRowCount : result.TotalRowCount,
+                        estimatedTokens,
+                        tokenBudget,
+                        result.Summarized);
                 }
+            }
+
+            // Add indicator if server summarized the response
+            if (result.Summarized && result.OriginalRowCount > 0)
+            {
+                output = $"(Summarized from {result.OriginalRowCount:N0} rows)\n\n{output}";
             }
 
             // Append status footer with timing and token count
@@ -292,18 +302,16 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
     /// <summary>
     /// Format the message returned when a query exceeds the token budget.
     /// </summary>
-    private static string FormatBudgetExceededMessage(long rowCount, int estimatedTokens, int tokenBudget)
+    private static string FormatBudgetExceededMessage(long rowCount, int estimatedTokens, int tokenBudget, bool wasSummarized = false)
     {
-        return $"""
-            Response exceeds token budget: {estimatedTokens:N0} tokens (budget: {tokenBudget:N0}), {rowCount:N0} rows.
+        var prefix = wasSummarized
+            ? $"Response still exceeds budget after LLM summarization"
+            : $"Response exceeds token budget";
 
-            Options:
-            1. **Repeat the query exactly** to receive the full result (budget will be bypassed for this query)
-            2. **Adjust your query** to return fewer results:
-               - Add a LIMIT clause to reduce rows
-               - Use more specific WHERE conditions
-               - Select fewer columns
-               - Wrap with `llm_summarize((SELECT to_json(list(t)) FROM (...) t), 'your question')` if full fidelity is not required
+        return $"""
+            {prefix}: {estimatedTokens:N0} tokens (budget: {tokenBudget:N0}), {rowCount:N0} rows.
+
+            **Repeat the query exactly** to receive the full result (budget check bypassed on repeat).
             """;
     }
 
@@ -335,7 +343,7 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
             var escapedPrompt = prompt.Replace("'", "''", StringComparison.Ordinal);
 
             var sql = $"SELECT llm_summarize('{escapedContent}', '{escapedPrompt}')";
-            var result = await queryExecutor.ExecuteAsync(sql, 1, ResultFormat.Toon, cancel).ConfigureAwait(false);
+            var result = await queryExecutor.ExecuteAsync(sql, 1, ResultFormat.Toon, cancellationToken: cancel).ConfigureAwait(false);
             return string.Join(Environment.NewLine, result.Lines);
         }
         catch (Exception ex)
