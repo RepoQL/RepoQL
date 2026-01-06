@@ -252,8 +252,23 @@ public static class RepoIndexerServiceCollectionExtensions
 
             // Load shipped model
             var baseDir = AppContext.BaseDirectory;
-            var shipped = Path.Combine(baseDir, "Embeddings", "Model", "embedding_model.onnx");
+            var modelDir = Path.Combine(baseDir, "Embeddings", "Model");
+            var shipped = Path.Combine(modelDir, "embedding_model.onnx");
             log?.LogInformation("Local embedding provider: looking for ONNX at {Path} (baseDir={BaseDir})", shipped, baseDir);
+
+            // Extract from embedded resources if not already present
+            if (!File.Exists(shipped))
+            {
+                try
+                {
+                    ExtractEmbeddedModelIfAvailable(modelDir, log);
+                }
+                catch (Exception ex)
+                {
+                    log?.LogWarning(ex, "Local embedding provider: failed to extract embedded model resources");
+                }
+            }
+
             if (File.Exists(shipped))
             {
                 var onnx = new OnnxEmbeddingProvider(shipped, sp.GetService<ILogger<OnnxEmbeddingProvider>>()!, maxTokens);

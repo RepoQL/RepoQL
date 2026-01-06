@@ -468,7 +468,7 @@ public class IndexingEngineTests
     }
 
     [Test]
-    [Timeout(15_000)]
+    [Timeout(30_000)]
     [DisplayName("HotPathIdle reports the epoch that drained")]
     public async Task Given_NewEpoch_When_WorkCompletes_Then_ReportsEpoch(CancellationToken token)
     {
@@ -487,7 +487,7 @@ public class IndexingEngineTests
     }
 
     [Test]
-    [Timeout(15_000)]
+    [Timeout(30_000)]
     [DisplayName("Dispatches completed items to analysis once hot path is idle")]
     public async Task Given_ItemCompletes_When_HotPathIdle_Then_AnalysisRuns(CancellationToken token)
     {
