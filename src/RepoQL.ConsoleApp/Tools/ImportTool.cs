@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
+using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
@@ -7,10 +8,11 @@ using RepoQL.Contracts;
 namespace RepoQL.ConsoleApp.Tools;
 
 [McpServerToolType]
-internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRunner selfTestRunner)
+internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRunner selfTestRunner, QueryExecutor queryExecutor)
 {
     private readonly RepoQlClientProvider _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
     private readonly SelfTestRunner _selfTestRunner = selfTestRunner ?? throw new ArgumentNullException(nameof(selfTestRunner));
+    private readonly QueryExecutor _queryExecutor = queryExecutor ?? throw new ArgumentNullException(nameof(queryExecutor));
 
     private const string ImportInstructions =
         """
@@ -66,21 +68,20 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
             // Extract repository information for query guidance
             var uriPattern = GetUriPattern(uri.Trim());
 
+            // Generate tree visualization of imported content
+            var treeOutput = await GenerateTreeAsync(uriPattern, cancellationToken).ConfigureAwait(false);
+
             return $"""
                 Import completed: {uri.Trim()}
 
-                Pipeline status: reindexing={status.Reindexing}, writerPending={status.WriterPending}
-                Stages: {stageSummary}
+                {treeOutput}
 
                 To query the imported content, use:
                 - File search: SELECT uri, score FROM search('keywords', scope := '{uriPattern}%', k := 10)
-                - Xray scan: Use pattern="{uriPattern}/**/*" with the xray tool
-                - Document list: SELECT uri, name, headline FROM files WHERE uri LIKE '{uriPattern}%'
+                - Xray scan: Use scope="{uriPattern}/**" with the xray tool
+                - Document list: SELECT uri, headline FROM Files WHERE uri LIKE '{uriPattern}%'
 
-                Example: To see what was imported, run:
-                SELECT COUNT(*) as files FROM xray_documents() WHERE document_uri LIKE '{uriPattern}%'
-
-                Note: Re-importing the same repository will perform an incremental update - only new or changed files will be reprocessed.
+                Note: Re-importing the same repository will perform an incremental update.
                 """;
         }
         catch (Exception ex)
@@ -169,5 +170,47 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
         _clientProvider.SetWorkingDirectory(fullPath);
         return true;
+    }
+
+    /// <summary>
+    /// Generate a tree visualization of the imported content.
+    /// </summary>
+    private async Task<string> GenerateTreeAsync(string uriPattern, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var escapedPattern = uriPattern.Replace("'", "''");
+            var sql = $"SELECT tree(list(uri)) FROM Files WHERE uri LIKE '{escapedPattern}%'";
+            var result = await _queryExecutor.ExecuteAsync(sql, 1, ResultFormat.Toon, cancellationToken).ConfigureAwait(false);
+
+            var tree = string.Join(Environment.NewLine, result.Lines);
+            if (string.IsNullOrWhiteSpace(tree))
+            {
+                return $"(No files indexed yet for {uriPattern})";
+            }
+
+            var fileCount = result.TotalRowCount > 0 ? result.TotalRowCount : CountFiles(tree);
+            return $"Imported {fileCount} files:\n{tree}";
+        }
+        catch
+        {
+            // If tree generation fails, return a simple message
+            return $"(Tree generation pending - files are being indexed)";
+        }
+    }
+
+    /// <summary>
+    /// Count files in tree output by counting lines that don't end with /
+    /// </summary>
+    private static long CountFiles(string tree)
+    {
+        return tree.Split('\n').Count(line =>
+        {
+            var trimmed = line.TrimEnd();
+            return !string.IsNullOrEmpty(trimmed) &&
+                   !trimmed.EndsWith('/') &&
+                   !trimmed.EndsWith("://") &&
+                   !trimmed.Contains("files)");
+        });
     }
 }

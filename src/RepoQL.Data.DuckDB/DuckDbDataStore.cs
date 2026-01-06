@@ -911,6 +911,7 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/annotations_for.sql",
                 "Macros/annotations_all.sql",
                 "Macros/glob_match.sql",
+                "Macros/glob_files.sql",
                 "Tables/document_embedding.sql",
                 "Tables/vss_indexes.sql",
                 "Views/repo_index.sql",

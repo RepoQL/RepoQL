@@ -45,6 +45,23 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
                                                    `application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
                                              </CONTEXT>
                                              
+                                             <SPECIAL COMMANDS>
+                                             ### Capsule: ReadPrefix
+                                             **Invariant**
+                                             `read:<uri>` returns content; `read:<uri> // <question>` summarizes via LLM.
+                                             **Example**
+                                             read:file:///src/Auth.cs                              raw content
+                                             read:file:///docs/api.md#line=50,100                  lines 50-100 inclusive
+                                             read:file:///src/**/*.cs                              glob expansion
+                                             read:file:///docs/guide.md // How does auth work?     LLM summary
+                                             **Depth**
+                                             - URI schemes: `file:///`, `docs:///`, `github://`
+                                             - Fragments: `#line=X,Y` (inclusive), `#symbol=Name`, `#char=X,Y`
+                                             - LLM returns citations as `#line=X,Y`; use for follow-up reads
+                                             - xray locates across files; read retrieves from known locations
+                                             ---
+                                             </SPECIAL COMMANDS>
+                                             
                                              <SCHEMA>
                                                  Everything is a graph. Files are nodes with artifacts (bytes). Entities inside files (headings, functions, etc.) are child nodes connected by edges. Precise locations use spans. Everything else (lint, metrics, outlines) is annotations.
                                                  

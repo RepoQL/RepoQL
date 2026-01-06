@@ -49,10 +49,27 @@ public class ToonFormatter : IResultFormatter
 
     /// <summary>
     /// Single-column mode: just values, one per line (no header)
+    /// For single-row multiline strings (like tree output), return raw lines unquoted.
     /// </summary>
     private static string[] FormatSingleColumn(ColumnSchema[] cols, RowData[] rows, int take)
     {
         var lines = new List<string>(take);
+
+        // Special case: single row with a multiline string - return raw lines
+        if (take == 1 && rows.Length > 0 && rows[0].Values.Count > 0)
+        {
+            var val = rows[0].Values[0];
+            if (val.KindCase == Value.KindOneofCase.StringValue)
+            {
+                var s = val.StringValue ?? "";
+                if (s.Contains('\n'))
+                {
+                    // Return raw lines without quoting - preserves tree structure
+                    return s.Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+                }
+            }
+        }
+
         for (var r = 0; r < take; r++)
         {
             var val = r < rows.Length && rows[r].Values.Count > 0

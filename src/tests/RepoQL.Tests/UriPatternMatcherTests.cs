@@ -147,14 +147,16 @@ internal class UriPatternMatcherTests
     [Test]
     public void ShorthandPath_InfersFileScheme()
     {
-        var result = UriPatternMatcher.Matches("file:///src/App.cs", "src/*.cs");
+        // Pattern is prefixed with URI's root segment (repo), so src/*.cs matches file:///repo/src/App.cs
+        var result = UriPatternMatcher.Matches("file:///repo/src/App.cs", "src/*.cs");
         result.Should().BeTrue();
     }
 
     [Test]
     public void ShorthandPath_InfersFileSchemeForDeep()
     {
-        var result = UriPatternMatcher.Matches("file:///docs/readme.md", "docs/**/*.md");
+        // Pattern is prefixed with URI's root segment (repo), so docs/**/*.md matches file:///repo/docs/readme.md
+        var result = UriPatternMatcher.Matches("file:///repo/docs/readme.md", "docs/**/*.md");
         result.Should().BeTrue();
     }
 
@@ -268,14 +270,93 @@ internal class UriPatternMatcherTests
     [Test]
     public void CaseInsensitive_ByDefault()
     {
-        var result = UriPatternMatcher.Matches("file:///SRC/APP.CS", "src/app.cs");
+        // Pattern src/app.cs with case-insensitive should match file:///repo/SRC/APP.CS
+        var result = UriPatternMatcher.Matches("file:///repo/SRC/APP.CS", "src/app.cs");
         result.Should().BeTrue();
     }
 
     [Test]
     public void CaseSensitive_WhenSpecified()
     {
-        var result = UriPatternMatcher.Matches("file:///SRC/APP.CS", "src/app.cs", ignoreCase: false);
+        // Pattern src/app.cs with case-sensitive should NOT match file:///repo/SRC/APP.CS
+        var result = UriPatternMatcher.Matches("file:///repo/SRC/APP.CS", "src/app.cs", ignoreCase: false);
         result.Should().BeFalse();
+    }
+
+    // === Deep Path Patterns (Issue 4 fix) ===
+
+    [Test]
+    public void DeepPath_ShorthandPatternMatchesWhenStartsWithRootSegment()
+    {
+        // Pattern starts with same segment as URI root - should not double up
+        var uri = "file:///docs/repositories/platform-services/identity/README.md";
+        var pattern = "docs/repositories/platform-services/identity/**/*.md";
+
+        UriPatternMatcher.Matches(uri, pattern).Should().BeTrue();
+    }
+
+    [Test]
+    public void DeepPath_FullUriPatternWorks()
+    {
+        var uri = "file:///docs/repositories/platform-services/identity/README.md";
+        var pattern = "file:///docs/repositories/platform-services/identity/**/*.md";
+
+        UriPatternMatcher.Matches(uri, pattern).Should().BeTrue();
+    }
+
+    [Test]
+    public void DeepPath_NestedFileMatchesDoubleStarPattern()
+    {
+        var uri = "file:///docs/repositories/platform-services/identity/subfolder/README.md";
+        var pattern = "docs/repositories/platform-services/identity/**/*.md";
+
+        UriPatternMatcher.Matches(uri, pattern).Should().BeTrue();
+    }
+
+    // === Trailing Slash Patterns (Issue 5 fix) ===
+
+    [Test]
+    public void TrailingSlash_MatchesDescendants()
+    {
+        var uri = "file:///docs/repositories/platform-services/identity/README.md";
+        var pattern = "file:///docs/repositories/platform-services/identity/";
+
+        UriPatternMatcher.Matches(uri, pattern).Should().BeTrue();
+    }
+
+    [Test]
+    public void TrailingSlash_ShorthandMatchesDescendants()
+    {
+        var uri = "file:///docs/repositories/platform-services/identity/README.md";
+        var pattern = "docs/repositories/platform-services/identity/";
+
+        UriPatternMatcher.Matches(uri, pattern).Should().BeTrue();
+    }
+
+    [Test]
+    public void TrailingSlash_MatchesDeeplyNestedFiles()
+    {
+        var uri = "file:///docs/repositories/platform-services/identity/subfolder/deep/file.md";
+        var pattern = "docs/repositories/platform-services/identity/";
+
+        UriPatternMatcher.Matches(uri, pattern).Should().BeTrue();
+    }
+
+    // === Wildcard-Leading Patterns ===
+
+    [Test]
+    public void DoubleStarSlash_MatchesAnyDepth()
+    {
+        var pattern = "**/*.md";
+
+        // Should match .md files at any depth
+        UriPatternMatcher.Matches("file:///README.md", pattern).Should().BeTrue();
+        UriPatternMatcher.Matches("file:///docs/README.md", pattern).Should().BeTrue();
+        UriPatternMatcher.Matches("file:///docs/deep/path/README.md", pattern).Should().BeTrue();
+        UriPatternMatcher.Matches("file:///docs/repositories/platform-services/identity/README.md", pattern).Should().BeTrue();
+
+        // Should NOT match non-.md files
+        UriPatternMatcher.Matches("file:///docs/README.txt", pattern).Should().BeFalse();
+        UriPatternMatcher.Matches("file:///src/App.cs", pattern).Should().BeFalse();
     }
 }

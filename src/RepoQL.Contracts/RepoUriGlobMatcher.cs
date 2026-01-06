@@ -76,7 +76,8 @@ public static class RepoUriGlobMatcher
             Absolute: normalized,
             BasePrefix: basePrefix,
             SchemePrefix: schemePrefix,
-            HasLeadingSlash: hasLeadingSlash);
+            HasLeadingSlash: hasLeadingSlash,
+            RootSegment: rootSegment);
     }
 
     private static PatternInfo NormalizePattern(string value, string defaultScheme, UriInfo uriInfo, bool ignoreCase)
@@ -118,6 +119,13 @@ public static class RepoUriGlobMatcher
             return BuildSchemeOnlyPrefix(uriInfo, defaultScheme);
         }
 
+        // If pattern starts with the same segment as the URI's root, use scheme-only prefix
+        // to avoid doubling up (e.g., file:///docs/docs/... when pattern is "docs/...")
+        if (!string.IsNullOrEmpty(uriInfo.RootSegment) && PatternStartsWithSegment(normalizedPattern, uriInfo.RootSegment))
+        {
+            return BuildSchemeOnlyPrefix(uriInfo, defaultScheme);
+        }
+
         var prefix = uriInfo.BasePrefix;
         if (!string.IsNullOrEmpty(prefix))
             return prefix;
@@ -125,6 +133,20 @@ public static class RepoUriGlobMatcher
         return uriInfo.Absolute.Contains("://", StringComparison.Ordinal)
             ? defaultScheme
             : string.Empty;
+    }
+
+    private static bool PatternStartsWithSegment(string pattern, string segment)
+    {
+        // Pattern must start with the segment followed by / or be exactly the segment
+        var patternTrimmed = pattern.TrimStart('/');
+        if (patternTrimmed.StartsWith(segment, StringComparison.OrdinalIgnoreCase))
+        {
+            if (patternTrimmed.Length == segment.Length)
+                return true;
+            if (patternTrimmed.Length > segment.Length && patternTrimmed[segment.Length] == '/')
+                return true;
+        }
+        return false;
     }
 
     private static bool IsWildcard(char c) => c is '*' or '?' or '[';
@@ -370,7 +392,7 @@ public static class RepoUriGlobMatcher
 
     private readonly record struct GlobCacheKey(string Pattern, bool IgnoreCase);
 
-    private readonly record struct UriInfo(string Absolute, string BasePrefix, string SchemePrefix, bool HasLeadingSlash);
+    private readonly record struct UriInfo(string Absolute, string BasePrefix, string SchemePrefix, bool HasLeadingSlash, string RootSegment);
 
     private readonly record struct PatternInfo(string Pattern);
 }

@@ -27,41 +27,54 @@ internal sealed class XrayTool(
         <INTENT_SELECTION>
         CRITICAL: Choose intent based on YOUR CURRENT KNOWLEDGE STATE, not the task type.
 
-        EXPLORE - "I don't know what exists yet"
-          Use when: Starting a new investigation, understanding architecture, discovering what's available
-          Output: Many results, headlines only, broad coverage
-          Keywords: Optional (can explore without searching)
-          Example tasks: "What's in this codebase?", "How is this organized?", "What docs exist?"
-
-        FIND - "I know roughly what I'm looking for"
-          Use when: You have a concept/feature in mind, need to locate implementations
-          Output: Fewer results, headlines + structure, method signatures visible
-          Keywords: Required (you must know what to search for)
-          Example tasks: "Where is auth implemented?", "Find the caching logic"
-
-        EXAMINE - "I found it, show me the details"
-          Use when: You already know WHICH FILES contain what you need
-          Output: Few results, full snippets with code context
-          Keywords: Required (to focus on specific aspects)
-          Example tasks: "Show me the validation logic in AuthService.cs"
-
-        UNDERSTAND - "I want a synthesized explanation"
-          Use when: You need a prose explanation, not structured results
-          Output: **Answer** (concise findings) + **Derivation** (evidence and reasoning with citations)
-          Keywords: Required (becomes the question for LLM synthesis)
-          Example tasks: "Explain how auth works", "What's the data flow for X?"
-
-        WORKFLOW: Almost always progress Explore → Find → Examine (→ Understand for synthesis)
-          1. EXPLORE first to discover what exists and learn vocabulary
-          2. FIND to locate specific implementations using discovered terms
-          3. EXAMINE to read detailed code in the files you found
-
-        ANTI-PATTERNS (common mistakes):
-          ✗ Using Find/Examine for "understand the architecture" → Use Explore first
-          ✗ Using Examine before you know which files matter → Use Find first
-          ✗ Skipping Explore and going straight to Find → You'll miss context
-          ✗ Using same intent repeatedly → Progress through the workflow
-        </INTENT_SELECTION>
+        ### Capsule: XRayIntent
+        **Invariant**
+        Intent matches knowledge state: Explore (discovery), Find (location), Examine (structure), Understand (synthesis).
+        **Example**
+        Explore  → tokenBudget=1000 keywords="payment" scope="file:///docs/**"
+        Find     → tokenBudget=1500 keywords="settlement batch" boost="(?i)payment"
+        Examine  → tokenBudget=3000 keywords="reconciliation logic"
+        Understand → tokenBudget=2000 keywords="Why does Pushpay batch payments?"
+        **Depth**
+        - All intents accept: tokenBudget, keywords, scope, boost, penalize
+        - Explore: keywords optional (ranks when present); broad results
+        - Find: keywords required; ranked results with snippets
+        - Examine: keywords required; deep structure with line numbers
+        - Understand: keywords required as question; prose synthesis
+        - Budget by intent: Explore 800-2000, Find 1000-2000, Examine 2000-5000, Understand 1000-3000
+        - Workflow: Explore→Find→Examine→Understand (accumulates knowledge)
+        ---
+        
+        ### Capsule: XRayTargeting
+        **Invariant**
+        Keywords target semantically; boost/penalize adjust ranking (regex); scope filters path (glob).
+        **Example**
+        keywords="authentication flow"              semantic targeting
+        boost="(?i)oauth|jwt|session"               elevate matches
+        penalize="(?i)test|mock|fixture"            demote matches
+        scope="file:///docs/service/**/*.md"        path filter
+        **Depth**
+        - All parameters work with all intents
+        - Keywords: 2-5 word phrases; question format for Understand
+        - boost/penalize: RE2 regex (`(?i)` case-insensitive, `|` alternation)
+        - scope: glob pattern (`*` single level, `**` recursive, `*.md` extension)
+        - boost adjusts ranking; scope excludes—choose based on need
+        ---
+        
+        ### Capsule: ExplainNarrow
+        **Invariant**
+        When using explain, queries must be self-contained; keywords become search terms directly.
+        **Example**
+        ✓ "What is AuthService responsible for?"
+        ✓ "Why does PaymentProcessor use idempotency keys?"
+        ✗ "Explain everything about authentication"
+        ✗ "What does this service do?"
+        **Depth**
+        - No pronouns or references—xray has no conversation context
+        - Include entity names, service names, specific concepts
+        - Broad queries dilute relevance; focused queries concentrate it
+        - Derivation section shows evidence; verify citations before trusting
+        ---
 
         <KNOBS>
         tokenBudget:
@@ -71,7 +84,7 @@ internal sealed class XrayTool(
             the underlying query is the same regardless of budget - budget controls the level of detail in the response, and attempts to maximize value given the budget and intent
 
         keywords: search terms for hybrid (semantic + lexical) search
-          - Questions + boost patterns work best: keywords="How does auth work?" boost="Auth.*,Validate.*"
+          - Questions + boost patterns work best: keywords="How does auth work?" boost="(?i)Auth.*|Validate.*"
           - Questions alone find conceptually related content via semantic search
           - Control results with patterns to boost or penalize matches
 
