@@ -579,8 +579,20 @@ public static class RepoIndexerServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Guards against redundant extraction attempts within the same process.
+    /// </summary>
+    private static volatile bool _extractionAttempted;
+
     private static void ExtractEmbeddedModelIfAvailable(string destinationModelDir, ILogger? log)
     {
+        // Only attempt extraction once per process to avoid redundant work
+        if (_extractionAttempted)
+        {
+            return;
+        }
+        _extractionAttempted = true;
+
         var entry = System.Reflection.Assembly.GetEntryAssembly();
         if (entry == null)
         {
