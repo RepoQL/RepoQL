@@ -423,6 +423,8 @@ public static class RepoIndexerServiceCollectionExtensions
             var logger = sp.GetService<ILogger<McpClientRegistry>>();
             return McpClientRegistry.CreateFromDirectory(resolvedRoot, selfServerName: "repoql", logger);
         });
+        // Register IMcpToolCaller for UDF resolution - McpClientRegistry implements this interface
+        services.AddSingleton<IMcpToolCaller>(sp => sp.GetRequiredService<McpClientRegistry>());
         services.AddHostedService<McpHostedService>();
 
         // In-memory OTEL sink for dashboards/tests
