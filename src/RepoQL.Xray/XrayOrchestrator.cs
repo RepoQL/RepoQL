@@ -215,7 +215,10 @@ public sealed class XrayOrchestrator
                 maxTokens: 1000,
                 ct).ConfigureAwait(false);
 
-            var footer = RepresentationFormatter.FormatStatusFooter(status);
+            // Calculate token count for the response content (excluding footer)
+            var responseContent = $"## Understanding: {question}\n\n{result}";
+            var tokenCount = TokenEstimator.EstimateTokens(responseContent);
+            var footer = RepresentationFormatter.FormatStatusFooter(status, tokenCount);
 
             return $"""
                 ## Understanding: {question}
@@ -223,7 +226,7 @@ public sealed class XrayOrchestrator
                 {result}
 
                 ---
-                
+
                 {footer}
                 """;
         }
