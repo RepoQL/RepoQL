@@ -1,0 +1,14 @@
+Workbook: {{ file_name }}
+Sheets: {% for sheet in sheets %}{{ sheet.name }} ({{ sheet.row_count }} rows){% unless forloop.last %}, {% endunless %}{% endfor %}
+{% if tables and tables.size > 0 -%}
+Tables: {% for t in tables limit:5 %}{{ t.name }}{% unless forloop.last %}, {% endunless %}{% endfor %}{% if tables.size > 5 %} +{{ tables.size | minus: 5 }} more{% endif %}
+{% endif -%}
+{% if named_ranges and named_ranges.size > 0 -%}
+Named Ranges: {{ named_range_count }}
+{% endif -%}
+{% if has_formulas -%}
+Formulas: Present{% if has_totals %} (includes SUM/totals){% endif %}
+{% endif -%}
+{% if column_type_counts and column_type_counts.size > 0 -%}
+Data Types: {% for dt in column_type_counts limit:5 %}{{ dt.type }}: {{ dt.count }}{% unless forloop.last %}, {% endunless %}{% endfor %}
+{% endif -%}

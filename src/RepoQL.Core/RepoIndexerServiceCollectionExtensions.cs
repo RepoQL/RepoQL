@@ -30,6 +30,7 @@ using RepoQL.Formats.Terraform;
 using RepoQL.Formats.TypeScript;
 using RepoQL.Formats.Sql;
 using RepoQL.Formats.CSS;
+using RepoQL.Formats.Xlsx;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
@@ -289,6 +290,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddPHPFormat();
         services.AddTerraformFormat();
         services.AddCSSFormat();
+        services.AddXlsxFormat();
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjAnalyzer>();

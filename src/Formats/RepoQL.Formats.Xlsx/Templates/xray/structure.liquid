@@ -1,0 +1,37 @@
+Workbook
+{% for sheet in sheets -%}
+  {{ sheet.name }}{% if sheet.hidden %} [hidden]{% endif %}
+
+    Rows: {{ sheet.row_count }} | Columns: {{ sheet.column_count }}
+{% if sheet.has_header_row and sheet.detected_columns.size > 0 -%}
+    Header Row: {{ sheet.header_row_index }}
+    Columns:
+{% for col in sheet.detected_columns -%}
+      {% if col.has_formulas %}∑{% else %} {% endif %}{{ col.letter }}: {{ col.header }}{% if col.type != "unknown" %} ({{ col.type }}){% endif %}{% if col.type == "numeric" or col.type == "currency" or col.type == "percentage" %}{% if col.min_value and col.max_value %} → {{ col.min_value | round: 2 }} - {{ col.max_value | round: 2 }}{% endif %}{% elsif col.type == "date" or col.type == "datetime" %}{% if col.min_date_formatted and col.max_date_formatted %} → {{ col.min_date_formatted }} to {{ col.max_date_formatted }}{% endif %}{% elsif col.sample_values.size > 1 %} → {{ col.sample_values | join: ", " }}{% elsif col.sample_value %} → "{{ col.sample_value }}"{% endif %}
+{% endfor -%}
+{% endif -%}
+{% if sheet.tables.size > 0 -%}
+    Tables:
+{% for t in sheet.tables -%}
+      - {{ t.name }}: {{ t.range }} ({{ t.row_count }} rows)
+{% endfor -%}
+{% endif -%}
+{% if sheet.charts.size > 0 -%}
+    Charts:
+{% for c in sheet.charts -%}
+      - {{ c.name }}: {{ c.chart_type }}
+{% endfor -%}
+{% endif -%}
+{% if sheet.pivot_tables.size > 0 -%}
+    PivotTables:
+{% for p in sheet.pivot_tables -%}
+      - {{ p.name }}
+{% endfor -%}
+{% endif -%}
+{% endfor -%}
+{% if named_ranges and named_ranges.size > 0 -%}
+Named Ranges:
+{% for nr in named_ranges -%}
+  - {{ nr.name }}: {{ nr.refers_to }}
+{% endfor -%}
+{% endif -%}
