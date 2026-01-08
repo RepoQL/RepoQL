@@ -346,8 +346,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                 ["capsules"] = state.Surface.Capsules.Select(c => new Dictionary<string, object?>
                 {
                     ["name"] = c.Name,
-                    ["invariant"] = c.Invariant,
-                    ["invariant_preview"] = c.Invariant.Length > 60 ? c.Invariant.Substring(0, 57) + "..." : c.Invariant
+                    ["invariant"] = c.Invariant
                 }).ToList(),
                 ["capsules_count"] = state.Surface.Capsules.Count
             };
