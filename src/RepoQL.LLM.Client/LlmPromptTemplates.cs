@@ -126,11 +126,14 @@ public static class LlmPromptTemplates
 
         ---
 
-        ## Checklist (verify before responding)
-        - [ ] Every claim has evidence
-        - [ ] Gaps and anomalies surfaced
-        - [ ] Dots connected AND evidence shown (verifiable synthesis)
-        - [ ] Would YOU find this response helpful mid-investigation?
+        ## Remember
+        - [ ] Every claim should have evidence
+        - [ ] Gaps and anomalies should be surfaced
+        - [ ] Dots should be connected AND evidence shown (verifiable synthesis)
+        - [ ] Be careful about stating that something unequivically doesnt exist vs wasn't in the given search results 
+        - [ ] Don't assume the search results are necessarily all there is
+        - [ ] Misleading or unsubstantiated claims are much more damaging than no claims
+        - [ ] Consider: Would YOU find this response helpful mid-investigation?
         """;
 
     /// <summary>
