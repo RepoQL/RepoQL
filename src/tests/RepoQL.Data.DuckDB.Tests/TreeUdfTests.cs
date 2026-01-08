@@ -40,9 +40,9 @@ public class TreeUdfTests : IDisposable
     {
         public bool Enabled => false;
         public string Model => "disabled";
-        public Task<string> SummarizeAsync(string jsonData, string intent, int maxTokens = 500, CancellationToken ct = default)
+        public Task<string> SummarizeAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
             => Task.FromResult("LLM disabled");
-        public Task<LlmSummaryResult> SummarizeWithReasoningAsync(string jsonData, string intent, int maxTokens = 500, CancellationToken ct = default)
+        public Task<LlmSummaryResult> SummarizeWithReasoningAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
             => Task.FromResult(new LlmSummaryResult("LLM disabled"));
         public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
             => Task.FromResult("LLM disabled");
@@ -200,5 +200,45 @@ public class TreeUdfTests : IDisposable
         var tree = results[0]!;
         tree.Should().Contain("(1 file)");
         tree.Should().NotContain("(1 files)");
+    }
+
+    [Test]
+    [DisplayName("tree with foldersOnly=true hides files and shows type counts")]
+    public void Tree_FoldersOnly_HidesFilesAndShowsTypeCounts()
+    {
+        var results = _db.Read(
+            """SELECT tree('["file:///src/a.cs", "file:///src/b.cs", "file:///src/config.json", "file:///lib/helper.cs"]', true)""",
+            r => r.IsDBNull(0) ? null : r.GetString(0));
+
+        results.Should().HaveCount(1);
+        var tree = results[0]!;
+
+        // Should NOT contain individual file names
+        tree.Should().NotContain("a.cs");
+        tree.Should().NotContain("b.cs");
+        tree.Should().NotContain("config.json");
+        tree.Should().NotContain("helper.cs");
+
+        // Should contain folder with extension counts
+        tree.Should().Contain("src/");
+        tree.Should().Contain("lib/");
+        tree.Should().Contain("2 cs"); // src/ has 2 cs files
+        tree.Should().Contain("1 json"); // src/ has 1 json file
+    }
+
+    [Test]
+    [DisplayName("tree with foldersOnly=false shows files (default behavior)")]
+    public void Tree_FoldersOnlyFalse_ShowsFiles()
+    {
+        var results = _db.Read(
+            """SELECT tree('["file:///src/a.cs", "file:///src/b.cs"]', false)""",
+            r => r.IsDBNull(0) ? null : r.GetString(0));
+
+        results.Should().HaveCount(1);
+        var tree = results[0]!;
+
+        // Should contain file names
+        tree.Should().Contain("a.cs");
+        tree.Should().Contain("b.cs");
     }
 }

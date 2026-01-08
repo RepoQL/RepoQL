@@ -192,20 +192,8 @@ public sealed class XrayOrchestrator
         CancellationToken ct)
     {
         // The xray output becomes the context, the keywords become the question
-        var intent = $"""
-            Answer this question based on the codebase information provided: {question}
-
-            Requirements:
-            - Quote actual code verbatim when describing implementations - never paraphrase into pseudocode
-            - Cite every claim with file:// URIs (include #line=N,M for specific code)
-            - Omit anything you cannot directly verify from the provided context
-            - Be honest when you have insufficient information
-            - Less is more - make every token earn its place
-
-            Structure your response as:
-            1. **Answer** - Direct, concise answer to the question
-            2. **Derivation** - Show your working: the key evidence you found and the logical steps connecting it to your conclusions
-            """;
+        // System prompt (CoreSystemPrompt with capsules) handles format and wisdom
+        var intent = question;
 
         try
         {
@@ -213,7 +201,8 @@ public sealed class XrayOrchestrator
                 xrayOutput,
                 intent,
                 maxTokens: 1000,
-                ct).ConfigureAwait(false);
+                repoTree: null,
+                ct: ct).ConfigureAwait(false);
 
             // Calculate token count for the response content (excluding footer)
             var responseContent = $"## Understanding: {question}\n\n{result}";

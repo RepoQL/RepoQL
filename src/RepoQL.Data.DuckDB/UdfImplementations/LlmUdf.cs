@@ -30,7 +30,7 @@ public class LlmUdf(ILlmProvider llmProvider)
         try
         {
             // Block synchronously on async call (required by DuckDB UDF framework)
-            var result = llmProvider.SummarizeAsync(jsonData, intent, maxTokens, CancellationToken.None)
+            var result = llmProvider.SummarizeAsync(jsonData, intent, maxTokens, repoTree: null, ct: CancellationToken.None)
                 .GetAwaiter()
                 .GetResult();
 

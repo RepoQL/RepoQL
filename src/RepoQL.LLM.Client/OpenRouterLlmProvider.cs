@@ -66,9 +66,10 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         string jsonData,
         string intent,
         int maxTokens = 500,
+        string? repoTree = null,
         CancellationToken ct = default)
     {
-        var result = await SummarizeWithReasoningAsync(jsonData, intent, maxTokens, ct);
+        var result = await SummarizeWithReasoningAsync(jsonData, intent, maxTokens, repoTree, ct);
         return result.Content;
     }
 
@@ -76,6 +77,7 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         string jsonData,
         string intent,
         int maxTokens = 500,
+        string? repoTree = null,
         CancellationToken ct = default)
     {
         if (!Enabled)
@@ -84,11 +86,12 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         try
         {
             var toon = JsonToToonConverter.Convert(jsonData);
-            var prompt = LlmPromptTemplates.BuildSummarizePrompt(toon, intent, maxTokens);
+            var prompt = LlmPromptTemplates.BuildSummarizePrompt(toon, intent, maxTokens, repoTree);
 
             var messages = new JsonArray
             {
-                new JsonObject { ["role"] = "user", ["content"] = prompt }
+                new JsonObject { ["role"] = "system", ["content"] = prompt.System },
+                new JsonObject { ["role"] = "user", ["content"] = prompt.User }
             };
             var response = await CallApiAsync(messages, tools: null, ct);
 
@@ -128,7 +131,8 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
 
             var messages = new JsonArray
             {
-                new JsonObject { ["role"] = "user", ["content"] = prompt }
+                new JsonObject { ["role"] = "system", ["content"] = prompt.System },
+                new JsonObject { ["role"] = "user", ["content"] = prompt.User }
             };
             var response = await CallApiAsync(messages, tools: null, ct);
 
@@ -208,7 +212,7 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
     }
 
     private async Task<string> CallApiWithToolsAsync(
-        string prompt,
+        PromptPair prompt,
         object[] tools,
         Func<string, int, string> readUri,
         CancellationToken ct)
@@ -216,7 +220,8 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         // Use JsonArray for consistent serialization (mixing JsonElement with anonymous objects causes issues)
         var messages = new JsonArray
         {
-            new JsonObject { ["role"] = "user", ["content"] = prompt }
+            new JsonObject { ["role"] = "system", ["content"] = prompt.System },
+            new JsonObject { ["role"] = "user", ["content"] = prompt.User }
         };
         var toolCallCount = 0;
 
@@ -411,7 +416,11 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
             rawMessage = message.Clone();
 
             if (message.TryGetProperty("content", out var contentProp) && contentProp.ValueKind == JsonValueKind.String)
-                responseContent = contentProp.GetString();
+            {
+                var rawContent = contentProp.GetString();
+                // Decode XML entities that some models may return in code snippets
+                responseContent = rawContent is not null ? DecodeXmlEntities(rawContent) : null;
+            }
 
             // Capture reasoning content for thinking models (Kimi K2, etc.)
             if (message.TryGetProperty("reasoning_content", out var rc))
@@ -487,6 +496,23 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Decode only the 5 XML special character entities.
+    /// More targeted than WebUtility.HtmlDecode which handles all HTML entities.
+    /// </summary>
+    private static string DecodeXmlEntities(string text)
+    {
+        if (!text.Contains('&'))
+            return text;
+
+        return text
+            .Replace("&lt;", "<")
+            .Replace("&gt;", ">")
+            .Replace("&amp;", "&")
+            .Replace("&quot;", "\"")
+            .Replace("&apos;", "'");
     }
 
     #region Internal Types

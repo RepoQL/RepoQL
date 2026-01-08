@@ -7,7 +7,8 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// <summary>
 /// UDF for formatting URI lists as ASCII tree structures.
 /// Purpose: Provides visual tree representation of file/document hierarchies for quick codebase overview.
-/// Complexity: URI parsing and tree building logic; isolated to this class.
+/// Complexity: URI parsing, tree building, and progressive disclosure logic (full vs folders-only);
+/// isolated to this class. The rest of the system just calls FormatTree with the foldersOnly flag.
 /// </summary>
 [UdfClass]
 public class TreeUdf
@@ -21,10 +22,11 @@ public class TreeUdf
     /// Formats a list of URIs as an ASCII tree grouped by scheme with folder counts.
     /// </summary>
     /// <param name="urisJson">JSON array of URI strings, e.g. ["file:///src/a.cs", "docs:///readme.md"]</param>
+    /// <param name="foldersOnly">If true, shows only folders with file type counts (e.g., "src/ (3 cs, 2 json)")</param>
     /// <returns>ASCII tree string with box-drawing characters</returns>
     [ScalarUdf("_tree_internal", MacroName = "tree", IsPure = true,
         Description = "Format URIs as ASCII tree grouped by scheme with folder counts")]
-    public string FormatTree(string urisJson)
+    public string FormatTree(string urisJson, [UdfDefault("false")] bool foldersOnly)
     {
         if (string.IsNullOrWhiteSpace(urisJson))
             return string.Empty;
@@ -43,7 +45,7 @@ public class TreeUdf
             var (scheme, paths) = schemeList[i];
             var tree = BuildTree(paths);
             var isLastScheme = i == schemeList.Count - 1;
-            RenderTree(sb, scheme, tree, isLastScheme);
+            RenderTree(sb, scheme, tree, isLastScheme, foldersOnly);
         }
 
         return sb.ToString().TrimEnd();
@@ -154,6 +156,20 @@ public class TreeUdf
                     child.IsFile = true;
                     // Count this file in the parent folder
                     current.FileCount++;
+
+                    // Track extension for type-aware folder summaries
+                    var ext = GetExtension(segment);
+                    if (!string.IsNullOrEmpty(ext))
+                    {
+                        current.FilesByExtension.TryGetValue(ext, out var count);
+                        current.FilesByExtension[ext] = count + 1;
+                    }
+                    else
+                    {
+                        // Files without extension
+                        current.FilesByExtension.TryGetValue("(no ext)", out var count);
+                        current.FilesByExtension["(no ext)"] = count + 1;
+                    }
                 }
 
                 current = child;
@@ -163,11 +179,24 @@ public class TreeUdf
         return root;
     }
 
-    private static void RenderTree(StringBuilder sb, string scheme, TreeNode root, bool isLastScheme)
+    /// <summary>
+    /// Extract file extension without the dot, in lowercase.
+    /// </summary>
+    private static string GetExtension(string filename)
+    {
+        var dotIndex = filename.LastIndexOf('.');
+        if (dotIndex < 0 || dotIndex == filename.Length - 1)
+            return string.Empty;
+        return filename[(dotIndex + 1)..].ToLowerInvariant();
+    }
+
+    private static void RenderTree(StringBuilder sb, string scheme, TreeNode root, bool isLastScheme, bool foldersOnly)
     {
         sb.AppendLine(scheme);
 
+        // Filter children based on mode
         var children = root.Children
+            .Where(kv => !foldersOnly || !kv.Value.IsFile) // In folders-only mode, skip files at root
             .OrderBy(kv => kv.Value.IsFile) // Folders first
             .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -175,7 +204,7 @@ public class TreeUdf
         for (var i = 0; i < children.Count; i++)
         {
             var isLast = i == children.Count - 1;
-            RenderNode(sb, children[i].Value, "", isLast);
+            RenderNode(sb, children[i].Value, "", isLast, foldersOnly);
         }
 
         // Add blank line between schemes (but not after last)
@@ -183,16 +212,21 @@ public class TreeUdf
             sb.AppendLine();
     }
 
-    private static void RenderNode(StringBuilder sb, TreeNode node, string prefix, bool isLast)
+    private static void RenderNode(StringBuilder sb, TreeNode node, string prefix, bool isLast, bool foldersOnly)
     {
         var branch = isLast ? LastBranch : Branch;
         var name = node.Name;
 
-        // Add folder indicator and count for non-file nodes with children
+        // Add folder indicator and counts for non-file nodes with children
         if (!node.IsFile && node.Children.Count > 0)
         {
             name += "/";
-            if (node.FileCount > 0)
+            if (foldersOnly)
+            {
+                // Show type counts (e.g., "3 cs, 2 json")
+                name += FormatTypeCounts(node);
+            }
+            else if (node.FileCount > 0)
             {
                 var fileWord = node.FileCount == 1 ? "file" : "files";
                 name += $" ({node.FileCount} {fileWord})";
@@ -208,9 +242,10 @@ public class TreeUdf
         sb.Append(branch);
         sb.AppendLine(name);
 
-        // Render children
+        // Render children (skip files in folders-only mode)
         var childPrefix = prefix + (isLast ? Space : Vertical);
         var children = node.Children
+            .Where(kv => !foldersOnly || !kv.Value.IsFile)
             .OrderBy(kv => kv.Value.IsFile) // Folders first
             .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -218,8 +253,26 @@ public class TreeUdf
         for (var i = 0; i < children.Count; i++)
         {
             var childIsLast = i == children.Count - 1;
-            RenderNode(sb, children[i].Value, childPrefix, childIsLast);
+            RenderNode(sb, children[i].Value, childPrefix, childIsLast, foldersOnly);
         }
+    }
+
+    /// <summary>
+    /// Format file counts by extension (e.g., " (3 cs, 2 json, 1 md)").
+    /// </summary>
+    private static string FormatTypeCounts(TreeNode node)
+    {
+        if (node.FilesByExtension.Count == 0)
+            return string.Empty;
+
+        // Sort by count descending, then by extension
+        var parts = node.FilesByExtension
+            .OrderByDescending(kv => kv.Value)
+            .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(kv => $"{kv.Value} {kv.Key}")
+            .ToList();
+
+        return $" ({string.Join(", ", parts)})";
     }
 
     private class TreeNode
@@ -228,5 +281,10 @@ public class TreeUdf
         public Dictionary<string, TreeNode> Children { get; } = new();
         public int FileCount { get; set; }
         public bool IsFile { get; set; }
+        /// <summary>
+        /// Counts of direct child files by extension (e.g., "cs" -> 3, "json" -> 2).
+        /// Only populated for folder nodes. Extension is lowercase without dot.
+        /// </summary>
+        public Dictionary<string, int> FilesByExtension { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }

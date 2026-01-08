@@ -49,6 +49,9 @@ service RepoQL {
   // Execute an xray query returning both structured results and pre-rendered output.
   rpc Xray(XrayRequest) returns (XrayResponse);
 
+  // Read repository content with token-budget-aware representation selection.
+  rpc Read(ReadRequest) returns (ReadResponse);
+
   // Stream real-time status events. Replaces polling for live dashboard updates.
   rpc WatchStatus(WatchStatusRequest) returns (stream StatusEvent);
 }
@@ -500,6 +503,33 @@ message XrayIndexerStatus {
   bool ready = 3;
   // Query elapsed time in milliseconds.
   int64 elapsed_ms = 4;
+}
+
+// ----- Read: token-budget-aware content retrieval -----
+
+message ReadRequest {
+  // URI or glob pattern (e.g., file:///path, docs:///file.md, file:///**/*.cs).
+  // Append ' // <question>' for LLM synthesis via xray Understand.
+  string uri = 1;
+  // Token budget - determines representation depth (full/structure/headline).
+  int32 token_budget = 2;
+}
+
+message ReadResponse {
+  // True if the read executed successfully.
+  bool success = 1;
+  // Error message if success is false.
+  string error = 2;
+  // Pre-rendered output for display/MCP.
+  string rendered_output = 3;
+  // Representation level used (full/structure/headline/glob/question).
+  string representation = 4;
+  // Number of files read (for glob patterns).
+  int32 files_read = 5;
+  // Number of files omitted due to budget constraints.
+  int32 files_omitted = 6;
+  // Current indexer status with readiness info.
+  XrayIndexerStatus status = 7;
 }
 
 // ----- WatchStatus: real-time status streaming -----

@@ -1,17 +1,14 @@
-﻿using System.ComponentModel;
-using System.Globalization;
-using System.Text.RegularExpressions;
+using System.ComponentModel;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
-using RepoQL.ConsoleApp.Resources;
 using RepoQL.Xray;
 
 namespace RepoQL.ConsoleApp.Tools;
 
 [McpServerToolType]
-internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRunner, RepoResourceService resourceService)
+internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRunner)
 {
     /// <summary>
     /// Track the last query that exceeded token budget for "repeat to confirm" pattern.
@@ -44,24 +41,7 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
                                                  - Semantic mime type indicates both file type and contents e.g.
                                                    `application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
                                              </CONTEXT>
-                                             
-                                             <SPECIAL COMMANDS>
-                                             ### Capsule: ReadPrefix
-                                             **Invariant**
-                                             `read:<uri>` returns content; `read:<uri> // <question>` summarizes via LLM.
-                                             **Example**
-                                             read:file:///src/Auth.cs                              raw content
-                                             read:file:///docs/api.md#line=50,100                  lines 50-100 inclusive
-                                             read:file:///src/**/*.cs                              glob expansion
-                                             read:file:///docs/guide.md // How does auth work?     LLM summary
-                                             **Depth**
-                                             - URI schemes: `file:///`, `docs:///`, `github://`
-                                             - Fragments: `#line=X,Y` (inclusive), `#symbol=Name`, `#char=X,Y`
-                                             - LLM returns citations as `#line=X,Y`; use for follow-up reads
-                                             - xray locates across files; read retrieves from known locations
-                                             ---
-                                             </SPECIAL COMMANDS>
-                                             
+
                                              <SCHEMA>
                                                  Everything is a graph. Files are nodes with artifacts (bytes). Entities inside files (headings, functions, etc.) are child nodes connected by edges. Precise locations use spans. Everything else (lint, metrics, outlines) is annotations.
                                                  
@@ -197,10 +177,10 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
                                              <INSTRUCTION>
                                              
                                              - Use Xray for anything you can - it will always use less tokens than Query
-                                             - Use ReadMcpResourceTool when you want to read content and you know the URI
+                                             - Use the read tool when you want to read content and you know the URI
                                              - Use query when you need more control or your needs are complex
                                              - Remember that you can import additional repositories if you need more context
-                                             
+
                                              </INSTRUCTION>
                                              """;
 
@@ -208,7 +188,7 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> Query(
-        [Description("DuckDB-style SQL to execute. Pass ':diagnostics:' to run diagnostics. Pass 'read:<uri>' for raw content, or 'read:<uri> // <question>' to summarize with LLM.")] string sql,
+        [Description("DuckDB-style SQL to execute. Pass ':diagnostics:' to run diagnostics.")] string sql,
         [Description("Maximum number of rows to include when formatting the response.")] int maxRows = 500,
         [Description("Token budget for response. If exceeded and SQL contains a comment (intent), server may LLM-summarize. Client checks result and offers repeat-to-confirm if still too large.")] int tokenBudget = 15_000,
         CancellationToken cancel = default)
@@ -220,21 +200,6 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
         if (sql.Trim().Equals(":diagnostics:", StringComparison.OrdinalIgnoreCase))
         {
             return await selfTestRunner.RunAsync(cancel);
-        }
-
-        // Special command: read:<uri> [// <guidance>] - return raw content or LLM summary
-        if (sql.StartsWith("read:", StringComparison.OrdinalIgnoreCase))
-        {
-            var rest = sql[5..].Trim();
-
-            // Pattern: <uri> // <guidance> - URI is non-whitespace, separator has spaces
-            var match = ReadGuidancePattern().Match(rest);
-            if (match.Success)
-            {
-                return await ReadWithGuidanceAsync(match.Groups[1].Value, match.Groups[2].Value, cancel).ConfigureAwait(false);
-            }
-
-            return await ReadResourceContentAsync(rest, cancel).ConfigureAwait(false);
         }
 
         try
@@ -314,93 +279,4 @@ internal partial class QueryTool(QueryExecutor queryExecutor, SelfTestRunner sel
             **Repeat the query exactly** to receive the full result (budget check bypassed on repeat).
             """;
     }
-
-    private async Task<string> ReadWithGuidanceAsync(string uri, string guidance, CancellationToken cancel)
-    {
-        try
-        {
-            var content = await ReadResourceContentAsync(uri, cancel).ConfigureAwait(false);
-
-            // Extract base URI (without fragment) and starting line offset
-            var (baseUri, startLine) = ParseUriAndOffset(uri);
-
-            // Add line numbers so LLM can cite accurately
-            var numberedContent = AddLineNumbers(content, startLine);
-
-            // Build prompt that asks for evidence with line citations
-            var prompt = $"""
-                {guidance}
-
-                If nuances exist (things I might not know, tangential context), surface them. If the question isn't answerable from this content, say so concisely and note what's missing if known. Be concise.
-
-                YOU MUST cite every claim as a clickable URI.
-                Format: {baseUri}#line=N,M
-                Correct: {baseUri}#line=42,50
-                Wrong: {baseUri}#42,50 (missing "line=")
-                """;
-
-            var escapedContent = numberedContent.Replace("'", "''", StringComparison.Ordinal);
-            var escapedPrompt = prompt.Replace("'", "''", StringComparison.Ordinal);
-
-            var sql = $"SELECT llm_summarize('{escapedContent}', '{escapedPrompt}')";
-            var result = await queryExecutor.ExecuteAsync(sql, 1, ResultFormat.Toon, cancellationToken: cancel).ConfigureAwait(false);
-            return string.Join(Environment.NewLine, result.Lines);
-        }
-        catch (Exception ex)
-        {
-            return $"Error: {ex.Message}";
-        }
-    }
-
-    private static (string baseUri, int startLine) ParseUriAndOffset(string uri)
-    {
-        var hashIndex = uri.IndexOf('#', StringComparison.Ordinal);
-        if (hashIndex < 0)
-            return (uri, 1);
-
-        var baseUri = uri[..hashIndex];
-        var fragment = uri[(hashIndex + 1)..];
-
-        // Look for line=N or line=N,M
-        var lineMatch = Regex.Match(fragment, @"line=(\d+)");
-        var startLine = lineMatch.Success ? int.Parse(lineMatch.Groups[1].Value, CultureInfo.InvariantCulture) : 1;
-
-        return (baseUri, startLine);
-    }
-
-    private static string AddLineNumbers(string content, int startLine = 1)
-    {
-        var lines = content.Split('\n');
-        var maxLine = startLine + lines.Length - 1;
-        var width = maxLine.ToString(CultureInfo.InvariantCulture).Length;
-        return string.Join('\n', lines.Select((line, i) =>
-            $"{(startLine + i).ToString(CultureInfo.InvariantCulture).PadLeft(width)}  {line.TrimEnd('\r')}"));
-    }
-
-    private async Task<string> ReadResourceContentAsync(string uri, CancellationToken cancel)
-    {
-        try
-        {
-            // Glob patterns need special handling - concatenate all matched files
-            if (uri.Contains('*') || uri.Contains('?'))
-            {
-                var results = await resourceService.FetchGlobAsync(uri, cancel).ConfigureAwait(false);
-                if (results.Count == 0)
-                    return $"No files matched: {uri}";
-
-                return string.Join("\n\n", results.Select(r =>
-                    $"--- {r.Uri} ---\n{r.Text ?? "(empty)"}"));
-            }
-
-            var resource = await resourceService.FetchResourceAsync(uri, cancel).ConfigureAwait(false);
-            return resource.Text ?? "(empty)";
-        }
-        catch (Exception ex)
-        {
-            return $"Error reading {uri}: {ex.Message}";
-        }
-    }
-
-    [GeneratedRegex(@"^(\S+)\s+//\s+(.+)$")]
-    private static partial Regex ReadGuidancePattern();
 }

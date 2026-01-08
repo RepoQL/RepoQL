@@ -133,13 +133,14 @@ internal class McpCommands
                                             - Xray should be your first tool for finding and understanding. Intent and the token budget controls how tokens are spent in the response.
                                             - Use Query to do what xray cannot with all the power of SQL including applying semantic search and regex across files - don't use it to do what xray can.
                                             - Always map the territory with xray before reading whole files
-                                            - In the query tool use read:<UriGlob> to read files or snippets. Use read:<UriGlob> // <question> to have an agent read the files and answer your question, saving your context window
+                                            - Use the read tool to fetch content from known URIs with token-budget-aware representation. Use read(uri // question, budget) to have an LLM answer questions about specific files.
                                            </REMEMBER>
                                            """;
                 })
                 .WithStdioServerTransport()
                 .WithTools<QueryTool>()
                 .WithTools<XrayTool>()
+                .WithTools<ReadTool>()
                 .WithTools<ImportTool>()
 #if DEBUG
                 .WithTools<SelfTestTool>()

@@ -26,12 +26,14 @@ public interface ILlmProvider
     /// <param name="jsonData">JSON array of result rows from the query.</param>
     /// <param name="intent">What the caller hoped to find/understand.</param>
     /// <param name="maxTokens">Approximate token limit for the summary.</param>
+    /// <param name="repoTree">Optional ASCII tree of repository structure for suggesting related files.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Text summary addressing the caller's intent.</returns>
     Task<string> SummarizeAsync(
         string jsonData,
         string intent,
         int maxTokens = 500,
+        string? repoTree = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -41,6 +43,7 @@ public interface ILlmProvider
         string jsonData,
         string intent,
         int maxTokens = 500,
+        string? repoTree = null,
         CancellationToken ct = default);
 
     /// <summary>

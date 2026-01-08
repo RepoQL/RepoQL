@@ -949,6 +949,22 @@ public sealed class RepoQlClient : IRepoQlClient
             return response;
         }, cancellationToken);
 
+    public Task<ReadResponse> ReadAsync(
+        string uri,
+        int tokenBudget,
+        CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            var request = new Contracts.ReadRequest
+            {
+                Uri = uri,
+                TokenBudget = tokenBudget
+            };
+
+            var response = await client.ReadAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            return response;
+        }, cancellationToken);
+
     public async IAsyncEnumerable<StatusEvent> WatchStatusAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var attempt = 0;

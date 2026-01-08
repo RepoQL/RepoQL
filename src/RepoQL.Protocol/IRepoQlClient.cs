@@ -137,6 +137,17 @@ public interface IRepoQlClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Read repository content with token-budget-aware representation selection.
+    /// </summary>
+    /// <param name="uri">URI or glob pattern. Append ' // question' for LLM synthesis.</param>
+    /// <param name="tokenBudget">Token budget - determines representation depth (full/structure/headline).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<ReadResponse> ReadAsync(
+        string uri,
+        int tokenBudget,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Stream real-time status events from the server. Replaces polling for live dashboard updates.
     /// </summary>
     /// <param name="cancellationToken">Cancellation token to stop the stream.</param>

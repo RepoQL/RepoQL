@@ -7,48 +7,49 @@ public class LlmPromptTemplatesTests
     #region BuildSummarizePrompt
 
     [Test]
-    public async Task BuildSummarizePrompt_IncludesIntent()
+    public void BuildSummarizePrompt_IncludesIntent()
     {
         var result = LlmPromptTemplates.BuildSummarizePrompt(
             "test data",
             "Find authentication patterns",
             500);
 
-        result.Should().Contain("Find authentication patterns");
+        result.User.Should().Contain("Find authentication patterns");
     }
 
     [Test]
-    public async Task BuildSummarizePrompt_IncludesData()
+    public void BuildSummarizePrompt_IncludesData()
     {
         var result = LlmPromptTemplates.BuildSummarizePrompt(
             "[1]{uri}:\nfile:///test.cs",
             "intent",
             500);
 
-        result.Should().Contain("[1]{uri}:");
-        result.Should().Contain("file:///test.cs");
+        result.User.Should().Contain("[1]{uri}:");
+        result.User.Should().Contain("file:///test.cs");
     }
 
     [Test]
-    public async Task BuildSummarizePrompt_IncludesTokenLimit()
+    public void BuildSummarizePrompt_IncludesTokenLimit()
     {
         var result = LlmPromptTemplates.BuildSummarizePrompt(
             "data",
             "intent",
             300);
 
-        result.Should().Contain("300");
+        result.System.Should().Contain("300");
     }
 
     [Test]
-    public async Task BuildSummarizePrompt_MentionsToonFormat()
+    public void BuildSummarizePrompt_HasSystemPrompt()
     {
         var result = LlmPromptTemplates.BuildSummarizePrompt(
             "data",
             "intent",
             500);
 
-        result.Should().Contain("TOON");
+        result.System.Should().NotBeNullOrEmpty();
+        result.System.Should().Contain("Repository Analysis Agent");
     }
 
     #endregion
@@ -56,46 +57,60 @@ public class LlmPromptTemplatesTests
     #region BuildExtractPrompt
 
     [Test]
-    public async Task BuildExtractPrompt_IncludesIntent()
+    public void BuildExtractPrompt_IncludesIntent()
     {
         var result = LlmPromptTemplates.BuildExtractPrompt(
             "test data",
             "How does authentication work?");
 
-        result.Should().Contain("How does authentication work?");
+        result.User.Should().Contain("How does authentication work?");
     }
 
     [Test]
-    public async Task BuildExtractPrompt_IncludesData()
+    public void BuildExtractPrompt_IncludesData()
     {
         var result = LlmPromptTemplates.BuildExtractPrompt(
             "[2]{uri,headline}:\ntest1\ntest2",
             "intent");
 
-        result.Should().Contain("[2]{uri,headline}:");
+        result.User.Should().Contain("[2]{uri,headline}:");
     }
 
     [Test]
-    public async Task BuildExtractPrompt_MentionsMarkdownOutput()
+    public void BuildExtractPrompt_HasSystemPrompt()
     {
         var result = LlmPromptTemplates.BuildExtractPrompt(
             "data",
             "intent");
 
-        // Should produce a markdown report from the data
-        result.Should().Contain("markdown report");
+        result.System.Should().NotBeNullOrEmpty();
+        result.System.Should().Contain("Repository Analysis Agent");
     }
 
     [Test]
-    public async Task BuildExtractPrompt_DescribesOutputFormat()
+    public void BuildSummarizePrompt_IncludesRepoTree_WhenProvided()
     {
-        var result = LlmPromptTemplates.BuildExtractPrompt(
+        var repoTree = "src/\n  main.cs\n  helper.cs";
+        var result = LlmPromptTemplates.BuildSummarizePrompt(
             "data",
-            "intent");
+            "intent",
+            500,
+            repoTree);
 
-        // Should describe the expected output format with URIs and code blocks
-        result.Should().Contain("<uri>");
-        result.Should().Contain("synthesis");
+        result.User.Should().Contain("src/");
+        result.User.Should().Contain("AvailableFiles");
+    }
+
+    [Test]
+    public void BuildSummarizePrompt_OmitsRepoTree_WhenNull()
+    {
+        var result = LlmPromptTemplates.BuildSummarizePrompt(
+            "data",
+            "intent",
+            500,
+            repoTree: null);
+
+        result.User.Should().NotContain("AvailableFiles");
     }
 
     #endregion

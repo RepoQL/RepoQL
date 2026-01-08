@@ -167,8 +167,23 @@ public class UdfRegistry
                     for (ulong i = 0; i < n; i++)
                     {
                         var args = new object?[parameters.Length];
-                        if (parameters.Length > 0 && readers.Count > 0)
-                            args[0] = readers[0].IsValid(i) ? readers[0].GetValue<string>(i) : null;
+
+                        // Read param and convert to target type
+                        try
+                        {
+                            if (parameters.Length > 0 && readers.Count > 0 && readers[0].IsValid(i))
+                            {
+                                var strValue = readers[0].GetValue<string>(i);
+                                args[0] = ConvertStringValue(strValue, parameters[0].ParameterType);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new InvalidOperationException($"UDF '{name}': Failed to read/convert parameters: {ex.Message}", ex);
+                        }
+
+                        // Apply defaults for any null args
+                        ApplyDefaults(args, parameters);
 
                         var result = method.Invoke(instance, args);
 
@@ -227,10 +242,28 @@ public class UdfRegistry
                     for (ulong i = 0; i < n; i++)
                     {
                         var args = new object?[parameters.Length];
-                        if (parameters.Length > 0 && readers.Count > 0)
-                            args[0] = readers[0].IsValid(i) ? readers[0].GetValue<string>(i) : null;
-                        if (parameters.Length > 1 && readers.Count > 1)
-                            args[1] = readers[1].IsValid(i) ? readers[1].GetValue<string>(i) : null;
+
+                        // Read params and convert to target types
+                        try
+                        {
+                            if (parameters.Length > 0 && readers.Count > 0 && readers[0].IsValid(i))
+                            {
+                                var strValue = readers[0].GetValue<string>(i);
+                                args[0] = ConvertStringValue(strValue, parameters[0].ParameterType);
+                            }
+                            if (parameters.Length > 1 && readers.Count > 1 && readers[1].IsValid(i))
+                            {
+                                var strValue = readers[1].GetValue<string>(i);
+                                args[1] = ConvertStringValue(strValue, parameters[1].ParameterType);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new InvalidOperationException($"UDF '{name}': Failed to read/convert parameters: {ex.Message}", ex);
+                        }
+
+                        // Apply defaults for any null args
+                        ApplyDefaults(args, parameters);
 
                         var result = method.Invoke(instance, args);
 
@@ -290,11 +323,24 @@ public class UdfRegistry
                     {
                         var args = new object?[parameters.Length];
 
-                        // First 2 params from DuckDB directly
-                        if (parameters.Length > 0 && readers.Count > 0)
-                            args[0] = readers[0].IsValid(i) ? readers[0].GetValue<string>(i) : null;
-                        if (parameters.Length > 1 && readers.Count > 1)
-                            args[1] = readers[1].IsValid(i) ? readers[1].GetValue<string>(i) : null;
+                        // First 2 params from DuckDB directly (as VARCHAR, convert to target type)
+                        try
+                        {
+                            if (parameters.Length > 0 && readers.Count > 0 && readers[0].IsValid(i))
+                            {
+                                var strValue = readers[0].GetValue<string>(i);
+                                args[0] = ConvertStringValue(strValue, parameters[0].ParameterType);
+                            }
+                            if (parameters.Length > 1 && readers.Count > 1 && readers[1].IsValid(i))
+                            {
+                                var strValue = readers[1].GetValue<string>(i);
+                                args[1] = ConvertStringValue(strValue, parameters[1].ParameterType);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            throw new InvalidOperationException($"UDF '{name}': Failed to read/convert parameters: {ex.Message}", ex);
+                        }
 
                         // 3rd+ params from JSON (if we have 3+ method params and 3rd DuckDB param exists)
                         if (parameters.Length > 2 && readers.Count > 2 && readers[2].IsValid(i))
@@ -385,6 +431,52 @@ public class UdfRegistry
                 ? element.GetBoolean() : null,
             _ => element.GetString()
         };
+    }
+
+    /// <summary>
+    /// Convert a string value (from VARCHAR) to the target parameter type.
+    /// Used for the first 2 UDF parameters which are passed as VARCHAR.
+    /// Handles DuckDB's boolean representations: "true"/"false", "TRUE"/"FALSE", "1"/"0".
+    /// </summary>
+    private static object? ConvertStringValue(string? value, Type targetType)
+    {
+        if (value is null)
+            return null;
+
+        var underlying = Nullable.GetUnderlyingType(targetType) ?? targetType;
+
+        try
+        {
+            if (underlying == typeof(string))
+                return value;
+
+            if (underlying == typeof(int))
+                return int.TryParse(value, out var i) ? i : null;
+
+            if (underlying == typeof(long))
+                return long.TryParse(value, out var l) ? l : null;
+
+            if (underlying == typeof(double))
+                return double.TryParse(value, out var d) ? d : null;
+
+            if (underlying == typeof(bool))
+            {
+                // bool.TryParse handles "true"/"false" case-insensitively
+                if (bool.TryParse(value, out var b))
+                    return b;
+                // DuckDB might also send "1"/"0"
+                if (value == "1") return true;
+                if (value == "0") return false;
+                return null;
+            }
+
+            return value;
+        }
+        catch
+        {
+            // Any conversion error returns null, letting ApplyDefaults handle it
+            return null;
+        }
     }
 
     private static string SerializeEnumerable(System.Collections.IEnumerable enumerable)
