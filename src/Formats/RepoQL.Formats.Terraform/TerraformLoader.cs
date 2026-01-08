@@ -84,8 +84,11 @@ public sealed partial class TerraformLoader : IFormatLoader, IFormatMaterializer
 
         var parseResult = state.ParseResult;
 
+        // Calculate token count for the text content
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
         // Generate X-ray summaries
-        var headline = BuildHeadline(document, parseResult);
+        var headline = BuildHeadline(document, parseResult, tokenCount);
         var structure = BuildStructure(parseResult);
 
         var artifact = new Artifact
@@ -96,6 +99,7 @@ public sealed partial class TerraformLoader : IFormatLoader, IFormatMaterializer
             MediaType = state.MediaType,
             Text = document.Text,
             StoreUri = state.StoreUri,
+            TokenCount = tokenCount,
             Headline = headline,
             Structure = structure
         };
@@ -218,7 +222,7 @@ public sealed partial class TerraformLoader : IFormatLoader, IFormatMaterializer
         };
     }
 
-    private static string BuildHeadline(DocumentModel document, TerraformParseResult parseResult)
+    private static string BuildHeadline(DocumentModel document, TerraformParseResult parseResult, int? tokenCount)
     {
         var fileName = GetFileName(document.Uri);
         var parts = new List<string> { fileName };
@@ -241,7 +245,8 @@ public sealed partial class TerraformLoader : IFormatLoader, IFormatMaterializer
             parts.Add($"{parseResult.Outputs.Count} outputs");
         }
 
-        return string.Join(" | ", parts);
+        var tokenPart = tokenCount.HasValue ? $" | {tokenCount.Value} tokens" : string.Empty;
+        return string.Join(" | ", parts) + tokenPart;
     }
 
     private static string BuildStructure(TerraformParseResult parseResult)

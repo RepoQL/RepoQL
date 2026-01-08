@@ -186,10 +186,13 @@ public sealed class CsProjLoader : IFormatLoader, IFormatMaterializer
         };
 
 
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+        model["token_count"] = tokenCount;
+
         var headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
         var summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
         var structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
-        
+
 
         var artifact = new Artifact
         {
@@ -201,7 +204,8 @@ public sealed class CsProjLoader : IFormatLoader, IFormatMaterializer
             StoreUri = document.Uri.ToString(),
             Headline = headline,
             Summary = summary,
-            Structure = structure
+            Structure = structure,
+            TokenCount = tokenCount
         };
 
         var now = DateTimeOffset.UtcNow;

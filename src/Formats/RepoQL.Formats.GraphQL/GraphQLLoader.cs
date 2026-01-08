@@ -98,6 +98,8 @@ public sealed partial class GraphQLLoader(ILogger<GraphQLLoader>? logger = null)
             LogFailedToRenderTemplates(Logger, ex, document.Uri.ToString());
         }
 
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
         var artifact = new Artifact
         {
             Id = Guid.NewGuid(),
@@ -106,9 +108,10 @@ public sealed partial class GraphQLLoader(ILogger<GraphQLLoader>? logger = null)
             MediaType = state.MediaType,
             Text = document.Text,
             StoreUri = state.StoreUri,
-            Headline = headline,
+            Headline = headline is not null ? $"{headline} | {tokenCount} tokens" : null,
             Summary = summary,
-            Structure = structure
+            Structure = structure,
+            TokenCount = tokenCount
         };
 
         var now = DateTimeOffset.UtcNow;

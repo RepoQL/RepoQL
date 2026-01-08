@@ -74,7 +74,7 @@ internal static class DuckDbExtensions
 
     /// <summary>
     /// Map a data record to an Artifact.
-    /// Column order: id, digest, byte_size, media_type, text_content, storage_uri, headline, summary, structure
+    /// Column order: id, digest, byte_size, media_type, text_content, storage_uri, headline, summary, structure, token_count
     /// </summary>
     public static Artifact MapToArtifact(this IDataRecord r)
     {
@@ -88,7 +88,8 @@ internal static class DuckDbExtensions
             StoreUri = r.IsDBNull(5) ? null : RepoUri.Parse(r.GetString(5)),
             Headline = r.IsDBNull(6) ? null : r.GetString(6),
             Summary = r.IsDBNull(7) ? null : r.GetString(7),
-            Structure = r.IsDBNull(8) ? null : r.GetString(8)
+            Structure = r.IsDBNull(8) ? null : r.GetString(8),
+            TokenCount = r.IsDBNull(9) ? null : (int?)r.GetInt64(9)
         };
     }
 

@@ -394,4 +394,114 @@ public class RepresentationFormatterTests
         standard.Should().Contain("- Item");  // Standard shows structure
         standard.Should().Contain("file:///test.cs");  // Has URI
     }
+
+    // Representation hint tests
+
+    [Test]
+    [DisplayName("Representation hint returns null for full representation")]
+    public void Given_FullRepresentation_Then_ReturnsNull()
+    {
+        var costs = new RepresentationCosts(FullTokens: 1000, StructureTokens: 500, HeadlineTokens: 100);
+
+        var hint = RepresentationFormatter.FormatRepresentationHint("full", costs);
+
+        hint.Should().BeNull();
+    }
+
+    [Test]
+    [DisplayName("Representation hint shows structure cost for headline level")]
+    public void Given_HeadlineLevel_Then_ShowsStructureAndFullCosts()
+    {
+        var costs = new RepresentationCosts(FullTokens: 5200, StructureTokens: 1500, HeadlineTokens: 100);
+
+        var hint = RepresentationFormatter.FormatRepresentationHint("headline", costs);
+
+        hint.Should().NotBeNull();
+        hint.Should().Be("showing: headline | structure: 1.5k tok | full: 5.2k tok");
+    }
+
+    [Test]
+    [DisplayName("Representation hint shows full cost for structure level")]
+    public void Given_StructureLevel_Then_ShowsFullCost()
+    {
+        var costs = new RepresentationCosts(FullTokens: 5200, StructureTokens: 1500, HeadlineTokens: 100);
+
+        var hint = RepresentationFormatter.FormatRepresentationHint("structure", costs);
+
+        hint.Should().NotBeNull();
+        hint.Should().Be("showing: structure | full: 5.2k tok");
+    }
+
+    [Test]
+    [DisplayName("Representation hint handles missing costs")]
+    public void Given_MissingCosts_Then_ShowsOnlyAvailableCosts()
+    {
+        // Only full cost available
+        var costs = new RepresentationCosts(FullTokens: 3000, StructureTokens: null, HeadlineTokens: 50);
+
+        var hint = RepresentationFormatter.FormatRepresentationHint("headline", costs);
+
+        hint.Should().NotBeNull();
+        hint.Should().Be("showing: headline | full: 3.0k tok");
+    }
+
+    [Test]
+    [DisplayName("Representation hint returns null when no higher-fidelity costs available")]
+    public void Given_NoHigherFidelityCosts_Then_ReturnsNull()
+    {
+        // At structure level but no full cost available
+        var costs = new RepresentationCosts(FullTokens: null, StructureTokens: 1500, HeadlineTokens: 100);
+
+        var hint = RepresentationFormatter.FormatRepresentationHint("structure", costs);
+
+        // No higher-fidelity representation info to show
+        hint.Should().BeNull();
+    }
+
+    [Test]
+    [DisplayName("Representation hint formats small token counts without k suffix")]
+    public void Given_SmallTokenCounts_Then_FormatsWithoutKSuffix()
+    {
+        var costs = new RepresentationCosts(FullTokens: 500, StructureTokens: 200, HeadlineTokens: 50);
+
+        var hint = RepresentationFormatter.FormatRepresentationHint("headline", costs);
+
+        hint.Should().NotBeNull();
+        hint.Should().Be("showing: headline | structure: 200 tok | full: 500 tok");
+    }
+
+    [Test]
+    [DisplayName("Representation hint for none level shows all available costs")]
+    public void Given_NoneLevel_Then_ShowsAllAvailableCosts()
+    {
+        var costs = new RepresentationCosts(FullTokens: 5000, StructureTokens: 1500, HeadlineTokens: 100);
+
+        var hint = RepresentationFormatter.FormatRepresentationHint("none", costs);
+
+        hint.Should().NotBeNull();
+        hint.Should().Be("showing: none | headline: 100 tok | structure: 1.5k tok | full: 5.0k tok");
+    }
+
+    [Test]
+    [DisplayName("Status footer integrates representation hint")]
+    public void Given_StatusFooterWithHint_Then_IncludesHintInBrackets()
+    {
+        var status = new IndexerStatus(IndexPending: 0, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 50);
+        var hint = "showing: structure | full: 5.2k tok";
+
+        var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1500, representationHint: hint);
+
+        output.Should().Be("[1.5k tok | 50 ms | index: ready | semantic: ready | showing: structure | full: 5.2k tok]");
+    }
+
+    [Test]
+    [DisplayName("Status footer without hint works as before")]
+    public void Given_StatusFooterWithoutHint_Then_NoExtraPipe()
+    {
+        var status = new IndexerStatus(IndexPending: 0, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 50);
+
+        var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1500, representationHint: null);
+
+        output.Should().Be("[1.5k tok | 50 ms | index: ready | semantic: ready]");
+    }
 }

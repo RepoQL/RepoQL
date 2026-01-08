@@ -96,11 +96,14 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer
         string? summary = null;
         string? structure = null;
 
+        // Calculate token count for the text content
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
         try
         {
             if (_renderer is not null)
             {
-                var model = BuildTemplateModel(document, state, parseResult);
+                var model = BuildTemplateModel(document, state, parseResult, tokenCount);
                 headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
                 summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
                 structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
@@ -121,7 +124,8 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer
             StoreUri = state.StoreUri,
             Headline = headline,
             Summary = summary,
-            Structure = structure
+            Structure = structure,
+            TokenCount = tokenCount
         };
 
         var docNode = new Node
@@ -271,7 +275,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer
         };
     }
 
-    private static Dictionary<string, object?> BuildTemplateModel(DocumentModel document, PHPDocumentState state, PHPParseResult parseResult)
+    private static Dictionary<string, object?> BuildTemplateModel(DocumentModel document, PHPDocumentState state, PHPParseResult parseResult, int? tokenCount)
     {
         var fileName = GetFileName(document.Uri);
         var allMethods = parseResult.Classes.SelectMany(c => c.Methods.Select(m => m.Name))
@@ -290,6 +294,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer
             ["media_kind"] = state.MediaType.Kind ?? string.Empty,
             ["size_bytes"] = state.Size,
             ["line_count"] = document.LineMap.LineCount,
+            ["token_count"] = tokenCount ?? 0,
             ["namespace"] = parseResult.Namespace ?? "(global)",
             ["class_count"] = parseResult.Classes.Count,
             ["interface_count"] = parseResult.Interfaces.Count,

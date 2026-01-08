@@ -98,10 +98,13 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
         var views = state.Objects.Where(o => o.Type == SqlObjectType.View).ToList();
         var functions = state.Objects.Where(o => o.Type is SqlObjectType.Function or SqlObjectType.Procedure or SqlObjectType.Macro).ToList();
 
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
         var model = new Dictionary<string, object?>
         {
             ["file_name"] = fileName,
             ["size_bytes"] = state.Size,
+            ["token_count"] = tokenCount,
             ["primary_object"] = primaryObject is null ? null : new Dictionary<string, object?>
             {
                 ["type"] = primaryObject.Type.ToString().ToUpperInvariant(),
@@ -165,7 +168,8 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
             StoreUri = document.Uri.ToString(),
             Headline = headline,
             Summary = summary,
-            Structure = structure
+            Structure = structure,
+            TokenCount = tokenCount
         };
 
         var now = DateTimeOffset.UtcNow;

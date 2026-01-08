@@ -290,6 +290,9 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                     .First().Key;
             }
 
+            // Calculate token count for the text content
+            var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
             var model = new Dictionary<string, object?>
             {
                 ["file_name"] = fileName,
@@ -297,6 +300,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                 ["media_base"] = $"{state.MediaType.Type}/{state.MediaType.Subtype}",
                 ["size_bytes"] = state.Size,
                 ["line_count"] = document.LineMap.LineCount,
+                ["token_count"] = tokenCount ?? 0,
                 ["headings_count"] = state.Surface.Headings.Count,
                 ["codeblocks_count"] = state.Surface.CodeBlocks.Count,
                 ["links_count"] = state.Surface.Links.Count,
@@ -331,6 +335,9 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                 // ignore templating errors; x-ray is best-effort
             }
 
+        // Get token count from model (already calculated above, default to null if not calculated)
+        var finalTokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
         var artifact = new Artifact
         {
             Id = Guid.NewGuid(),
@@ -341,7 +348,8 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
             StoreUri = state.StoreUri,
             Headline = headline,
             Summary = summary,
-            Structure = structure
+            Structure = structure,
+            TokenCount = finalTokenCount
         };
 
         var nodes = new List<Node>();

@@ -7,7 +7,8 @@
                                         storage_uri  VARCHAR,
                                         headline     VARCHAR,
                                         summary      VARCHAR,
-                                        structure    VARCHAR
+                                        structure    VARCHAR,
+                                       token_count  BIGINT
 );
 COMMENT ON TABLE artifact IS 'Content-addressed artifact bytes and optional decoded text.';
 COMMENT ON COLUMN artifact.id IS 'Artifact identifier (GUID).';
@@ -19,3 +20,4 @@ COMMENT ON COLUMN artifact.storage_uri IS 'External storage location for raw byt
 COMMENT ON COLUMN artifact.headline IS 'X-ray Level 0 (headline): essential identity (single line), always present for documents.';
 COMMENT ON COLUMN artifact.summary IS 'X-ray Level 1 (summary): key information (~5 lines, max 10) for understanding without reading full content.';
 COMMENT ON COLUMN artifact.structure IS 'X-ray Level 2 (structure): detailed outline (~15 lines, max 25) for navigation and exploration.';
+COMMENT ON COLUMN artifact.token_count IS 'Estimated token count for text_content using Claude BPE tokenizer. NULL for binary files or if estimation failed.';

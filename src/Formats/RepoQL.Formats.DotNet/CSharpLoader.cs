@@ -293,6 +293,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
             CSharpDocumentSurface surface,
             IReadOnlyList<CSharpSymbolReference> references)
         {
+            var tokenCount = TokenEstimator.EstimateTokensSafe(text);
             var artifact = new Artifact
             {
                 Digest = digest,
@@ -300,7 +301,8 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                 MediaType = mediaType,
                 Text = text,
                 StoreUri = uri,
-                Headline = BuildHeadline(uri, surface),
+                TokenCount = tokenCount,
+                Headline = BuildHeadline(uri, surface, tokenCount),
                 Summary = BuildSummary(surface),
                 Structure = BuildStructure(surface)
             };
@@ -729,7 +731,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
         return sb.ToString();
     }
 
-    private static string BuildHeadline(RepoUri uri, CSharpDocumentSurface surface)
+    private static string BuildHeadline(RepoUri uri, CSharpDocumentSurface surface, int? tokenCount)
     {
         var fileName = GetFileName(uri);
 
@@ -739,14 +741,16 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
             .Select(t => $"{t.Kind} {t.Name}")
             .ToArray();
 
+        var tokenPart = tokenCount.HasValue ? $" | {tokenCount.Value} tokens" : string.Empty;
+
         if (topTypes.Length == 0)
-            return $"{fileName} | (empty)";
+            return $"{fileName} | (empty){tokenPart}";
 
         var typePart = string.Join(", ", topTypes);
         if (surface.Types.Count > 3)
             typePart += $" (+{surface.Types.Count - 3} more)";
 
-        return $"{fileName} | {typePart}";
+        return $"{fileName} | {typePart}{tokenPart}";
     }
 
     private static string BuildSummary(CSharpDocumentSurface surface)

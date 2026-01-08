@@ -21,6 +21,7 @@ public static class StandardFilters
         filters.AddFilter("is_multiline", IsMultiline);
         filters.AddFilter("non_empty_lines", NonEmptyLines);
         filters.AddFilter("single_line", SingleLine);
+        filters.AddFilter("tokens", Tokens);
     }
 
     // {{ bytes | filesize }} -> "1.23 MB"
@@ -227,6 +228,20 @@ public static class StandardFilters
         s = s.Replace("\r\n", "\n").Replace('\r', '\n');
         s = s.Replace('\n', ' ').Replace('\t', ' ');
         return new ValueTask<FluidValue>(new StringValue(s));
+    }
+
+    // {{ 1500 | tokens }} -> "~1.5k tok"
+    // {{ 150 | tokens }} -> "~150 tok"
+    // {{ 0 | tokens }} -> "" (empty)
+    private static ValueTask<FluidValue> Tokens(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var n = Convert.ToDouble(input.ToNumberValue(), CultureInfo.InvariantCulture);
+        if (n <= 0)
+            return new ValueTask<FluidValue>(StringValue.Empty);
+
+        // Use 1 decimal for values >= 1000
+        var formatted = n >= 1000 ? Abbr(n, 1) : ((int)n).ToString(CultureInfo.InvariantCulture);
+        return new ValueTask<FluidValue>(new StringValue($"~{formatted} tok"));
     }
 }
 

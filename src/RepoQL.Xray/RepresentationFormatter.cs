@@ -208,10 +208,14 @@ public static class RepresentationFormatter
     /// <summary>
     /// Format the status footer showing indexer state, timing, and token usage.
     /// </summary>
-    public static string FormatStatusFooter(IndexerStatus status, int? tokenCount = null)
+    /// <param name="status">Current indexer status.</param>
+    /// <param name="tokenCount">Optional token count for the output.</param>
+    /// <param name="representationHint">Optional representation hint (inner content) to append.</param>
+    public static string FormatStatusFooter(IndexerStatus status, int? tokenCount = null, string? representationHint = null)
     {
         // Format: [1.5k tok | 42ms | index: ready | semantic: ready]
         // Or if busy: [1.2k tok | 42ms | index: 5 pending | semantic: pending]
+        // Or with hint: [1.2k tok | 42ms | index: ready | semantic: ready | showing: structure | full: 5.2k tok]
         var indexStatus = status.IndexPending > 0
             ? $"{status.IndexPending} pending"
             : "ready";
@@ -230,7 +234,58 @@ public static class RepresentationFormatter
 
         var duration = FormatDuration(status.ElapsedMs);
 
-        return $"[{tokenPart}{duration} | index: {indexStatus} | semantic: {semanticStatus}]";
+        var hintPart = !string.IsNullOrEmpty(representationHint)
+            ? $" | {representationHint}"
+            : "";
+
+        return $"[{tokenPart}{duration} | index: {indexStatus} | semantic: {semanticStatus}{hintPart}]";
+    }
+
+    /// <summary>
+    /// Format a hint about the representation level chosen and what budget is needed for higher-fidelity representations.
+    /// Returns the inner content (without brackets) to be appended to the footer, or null when not needed.
+    /// </summary>
+    /// <param name="level">The representation level chosen ("full", "structure", "headline", "none").</param>
+    /// <param name="costs">Token costs for each representation level.</param>
+    /// <returns>Inner hint content (pipe-delimited), or null if no hint is needed.</returns>
+    public static string? FormatRepresentationHint(string level, RepresentationCosts costs)
+    {
+        if (level == "full")
+            return null;
+
+        var parts = new List<string>();
+        parts.Add($"showing: {level}");
+
+        // Show costs for higher-fidelity representations
+        if (level == "headline")
+        {
+            if (costs.StructureTokens.HasValue)
+                parts.Add($"structure: {FormatTokenCount(costs.StructureTokens.Value)}");
+            if (costs.FullTokens.HasValue)
+                parts.Add($"full: {FormatTokenCount(costs.FullTokens.Value)}");
+        }
+        else if (level == "structure")
+        {
+            if (costs.FullTokens.HasValue)
+                parts.Add($"full: {FormatTokenCount(costs.FullTokens.Value)}");
+        }
+        else if (level == "none")
+        {
+            // Show what's available (if anything)
+            if (costs.HeadlineTokens.HasValue)
+                parts.Add($"headline: {FormatTokenCount(costs.HeadlineTokens.Value)}");
+            if (costs.StructureTokens.HasValue)
+                parts.Add($"structure: {FormatTokenCount(costs.StructureTokens.Value)}");
+            if (costs.FullTokens.HasValue)
+                parts.Add($"full: {FormatTokenCount(costs.FullTokens.Value)}");
+        }
+
+        // If we only have the level, no additional info to show
+        if (parts.Count == 1)
+            return null;
+
+        // Return inner content without brackets - caller will integrate into footer
+        return string.Join(" | ", parts);
     }
 
     /// <summary>

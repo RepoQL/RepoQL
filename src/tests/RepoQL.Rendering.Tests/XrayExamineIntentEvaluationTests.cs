@@ -124,7 +124,7 @@ public static class UtilityCalculator
             "Middle tier should have substance (Rich or Standard) in Read intent, got {0}", middleTier);
 
         // Test 4: Token estimation for Rich representation should consume significant tokens
-        var richTokens = TokenEstimator.Estimate(utilityCalculatorResult, Representation.Rich);
+        var richTokens = XrayTokenEstimator.Estimate(utilityCalculatorResult, Representation.Rich);
         richTokens.Should().BeGreaterThan(150, "Rich representation with code snippet should be 150+ tokens");
 
         // Test 5: Rich representation includes snippet in formatted output

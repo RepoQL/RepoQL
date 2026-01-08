@@ -136,6 +136,10 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
         string? headline = null;
         string? summary = null;
         string? structure = null;
+
+        // Calculate token count for the text content
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
         try
         {
             if (_renderer is not null)
@@ -202,6 +206,7 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
                     ["media_base"] = $"{state.MediaType.Type}/{state.MediaType.Subtype}",
                     ["size_bytes"] = state.Size,
                     ["line_count"] = document.LineMap.LineCount,
+                    ["token_count"] = tokenCount ?? 0,
                     ["diagram_kind"] = root.DiagramKind,
                     ["node_count"] = flowNodes.Count,
                     ["edge_count"] = flowEdges.Count,
@@ -235,7 +240,8 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
             StoreUri = state.StoreUri,
             Headline = headline,
             Summary = summary,
-            Structure = structure
+            Structure = structure,
+            TokenCount = tokenCount
         };
 
         var docNode = new Node

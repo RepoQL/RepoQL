@@ -70,6 +70,9 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
         var digest = document.GetMetadataOrDefault<string>("plaintext.digest") ?? "unknown";
         var size = document.GetMetadataOrDefault<long>("plaintext.size");
 
+        // Calculate token count for the text content
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
         // Prepare x-ray fields for initializer; best-effort and terse
         string? headline = null;
         string? summary = null;
@@ -81,10 +84,11 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
                 : $"{document.MediaType.Type}/{document.MediaType.Subtype}";
             var sizeHuman = FormatBytes(size);
             var lineCount = document.LineMap?.LineCount ?? 0;
+            var tokensStr = tokenCount.HasValue ? $" | {FormatTokens(tokenCount.Value)}" : "";
 
             headline = lineCount > 0
-                ? $"{fileName} | {kindOrBase} | {sizeHuman} | {lineCount} lines"
-                : $"{fileName} | {kindOrBase} | {sizeHuman}";
+                ? $"{fileName} | {kindOrBase} | {sizeHuman} | {lineCount} lines{tokensStr}"
+                : $"{fileName} | {kindOrBase} | {sizeHuman}{tokensStr}";
 
             var summaryLines = new List<string>(2)
             {
@@ -109,7 +113,8 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
             StoreUri = document.Uri.ToString(),
             Headline = headline,
             Summary = summary,
-            Structure = null
+            Structure = null,
+            TokenCount = tokenCount
         };
 
         var node = new Node
@@ -166,5 +171,14 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
         if (bytes >= MB) return ($"{bytes / (double)MB:0.##} MB");
         if (bytes >= KB) return ($"{bytes / (double)KB:0.##} KB");
         return ($"{bytes} B");
+    }
+
+    private static string FormatTokens(int tokens)
+    {
+        if (tokens >= 1_000_000)
+            return $"~{tokens / 1_000_000d:0.#}M tok";
+        if (tokens >= 1_000)
+            return $"~{tokens / 1_000d:0.#}k tok";
+        return $"~{tokens} tok";
     }
 }

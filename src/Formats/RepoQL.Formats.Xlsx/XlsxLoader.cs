@@ -560,15 +560,25 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
         string? headline = null;
         string? summary = null;
         string? structure = null;
+        int? tokenCount = null;
 
         try
         {
             var fileName = GetFileName(document.Uri);
             var model = BuildXrayModel(state, fileName);
 
-            headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
+            // Render summary and structure first so we can calculate token count for headline
             summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
             structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
+
+            // For binary formats, estimate tokens from the text representation (summary + structure)
+            var textForTokens = string.Join("\n", new[] { summary, structure }.Where(s => !string.IsNullOrEmpty(s)));
+            tokenCount = TokenEstimator.EstimateTokensSafe(textForTokens);
+
+            // Add token count to model for headline template
+            model["token_count"] = tokenCount ?? 0;
+
+            headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
         }
         catch
         {
@@ -585,7 +595,8 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
             StoreUri = state.StoreUri,
             Headline = headline,
             Summary = summary,
-            Structure = structure
+            Structure = structure,
+            TokenCount = tokenCount
         };
 
         var nodes = new List<Node>();

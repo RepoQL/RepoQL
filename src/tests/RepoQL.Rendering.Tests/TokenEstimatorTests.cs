@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using RepoQL.Contracts;
 using RepoQL.Rendering.Tests.TestData;
 using RepoQL.Xray;
 
@@ -53,8 +54,8 @@ public class TokenEstimatorTests
         var smallHeadline = ResultBuilder.Create(80, headlineLength: 20);
         var largeHeadline = ResultBuilder.Create(80, headlineLength: 100);
 
-        var smallTokens = TokenEstimator.EstimateMinimal(smallHeadline);
-        var largeTokens = TokenEstimator.EstimateMinimal(largeHeadline);
+        var smallTokens = XrayTokenEstimator.EstimateMinimal(smallHeadline);
+        var largeTokens = XrayTokenEstimator.EstimateMinimal(largeHeadline);
 
         // Both should produce positive token counts
         smallTokens.Should().BeGreaterThan(0);
@@ -67,7 +68,7 @@ public class TokenEstimatorTests
     {
         var result = ResultBuilder.Document(80, headlineLength: 40);
 
-        var tokens = TokenEstimator.EstimateCompact(result);
+        var tokens = XrayTokenEstimator.EstimateCompact(result);
 
         // Should produce reasonable token count for URI + headline + formatting
         tokens.Should().BeGreaterThan(5);
@@ -80,8 +81,8 @@ public class TokenEstimatorTests
         var doc = ResultBuilder.Document(80, headlineLength: 40);
         var obj = ResultBuilder.Create(80, headlineLength: 40, kind: "method");
 
-        var docTokens = TokenEstimator.EstimateCompact(doc);
-        var objTokens = TokenEstimator.EstimateCompact(obj);
+        var docTokens = XrayTokenEstimator.EstimateCompact(doc);
+        var objTokens = XrayTokenEstimator.EstimateCompact(obj);
 
         objTokens.Should().BeGreaterThan(docTokens, "object includes [kind] badge");
     }
@@ -93,8 +94,8 @@ public class TokenEstimatorTests
         var withoutStructure = ResultBuilder.Document(80, headlineLength: 40);
         var withStructure = ResultBuilder.Create(80, headlineLength: 40, structureLength: 200);
 
-        var tokensWithout = TokenEstimator.EstimateStandard(withoutStructure);
-        var tokensWith = TokenEstimator.EstimateStandard(withStructure);
+        var tokensWithout = XrayTokenEstimator.EstimateStandard(withoutStructure);
+        var tokensWith = XrayTokenEstimator.EstimateStandard(withStructure);
 
         tokensWith.Should().BeGreaterThan(tokensWithout, "structure adds tokens");
     }
@@ -106,8 +107,8 @@ public class TokenEstimatorTests
         var smallSnippet = ResultBuilder.ObjectResult(90, snippetLength: 100);
         var largeSnippet = ResultBuilder.ObjectResult(90, snippetLength: 500);
 
-        var smallTokens = TokenEstimator.EstimateRich(smallSnippet);
-        var largeTokens = TokenEstimator.EstimateRich(largeSnippet);
+        var smallTokens = XrayTokenEstimator.EstimateRich(smallSnippet);
+        var largeTokens = XrayTokenEstimator.EstimateRich(largeSnippet);
 
         // Larger snippets should produce more tokens
         largeTokens.Should().BeGreaterThan(smallTokens, "larger snippet produces more tokens");
@@ -119,13 +120,13 @@ public class TokenEstimatorTests
     {
         var result = ResultBuilder.Create(80, headlineLength: 40, structureLength: 100, snippetLength: 200);
 
-        var compact = TokenEstimator.Estimate(result, Representation.Compact);
-        var standard = TokenEstimator.Estimate(result, Representation.Standard);
-        var rich = TokenEstimator.Estimate(result, Representation.Rich);
+        var compact = XrayTokenEstimator.Estimate(result, Representation.Compact);
+        var standard = XrayTokenEstimator.Estimate(result, Representation.Standard);
+        var rich = XrayTokenEstimator.Estimate(result, Representation.Rich);
 
-        compact.Should().Be(TokenEstimator.EstimateCompact(result));
-        standard.Should().Be(TokenEstimator.EstimateStandard(result));
-        rich.Should().Be(TokenEstimator.EstimateRich(result));
+        compact.Should().Be(XrayTokenEstimator.EstimateCompact(result));
+        standard.Should().Be(XrayTokenEstimator.EstimateStandard(result));
+        rich.Should().Be(XrayTokenEstimator.EstimateRich(result));
     }
 
     [Test]
@@ -134,9 +135,9 @@ public class TokenEstimatorTests
     {
         var result = ResultBuilder.Create(80, headlineLength: 50, structureLength: 200, snippetLength: 400);
 
-        var minimal = TokenEstimator.EstimateMinimal(result);
-        var compact = TokenEstimator.EstimateCompact(result);
-        var standard = TokenEstimator.EstimateStandard(result);
+        var minimal = XrayTokenEstimator.EstimateMinimal(result);
+        var compact = XrayTokenEstimator.EstimateCompact(result);
+        var standard = XrayTokenEstimator.EstimateStandard(result);
 
         minimal.Should().BeLessThan(compact, "Minimal has no URI");
         compact.Should().BeLessThan(standard, "Compact has no structure");
@@ -146,13 +147,13 @@ public class TokenEstimatorTests
     [DisplayName("Truncation summary with confidence estimates more tokens")]
     public void Given_TruncationSummary_When_HasConfidence_Then_EstimatesMore()
     {
-        var withConf = TokenEstimator.EstimateTruncationSummary(hasConfidence: true);
-        var withoutConf = TokenEstimator.EstimateTruncationSummary(hasConfidence: false);
+        var withConf = XrayTokenEstimator.EstimateTruncationSummary(hasConfidence: true);
+        var withoutConf = XrayTokenEstimator.EstimateTruncationSummary(hasConfidence: false);
 
         withConf.Should().BeGreaterThan(withoutConf);
     }
 
     // Note: Child objects are now estimated separately via ValueBasedAllocator
-    // rather than recursively within TokenEstimator. This enables per-child
+    // rather than recursively within XrayTokenEstimator. This enables per-child
     // representation level allocation based on value/confidence.
 }

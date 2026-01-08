@@ -78,7 +78,7 @@ public static class DecisionEngine
                 representation = tierRep.Value;
             }
 
-            var tokens = TokenEstimator.Estimate(result, representation);
+            var tokens = XrayTokenEstimator.Estimate(result, representation);
             decisions.Add(new RenderingDecision(result, representation, tokens));
             itemsIncluded++;
         }
@@ -116,7 +116,7 @@ public static class DecisionEngine
         foreach (var result in distribution.TopTier)
         {
             var level = intent == Intent.Explore ? Representation.Compact : Representation.Rich;
-            total += TokenEstimator.Estimate(result, level);
+            total += XrayTokenEstimator.Estimate(result, level);
         }
 
         foreach (var result in distribution.MiddleTier)
@@ -128,12 +128,12 @@ public static class DecisionEngine
                 Intent.Examine => Representation.Standard,
                 _ => Representation.Compact
             };
-            total += TokenEstimator.Estimate(result, level);
+            total += XrayTokenEstimator.Estimate(result, level);
         }
 
         foreach (var result in distribution.BottomTier)
         {
-            total += TokenEstimator.Estimate(result, Representation.Compact);
+            total += XrayTokenEstimator.Estimate(result, Representation.Compact);
         }
 
         return total;
@@ -210,7 +210,7 @@ public static class DecisionEngine
         if (lowerLevel is null)
             return null;
 
-        var newTokens = TokenEstimator.Estimate(decision.Result, lowerLevel.Value);
+        var newTokens = XrayTokenEstimator.Estimate(decision.Result, lowerLevel.Value);
         return new RenderingDecision(decision.Result, lowerLevel.Value, newTokens);
     }
 }

@@ -52,4 +52,10 @@ public sealed record Artifact
     ///     X-ray Structure (Level 2): detailed outline (~15 lines, max 25) for navigation and structural exploration.
     /// </summary>
     public string? Structure { get; init; }
+
+    /// <summary>
+    ///     Estimated token count for the text content using Claude BPE tokenizer.
+    ///     NULL for binary files or if estimation failed.
+    /// </summary>
+    public int? TokenCount { get; init; }
 }

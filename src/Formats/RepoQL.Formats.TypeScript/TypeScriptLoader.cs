@@ -106,6 +106,7 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
         if (document.GetMetadataOrDefault<TypeScriptDocumentState>(StateMetadataKey) is not { } state)
             throw new InvalidOperationException("TypeScript document missing state metadata.");
 
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
         var artifact = new Artifact
         {
             Id = state.ArtifactId,
@@ -114,7 +115,8 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             MediaType = state.MediaType,
             Text = document.Text,
             StoreUri = state.StoreUri,
-            Headline = BuildHeadline(document, state),
+            TokenCount = tokenCount,
+            Headline = BuildHeadline(document, state, tokenCount),
             Summary = BuildSummary(document, state),
             Structure = BuildStructure(document, state)
         };
@@ -335,7 +337,7 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildHeadline(DocumentModel document, TypeScriptDocumentState state)
+    private static string BuildHeadline(DocumentModel document, TypeScriptDocumentState state, int? tokenCount)
     {
         var fileName = SafeFileName(document.Uri);
         var exports = state.Parse.Declarations.Where(d => d.IsExported && !string.IsNullOrWhiteSpace(d.Name))
@@ -344,9 +346,10 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             .ToList();
         var exportText = exports.Count == 0 ? "exports: -" : $"exports: {string.Join(", ", exports.Take(4))}";
         var importText = $"imports: {state.Parse.Imports.Count}";
+        var tokenText = tokenCount.HasValue ? $"{tokenCount.Value} tokens" : null;
         var diag = state.Parse.Diagnostics.Count > 0 ? $"[⚠️ {state.Parse.Diagnostics.Count}]" : null;
 
-        return string.Join(" | ", new[] { fileName, exportText, importText, diag }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        return string.Join(" | ", new[] { fileName, exportText, importText, tokenText, diag }.Where(s => !string.IsNullOrWhiteSpace(s)));
     }
 
     private static string BuildSummary(DocumentModel document, TypeScriptDocumentState state)

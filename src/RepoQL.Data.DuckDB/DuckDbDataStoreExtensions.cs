@@ -353,7 +353,7 @@ public static class DuckDbDataStoreExtensions
     {
         ArgumentNullException.ThrowIfNull(store);
         return store.Read(
-            $"SELECT id, digest, byte_size, media_type, text_content, storage_uri, headline, summary, structure FROM artifact WHERE id = '{id}'",
+            $"SELECT id, digest, byte_size, media_type, text_content, storage_uri, headline, summary, structure, token_count FROM artifact WHERE id = '{id}'",
             r => r.MapToArtifact()).FirstOrDefault();
     }
 
@@ -577,7 +577,7 @@ public static class DuckDbDataStoreExtensions
         // Check if artifact with same digest exists
         using var check = conn.CreateCommand();
         check.Transaction = tx;
-        check.CommandText = "SELECT id, digest, byte_size, media_type, text_content, storage_uri, headline, summary, structure FROM artifact WHERE digest = ?;";
+        check.CommandText = "SELECT id, digest, byte_size, media_type, text_content, storage_uri, headline, summary, structure, token_count FROM artifact WHERE digest = ?;";
         check.AddParameters(artifact.Digest);
         using var reader = check.ExecuteReader();
         if (reader.Read())
@@ -589,11 +589,11 @@ public static class DuckDbDataStoreExtensions
         using var ins = conn.CreateCommand();
         ins.Transaction = tx;
         ins.CommandText = """
-            INSERT INTO artifact (id, digest, byte_size, media_type, text_content, storage_uri, headline, summary, structure)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO artifact (id, digest, byte_size, media_type, text_content, storage_uri, headline, summary, structure, token_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
             """;
         ins.AddParameters(artifact.Id, artifact.Digest, artifact.Size, artifact.MediaType?.ToString(),
-            artifact.Text, artifact.StoreUri?.ToString(), artifact.Headline, artifact.Summary, artifact.Structure);
+            artifact.Text, artifact.StoreUri?.ToString(), artifact.Headline, artifact.Summary, artifact.Structure, artifact.TokenCount);
         ins.ExecuteNonQuery();
 
         return artifact;

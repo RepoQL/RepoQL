@@ -90,8 +90,11 @@ public sealed class CSSLoader : IFormatLoader, IFormatMaterializer
 
         var parseResult = state.ParseResult;
 
+        // Calculate token count
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
         // Generate X-ray summaries
-        var headline = BuildHeadline(document, parseResult, state.MediaType);
+        var headline = BuildHeadline(document, parseResult, state.MediaType, tokenCount);
         var structure = BuildStructure(parseResult, state.MediaType);
 
         var artifact = new Artifact
@@ -103,7 +106,8 @@ public sealed class CSSLoader : IFormatLoader, IFormatMaterializer
             Text = document.Text,
             StoreUri = state.StoreUri,
             Headline = headline,
-            Structure = structure
+            Structure = structure,
+            TokenCount = tokenCount
         };
 
         var language = state.MediaType.Kind switch
@@ -290,7 +294,7 @@ public sealed class CSSLoader : IFormatLoader, IFormatMaterializer
         };
     }
 
-    private static string BuildHeadline(DocumentModel document, CSSParseResult parseResult, SemanticMediaType mediaType)
+    private static string BuildHeadline(DocumentModel document, CSSParseResult parseResult, SemanticMediaType mediaType, int? tokenCount)
     {
         var fileName = GetFileName(document.Uri);
         var parts = new List<string> { fileName };
@@ -316,6 +320,11 @@ public sealed class CSSLoader : IFormatLoader, IFormatMaterializer
         else
         {
             parts.Add(language);
+        }
+
+        if (tokenCount.HasValue)
+        {
+            parts.Add($"{tokenCount.Value} tokens");
         }
 
         return string.Join(" | ", parts);

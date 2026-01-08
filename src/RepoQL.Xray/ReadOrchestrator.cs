@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using RepoQL.Contracts;
+using CoreTokenEstimator = RepoQL.Contracts.TokenEstimator;
 
 namespace RepoQL.Xray;
 
@@ -117,7 +118,7 @@ public sealed partial class ReadOrchestrator
             // Try full tree first
             var fullTree = await _contentProvider.FormatAsTreeAsync(uris, foldersOnly: false, cancellationToken).ConfigureAwait(false)
                            ?? string.Join("\n", uris);
-            var fullTreeTokens = TokenEstimator.EstimateTokens(fullTree);
+            var fullTreeTokens = CoreTokenEstimator.EstimateTokens(fullTree);
 
             if (fullTreeTokens <= tokenBudget)
             {
@@ -134,7 +135,7 @@ public sealed partial class ReadOrchestrator
             // Full tree doesn't fit - try folders-only
             var foldersTree = await _contentProvider.FormatAsTreeAsync(uris, foldersOnly: true, cancellationToken).ConfigureAwait(false)
                               ?? "(folders-only not supported)";
-            var foldersTreeTokens = TokenEstimator.EstimateTokens(foldersTree);
+            var foldersTreeTokens = CoreTokenEstimator.EstimateTokens(foldersTree);
 
             if (foldersTreeTokens <= tokenBudget)
             {
@@ -223,12 +224,13 @@ public sealed partial class ReadOrchestrator
                 Error: $"No content found for: {uri}");
         }
 
-        var (output, level) = SelectRepresentation(document, tokenBudget);
+        var (output, level, costs) = SelectRepresentation(document, tokenBudget);
 
-        // Build output with status footer
-        var tokens = TokenEstimator.EstimateTokens(output);
+        // Build output with status footer (including representation hint if not full)
+        var tokens = CoreTokenEstimator.EstimateTokens(output);
         var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
-        var footer = RepresentationFormatter.FormatStatusFooter(statusWithTiming, tokens);
+        var hint = RepresentationFormatter.FormatRepresentationHint(level, costs);
+        var footer = RepresentationFormatter.FormatStatusFooter(statusWithTiming, tokens, hint);
 
         return new ReadExecutionResult(
             Success: true,
@@ -265,13 +267,17 @@ public sealed partial class ReadOrchestrator
         var filesIncluded = 0;
         var filesOmitted = 0;
 
+        // Track representation levels for summary
+        var levelCounts = new Dictionary<string, int>();
+        var maxFullCost = 0;
+
         foreach (var doc in documents)
         {
             // Calculate per-file budget share
             var fileBudget = remainingBudget / Math.Max(1, documents.Count - filesIncluded);
-            var (fileOutput, _) = SelectRepresentation(doc, fileBudget);
+            var (fileOutput, level, costs) = SelectRepresentation(doc, fileBudget);
 
-            var fileTokens = TokenEstimator.EstimateTokens(fileOutput);
+            var fileTokens = CoreTokenEstimator.EstimateTokens(fileOutput);
 
             // Include file if it fits or if it's the first one
             if (fileTokens <= remainingBudget || filesIncluded == 0)
@@ -281,6 +287,13 @@ public sealed partial class ReadOrchestrator
                 sb.Append(fileOutput);
                 remainingBudget -= fileTokens;
                 filesIncluded++;
+
+                // Track representation level
+                levelCounts[level] = levelCounts.GetValueOrDefault(level) + 1;
+
+                // Track max full cost for files not at full representation
+                if (level != "full" && costs.FullTokens.HasValue)
+                    maxFullCost = Math.Max(maxFullCost, costs.FullTokens.Value);
             }
             else
             {
@@ -294,9 +307,12 @@ public sealed partial class ReadOrchestrator
         }
 
         var output = sb.ToString();
-        var tokens = TokenEstimator.EstimateTokens(output);
+        var tokens = CoreTokenEstimator.EstimateTokens(output);
         var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
-        var footer = RepresentationFormatter.FormatStatusFooter(statusWithTiming, tokens);
+
+        // Add representation summary if not all files are at full representation
+        var hint = FormatGlobRepresentationHint(levelCounts, maxFullCost);
+        var footer = RepresentationFormatter.FormatStatusFooter(statusWithTiming, tokens, hint);
 
         return new ReadExecutionResult(
             Success: true,
@@ -304,6 +320,32 @@ public sealed partial class ReadOrchestrator
             Representation: "glob",
             FilesRead: filesIncluded,
             FilesOmitted: filesOmitted);
+    }
+
+    /// <summary>
+    /// Format a representation hint for glob results showing level breakdown.
+    /// Returns inner content (without brackets) or null if all files are at full representation.
+    /// </summary>
+    private static string? FormatGlobRepresentationHint(Dictionary<string, int> levelCounts, int maxFullCost)
+    {
+        // If all files are at full representation, no hint needed
+        if (levelCounts.Count == 1 && levelCounts.ContainsKey("full"))
+            return null;
+
+        var parts = new List<string>();
+
+        // Show level breakdown
+        var breakdown = levelCounts
+            .OrderByDescending(kvp => kvp.Key == "full" ? 3 : kvp.Key == "structure" ? 2 : kvp.Key == "headline" ? 1 : 0)
+            .Select(kvp => $"{kvp.Value}x {kvp.Key}");
+        parts.Add($"representations: {string.Join(", ", breakdown)}");
+
+        // Show max full cost if any file is not at full representation
+        if (maxFullCost > 0)
+            parts.Add($"largest file full: {maxFullCost} tok");
+
+        // Return inner content without brackets - caller will integrate into footer
+        return string.Join(" | ", parts);
     }
 
     /// <summary>
@@ -349,7 +391,7 @@ public sealed partial class ReadOrchestrator
             }
         }
 
-        var contentTokens = TokenEstimator.EstimateTokens(allContent.ToString());
+        var contentTokens = CoreTokenEstimator.EstimateTokens(allContent.ToString());
 
         // If content is small enough and LLM is available, call directly
         if (contentTokens < LargeContentThreshold && _llmProvider is { Enabled: true })
@@ -402,7 +444,7 @@ public sealed partial class ReadOrchestrator
                 ct: cancellationToken).ConfigureAwait(false);
 
             // Build output with status footer
-            var tokens = TokenEstimator.EstimateTokens(response);
+            var tokens = CoreTokenEstimator.EstimateTokens(response);
             var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
             var footer = RepresentationFormatter.FormatStatusFooter(statusWithTiming, tokens);
 
@@ -461,31 +503,46 @@ public sealed partial class ReadOrchestrator
     /// <summary>
     /// Select the richest representation that fits the token budget.
     /// Priority: full content -> headline + structure -> headline only
+    /// Also returns token costs for all available representations.
     /// </summary>
-    private static (string output, string level) SelectRepresentation(ReadDocument doc, int budget)
+    private static (string output, string level, RepresentationCosts costs) SelectRepresentation(ReadDocument doc, int budget)
     {
-        // Try full content first
-        if (!string.IsNullOrEmpty(doc.TextContent))
-        {
-            var full = doc.TextContent;
-            if (TokenEstimator.EstimateTokens(full) <= budget)
-                return (full, "full");
-        }
+        // Calculate costs for all available representations
+        int? fullTokens = null;
+        int? structureTokens = null;
+        int? headlineTokens = null;
 
-        // Try headline + structure
+        if (!string.IsNullOrEmpty(doc.TextContent))
+            fullTokens = CoreTokenEstimator.EstimateTokens(doc.TextContent);
+
         if (!string.IsNullOrEmpty(doc.Headline) && !string.IsNullOrEmpty(doc.Structure))
         {
-            var structure = $"{doc.Headline}\n\n{doc.Structure}";
-            if (TokenEstimator.EstimateTokens(structure) <= budget)
-                return (structure, "structure");
+            var structureText = $"{doc.Headline}\n\n{doc.Structure}";
+            structureTokens = CoreTokenEstimator.EstimateTokens(structureText);
+        }
+
+        if (!string.IsNullOrEmpty(doc.Headline))
+            headlineTokens = CoreTokenEstimator.EstimateTokens(doc.Headline);
+
+        var costs = new RepresentationCosts(fullTokens, structureTokens, headlineTokens);
+
+        // Try full content first
+        if (fullTokens.HasValue && fullTokens.Value <= budget)
+            return (doc.TextContent!, "full", costs);
+
+        // Try headline + structure
+        if (structureTokens.HasValue && structureTokens.Value <= budget)
+        {
+            var structureText = $"{doc.Headline}\n\n{doc.Structure}";
+            return (structureText, "structure", costs);
         }
 
         // Fall back to headline only
         if (!string.IsNullOrEmpty(doc.Headline))
-            return (doc.Headline, "headline");
+            return (doc.Headline, "headline", costs);
 
         // Last resort: just indicate no content
-        return ($"(No content available for {doc.Uri})", "none");
+        return ($"(No content available for {doc.Uri})", "none", costs);
     }
 
     private static bool IsGlobPattern(string uri)
@@ -519,6 +576,16 @@ public sealed record ReadDocument(
     string? Headline,
     string? Summary,
     string? Structure);
+
+/// <summary>
+/// Token costs for different representation levels of a document.
+/// Used to inform users what budget is needed for higher-fidelity representations.
+/// </summary>
+public sealed record RepresentationCosts(
+    int? FullTokens,       // Cost for full content (null if not available)
+    int? StructureTokens,  // Cost for headline + structure (null if not available)
+    int? HeadlineTokens    // Cost for headline only (null if not available)
+);
 
 /// <summary>
 /// Interface for fetching document content for read operations.

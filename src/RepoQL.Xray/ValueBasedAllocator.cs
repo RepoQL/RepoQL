@@ -28,7 +28,7 @@ public static class ValueBasedAllocator
             Result = r,
             ExpectedValue = CalculateFileEV(r, intent),
             Budget = 0,
-            MinCost = TokenEstimator.EstimateMinimal(r)
+            MinCost = XrayTokenEstimator.EstimateMinimal(r)
         }).ToList();
 
         // Proportional budget allocation to files
@@ -120,7 +120,7 @@ public static class ValueBasedAllocator
                 Result = file with { ChildObjects = null },
                 ExpectedValue = file.Confidence * GetIntentModifier(intent),
                 Level = Representation.Minimal,
-                Tokens = TokenEstimator.EstimateMinimal(file)
+                Tokens = XrayTokenEstimator.EstimateMinimal(file)
             }
         };
 
@@ -137,7 +137,7 @@ public static class ValueBasedAllocator
                     Result = c,
                     ExpectedValue = c.Confidence * GetIntentModifier(intent),
                     Level = Representation.Minimal,
-                    Tokens = TokenEstimator.EstimateMinimal(c)
+                    Tokens = XrayTokenEstimator.EstimateMinimal(c)
                 })
                 .OrderByDescending(c => c.ExpectedValue)
                 .ToList();
@@ -157,7 +157,7 @@ public static class ValueBasedAllocator
             {
                 var allocation = (int)(fileBudget * item.ExpectedValue / totalEV);
                 item.Level = PickBestFit(item.Result, allocation, intent);
-                item.Tokens = TokenEstimator.Estimate(item.Result, item.Level);
+                item.Tokens = XrayTokenEstimator.Estimate(item.Result, item.Level);
             }
         }
 
@@ -189,7 +189,7 @@ public static class ValueBasedAllocator
                 var nextLevel = GetNextLevel(item.Level);
                 if (nextLevel is null) continue;
 
-                var nextCost = TokenEstimator.Estimate(item.Result, nextLevel.Value);
+                var nextCost = XrayTokenEstimator.Estimate(item.Result, nextLevel.Value);
                 var upgradeCost = nextCost - item.Tokens;
 
                 if (upgradeCost <= remaining)
@@ -217,11 +217,11 @@ public static class ValueBasedAllocator
     /// </summary>
     private static Representation PickBestFit(XrayResult result, int allocation, Intent intent)
     {
-        if (TokenEstimator.EstimateRich(result) <= allocation)
+        if (XrayTokenEstimator.EstimateRich(result) <= allocation)
             return Representation.Rich;
-        if (TokenEstimator.EstimateStandard(result) <= allocation)
+        if (XrayTokenEstimator.EstimateStandard(result) <= allocation)
             return Representation.Standard;
-        if (TokenEstimator.EstimateCompact(result) <= allocation)
+        if (XrayTokenEstimator.EstimateCompact(result) <= allocation)
             return Representation.Compact;
 
         // Minimal (no URI) only for Explore - URI is high-value for Find/Examine/Understand

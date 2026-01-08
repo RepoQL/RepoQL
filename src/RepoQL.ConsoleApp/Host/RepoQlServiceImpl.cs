@@ -123,7 +123,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             if (request.TokenBudget > 0 && resp.Rows.Count > 0)
             {
                 var formatted = FormatResponseForTokenEstimation(resp);
-                var estimatedTokens = TokenEstimator.EstimateTokens(formatted);
+                var estimatedTokens = RepoQL.Xray.TokenEstimator.EstimateTokens(formatted);
 
                 if (estimatedTokens > request.TokenBudget)
                 {

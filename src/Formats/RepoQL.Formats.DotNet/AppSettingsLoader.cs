@@ -132,6 +132,7 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
 
         // Build template model
         var fileName = GetFileName(document.Uri);
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
 
         var model = new Dictionary<string, object?>
         {
@@ -139,6 +140,7 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
             ["media_kind"] = state.MediaType.Kind ?? "config.appsettings",
             ["size_bytes"] = state.Size,
             ["line_count"] = document.LineMap.LineCount,
+            ["token_count"] = tokenCount,
             ["environment"] = state.Environment,
             ["top_keys"] = state.TopLevelKeys,
             ["connection_strings"] = state.ConnectionStringNames,
@@ -159,7 +161,8 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
             StoreUri = document.Uri.ToString(),
             Headline = headline,
             Summary = summary,
-            Structure = structure
+            Structure = structure,
+            TokenCount = tokenCount
         };
 
         var now = DateTimeOffset.UtcNow;

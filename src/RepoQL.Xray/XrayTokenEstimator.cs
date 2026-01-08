@@ -1,32 +1,23 @@
-using LLMSharp.Anthropic.Tokenizer;
+using CoreTokenEstimator = RepoQL.Contracts.TokenEstimator;
 
 namespace RepoQL.Xray;
 
 /// <summary>
-/// Estimates token counts for text and representation levels.
-/// Uses the official Claude BPE tokenizer from LLMSharp.Anthropic.Tokenizer.
+/// Estimates token counts for XRay representation levels.
 ///
 /// Purpose: Provides accurate token counts for budget-based output rendering decisions.
-/// Complexity: Wraps the ClaudeTokenizer which loads BPE rank maps from embedded resources on first use.
-/// The rest of the system is protected from this complexity via a simple static interface.
+/// Complexity: Base tokenization is handled by Contracts.TokenEstimator; this class adds
+/// representation-level estimation methods specific to XRay rendering.
 /// </summary>
-public static class TokenEstimator
+public static class XrayTokenEstimator
 {
-    private static readonly Lazy<ClaudeTokenizer> Tokenizer = new(() => new ClaudeTokenizer());
-
-    /// <summary>
-    /// Count tokens for a string using the Claude BPE tokenizer.
-    /// </summary>
-    public static int EstimateTokens(string? text)
-        => string.IsNullOrEmpty(text) ? 0 : Tokenizer.Value.CountTokens(text);
-
     /// <summary>
     /// Estimate tokens for Minimal representation (headline only).
     /// </summary>
     public static int EstimateMinimal(XrayResult result)
     {
         // Just headline (single line) + minimal overhead
-        return EstimateTokens(result.Headline) + 1;
+        return CoreTokenEstimator.EstimateTokens(result.Headline) + 1;
     }
 
     /// <summary>
@@ -39,10 +30,10 @@ public static class TokenEstimator
         var tokens = 0;
         tokens += 2; // confidence "XX% "
         if (result.Kind != null)
-            tokens += EstimateTokens($"[{result.Kind}] ");
-        tokens += EstimateTokens(result.Uri);
+            tokens += CoreTokenEstimator.EstimateTokens($"[{result.Kind}] ");
+        tokens += CoreTokenEstimator.EstimateTokens(result.Uri);
         tokens += 1; // newline
-        tokens += EstimateTokens(result.Headline);
+        tokens += CoreTokenEstimator.EstimateTokens(result.Headline);
         tokens += 2; // overhead
         return tokens;
     }
@@ -57,13 +48,13 @@ public static class TokenEstimator
         var tokens = 0;
         tokens += 2; // confidence "XX% "
         if (result.Kind != null)
-            tokens += EstimateTokens($"[{result.Kind}] ");
-        tokens += EstimateTokens(result.Uri);
+            tokens += CoreTokenEstimator.EstimateTokens($"[{result.Kind}] ");
+        tokens += CoreTokenEstimator.EstimateTokens(result.Uri);
         tokens += 1; // newline
-        tokens += EstimateTokens(result.Headline);
+        tokens += CoreTokenEstimator.EstimateTokens(result.Headline);
         tokens += 2; // overhead
         tokens += 1; // newline before structure
-        tokens += EstimateTokens(result.Structure);
+        tokens += CoreTokenEstimator.EstimateTokens(result.Structure);
         return tokens;
     }
 
@@ -77,12 +68,12 @@ public static class TokenEstimator
         var tokens = 0;
         tokens += 2; // confidence "XX% "
         if (result.Kind != null)
-            tokens += EstimateTokens($"[{result.Kind}] ");
-        tokens += EstimateTokens(result.Uri);
+            tokens += CoreTokenEstimator.EstimateTokens($"[{result.Kind}] ");
+        tokens += CoreTokenEstimator.EstimateTokens(result.Uri);
         tokens += 2; // newline + code fence opener
-        tokens += EstimateTokens(result.Lang); // language hint
+        tokens += CoreTokenEstimator.EstimateTokens(result.Lang); // language hint
         tokens += 1; // newline
-        tokens += EstimateTokens(result.Snippet);
+        tokens += CoreTokenEstimator.EstimateTokens(result.Snippet);
         tokens += 2; // code fence closer + trailing newline
         return tokens;
     }

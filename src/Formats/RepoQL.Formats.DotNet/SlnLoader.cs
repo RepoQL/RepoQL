@@ -212,10 +212,13 @@ public sealed class SlnLoader(ITemplateRenderer? renderer = null) : IFormatLoade
             ["guid"] = f.Guid
         }).ToList();
 
+        var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
+
         var model = new Dictionary<string, object?>
         {
             ["file_name"] = fileName,
             ["size_bytes"] = state.Size,
+            ["token_count"] = tokenCount,
             ["format_version"] = string.IsNullOrEmpty(state.FormatVersion) ? "?" : state.FormatVersion,
             ["vs_version"] = string.IsNullOrEmpty(state.VsVersion) ? "?" : state.VsVersion,
             ["project_count"] = projectCount,
@@ -243,7 +246,8 @@ public sealed class SlnLoader(ITemplateRenderer? renderer = null) : IFormatLoade
             StoreUri = document.Uri.ToString(),
             Headline = headline,
             Summary = summary,
-            Structure = structure
+            Structure = structure,
+            TokenCount = tokenCount
         };
 
         var now = DateTimeOffset.UtcNow;

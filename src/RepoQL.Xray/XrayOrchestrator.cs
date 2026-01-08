@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using RepoQL.Contracts;
 using RepoQL.Xray.Search;
+using CoreTokenEstimator = RepoQL.Contracts.TokenEstimator;
 
 namespace RepoQL.Xray;
 
@@ -206,7 +207,7 @@ public sealed class XrayOrchestrator
 
             // Calculate token count for the response content (excluding footer)
             var responseContent = $"## Understanding: {question}\n\n{result}";
-            var tokenCount = TokenEstimator.EstimateTokens(responseContent);
+            var tokenCount = CoreTokenEstimator.EstimateTokens(responseContent);
             var footer = RepresentationFormatter.FormatStatusFooter(status, tokenCount);
 
             return $"""
