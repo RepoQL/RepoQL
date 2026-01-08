@@ -9,6 +9,7 @@ using RepoQL.Contracts.Models;
 using RepoQL.Formats.Xlsx.Analysis;
 using RepoQL.Formats.Xlsx.Surface;
 using RepoQL.Templating;
+using RepoQL.Templating.Filters;
 
 namespace RepoQL.Formats.Xlsx;
 
@@ -35,7 +36,8 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
 
     private readonly LiquidTemplateRenderer _renderer = new(
         assembly: typeof(XlsxLoader).Assembly,
-        resourceRoot: "RepoQL.Formats.Xlsx.Templates");
+        resourceRoot: "RepoQL.Formats.Xlsx.Templates",
+        configure: StandardFilters.RegisterAll);
 
     public XlsxLoader(ILogger<XlsxLoader>? logger = null)
     {

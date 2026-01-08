@@ -1,3 +1,10 @@
 {%- for h in headings -%}
 {{ h.indent }}- {{ h.text }}
 {% endfor -%}
+{%- if capsules and capsules.size > 0 -%}
+
+Capsules:
+{%- for c in capsules %}
+  - {{ c.name }}: {{ c.invariant_preview }}
+{% endfor -%}
+{%- endif -%}

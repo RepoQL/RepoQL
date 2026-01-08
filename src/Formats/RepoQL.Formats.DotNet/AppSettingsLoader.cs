@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
+using RepoQL.Templating.Filters;
 
 namespace RepoQL.Formats.DotNet;
 
@@ -21,7 +22,8 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
 
     private readonly ITemplateRenderer _renderer = renderer ?? new LiquidTemplateRenderer(
         assembly: typeof(AppSettingsLoader).Assembly,
-        resourceRoot: "RepoQL.Formats.DotNet.Templates");
+        resourceRoot: "RepoQL.Formats.DotNet.Templates",
+        configure: StandardFilters.RegisterAll);
 
     /// <inheritdoc />
     public bool Supports(SemanticMediaType mediaType)

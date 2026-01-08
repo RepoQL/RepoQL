@@ -3,6 +3,7 @@ using System.Xml.Linq;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
+using RepoQL.Templating.Filters;
 using System.Text.Json.Nodes;
 
 namespace RepoQL.Formats.DotNet;
@@ -21,7 +22,8 @@ public sealed class CsProjLoader : IFormatLoader, IFormatMaterializer
 
     private readonly ITemplateRenderer _renderer = new LiquidTemplateRenderer(
         assembly: typeof(CsProjLoader).Assembly,
-        resourceRoot: "RepoQL.Formats.DotNet.Templates");
+        resourceRoot: "RepoQL.Formats.DotNet.Templates",
+        configure: StandardFilters.RegisterAll);
 
     /// <inheritdoc />
     public bool Supports(SemanticMediaType mediaType)

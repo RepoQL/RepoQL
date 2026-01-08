@@ -301,11 +301,13 @@ public static class RepositoryUserDefinedFunctions
             true
         );
 
-        // matches_glob(uri, pattern_spec, ignore_case, default_scheme) -> bool?
+        // repoql_matches_glob(uri, pattern_spec, ignore_case, default_scheme) -> bool?
         // Supports semicolon-delimited patterns and negative patterns with ! prefix.
+        // Also supports fragment patterns like #symbol=MyClass.* and #line=10,*.
         // Returns TRUE for NULL/blank patterns (matches everything).
+        // Wrapped by matches_glob() macro which provides default parameters.
         connection.RegisterScalarFunction<string, string, bool, string, bool>(
-            "matches_glob",
+            "repoql_matches_glob",
             (readers, writer, rowCount) =>
             {
                 var uriReader = readers[0];
@@ -353,6 +355,41 @@ public static class RepositoryUserDefinedFunctions
                     {
                         writer.WriteValue(matched.Value, rowIndex);
                     }
+                }
+            },
+            true
+        );
+
+        // symbol_matches(qualified_name, pattern) -> bool?
+        // Matches symbol names against patterns with wildcards.
+        // Supports: "MyClass" (exact), "MyClass.*" (direct children), "MyClass.**" (all descendants)
+        connection.RegisterScalarFunction<string, string, bool>(
+            "symbol_matches",
+            (readers, writer, rowCount) =>
+            {
+                var qualifiedNameReader = readers[0];
+                var patternReader = readers[1];
+
+                for (ulong rowIndex = 0; rowIndex < rowCount; rowIndex++)
+                {
+                    // Handle NULL inputs - return NULL (three-valued logic)
+                    if (!qualifiedNameReader.IsValid(rowIndex) || !patternReader.IsValid(rowIndex))
+                    {
+                        writer.WriteNull(rowIndex);
+                        continue;
+                    }
+
+                    var qualifiedName = qualifiedNameReader.GetValue<string>(rowIndex);
+                    var pattern = patternReader.GetValue<string>(rowIndex);
+
+                    if (string.IsNullOrWhiteSpace(qualifiedName) || string.IsNullOrWhiteSpace(pattern))
+                    {
+                        writer.WriteNull(rowIndex);
+                        continue;
+                    }
+
+                    var matched = SymbolPatternMatcher.Matches(qualifiedName, pattern);
+                    writer.WriteValue(matched, rowIndex);
                 }
             },
             true

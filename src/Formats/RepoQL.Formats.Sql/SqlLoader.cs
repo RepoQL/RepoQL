@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
+using RepoQL.Templating.Filters;
 
 namespace RepoQL.Formats.Sql;
 
@@ -20,7 +21,8 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
 
     private readonly ITemplateRenderer _renderer = new LiquidTemplateRenderer(
         assembly: typeof(SqlLoader).Assembly,
-        resourceRoot: "RepoQL.Formats.Sql.Templates");
+        resourceRoot: "RepoQL.Formats.Sql.Templates",
+        configure: StandardFilters.RegisterAll);
 
     // Regex patterns for SQL object detection
     [GeneratedRegex(@"CREATE\s+(?:OR\s+REPLACE\s+)?(?<type>TABLE|VIEW|FUNCTION|PROCEDURE|MACRO|TRIGGER)\s+(?:IF\s+NOT\s+EXISTS\s+)?(?<name>\w+)", RegexOptions.IgnoreCase | RegexOptions.Multiline)]

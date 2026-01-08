@@ -546,7 +546,7 @@ public sealed partial class ReadOrchestrator
     }
 
     private static bool IsGlobPattern(string uri)
-        => uri.Contains('*') || uri.Contains('?');
+        => uri.Contains('*') || uri.Contains('?') || uri.Contains(';') || uri.Contains('!');
 
     [GeneratedRegex(@"^(\S+)\s+//\s+(.+)$")]
     private static partial Regex QuestionPattern();

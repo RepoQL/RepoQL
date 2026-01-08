@@ -9,4 +9,5 @@ internal sealed class MarkdownSurface
     public required IReadOnlyList<HeadingInfo> Headings { get; init; }
     public required IReadOnlyList<LinkInfo> Links { get; init; }
     public required IReadOnlyList<CodeBlockInfo> CodeBlocks { get; init; }
+    public required IReadOnlyList<CapsuleInfo> Capsules { get; init; }
 }

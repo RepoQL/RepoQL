@@ -17,8 +17,50 @@ public static class RepoUriGlobMatcher
     /// <summary>
     /// Returns true if <paramref name="uri"/> matches the glob <paramref name="pattern"/>.
     /// Returns null when either input is blank to preserve SQL three-valued logic.
+    /// Supports fragment patterns like #symbol=MyClass.* and #line=1,5.
     /// </summary>
     public static bool? IsMatch(string? uri, string? pattern, bool ignoreCase = true, string? defaultScheme = null)
+    {
+        if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(pattern))
+            return null;
+
+        // Split URI and pattern into container + fragment
+        var (uriContainer, uriFragment) = SplitFragment(uri);
+        var (patternContainer, patternFragment) = SplitFragment(pattern);
+
+        // Match the container (file path) using existing glob logic
+        var containerMatch = MatchContainer(uriContainer, patternContainer, ignoreCase, defaultScheme);
+        if (containerMatch != true)
+            return containerMatch;
+
+        // If pattern has no fragment, container match is sufficient
+        if (string.IsNullOrEmpty(patternFragment))
+            return true;
+
+        // Pattern has fragment - URI must also have a fragment to match
+        if (string.IsNullOrEmpty(uriFragment))
+            return false;
+
+        // Match the fragments
+        return MatchFragment(uriFragment, patternFragment, ignoreCase);
+    }
+
+    /// <summary>
+    /// Splits a URI into container (before #) and fragment (after #).
+    /// </summary>
+    private static (string Container, string? Fragment) SplitFragment(string value)
+    {
+        var hashIndex = value.IndexOf('#', StringComparison.Ordinal);
+        if (hashIndex < 0)
+            return (value, null);
+
+        return (value[..hashIndex], value[(hashIndex + 1)..]);
+    }
+
+    /// <summary>
+    /// Match the container portion of the URI using existing glob logic.
+    /// </summary>
+    private static bool? MatchContainer(string uri, string pattern, bool ignoreCase, string? defaultScheme)
     {
         if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(pattern))
             return null;
@@ -41,6 +83,160 @@ public static class RepoUriGlobMatcher
         });
 
         return regex.IsMatch(uriInfo.Absolute);
+    }
+
+    /// <summary>
+    /// Match fragment patterns. Supports:
+    /// - symbol=Pattern.* (direct children) and symbol=Pattern.** (all descendants)
+    /// - line=N,M (exact range), line=N (contains), line=*,M, line=N,*, line=*
+    /// - Exact match for other fragment types
+    /// URI fragments can have multiple parts (e.g., line=1,5&amp;symbol=Foo) - pattern matches if
+    /// the pattern's type exists in the URI and values match.
+    /// </summary>
+    private static bool MatchFragment(string uriFragment, string patternFragment, bool ignoreCase)
+    {
+        var patternParsed = ParseSingleFragmentPart(patternFragment);
+        if (patternParsed.Type is null)
+            return false;
+
+        // Parse all parts from URI fragment and find matching type
+        var uriParts = ParseAllFragmentParts(uriFragment);
+        var matchingPart = uriParts.FirstOrDefault(p =>
+            string.Equals(p.Type, patternParsed.Type,
+                ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+
+        if (matchingPart.Type is null)
+            return false;
+
+        return patternParsed.Type.ToLowerInvariant() switch
+        {
+            "symbol" => MatchSymbolFragment(matchingPart.Value, patternParsed.Value),
+            "line" => MatchLineFragment(matchingPart.Value, patternParsed.Value),
+            _ => string.Equals(matchingPart.Value, patternParsed.Value,
+                     ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
+        };
+    }
+
+    /// <summary>
+    /// Parse all key=value parts from a fragment string.
+    /// Handles compound fragments like "line=1,5&amp;symbol=Foo".
+    /// </summary>
+    private static IEnumerable<(string? Type, string? Value)> ParseAllFragmentParts(string? fragment)
+    {
+        if (string.IsNullOrEmpty(fragment))
+            yield break;
+
+        // Check for plain anchor (no = sign)
+        if (!fragment.Contains('=', StringComparison.Ordinal))
+        {
+            yield return ("anchor", fragment);
+            yield break;
+        }
+
+        // Split by & and parse each part
+        var parts = fragment.Split('&');
+        foreach (var part in parts)
+        {
+            var parsed = ParseSingleFragmentPart(part);
+            if (parsed.Type is not null)
+                yield return parsed;
+        }
+    }
+
+    /// <summary>
+    /// Parse a single key=value fragment part.
+    /// </summary>
+    private static (string? Type, string? Value) ParseSingleFragmentPart(string? fragment)
+    {
+        if (string.IsNullOrEmpty(fragment))
+            return (null, null);
+
+        var equalsIndex = fragment.IndexOf('=', StringComparison.Ordinal);
+        if (equalsIndex < 0)
+            return ("anchor", fragment); // Plain anchor
+
+        var type = fragment[..equalsIndex];
+        var value = fragment[(equalsIndex + 1)..];
+
+        return (type, value);
+    }
+
+    /// <summary>
+    /// Match symbol patterns with wildcards.
+    /// </summary>
+    private static bool MatchSymbolFragment(string? uriValue, string? patternValue)
+    {
+        if (string.IsNullOrEmpty(uriValue) || string.IsNullOrEmpty(patternValue))
+            return false;
+
+        return SymbolPatternMatcher.Matches(uriValue, patternValue);
+    }
+
+    /// <summary>
+    /// Match line range patterns with wildcards.
+    /// Supports: exact (1,5), contains (5), wildcard start (*,10), wildcard end (5,*), full wildcard (*)
+    /// </summary>
+    private static bool MatchLineFragment(string? uriValue, string? patternValue)
+    {
+        if (string.IsNullOrEmpty(uriValue) || string.IsNullOrEmpty(patternValue))
+            return false;
+
+        // Full wildcard - matches any line fragment
+        if (patternValue == "*")
+            return true;
+
+        var (uStart, uEnd) = ParseLineRange(uriValue);
+        var (pStart, pEnd) = ParseLineRange(patternValue);
+
+        // If URI doesn't have valid line info, no match
+        if (uStart is null)
+            return false;
+
+        // Pattern: *,N (wildcard start) - match if URI ends at N
+        if (pStart is null && pEnd is not null)
+            return uEnd == pEnd;
+
+        // Pattern: N,* (wildcard end) - match if URI starts at N
+        if (pStart is not null && pEnd is null && patternValue.Contains(',', StringComparison.Ordinal))
+            return uStart == pStart;
+
+        // Pattern: N (single line, contains check) - match if URI range contains line N
+        if (pStart is not null && pEnd is null && !patternValue.Contains(',', StringComparison.Ordinal))
+        {
+            var effectiveEnd = uEnd ?? uStart;
+            return uStart <= pStart && pStart <= effectiveEnd;
+        }
+
+        // Pattern: N,M (exact range) - match if URI range equals pattern range
+        return uStart == pStart && uEnd == pEnd;
+    }
+
+    /// <summary>
+    /// Parse a line range value like "1,5" or "10" or "*,5".
+    /// Returns (start, end) where null indicates wildcard or missing.
+    /// </summary>
+    private static (int? Start, int? End) ParseLineRange(string value)
+    {
+        var commaIndex = value.IndexOf(',', StringComparison.Ordinal);
+
+        if (commaIndex < 0)
+        {
+            // Single value: "10" or "*"
+            if (value == "*")
+                return (null, null);
+            if (int.TryParse(value, out var single))
+                return (single, null);
+            return (null, null);
+        }
+
+        // Range: "1,5" or "*,5" or "1,*"
+        var startStr = value[..commaIndex];
+        var endStr = value[(commaIndex + 1)..];
+
+        int? start = startStr == "*" ? null : int.TryParse(startStr, out var s) ? s : null;
+        int? end = endStr == "*" ? null : int.TryParse(endStr, out var e) ? e : null;
+
+        return (start, end);
     }
 
     private static UriInfo NormalizeUri(string value, bool ignoreCase)

@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
+using RepoQL.Templating.Filters;
 
 namespace RepoQL.Formats.DotNet;
 
@@ -20,7 +21,8 @@ public sealed class SlnLoader(ITemplateRenderer? renderer = null) : IFormatLoade
 
     private readonly ITemplateRenderer _renderer = renderer ?? new LiquidTemplateRenderer(
         assembly: typeof(SlnLoader).Assembly,
-        resourceRoot: "RepoQL.Formats.DotNet.Templates");
+        resourceRoot: "RepoQL.Formats.DotNet.Templates",
+        configure: StandardFilters.RegisterAll);
 
     // Project("{GUID}") = "Name", "Path", "{GUID}"
     private static readonly Regex ProjectRegex = new(

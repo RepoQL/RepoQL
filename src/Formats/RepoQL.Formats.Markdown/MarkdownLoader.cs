@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using System.Threading;
 using Markdig;
 using Markdig.Extensions.Tables;
@@ -12,6 +13,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
+using RepoQL.Templating.Filters;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -31,7 +33,8 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
 
     private readonly LiquidTemplateRenderer _renderer = new(
         assembly: typeof(MarkdownLoader).Assembly,
-        resourceRoot: "RepoQL.Formats.Markdown.Templates");
+        resourceRoot: "RepoQL.Formats.Markdown.Templates",
+        configure: StandardFilters.RegisterAll);
 
     private static readonly Lazy<string> MarkdownViewsSql = new(
         () => ReadEmbeddedResource("RepoQL.Formats.Markdown.Schema.markdown_views.sql"));
@@ -48,6 +51,18 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
         ("architecture", "architecture"),
         ("design", "architecture")
     ];
+
+    private static readonly Regex CapsuleHeadingPattern = new(
+        @"^Capsule:\s*([A-Z][A-Za-z0-9]+)",
+        RegexOptions.Compiled);
+
+    private static readonly Regex SeeAlsoPattern = new(
+        @"SeeAlso:\s*(.+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    private static readonly Regex CapsuleNamePattern = new(
+        @"`?([A-Z][A-Za-z0-9]+)`?",
+        RegexOptions.Compiled);
 
     public MarkdownLoader(ILogger<MarkdownLoader>? logger = null)
     {
@@ -220,13 +235,17 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
         var imagesCount = markdigDoc.Descendants<LinkInline>().Count(l => l.IsImage);
         var tablesCount = markdigDoc.Descendants<Table>().Count();
 
+        // Extract capsules from headings matching "Capsule: Name" pattern
+        var capsules = ExtractCapsules(headings, markdigDoc, text, lineMap);
+
         var surface = new MarkdownSurface
         {
             DocumentId = docId,
             DocumentProperties = documentProps,
             Headings = headings,
             Links = links,
-            CodeBlocks = blocks
+            CodeBlocks = blocks,
+            Capsules = capsules
         };
 
         var state = new MarkdownDocumentState
@@ -323,7 +342,14 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                     ["level"] = h.Level,
                     ["text"] = h.Text,
                     ["indent"] = new string(' ', Math.Max(0, (h.Level - 1) * 2))
-                }).ToList()
+                }).ToList(),
+                ["capsules"] = state.Surface.Capsules.Select(c => new Dictionary<string, object?>
+                {
+                    ["name"] = c.Name,
+                    ["invariant"] = c.Invariant,
+                    ["invariant_preview"] = c.Invariant.Length > 60 ? c.Invariant.Substring(0, 57) + "..." : c.Invariant
+                }).ToList(),
+                ["capsules_count"] = state.Surface.Capsules.Count
             };
 
             headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
@@ -462,6 +488,68 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                         Id = Guid.NewGuid(),
                         SrcId = node.Id,
                         DstId = headingId,
+                        Type = "REFERS_TO",
+                        IsComposition = false,
+                        Ordinal = null,
+                        ScopeDocumentId = docNode.Id,
+                        CreatedAt = now
+                    });
+                }
+            }
+        }
+
+        // Build capsule index for REFERS_TO edges
+        var capsuleIndex = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        foreach (var capsule in state.Surface.Capsules)
+        {
+            capsuleIndex[capsule.Name] = capsule.NodeId;
+        }
+
+        // Materialize capsules
+        foreach (var capsule in state.Surface.Capsules)
+        {
+            var span = ToSpan(document, capsule.CapsuleSpan, docNode.Id, capsule.SpanId);
+            spans.Add(span);
+
+            var seeAlsoArray = new JsonArray();
+            foreach (var refName in capsule.SeeAlso)
+            {
+                seeAlsoArray.Add(JsonValue.Create(refName));
+            }
+
+            var node = new Node
+            {
+                Id = capsule.NodeId,
+                Kind = "md_capsule",
+                SpanId = capsule.SpanId,
+                Props = new JsonObject
+                {
+                    ["name"] = capsule.Name,
+                    ["invariant"] = capsule.Invariant,
+                    ["example"] = capsule.Example,
+                    ["has_boundary"] = capsule.HasBoundary,
+                    ["boundary_text"] = capsule.BoundaryText,
+                    ["see_also"] = seeAlsoArray,
+                    ["heading_level"] = capsule.HeadingLevel
+                },
+                Headline = BuildCapsuleHeadline(capsule),
+                Structure = BuildCapsuleStructure(capsule),
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            nodes.Add(node);
+            edges.Add(CreateHasPart(docNode.Id, node.Id, docNode.Id, ordinal++, now));
+
+            // Create REFERS_TO edges for SeeAlso references
+            foreach (var refName in capsule.SeeAlso)
+            {
+                if (capsuleIndex.TryGetValue(refName, out var targetId) && targetId != capsule.NodeId)
+                {
+                    edges.Add(new Edge
+                    {
+                        Id = Guid.NewGuid(),
+                        SrcId = capsule.NodeId,
+                        DstId = targetId,
                         Type = "REFERS_TO",
                         IsComposition = false,
                         Ordinal = null,
@@ -964,9 +1052,178 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
         return reader.ReadToEnd();
     }
 
+    private static List<CapsuleInfo> ExtractCapsules(
+        IReadOnlyList<HeadingInfo> headings,
+        MarkdownDocument markdigDoc,
+        string text,
+        TextLineMap lineMap)
+    {
+        var capsules = new List<CapsuleInfo>();
+
+        foreach (var heading in headings)
+        {
+            var match = CapsuleHeadingPattern.Match(heading.Text);
+            if (!match.Success)
+                continue;
+
+            var capsuleName = match.Groups[1].Value;
+            var nodeId = Guid.NewGuid();
+            var spanId = Guid.NewGuid();
+
+            // Extract content from the section
+            var sectionStart = heading.SectionSpan.StartChar;
+            var sectionEnd = heading.SectionSpan.EndChar;
+            var sectionText = text.Substring(sectionStart, Math.Min(sectionEnd - sectionStart, text.Length - sectionStart));
+
+            // Parse capsule sections
+            var (invariant, example, hasBoundary, boundaryText, seeAlso) = ParseCapsuleSections(sectionText);
+
+            if (string.IsNullOrWhiteSpace(invariant))
+                continue; // Skip if no invariant found - not a valid capsule
+
+            capsules.Add(new CapsuleInfo(
+                nodeId,
+                spanId,
+                capsuleName,
+                invariant,
+                example,
+                hasBoundary,
+                boundaryText,
+                seeAlso,
+                heading.Level,
+                heading.SectionSpan));
+        }
+
+        return capsules;
+    }
+
+    private static (string Invariant, string? Example, bool HasBoundary, string? BoundaryText, IReadOnlyList<string> SeeAlso) ParseCapsuleSections(string sectionText)
+    {
+        var lines = sectionText.Split('\n');
+        var invariant = string.Empty;
+        string? example = null;
+        var hasBoundary = false;
+        string? boundaryText = null;
+        var seeAlso = new List<string>();
+        var depthBullets = new List<string>();
+
+        var currentSection = CapsuleSection.None;
+        var sectionContent = new StringBuilder();
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.TrimEnd('\r');
+            var trimmed = line.Trim();
+
+            // Check for section markers
+            if (trimmed.StartsWith("**Invariant**", StringComparison.OrdinalIgnoreCase))
+            {
+                currentSection = CapsuleSection.Invariant;
+                sectionContent.Clear();
+                continue;
+            }
+            if (trimmed.StartsWith("**Example**", StringComparison.OrdinalIgnoreCase))
+            {
+                if (currentSection == CapsuleSection.Invariant)
+                    invariant = sectionContent.ToString().Trim();
+                currentSection = CapsuleSection.Example;
+                sectionContent.Clear();
+                continue;
+            }
+            if (trimmed.StartsWith("**Depth**", StringComparison.OrdinalIgnoreCase))
+            {
+                if (currentSection == CapsuleSection.Invariant)
+                    invariant = sectionContent.ToString().Trim();
+                else if (currentSection == CapsuleSection.Example)
+                    example = sectionContent.ToString().Trim();
+                currentSection = CapsuleSection.Depth;
+                sectionContent.Clear();
+                continue;
+            }
+
+            // Check for boundary marker in example section
+            if (currentSection == CapsuleSection.Example && trimmed.StartsWith("//BOUNDARY:", StringComparison.OrdinalIgnoreCase))
+            {
+                hasBoundary = true;
+                boundaryText = trimmed.Substring("//BOUNDARY:".Length).Trim();
+                continue;
+            }
+
+            // Collect content based on current section
+            switch (currentSection)
+            {
+                case CapsuleSection.Invariant:
+                case CapsuleSection.Example:
+                    if (!string.IsNullOrWhiteSpace(line))
+                        sectionContent.AppendLine(line);
+                    break;
+                case CapsuleSection.Depth:
+                    if (trimmed.StartsWith("-") || trimmed.StartsWith("*"))
+                    {
+                        var bullet = trimmed.TrimStart('-', '*', ' ');
+                        depthBullets.Add(bullet);
+
+                        // Check for SeeAlso references
+                        var seeAlsoMatch = SeeAlsoPattern.Match(bullet);
+                        if (seeAlsoMatch.Success)
+                        {
+                            var references = seeAlsoMatch.Groups[1].Value;
+                            foreach (Match nameMatch in CapsuleNamePattern.Matches(references))
+                            {
+                                seeAlso.Add(nameMatch.Groups[1].Value);
+                            }
+                        }
+                    }
+                    break;
+            }
+        }
+
+        // Finalize last section
+        if (currentSection == CapsuleSection.Invariant)
+            invariant = sectionContent.ToString().Trim();
+        else if (currentSection == CapsuleSection.Example)
+            example = sectionContent.ToString().Trim();
+
+        return (invariant, string.IsNullOrWhiteSpace(example) ? null : example, hasBoundary, boundaryText, seeAlso);
+    }
+
+    private enum CapsuleSection
+    {
+        None,
+        Invariant,
+        Example,
+        Depth
+    }
+
+    private static string BuildCapsuleHeadline(CapsuleInfo capsule)
+    {
+        var invariantPreview = capsule.Invariant.Length > 80
+            ? capsule.Invariant.Substring(0, 77) + "..."
+            : capsule.Invariant;
+        return $"Capsule: {capsule.Name} - {invariantPreview}";
+    }
+
+    private static string BuildCapsuleStructure(CapsuleInfo capsule)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"**Invariant**: {capsule.Invariant}");
+
+        if (!string.IsNullOrEmpty(capsule.Example))
+        {
+            sb.AppendLine();
+            sb.AppendLine($"**Example**: {capsule.Example}");
+            if (capsule.HasBoundary && !string.IsNullOrEmpty(capsule.BoundaryText))
+            {
+                sb.AppendLine($"//BOUNDARY: {capsule.BoundaryText}");
+            }
+        }
+
+        return sb.ToString().Trim();
+    }
+
     [LoggerMessage(LogLevel.Warning, "Failed to parse {Name} as markdown")]
     partial void LogFailedToParseNameAsMarkdown(Exception ex, string name);
-    
+
     [LoggerMessage(LogLevel.Warning, "Failed to load front matter from {Name}")]
     partial void LogFailedToLoadFrontmatter(Exception ex, string name);
 }

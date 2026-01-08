@@ -123,7 +123,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             if (request.TokenBudget > 0 && resp.Rows.Count > 0)
             {
                 var formatted = FormatResponseForTokenEstimation(resp);
-                var estimatedTokens = RepoQL.Xray.TokenEstimator.EstimateTokens(formatted);
+                var estimatedTokens = TokenEstimator.EstimateTokens(formatted);
 
                 if (estimatedTokens > request.TokenBudget)
                 {
@@ -1150,18 +1150,50 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         public Task<ReadDocument?> FetchDocumentAsync(string uri, CancellationToken cancellationToken)
         {
             var escapedUri = uri.Replace("'", "''", StringComparison.Ordinal);
-            var sql = $"""
-                SELECT n.uri,
-                       a.text_content,
-                       a.media_type,
-                       a.headline,
-                       a.summary,
-                       a.structure
-                FROM node n
-                JOIN artifact a ON a.id = n.artifact_id
-                WHERE lower(n.uri) = lower('{escapedUri}')
-                LIMIT 1
-                """;
+            var hasFragment = uri.Contains('#', StringComparison.Ordinal);
+
+            // For fragment URIs (symbols, line ranges), join through span -> document -> artifact
+            // since sub-document nodes have NULL artifact_id
+            string sql;
+            if (hasFragment)
+            {
+                sql = $"""
+                    SELECT n.uri,
+                           -- Extract lines from full content based on span
+                           CASE WHEN s.start_line IS NOT NULL AND a.text_content IS NOT NULL
+                                THEN (SELECT string_agg(line, chr(10))
+                                      FROM (SELECT unnest(string_split(a.text_content, chr(10))) as line,
+                                                   generate_subscripts(string_split(a.text_content, chr(10)), 1) as line_num)
+                                      WHERE line_num >= s.start_line AND line_num <= s.end_line)
+                                ELSE a.text_content
+                           END as text_content,
+                           a.media_type,
+                           a.headline,
+                           a.summary,
+                           a.structure
+                    FROM node n
+                    JOIN span s ON s.id = n.span_id
+                    JOIN node d ON d.id = s.document_id
+                    JOIN artifact a ON a.id = d.artifact_id
+                    WHERE lower(n.uri) = lower('{escapedUri}')
+                    LIMIT 1
+                    """;
+            }
+            else
+            {
+                sql = $"""
+                    SELECT n.uri,
+                           a.text_content,
+                           a.media_type,
+                           a.headline,
+                           a.summary,
+                           a.structure
+                    FROM node n
+                    JOIN artifact a ON a.id = n.artifact_id
+                    WHERE lower(n.uri) = lower('{escapedUri}')
+                    LIMIT 1
+                    """;
+            }
 
             var results = _db.Query(sql);
             var row = results.FirstOrDefault();
@@ -1181,21 +1213,61 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         public Task<IReadOnlyList<ReadDocument>> FetchGlobAsync(string globUri, CancellationToken cancellationToken)
         {
             var escapedGlob = globUri.Replace("'", "''", StringComparison.Ordinal);
-            var sql = $"""
-                SELECT n.uri,
-                       a.text_content,
-                       a.media_type,
-                       a.headline,
-                       a.summary,
-                       a.structure
-                FROM node n
-                JOIN artifact a ON a.id = n.artifact_id
-                WHERE n.kind = 'document'
-                  AND (glob_match(n.uri, '{escapedGlob}', default_scheme := 'file:///')
-                       OR glob_match(n.uri, '{escapedGlob}', default_scheme := 'docs:///'))
-                ORDER BY n.uri
-                LIMIT 50
-                """;
+            var hasFragment = globUri.Contains('#', StringComparison.Ordinal);
+
+            // Use matches_glob which supports:
+            // - Semicolon-delimited patterns (src/**;lib/**)
+            // - Exclusion patterns (!tests/**)
+            // - Fragment patterns (#symbol=MyClass.*)
+            string sql;
+            if (hasFragment)
+            {
+                // For fragment patterns, nodes don't have their own artifact.
+                // Join through span -> document -> artifact to get content.
+                // Extract just the lines for this symbol/range from the full text.
+                sql = $"""
+                    SELECT n.uri,
+                           -- Extract lines from full content based on span
+                           CASE WHEN s.start_line IS NOT NULL AND a.text_content IS NOT NULL
+                                THEN (SELECT string_agg(line, chr(10))
+                                      FROM (SELECT unnest(string_split(a.text_content, chr(10))) as line,
+                                                   generate_subscripts(string_split(a.text_content, chr(10)), 1) as line_num)
+                                      WHERE line_num >= s.start_line AND line_num <= s.end_line)
+                                ELSE a.text_content
+                           END as text_content,
+                           a.media_type,
+                           a.headline,
+                           a.summary,
+                           a.structure
+                    FROM node n
+                    JOIN span s ON s.id = n.span_id
+                    JOIN node d ON d.id = s.document_id
+                    JOIN artifact a ON a.id = d.artifact_id
+                    WHERE (matches_glob(n.uri, '{escapedGlob}', default_scheme := 'file:///')
+                           OR matches_glob(n.uri, '{escapedGlob}', default_scheme := 'docs:///'))
+                    ORDER BY n.uri
+                    LIMIT 100
+                    """;
+            }
+            else
+            {
+                // For document patterns, use simple join
+                sql = $"""
+                    SELECT n.uri,
+                           a.text_content,
+                           a.media_type,
+                           a.headline,
+                           a.summary,
+                           a.structure
+                    FROM node n
+                    JOIN artifact a ON a.id = n.artifact_id
+                    WHERE n.kind = 'document'
+                      AND (matches_glob(n.uri, '{escapedGlob}', default_scheme := 'file:///')
+                           OR matches_glob(n.uri, '{escapedGlob}', default_scheme := 'docs:///'))
+                    ORDER BY n.uri
+                    LIMIT 100
+                    """;
+            }
 
             var results = _db.Query(sql);
             var documents = new List<ReadDocument>();

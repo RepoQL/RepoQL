@@ -1,5 +1,6 @@
 using System.Globalization;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Models;
 
 namespace RepoQL.Formats.GraphQL;
 
@@ -19,7 +20,7 @@ internal static class GraphQLXrayModelBuilder
             ["media_kind"] = state.MediaType.Kind ?? string.Empty,
             ["media_base"] = $"{state.MediaType.Type}/{state.MediaType.Subtype}",
             ["size_bytes"] = state.Size,
-            ["size_human"] = FormatBytes(state.Size),
+            ["token_count"] = TokenEstimator.EstimateTokensSafe(document.Text),
             ["stats"] = BuildStats(state),
             ["operations"] = BuildOperations(state),
             ["fragments"] = BuildFragments(state),

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
+using RepoQL.Templating.Filters;
 
 namespace RepoQL.Formats.Mermaid;
 
@@ -12,7 +13,8 @@ public sealed partial class MermaidLoader(ITemplateRenderer? renderer, ILogger<M
 
     private readonly ITemplateRenderer? _renderer = renderer ?? new LiquidTemplateRenderer(
         assembly: typeof(MermaidLoader).Assembly,
-        resourceRoot: "RepoQL.Formats.Mermaid.Templates");
+        resourceRoot: "RepoQL.Formats.Mermaid.Templates",
+        configure: StandardFilters.RegisterAll);
 
     public MermaidLoader() : this(null) { }
 

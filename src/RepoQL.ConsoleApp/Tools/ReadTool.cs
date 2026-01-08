@@ -75,14 +75,26 @@ internal sealed class ReadTool(
         Symbol:
           read("file:///src/Auth.cs#symbol=ValidateToken", 1500)
 
+        Symbol pattern (all descendants):
+          read("file:///src/Auth.cs#symbol=AuthService.**", 3000)
+
         Glob pattern:
           read("file:///src/Services/**/*.cs", 8000)
+
+        Compound pattern (multiple includes):
+          read("file:///src/**/*.cs;file:///lib/**/*.cs", 10000)
+
+        Compound with exclusions:
+          read("file:///src/**/*.cs;!file:///src/tests/**", 8000)
 
         With question (LLM synthesis):
           read("file:///docs/API.md // What authentication methods are supported?", 2000)
 
         Multiple files with question:
           read("file:///src/Auth/**/*.cs // How is the refresh token rotated?", 3000)
+
+        Directory tree (structure overview):
+          read("file:///src/** => tree", 2000)
         </EXAMPLES>
 
         <BUDGET_GUIDE>

@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
+using RepoQL.Templating.Filters;
 
 namespace RepoQL.Formats.GraphQL;
 
@@ -18,7 +19,8 @@ public sealed partial class GraphQLLoader(ILogger<GraphQLLoader>? logger = null)
 
     private readonly LiquidTemplateRenderer _renderer = new(
         assembly: typeof(GraphQLLoader).Assembly,
-        resourceRoot: "RepoQL.Formats.GraphQL.Templates");
+        resourceRoot: "RepoQL.Formats.GraphQL.Templates",
+        configure: StandardFilters.RegisterAll);
 
     private ILogger<GraphQLLoader> Logger { get; } = logger ?? NullLogger<GraphQLLoader>.Instance;
 

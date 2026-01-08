@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.Templating;
+using RepoQL.Templating.Filters;
 
 namespace RepoQL.Formats.PHP;
 
@@ -21,7 +22,8 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer
         Logger = logger ?? NullLogger<PHPLoader>.Instance;
         _renderer = renderer ?? new LiquidTemplateRenderer(
             assembly: typeof(PHPLoader).Assembly,
-            resourceRoot: "RepoQL.Formats.PHP.Templates");
+            resourceRoot: "RepoQL.Formats.PHP.Templates",
+            configure: StandardFilters.RegisterAll);
         _client = new PHPAntlrClient();
     }
 

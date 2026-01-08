@@ -3,6 +3,7 @@ using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Contracts;
 using RepoQL.Xray;
 
 namespace RepoQL.ConsoleApp.Tools;
@@ -213,7 +214,9 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
 
             // Clear the stored query - it's either being repeated (confirmed) or a new query
             _lastBudgetExceededQuery = null;
-            var output = string.Join(Environment.NewLine, result.Lines);
+            var output = result.Lines.Length > 0
+                ? string.Join(Environment.NewLine, result.Lines)
+                : "No results. Try a different query, or explore the docs with: xray intent=Explore scope=\"docs:///**\"";
 
             // Check token budget (even after server summarization - summary might still exceed)
             if (tokenBudget > 0 && !isRepeatRequest)
