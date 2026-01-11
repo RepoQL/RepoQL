@@ -105,27 +105,31 @@ WHERE is_static = true AND signature LIKE '%this %';
 ## Capsule: FunctionsLocation
 
 **Invariant**
-`start_line` and `end_line` give the function's span in the source file.
+`start_line` gives the function's starting position; use `uri` fragment for precise addressing.
 
 **Example**
 ```sql
--- Functions with line ranges
-SELECT name, file_name, start_line, end_line FROM Functions;
+-- Functions with location info
+SELECT name, file_name, start_line, end_line FROM Functions WHERE start_line IS NOT NULL;
 
--- Long methods (code smell)
-SELECT name, file_uri, (end_line - start_line) AS lines
-FROM Functions WHERE function_kind = 'method'
-ORDER BY lines DESC LIMIT 10;
+-- Longest methods by line count
+SELECT name, declaring_type, (end_line - start_line) AS lines
+FROM Functions WHERE end_line IS NOT NULL ORDER BY lines DESC LIMIT 10;
 
--- Methods in a line range
-SELECT name FROM Functions
-WHERE file_uri = 'file:///src/Service.cs'
-  AND start_line >= 100 AND end_line <= 200;
+-- Build URI with line range
+SELECT name, file_uri || '#line=' || start_line || ',' || end_line AS func_uri FROM Functions;
+
+-- Preview function with snippet
+SELECT name, s.text
+FROM Functions f, LATERAL snippet(f.uri, 5) s
+WHERE f.name = 'ProcessOrder' AND s.is_focus;
 ```
 
 **Depth**
-- Lines extracted from `uri` fragment via `repository_uri_line_start/end`
-- Use with `snippet()` to preview method source code
+- `start_line`: First line of function definition (may be NULL)
+- `end_line`: Last line of function definition (may be NULL)
+- `uri`: Full URI with fragment for direct addressing
+- Use `snippet(uri, context)` to preview function source code
 - `span_id` links to full span details in `span` table
 
 ---
@@ -171,8 +175,8 @@ WHERE file_uri NOT LIKE '%test%' AND name NOT LIKE 'Test%';
 | Static methods | `WHERE is_static = true` |
 | Constructors | `WHERE function_kind = 'constructor'` |
 | By return type | `WHERE return_type LIKE '%Task%'` |
-| Long methods | `ORDER BY (end_line - start_line) DESC` |
 | Many params | `ORDER BY json_array_length(parameters) DESC` |
+| By start line | `ORDER BY start_line` |
 
 ---
 
@@ -194,8 +198,8 @@ WHERE file_uri NOT LIKE '%test%' AND name NOT LIKE 'Test%';
 | `lang` | string | Language (`csharp`, `typescript`, etc.) |
 | `is_static` | boolean | Static modifier |
 | `is_async` | boolean | Async modifier |
-| `start_line` | integer | First line of function |
-| `end_line` | integer | Last line of function |
+| `start_line` | integer | First line of function (may be NULL) |
+| `end_line` | integer | Last line of function (may be NULL) |
 | `headline` | string | X-ray one-line summary |
 | `structure` | string | X-ray detailed structure |
 | `node_id` | uuid | Foreign key to `node` table |

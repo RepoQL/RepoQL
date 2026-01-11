@@ -11,7 +11,7 @@
 --   SELECT uri, headline FROM xray_structured('error handling') WHERE kind IS NULL;
 --
 -- Custom JSON for LLM:
---   SELECT llm_summarize(
+--   SELECT ask(
 --     (SELECT to_json(list(t)) FROM (
 --       SELECT uri, headline FROM xray_structured('auth', tokens := 500) WHERE depth = 0
 --     ) t),

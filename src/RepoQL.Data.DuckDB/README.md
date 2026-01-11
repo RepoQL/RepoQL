@@ -78,7 +78,7 @@ No additional registration needed. IL Linker config preserves the class automati
 | Macro | UDF Class | Purpose |
 |-------|-----------|---------|
 | `xray(...)` | `XrayUdf` | Token-budgeted codebase exploration |
-| `llm_summarize(...)` | `LlmUdf` | LLM-powered result summarization |
+| `ask(...)` | `LlmUdf` | Ask questions about query results using LLM |
 | `llm_extract(...)` | `LlmUdf` | LLM-powered code extraction |
 | `embed_status()` | `EmbedUdf` | Embedding provider diagnostics |
 | `embed_text(...)` | `EmbedUdf` | Text → embedding vector |
@@ -188,7 +188,7 @@ RepoQL.Data.DuckDB/
 │   └── UdfHelpers.cs           # JSON serialization utilities
 ├── UdfImplementations/
 │   ├── XrayUdf.cs              # xray() macro
-│   ├── LlmUdf.cs               # llm_summarize(), llm_extract()
+│   ├── LlmUdf.cs               # ask(), llm_extract()
 │   ├── EmbedUdf.cs             # embed_status(), embed_text()
 │   ├── DiagnosticsUdf.cs       # indexing_diagnostics(), indexing_queue()
 │   └── McpCallUdf.cs           # mcp_call()

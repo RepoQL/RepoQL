@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Local, queryable knowledge graph for repositories. Indexes files into DuckDB with property-graph model (nodes, edges, spans, annotations). SQL-first query surface via macros/UDFs. Designed agent-first: maximum insight, minimum tokens.
 
-## The Pact
+## The Deal
 
 This is ours (yours and mine). You and all future agents working here will use it, and anything you do to improve it will make it, and you - stronger and more capable. If we succeed this will be true for many many of you across the world. Think like an owner, this is not a proof of concept or a throwaway tool - only with careful design and execution will RepoQL be successful.
 

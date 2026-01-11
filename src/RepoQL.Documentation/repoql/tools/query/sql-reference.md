@@ -1,6 +1,6 @@
 ---
 description: SQL macro and UDF reference for query tool users - signatures, parameters, and usage examples
-tags: [search, snippet, xray, llm_summarize, annotations, macros, UDFs]
+tags: [search, snippet, xray, ask, annotations, macros, UDFs]
 audience: ["LLMs"]
 categories: ["Reference[100%]"]
 ---
@@ -247,17 +247,17 @@ SELECT * FROM annotations WHERE severity = 'error';
 
 ## LLM Functions
 
-### llm_summarize()
+### ask()
 
-LLM-powered summarization of query results.
+Ask a question about query results using LLM.
 
 ```sql
-llm_summarize(json_data, intent, max_tokens := 500)
+ask(json_data, question, max_tokens := 500)
 ```
 
 **Parameters**:
 - `json_data`: JSON array of result rows
-- `intent`: What you want to understand
+- `question`: What you want to understand
 - `max_tokens`: Approximate response length
 
 **Example**:
@@ -266,7 +266,7 @@ WITH results AS (
     SELECT uri, headline, structure
     FROM search('authentication', k := 10)
 )
-SELECT llm_summarize(
+SELECT ask(
     (SELECT json_group_array(json_object('uri', uri, 'headline', headline)) FROM results),
     'How is authentication implemented?',
     300

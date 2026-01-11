@@ -1,224 +1,248 @@
-# RepoQL Essentials
+---
+description: "RepoQL quickstart - xray and read for exploration, query for SQL, search for discovery. Views: Files, Types, Functions, Annotations."
+tags: ["quickstart", "xray", "read", "query", "search", "views"]
+audience: ["LLMs"]
+categories: ["Guide[100%]"]
+---
 
-## Foundation
+# RepoQL Quickstart
 
-Five tables. Everything addressable by URI. Pre-computed summaries save tokens.
+RepoQL indexes your codebase into a queryable graph. Three tools, progressive depth.
+
+## Tools Overview
+
+| Tool | Purpose | When to Use |
+|------|---------|-------------|
+| **xray** | Token-budgeted exploration | First choice for most tasks |
+| **read** | Fetch content by URI | When you know what file you want |
+| **query** | Raw SQL access | Complex analysis, aggregations, joins |
+
+**Start with xray. Fall back to query only when needed.**
+
+---
+
+## xray Tool
+
+Explore the codebase with controlled token spend. Four intents, progressive depth.
+
+| Intent | Use When | Token Budget |
+|--------|----------|--------------|
+| `Explore` | Don't know what exists | 800-2000 |
+| `Find` | Looking for specific code | 1000-2000 |
+| `Examine` | Need structure details | 2000-5000 |
+| `Understand` | Want synthesized explanation | 1000-3000 |
+
+**Examples:**
+```
+xray intent=Explore scope="file:///src/**" tokenBudget=1500
+xray intent=Find keywords="authentication" tokenBudget=1500
+xray intent=Examine scope="file:///src/Auth.cs" tokenBudget=3000
+xray intent=Understand keywords="How does JWT validation work?" tokenBudget=2000
+```
+
+**Key parameters:**
+- `scope`: Glob pattern (`file:///src/**/*.cs`, `docs:///**`)
+- `keywords`: Search terms (questions work best for Understand)
+- `boost`: Regex to elevate matches (`(?i)service|handler`)
+- `penalize`: Regex to demote (`(?i)test|mock`)
+
+See `docs:///repoql/tools/xray/using-xray.md` for details.
+
+---
+
+## read Tool
+
+Fetch content when you know the URI. Budget controls detail level.
+
+```
+read("file:///src/Auth.cs", 3000)                    -- Full content if fits
+read("file:///src/Auth.cs#line=50,100", 2000)        -- Line range
+read("file:///src/Auth.cs#symbol=ValidateToken", 1500) -- Symbol
+read("file:///src/**/*.cs", 8000)                    -- Glob (budget distributed)
+read("file:///src/** => tree", 2000)                 -- Directory tree
+read("file:///src/Auth.cs // How does auth work?", 2000) -- LLM synthesis
+```
+
+**Progressive disclosure:**
+- Budget < structure cost → headline only
+- Budget < full cost → structure
+- Budget >= full cost → complete content
+
+See `docs:///repoql/tools/read/read-command.md` for details.
+
+---
+
+## query Tool
+
+SQL access to the full graph. Use for aggregations, joins, complex analysis.
+
+### Convenience Views
+
+Start with views, not raw tables:
+
+```sql
+-- File inventory
+SELECT uri, lang, lines, error_count FROM Files WHERE lang = 'code.csharp';
+
+-- Find functions
+SELECT file_uri, name, signature FROM Functions WHERE name LIKE '%Validate%';
+
+-- Find types
+SELECT file_uri, name, type_kind FROM Types WHERE type_kind = 'class';
+
+-- Find errors
+SELECT target_uri, severity, message FROM Annotations WHERE severity = 'error';
+```
+
+| View | Purpose | Key Columns |
+|------|---------|-------------|
+| `Files` | Document inventory | uri, lang, lines, error_count, headline |
+| `Types` | Classes, interfaces, structs | name, type_kind, namespace, signature |
+| `Functions` | Methods, constructors | name, signature, declaring_type |
+| `Annotations` | Lint errors, warnings | severity, message, target_uri |
+
+See `docs:///repoql/tools/query/views/files.md`, `types.md`, `functions.md`, `annotations.md`.
+
+### Search
+
+Hybrid semantic + lexical search:
+
+```sql
+SELECT uri, score FROM search('authentication', k := 20);
+SELECT uri, score FROM search('config', scope := 'file:///src/%', k := 15);
+SELECT uri, score FROM search('handler', negative_pattern := '(?i)test', k := 20);
+```
+
+Compose with `snippet()` for code context:
+```sql
+SELECT s.uri, sn.line_number, sn.text
+FROM search('error handling', k := 5) s,
+     LATERAL snippet(s.uri, 2) sn
+WHERE sn.is_focus;
+```
+
+See `docs:///repoql/tools/query/functions/search.md`.
+
+---
+
+## Core Data Model
+
+Five tables underpin everything:
 
 | Table | Purpose |
 |-------|---------|
-| `artifact` | Content: text_content, digest, **headline/summary/structure** |
+| `artifact` | File content + pre-computed `headline`, `summary`, `structure` |
 | `node` | Entities: documents, functions, classes, headings |
-| `edge` | Relationships: CALLS, IMPORTS, REFERS_TO, composition |
+| `edge` | Relationships: CALLS, IMPORTS, REFERS_TO, HAS_PART |
 | `span` | Locations: line/byte ranges within documents |
 | `annotation` | Facts: lint errors, metrics, analysis results |
 
-**URI fragments address precisely:**
-`file:///src/auth.cs#line=42,50` | `file:///lib.cs#symbol=Foo.Bar` | `file:///api.yaml#/paths/users`
+**URIs address precisely:**
+- `file:///src/auth.cs` - whole file
+- `file:///src/auth.cs#line=42,50` - line range
+- `file:///src/auth.cs#symbol=AuthService.Validate` - symbol
+- `docs:///quickstart.md` - embedded documentation
+
+See `docs:///repoql/tools/query/core-tables.md`.
 
 ---
 
-## Capsule: Composition
+## Format-Specific Features
 
-**Invariant**
-LATERAL joins expand each result row with context or related data in one query.
+Each file format has specialized macros and views:
 
-**Example**
+### C# (`docs:///repoql/tools/query/formats/csharp.md`)
 ```sql
--- Search + code context
-SELECT f.uri, s.line_number, s.text
-FROM search('auth', k := 5) f,
-     LATERAL snippet(f.uri, 2) s
-WHERE s.is_focus;
+SELECT * FROM csharp_types WHERE kind = 'class';
+SELECT * FROM csharp_members WHERE kind = 'method';
 ```
 
-**Depth**
-- `LATERAL` = for each row, invoke function with that row's values
-- Compose: search -> snippet, search -> annotation, node -> edges
-- NotThis: fetch results then loop in application code
-
----
-
-## Capsule: RegexExtraction
-
-**Invariant**
-One query extracts all pattern instances across the codebase once the pattern is known.
-
-**Example**
+### Markdown (`docs:///repoql/tools/query/formats/markdown.md`)
 ```sql
--- Every TODO
-SELECT n.uri, regexp_extract_all(a.text_content, 'TODO:\s*(.+)', 1) AS todos
-FROM node n JOIN artifact a ON n.artifact_id = a.id
-WHERE n.kind = 'document' AND regexp_matches(a.text_content, 'TODO:');
-
--- Frequency per file
-SELECT n.uri, length(regexp_extract_all(a.text_content, 'console\.log', 0)) AS count
-FROM node n JOIN artifact a ON n.artifact_id = a.id
-WHERE n.kind = 'document' AND count > 0
-ORDER BY count DESC;
+SELECT document_uri, level, text FROM markdown_headings;
+SELECT document_uri, href, link_text FROM markdown_links;
 ```
 
-**Depth**
-- `regexp_extract_all(text, pattern, group)` -> list of matches
-- `regexp_matches(text, pattern)` -> boolean filter
-- Group 0 = full match; 1+ = captures
-- NotThis: looping over files in application code
-
----
-
-## Capsule: GraphTraversal
-
-**Invariant**
-Edges encode relationships; query them instead of parsing code.
-
-**Example**
+### Excel (`docs:///repoql/tools/query/formats/xlsx.md`)
 ```sql
--- What calls this function?
-SELECT src.uri, src.properties->>'$.symbol' AS caller
-FROM edge e
-JOIN node src ON e.source_node_id = src.id
-JOIN node tgt ON e.destination_node_id = tgt.id
-WHERE tgt.uri LIKE '%#symbol=ProcessRequest%' AND e.type = 'CALLS';
-
--- Document structure
-SELECT child.kind, child.properties->>'$.name'
-FROM node doc
-JOIN edge e ON e.source_node_id = doc.id AND e.is_composition
-JOIN node child ON e.destination_node_id = child.id
-WHERE doc.uri = 'file:///src/api.cs';
+SELECT * FROM xlsx('file:///data/expenses.xlsx');
+SELECT * FROM xlsx_sheets('file:///data/workbook.xlsx');
+SELECT * FROM xlsx_union('**/expenses*.xlsx');
 ```
 
-**Depth**
-- `edge.type`: CALLS, IMPORTS, REFERS_TO, INHERITS
-- `edge.is_composition`: parent contains child
-- NotThis: parsing source to find call sites
-
 ---
 
-## Capsule: AnnotationQuery
+## Common Workflows
 
-**Invariant**
-Annotations are pre-computed facts; query them instead of re-analyzing.
-
-**Example**
-```sql
--- All errors
-SELECT resolved_target_uri, rule_id, message
-FROM annotations WHERE severity = 'error';
-
--- Per-file counts using FILTER
-SELECT n.uri,
-       count(*) FILTER (WHERE severity = 'error') AS errors,
-       count(*) FILTER (WHERE severity = 'warning') AS warnings
-FROM node n JOIN annotation a ON a.scope_document_id = n.id
-GROUP BY n.uri HAVING errors > 0;
+### Explore unfamiliar codebase
+```
+xray intent=Explore scope="file:///src/**" tokenBudget=2000
 ```
 
-**Depth**
-- Kinds: lint, metric, diagnostic
-- `annotations` view = joined with URIs; `annotation` table = raw
-- NotThis: re-running analysis on content
-
----
-
-## Capsule: ViewDiscovery
-
-**Invariant**
-Format-specific views project the graph into domain terms; discover at runtime.
-
-**Example**
-```sql
--- Available views
-SELECT table_name FROM information_schema.tables WHERE table_type = 'VIEW';
-
--- Domain queries
-SELECT document_uri, level, text FROM markdown_headings WHERE level <= 2;
-SELECT namespace, name FROM csharp_types WHERE kind = 'class';
+### Find where something is implemented
+```
+xray intent=Find keywords="authentication token" tokenBudget=1500
 ```
 
-**Depth**
-- Views from parsers: markdown_headings, csharp_types, csharp_members
-- Inspect: `SELECT sql FROM duckdb_views() WHERE view_name = '...'`
-- NotThis: manual node/edge/span joins when a view exists
-
----
-
-## DuckDB Patterns
-
-| Pattern | Effect |
-|---------|--------|
-| `regexp_extract_all(t, p, n)` | All matches as list |
-| `regexp_matches(t, p)` | Boolean filter |
-| `FROM x, LATERAL fn(x.col)` | Expand rows |
-| `count(*) FILTER (WHERE c)` | Conditional count |
-| `QUALIFY row_number() OVER(...) <= n` | Top-N per group |
-| `list_transform(l, lambda x: ...)` | Map over list |
-| `col->>'$.key'` | JSON extract as text |
-| `GROUP BY ALL` | Auto-group non-aggregates |
-| `SELECT * EXCLUDE (col)` | All except column |
-
----
-
-## Kitchen Sink Query
-
-One query demonstrating all patterns - starts with semantic search, then extracts:
-
-```sql
-WITH candidates AS (
-  -- SEMANTIC SEARCH: find relevant files first
-  SELECT uri, score AS search_score
-  FROM search('error handling', k := 20)
-),
-extracted AS (
-  -- REGEX EXTRACTION + JSON on candidates only
-  SELECT
-    c.uri,
-    c.search_score,
-    n.id AS node_id,
-    n.properties->>'$.language' AS lang,
-    regexp_extract_all(a.text_content, '(TODO|FIXME|HACK):\s*(.+)', 0) AS raw_tasks,
-    length(regexp_extract_all(a.text_content, 'TODO|FIXME|HACK', 0)) AS task_count
-  FROM candidates c
-  JOIN node n ON n.uri = c.uri AND n.kind = 'document'
-  JOIN artifact a ON n.artifact_id = a.id
-  WHERE regexp_matches(a.text_content, 'TODO|FIXME|HACK')
-),
-with_annotations AS (
-  -- FILTER + GROUP BY ALL + QUALIFY
-  SELECT
-    e.uri, e.search_score, e.lang, e.task_count, e.raw_tasks,
-    count(ann.id) FILTER (WHERE ann.severity = 'error') AS errors,
-    count(ann.id) FILTER (WHERE ann.severity = 'warning') AS warnings,
-    count(ed.id) FILTER (WHERE ed.type = 'CALLS') AS outgoing_calls
-  FROM extracted e
-  LEFT JOIN annotation ann ON ann.scope_document_id = e.node_id
-  LEFT JOIN edge ed ON ed.source_node_id = e.node_id
-  GROUP BY ALL
-  QUALIFY row_number() OVER (ORDER BY task_count DESC) <= 10
-),
-with_context AS (
-  -- LATERAL composition with snippet
-  SELECT wa.*, s.line_number, s.text AS context
-  FROM with_annotations wa,
-       LATERAL snippet(wa.uri, 1) s
-  WHERE s.text ~ 'TODO|FIXME|HACK'
-)
-SELECT
-  * EXCLUDE (raw_tasks, context),  -- EXCLUDE verbose columns
-  list_transform(raw_tasks, lambda t: t[1] || ': ' || left(t[2], 40)) AS tasks,  -- lambda
-  context AS sample_line
-FROM with_context
-ORDER BY search_score DESC, task_count DESC, line_number
-LIMIT 20;
+### Understand how something works
+```
+xray intent=Understand keywords="How does the caching layer work?" tokenBudget=2500
 ```
 
-Uses: `search`, `regexp_extract_all`, `regexp_matches`, `LATERAL snippet`, `FILTER`, `QUALIFY`, `GROUP BY ALL`, `EXCLUDE`, `list_transform`, `->>'$.key'`, edges, annotations.
+### Get codebase statistics
+```sql
+SELECT lang, COUNT(*) as files, SUM(lines) as total_lines
+FROM Files GROUP BY lang ORDER BY total_lines DESC;
+```
+
+### Find all errors
+```sql
+SELECT target_uri, message FROM Annotations WHERE severity = 'error';
+```
+
+### Read specific file with context
+```
+read("file:///src/Auth.cs#symbol=ValidateToken", 2000)
+```
 
 ---
 
-## Key Patterns
+## SQL Power Patterns
 
-- `xray()` for token-budgeted exploration; `search()` for ranked retrieval
-- `LATERAL` composes functions: search → snippet, search → annotations
-- `edge` table encodes relationships (CALLS, IMPORTS, REFERS_TO)
-- `annotations` view has pre-computed diagnostics and metrics
-- Format-specific views (markdown_headings, csharp_types) simplify queries
+For complex analysis via the query tool:
+
+| Pattern | Example |
+|---------|---------|
+| LATERAL composition | `FROM search(...) s, LATERAL snippet(s.uri, 2) sn` |
+| Conditional count | `count(*) FILTER (WHERE severity = 'error')` |
+| Regex extraction | `regexp_extract_all(text, 'TODO:\s*(.+)', 1)` |
+| JSON access | `properties->>'$.name'` |
+| Top-N per group | `QUALIFY row_number() OVER(...) <= n` |
+| Exclude columns | `SELECT * EXCLUDE (large_column)` |
+
+See `docs:///repoql/tools/query/sql-reference.md` for full reference.
+
+---
+
+## Documentation Map
+
+| Topic | URI |
+|-------|-----|
+| This quickstart | `docs:///quickstart.md` |
+| xray tool | `docs:///repoql/tools/xray/using-xray.md` |
+| read tool | `docs:///repoql/tools/read/read-command.md` |
+| search function | `docs:///repoql/tools/query/functions/search.md` |
+| Core tables | `docs:///repoql/tools/query/core-tables.md` |
+| Files view | `docs:///repoql/tools/query/views/files.md` |
+| Types view | `docs:///repoql/tools/query/views/types.md` |
+| Functions view | `docs:///repoql/tools/query/views/functions.md` |
+| Annotations view | `docs:///repoql/tools/query/views/annotations.md` |
+| SQL reference | `docs:///repoql/tools/query/sql-reference.md` |
+| C# format | `docs:///repoql/tools/query/formats/csharp.md` |
+| Markdown format | `docs:///repoql/tools/query/formats/markdown.md` |
+| Excel format | `docs:///repoql/tools/query/formats/xlsx.md` |
+
+**Explore docs:**
+```
+xray intent=Explore scope="docs:///**" tokenBudget=2000
+```

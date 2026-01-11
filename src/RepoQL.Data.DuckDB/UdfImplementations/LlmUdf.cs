@@ -11,15 +11,15 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 public class LlmUdf(ILlmProvider llmProvider)
 {
     /// <summary>
-    /// Summarize data with respect to caller's intent.
-    /// Internal UDF called by llm_summarize macro.
+    /// Ask a question about data using LLM.
+    /// Internal UDF called by ask() macro.
     /// </summary>
     /// <param name="jsonData">JSON array of result rows from the query.</param>
-    /// <param name="intent">What the caller hoped to find/understand.</param>
-    /// <param name="maxTokens">Approximate token limit for the summary (default 500).</param>
-    /// <returns>Text summary addressing the caller's intent.</returns>
-    [ScalarUdf("_llm_summarize_internal", MacroName = "llm_summarize", Description = "LLM-powered summarization of query results")]
-    public string Summarize(
+    /// <param name="intent">What the caller hopes to find/understand.</param>
+    /// <param name="maxTokens">Approximate token limit for the response (default 500).</param>
+    /// <returns>Text response addressing the caller's intent.</returns>
+    [ScalarUdf("_ask_internal", MacroName = "ask", Description = "Ask a question about query results using LLM")]
+    public string Ask(
         string jsonData,
         string intent,
         [UdfDefault("500")] int maxTokens)

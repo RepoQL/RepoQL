@@ -74,25 +74,31 @@ SELECT name, extends FROM Types WHERE type_kind = 'interface';
 ## Capsule: TypesLocation
 
 **Invariant**
-`start_line` and `end_line` give the type's span in the source file.
+`start_line` gives the type's starting position; use `uri` fragment for precise addressing.
 
 **Example**
 ```sql
--- Types with line ranges
-SELECT name, file_name, start_line, end_line FROM Types;
+-- Types with location info
+SELECT name, file_name, start_line, end_line FROM Types WHERE start_line IS NOT NULL;
 
--- Large types (many lines)
+-- Largest types by line count
 SELECT name, file_uri, (end_line - start_line) AS lines
-FROM Types ORDER BY lines DESC LIMIT 10;
+FROM Types WHERE end_line IS NOT NULL ORDER BY lines DESC LIMIT 10;
 
--- Build URI with fragment
-SELECT name, file_uri || '#line=' || start_line || ',' || end_line AS full_uri
-FROM Types;
+-- Build URI with line range
+SELECT name, file_uri || '#line=' || start_line || ',' || end_line AS type_uri FROM Types;
+
+-- Preview type with snippet
+SELECT name, s.text
+FROM Types t, LATERAL snippet(t.uri, 3) s
+WHERE t.name = 'AuthService' AND s.is_focus;
 ```
 
 **Depth**
-- Lines extracted from `uri` fragment via `repository_uri_line_start/end`
-- Use with `snippet()` to preview type source code
+- `start_line`: First line of type definition (may be NULL)
+- `end_line`: Last line of type definition (may be NULL)
+- `uri`: Full URI with fragment for direct addressing
+- Use `snippet(uri, context)` to preview type source code
 - `span_id` links to full span details in `span` table
 
 ---
@@ -138,7 +144,7 @@ SELECT name FROM Types WHERE file_uri NOT LIKE '%test%' AND file_uri NOT LIKE '%
 | With base class | `WHERE extends IS NOT NULL` |
 | Implementing interface | `WHERE implements::text LIKE '%IFoo%'` |
 | In specific file | `WHERE file_name = 'Foo.cs'` |
-| Large types | `ORDER BY (end_line - start_line) DESC` |
+| By start line | `ORDER BY start_line` |
 
 ---
 
@@ -158,8 +164,8 @@ SELECT name FROM Types WHERE file_uri NOT LIKE '%test%' AND file_uri NOT LIKE '%
 | `lang` | string | Language (`csharp`, `typescript`, etc.) |
 | `extends` | string | Base class/interface name |
 | `implements` | json | Array of implemented interfaces |
-| `start_line` | integer | First line of type definition |
-| `end_line` | integer | Last line of type definition |
+| `start_line` | integer | First line of type definition (may be NULL) |
+| `end_line` | integer | Last line of type definition (may be NULL) |
 | `headline` | string | X-ray one-line summary |
 | `structure` | string | X-ray detailed structure |
 | `node_id` | uuid | Foreign key to `node` table |

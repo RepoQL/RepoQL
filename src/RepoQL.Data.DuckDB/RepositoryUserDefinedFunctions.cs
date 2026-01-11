@@ -1083,7 +1083,12 @@ public static class RepositoryUserDefinedFunctions
     private static string? ExtractKeyPayload(string fragment, string key, string prefix)
     {
         if (fragment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            return fragment[prefix.Length..];
+        {
+            var payload = fragment[prefix.Length..];
+            // Handle parameterized fragments: #line=12,20&symbol=Foo → extract "12,20" not "12,20&symbol=Foo"
+            var nextParam = payload.IndexOf('&');
+            return nextParam >= 0 ? payload[..nextParam] : payload;
+        }
 
         switch (fragment.IndexOf('='))
         {

@@ -7,8 +7,8 @@
 --   SELECT xray('authentication', tokens := 1500, intent := 'Examine');
 --   SELECT xray('error handling', tokens := 2000, scope := 'file:///src/**');
 --
--- Compose with LLM summarization:
---   SELECT llm_summarize(xray('embeddings', tokens := 1000), 'Explain how embeddings work', 200);
+-- Compose with LLM:
+--   SELECT ask(xray('embeddings', tokens := 1000), 'Explain how embeddings work', 200);
 --
 CREATE OR REPLACE MACRO xray(
     keywords,

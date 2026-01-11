@@ -1,5 +1,5 @@
 ---
-description: "search(q, mode='auto', k=200, uri_glob, mime_glob) → uri, symbol, scope, kind, score, dense_score. Hybrid lexical+semantic search for documents and objects."
+description: "search(keywords, scope, boost_pattern, k) → uri, headline, structure, score. Hybrid semantic+lexical document search."
 tags: ["search", "semantic", "lexical", "bm25", "embeddings", "hybrid"]
 audience: ["LLMs"]
 categories: ["Reference[100%]", "Tools[100%]"]
@@ -7,233 +7,178 @@ categories: ["Reference[100%]", "Tools[100%]"]
 
 # search Function
 
-Hybrid search combining lexical matching, fuzzy subsequence, and semantic embeddings.
+Hybrid search combining semantic embeddings and lexical matching to find relevant documents.
 
 ---
 
 ## Capsule: SearchBasic
 
 **Invariant**
-`search(q, k)` returns documents and objects ranked by combined score.
+`search(keywords, k)` returns documents ranked by combined semantic and lexical score.
 
 **Example**
 ```sql
 SELECT uri, score FROM search('authentication', k := 20);
-SELECT uri, symbol, kind FROM search('ProcessRequest', k := 10) WHERE scope = 'object';
+SELECT uri, headline, score FROM search('error handling', k := 10);
 ```
-//BOUNDARY: Returns both files (scope='document') and symbols within files (scope='object') unless filtered.
+//BOUNDARY: Returns documents (files), not individual symbols. Use `snippet()` to get code context.
 
 **Depth**
-- `q`: Query text (keywords, phrases, questions)
+- `keywords`: Search terms (required)
 - `k`: Max results (default 200)
 - Results sorted by `score` descending
-- Each result includes identity (`uri`, `symbol`), type (`scope`, `kind`), and scores
-
----
-
-## Capsule: SearchScope
-
-**Invariant**
-`scope='document'` returns files; `scope='object'` returns functions/classes/headings.
-
-**Example**
-```sql
--- Files only
-SELECT uri, score FROM search('config', k := 20) WHERE scope = 'document';
-
--- Functions/classes only
-SELECT uri, symbol, kind, score
-FROM search('ValidateToken', k := 15)
-WHERE scope = 'object';
-
--- Mixed (default)
-SELECT uri, scope, symbol, score FROM search('auth', k := 30);
-```
-//BOUNDARY: Object URIs include fragment: `file:///src/Auth.cs#symbol=AuthService.Validate&line=42,60`
-
-**Depth**
-- Document scope: whole files (`file:///path/to/file.cs`)
-- Object scope: entities within files (classes, functions, methods, headings)
-- Object URIs encode both symbol name and line range
-- `uri_glob` parameter forces document scope (avoids object spam)
+- Each result includes `uri`, `headline`, `structure`, and score components
 
 ---
 
 ## Capsule: SearchScoring
 
 **Invariant**
-Final score combines three signals: `bm25_score` (lexical) + `fuzzy_score` (subsequence) + `dense_score` (semantic).
+Final score combines semantic similarity (`sem_score`) and lexical matching (`bm25_score`).
 
 **Example**
 ```sql
-SELECT uri, bm25_score, fuzzy_score, dense_score, score
+SELECT uri, sem_score, bm25_score, score
 FROM search('JWT token refresh', k := 10);
 ```
-//BOUNDARY: Weights vary by query type. Auto mode: 45% BM25, 35% fuzzy, 20% semantic.
+//BOUNDARY: `sem_score` NULL means embeddings not yet loaded. Search still works via lexical matching.
 
 **Depth**
-- **bm25_score**: Position-based lexical matching
-  - Exact symbol match: 4.0 points
-  - Symbol contains query: 3.2
-  - Basename equals: 3.0
-  - Basename contains: 2.0
-  - Path contains: 1.0
-- **fuzzy_score**: Subsequence matching (0-5)
-  - Rewards consecutive character matches
-  - Rewards word boundary matches
-- **dense_score**: Embedding cosine similarity (0-1)
+- **sem_score**: Embedding cosine similarity (0-1)
   - Query embedded at runtime
-  - Compared against pre-computed embeddings
-  - NULL if embeddings not yet loaded
-
----
-
-## Capsule: SearchModes
-
-**Invariant**
-`mode` parameter controls scoring weights. Auto-detected from query when `mode='auto'`.
-
-**Example**
-```sql
--- Explicit heavy mode (semantic-first)
-SELECT uri, score FROM search('Why does auth fail?', mode := 'heavy', k := 10);
-
--- Symbol mode (lexical-first)
-SELECT uri, symbol FROM search('AuthService::Validate', mode := 'symbol', k := 10);
-```
-//BOUNDARY: Auto-detection uses heuristics: `::`, `.()`, questions, length.
-
-**Depth**
-| Mode | Trigger | BM25 | Fuzzy | Semantic |
-|------|---------|------|-------|----------|
-| `auto` | Default | 45% | 35% | 20% |
-| `heavy` | Questions, >160 chars, "exception" | 20% | 0% | 80% |
-| `symbol` | Contains `::`, `.()`, nested dots | 45% | 35% | 14% |
-| `error` | Stack traces | 45% | 35% | 20% |
+  - Compared against pre-computed document embeddings
+- **bm25_score**: Lexical matching score
+  - Matches in headline and structure weighted higher
+- **source**: Origin tier - 'semantic', 'bm25', 'outline', 'body'
+- **score**: Combined final ranking score
 
 ---
 
 ## Capsule: SearchFiltering
 
 **Invariant**
-`uri_glob` filters by path; `mime_glob` filters by type; `boost_pattern`/`negative_pattern` adjust ranking.
+`scope` filters by URI pattern; `boost_pattern`/`negative_pattern` adjust ranking.
 
 **Example**
 ```sql
--- Path filter (forces document scope)
-SELECT uri, score FROM search('config', uri_glob := 'src/**/*.cs', k := 20);
-
--- MIME filter
-SELECT uri, score FROM search('schema', mime_glob := '*markdown*', k := 15);
+-- Filter to directory
+SELECT uri, score FROM search('config', scope := 'file:///src/api/%', k := 20);
 
 -- Boost pattern
-SELECT uri, score FROM search('auth', boost_pattern := '(?i)service', k := 20);
+SELECT uri, score FROM search('auth', boost_pattern := '(?i)service|handler', k := 20);
 
 -- Negative pattern (demote tests)
-SELECT uri, score FROM search('handler', negative_pattern := '(?i)test|mock', k := 20);
-```
-//BOUNDARY: `uri_glob` forces `scope='document'`. Cannot glob-filter objects.
-
-**Depth**
-- `uri_glob`: Glob pattern on URI path (`src/**/*.cs`)
-- `mime_glob`: Glob pattern on MIME type (`*json*`)
-- `boost_pattern`: Regex to boost matching results
-- `negative_pattern`: Regex to demote matching results (0.5x multiplier)
-
----
-
-## Capsule: FileSearch
-
-**Invariant**
-`file_search(keywords, question, k)` searches documents only, with question-aware mode switching.
-
-**Example**
-```sql
--- Keyword search
-SELECT uri, score FROM file_search('authentication config', k := 10);
-
--- Question search (heavy mode)
-SELECT uri, score
-FROM file_search('', question := 'Where are JWT tokens validated?', k := 10);
+SELECT uri, score FROM search('parser', negative_pattern := '(?i)test|mock', k := 20);
 
 -- Combined
-SELECT uri, score
-FROM file_search('mermaid', question := 'Show class diagram examples', k := 5);
+SELECT uri, score FROM search('validation',
+    scope := 'file:///src/%',
+    boost_pattern := 'input|form',
+    negative_pattern := '(?i)test'
+, k := 15);
 ```
-//BOUNDARY: `question` parameter triggers heavy mode (80% semantic). Wrapper around `search()`.
+//BOUNDARY: `scope` uses SQL LIKE pattern (% wildcard), not glob syntax.
 
 **Depth**
-- Documents only (no objects)
-- `question` appended to keywords, triggers semantic-heavy mode
-- Simpler interface when you only want files
+- `scope`: URI LIKE pattern (e.g., `'file:///src/%'`)
+- `boost_pattern`: Regex to boost matching results
+- `negative_pattern`: Regex to demote matching results
+- `derank_factor`: Penalty multiplier for negative matches (default 0.5)
 
 ---
 
-## Capsule: Related
+## Capsule: SearchThresholds
 
 **Invariant**
-`related(seed_uri, k)` finds documents/objects similar to the seed.
+Threshold parameters control minimum scores for inclusion in results.
 
 **Example**
 ```sql
--- Find files similar to Auth.cs
-SELECT uri, score FROM related('file:///src/Auth.cs', k := 10);
+-- Stricter semantic threshold
+SELECT uri, score FROM search('architecture', sem_threshold := 0.5, k := 10);
 
--- Find functions similar to a specific method
-SELECT uri, symbol, score
-FROM related('file:///src/Auth.cs#symbol=ValidateToken', k := 10);
+-- Lower BM25 threshold for broader results
+SELECT uri, score FROM search('config', bm25_threshold := 0.05, k := 30);
 ```
-//BOUNDARY: "More like this" query. Uses seed's embedding for similarity.
+//BOUNDARY: Higher thresholds = fewer but more relevant results.
 
 **Depth**
-- Seed must be a valid indexed URI
-- Combines embedding similarity with lexical fallback
-- Supports same glob filters as `search()`
-- Excludes the seed from results
+- `sem_threshold`: Min semantic score for tier 1 (default 0.35)
+- `bm25_threshold`: Min BM25 score for tier 2 (default 0.10)
+- `enable_body_rescue`: Scan full text when other methods fail (default FALSE, expensive)
 
 ---
 
 ## Capsule: ResultColumns
 
 **Invariant**
-Search returns identity, type, scores, and metadata columns.
+Search returns document identity, pre-computed summaries, and score breakdown.
 
 **Example**
 ```sql
 SELECT
-    uri,           -- Full URI (file:///path or file:///path#symbol=...)
-    symbol,        -- Symbol name (NULL for documents)
-    scope,         -- 'document' | 'object'
-    kind,          -- Node type: 'document', 'class', 'function', etc.
-    headline,      -- Short summary
-    bm25_score,    -- Lexical score (0-1 normalized)
-    fuzzy_score,   -- Subsequence score (0-1 normalized)
-    dense_score,   -- Semantic score (0-1, NULL if not embedded)
-    score,         -- Combined final score
-    confidence     -- Score bucket: 0.95 (high), 0.80, 0.65, 0.40 (low)
+    uri,              -- Document URI (file:///path/to/file.cs)
+    headline,         -- One-line summary
+    structure,        -- Detailed outline
+    source,           -- Match tier: 'semantic', 'bm25', 'outline', 'body'
+    sem_score,        -- Semantic similarity (0-1, may be NULL)
+    bm25_score,       -- Lexical match score
+    struct_mentions,  -- Matches in structure
+    body_mentions,    -- Matches in body
+    deranked,         -- TRUE if negative_pattern matched
+    score             -- Combined final score
 FROM search('query', k := 20);
 ```
-//BOUNDARY: `dense_score` NULL means embeddings not yet loaded for that result.
+//BOUNDARY: Use `headline` and `structure` to understand results without reading files.
 
 ---
 
-## Capsule: SearchDebug
+## Capsule: SearchComposition
 
 **Invariant**
-`boosts_json` and `explain_json` provide debugging info.
+Compose `search()` with `snippet()` using LATERAL to get code context.
 
 **Example**
 ```sql
-SELECT uri, score, boosts_json, explain_json
-FROM search('auth', k := 5);
+-- Search + code preview
+SELECT s.uri, sn.line_number, sn.text
+FROM search('error handling', k := 5) s,
+     LATERAL snippet(s.uri, 2) sn
+WHERE sn.is_focus
+ORDER BY s.score DESC, sn.line_number;
+
+-- Search + annotations
+SELECT s.uri, s.score, a.message
+FROM search('validation', k := 10) s
+LEFT JOIN annotation a ON a.resolved_target_uri = s.uri
+WHERE a.severity = 'error';
 ```
-//BOUNDARY: JSON columns show route taken and candidate counts.
+//BOUNDARY: LATERAL = for each search result, invoke snippet with that result's URI.
 
 **Depth**
-- `boosts_json`: `{route, uri_glob_applied, mime_glob_applied, keywords_empty}`
-- `explain_json`: `{route, lex_candidates, dense_candidates, requested_mode}`
-- Use to debug unexpected rankings
-- Check `lex_candidates=0` if lexical matching seems broken
+- `snippet(uri, context_lines)` returns lines around matches
+- Compose with annotations, edges, or format-specific views
+- Avoids multiple round-trips by joining in one query
+
+---
+
+## Capsule: Related
+
+**Invariant**
+`related(seed_uri, k)` finds documents similar to the seed.
+
+**Example**
+```sql
+SELECT uri, score FROM related('file:///src/Auth.cs', k := 10);
+SELECT uri, score FROM related('file:///docs/API.md', k := 5);
+```
+//BOUNDARY: "More like this" query. Uses seed's embedding for similarity.
+
+**Depth**
+- Seed must be a valid indexed URI
+- Combines embedding similarity with lexical fallback
+- Excludes the seed from results
+- Supports `uri_glob` and `mime_glob` filters
 
 ---
 
@@ -241,14 +186,14 @@ FROM search('auth', k := 5);
 
 | Goal | Query |
 |------|-------|
-| Find files by keyword | `SELECT uri FROM search('auth', k := 20) WHERE scope = 'document'` |
-| Find functions by name | `SELECT uri, symbol FROM search('ProcessRequest', k := 10) WHERE scope = 'object'` |
-| Semantic question | `SELECT uri FROM file_search('', question := 'How does caching work?', k := 10)` |
-| Files in directory | `SELECT uri FROM search('handler', uri_glob := 'src/api/**', k := 15)` |
+| Find files by keyword | `SELECT uri, score FROM search('auth', k := 20)` |
+| Files in directory | `SELECT uri FROM search('handler', scope := 'file:///src/api/%', k := 15)` |
 | Exclude tests | `SELECT uri FROM search('service', negative_pattern := '(?i)test', k := 20)` |
+| Boost specific terms | `SELECT uri FROM search('config', boost_pattern := 'database\|redis', k := 15)` |
 | Find similar files | `SELECT uri FROM related('file:///src/Auth.cs', k := 10)` |
-| Symbol exact match | `SELECT uri, symbol FROM search('AuthService.ValidateToken', k := 5) WHERE scope = 'object' ORDER BY bm25_score DESC` |
-| Markdown files only | `SELECT uri FROM search('setup', mime_glob := '*markdown*', k := 10)` |
+| Search + code context | `SELECT s.uri, sn.text FROM search('error', k := 5) s, LATERAL snippet(s.uri, 2) sn WHERE sn.is_focus` |
+| Markdown files only | `SELECT uri FROM search('setup', scope := '%.md', k := 10)` |
+| High-confidence only | `SELECT uri FROM search('critical', sem_threshold := 0.5, k := 10)` |
 
 ---
 
@@ -257,8 +202,8 @@ FROM search('auth', k := 5);
 | Mistake | Fix |
 |---------|-----|
 | `search('auth') LIMIT 10` | Use `k := 10` parameter, not LIMIT |
-| `scope = 'file'` | Use `scope = 'document'` |
-| `uri_glob` with objects | `uri_glob` forces document scope; filter objects via WHERE |
-| `dense_score IS NULL` | Embeddings loading; wait or use lexical columns |
-| `ORDER BY score` | Results already sorted by score; omit or use `ORDER BY bm25_score` for lexical-first |
-| Very broad query | Add `uri_glob` or increase specificity; broad queries dilute relevance |
+| `scope := 'src/**/*.cs'` | Use LIKE pattern: `scope := 'file:///src/%.cs'` |
+| `sem_score IS NULL` | Normal during startup; embeddings load progressively |
+| Expecting symbols | `search()` returns documents; use `snippet()` for code |
+| `ORDER BY score` | Results already sorted; omit unless re-ordering |
+| Very broad query | Add `scope` filter or increase specificity |
