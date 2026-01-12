@@ -35,9 +35,9 @@ Blazor Server (RepoQL.Web)
 ## Dependencies & Integration
 
 - Reference `RepoQL.Protocol` from the new project to obtain `RepoQlClient` and the generated gRPC contracts.
-- Reuse the macros already registered by the host for structured data:
-  - `xray_documents()` for document inventory.
-  - `xray_items(include_kinds, max_per_document)` for per-file structure.
+- Reuse views and macros for structured data:
+  - `Files` view for document inventory.
+  - Node/edge queries for per-file structure.
   - `snippet(uri, context)` for preview windows.
   - `annotations_all(kind_filter, min_severity)` in ad-hoc SQL to show diagnostics.
 - Execute `WaitForPipelineAsync` and `ReindexAllAsync` from the client to report/back up indexing state.
@@ -92,10 +92,10 @@ Blazor Server (RepoQL.Web)
 
 ### Explorer Page
 
-- **Left rail**: tree/list fed by `xray_documents()`; includes search box that runs a filtered SQL (matches file name or URI).
+- **Left rail**: tree/list fed by `Files` view; includes search box that runs a filtered SQL (matches file name or URI).
 - **Main panel**: tabs
   1. *Overview*: show artifact headline/summary/structure (fall back to `text_content` truncated if absent).
-  2. *Structure*: table from `xray_items`; clicking an item updates the snippet context.
+  2. *Structure*: table from node/edge queries; clicking an item updates the snippet context.
   3. *Snippet*: lines from `snippet()` with focus highlighting.
   4. *Linked Records*: run pre-built SQL to list nodes/edges/annotations referencing the document; allow severity filters.
 - Each tab loads lazily on first view to keep startup light.
@@ -116,7 +116,7 @@ Blazor Server (RepoQL.Web)
 2. **Select document in explorer**
    - Document list item carries the document URI.
    - Selecting triggers three asynchronous loads in parallel:
-     - `GetDocumentStructureAsync(uri)` to build the structure tab (calls `xray_items`).
+     - `GetDocumentStructureAsync(uri)` to build the structure tab (queries node/edge).
      - `GetSnippetAsync(uri, context)` to populate snippet.
      - `ListLinkedRecordsAsync(uri)` to build node/edge/annotation tables.
    - Results cached in component state; subsequent tab switches reuse the same data.
@@ -143,7 +143,7 @@ Blazor Server (RepoQL.Web)
    - Implement saved query persistence.
 
 4. **Explorer**
-   - Build document list component calling `xray_documents`.
+   - Build document list component using `Files` view.
    - Implement tabs for overview, structure, snippet, linked records.
 
 5. **Polish**

@@ -747,7 +747,7 @@ public sealed class DuckDbDataStore : IDisposable
     /// <summary>
     /// Detects if an exception indicates a fatal database error that invalidates the database.
     /// </summary>
-    private static bool IsFatalDatabaseError(DuckDBException ex) 
+    private static bool IsFatalDatabaseError(DuckDBException ex)
     {
         var message = ex.Message ?? "";
         return message.Contains("database has been invalidated", StringComparison.OrdinalIgnoreCase) ||
@@ -921,16 +921,15 @@ public sealed class DuckDbDataStore : IDisposable
                 "Views/functions.sql",
                 "Macros/snippet.sql",
                 "Macros/node_primary_fragment.sql",
-                "Macros/xray_documents.sql",
-                "Macros/xray_items.sql",
-                "Macros/xray_lines.sql",
                 "Macros/search_helpers.sql",
                 "Macros/search_lexical.sql",
                 "Macros/search_semantic.sql",
                 "Macros/search_debug.sql",
                 "Macros/search.sql",
                 "Macros/hybrid_search.sql",
+                "Macros/search_symbol.sql",
                 "Tables/file_system_mount.sql",
+                "Views/filesystems.sql",
                 "Macros/xray.sql",
                 "Macros/xray_structured.sql"
             };

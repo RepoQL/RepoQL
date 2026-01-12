@@ -135,13 +135,15 @@ internal sealed class ReadTool(
         }
         catch (Exception ex)
         {
+            var cleanMessage = ErrorClassifier.GetCleanMessage(ex);
+
             // Infrastructure errors get diagnostics appended
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
                 var diagnostics = await _selfTestRunner.RunAsync(cancel).ConfigureAwait(false);
-                return $"Error: {ex.Message}\n\n{diagnostics}";
+                return $"Error: {cleanMessage}\n\n{diagnostics}";
             }
-            return $"Error: {ex.Message}";
+            return $"Error: {cleanMessage}";
         }
     }
 }

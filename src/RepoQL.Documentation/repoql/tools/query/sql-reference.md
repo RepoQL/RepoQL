@@ -180,32 +180,6 @@ SELECT xray('authentication', intent := 'Find', tokens := 500);
 
 ---
 
-### xray_documents()
-
-Document inventory with pre-computed summaries.
-
-```sql
-SELECT * FROM xray_documents();
-```
-
-**Returns**: `document_uri, file_name, media_base, media_kind, byte_size, kinds_summary, headline, summary, structure`
-
-**Example**:
-```sql
--- All markdown files
-SELECT document_uri, headline
-FROM xray_documents()
-WHERE media_kind LIKE '%markdown%';
-```
-
-**Depth**
-- `headline`: One-line description
-- `summary`: Key details (~10 lines)
-- `structure`: Expanded outline (~25 lines)
-- `kinds_summary`: Entity counts (e.g., `class:3 method:12`)
-
----
-
 ## Annotations
 
 ### annotations_for()

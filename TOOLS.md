@@ -204,7 +204,7 @@ RepoQL = x-ray vision + semantic search + SQL composability without consuming co
 **Example**
 ```sql
 -- See document inventory instantly
-SELECT * FROM xray_documents() WHERE file_name LIKE '%knowledge/%'
+SELECT * FROM Files WHERE name LIKE '%knowledge/%'
 
 -- vs Read tool: 1 file = full context consumed
 ```
@@ -258,7 +258,7 @@ ORDER BY relevance DESC
 ```
 
 **☑ RepoQL Non-Negotiables**
-☑ Use xray_documents() for inventory, file_search(keywords, question) for discovery
+☑ Use Files view for inventory, search() for discovery
 ☑ Set k parameter to limit breadth (k := 10, k := 50)
 ☑ Query duckdb_views() to discover available views
 ☑ Compose with JOINs—search → structure → insight

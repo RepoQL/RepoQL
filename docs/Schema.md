@@ -499,94 +499,36 @@ CREATE OR REPLACE MACRO snippet(u, context_lines) AS TABLE (
 );
 ```
 
-### 3) X‑ray summaries
+### 3) Files view
 
-Documents and items, with optional detail.
+The primary document inventory view with pre-computed summaries.
 
 ```sql
-CREATE OR REPLACE MACRO xray_documents() AS TABLE (
-  WITH docs AS (
-    SELECT id, uri, artifact_id FROM node WHERE kind = 'document'
-  ),
-  media AS (
-    SELECT d.id AS doc_id, a.media_type, a.byte_size
-    FROM docs d LEFT JOIN artifact a ON a.id = d.artifact_id
-  ),
-  parts AS (
-    SELECT e.source_node_id AS doc_id, c.kind, COUNT(*) AS item_count
-    FROM edge e
-    JOIN node c ON c.id = e.destination_node_id
-    WHERE e.is_composition = TRUE
-    GROUP BY 1,2
-  ),
-  kinds AS (
-    SELECT doc_id, string_agg(kind || ':' || CAST(item_count AS TEXT), ' ') AS kinds_summary
-    FROM parts GROUP BY doc_id
-  )
-  SELECT
-    d.uri                                        AS document_uri,
-    repository_uri_file_name(d.uri)              AS file_name,
-    media_type_base(m.media_type)                AS media_base,
-    media_type_kind(m.media_type)                AS media_kind,
-    m.byte_size                                  AS byte_size,
-    COALESCE(k.kinds_summary, '')                AS kinds_summary
-  FROM docs d
-  LEFT JOIN media m ON m.doc_id = d.id
-  LEFT JOIN kinds k ON k.doc_id = d.id
-  ORDER BY lower(file_name)
-);
+CREATE OR REPLACE VIEW Files AS
+SELECT
+    n.uri,
+    repository_uri_file_name(n.uri) AS name,
+    media_type_lang(a.media_type) AS lang,
+    a.byte_size,
+    a.headline,
+    a.summary,
+    a.structure
+FROM node n
+JOIN artifact a ON n.artifact_id = a.id
+WHERE n.kind = 'document';
+```
 
-CREATE OR REPLACE MACRO xray_items(include_kinds, max_per_document) AS TABLE (
-  WITH docs AS (SELECT id, uri FROM node WHERE kind='document'),
-  cand AS (
-    SELECT
-      d.id AS doc_id, d.uri AS document_uri,
-      c.id AS item_id, c.kind AS item_kind,
-      node_display_label(c.kind, c.properties) AS item_label,
-      s.start_line, s.end_line, s.start_byte, s.end_byte, e.ordinal,
-      node_primary_fragment(c.kind, c.properties, s.start_line, s.end_line, s.start_byte, s.end_byte) AS frag
-    FROM docs d
-    JOIN edge e ON e.source_node_id=d.id AND e.is_composition=TRUE
-    JOIN node c ON c.id=e.destination_node_id
-    LEFT JOIN span s ON s.id=c.span_id
-    WHERE include_kinds IS NULL
-       OR EXISTS (
-         SELECT 1 FROM UNNEST(string_split(include_kinds, ',')) k(value)
-         WHERE lower(trim(k.value)) = lower(c.kind)
-       )
-  ),
-  ranked AS (
-    SELECT *,
-           ROW_NUMBER() OVER (
-             PARTITION BY doc_id
-             ORDER BY COALESCE(start_line, 2147483647), COALESCE(ordinal, 2147483647), item_id
-           ) AS rn
-    FROM cand
-  )
-  SELECT
-    document_uri,
-    repository_uri_file_name(document_uri) AS file_name,
-    item_kind,
-    COALESCE(item_label, '?') AS item_label,
-    COALESCE(repository_uri_join(document_uri, frag), document_uri) AS item_uri
-  FROM ranked
-  WHERE rn <= COALESCE(CAST(max_per_document AS INTEGER), 8)
-  ORDER BY lower(file_name), rn
-);
+For per-document structure, query node/edge directly:
 
-CREATE OR REPLACE MACRO xray_lines(lod, include_kinds, max_per_document) AS TABLE (
-  WITH d AS (SELECT * FROM xray_documents()),
-       i AS (SELECT * FROM xray_items(include_kinds, max_per_document))
-  SELECT file_name, 0 AS ord,
-         (file_name || ' · ' || COALESCE(media_kind, media_base) ||
-          CASE WHEN kinds_summary <> '' THEN '  ' || kinds_summary ELSE '' END) AS line
-  FROM d
-  UNION ALL
-  SELECT repository_uri_file_name(document_uri) AS file_name, 1 AS ord,
-         ('  - ' || item_kind || ': ' || item_label || '  (' || item_uri || ')') AS line
-  FROM i
-  WHERE CAST(lod AS INTEGER) >= 1
-);
+```sql
+-- Get child items of a document
+SELECT c.kind, c.properties, s.start_line, s.end_line
+FROM node doc
+JOIN edge e ON e.source_node_id = doc.id AND e.is_composition = TRUE
+JOIN node c ON c.id = e.destination_node_id
+LEFT JOIN span s ON s.id = c.span_id
+WHERE doc.uri = 'file:///src/Example.cs'
+ORDER BY s.start_line;
 ```
 
 ### 4) Annotations view and filters
@@ -689,12 +631,10 @@ CREATE OR REPLACE MACRO annotations_all(kinds, min_severity) AS TABLE (
   SELECT * FROM snippet('file:///repo/app.py#edge=8b4f…', 3);
   ```
 
-* **Repo X‑ray (compact text)**
+* **Repo inventory (compact)**
 
   ```sql
-  SELECT string_agg(line, '\n')
-  FROM (SELECT * FROM xray_lines(1, 'md_heading,md_code_block,cs_class,py_function', 5)
-        ORDER BY lower(file_name), ord);
+  SELECT name, lang, headline FROM Files ORDER BY lower(name);
   ```
 
 * **Lint and outline for one file**

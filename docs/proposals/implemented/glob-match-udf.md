@@ -21,7 +21,7 @@ Introduce a DuckDB scalar UDF `glob_match(uri, pattern, ignore_case := TRUE, def
 - **Deterministic results.** Operating inside DuckDB ensures filters apply to the indexed repository state, instead of hitting the live filesystem per query (which can drift or miss synthetic URIs such as `embed:///…`).
 
 ## Intended Use Cases
-- Narrowing `xray_documents()` or custom document inventories to a sub-tree (`glob_match(uri, 'src/**/*.md')`).
+- Narrowing `Files` view or custom document inventories to a sub-tree (`glob_match(uri, 'src/**/*.md')`).
 - Scoping annotation or lint queries to specific folders or file types without hand-written `LIKE` clauses.
 - Combining with macros like `file_search` to keep semantic search output within directories relevant to a policy or feature area.
 - Powering CLI filters (e.g., `repoql xray src/**/*.md`) by delegating the pattern directly to SQL.
@@ -74,7 +74,7 @@ Add the new function to `RepositoryUserDefinedFunctions.RegisterAll`, adjacent t
 ```sql
 -- Filter Markdown documents inside src/
 SELECT uri, headline
-FROM xray_documents()
+FROM Files
 WHERE glob_match(uri, 'src/**/*.md');
 
 -- Only README variants in the repository root (case-sensitive)

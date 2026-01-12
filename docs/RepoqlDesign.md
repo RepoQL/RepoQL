@@ -36,7 +36,7 @@ categories: ["Documentation[100%]", "How-To[95%]"]
 Query repository structure without reading files, saving 100x-1000x tokens.
 
 **Example**
-`SELECT * FROM xray_documents()` → 10,000 file summaries (100KB) vs reading raw files (500MB+)
+`SELECT * FROM Files` → 10,000 file summaries (100KB) vs reading raw files (500MB+)
 
 **Depth**
 - Distinction: Traditional tools require file reading; RepoQL pre-indexes structure
@@ -254,8 +254,8 @@ Each virtual filesystem emits change events:
 
 ```sql
 -- Query spans physical files AND embedded docs uniformly
-SELECT document_uri, headline
-FROM xray_documents()
+SELECT uri, headline
+FROM Files
 WHERE headline LIKE '%authentication%'
 
 -- Returns both:
@@ -316,7 +316,7 @@ CREATE TABLE csharp_types_custom (...)
 **Why X-ray Summaries?**
 ```
 Read 10K files: 500MB text, 1M+ tokens
-xray_documents(): 100KB summaries, 20K tokens
+Files view: 100KB summaries, 20K tokens
 
 50x compression, instant queries
 ```
@@ -359,7 +359,7 @@ Features must justify cognitive cost:
 
 ```sql
 -- Inventory: What exists?
-SELECT * FROM xray_documents() WHERE media_kind = 'code.csharp'
+SELECT * FROM Files WHERE lang = 'csharp'
 
 -- Search: Find relevant code
 SELECT uri, symbol, score FROM search('authentication', k := 10)
@@ -631,10 +631,10 @@ import(uri="github://owner/repo@main")
 **Cross-Repo Queries**:
 ```sql
 -- Find authentication patterns across local + imported repos
-SELECT document_uri, headline
-FROM xray_documents()
+SELECT uri, headline
+FROM Files
 WHERE headline LIKE '%authentication%'
-  AND (document_uri LIKE 'file:///%' OR document_uri LIKE 'github://%')
+  AND (uri LIKE 'file:///%' OR uri LIKE 'github://%')
 ```
 
 **Agent Mental Model**: "Import adds another source to search—same tools, more content."
@@ -862,7 +862,7 @@ POST /api/diagnostics/errors
 
 **Problem**: Wastes tokens when structure query would suffice.
 
-**Instead**: `xray_documents()` + `snippet()` + views.
+**Instead**: `Files` view + `snippet()` + format-specific views.
 
 **Example**:
 ```sql

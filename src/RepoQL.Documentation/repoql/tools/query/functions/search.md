@@ -1,13 +1,14 @@
 ---
-description: "search(keywords, scope, boost_pattern, k) → uri, headline, structure, score. Hybrid semantic+lexical document search."
-tags: ["search", "semantic", "lexical", "bm25", "embeddings", "hybrid"]
+description: "search() for documents, search_symbol() for objects within files. Hybrid semantic+lexical search."
+tags: ["search", "search_symbol", "semantic", "lexical", "bm25", "embeddings", "hybrid", "symbol"]
 audience: ["LLMs"]
 categories: ["Reference[100%]", "Tools[100%]"]
 ---
 
-# search Function
+# Search Functions
 
-Hybrid search combining semantic embeddings and lexical matching to find relevant documents.
+`search()` - document-level hybrid search combining semantic embeddings and lexical matching.
+`search_symbol()` - object-level search for functions, classes, methods, and other code entities.
 
 ---
 
@@ -182,6 +183,27 @@ SELECT uri, score FROM related('file:///docs/API.md', k := 5);
 
 ---
 
+## Capsule: SearchSymbol
+
+**Invariant**
+Symbol search returns code objects (classes, methods, functions) ranked by name match with location.
+
+**Example**
+```sql
+SELECT symbol, uri FROM search_symbol('ValidateToken');
+SELECT symbol FROM search_symbol('Service', kind_filter := 'type', scope := 'src/**/*.cs');
+```
+//BOUNDARY: Returns objects within files, not files themselves.
+
+**Depth**
+- Distinction: `search()` finds documents; `search_symbol()` finds entities within documents.
+- `scope` uses glob syntax (`**/*.cs`), not LIKE patterns.
+- `kind_filter` matches substring: `'type'` matches `csharp.type`, `ts.interface`.
+- Returns: `uri`, `symbol`, `kind`, `headline`, `line_start`, `line_end`, `score`, `confidence`.
+- SeeAlso: `search`, `glob_files`.
+
+---
+
 ## Common Patterns
 
 | Goal | Query |
@@ -194,6 +216,10 @@ SELECT uri, score FROM related('file:///docs/API.md', k := 5);
 | Search + code context | `SELECT s.uri, sn.text FROM search('error', k := 5) s, LATERAL snippet(s.uri, 2) sn WHERE sn.is_focus` |
 | Markdown files only | `SELECT uri FROM search('setup', scope := '%.md', k := 10)` |
 | High-confidence only | `SELECT uri FROM search('critical', sem_threshold := 0.5, k := 10)` |
+| Find a symbol by name | `SELECT symbol, uri FROM search_symbol('ValidateToken')` |
+| Find types only | `SELECT symbol, uri FROM search_symbol('Service', kind_filter := 'type')` |
+| Symbols in directory | `SELECT symbol FROM search_symbol('Handler', scope := 'src/api/**')` |
+| Exclude test symbols | `SELECT symbol FROM search_symbol('Test', scope := 'src/**;!**/tests/**')` |
 
 ---
 
@@ -202,8 +228,9 @@ SELECT uri, score FROM related('file:///docs/API.md', k := 5);
 | Mistake | Fix |
 |---------|-----|
 | `search('auth') LIMIT 10` | Use `k := 10` parameter, not LIMIT |
-| `scope := 'src/**/*.cs'` | Use LIKE pattern: `scope := 'file:///src/%.cs'` |
+| `scope := 'src/**/*.cs'` in search() | Use LIKE pattern: `scope := 'file:///src/%.cs'` |
 | `sem_score IS NULL` | Normal during startup; embeddings load progressively |
-| Expecting symbols | `search()` returns documents; use `snippet()` for code |
+| Using search() for symbols | Use `search_symbol()` for classes, methods, functions |
 | `ORDER BY score` | Results already sorted; omit unless re-ordering |
 | Very broad query | Add `scope` filter or increase specificity |
+| Using LIKE in search_symbol() scope | Use glob: `scope := 'src/**/*.cs'` (not `'file:///src/%.cs'`) |

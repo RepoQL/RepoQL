@@ -96,7 +96,7 @@ Beyond UDFs, embedded SQL scripts define core macros:
 |-------|----------|---------|
 | `search(keywords, k)` | `Schema/Macros/search.sql` | Semantic + lexical search |
 | `snippet(uri, context)` | `Schema/Macros/snippet.sql` | Code preview with context |
-| `xray_documents()` | `Schema/Macros/xray_documents.sql` | Document inventory |
+| `Files` (view) | `Schema/Views/Files.sql` | Document inventory |
 
 ---
 

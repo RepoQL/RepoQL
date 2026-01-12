@@ -65,10 +65,15 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         </VIEWS>
         
         <FUNCTIONS>
-        **search(q, k)** - semantic + lexical ranked search
+        **search(q, k)** - semantic + lexical document search
         ```sql
         SELECT uri, score FROM search('authentication', k := 10);
-        SELECT uri, symbol FROM search('ValidateToken', k := 5) WHERE scope = 'object';
+        ```
+
+        **search_symbol(q, scope, kind_filter, k)** - find functions, classes, methods by name
+        ```sql
+        SELECT symbol, uri FROM search_symbol('ValidateToken');
+        SELECT symbol FROM search_symbol('Service', kind_filter := 'type', scope := 'src/**/*.cs');
         ```
         
         **snippet(uri, context)** - code preview around location
@@ -230,17 +235,18 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         }
         catch (Exception ex)
         {
-            await Console.Error.WriteLineAsync(ex.Message);
+            var cleanMessage = ErrorClassifier.GetCleanMessage(ex);
+            await Console.Error.WriteLineAsync(cleanMessage);
 
             // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
                 var diagnostics = await selfTestRunner.RunAsync(cancel);
-                return $"Error: {ex.Message}\n\n{diagnostics}";
+                return $"Error: {cleanMessage}\n\n{diagnostics}";
             }
 
             // For user input errors (SQL syntax, etc.), just return the message
-            return ex.Message;
+            return cleanMessage;
         }
     }
 

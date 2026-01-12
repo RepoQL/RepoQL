@@ -135,9 +135,9 @@ This is the template for other formats (OpenAPI, traces, CI YAML): **nodes + edg
 
 **Macos (table‑valued):**
 
-* `xray_documents()` → inventory (file name, media\_kind, byte\_size).
-* `xray_items(kinds, max_per_document)` → per‑doc “items”.
-* `xray_lines(lod, include_kinds, max_per_document)` → printable outline.
+* `Files` view → inventory (uri, name, lang, byte\_size, headline, summary, structure).
+* `xray(keywords, intent, tokens) → token-budgeted exploration (UDF-backed).
+* `search(keywords, k) → semantic + lexical search.
 * `annotations_for(uri, kinds, min_severity)` / `annotations_all(kinds, min)` → diagnostics.
 * `entities_by_uri(uri)` → resolve any RepoURI to the entities at that location.&#x20;
 

@@ -22,7 +22,7 @@
 * **Schema tables**: `artifact`, `node`, `edge`, `span`, `annotation`. Idempotent upserts via `semantic_key`. **URIs live only on document nodes;** fragments resolved at query time.
 * **Addressing**: **RepoURI** (files, JSON Pointers, line/char ranges, anchors, archive entries including nested). Round‑trip rules and normalization are defined.
 * **Typing**: **Semantic Media Type (SemType)**; MIME + parameters (e.g., `kind`, `version`). Routing is data‑driven.
-* **Query surface**: small, stable macros/UDFs (`xray_documents`, `xray_items`, `xray_lines`, `entities_by_uri`, `snippet`, `annotations_*`, `repository_uri_*`).
+* **Query surface**: small, stable views/macros/UDFs (`Files`, `Functions`, `Types`, `Annotations`, `xray()`, `search()`, `snippet`, `annotations_*`, `repository_uri_*`).
 
 **Flexible (how we extend safely):**
 
@@ -135,8 +135,8 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 
 * `repoql query [--format {table,json,ndjson,csv,parquet}] <SQL…>`
   Raw SQL with schema in JSON header; supports streaming.
-* `repoql xray [--kinds <k1,k2>] [--max-per-doc N] [--lod 0|1]`
-  Uses `xray_documents()`, `xray_items()`, `xray_lines()`. Great as *SessionStart* context for agents.
+* `repoql xray [--intent Find|Explore|Understand] [--tokens N] [--scope <glob>]`
+  Uses `xray()` UDF for token-budgeted exploration. Great as *SessionStart* context for agents.
 * `repoql lint [--min-severity warning] [--format {table,json,sarif,gha}] [--group-by source] [--include-fixes]`
   One SELECT over `annotations_all('lint', …)`; render as **SARIF** or GitHub **workflow commands**.
 * `repoql fix [--rule <id>] [--uris …] [--dry-run|--apply] [--commit "msg"] [--export {sarif,diff,json}]`
@@ -166,7 +166,7 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 
 **Default cold‑start plan for agents**
 
-1. `xray_documents()` to map the repo; optionally `xray_items()` for `md_heading,cs_class,py_function`.
+1. `SELECT * FROM Files` to map the repo; use `xray()` for token-budgeted exploration.
 2. Pull `annotations_all('lint','warning')` to select work; preview with `snippet(resolved_target_uri, 3)`.
 3. Call `fix.generate` for safe rules, apply via CLI; **verify** until **empty**.
 
@@ -178,7 +178,7 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 
 **Claude Code hooks** (or analogous IDE hooks)
 
-* *SessionStart*: inject `xray_lines` + top `lint` rows into context (keep token‑light).
+* *SessionStart*: inject `Files` view summary + top `lint` rows into context (keep token‑light).
 * *PreToolUse (Write)*: run `repoql verify`; **block** on violations; print human‑readable rows.
 * *PostToolUse (Write)*: run `repoql fix` for safe rules (broken links, MD hygiene), then `verify` again.
 * *UserPromptSubmit*: add a short policy summary (counts, most severe) so the model plans with guardrails.
@@ -248,12 +248,10 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 
 ## 10) Example queries (ready to paste)
 
-* **Repo x‑ray (level 1)**
+* **Repo inventory**
 
   ```sql
-  SELECT string_agg(line, '\n')
-  FROM (SELECT * FROM xray_lines(1, 'md_heading,md_code_block,cs_class,py_function', 8)
-        ORDER BY lower(file_name), ord);
+  SELECT name, lang, headline FROM Files ORDER BY lower(name);
   ```
 
 
@@ -337,8 +335,8 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 
 > *You have four calls:*
 >
-> 1. `xray_documents()` → list of docs with media kind/size
-> 2. `xray_items(kinds,n)` → per‑doc items (e.g., `md_heading,cs_class`)
+> 1. `Files` view → list of docs with lang/size/headline/summary
+> 2. `xray(keywords, intent, tokens)` → token-budgeted exploration
 > 3. `annotations_all(kinds,min)` → the work queue (e.g., `'lint','warning'`)
 > 4. `snippet(uri, ctx)` → focused preview for any **RepoURI**
 >    Use URIs as canonical keys; never fuzzy‑match paths. Prefer structure first; fetch bytes only via `snippet`. “Done” means the selection query turns **empty**. 

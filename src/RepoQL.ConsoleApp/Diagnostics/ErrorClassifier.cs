@@ -67,4 +67,41 @@ internal static class ErrorClassifier
                message.Contains("Invalid Input Error", StringComparison.OrdinalIgnoreCase) ||
                message.Contains("Constraint Error", StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// Extracts a clean error message from an exception, stripping gRPC wrapper noise.
+    /// Converts: Status(StatusCode="Internal", Detail="Binder Error: ...")
+    /// To: Binder Error: ...
+    /// </summary>
+    public static string GetCleanMessage(Exception ex)
+    {
+        var message = ex.Message;
+
+        // Handle RpcException - extract the Detail from the Status
+        if (ex is RpcException rpc)
+        {
+            // rpc.Status.Detail contains the clean error without wrapper
+            if (!string.IsNullOrWhiteSpace(rpc.Status.Detail))
+            {
+                message = rpc.Status.Detail;
+            }
+        }
+
+        // Fallback: if message still has the Status wrapper, try to extract Detail
+        if (message.StartsWith("Status(StatusCode=", StringComparison.Ordinal))
+        {
+            var detailMatch = System.Text.RegularExpressions.Regex.Match(
+                message,
+                @"Detail=""([^""]+)""",
+                System.Text.RegularExpressions.RegexOptions.None,
+                TimeSpan.FromMilliseconds(100));
+
+            if (detailMatch.Success)
+            {
+                message = detailMatch.Groups[1].Value;
+            }
+        }
+
+        return message;
+    }
 }

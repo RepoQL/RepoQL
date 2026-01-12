@@ -45,9 +45,9 @@ internal sealed class StatsService
         var mediaBreakdownTask = client.ExecuteRawQueryAsync(
             """
             SELECT
-                COALESCE(media_kind, media_base, 'unknown') AS label,
+                COALESCE(lang, 'unknown') AS label,
                 COUNT(*) AS total
-            FROM xray_documents()
+            FROM Files
             GROUP BY label
             ORDER BY total DESC
             """,
@@ -86,25 +86,14 @@ internal sealed class StatsService
         var client = await _connectionManager.GetClientAsync(cancellationToken).ConfigureAwait(false);
 
         const string sql = """
-            WITH docs AS (
-              SELECT
-                xd.document_uri,
-                COALESCE(xd.media_kind, xd.media_base, 'unknown') AS media_label,
-                a.headline,
-                a.summary,
-                a.structure
-              FROM xray_documents() xd
-              LEFT JOIN node n ON lower(n.uri) = lower(xd.document_uri)
-              LEFT JOIN artifact a ON a.id = n.artifact_id
-            )
             SELECT
-              media_label,
+              COALESCE(lang, 'unknown') AS media_label,
               COUNT(*) as file_count,
               COUNT(*) FILTER (WHERE headline IS NOT NULL) as with_headline,
               COUNT(*) FILTER (WHERE summary IS NOT NULL) as with_summary,
               COUNT(*) FILTER (WHERE structure IS NOT NULL) as with_structure,
-              (SELECT document_uri FROM docs d2 WHERE d2.media_label = d.media_label ORDER BY RANDOM() LIMIT 1) as sample_uri
-            FROM docs d
+              (SELECT f2.uri FROM Files f2 WHERE COALESCE(f2.lang, 'unknown') = COALESCE(f.lang, 'unknown') ORDER BY RANDOM() LIMIT 1) as sample_uri
+            FROM Files f
             GROUP BY media_label
             ORDER BY file_count DESC
             """;

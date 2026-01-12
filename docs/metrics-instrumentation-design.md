@@ -216,7 +216,7 @@ Use `repoql.` prefix, semantic units (`ms`, `bytes`, `files`), and standard tags
 **Note**: Database totals (documents, nodes, edges, annotations, embeddings) are **NOT** included. Query on-demand via:
 ```bash
 repoql query "SELECT COUNT(*) FROM node WHERE kind='document'"
-repoql query "SELECT * FROM xray_documents()"
+repoql query "SELECT * FROM Files"
 ```
 
 ---
@@ -1421,7 +1421,7 @@ repoql query "SELECT COUNT(*) FROM annotation"
 repoql query "SELECT COUNT(*) FROM document_embedding"
 
 # Full inventory with xray
-repoql query "SELECT * FROM xray_documents()"
+repoql query "SELECT * FROM Files"
 ```
 
 If you need these in Aspire dashboard later, create a separate **DatabaseMetricsCollector** background service:

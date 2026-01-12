@@ -63,7 +63,7 @@ dotnet run -- --treenode-filter "/*/*/*/MyTestName*"
 dotnet run -- --output Detailed    # Verbose
 
 # Run CLI locally
-dotnet run --project src/RepoQL.ConsoleApp -- query "SELECT * FROM xray_documents()"
+dotnet run --project src/RepoQL.ConsoleApp -- query "SELECT * FROM Files"
 dotnet run --project src/RepoQL.ConsoleApp -- xray --detail headline
 ```
 
@@ -93,7 +93,7 @@ Multiple URI schemes unified under single interface:
 ### Key SQL Macros
 
 ```sql
-xray_documents()                                      -- Document inventory
+SELECT * FROM Files                                   -- Document inventory (view)
 search('auth JWT refresh', k := 10)                   -- Semantic search (documents)
 search('config', scope := 'file:///src/%', k := 10)  -- Scoped search
 snippet('file:///path#line=42', 3)                    -- Code preview
@@ -129,7 +129,7 @@ CLI and MCP server share the same core. Use CLI for local debugging/reindexing; 
 | Add new file format | See `src/Indexing/RepoQL.Indexing/PROCESSOR_GUIDE.md` for complete walkthrough. |
 | Add lint rule | Emit `annotation` with `kind='lint'`, `severity`, `rule_id`, `message`. See `docs/Schema.md` §annotation. |
 | Add macro/UDF/view | See `docs/Schema.md` for patterns. Macros in `Schema/Macros/`, UDFs in `UdfImplementations/`. |
-| Query without reading files | Use `xray_documents()`, `search()`, `snippet()` - structure is pre-indexed |
+| Query without reading files | Use `Files` view, `search()`, `snippet()` - structure is pre-indexed |
 | Find a symbol | Use `_search_candidates('ClassName', k := 10) WHERE scope='object'` or xray with keywords |
 | Propose architecture change | Read `docs/RepoqlDesign.md` first. Extend via views/macros/UDFs, never new base tables. |
 

@@ -93,11 +93,16 @@ JOIN node n ON n.artifact_id = a.id
 WHERE n.uri = 'file:///src/Services/UserService.cs'
 
 -- Quick inventory
-SELECT * FROM xray_documents() WHERE file_name LIKE '%.cs'
+SELECT * FROM Files WHERE name LIKE '%.cs'
 
--- Structural preview
-SELECT * FROM xray_items('csharp.type,csharp.member', 20)
-WHERE document_uri = 'file:///src/Services/UserService.cs'
+-- Structural preview (types and members)
+SELECT n.uri, n.kind, n.properties
+FROM node n
+JOIN node doc ON doc.id = n.id OR EXISTS (
+  SELECT 1 FROM edge e WHERE e.source_node_id = doc.id AND e.destination_node_id = n.id
+)
+WHERE doc.uri = 'file:///src/Services/UserService.cs'
+  AND n.kind IN ('csharp.type', 'csharp.member')
 ```
 
 ## Analysis Modes

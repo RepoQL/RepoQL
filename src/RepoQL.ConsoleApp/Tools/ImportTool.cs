@@ -22,6 +22,8 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         To remove: Prefix the URI with `-` (e.g., `-github://owner/repo`) to delete the import and all its indexed data.
 
         Optionally specify which pipeline stage to wait for [Discovery|Indexing|SemanticIndexing|Analysis|Unspecified]. Defaults to SemanticIndexing to ensure embeddings are ready for search. Use Unspecified to return immediately.
+
+        To see all imports: `SELECT * FROM Filesystems`
         """;
 
     [McpServerTool(ReadOnly = false, Destructive = false, OpenWorld = false, Name = "import"), Description(ImportInstructions)]
@@ -86,16 +88,17 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         }
         catch (Exception ex)
         {
-            await Console.Error.WriteLineAsync(ex.Message);
+            var cleanMessage = ErrorClassifier.GetCleanMessage(ex);
+            await Console.Error.WriteLineAsync(cleanMessage);
 
             // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
                 var diagnostics = await _selfTestRunner.RunAsync(cancellationToken);
-                return $"Import failed: {ex.Message}\n\n{diagnostics}";
+                return $"Import failed: {cleanMessage}\n\n{diagnostics}";
             }
 
-            return $"Import failed: {ex.Message}";
+            return $"Import failed: {cleanMessage}";
         }
     }
 

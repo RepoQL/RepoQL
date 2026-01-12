@@ -4,45 +4,23 @@ using Google.Protobuf.WellKnownTypes;
 namespace RepoQL.Web.Services;
 
 /// <summary>
-/// Provides typed accessors over RepoQL macros used by the explorer view.
+/// Provides typed accessors over RepoQL views used by the explorer view.
 /// </summary>
 internal sealed class DocumentExplorerService
 {
     private const string DocumentQuery = """
-WITH docs AS (
-    SELECT
-        xd.document_uri,
-        xd.file_name,
-        xd.media_label,
-        xd.byte_size,
-        xd.kinds_summary,
-        a.headline,
-        a.summary,
-        a.structure
-    FROM (
-        SELECT
-            d.document_uri,
-            d.file_name,
-            COALESCE(d.media_kind, d.media_base) AS media_label,
-            d.byte_size,
-            d.kinds_summary
-        FROM xray_documents() d
-    ) xd
-    LEFT JOIN node n ON lower(n.uri) = lower(xd.document_uri)
-    LEFT JOIN artifact a ON a.id = n.artifact_id
-)
 SELECT
-    document_uri,
-    file_name,
-    media_label,
+    uri AS document_uri,
+    name AS file_name,
+    lang AS media_label,
     byte_size,
-    kinds_summary,
+    '' AS kinds_summary,
     headline,
     summary,
     structure
-FROM docs
+FROM Files
 {FILTER}
-ORDER BY lower(file_name)
+ORDER BY lower(name)
 LIMIT 250
 """;
 
@@ -106,22 +84,28 @@ LIMIT 250
 
         var client = await _connectionManager.GetClientAsync(cancellationToken).ConfigureAwait(false);
 
-        var sql = """
+        // Build kind filter if specified
+        var kindFilter = string.IsNullOrWhiteSpace(includeKinds)
+            ? ""
+            : $"AND c.kind IN ({string.Join(", ", includeKinds.Split(',').Select(k => $"'{k.Trim().ToLowerInvariant()}'"))})";
+
+        var sql = $"""
             SELECT
-                item_kind,
-                item_label,
-                item_uri
-            FROM xray_items(?, ?)
-            WHERE lower(document_uri) = lower(?)
-            ORDER BY item_kind, item_label
+                c.kind AS item_kind,
+                COALESCE(c.properties->>'$.name', c.properties->>'$.text', '?') AS item_label,
+                COALESCE(c.uri, d.uri || '#line=' || s.start_line || ',' || s.end_line) AS item_uri
+            FROM node d
+            JOIN edge e ON e.source_node_id = d.id AND e.is_composition = TRUE
+            JOIN node c ON c.id = e.destination_node_id
+            LEFT JOIN span s ON s.id = c.span_id
+            WHERE lower(d.uri) = lower(?)
+              AND d.kind = 'document'
+              {kindFilter}
+            ORDER BY COALESCE(s.start_line, e.ordinal, 0), c.kind
+            LIMIT ?
             """;
 
-        var parameters = new object?[]
-        {
-            includeKinds,
-            maxItemsPerDocument,
-            documentUri
-        };
+        var parameters = new object?[] { documentUri, maxItemsPerDocument };
 
         var response = await client.ExecuteRawQueryAsync(sql, parameters, cancellationToken: cancellationToken).ConfigureAwait(false);
         var items = new List<DocumentItem>(response.Rows.Count);
