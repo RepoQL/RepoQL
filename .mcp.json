@@ -8,6 +8,11 @@
     "aspire-dashboard": {
       "type": "http",
       "url": "http://localhost:15011/mcp"
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
     }
   }
 }

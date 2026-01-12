@@ -21,6 +21,10 @@ public class McpMacroGeneratorTests
 
         result.Should().Contain("CREATE OR REPLACE MACRO test_server_list_items()");
         result.Should().Contain("_mcp_call_internal('test-server', 'list_items'");
+        // Must wrap in params_json for UDF framework (extracts 3rd+ params by property name)
+        result.Should().Contain("json_object('params_json', '{}')");
+        // Uses parse_structured UDF to convert response to JSON
+        result.Should().Contain("parse_structured(raw_text)");
     }
 
     [Test]
@@ -54,6 +58,8 @@ public class McpMacroGeneratorTests
         // JSON keys preserve original case for MCP server, SQL params use sanitized names
         result.Should().Contain("'resourceName', \"resourcename\"");
         result.Should().Contain("'limit', \"limit\"");
+        // Must wrap in params_json for UDF framework
+        result.Should().Contain("json_object('params_json',");
     }
 
     [Test]

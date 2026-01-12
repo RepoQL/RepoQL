@@ -99,7 +99,23 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         WHERE sn.is_focus;
         ```
         </FUNCTIONS>
-        
+
+        <MCP>
+        **External MCP tools** - call other MCP servers, results as SQL rows
+        ```sql
+        SELECT * FROM mcp_tools();                    -- list available tools
+        SELECT * FROM mcp_tool_params();              -- list parameters with docs
+        SELECT * FROM context7_resolve_library_id(libraryname := 'react', query := 'hooks');
+        ```
+
+        **parse(text)** - convert CSV/TSV/YAML/JSON/JSONL to rows
+        ```sql
+        SELECT * FROM parse('id,name\n1,Alice\n2,Bob\n3,Charlie');
+        ```
+
+        See `docs:///repoql/tools/query/functions/mcp.md` for full MCP documentation.
+        </MCP>
+
         <MORE>
         **Format-specific views** - prefixed by format (e.g., `markdown_headings`, `csharp_types`)
         See `docs:///repoql/tools/query/formats/*` for available views per format.

@@ -281,11 +281,12 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
 
         var client = await GetClientAsync(serverName, cancellationToken).ConfigureAwait(false);
 
-        // Parse parameters from JSON
+        // Parse parameters from JSON, converting JsonElement values to primitives
         Dictionary<string, object?>? parameters = null;
         if (!string.IsNullOrWhiteSpace(paramsJson))
         {
-            parameters = JsonSerializer.Deserialize<Dictionary<string, object?>>(paramsJson);
+            using var doc = JsonDocument.Parse(paramsJson);
+            parameters = ConvertJsonElementToDict(doc.RootElement);
         }
 
         var result = await client.CallToolAsync(toolName, parameters, cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -295,11 +296,11 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         if (contents.Count == 0)
             return "null";
 
-        // If single text content, extract JSON if present
-        // MCP servers often return markdown with embedded JSON for LLM consumption
+        // If single text content, return as-is
+        // The parse_structured() UDF will handle format detection and conversion in SQL
         if (contents.Count == 1 && contents[0] is TextContentBlock textContent)
         {
-            return JsonResponseExtractor.Extract(textContent.Text);
+            return textContent.Text ?? "null";
         }
 
         // Multiple contents or non-text: serialize as array
@@ -590,6 +591,38 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
             Scopes = oauthObj.TryGetProperty("scopes", out var scopesProp)
                 ? scopesProp.EnumerateArray().Select(s => s.GetString() ?? "").Where(s => !string.IsNullOrEmpty(s)).ToArray()
                 : null
+        };
+    }
+
+    /// <summary>
+    /// Converts a JsonElement to a Dictionary with primitive values.
+    /// JsonSerializer.Deserialize produces JsonElement values which MCP SDK may not handle.
+    /// </summary>
+    private static Dictionary<string, object?>? ConvertJsonElementToDict(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var dict = new Dictionary<string, object?>();
+        foreach (var prop in element.EnumerateObject())
+        {
+            dict[prop.Name] = ConvertJsonElement(prop.Value);
+        }
+        return dict;
+    }
+
+    private static object? ConvertJsonElement(JsonElement element)
+    {
+        return element.ValueKind switch
+        {
+            JsonValueKind.String => element.GetString(),
+            JsonValueKind.Number => element.TryGetInt64(out var l) ? l : element.GetDouble(),
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            JsonValueKind.Array => element.EnumerateArray().Select(ConvertJsonElement).ToList(),
+            JsonValueKind.Object => ConvertJsonElementToDict(element),
+            _ => element.GetRawText()
         };
     }
 

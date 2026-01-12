@@ -46,13 +46,18 @@ public static partial class McpMacroGenerator
         var paramsJsonExpr = BuildParamsJsonExpression(parameters);
 
         // Generate macro that:
-        // 1. Calls _mcp_call_internal to get JSON result (UDF handles JSON extraction from markdown)
-        // 2. Parses the JSON as an array and unnests into rows
-        // 3. Each row is a JSON object that can be queried with json_extract
+        // 1. Calls _mcp_call_internal to get raw response text
+        // 2. Uses parse_structured() UDF to convert to JSON (handles JSON/JSONL/CSV/TSV/YAML/embedded)
+        // 3. Parses the JSON as an array and unnests into rows
+        // 4. Each row is a JSON object that can be queried with json_extract
         return $$"""
             CREATE OR REPLACE MACRO {{macroName}}({{paramList}}) AS TABLE (
                 WITH raw_result AS (
-                    SELECT _mcp_call_internal('{{EscapeSql(tool.ServerName)}}', '{{EscapeSql(tool.ToolName)}}', {{paramsJsonExpr}}) AS json_data
+                    SELECT _mcp_call_internal('{{EscapeSql(tool.ServerName)}}', '{{EscapeSql(tool.ToolName)}}', {{paramsJsonExpr}}) AS raw_text
+                ),
+                structured AS (
+                    SELECT parse_structured(raw_text) AS json_data
+                    FROM raw_result
                 ),
                 parsed AS (
                     SELECT
@@ -61,7 +66,7 @@ public static partial class McpMacroGenerator
                             WHEN json_data IS NULL OR json_data = 'null' THEN '[]'
                             ELSE '[' || json_data || ']'
                         END AS json_array
-                    FROM raw_result
+                    FROM structured
                 )
                 SELECT unnest(from_json(json_array, '["json"]')) AS value
                 FROM parsed
@@ -71,34 +76,99 @@ public static partial class McpMacroGenerator
     }
 
     /// <summary>
-    /// Generates a macro that lists all available MCP tools.
+    /// Generates macros that list all available MCP tools and their parameters.
     /// </summary>
     public static string GenerateDiscoveryMacro(IReadOnlyList<McpToolDefinition> tools)
     {
+        var sb = new StringBuilder();
+
+        // Generate mcp_tools() macro with example usage
         if (tools.Count == 0)
         {
-            return """
+            sb.AppendLine("""
                 CREATE OR REPLACE MACRO mcp_tools() AS TABLE (
-                    SELECT NULL::VARCHAR AS server, NULL::VARCHAR AS tool, NULL::VARCHAR AS macro_name, NULL::VARCHAR AS description
+                    SELECT NULL::VARCHAR AS server, NULL::VARCHAR AS tool, NULL::VARCHAR AS macro_name,
+                           NULL::VARCHAR AS description, NULL::VARCHAR AS example
                     WHERE false
                 );
-                """;
+                """);
+        }
+        else
+        {
+            var toolValues = tools.Select(t =>
+            {
+                var macroName = SanitizeName($"{t.ServerName}_{t.ToolName}");
+                var desc = EscapeSql(t.Description ?? "");
+                var parameters = ExtractParameters(t.InputSchema);
+                var example = BuildExampleUsage(macroName, parameters);
+                return $"('{EscapeSql(t.ServerName)}', '{EscapeSql(t.ToolName)}', '{macroName}', '{desc}', '{EscapeSql(example)}')";
+            });
+
+            sb.AppendLine($$"""
+                CREATE OR REPLACE MACRO mcp_tools() AS TABLE (
+                    SELECT * FROM (VALUES
+                        {{string.Join(",\n            ", toolValues)}}
+                    ) AS t(server, tool, macro_name, description, example)
+                );
+                """);
         }
 
-        var values = tools.Select(t =>
-        {
-            var macroName = SanitizeName($"{t.ServerName}_{t.ToolName}");
-            var desc = EscapeSql(t.Description ?? "");
-            return $"('{EscapeSql(t.ServerName)}', '{EscapeSql(t.ToolName)}', '{macroName}', '{desc}')";
-        });
+        sb.AppendLine();
 
-        return $$"""
-            CREATE OR REPLACE MACRO mcp_tools() AS TABLE (
-                SELECT * FROM (VALUES
-                    {{string.Join(",\n            ", values)}}
-                ) AS t(server, tool, macro_name, description)
-            );
-            """;
+        // Generate mcp_tool_params() macro with parameter details
+        var paramValues = new List<string>();
+        foreach (var tool in tools)
+        {
+            var macroName = SanitizeName($"{tool.ServerName}_{tool.ToolName}");
+            var parameters = ExtractParameters(tool.InputSchema);
+
+            foreach (var param in parameters)
+            {
+                var paramDesc = EscapeSql(param.Description ?? "");
+                var defaultVal = param.Default?.ToString() ?? "";
+                paramValues.Add($"('{EscapeSql(tool.ServerName)}', '{macroName}', '{param.Name}', '{param.OriginalName}', '{param.Type}', {(param.Required ? "true" : "false")}, '{paramDesc}', '{EscapeSql(defaultVal)}')");
+            }
+        }
+
+        if (paramValues.Count == 0)
+        {
+            sb.AppendLine("""
+                CREATE OR REPLACE MACRO mcp_tool_params() AS TABLE (
+                    SELECT NULL::VARCHAR AS server, NULL::VARCHAR AS macro_name, NULL::VARCHAR AS param_name,
+                           NULL::VARCHAR AS original_name, NULL::VARCHAR AS param_type, NULL::BOOLEAN AS required,
+                           NULL::VARCHAR AS description, NULL::VARCHAR AS default_value
+                    WHERE false
+                );
+                """);
+        }
+        else
+        {
+            sb.AppendLine($$"""
+                CREATE OR REPLACE MACRO mcp_tool_params() AS TABLE (
+                    SELECT * FROM (VALUES
+                        {{string.Join(",\n            ", paramValues)}}
+                    ) AS t(server, macro_name, param_name, original_name, param_type, required, description, default_value)
+                );
+                """);
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Builds an example usage string for a tool macro.
+    /// </summary>
+    private static string BuildExampleUsage(string macroName, IReadOnlyList<McpToolParameter> parameters)
+    {
+        if (parameters.Count == 0)
+            return $"SELECT * FROM {macroName}()";
+
+        var requiredParams = parameters.Where(p => p.Required).ToList();
+        if (requiredParams.Count == 0)
+            return $"SELECT * FROM {macroName}()";
+
+        var paramExamples = requiredParams.Select(p => $"{p.Name} := '...'");
+        return $"SELECT * FROM {macroName}({string.Join(", ", paramExamples)})";
     }
 
     /// <summary>
@@ -179,20 +249,21 @@ public static partial class McpMacroGenerator
     {
         if (parameters.Count == 0)
         {
-            // IMPORTANT: Must return non-NULL string - DuckDB skips UDF calls when all args are NULL
-            return "'{}'";
+            // IMPORTANT: UDF framework extracts 3rd+ params from JSON by property name.
+            // Even with no MCP params, we must wrap in params_json for the framework.
+            return "json_object('params_json', '{}')";
         }
 
-        // Build a CASE expression that constructs JSON only for non-NULL parameters
-        // This uses json_object which handles nulls gracefully
+        // Build JSON for MCP tool parameters
         // JSON key uses OriginalName (MCP expects exact case), SQL param uses Name (sanitized, quoted for reserved keywords)
         var jsonPairs = parameters.Select(p =>
             $"'{p.OriginalName}', \"{p.Name}\"");
 
-        // Use json_object with ABSENT ON NULL to omit null values
-        // DuckDB syntax: json_object('key1', val1, 'key2', val2, ...)
-        // COALESCE ensures we never pass NULL to the UDF
-        return $"COALESCE(json_object({string.Join(", ", jsonPairs)})::VARCHAR, '{{}}')";
+        // IMPORTANT: The UDF framework (UdfRegistry) packs 3rd+ method params into JSON and extracts by property name.
+        // _mcp_call_internal has 3 params (server, tool, params_json), so the framework expects the 3rd DuckDB arg
+        // to be a JSON object with a property named "params_json". We must wrap our params JSON accordingly.
+        var innerJson = $"COALESCE(json_object({string.Join(", ", jsonPairs)})::VARCHAR, '{{}}')";
+        return $"json_object('params_json', {innerJson})";
     }
 
     /// <summary>

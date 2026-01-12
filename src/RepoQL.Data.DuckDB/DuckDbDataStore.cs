@@ -931,7 +931,8 @@ public sealed class DuckDbDataStore : IDisposable
                 "Tables/file_system_mount.sql",
                 "Views/filesystems.sql",
                 "Macros/xray.sql",
-                "Macros/xray_structured.sql"
+                "Macros/xray_structured.sql",
+                "Macros/parse.sql"
             };
 
             foreach (var script in schemaScripts)
