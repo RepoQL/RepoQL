@@ -68,7 +68,12 @@ public sealed record McpToolDefinition
 /// </summary>
 public sealed record McpToolParameter
 {
+    /// <summary>Sanitized name safe for SQL identifiers (lowercased, special chars replaced)</summary>
     public required string Name { get; init; }
+
+    /// <summary>Original name from JSON schema (for JSON key in MCP calls)</summary>
+    public required string OriginalName { get; init; }
+
     public required string Type { get; init; } // "string", "integer", "boolean", "object", "array"
     public bool Required { get; init; }
     public string? Description { get; init; }

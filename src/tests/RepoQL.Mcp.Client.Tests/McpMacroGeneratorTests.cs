@@ -48,8 +48,12 @@ public class McpMacroGeneratorTests
         var result = McpMacroGenerator.GenerateToolMacro(tool);
 
         result.Should().Contain("dashboard_get_logs(");
+        // SQL params use sanitized (lowercased) names, quoted for reserved keywords
         result.Should().Contain("\"resourcename\" :=");
         result.Should().Contain("\"limit\" :=");
+        // JSON keys preserve original case for MCP server, SQL params use sanitized names
+        result.Should().Contain("'resourceName', \"resourcename\"");
+        result.Should().Contain("'limit', \"limit\"");
     }
 
     [Test]
@@ -307,6 +311,30 @@ public class McpMacroGeneratorTests
         var result = McpMacroGenerator.ExtractParameters(schema);
 
         result[0].Name.Should().Be("resource_name");
+        result[0].OriginalName.Should().Be("resource-name");
+    }
+
+    [Test]
+    public async Task ExtractParameters_PreservesOriginalCamelCaseName()
+    {
+        var schema = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "appId": { "type": "string" },
+                    "searchTerm": { "type": "string" }
+                }
+            }
+            """).RootElement;
+
+        var result = McpMacroGenerator.ExtractParameters(schema);
+
+        // SQL names are lowercased
+        result.Select(p => p.Name).Should().Contain("appid");
+        result.Select(p => p.Name).Should().Contain("searchterm");
+        // Original names preserve case for MCP
+        result.Select(p => p.OriginalName).Should().Contain("appId");
+        result.Select(p => p.OriginalName).Should().Contain("searchTerm");
     }
 
     #endregion

@@ -157,6 +157,7 @@ public static partial class McpMacroGenerator
             parameters.Add(new McpToolParameter
             {
                 Name = paramName,
+                OriginalName = prop.Name,  // Preserve original for JSON key
                 Type = paramType,
                 Required = required.Contains(prop.Name),
                 Description = description,
@@ -184,9 +185,9 @@ public static partial class McpMacroGenerator
 
         // Build a CASE expression that constructs JSON only for non-NULL parameters
         // This uses json_object which handles nulls gracefully
-        // Parameter names are quoted to handle reserved keywords like 'offset', 'count'
+        // JSON key uses OriginalName (MCP expects exact case), SQL param uses Name (sanitized, quoted for reserved keywords)
         var jsonPairs = parameters.Select(p =>
-            $"'{p.Name}', \"{p.Name}\"");
+            $"'{p.OriginalName}', \"{p.Name}\"");
 
         // Use json_object with ABSENT ON NULL to omit null values
         // DuckDB syntax: json_object('key1', val1, 'key2', val2, ...)
