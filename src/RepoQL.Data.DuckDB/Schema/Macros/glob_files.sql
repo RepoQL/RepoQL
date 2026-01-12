@@ -45,7 +45,7 @@ WHERE
         WHEN p.pattern IS NOT NULL THEN
             n.kind = 'document'
             AND matches_glob(n.uri, p.pattern, ignore_case, default_scheme) IS TRUE
-        -- Branch 4: Neither provided - return nothing
-        ELSE FALSE
+        -- Branch 4: Neither provided - return all documents
+        ELSE n.kind = 'document'
     END
 ORDER BY n.uri;
