@@ -48,8 +48,38 @@ public class McpMacroGeneratorTests
         var result = McpMacroGenerator.GenerateToolMacro(tool);
 
         result.Should().Contain("dashboard_get_logs(");
-        result.Should().Contain("resourcename :=");
-        result.Should().Contain("limit :=");
+        result.Should().Contain("\"resourcename\" :=");
+        result.Should().Contain("\"limit\" :=");
+    }
+
+    [Test]
+    public async Task GenerateToolMacro_QuotesReservedKeywordParameters()
+    {
+        var schema = JsonDocument.Parse("""
+            {
+                "type": "object",
+                "properties": {
+                    "offset": { "type": "integer", "description": "Start position" },
+                    "count": { "type": "integer", "description": "Number of items" }
+                }
+            }
+            """).RootElement;
+
+        var tool = new McpToolDefinition
+        {
+            ServerName = "api",
+            ToolName = "list",
+            InputSchema = schema
+        };
+
+        var result = McpMacroGenerator.GenerateToolMacro(tool);
+
+        // Parameter names should be quoted to handle reserved keywords
+        result.Should().Contain("\"offset\" :=");
+        result.Should().Contain("\"count\" :=");
+        // JSON keys should use single quotes, parameter refs should use double quotes
+        result.Should().Contain("'offset', \"offset\"");
+        result.Should().Contain("'count', \"count\"");
     }
 
     [Test]

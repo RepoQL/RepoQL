@@ -40,7 +40,7 @@ public static partial class McpMacroGenerator
         var parameters = ExtractParameters(tool.InputSchema);
 
         var paramList = parameters.Count > 0
-            ? string.Join(", ", parameters.Select(p => $"{p.Name} := NULL"))
+            ? string.Join(", ", parameters.Select(p => $"\"{p.Name}\" := NULL"))
             : "";
 
         var paramsJsonExpr = BuildParamsJsonExpression(parameters);
@@ -184,8 +184,9 @@ public static partial class McpMacroGenerator
 
         // Build a CASE expression that constructs JSON only for non-NULL parameters
         // This uses json_object which handles nulls gracefully
+        // Parameter names are quoted to handle reserved keywords like 'offset', 'count'
         var jsonPairs = parameters.Select(p =>
-            $"'{p.Name}', {p.Name}");
+            $"'{p.Name}', \"{p.Name}\"");
 
         // Use json_object with ABSENT ON NULL to omit null values
         // DuckDB syntax: json_object('key1', val1, 'key2', val2, ...)
