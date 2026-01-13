@@ -1,25 +1,18 @@
--- parse(text) - Parse structured data (JSON/JSONL/CSV/TSV/YAML) into table rows
--- Each row contains a JSON object in the 'value' column
--- Use json_extract_string(value, '$.field') to access fields
+-- parse(text) - Parse CSV/TSV text into table rows with dynamic columns
+-- Columns are auto-detected from the header row
 --
 -- Examples:
---   SELECT * FROM parse('id,name\n1,Alice\n2,Bob')
---   SELECT json_extract_string(value, '$.name') AS name FROM parse('{"name":"test"}')
+--   SELECT * FROM parse('id,name
+--   1,Alice
+--   2,Bob')
+--
+--   SELECT * FROM parse('project,team,priority
+--   RepoQL.Data.DuckDB,Platform,1
+--   RepoQL.Indexing,Platform,2')
+--
+-- Note: Uses temp file + read_csv_auto for dynamic column detection.
+-- For JSON data, use from_json() with json_structure() directly.
 
 CREATE OR REPLACE MACRO parse(text) AS TABLE (
-    WITH parsed AS (
-        SELECT parse_structured(text) AS json_data
-    ),
-    normalized AS (
-        SELECT
-            CASE
-                WHEN json_type(json_data::JSON) = 'ARRAY' THEN json_data
-                WHEN json_data IS NULL OR json_data = 'null' THEN '[]'
-                ELSE '[' || json_data || ']'
-            END AS json_array
-        FROM parsed
-    )
-    SELECT unnest(from_json(json_array, '["json"]')) AS value
-    FROM normalized
-    WHERE json_array != '[]'
+    SELECT * FROM read_csv_auto(_write_temp_csv(text), header := true)
 );
