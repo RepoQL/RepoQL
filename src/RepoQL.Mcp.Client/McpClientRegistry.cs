@@ -25,17 +25,20 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
     private readonly ConcurrentDictionary<string, Task<IMcpClient>> _connectingClients = new();
     private readonly ILogger _logger;
     private readonly string _selfServerName;
+    private readonly McpCredentialProvider _credentialProvider;
     private bool _disposed;
     private bool _started;
 
     private McpClientRegistry(
         IReadOnlyDictionary<string, McpServerConfig> configs,
         string selfServerName,
-        ILogger logger)
+        ILogger logger,
+        McpCredentialProvider? credentialProvider = null)
     {
         _configs = configs;
         _selfServerName = selfServerName;
         _logger = logger;
+        _credentialProvider = credentialProvider ?? new McpCredentialProvider(logger);
     }
 
     /// <summary>
@@ -352,14 +355,46 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
             };
 
             // Add headers with environment variable expansion
-            if (config.Headers is { Count: > 0 })
+            var headers = config.Headers is { Count: > 0 }
+                ? config.Headers.ToDictionary(h => h.Key, h => ExpandEnvironmentVariables(h.Value))
+                : new Dictionary<string, string>();
+
+            // Try to get stored credentials if not explicitly using config-only mode
+            McpCredentials? storedCredentials = null;
+            if (config.CredentialsFrom != McpCredentialsSource.Config)
             {
-                transportOptions.AdditionalHeaders = config.Headers
-                    .ToDictionary(h => h.Key, h => ExpandEnvironmentVariables(h.Value));
+                storedCredentials = await _credentialProvider.GetCredentialsAsync(config.Url, cancellationToken).ConfigureAwait(false);
+
+                if (storedCredentials is not null)
+                {
+                    // Check if expired and try to refresh
+                    if (storedCredentials.IsExpired && storedCredentials.CanRefresh)
+                    {
+                        _logger.LogDebug("Stored credentials expired for '{Server}', attempting refresh", config.Name);
+                        storedCredentials = await _credentialProvider.RefreshTokenAsync(storedCredentials, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    // If we have valid credentials, use them
+                    if (storedCredentials is not null && !storedCredentials.IsExpired)
+                    {
+                        _logger.LogInformation("Using stored credentials for '{Server}'", config.Name);
+                        headers["Authorization"] = $"Bearer {storedCredentials.AccessToken}";
+                    }
+                    else
+                    {
+                        _logger.LogDebug("Stored credentials invalid or refresh failed for '{Server}', will use OAuth flow", config.Name);
+                        storedCredentials = null; // Clear so we fall through to OAuth
+                    }
+                }
             }
 
-            // Configure OAuth if specified
-            if (config.OAuth is { } oauth)
+            if (headers.Count > 0)
+            {
+                transportOptions.AdditionalHeaders = headers;
+            }
+
+            // Configure OAuth if specified and we don't have valid stored credentials
+            if (config.OAuth is { } oauth && storedCredentials is null)
             {
                 transportOptions.OAuth = new ClientOAuthOptions
                 {
@@ -561,7 +596,8 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
                 Headers = serverObj.TryGetProperty("headers", out var headersProp)
                     ? headersProp.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString() ?? "")
                     : null,
-                OAuth = ParseOAuthConfig(serverObj)
+                OAuth = ParseOAuthConfig(serverObj),
+                CredentialsFrom = ParseCredentialsFrom(serverObj)
             };
 
             configs[serverName] = config;
@@ -591,6 +627,21 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
             Scopes = oauthObj.TryGetProperty("scopes", out var scopesProp)
                 ? scopesProp.EnumerateArray().Select(s => s.GetString() ?? "").Where(s => !string.IsNullOrEmpty(s)).ToArray()
                 : null
+        };
+    }
+
+    private static McpCredentialsSource ParseCredentialsFrom(JsonElement serverObj)
+    {
+        if (!serverObj.TryGetProperty("credentialsFrom", out var credProp))
+            return McpCredentialsSource.Auto;
+
+        var value = credProp.GetString()?.ToLowerInvariant();
+        return value switch
+        {
+            "claude" => McpCredentialsSource.Claude,
+            "repoql" => McpCredentialsSource.Repoql,
+            "config" => McpCredentialsSource.Config,
+            _ => McpCredentialsSource.Auto
         };
     }
 

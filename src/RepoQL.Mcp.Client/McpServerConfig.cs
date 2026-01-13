@@ -15,9 +15,36 @@ public sealed record McpServerConfig
     public Dictionary<string, string>? Env { get; init; }     // Environment variables (stdio)
     public Dictionary<string, string>? Headers { get; init; } // HTTP headers (http) - supports ${VAR} expansion
     public McpOAuthConfig? OAuth { get; init; } // OAuth configuration (http)
+    public McpCredentialsSource CredentialsFrom { get; init; } = McpCredentialsSource.Auto; // Where to get credentials
 
     public bool IsStdio => string.Equals(Type, "stdio", StringComparison.OrdinalIgnoreCase);
     public bool IsHttp => string.Equals(Type, "http", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// Specifies where to get OAuth credentials from.
+/// </summary>
+public enum McpCredentialsSource
+{
+    /// <summary>
+    /// Auto-detect: Try Claude's store first, then RepoQL's, then OAuth flow.
+    /// </summary>
+    Auto,
+
+    /// <summary>
+    /// Only use Claude Code's credential store (~/.claude/.credentials.json).
+    /// </summary>
+    Claude,
+
+    /// <summary>
+    /// Only use RepoQL's credential store (~/.repoql/.mcp-credentials.json).
+    /// </summary>
+    Repoql,
+
+    /// <summary>
+    /// Only use credentials from config (headers or OAuth flow).
+    /// </summary>
+    Config
 }
 
 /// <summary>
