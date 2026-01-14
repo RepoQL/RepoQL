@@ -46,6 +46,7 @@ using RepoQL.Indexing.Indexing.State;
 using RepoQL.Metrics;
 using RepoQL.Templating;
 using RepoQL.Mcp.Client;
+using RepoQL.Mcp.Client.Configuration;
 
 namespace RepoQL.Core;
 
@@ -435,10 +436,16 @@ public static class RepoIndexerServiceCollectionExtensions
         });
 
         // MCP client integration - connects to external MCP servers and exposes their tools via SQL
+        // Loads from both repo-level configs and global agent configs (Claude Code, Claude Desktop)
         services.AddSingleton(sp =>
         {
             var logger = sp.GetService<ILogger<McpClientRegistry>>();
-            return McpClientRegistry.CreateFromDirectory(resolvedRoot, selfServerName: "repoql", logger);
+            var options = McpConfigOptions.FromEnvironment();
+            return McpClientRegistry.CreateFromDirectoryWithGlobals(
+                resolvedRoot,
+                includeGlobalAgents: options.IncludeGlobalAgents,
+                selfServerName: options.SelfServerName,
+                logger);
         });
         // Register IMcpToolCaller for UDF resolution - McpClientRegistry implements this interface
         services.AddSingleton<IMcpToolCaller>(sp => sp.GetRequiredService<McpClientRegistry>());
