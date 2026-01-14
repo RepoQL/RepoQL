@@ -3,20 +3,15 @@
     <!-- Include all the target files under /build -->
     <Import Project="$(BuildExtensionsDirectory)*.targets"/>
 
-    <!-- Fix Antlr4BuildTasks which uses USERPROFILE (doesn't exist on macOS/Linux).
-         This must be static (not in a Target) to be evaluated before Antlr4BuildTasks
-         tries to resolve the jar path during target dependency resolution.
-         Use HOME on Unix, USERPROFILE on Windows. ItemGroup Update overrides existing metadata. -->
-    <PropertyGroup>
-        <!-- $(USERPROFILE) works on Windows; on Unix the workflow sets USERPROFILE=HOME -->
-        <_AntlrHome Condition="'$(USERPROFILE)' != ''">$(USERPROFILE)</_AntlrHome>
-        <!-- Fallback: explicitly read HOME env var via property function ($(HOME) doesn't work on macOS) -->
-        <_AntlrHome Condition="'$(_AntlrHome)' == ''">$([System.Environment]::GetEnvironmentVariable('HOME'))</_AntlrHome>
-    </PropertyGroup>
-    <ItemGroup Condition="'$(_AntlrHome)' != ''">
+    <!-- Fix Antlr4BuildTasks using USERPROFILE which doesn't exist on macOS/Linux.
+         - Must use ItemGroup Update (not ItemDefinitionGroup) to override values already set by Antlr4BuildTasks.targets
+         - Must use GetFolderPath(SpecialFolder.UserProfile) which is the reliable cross-platform .NET API
+           (environment variables like $(HOME) don't work as MSBuild properties on macOS)
+         - No conditional - GetFolderPath always returns a valid path on all platforms -->
+    <ItemGroup>
         <Antlr4 Update="@(Antlr4)">
-            <AntlrToolJarDownloadDir>$(_AntlrHome)/.m2/</AntlrToolJarDownloadDir>
-            <JavaDownloadDirectory>$(_AntlrHome)/.jre/</JavaDownloadDirectory>
+            <AntlrToolJarDownloadDir>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.m2/</AntlrToolJarDownloadDir>
+            <JavaDownloadDirectory>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.jre/</JavaDownloadDirectory>
         </Antlr4>
     </ItemGroup>
 </Project>
