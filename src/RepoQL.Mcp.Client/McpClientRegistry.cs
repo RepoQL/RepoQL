@@ -10,6 +10,7 @@ using ModelContextProtocol.Authentication;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using RepoQL.Data.DuckDB;
+using RepoQL.Mcp.Client.Configuration;
 
 namespace RepoQL.Mcp.Client;
 
