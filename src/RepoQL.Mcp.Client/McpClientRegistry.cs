@@ -49,7 +49,7 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         string selfServerName = "repoql",
         ILogger? logger = null)
     {
-        var configs = LoadConfig(configPath);
+        var configs = McpConfigLoader.LoadFromFile(configPath);
         return new McpClientRegistry(configs, selfServerName, logger ?? NullLogger.Instance);
     }
 
@@ -63,35 +63,60 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         ILogger? logger = null)
     {
         var log = logger ?? NullLogger.Instance;
-        var configs = new Dictionary<string, McpServerConfig>(StringComparer.OrdinalIgnoreCase);
+        var source = new DirectoryMcpConfigSource(directory, log);
+        var configs = source.LoadConfigs()
+            .Where(kvp => !string.Equals(kvp.Key, selfServerName, StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
 
-        // Load configs in order (later overrides earlier)
-        var configPaths = new[]
+        return new McpClientRegistry(configs, selfServerName, log);
+    }
+
+    /// <summary>
+    /// Creates a registry by loading configs from multiple sources, including
+    /// repository-level and global agent configurations.
+    /// </summary>
+    /// <param name="directory">Repository root directory</param>
+    /// <param name="includeGlobalAgents">
+    /// When true, loads MCP servers from global agent configs (Claude Code, Claude Desktop, etc.).
+    /// When false, only loads repo-level configs.
+    /// </param>
+    /// <param name="selfServerName">Server name to exclude (prevents self-reference)</param>
+    /// <param name="logger">Optional logger for diagnostics</param>
+    public static McpClientRegistry CreateFromDirectoryWithGlobals(
+        string directory,
+        bool includeGlobalAgents = true,
+        string selfServerName = "repoql",
+        ILogger? logger = null)
+    {
+        var log = logger ?? NullLogger.Instance;
+
+        IReadOnlyList<IMcpConfigSource> sources;
+        if (includeGlobalAgents)
         {
-            Path.Combine(directory, ".mcp.json"),
-            Path.Combine(directory, ".repoql.mcp.json"),
-            Path.Combine(directory, ".repoql", ".mcp.json")
-        };
-
-        foreach (var path in configPaths)
+            sources = McpConfigSourceFactory.CreateAll(directory, logger: log);
+        }
+        else
         {
-            if (!File.Exists(path)) continue;
-
-            try
-            {
-                var fileConfigs = LoadConfig(path);
-                foreach (var (name, config) in fileConfigs)
-                {
-                    configs[name] = config;
-                }
-                log.LogDebug("Loaded MCP config from {Path} ({Count} servers)", path, fileConfigs.Count);
-            }
-            catch (Exception ex)
-            {
-                log.LogWarning(ex, "Failed to load MCP config from {Path}", path);
-            }
+            sources = new[] { McpConfigSourceFactory.CreateDirectorySource(directory, log) };
         }
 
+        return CreateFromSources(sources, selfServerName, log);
+    }
+
+    /// <summary>
+    /// Creates a registry from explicit config sources.
+    /// Use this for full control over which sources are loaded.
+    /// </summary>
+    /// <param name="sources">Config sources to load from (merged by priority)</param>
+    /// <param name="selfServerName">Server name to exclude (prevents self-reference)</param>
+    /// <param name="logger">Optional logger for diagnostics</param>
+    public static McpClientRegistry CreateFromSources(
+        IEnumerable<IMcpConfigSource> sources,
+        string selfServerName = "repoql",
+        ILogger? logger = null)
+    {
+        var log = logger ?? NullLogger.Instance;
+        var configs = McpConfigSourceFactory.LoadAndMerge(sources, selfServerName);
         return new McpClientRegistry(configs, selfServerName, log);
     }
 
