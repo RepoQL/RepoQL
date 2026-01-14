@@ -8,8 +8,10 @@
          tries to resolve the jar path during target dependency resolution.
          Use HOME on Unix, USERPROFILE on Windows. ItemGroup Update overrides existing metadata. -->
     <PropertyGroup>
+        <!-- $(USERPROFILE) works on Windows; on Unix the workflow sets USERPROFILE=HOME -->
         <_AntlrHome Condition="'$(USERPROFILE)' != ''">$(USERPROFILE)</_AntlrHome>
-        <_AntlrHome Condition="'$(_AntlrHome)' == '' AND '$(HOME)' != ''">$(HOME)</_AntlrHome>
+        <!-- Fallback: explicitly read HOME env var via property function ($(HOME) doesn't work on macOS) -->
+        <_AntlrHome Condition="'$(_AntlrHome)' == ''">$([System.Environment]::GetEnvironmentVariable('HOME'))</_AntlrHome>
     </PropertyGroup>
     <ItemGroup Condition="'$(_AntlrHome)' != ''">
         <Antlr4 Update="@(Antlr4)">
