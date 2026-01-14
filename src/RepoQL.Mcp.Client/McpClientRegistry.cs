@@ -10,6 +10,7 @@ using ModelContextProtocol.Authentication;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using RepoQL.Data.DuckDB;
+using RepoQL.Mcp.Client.Configuration;
 
 namespace RepoQL.Mcp.Client;
 
@@ -46,7 +47,7 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         string selfServerName = "repoql",
         ILogger? logger = null)
     {
-        var configs = LoadConfig(configPath);
+        var configs = McpConfigLoader.LoadFromFile(configPath);
         return new McpClientRegistry(configs, selfServerName, logger ?? NullLogger.Instance);
     }
 
@@ -60,35 +61,60 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         ILogger? logger = null)
     {
         var log = logger ?? NullLogger.Instance;
-        var configs = new Dictionary<string, McpServerConfig>(StringComparer.OrdinalIgnoreCase);
+        var source = new DirectoryMcpConfigSource(directory, log);
+        var configs = source.LoadConfigs()
+            .Where(kvp => !string.Equals(kvp.Key, selfServerName, StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
 
-        // Load configs in order (later overrides earlier)
-        var configPaths = new[]
+        return new McpClientRegistry(configs, selfServerName, log);
+    }
+
+    /// <summary>
+    /// Creates a registry by loading configs from multiple sources, including
+    /// repository-level and global agent configurations.
+    /// </summary>
+    /// <param name="directory">Repository root directory</param>
+    /// <param name="includeGlobalAgents">
+    /// When true, loads MCP servers from global agent configs (Claude Code, Claude Desktop, etc.).
+    /// When false, only loads repo-level configs.
+    /// </param>
+    /// <param name="selfServerName">Server name to exclude (prevents self-reference)</param>
+    /// <param name="logger">Optional logger for diagnostics</param>
+    public static McpClientRegistry CreateFromDirectoryWithGlobals(
+        string directory,
+        bool includeGlobalAgents = true,
+        string selfServerName = "repoql",
+        ILogger? logger = null)
+    {
+        var log = logger ?? NullLogger.Instance;
+
+        IReadOnlyList<IMcpConfigSource> sources;
+        if (includeGlobalAgents)
         {
-            Path.Combine(directory, ".mcp.json"),
-            Path.Combine(directory, ".repoql.mcp.json"),
-            Path.Combine(directory, ".repoql", ".mcp.json")
-        };
-
-        foreach (var path in configPaths)
+            sources = McpConfigSourceFactory.CreateAll(directory, logger: log);
+        }
+        else
         {
-            if (!File.Exists(path)) continue;
-
-            try
-            {
-                var fileConfigs = LoadConfig(path);
-                foreach (var (name, config) in fileConfigs)
-                {
-                    configs[name] = config;
-                }
-                log.LogDebug("Loaded MCP config from {Path} ({Count} servers)", path, fileConfigs.Count);
-            }
-            catch (Exception ex)
-            {
-                log.LogWarning(ex, "Failed to load MCP config from {Path}", path);
-            }
+            sources = new[] { McpConfigSourceFactory.CreateDirectorySource(directory, log) };
         }
 
+        return CreateFromSources(sources, selfServerName, log);
+    }
+
+    /// <summary>
+    /// Creates a registry from explicit config sources.
+    /// Use this for full control over which sources are loaded.
+    /// </summary>
+    /// <param name="sources">Config sources to load from (merged by priority)</param>
+    /// <param name="selfServerName">Server name to exclude (prevents self-reference)</param>
+    /// <param name="logger">Optional logger for diagnostics</param>
+    public static McpClientRegistry CreateFromSources(
+        IEnumerable<IMcpConfigSource> sources,
+        string selfServerName = "repoql",
+        ILogger? logger = null)
+    {
+        var log = logger ?? NullLogger.Instance;
+        var configs = McpConfigSourceFactory.LoadAndMerge(sources, selfServerName);
         return new McpClientRegistry(configs, selfServerName, log);
     }
 
@@ -519,80 +545,6 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         }
     }
 
-    private static Dictionary<string, McpServerConfig> LoadConfig(string configPath)
-    {
-        if (!File.Exists(configPath))
-            return new Dictionary<string, McpServerConfig>();
-
-        var json = File.ReadAllText(configPath);
-        using var doc = JsonDocument.Parse(json);
-
-        var configs = new Dictionary<string, McpServerConfig>(StringComparer.OrdinalIgnoreCase);
-
-        // Try "mcpServers" first (Claude format), then "servers"
-        JsonElement serversElement;
-        if (!doc.RootElement.TryGetProperty("mcpServers", out serversElement) &&
-            !doc.RootElement.TryGetProperty("servers", out serversElement))
-        {
-            return configs;
-        }
-
-        foreach (var serverProp in serversElement.EnumerateObject())
-        {
-            var serverName = serverProp.Name;
-            var serverObj = serverProp.Value;
-
-            var type = serverObj.TryGetProperty("type", out var typeProp)
-                ? typeProp.GetString() ?? "stdio"
-                : "stdio";
-
-            var config = new McpServerConfig
-            {
-                Name = serverName,
-                Type = type,
-                Command = serverObj.TryGetProperty("command", out var cmdProp) ? cmdProp.GetString() : null,
-                Args = serverObj.TryGetProperty("args", out var argsProp)
-                    ? argsProp.EnumerateArray().Select(a => a.GetString() ?? "").ToArray()
-                    : null,
-                Url = serverObj.TryGetProperty("url", out var urlProp) ? urlProp.GetString() : null,
-                Env = serverObj.TryGetProperty("env", out var envProp)
-                    ? envProp.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString() ?? "")
-                    : null,
-                Headers = serverObj.TryGetProperty("headers", out var headersProp)
-                    ? headersProp.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString() ?? "")
-                    : null,
-                OAuth = ParseOAuthConfig(serverObj)
-            };
-
-            configs[serverName] = config;
-        }
-
-        return configs;
-    }
-
-    private static McpOAuthConfig? ParseOAuthConfig(JsonElement serverObj)
-    {
-        if (!serverObj.TryGetProperty("oauth", out var oauthObj))
-            return null;
-
-        if (!oauthObj.TryGetProperty("redirectUri", out var redirectUriProp))
-            return null; // redirectUri is required
-
-        var redirectUri = redirectUriProp.GetString();
-        if (string.IsNullOrEmpty(redirectUri))
-            return null;
-
-        return new McpOAuthConfig
-        {
-            RedirectUri = redirectUri,
-            ClientId = oauthObj.TryGetProperty("clientId", out var clientIdProp) ? clientIdProp.GetString() : null,
-            ClientSecret = oauthObj.TryGetProperty("clientSecret", out var clientSecretProp) ? clientSecretProp.GetString() : null,
-            ClientName = oauthObj.TryGetProperty("clientName", out var clientNameProp) ? clientNameProp.GetString() : null,
-            Scopes = oauthObj.TryGetProperty("scopes", out var scopesProp)
-                ? scopesProp.EnumerateArray().Select(s => s.GetString() ?? "").Where(s => !string.IsNullOrEmpty(s)).ToArray()
-                : null
-        };
-    }
 
     /// <summary>
     /// Converts a JsonElement to a Dictionary with primitive values.
