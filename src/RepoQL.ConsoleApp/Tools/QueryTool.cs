@@ -134,6 +134,8 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         ```sql
         SELECT uri, score FROM related('file:///src/Auth.cs', k := 10);
         ```
+
+        **Git history** - `git_status()`, `git_diff()`, `git_blame()`, `git_hotspots`, `changes_related_to()`. See `docs:///repoql/tools/query/functions/git.md`.
         </MORE>
         
         <LEARNING>
