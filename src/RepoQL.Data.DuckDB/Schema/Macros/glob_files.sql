@@ -22,7 +22,7 @@
 CREATE OR REPLACE MACRO glob_files(
     pattern_spec := NULL,
     uris := NULL,
-    ignore_case := TRUE,
+    ignore_case := 'true',
     default_scheme := 'file:///'
 ) AS TABLE
 WITH params AS (

@@ -21,6 +21,7 @@ public sealed class RepoqlHost : BackgroundService
     private readonly CompositeFileSystem _fileSystem;
     private readonly Func<RawArtifact, IndexItemOptions, CancellationToken, Task> _enqueue;
     private readonly IAsyncDisposable? _engineLifetime;
+    private readonly IIndexingCoordinator? _coordinator;
     private readonly RepoqlHostOptions _options;
     private readonly ILogger<RepoqlHost> _logger;
 
@@ -40,12 +41,14 @@ public sealed class RepoqlHost : BackgroundService
         CompositeFileSystem fileSystem,
         IndexingEngine engine,
         IOptions<RepoqlHostOptions> options,
-        ILogger<RepoqlHost>? logger = null)
+        ILogger<RepoqlHost>? logger = null,
+        IIndexingCoordinator? coordinator = null)
         : this(
             fileSystem,
             (artifact, enqueueOptions, token) => engine.EnqueueItemAsync(artifact, enqueueOptions, token),
             options,
-            logger)
+            logger,
+            coordinator)
     {
         _engineLifetime = engine;
     }
@@ -54,12 +57,14 @@ public sealed class RepoqlHost : BackgroundService
         CompositeFileSystem fileSystem,
         Func<RawArtifact, IndexItemOptions, CancellationToken, Task> enqueue,
         IOptions<RepoqlHostOptions> options,
-        ILogger<RepoqlHost>? logger = null)
+        ILogger<RepoqlHost>? logger = null,
+        IIndexingCoordinator? coordinator = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _enqueue = enqueue ?? throw new ArgumentNullException(nameof(enqueue));
         _options = options?.Value ?? new RepoqlHostOptions();
         _logger = logger ?? NullLogger<RepoqlHost>.Instance;
+        _coordinator = coordinator;
     }
 
     /// <summary>
@@ -93,6 +98,23 @@ public sealed class RepoqlHost : BackgroundService
         _startupComplete.TrySetResult();
 
         _dirtyScanLoop = Task.Run(() => DirtyScanLoopAsync(stoppingToken), CancellationToken.None);
+
+        // Run git indexing synchronously after startup - waits for pipeline to become idle first
+        if (_coordinator is not null)
+        {
+            try
+            {
+                await _coordinator.TriggerIncrementalGitIndexingAsync(stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                // Expected when stopping
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Git history indexing failed");
+            }
+        }
 
         // Keep the background service alive until the host is asked to stop.
         try

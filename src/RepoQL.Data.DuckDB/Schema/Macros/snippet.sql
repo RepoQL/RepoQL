@@ -4,8 +4,8 @@ WITH base AS (
         repository_uri_container(u)     AS base,
         repository_uri_fragment(u)      AS frag,
         repository_uri_fragment_kind(u) AS kind,
-        repository_uri_line_start(u)    AS l1,
-        repository_uri_line_end(u)      AS l2,
+        TRY_CAST(repository_uri_line_start(u) AS INTEGER)    AS l1,
+        TRY_CAST(repository_uri_line_end(u) AS INTEGER)      AS l2,
         repository_uri_symbol(u)        AS symbol
 ),
      doc AS (
@@ -69,30 +69,30 @@ WITH base AS (
                  (SELECT sl1 FROM symbol_focus),
                  (SELECT el1 FROM edge_focus),
                  (SELECT l1  FROM base),
-                 (SELECT line_for_byte_offset(text_content, c1) FROM doc, char_rng),
+                 (SELECT TRY_CAST(line_for_byte_offset(text_content, CAST(c1 AS VARCHAR)) AS INTEGER) FROM doc, char_rng),
                  1
              ) AS fl1,
              COALESCE(
                  (SELECT sl2 FROM symbol_focus),
                  (SELECT el2 FROM edge_focus),
                  (SELECT l2  FROM base),
-                 (SELECT NULLIF(line_for_byte_offset(text_content, c2), 0) FROM doc, char_rng)
+                 (SELECT NULLIF(TRY_CAST(line_for_byte_offset(text_content, CAST(c2 AS VARCHAR)) AS INTEGER), 0) FROM doc, char_rng)
              ) AS fl2,
              COALESCE(
                  (SELECT sc1 FROM symbol_focus),
                  (SELECT ec1 FROM edge_focus),
-                 (SELECT column_for_byte_offset(text_content, c1) FROM doc, char_rng)
+                 (SELECT TRY_CAST(column_for_byte_offset(text_content, CAST(c1 AS VARCHAR)) AS INTEGER) FROM doc, char_rng)
              ) AS fc1,
              COALESCE(
                  (SELECT sc2 FROM symbol_focus),
                  (SELECT ec2 FROM edge_focus),
-                 (SELECT column_for_byte_offset(text_content, c2) FROM doc, char_rng)
+                 (SELECT TRY_CAST(column_for_byte_offset(text_content, CAST(c2 AS VARCHAR)) AS INTEGER) FROM doc, char_rng)
              ) AS fc2
      ),
     raw_text AS (
         SELECT
             CASE WHEN text_content IS NOT NULL THEN text_content
-                 ELSE COALESCE(binary_preview(storage_uri, 4096), '')
+                 ELSE COALESCE(binary_preview(storage_uri, '4096'), '')
                 END AS content
         FROM doc
     ),

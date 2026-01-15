@@ -16,6 +16,7 @@
     <ItemGroup>
       <PackageReference Include="DotNext.Threading" Version="5.26.0" />
       <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1" />
+      <PackageReference Include="LibGit2Sharp" Version="0.30.0" />
     </ItemGroup>
 
 </Project>

@@ -17,7 +17,7 @@ WITH base AS (
      span_uri AS (
          SELECT a.id,
                 repository_uri_join(b.scope_document_uri,
-                                    fragment_from_line_range(s.start_line, s.end_line)) AS uri_from_span
+                                    fragment_from_line_range(CAST(s.start_line AS VARCHAR), CAST(s.end_line AS VARCHAR))) AS uri_from_span
          FROM base b
                   JOIN annotation a ON a.id = b.id
                   LEFT JOIN span s  ON s.id = a.target_span_id
@@ -27,7 +27,7 @@ WITH base AS (
                 -- Simplified fragment for nodes: just use line range if available
                 CASE
                     WHEN s.start_line IS NOT NULL AND s.end_line IS NOT NULL
-                        THEN fragment_from_line_range(s.start_line, s.end_line)
+                        THEN fragment_from_line_range(CAST(s.start_line AS VARCHAR), CAST(s.end_line AS VARCHAR))
                     ELSE NULL
                     END AS frag
          FROM base b

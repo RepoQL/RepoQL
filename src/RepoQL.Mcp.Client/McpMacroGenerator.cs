@@ -48,29 +48,19 @@ public static partial class McpMacroGenerator
         // Generate macro that:
         // 1. Calls _mcp_call_internal to get raw response text
         // 2. Uses parse_structured() UDF to convert to JSON (handles JSON/JSONL/CSV/TSV/YAML/embedded)
-        // 3. Parses the JSON as an array and unnests into rows
-        // 4. Each row is a JSON object that can be queried with json_extract
+        // 3. Writes JSON to temp file and uses read_json_auto for dynamic column detection
+        // Note: DuckDB table functions cannot contain subqueries, so we chain the temp file write
+        // directly with the scalar UDFs to avoid subquery issues
         return $$"""
             CREATE OR REPLACE MACRO {{macroName}}({{paramList}}) AS TABLE (
-                WITH raw_result AS (
-                    SELECT _mcp_call_internal('{{EscapeSql(tool.ServerName)}}', '{{EscapeSql(tool.ToolName)}}', {{paramsJsonExpr}}) AS raw_text
-                ),
-                structured AS (
-                    SELECT parse_structured(raw_text) AS json_data
-                    FROM raw_result
-                ),
-                parsed AS (
-                    SELECT
-                        CASE
-                            WHEN json_type(json_data::JSON) = 'ARRAY' THEN json_data
-                            WHEN json_data IS NULL OR json_data = 'null' THEN '[]'
-                            ELSE '[' || json_data || ']'
-                        END AS json_array
-                    FROM structured
+                SELECT * FROM read_json_auto(
+                    _write_temp_json(
+                        parse_structured(
+                            _mcp_call_internal('{{EscapeSql(tool.ServerName)}}', '{{EscapeSql(tool.ToolName)}}', {{paramsJsonExpr}})
+                        )
+                    ),
+                    maximum_object_size := 67108864
                 )
-                SELECT unnest(from_json(json_array, '["json"]')) AS value
-                FROM parsed
-                WHERE json_array != '[]'
             );
             """;
     }

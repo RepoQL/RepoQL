@@ -13,7 +13,7 @@ internal class MatchesGlobSqlTests
         using var store = new DuckDbDataStore(":memory:");
 
         // Pattern matches anywhere in path, so URI needs prefix before pattern directory
-        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.cs', 'src/**/*.cs', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.cs', 'src/**/*.cs') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
     }
@@ -23,7 +23,7 @@ internal class MatchesGlobSqlTests
     {
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.txt', 'src/**/*.cs', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.txt', 'src/**/*.cs') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeFalse();
     }
@@ -35,7 +35,7 @@ internal class MatchesGlobSqlTests
     {
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.cs', 'src/**;lib/**', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.cs', 'src/**;lib/**') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
     }
@@ -45,7 +45,7 @@ internal class MatchesGlobSqlTests
     {
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob('file:///repo/lib/Helper.cs', 'src/**;lib/**', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///repo/lib/Helper.cs', 'src/**;lib/**') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
     }
@@ -55,7 +55,7 @@ internal class MatchesGlobSqlTests
     {
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob('file:///repo/other/File.cs', 'src/**;lib/**', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///repo/other/File.cs', 'src/**;lib/**') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeFalse();
     }
@@ -68,7 +68,7 @@ internal class MatchesGlobSqlTests
         using var store = new DuckDbDataStore(":memory:");
 
         // Matches src/** but excluded by !src/tests/**
-        var rows = store.Query("SELECT matches_glob('file:///repo/src/tests/Test.cs', 'src/**;!src/tests/**', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///repo/src/tests/Test.cs', 'src/**;!src/tests/**') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeFalse();
     }
@@ -79,7 +79,7 @@ internal class MatchesGlobSqlTests
         using var store = new DuckDbDataStore(":memory:");
 
         // Matches src/** and not excluded
-        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.cs', 'src/**;!src/tests/**', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.cs', 'src/**;!src/tests/**') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
     }
@@ -91,7 +91,7 @@ internal class MatchesGlobSqlTests
     {
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.cs', '!**/*.md', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///repo/src/App.cs', '!**/*.md') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
     }
@@ -101,7 +101,7 @@ internal class MatchesGlobSqlTests
     {
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob('file:///repo/docs/readme.md', '!**/*.md', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///repo/docs/readme.md', '!**/*.md') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeFalse();
     }
@@ -113,7 +113,7 @@ internal class MatchesGlobSqlTests
     {
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob('file:///anything', '', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///anything', '') AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
     }
@@ -125,7 +125,7 @@ internal class MatchesGlobSqlTests
         // Use COALESCE(pattern, '') to convert NULL to empty string if you want "match everything" behavior.
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob('file:///anything', NULL, TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///anything', NULL) AS matched").ToList();
         rows.Should().HaveCount(1);
         rows[0]["matched"].Should().BeNull(); // DuckDB returns NULL without calling the function
     }
@@ -136,7 +136,7 @@ internal class MatchesGlobSqlTests
         // Use COALESCE to convert NULL to empty string for "match everything" behavior
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob('file:///anything', COALESCE(NULL, ''), TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob('file:///anything', COALESCE(NULL, '')) AS matched").ToList();
         rows.Should().HaveCount(1);
         Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
     }
@@ -148,7 +148,7 @@ internal class MatchesGlobSqlTests
     {
         using var store = new DuckDbDataStore(":memory:");
 
-        var rows = store.Query("SELECT matches_glob(NULL, 'src/**', TRUE, 'file:///') AS matched").ToList();
+        var rows = store.Query("SELECT matches_glob(NULL, 'src/**') AS matched").ToList();
         rows.Should().HaveCount(1);
         rows[0]["matched"].Should().BeNull();
     }

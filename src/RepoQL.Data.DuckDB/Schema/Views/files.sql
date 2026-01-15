@@ -1,4 +1,8 @@
 CREATE OR REPLACE VIEW files AS
+WITH git AS (
+    SELECT uri, index_status, work_tree_status, category
+    FROM git_status()
+)
 SELECT
     -- Identity
     doc.uri,
@@ -39,6 +43,9 @@ SELECT
     COALESCE(ann.error_count, 0) AS error_count,
     COALESCE(ann.warning_count, 0) AS warning_count,
 
+    -- Git status (NULL for non-file:// URIs or unchanged files)
+    git.category AS git_status,
+
     -- Join keys
     doc.id AS node_id,
     doc.artifact_id
@@ -52,4 +59,5 @@ LEFT JOIN (
     FROM annotation
     GROUP BY scope_document_id
 ) ann ON ann.scope_document_id = doc.id
+LEFT JOIN git ON git.uri = doc.uri
 WHERE doc.kind = 'document';

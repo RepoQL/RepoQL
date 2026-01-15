@@ -18,6 +18,7 @@ using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.ConsoleApp.Search;
 using RepoQL.Core;
+using RepoQL.Indexing.Hosting;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 using RepoQL.Protocol;

@@ -6,7 +6,7 @@
 CREATE OR REPLACE MACRO matches_glob(
     uri,
     pattern,
-    ignore_case := TRUE,
+    ignore_case := 'true',
     default_scheme := 'file:///'
 ) AS (
     repoql_matches_glob(uri, pattern, ignore_case, default_scheme)

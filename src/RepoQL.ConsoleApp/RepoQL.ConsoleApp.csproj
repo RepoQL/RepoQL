@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <Version>1.3.18</Version>
+        <Version>1.3.19</Version>
         <TargetFramework>net10.0</TargetFramework>
         <OutputType>Exe</OutputType>
         <AssemblyName>repoql</AssemblyName>
@@ -36,6 +36,7 @@
         <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       </PackageReference>
       <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1" GeneratePathProperty="true" />
+      <PackageReference Include="LibGit2Sharp.NativeBinaries" Version="2.0.322" GeneratePathProperty="true" />
       <PackageReference Include="JetBrains.Annotations" Version="2025.2.1" />
       <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" GeneratePathProperty="true" />
       <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
@@ -90,6 +91,49 @@
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>libduckdb.so</Link>
+        </Content>
+        <!-- LibGit2Sharp native binaries -->
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-x64\native\git2-a418d9d.dll"
+                 Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-x64\native\git2-a418d9d.dll')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>git2-a418d9d.dll</Link>
+        </Content>
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-arm64\native\git2-a418d9d.dll"
+                 Condition="'$(RuntimeIdentifier)' == 'win-arm64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-arm64\native\git2-a418d9d.dll')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>git2-a418d9d.dll</Link>
+        </Content>
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-arm64\native\libgit2-a418d9d.dylib"
+                 Condition="'$(RuntimeIdentifier)' == 'osx-arm64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-arm64\native\libgit2-a418d9d.dylib')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>libgit2-a418d9d.dylib</Link>
+        </Content>
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-x64\native\libgit2-a418d9d.dylib"
+                 Condition="'$(RuntimeIdentifier)' == 'osx-x64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-x64\native\libgit2-a418d9d.dylib')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>libgit2-a418d9d.dylib</Link>
+        </Content>
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-x64\native\libgit2-a418d9d.so"
+                 Condition="'$(RuntimeIdentifier)' == 'linux-x64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-x64\native\libgit2-a418d9d.so')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>libgit2-a418d9d.so</Link>
+        </Content>
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-arm64\native\libgit2-a418d9d.so"
+                 Condition="'$(RuntimeIdentifier)' == 'linux-arm64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-arm64\native\libgit2-a418d9d.so')">
+            <Pack>false</Pack>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+            <Link>libgit2-a418d9d.so</Link>
         </Content>
     </ItemGroup>
 

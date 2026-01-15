@@ -246,7 +246,7 @@ CREATE OR REPLACE MACRO xlsx_files(pattern := NULL) AS TABLE (
     JOIN artifact a ON a.id = n.artifact_id
     WHERE n.kind = 'document'
       AND a.media_type LIKE '%xlsx%'
-      AND (pattern IS NULL OR matches_glob(n.uri, pattern, TRUE, 'file:///'))
+      AND (pattern IS NULL OR matches_glob(n.uri, pattern))
     ORDER BY n.uri
 );
 
@@ -342,7 +342,7 @@ CREATE OR REPLACE MACRO xlsx_find_amounts(
     ) AS cols(key, value)
     WHERE n.kind = 'document'
       AND a.media_type LIKE '%xlsx%'
-      AND (pattern IS NULL OR matches_glob(n.uri, pattern, TRUE, 'file:///'))
+      AND (pattern IS NULL OR matches_glob(n.uri, pattern))
       AND (cols.value = 'numeric' OR cols.value = 'currency')
     ORDER BY n.uri, json_extract(ws.properties, '$.name'), cols.key
 );
@@ -380,6 +380,6 @@ CREATE OR REPLACE MACRO xlsx_summary(pattern := NULL) AS TABLE (
     JOIN artifact a ON a.id = n.artifact_id
     WHERE n.kind = 'document'
       AND a.media_type LIKE '%xlsx%'
-      AND (pattern IS NULL OR matches_glob(n.uri, pattern, TRUE, 'file:///'))
+      AND (pattern IS NULL OR matches_glob(n.uri, pattern))
     ORDER BY n.uri
 );

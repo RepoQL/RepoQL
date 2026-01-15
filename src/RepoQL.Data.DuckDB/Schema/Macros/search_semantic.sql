@@ -35,12 +35,12 @@ filtered AS (
     JOIN params p ON TRUE
     WHERE (
             p.uri_filter IS NULL
-            OR repoql_glob_match(fs.uri, p.uri_filter, TRUE, 'file:///') IS TRUE
-            OR repoql_glob_match(fs.uri_local, p.uri_filter, TRUE, NULL) IS TRUE
+            OR repoql_glob_match(fs.uri, p.uri_filter, 'true','file:///') IS TRUE
+            OR repoql_glob_match(fs.uri_local, p.uri_filter, 'true',NULL) IS TRUE
         )
       AND (
             p.mime_filter IS NULL
-            OR repoql_glob_match(COALESCE(fs.mime, ''), p.mime_filter, TRUE, NULL) IS TRUE
+            OR repoql_glob_match(COALESCE(fs.mime, ''), p.mime_filter, 'true',NULL) IS TRUE
         )
 ),
 

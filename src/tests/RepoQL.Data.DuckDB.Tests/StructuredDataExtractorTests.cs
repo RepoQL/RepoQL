@@ -86,7 +86,8 @@ public class StructuredDataExtractorTests
 
         var result = StructuredDataExtractor.Extract(input);
 
-        result.Should().Contain("\"id\":\"1\"");
+        // Numeric IDs are parsed as numbers, not strings
+        result.Should().Contain("\"id\":1");
         result.Should().Contain("\"name\":\"Alice\"");
         result.Should().Contain("\"status\":\"active\"");
     }
@@ -147,7 +148,8 @@ public class StructuredDataExtractorTests
 
         var result = StructuredDataExtractor.Extract(input);
 
-        result.Should().Contain("\"id\":\"1\"");
+        // Numeric IDs are parsed as numbers, not strings
+        result.Should().Contain("\"id\":1");
         result.Should().Contain("\"name\":\"Alice\"");
         result.Should().Contain("\"status\":\"active\"");
     }

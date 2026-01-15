@@ -33,6 +33,7 @@ using RepoQL.Formats.CSS;
 using RepoQL.Formats.Xlsx;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
+using RepoQL.Indexing.Git;
 using RepoQL.Indexing.Hosting;
 using RepoQL.Indexing.Indexing;
 using RepoQL.Indexing.Indexing.Commit;
@@ -533,12 +534,16 @@ public static class RepoIndexerServiceCollectionExtensions
             return new RepoQL.Indexing.Indexing.IndexingEngineDiagnosticsProvider(engine);
         });
 
+        // Git history indexer - indexes commits/file changes for code archaeology
+        services.AddSingleton<GitHistoryIndexer>();
+
         services.AddSingleton<IIndexingCoordinator>(sp => new IndexingCoordinator(
             sp.GetRequiredService<CompositeFileSystem>(),
             sp.GetRequiredService<IndexingEngine>(),
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetService<ILogger<IndexingCoordinator>>(),
-            sp.GetRequiredService<ICompositeFileSystemManager>()));
+            sp.GetRequiredService<ICompositeFileSystemManager>(),
+            sp.GetRequiredService<GitHistoryIndexer>()));
 
         services.AddSingleton<IVirtualFileSystemImporter>(sp => new GithubRepositoryImporter(
             sp.GetRequiredService<PhysicalFileSystem>(),
@@ -549,7 +554,16 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetService<ILogger<LocalDirectoryImporter>>()));
         services.AddSingleton<IFileSystemImportService, FileSystemImportService>();
-        services.AddHostedService<RepoqlHost>();
+
+        // Explicit factory needed: ActivatorUtilities doesn't reliably resolve optional parameters
+        // after other optional parameters (ILogger? before IIndexingCoordinator?)
+        services.AddSingleton(sp => new RepoqlHost(
+            sp.GetRequiredService<CompositeFileSystem>(),
+            sp.GetRequiredService<IndexingEngine>(),
+            sp.GetRequiredService<IOptions<RepoqlHostOptions>>(),
+            sp.GetService<ILogger<RepoqlHost>>(),
+            sp.GetRequiredService<IIndexingCoordinator>()));
+        services.AddHostedService(sp => sp.GetRequiredService<RepoqlHost>());
 
         return services;
     }

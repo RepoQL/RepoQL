@@ -8,6 +8,7 @@ using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Indexing.FileSystems;
+using RepoQL.Indexing.Git;
 using RepoQL.Indexing.Indexing;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.State;
@@ -69,6 +70,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     private readonly ICompositeFileSystemManager? _mountManager;
     private readonly IndexingEngine _engine;
     private readonly DuckDbDataStore _db;
+    private readonly GitHistoryIndexer? _gitIndexer;
     private readonly ILogger<IndexingCoordinator> _logger;
     private int _reindexScopes;
     private int _activeMountIndexing;
@@ -78,13 +80,15 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         IndexingEngine engine,
         DuckDbDataStore db,
         ILogger<IndexingCoordinator>? logger = null,
-        ICompositeFileSystemManager? mountManager = null)
+        ICompositeFileSystemManager? mountManager = null,
+        GitHistoryIndexer? gitIndexer = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _logger = logger ?? NullLogger<IndexingCoordinator>.Instance;
         _mountManager = mountManager;
+        _gitIndexer = gitIndexer;
 
         // Subscribe to mount changes for automatic indexing of new mounts
         if (_mountManager is not null)
@@ -94,6 +98,39 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     }
 
     public bool IsReindexing => Volatile.Read(ref _reindexScopes) > 0;
+
+    /// <summary>
+    /// Triggers incremental git history indexing in the background.
+    /// Waits for the pipeline to become idle, then indexes any new commits.
+    /// Safe to call multiple times - will only index commits not yet in the database.
+    /// </summary>
+    public async Task TriggerIncrementalGitIndexingAsync(CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("TriggerIncrementalGitIndexingAsync called");
+
+        if (_gitIndexer is null)
+        {
+            _logger.LogInformation("Git indexer not configured, skipping incremental git indexing");
+            return;
+        }
+
+        var repoRoot = RepoLocator.FindRepoRoot();
+        if (repoRoot is null)
+        {
+            _logger.LogInformation("Not in a git repository, skipping incremental git indexing");
+            return;
+        }
+
+        _logger.LogInformation("Waiting for pipeline to become idle before git indexing...");
+
+        // Wait for the file indexing pipeline to stabilize first
+        await WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
+
+        _logger.LogInformation("Pipeline idle, starting git indexing for {RepoRoot}", repoRoot);
+
+        // Now index any new git commits
+        await _gitIndexer.IndexIncrementalAsync(repoRoot, cancellationToken).ConfigureAwait(false);
+    }
 
     public PipelineStatusSnapshot GetPipelineStatus()
     {
@@ -450,7 +487,18 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         _db.TryCheckpoint(); // Checkpoint after full embeddings
 
         await WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
-        
+
+        // Index git history after file indexing completes
+        if (_gitIndexer is not null)
+        {
+            var repoRoot = RepoLocator.FindRepoRoot();
+            if (repoRoot is not null)
+            {
+                _logger.LogInformation("Indexing git history...");
+                await _gitIndexer.IndexAsync(repoRoot, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         var completedTimer = Stopwatch.StartNew();
         var completedActivity = StartPhaseActivity(CoordinatorReindexPhase.Completed, epoch, total);
         var completed = false;

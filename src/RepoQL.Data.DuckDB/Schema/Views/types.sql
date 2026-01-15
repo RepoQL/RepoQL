@@ -21,8 +21,8 @@ SELECT
     n.properties->'implements' AS implements,
 
     -- Location
-    repository_uri_line_start(n.uri) AS start_line,
-    repository_uri_line_end(n.uri) AS end_line,
+    TRY_CAST(repository_uri_line_start(n.uri) AS INTEGER) AS start_line,
+    TRY_CAST(repository_uri_line_end(n.uri) AS INTEGER) AS end_line,
 
     -- X-ray summaries
     n.headline,

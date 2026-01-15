@@ -29,8 +29,8 @@ SELECT
     COALESCE(json_extract_string(n.properties, '$.is_async'), 'false') = 'true' AS is_async,
 
     -- Location
-    repository_uri_line_start(n.uri) AS start_line,
-    repository_uri_line_end(n.uri) AS end_line,
+    TRY_CAST(repository_uri_line_start(n.uri) AS INTEGER) AS start_line,
+    TRY_CAST(repository_uri_line_end(n.uri) AS INTEGER) AS end_line,
 
     -- X-ray
     n.headline,

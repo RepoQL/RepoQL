@@ -78,29 +78,29 @@ public class SnippetMacroTests : IDisposable
     {
         var text = "Line 1\nLine 2\nLine 3";
 
-        // First line
-        var result = _store.ReadScalar<int>($"SELECT line_for_byte_offset('{text}', 0)");
-        result.Should().Be(1);
+        // First line (cast offset to VARCHAR for UDF)
+        var result = _store.ReadScalar<string>($"SELECT line_for_byte_offset('{text}', '0')");
+        result.Should().Be("1");
 
         // Second line (after first \n at position 6)
-        result = _store.ReadScalar<int>($"SELECT line_for_byte_offset('{text}', 7)");
-        result.Should().Be(2);
+        result = _store.ReadScalar<string>($"SELECT line_for_byte_offset('{text}', '7')");
+        result.Should().Be("2");
 
         // Third line (after second \n at position 13)
-        result = _store.ReadScalar<int>($"SELECT line_for_byte_offset('{text}', 14)");
-        result.Should().Be(3);
+        result = _store.ReadScalar<string>($"SELECT line_for_byte_offset('{text}', '14')");
+        result.Should().Be("3");
     }
 
     [Test]
     public void LineForByteOffset_HandlesNulls()
     {
-        var result = _store.ReadScalar<int?>("SELECT line_for_byte_offset(NULL, 10)");
+        var result = _store.ReadScalar<string?>("SELECT line_for_byte_offset(NULL, '10')");
         result.Should().BeNull();
 
-        result = _store.ReadScalar<int?>("SELECT line_for_byte_offset('test', NULL)");
+        result = _store.ReadScalar<string?>("SELECT line_for_byte_offset('test', NULL)");
         result.Should().BeNull();
 
-        result = _store.ReadScalar<int?>("SELECT line_for_byte_offset('test', -1)");
+        result = _store.ReadScalar<string?>("SELECT line_for_byte_offset('test', '-1')");
         result.Should().BeNull();
     }
 
@@ -109,36 +109,36 @@ public class SnippetMacroTests : IDisposable
     {
         var text = "Line 1\nLine 2 here\nLine 3";
 
-        // Beginning of first line
-        var result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 0)");
-        result.Should().Be(1);
+        // Beginning of first line (cast offset to VARCHAR for UDF)
+        var result = _store.ReadScalar<string>($"SELECT column_for_byte_offset('{text}', '0')");
+        result.Should().Be("1");
 
         // Middle of first line (position 3 = 'e' in "Line")
-        result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 3)");
-        result.Should().Be(4);
+        result = _store.ReadScalar<string>($"SELECT column_for_byte_offset('{text}', '3')");
+        result.Should().Be("4");
 
         // Beginning of second line (position 7, after \n)
-        result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 7)");
-        result.Should().Be(1);
+        result = _store.ReadScalar<string>($"SELECT column_for_byte_offset('{text}', '7')");
+        result.Should().Be("1");
 
         // Middle of second line (position 14 = 'h' in "here")
-        result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 14)");
-        result.Should().Be(8);
+        result = _store.ReadScalar<string>($"SELECT column_for_byte_offset('{text}', '14')");
+        result.Should().Be("8");
     }
 
     [Test]
     public void ColumnForByteOffset_HandlesMultiByteChars()
     {
-        // UTF-8 emoji is multi-byte
+        // UTF-8 emoji is multi-byte (cast offset to VARCHAR for UDF)
         var text = "Hello 😀 World";
 
         // Before emoji
-        var result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 6)");
-        result.Should().Be(7); // After "Hello "
+        var result = _store.ReadScalar<string>($"SELECT column_for_byte_offset('{text}', '6')");
+        result.Should().Be("7"); // After "Hello "
 
         // After emoji (emoji is 4 bytes in UTF-8)
-        result = _store.ReadScalar<int>($"SELECT column_for_byte_offset('{text}', 11)");
-        result.Should().Be(9); // After emoji and space
+        result = _store.ReadScalar<string>($"SELECT column_for_byte_offset('{text}', '11')");
+        result.Should().Be("9"); // After emoji and space
     }
 
     // ========== Snippet Macro Tests ==========

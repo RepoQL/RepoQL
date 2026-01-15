@@ -35,12 +35,12 @@ filtered AS (
     JOIN params p ON TRUE
     WHERE (
             p.uri_filter IS NULL
-            OR repoql_glob_match(fs.uri, p.uri_filter, TRUE, 'file:///') IS TRUE
-            OR repoql_glob_match(fs.uri_local, p.uri_filter, TRUE, NULL) IS TRUE
+            OR repoql_glob_match(fs.uri, p.uri_filter, 'true','file:///') IS TRUE
+            OR repoql_glob_match(fs.uri_local, p.uri_filter, 'true',NULL) IS TRUE
         )
       AND (
             p.mime_filter IS NULL
-            OR repoql_glob_match(COALESCE(fs.mime, ''), p.mime_filter, TRUE, NULL) IS TRUE
+            OR repoql_glob_match(COALESCE(fs.mime, ''), p.mime_filter, 'true',NULL) IS TRUE
         )
 ),
 
@@ -79,9 +79,9 @@ score_source AS (
             ELSE NULL
         END AS bm25_heur,
         -- Fallback fuzzy match on full text
-        match_score(p.keywords_lc, text_target) AS bm25_fallback,
+        TRY_CAST(match_score(p.keywords_lc, text_target) AS DOUBLE) AS bm25_fallback,
         -- Fuzzy subsequence score on search_key
-        match_score(p.keywords_lc, ri.search_key) AS fuzz
+        TRY_CAST(match_score(p.keywords_lc, ri.search_key) AS DOUBLE) AS fuzz
     FROM filtered ri
     CROSS JOIN params p
     -- Join to artifact for body position check (documents have artifact_id via doc node)

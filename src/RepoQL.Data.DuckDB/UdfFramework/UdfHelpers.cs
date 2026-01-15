@@ -91,6 +91,20 @@ public static class UdfHelpers
                 sb.Append(e.ToString());
                 sb.Append('"');
                 break;
+            case DateTimeOffset dto:
+                // Format for DuckDB TIMESTAMPTZ: YYYY-MM-DD HH:MM:SS±HH:MM
+                sb.Append('"');
+                sb.Append(dto.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture));
+                sb.Append(dto.Offset >= TimeSpan.Zero ? "+" : "");
+                sb.Append(dto.Offset.ToString(@"hh\:mm"));
+                sb.Append('"');
+                break;
+            case DateTime dt:
+                // Format for DuckDB TIMESTAMP: YYYY-MM-DD HH:MM:SS
+                sb.Append('"');
+                sb.Append(dt.ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture));
+                sb.Append('"');
+                break;
             default:
                 sb.Append('"');
                 sb.Append(EscapeJsonString(value.ToString() ?? ""));

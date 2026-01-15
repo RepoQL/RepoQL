@@ -57,4 +57,10 @@ public interface IIndexingCoordinator
     IAsyncEnumerable<ReindexProgressSnapshot> ReindexAsync(
         ReindexRequestOptions options,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Triggers incremental git history indexing in the background.
+    /// Waits for the pipeline to become idle, then indexes any new commits.
+    /// </summary>
+    Task TriggerIncrementalGitIndexingAsync(CancellationToken cancellationToken = default);
 }

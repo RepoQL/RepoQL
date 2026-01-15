@@ -870,9 +870,6 @@ public sealed class DuckDbDataStore : IDisposable
                 _logger.LogDebug("[DuckDB] WAL autocheckpoint set to 16MB");
             }
 
-            _logger.LogDebug("[DuckDB] Registering UDFs on writer connection...");
-            RepositoryUserDefinedFunctions.RegisterAll(_connection, _embeddingProvider);
-
             // Register attribute-based UDFs via the framework
             _logger.LogDebug("[DuckDB] Discovering and registering framework UDFs...");
             _udfRegistry.DiscoverAndRegister(_connection);
@@ -932,7 +929,17 @@ public sealed class DuckDbDataStore : IDisposable
                 "Views/filesystems.sql",
                 "Macros/xray.sql",
                 "Macros/xray_structured.sql",
-                "Macros/parse.sql"
+                "Macros/parse.sql",
+                // Git history tables, views, and macros
+                "Tables/git_commit.sql",
+                "Tables/git_file_change.sql",
+                "Views/git_hotspots.sql",
+                "Views/git_recent.sql",
+                "Macros/git_file_history.sql",
+                "Macros/git_blame.sql",
+                "Macros/git_diff.sql",
+                "Macros/git_status.sql",
+                "Macros/changes_related_to.sql"
             };
 
             foreach (var script in schemaScripts)
@@ -955,13 +962,6 @@ public sealed class DuckDbDataStore : IDisposable
 
             if (_formatSchemaScripts.Count > 0)
                 _logger.LogDebug("[DuckDB] Format schema scripts applied ({Count} scripts)", _formatSchemaScripts.Count);
-
-            if (!_isInMemory)
-            {
-                _logger.LogDebug("[DuckDB] Registering UDFs on reader connection...");
-                RepositoryUserDefinedFunctions.RegisterAll(_connection, _embeddingProvider);
-                // Note: Framework UDFs already registered above, no need to re-register
-            }
 
             _schemaInitialized = true;
 

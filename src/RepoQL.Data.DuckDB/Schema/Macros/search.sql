@@ -105,12 +105,12 @@ filtered AS (
     JOIN base_params bp ON TRUE
     WHERE (
             bp.uri_glob_filter IS NULL
-            OR repoql_glob_match(fs.uri, bp.uri_glob_filter, TRUE, 'file:///') IS TRUE
-            OR repoql_glob_match(fs.uri_local, bp.uri_glob_filter, TRUE, NULL) IS TRUE
+            OR repoql_glob_match(fs.uri, bp.uri_glob_filter, 'true','file:///') IS TRUE
+            OR repoql_glob_match(fs.uri_local, bp.uri_glob_filter, 'true',NULL) IS TRUE
         )
       AND (
             bp.mime_glob_filter IS NULL
-            OR repoql_glob_match(COALESCE(fs.mime, ''), bp.mime_glob_filter, TRUE, NULL) IS TRUE
+            OR repoql_glob_match(COALESCE(fs.mime, ''), bp.mime_glob_filter, 'true',NULL) IS TRUE
         )
 ),
 fallback_nodes AS (
@@ -162,10 +162,10 @@ scored AS (
             THEN array_to_string(
                 list_slice(
                     string_split(art.text_content, chr(10)),
-                    GREATEST(1, line_for_byte_offset(art.text_content, s.best_chunk_start) - 2),
+                    GREATEST(1, TRY_CAST(line_for_byte_offset(art.text_content, CAST(s.best_chunk_start AS VARCHAR)) AS INTEGER) - 2),
                     LEAST(
                         len(string_split(art.text_content, chr(10))),
-                        line_for_byte_offset(art.text_content, s.best_chunk_end) + 2
+                        TRY_CAST(line_for_byte_offset(art.text_content, CAST(s.best_chunk_end AS VARCHAR)) AS INTEGER) + 2
                     )
                 ),
                 chr(10)
@@ -301,12 +301,12 @@ filtered AS (
     JOIN base_params bp_filter ON TRUE
     WHERE (
             bp_filter.uri_glob_filter IS NULL
-            OR repoql_glob_match(rs.uri, bp_filter.uri_glob_filter, TRUE, 'file:///') IS TRUE
-            OR repoql_glob_match(rs.uri_local, bp_filter.uri_glob_filter, TRUE, NULL) IS TRUE
+            OR repoql_glob_match(rs.uri, bp_filter.uri_glob_filter, 'true','file:///') IS TRUE
+            OR repoql_glob_match(rs.uri_local, bp_filter.uri_glob_filter, 'true',NULL) IS TRUE
         )
       AND (
             bp_filter.mime_glob_filter IS NULL
-            OR repoql_glob_match(COALESCE(rs.mime, ''), bp_filter.mime_glob_filter, TRUE, NULL) IS TRUE
+            OR repoql_glob_match(COALESCE(rs.mime, ''), bp_filter.mime_glob_filter, 'true',NULL) IS TRUE
         )
 ),
 scored AS (
@@ -317,7 +317,7 @@ scored AS (
                 THEN list_cosine_similarity(seed.embedding, f.embedding)
             ELSE NULL
         END AS sim_score,
-        match_score(LOWER(COALESCE(seed.symbol_key, seed.search_key, '')), f.search_key) AS bm25_score,
+        TRY_CAST(match_score(LOWER(COALESCE(seed.symbol_key, seed.search_key, '')), f.search_key) AS DOUBLE) AS bm25_score,
         0.0 AS xref_score
     FROM filtered f
     JOIN seed ON TRUE

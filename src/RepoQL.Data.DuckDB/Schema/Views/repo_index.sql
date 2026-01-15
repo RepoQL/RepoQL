@@ -38,7 +38,7 @@ object_rows AS (
             repository_uri_join(
                 COALESCE(doc.uri, 'repoql://document/' || CAST(doc.id AS VARCHAR)),
                 COALESCE(
-                    fragment_from_line_range(span.start_line, span.end_line),
+                    fragment_from_line_range(CAST(span.start_line AS VARCHAR), CAST(span.end_line AS VARCHAR)),
                     concat('node/', child.kind, '/', REPLACE(CAST(child.id AS VARCHAR), '-', ''))
                 )
             )
@@ -63,8 +63,8 @@ object_rows AS (
                 ''
             )
         ) AS symbol_key,
-        COALESCE(span.start_line, repository_uri_line_start(child.uri)) AS line_start,
-        COALESCE(span.end_line, repository_uri_line_end(child.uri)) AS line_end,
+        COALESCE(span.start_line, TRY_CAST(repository_uri_line_start(child.uri) AS INTEGER)) AS line_start,
+        COALESCE(span.end_line, TRY_CAST(repository_uri_line_end(child.uri) AS INTEGER)) AS line_end,
         COALESCE(
             NULLIF(child.headline, ''),
             json_extract_string(child.properties, '$.name'),

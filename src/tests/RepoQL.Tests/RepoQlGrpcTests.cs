@@ -57,7 +57,7 @@ public class RepoQlGrpcTests
                 store.EnsureSchema();
                 services.AddSingleton<IGraphStore>(store);
                 // Satisfy RepoQlServiceImpl DI
-                services.AddSingleton(new Host.Options.RepositoryConfiguration { Path = repoPath });
+                services.AddSingleton(new RepositoryConfiguration { Path = repoPath });
                 services.AddSingleton(new HostState { RepositoryPath = repoPath, ImplicitStart = false, StartedAtUtc = DateTime.UtcNow });
                 services.AddSingleton<IInitialIndexingBarrier, ImmediateBarrier>();
             });
