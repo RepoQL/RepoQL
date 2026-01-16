@@ -910,6 +910,8 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/glob_match.sql",
                 "Macros/matches_glob.sql",
                 "Macros/glob_files.sql",
+                // git_status must come before Views/files.sql which uses it
+                "Macros/git_status.sql",
                 "Tables/document_embedding.sql",
                 "Tables/vss_indexes.sql",
                 "Views/repo_index.sql",
@@ -938,7 +940,6 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/git_file_history.sql",
                 "Macros/git_blame.sql",
                 "Macros/git_diff.sql",
-                "Macros/git_status.sql",
                 "Macros/changes_related_to.sql"
             };
 

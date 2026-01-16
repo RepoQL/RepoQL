@@ -941,6 +941,36 @@ public class DuckDbDataStoreTests
         results.Should().HaveCount(1);
     }
 
+    [Test]
+    [DisplayName("Schema initialization succeeds with all macros in correct order")]
+    public void Schema_MacroDependencyOrder_IsCorrect()
+    {
+        // This test catches the bug where a view/macro references another macro
+        // that hasn't been created yet due to incorrect schema loading order.
+        // If schema initialization fails, the DuckDbDataStore constructor throws.
+        using var db = new DuckDbDataStore();
+
+        // Verify key macros exist (these have dependencies on other macros/UDFs)
+        var macros = db.Read(
+            "SELECT function_name FROM duckdb_functions() WHERE function_name IN ('git_status', 'search', 'matches_glob', 'glob_files')",
+            r => r.GetString(0));
+
+        macros.Should().Contain("git_status", "git_status macro should be registered");
+        macros.Should().Contain("search", "search macro should be registered");
+        macros.Should().Contain("matches_glob", "matches_glob macro should be registered");
+        macros.Should().Contain("glob_files", "glob_files macro should be registered");
+
+        // Verify views were created (checking existence, not execution - UDFs need DI)
+        // The Files view definition references git_status() - if order is wrong, CREATE VIEW fails
+        var views = db.Read(
+            "SELECT table_name FROM information_schema.tables WHERE table_type = 'VIEW' AND table_name IN ('files', 'types', 'functions')",
+            r => r.GetString(0));
+
+        views.Should().Contain("files", "Files view should exist (depends on git_status macro being defined first)");
+        views.Should().Contain("types", "Types view should exist");
+        views.Should().Contain("functions", "Functions view should exist");
+    }
+
     #endregion
 
     #region Test Helpers
