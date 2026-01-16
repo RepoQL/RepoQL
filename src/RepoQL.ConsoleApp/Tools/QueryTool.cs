@@ -190,7 +190,6 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> Query(
         [Description("DuckDB-style SQL to execute. Pass ':diagnostics:' to run diagnostics.")] string sql,
-        [Description("Maximum number of rows to include when formatting the response.")] int maxRows = 500,
         [Description("Token budget for response. If exceeded and SQL contains a comment (intent), server may LLM-summarize. Client checks result and offers repeat-to-confirm if still too large.")] int tokenBudget = 15_000,
         CancellationToken cancel = default)
     {
@@ -206,11 +205,11 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         try
         {
             // Check if this is a repeat of a query that previously exceeded budget
-            // Include all parameters in signature so changing maxRows/tokenBudget doesn't bypass the check
-            var requestSignature = $"{sql.Trim()}|{maxRows}|{tokenBudget}";
+            var requestSignature = $"{sql.Trim()}|{tokenBudget}";
             var isRepeatRequest = _lastBudgetExceededQuery == requestSignature;
 
-            var result = await queryExecutor.ExecuteAsync(sql, maxRows, ResultFormat.Toon, tokenBudget, cancel).ConfigureAwait(false);
+            // Use int.MaxValue for maxRows - token budget controls output size
+            var result = await queryExecutor.ExecuteAsync(sql, int.MaxValue, ResultFormat.Toon, tokenBudget, cancel).ConfigureAwait(false);
 
             // Clear the stored query - it's either being repeated (confirmed) or a new query
             _lastBudgetExceededQuery = null;
