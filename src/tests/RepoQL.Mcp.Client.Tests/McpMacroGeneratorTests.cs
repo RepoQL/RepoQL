@@ -23,8 +23,9 @@ public class McpMacroGeneratorTests
         result.Should().Contain("_mcp_call_internal('test-server', 'list_items'");
         // Must wrap in params_json for UDF framework (extracts 3rd+ params by property name)
         result.Should().Contain("json_object('params_json', '{}')");
-        // Uses parse_structured UDF to convert response to JSON
-        result.Should().Contain("parse_structured(raw_text)");
+        // Uses parse_structured UDF to convert response to JSON (nested directly, no intermediate variable)
+        result.Should().Contain("parse_structured(");
+        result.Should().Contain("_write_temp_json(");
     }
 
     [Test]
