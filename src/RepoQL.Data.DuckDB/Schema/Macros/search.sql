@@ -322,6 +322,7 @@ scored AS (
     FROM filtered f
     JOIN seed ON TRUE
 ),
+-- Apply limit via QUALIFY for optimizer early-termination
 final AS (
     SELECT
         *,
@@ -334,12 +335,7 @@ final AS (
         ) AS rel_row,
         rrf_score(ROW_NUMBER() OVER (ORDER BY COALESCE(sim_score, 0) DESC, COALESCE(bm25_score, 0) DESC, uri), 10) AS rrf
     FROM scored
-),
-limited AS (
-    SELECT f.*
-    FROM final f
-    JOIN base_params bp_limit ON TRUE
-    WHERE f.rel_row <= bp_limit.result_k
+    QUALIFY rel_row <= (SELECT result_k FROM base_params)
 )
 SELECT
     doc_id,
@@ -364,7 +360,7 @@ SELECT
     rrf,
     score_confidence(score) AS confidence,
     json_object('mode', bp_out.requested_mode, 'seed_uri', bp_out.seed) AS explain_json
-FROM limited
+FROM final
 JOIN base_params bp_out ON TRUE
 ORDER BY score DESC, LENGTH(uri)
 );

@@ -90,12 +90,11 @@ score_source AS (
     WHERE p.keywords_empty = FALSE
 ),
 
--- Rank by best available BM25 signal
-ranked AS (
+-- Rank by best available BM25 signal and apply limit via QUALIFY
+limited AS (
     SELECT
         node_id,
         doc_id,
-        keywords_empty,
         -- Use best available score
         COALESCE(
             bm25_heur,
@@ -110,14 +109,7 @@ ranked AS (
                 node_id
         ) AS lex_rank
     FROM score_source
-),
-
--- Apply limit and normalize scores
-limited AS (
-    SELECT r.*
-    FROM ranked r
-    JOIN params p ON TRUE
-    WHERE r.lex_rank <= p.limit_cand
+    QUALIFY lex_rank <= (SELECT limit_cand FROM params)
 ),
 
 normalized AS (

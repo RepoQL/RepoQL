@@ -241,8 +241,8 @@ cfg AS (
     FROM params
 ),
 
--- Get all objects from the specified documents
-raw_objects AS (
+-- Get objects from documents and apply per-doc limit via QUALIFY
+candidates AS (
     SELECT
         ri.doc_id,
         ri.node_id,
@@ -250,51 +250,33 @@ raw_objects AS (
         split_part(ri.uri, '#', 1) AS document_uri,
         ri.kind,
         ri.symbol,
-        ri.symbol_key,
         ri.headline,
         ri.structure,
         ri.line_start,
         ri.line_end,
         ri.lang,
         ri.mime AS semantic_type,
-        coalesce(ri.headline, '') || ' ' || coalesce(ri.structure, '') AS outline_text,
-        ROW_NUMBER() OVER (PARTITION BY ri.doc_id ORDER BY ri.line_start NULLS LAST, ri.node_id) AS row_in_doc
-    FROM repo_index ri
-    WHERE ri.scope = 'object'
-      AND split_part(ri.uri, '#', 1) = ANY(doc_uris)
-),
-
--- Filter to max_per_doc and compute cheap features
-candidates AS (
-    SELECT
-        ro.doc_id,
-        ro.node_id,
-        ro.uri,
-        ro.document_uri,
-        ro.kind,
-        ro.symbol,
-        ro.headline,
-        ro.structure,
-        ro.line_start,
-        ro.line_end,
-        ro.lang,
-        ro.semantic_type,
         -- Name hit score: exact match = 1.0, substring = 0.5-0.8
         CASE
-            WHEN cfg.kw_lower <> '' AND ro.symbol_key = cfg.kw_lower THEN 1.0
-            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN ro.symbol_key) > 0 THEN 0.8
-            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN lower(coalesce(ro.headline, ''))) > 0 THEN 0.5
+            WHEN cfg.kw_lower <> '' AND ri.symbol_key = cfg.kw_lower THEN 1.0
+            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN ri.symbol_key) > 0 THEN 0.8
+            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN lower(coalesce(ri.headline, ''))) > 0 THEN 0.5
             ELSE 0.0
         END AS name_hit_score,
         -- Regex mentions in outline (headline + structure)
         CASE
             WHEN length(cfg.boost_re) > 0
-            THEN COALESCE(array_length(regexp_extract_all(ro.outline_text, '(?i)' || cfg.boost_re)), 0)
+            THEN COALESCE(array_length(regexp_extract_all(
+                coalesce(ri.headline, '') || ' ' || coalesce(ri.structure, ''),
+                '(?i)' || cfg.boost_re
+            )), 0)
             ELSE 0
         END AS regex_mentions
-    FROM raw_objects ro
+    FROM repo_index ri
     CROSS JOIN cfg
-    WHERE ro.row_in_doc <= max_per_doc
+    WHERE ri.scope = 'object'
+      AND split_part(ri.uri, '#', 1) = ANY(doc_uris)
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY ri.doc_id ORDER BY ri.line_start NULLS LAST, ri.node_id) <= max_per_doc
 )
 
 SELECT
