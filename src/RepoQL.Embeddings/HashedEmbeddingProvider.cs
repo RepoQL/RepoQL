@@ -19,13 +19,28 @@ public sealed class HashedEmbeddingProvider : IEmbeddingProvider
         Model = string.IsNullOrWhiteSpace(modelName) ? $"hashed-{Dimension}" : modelName!;
     }
 
-    public Task<float[]?> EmbedAsync(string text, CancellationToken cancellationToken = default)
+    public Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult<float[]?>(EmbedCore(text));
     }
 
-    public Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+    public Task<float[]?> EmbedPassageAsync(string text, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult<float[]?>(EmbedCore(text));
+    }
+
+    public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+        => EmbedBatchCore(texts, cancellationToken);
+
+    public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+        => EmbedBatchCore(texts, cancellationToken);
+
+    public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
+        => EmbedBatchCore(texts, cancellationToken);
+
+    private Task<float[]?[]> EmbedBatchCore(IReadOnlyList<string>? texts, CancellationToken cancellationToken)
     {
         if (texts is null || texts.Count == 0)
             return Task.FromResult(Array.Empty<float[]?>());

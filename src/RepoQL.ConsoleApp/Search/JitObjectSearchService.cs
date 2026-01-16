@@ -141,10 +141,11 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
         var intent = DetectQueryIntent(rawQuery);
 
         // Precompute query embedding if we have an embedding provider
+        // Use EmbedQueryAsync for search queries (E5 models prepend "query: " prefix)
         float[]? queryEmbedding = null;
         if (_embeddingProvider?.Enabled == true && !string.IsNullOrWhiteSpace(rawQuery))
         {
-            queryEmbedding = await _embeddingProvider.EmbedAsync(rawQuery, cancellationToken).ConfigureAwait(false);
+            queryEmbedding = await _embeddingProvider.EmbedQueryAsync(rawQuery, cancellationToken).ConfigureAwait(false);
         }
 
         // Extract tokens for name matching
@@ -870,13 +871,14 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
             loadedFromStorage, needsComputation.Count);
 
         // Step 2: Compute missing embeddings (session cache handles deduplication)
+        // Use passage embedding for object content (E5 models prepend "passage: " prefix)
         var computeSw = System.Diagnostics.Stopwatch.StartNew();
         var texts = needsComputation.Select(c =>
             $"{c.Headline ?? ""} {c.Structure ?? ""}".Trim()).ToList();
 
         var embeddings = cache.GetOrComputeBatch(
             texts,
-            batch => _embeddingProvider.EmbedBatchAsync(batch, cancellationToken).GetAwaiter().GetResult());
+            batch => _embeddingProvider.EmbedPassageBatchAsync(batch, cancellationToken).GetAwaiter().GetResult());
         computeSw.Stop();
 
         // Apply computed embeddings and collect for persistence

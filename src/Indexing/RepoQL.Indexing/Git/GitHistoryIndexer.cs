@@ -279,77 +279,86 @@ public sealed class GitHistoryIndexer
 
         _db.WriteTransaction((conn, tx) =>
         {
-            // Insert commits
-            var commitSql = new StringBuilder();
-            commitSql.AppendLine("INSERT INTO git_commit (hash, author_name, author_email, author_date, committer_name, committer_email, committer_date, message, parent_hashes, files_changed, insertions, deletions) VALUES");
+            BulkInsertCommits(conn, tx, commits);
 
-            for (var i = 0; i < commits.Count; i++)
-            {
-                var c = commits[i];
-                if (i > 0) commitSql.Append(',');
-                commitSql.AppendLine($@"(
-                    {Escape(c.Hash)},
-                    {Escape(c.AuthorName)},
-                    {Escape(c.AuthorEmail)},
-                    {EscapeTimestamp(c.AuthorDate)},
-                    {Escape(c.CommitterName)},
-                    {Escape(c.CommitterEmail)},
-                    {EscapeTimestamp(c.CommitterDate)},
-                    {Escape(c.Message)},
-                    {EscapeArray(c.ParentHashes)},
-                    {c.FilesChanged},
-                    {c.Insertions},
-                    {c.Deletions}
-                )");
-            }
-            commitSql.AppendLine("ON CONFLICT (hash) DO NOTHING;");
-
-            using (var cmd = conn.CreateCommand())
-            {
-                cmd.Transaction = tx;
-                cmd.CommandText = commitSql.ToString();
-                cmd.ExecuteNonQuery();
-            }
-
-            // Insert file changes
             if (fileChanges.Count > 0)
-            {
-                var changeSql = new StringBuilder();
-                changeSql.AppendLine("INSERT INTO git_file_change (commit_hash, uri, change_type, old_uri, insertions, deletions, is_binary) VALUES");
-
-                for (var i = 0; i < fileChanges.Count; i++)
-                {
-                    var fc = fileChanges[i];
-                    if (i > 0) changeSql.Append(',');
-                    // Convert relative paths to file:// URIs
-                    var uri = PathToUri(fc.FilePath);
-                    var oldUri = fc.OldPath is not null ? PathToUri(fc.OldPath) : null;
-                    changeSql.AppendLine($@"(
-                        {Escape(fc.CommitHash)},
-                        {Escape(uri)},
-                        {Escape(fc.ChangeType)},
-                        {Escape(oldUri)},
-                        {fc.Insertions},
-                        {fc.Deletions},
-                        {(fc.IsBinary ? "TRUE" : "FALSE")}
-                    )");
-                }
-                changeSql.Append(';');
-
-                using (var cmd = conn.CreateCommand())
-                {
-                    cmd.Transaction = tx;
-                    cmd.CommandText = changeSql.ToString();
-                    cmd.ExecuteNonQuery();
-                }
-            }
+                BulkInsertFileChanges(conn, tx, fileChanges);
         });
     }
 
-    private static string Escape(string? value)
+    private static void BulkInsertCommits(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<CommitRecord> commits)
     {
-        if (value is null) return "NULL";
-        return "'" + value.Replace("'", "''") + "'";
+        const int batchSize = 50; // 12 columns, moderate batch size
+        for (var offset = 0; offset < commits.Count; offset += batchSize)
+        {
+            var batch = commits.Skip(offset).Take(batchSize).ToList();
+            var sb = new StringBuilder();
+            sb.AppendLine("INSERT INTO git_commit (hash, author_name, author_email, author_date, committer_name, committer_email, committer_date, message, parent_hashes, files_changed, insertions, deletions) VALUES");
+
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+
+            for (var i = 0; i < batch.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                var p = i * 12;
+                sb.Append($"(${p + 1},${p + 2},${p + 3},${p + 4},${p + 5},${p + 6},${p + 7},${p + 8},${p + 9},${p + 10},${p + 11},${p + 12})");
+
+                var c = batch[i];
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.Hash });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.AuthorName });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.AuthorEmail });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.AuthorDate.UtcDateTime });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.CommitterName });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.CommitterEmail });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.CommitterDate.UtcDateTime });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.Message });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.ParentHashes });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.FilesChanged });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.Insertions });
+                cmd.Parameters.Add(new DuckDBParameter { Value = c.Deletions });
+            }
+
+            sb.AppendLine(" ON CONFLICT (hash) DO NOTHING;");
+            cmd.CommandText = sb.ToString();
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    private static void BulkInsertFileChanges(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<FileChangeRecord> changes)
+    {
+        const int batchSize = 100; // 7 columns, larger batch ok
+        for (var offset = 0; offset < changes.Count; offset += batchSize)
+        {
+            var batch = changes.Skip(offset).Take(batchSize).ToList();
+            var sb = new StringBuilder();
+            sb.AppendLine("INSERT INTO git_file_change (commit_hash, uri, change_type, old_uri, insertions, deletions, is_binary) VALUES");
+
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+
+            for (var i = 0; i < batch.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                var p = i * 7;
+                sb.Append($"(${p + 1},${p + 2},${p + 3},${p + 4},${p + 5},${p + 6},${p + 7})");
+
+                var fc = batch[i];
+                var uri = PathToUri(fc.FilePath);
+                var oldUri = fc.OldPath is not null ? PathToUri(fc.OldPath) : null;
+
+                cmd.Parameters.Add(new DuckDBParameter { Value = fc.CommitHash });
+                cmd.Parameters.Add(new DuckDBParameter { Value = uri });
+                cmd.Parameters.Add(new DuckDBParameter { Value = fc.ChangeType });
+                cmd.Parameters.Add(new DuckDBParameter { Value = oldUri ?? (object)DBNull.Value });
+                cmd.Parameters.Add(new DuckDBParameter { Value = fc.Insertions });
+                cmd.Parameters.Add(new DuckDBParameter { Value = fc.Deletions });
+                cmd.Parameters.Add(new DuckDBParameter { Value = fc.IsBinary });
+            }
+
+            cmd.CommandText = sb.ToString();
+            cmd.ExecuteNonQuery();
+        }
     }
 
     private static string PathToUri(string relativePath)
@@ -357,18 +366,6 @@ public sealed class GitHistoryIndexer
         // Normalize to forward slashes for URI
         var normalized = relativePath.Replace('\\', '/');
         return $"file:///{normalized}";
-    }
-
-    private static string EscapeTimestamp(DateTimeOffset value)
-    {
-        // DuckDB requires no space between time and timezone offset
-        return $"'{value:yyyy-MM-dd HH:mm:sszzz}'::TIMESTAMPTZ";
-    }
-
-    private static string EscapeArray(string[] values)
-    {
-        if (values.Length == 0) return "[]";
-        return "[" + string.Join(",", values.Select(v => Escape(v))) + "]";
     }
 
     private sealed record CommitRecord

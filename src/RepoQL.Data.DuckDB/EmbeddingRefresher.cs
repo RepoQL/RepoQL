@@ -246,7 +246,8 @@ public sealed class EmbeddingRefresher
             var batchTimer = Stopwatch.StartNew();
             try
             {
-                vectors = await provider.EmbedBatchAsync(pendingPayloads, progress, ct).ConfigureAwait(false);
+                // Use passage embedding for document content (E5 models prepend "passage: " prefix)
+                vectors = await provider.EmbedPassageBatchAsync(pendingPayloads, progress, ct).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

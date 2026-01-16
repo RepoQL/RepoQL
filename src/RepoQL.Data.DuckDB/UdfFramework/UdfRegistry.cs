@@ -213,10 +213,11 @@ public class UdfRegistry
                 try
                 {
                     var instance = CreateUdfInstance(classType);
+                    var args = new object?[parameters.Length];
 
                     for (ulong i = 0; i < n; i++)
                     {
-                        var args = new object?[parameters.Length];
+                        Array.Clear(args);
 
                         // Read param and convert to target type
                         if (parameters.Length > 0 && readers.Count > 0 && readers[0].IsValid(i))
@@ -284,10 +285,11 @@ public class UdfRegistry
                 try
                 {
                     var instance = CreateUdfInstance(classType);
+                    var args = new object?[parameters.Length];
 
                     for (ulong i = 0; i < n; i++)
                     {
-                        var args = new object?[parameters.Length];
+                        Array.Clear(args);
 
                         // Read params and convert to target types
                         if (parameters.Length > 0 && readers.Count > 0 && readers[0].IsValid(i))
@@ -363,10 +365,11 @@ public class UdfRegistry
                     _logger.LogDebug("[UDF3] {Name} creating instance of {Type}", name, classType.Name);
                     var instance = CreateUdfInstance(classType);
                     _logger.LogDebug("[UDF3] {Name} instance created successfully", name);
+                    var args = new object?[parameters.Length];
 
                     for (ulong i = 0; i < n; i++)
                     {
-                        var args = new object?[parameters.Length];
+                        Array.Clear(args);
 
                         // Read all 3 params directly from DuckDB
                         if (readers.Count > 0 && readers[0].IsValid(i))
@@ -449,10 +452,11 @@ public class UdfRegistry
                 try
                 {
                     var instance = CreateUdfInstance(classType);
+                    var args = new object?[parameters.Length];
 
                     for (ulong i = 0; i < n; i++)
                     {
-                        var args = new object?[parameters.Length];
+                        Array.Clear(args);
 
                         // Read all 4 params directly from DuckDB
                         if (readers.Count > 0 && readers[0].IsValid(i))
@@ -540,10 +544,11 @@ public class UdfRegistry
                 try
                 {
                     var instance = CreateUdfInstance(classType);
+                    var args = new object?[parameters.Length];
 
                     for (ulong i = 0; i < n; i++)
                     {
-                        var args = new object?[parameters.Length];
+                        Array.Clear(args);
 
                         // First 2 params directly from DuckDB
                         for (int p = 0; p < 2 && p < parameters.Length; p++)

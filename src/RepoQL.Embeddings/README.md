@@ -1,12 +1,12 @@
 # RepoQL Embeddings (Local ONNX)
 
 This folder contains the local, offline embedding stack used by RepoQL.
-We ship a compact English embedding model (BAAI/bge-small-en-v1.5) and a
+We ship a compact English embedding model (intfloat/e5-small-v2) and a
 minimal tokenizer so semantic search works out-of-the-box with no network access.
 
 ## What Ships
 
-- `Embeddings/Model/embedding_model.onnx` — the ONNX-optimized encoder
+- `Embeddings/Model/embedding_model.onnx` — the ONNX-optimized encoder (E5-small-v2)
 - `Embeddings/Model/tokenizer.json` — WordPiece vocabulary and config
 - `Embeddings/Model/tokenizer_config.json`, `special_tokens_map.json` — metadata for special tokens, normalization
 
@@ -26,15 +26,19 @@ by default; if a compatible GPU is available, ONNX Runtime may use CUDA or DML.
   - Disable with `REPOQL_EMBED_ENABLED=0`
   - Optional override with `REPOQL_EMBED_MODEL_PATH` (tokenizer must be next to the model)
 
-## Document vs Query Embeddings
+## Document vs Query Embeddings (Asymmetric Prefixes)
 
-- Documents & objects: embeddings are computed once the initial index scan reaches idle and
-  stored in DuckDB table `document_embedding` (document rows use `node_id = doc_id`, object rows
+E5 models use asymmetric prefixes for optimal retrieval performance:
+- **Passages (documents)**: embeddings are prefixed with `"passage: "` and computed once the initial index scan reaches idle.
+  Stored in DuckDB table `document_embedding` (document rows use `node_id = doc_id`, object rows
   capture structured children) as JSON arrays.
-- Queries: the primary `search(q, mode := 'auto', ...)` macro (and the legacy `file_search` wrapper) compute a query
-  vector on the fly via the `embed_text(text)` UDF.
-- The macro prepends the standard BGE retrieval instruction to queries:
-  `"Represent this sentence for searching relevant passages: " || q`
+- **Queries**: prefixed with `"query: "` and computed on the fly via `embed_query(text)` UDF.
+  The primary `search(q, mode := 'auto', ...)` macro uses this UDF.
+
+SQL UDFs:
+- `embed_query(text)` — embed text as a search query (prepends "query: " for E5)
+- `embed_passage(text)` — embed text as document content (prepends "passage: " for E5)
+- `embed_text(text)` — generic embedding without prefix (backwards compatible)
 
 ## Tokenization Details (WordPiece)
 
@@ -52,7 +56,8 @@ by default; if a compatible GPU is available, ONNX Runtime may use CUDA or DML.
 
 ## DuckDB UDFs and Storage
 
-- `embed_text(text)` → float array string or NULL if disabled (use `::FLOAT[]` to cast)
+- `embed_query(text)` → float array for search queries, prepends "query: " (use `::FLOAT[]` to cast)
+- `embed_passage(text)` → float array for document content, prepends "passage: " (use `::FLOAT[]` to cast)
 - `cosine_similarity_json(a_json, b_json)` → cosine similarity (0..1)
 - `document_embedding` stores both document- and object-scope vectors as JSON (VARCHAR) for portability:<br/>
   `(doc_id UUID, node_id UUID, uri TEXT, scope TEXT CHECK(scope IN ('document','object')), model TEXT, dim INT, embedding JSON, updated_at TIMESTAMP)`.<br/>
@@ -92,4 +97,24 @@ SELECT uri, score, semn FROM file_search('docs', 'Find markdown references', k :
 - Override model path: `REPOQL_EMBED_MODEL_PATH=/abs/path/embedding_model.onnx`
 
 If you need more models later, mirror this layout next to the binaries and ensure
-a matching tokenizer is present. For now we assume the shipped BGE small v1.5 files.
+a matching tokenizer is present.
+
+## Obtaining E5-small-v2 Model Files
+
+To export and optionally quantize the E5-small-v2 model:
+
+```bash
+# Install optimum
+pip install optimum[onnxruntime]
+
+# Export E5-small-v2 to ONNX
+optimum-cli export onnx --model intfloat/e5-small-v2 ./e5-small-v2/
+
+# Optional: Quantize to int8 for smaller size (~33MB)
+python -m onnxruntime.quantization.quantize \
+    --input ./e5-small-v2/model.onnx \
+    --output ./e5-small-v2/embedding_model.onnx \
+    --per_channel
+```
+
+Copy `embedding_model.onnx` and `tokenizer.json` to the Model folder.

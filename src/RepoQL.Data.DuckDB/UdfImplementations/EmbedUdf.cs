@@ -13,6 +13,7 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 [UdfClass]
 public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
 {
+    private readonly IEmbeddingProvider? _embeddingProvider = embeddingProvider;
     /// <summary>
     /// Cache for embeddings to avoid redundant API calls.
     /// Key is (text, model), value is (embedding result, timestamp).
@@ -31,24 +32,46 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
     [ScalarUdf("_embed_status_internal", MacroName = "embed_status", Description = "Returns status information about the embedding provider")]
     public string EmbedStatus([UdfDefault("''")] string? _dummy)
     {
-        var providerType = embeddingProvider?.GetType().Name ?? "null";
-        var enabled = embeddingProvider?.Enabled ?? false;
-        var model = embeddingProvider?.Model ?? "null";
-        var dimension = embeddingProvider?.Dimension ?? 0;
+        var providerType = _embeddingProvider?.GetType().Name ?? "null";
+        var enabled = _embeddingProvider?.Enabled ?? false;
+        var model = _embeddingProvider?.Model ?? "null";
+        var dimension = _embeddingProvider?.Dimension ?? 0;
 
         return $"provider_type: {providerType}\nenabled: {enabled}\nmodel: {model}\ndimension: {dimension}";
     }
 
     /// <summary>
-    /// Embeds text and returns a JSON array of floats representing the embedding vector.
+    /// Embeds text as a query and returns a JSON array of floats representing the embedding vector.
+    /// For E5 models, this prepends "query: " prefix for optimal asymmetric search.
     /// Returns null if the embedding provider is not configured or if embedding fails.
     /// Use ::FLOAT[] in SQL to cast the result.
     /// Results are cached for 60 seconds to avoid redundant API calls.
     /// </summary>
-    [ScalarUdf("embed_text", Description = "Embed text and return JSON array of floats (use ::FLOAT[] to cast)")]
-    public string? EmbedText(string text)
+    [ScalarUdf("embed_query", Description = "Embed search query text and return JSON array of floats (use ::FLOAT[] to cast)")]
+    public string? EmbedQuery(string text)
     {
-        if (embeddingProvider is null || !embeddingProvider.Enabled)
+        return EmbedCore(text, "query", provider => provider.EmbedQueryAsync(text, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// Embeds text as a passage (document content) and returns a JSON array of floats representing the embedding vector.
+    /// Prepends "passage: " prefix for asymmetric search.
+    /// Returns null if the embedding provider is not configured or if embedding fails.
+    /// Use ::FLOAT[] in SQL to cast the result.
+    /// Results are cached for 60 seconds to avoid redundant API calls.
+    /// </summary>
+    [ScalarUdf("embed_passage", Description = "Embed document/passage text and return JSON array of floats (use ::FLOAT[] to cast)")]
+    public string? EmbedPassage(string text)
+    {
+        return EmbedCore(text, "passage", provider => provider.EmbedPassageAsync(text, CancellationToken.None));
+    }
+
+    /// <summary>
+    /// Core embedding implementation with caching.
+    /// </summary>
+    private string? EmbedCore(string text, string cacheType, Func<IEmbeddingProvider, Task<float[]?>> embedFunc)
+    {
+        if (_embeddingProvider is null || !_embeddingProvider.Enabled)
         {
             return null;
         }
@@ -58,8 +81,8 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
             return null;
         }
 
-        // Create cache key including model to handle provider changes
-        var cacheKey = $"{embeddingProvider.Model}:{text}";
+        // Create cache key including model and type to handle provider changes
+        var cacheKey = $"{_embeddingProvider.Model}:{cacheType}:{text}";
 
         // Check cache first
         if (EmbeddingCache.TryGetValue(cacheKey, out var cached))
@@ -77,8 +100,7 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
         {
             // Use single-item API instead of batch - avoids padding overhead
             // (batch pads to 256 tokens, single uses actual token count)
-            vector = embeddingProvider.EmbedAsync(text, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            vector = embedFunc(_embeddingProvider).GetAwaiter().GetResult();
         }
         catch
         {

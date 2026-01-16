@@ -45,8 +45,9 @@ filtered AS (
 ),
 
 -- Generate query embedding (only if query is non-empty)
+-- Uses embed_query() which handles E5 model prefixes automatically
 query_vec AS (
-    SELECT embed_text('Represent this sentence for searching relevant passages: ' || p.raw_query) AS vec
+    SELECT embed_query(p.raw_query) AS vec
     FROM params p
     WHERE p.keywords_empty = FALSE
 ),

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using RepoQL.Contracts.Diagnostics;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB.UdfFramework;
 
 namespace RepoQL.Data.DuckDB.UdfImplementations;
@@ -9,7 +10,7 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// Provides visibility into the indexing pipeline state via SQL.
 /// </summary>
 [UdfClass]
-public class DiagnosticsUdf
+public class DiagnosticsUdf(IEmbeddingProvider? embeddingProvider)
 {
     // Cached JsonSerializerOptions to avoid allocating on every call (CA1869)
     private static readonly JsonSerializerOptions s_jsonOptions = new()
@@ -28,7 +29,10 @@ public class DiagnosticsUdf
     [ScalarUdf("_indexing_diagnostics_internal", MacroName = "indexing_diagnostics", Description = "Returns indexing pipeline diagnostics as key-value text", IsPure = false)]
     public string GetDiagnostics([UdfDefault("''")] string? _dummy)
     {
-        return IndexingDiagnostics.GetDiagnosticsText();
+        return IndexingDiagnostics.GetDiagnosticsText(
+            embeddingProvider?.GetType().Name,
+            embeddingProvider?.Enabled ?? false,
+            embeddingProvider?.Model);
     }
 
     /// <summary>

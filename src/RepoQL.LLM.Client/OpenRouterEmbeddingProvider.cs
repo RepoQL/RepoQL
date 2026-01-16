@@ -79,16 +79,34 @@ public sealed class OpenRouterEmbeddingProvider : IEmbeddingProvider, IDisposabl
         }
     }
 
-    public async Task<float[]?> EmbedAsync(string text, CancellationToken cancellationToken = default)
+    public async Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default)
     {
         if (!Enabled) return null;
         if (string.IsNullOrWhiteSpace(text)) return null;
 
-        var results = await EmbedBatchAsync([text], cancellationToken);
+        var results = await EmbedBatchCoreAsync([text], cancellationToken);
         return results.Length > 0 ? results[0] : null;
     }
 
-    public async Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+    public Task<float[]?> EmbedPassageAsync(string text, CancellationToken cancellationToken = default)
+        => EmbedQueryAsync(text, cancellationToken);
+
+    public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+        => EmbedBatchCoreAsync(texts, cancellationToken);
+
+    public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+        => EmbedBatchCoreAsync(texts, cancellationToken);
+
+    public Task<float[]?[]> EmbedPassageBatchAsync(
+        IReadOnlyList<string>? texts,
+        BatchEmbeddingProgress progress,
+        CancellationToken cancellationToken = default)
+    {
+        // Progress is handled by caller; we just do the embedding
+        return EmbedBatchCoreAsync(texts, cancellationToken);
+    }
+
+    private async Task<float[]?[]> EmbedBatchCoreAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
     {
         if (!Enabled || texts is null || texts.Count == 0)
             return [];
@@ -127,15 +145,6 @@ public sealed class OpenRouterEmbeddingProvider : IEmbeddingProvider, IDisposabl
         });
 
         return allResults;
-    }
-
-    public async Task<float[]?[]> EmbedBatchAsync(
-        IReadOnlyList<string>? texts,
-        BatchEmbeddingProgress progress,
-        CancellationToken cancellationToken = default)
-    {
-        // Progress is handled by caller; we just do the embedding
-        return await EmbedBatchAsync(texts, cancellationToken);
     }
 
     private async Task ProcessSingleBatchAsync(

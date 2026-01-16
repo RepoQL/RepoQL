@@ -11,11 +11,18 @@ using RepoQL.Contracts.Embeddings;
 namespace RepoQL.Embeddings;
 
 /// <summary>
-/// Local ONNX embedding provider for BGE small v1.5.
+/// Local ONNX embedding provider for E5-small-v2.
 /// Fast path: CLS pooling + L2 norm. CPU by default on Windows (GPU is slower).
 /// Linux/Unix probes for CUDA.
 /// </summary>
 /// <remarks>
+/// <para><strong>E5 Model Prefixes:</strong></para>
+/// <para>E5 models require asymmetric prefixes for optimal performance:</para>
+/// <list type="bullet">
+///   <item>Queries (search text): "query: " prefix</item>
+///   <item>Passages (documents): "passage: " prefix</item>
+/// </list>
+/// <para>Use <see cref="EmbedQueryAsync"/> for search queries and <see cref="EmbedPassageAsync"/> for documents.</para>
 /// <para><strong>Environment Variables:</strong></para>
 /// <list type="bullet">
 ///   <item><c>REPOQL_ORT_PROVIDER</c> - Execution provider override (CPU, CUDA, DML, COREML). macOS users can set COREML for ANE/GPU acceleration.</item>
@@ -26,6 +33,10 @@ namespace RepoQL.Embeddings;
 public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 {
     private static readonly ActivitySource ActivitySource = new("RepoQL.Embeddings.Onnx");
+
+    // E5 model prefixes for asymmetric embedding
+    private const string E5QueryPrefix = "query: ";
+    private const string E5PassagePrefix = "passage: ";
 
     private InferenceSession? _session;
     private readonly ILogger<OnnxEmbeddingProvider> _logger;
@@ -38,7 +49,17 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 
     private readonly WordPieceTokenizer? _tokenizer;
 
-    public string Model { get; private set; } = "bge-small-en-v1.5";
+    /// <summary>
+    /// Query prefix for asymmetric embedding (E5 models use "query: ").
+    /// </summary>
+    private readonly string _queryPrefix;
+
+    /// <summary>
+    /// Passage prefix for asymmetric embedding (E5 models use "passage: ").
+    /// </summary>
+    private readonly string _passagePrefix;
+
+    public string Model { get; private set; } = "e5-small-v2";
     public int Dimension { get; private set; } = 384; // will be corrected from graph on first run
     public string Provider { get; private set; } = "CPU";
     public bool Enabled => !_disposed && _session is not null && _tokenizer is not null;
@@ -46,6 +67,10 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     public OnnxEmbeddingProvider(string modelPath, ILogger<OnnxEmbeddingProvider>? logger = null, int? maxTokens = null, int? intraOp = null, int? interOp = null)
     {
         _logger = logger ?? NullLogger<OnnxEmbeddingProvider>.Instance;
+        // Always use E5 prefixes for asymmetric embedding
+        _queryPrefix = E5QueryPrefix;
+        _passagePrefix = E5PassagePrefix;
+
         if (string.IsNullOrWhiteSpace(modelPath)) return;
         var modelFull = Path.GetFullPath(modelPath);
         if (!File.Exists(modelFull)) { _logger.LogWarning("ONNX model not found at {Path}", modelFull); return; }
@@ -98,6 +123,9 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 
             Model = Path.GetFileNameWithoutExtension(modelFull);
 
+            _logger.LogInformation("Using E5 asymmetric prefixes: query='{QueryPrefix}', passage='{PassagePrefix}'",
+                _queryPrefix, _passagePrefix);
+
             // Discover inputs by convention
             foreach (var kv in _session.InputMetadata)
             {
@@ -132,8 +160,8 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         }
     }
 
-    /// <summary>Encode one text to a normalized embedding. Returns null on error.</summary>
-    public async Task<float[]?> EmbedAsync(string text, CancellationToken cancellationToken = default)
+    /// <summary>Core embedding implementation. Encodes text to a normalized embedding. Returns null on error.</summary>
+    private async Task<float[]?> EmbedCoreAsync(string text, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("onnx.embed", ActivityKind.Internal);
         activity?.SetTag("embed.provider", "onnx");
@@ -183,15 +211,39 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     }
 
     /// <summary>
-    /// Encode a batch. Faster than N single calls. Returns null for failed samples.
+    /// Embed text as a query (search text). Prepends "query: " prefix.
     /// </summary>
-    public Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
-        => EmbedBatchAsync(texts, default(BatchEmbeddingProgress), cancellationToken);
+    public Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default)
+        => EmbedCoreAsync(_queryPrefix + text, cancellationToken);
 
     /// <summary>
-    /// Encode a batch with progress reporting. Faster than N single calls. Returns null for failed samples.
+    /// Embed text as a passage (document/content). Prepends "passage: " prefix.
     /// </summary>
-    public async Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
+    public Task<float[]?> EmbedPassageAsync(string text, CancellationToken cancellationToken = default)
+        => EmbedCoreAsync(_passagePrefix + text, cancellationToken);
+
+    /// <summary>
+    /// Embed a batch of texts as queries (search texts). Prepends "query: " prefix.
+    /// </summary>
+    public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+        => EmbedBatchCoreAsync(texts, default, _queryPrefix, cancellationToken);
+
+    /// <summary>
+    /// Embed a batch of texts as passages (documents/content). Prepends "passage: " prefix.
+    /// </summary>
+    public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+        => EmbedBatchCoreAsync(texts, default, _passagePrefix, cancellationToken);
+
+    /// <summary>
+    /// Embed a batch of texts as passages with progress reporting. Prepends "passage: " prefix.
+    /// </summary>
+    public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
+        => EmbedBatchCoreAsync(texts, progress, _passagePrefix, cancellationToken);
+
+    /// <summary>
+    /// Core batch embedding implementation with prefix.
+    /// </summary>
+    private async Task<float[]?[]> EmbedBatchCoreAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, string prefix, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("onnx.embed_batch", ActivityKind.Internal);
         activity?.SetTag("embed.provider", "onnx");
@@ -206,7 +258,9 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         var tokenizeTimer = System.Diagnostics.Stopwatch.StartNew();
         var encs = new EncodingResult[batch];
         for (var i = 0; i < batch; i++)
-            encs[i] = _tokenizer!.Encode(texts[i], _maxSeqLen);
+        {
+            encs[i] = _tokenizer!.Encode(prefix + texts[i], _maxSeqLen);
+        }
         tokenizeTimer.Stop();
 
         // Autodetect input dtype

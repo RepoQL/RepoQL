@@ -3,10 +3,11 @@
 
 -- Check which search path will be used for semantic search.
 -- Returns: query_dim, vss_384_count, vss_768_count, vss_1024_count, search_path
+-- Uses embed_query() which handles E5 model prefixes automatically.
 CREATE OR REPLACE MACRO _search_semantic_explain(q) AS TABLE (
     WITH
     query_vec AS (
-        SELECT embed_text('Represent this sentence for searching relevant passages: ' || COALESCE(q, '')) AS vec
+        SELECT embed_query(COALESCE(q, '')) AS vec
         WHERE q IS NOT NULL AND TRIM(q) <> ''
     ),
     dim_info AS (
@@ -57,10 +58,11 @@ CREATE OR REPLACE MACRO _vss_status() AS TABLE (
 
 -- Test HNSW search directly (bypasses search macro).
 -- Use this to verify HNSW is working and measure its performance.
+-- Uses embed_query() which handles E5 model prefixes automatically.
 CREATE OR REPLACE MACRO _search_hnsw_direct(q, k := 10) AS TABLE (
     WITH
     query_vec AS (
-        SELECT embed_text('Represent this sentence for searching relevant passages: ' || q)::FLOAT[384] AS vec
+        SELECT embed_query(q)::FLOAT[384] AS vec
     )
     SELECT
         v.doc_id,
@@ -75,10 +77,11 @@ CREATE OR REPLACE MACRO _search_hnsw_direct(q, k := 10) AS TABLE (
 
 -- Test linear scan search directly (bypasses search macro).
 -- Use this for comparison with HNSW.
+-- Uses embed_query() which handles E5 model prefixes automatically.
 CREATE OR REPLACE MACRO _search_linear_direct(q, k := 10) AS TABLE (
     WITH
     query_vec AS (
-        SELECT embed_text('Represent this sentence for searching relevant passages: ' || q)::FLOAT[] AS vec
+        SELECT embed_query(q)::FLOAT[] AS vec
     )
     SELECT
         de.doc_id,

@@ -35,17 +35,38 @@ public readonly record struct BatchEmbeddingProgress(int BatchNumber, int TotalB
     public int PercentComplete => TotalItems > 0 ? (int)(ItemsProcessed * 100.0 / TotalItems) : 0;
 }
 
+/// <summary>
+/// Provider for text embeddings with asymmetric query/passage encoding.
+/// E5 models require different prefixes for queries ("query: ") and passages ("passage: ").
+/// </summary>
 public interface IEmbeddingProvider
 {
     string Model { get; }
     int Dimension { get; }
     bool Enabled { get; }
-    Task<float[]?> EmbedAsync(string text, CancellationToken cancellationToken = default);
-    Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Embed a batch with progress reporting.
+    /// Embed text as a query (search text). Prepends "query: " prefix for E5 models.
     /// </summary>
-    Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
-        => EmbedBatchAsync(texts, cancellationToken); // Default implementation ignores progress
+    Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Embed text as a passage (document/content). Prepends "passage: " prefix for E5 models.
+    /// </summary>
+    Task<float[]?> EmbedPassageAsync(string text, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Embed a batch of texts as queries (search texts). Prepends "query: " prefix for E5 models.
+    /// </summary>
+    Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Embed a batch of texts as passages (documents/content). Prepends "passage: " prefix for E5 models.
+    /// </summary>
+    Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Embed a batch of passages with progress reporting. Prepends "passage: " prefix for E5 models.
+    /// </summary>
+    Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default);
 }

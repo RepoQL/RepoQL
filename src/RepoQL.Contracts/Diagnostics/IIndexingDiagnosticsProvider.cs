@@ -76,11 +76,6 @@ public static class IndexingDiagnostics
 {
     private static IIndexingDiagnosticsProvider? _provider;
 
-    // Query-time embedding provider diagnostics
-    private static string? _queryEmbedProvider;
-    private static bool _queryEmbedEnabled;
-    private static string? _queryEmbedModel;
-
     /// <summary>
     /// Registers the diagnostics provider. Should be called once during startup.
     /// </summary>
@@ -90,19 +85,10 @@ public static class IndexingDiagnostics
     }
 
     /// <summary>
-    /// Sets the query-time embedding provider info (called from UDF registration).
-    /// </summary>
-    public static void SetQueryEmbeddingProvider(string? providerType, bool enabled, string? model)
-    {
-        _queryEmbedProvider = providerType;
-        _queryEmbedEnabled = enabled;
-        _queryEmbedModel = model;
-    }
-
-    /// <summary>
     /// Gets the current diagnostics snapshot as key-value text (no JSON, survives IL trimming).
+    /// Embedding provider info is passed directly rather than stored statically.
     /// </summary>
-    public static string GetDiagnosticsText()
+    public static string GetDiagnosticsText(string? queryEmbedProvider, bool queryEmbedEnabled, string? queryEmbedModel)
     {
         if (_provider is null)
             return "error: No diagnostics provider registered";
@@ -124,9 +110,9 @@ public static class IndexingDiagnostics
             $"embed_mode: {snapshot.EmbedMode}",
             $"embed_last_epoch: {snapshot.EmbedLastEpoch}",
             $"last_error: {snapshot.LastError ?? "null"}",
-            $"query_embed_provider: {_queryEmbedProvider ?? "null"}",
-            $"query_embed_enabled: {_queryEmbedEnabled}",
-            $"query_embed_model: {_queryEmbedModel ?? "null"}"
+            $"query_embed_provider: {queryEmbedProvider ?? "null"}",
+            $"query_embed_enabled: {queryEmbedEnabled}",
+            $"query_embed_model: {queryEmbedModel ?? "null"}"
         );
     }
 

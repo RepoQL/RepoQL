@@ -279,7 +279,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             batchActivity?.SetTag("total_batches", totalBatches);
             batchActivity?.SetTag("size", batchCount);
 
-            vectors = await _embeddingProvider!.EmbedBatchAsync(payloads, progress, cancellationToken).ConfigureAwait(false);
+            vectors = await _embeddingProvider!.EmbedPassageBatchAsync(payloads, progress, cancellationToken).ConfigureAwait(false);
         }
         batchTimer.Stop();
 
