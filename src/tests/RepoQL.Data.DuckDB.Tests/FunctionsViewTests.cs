@@ -13,7 +13,7 @@ public class FunctionsViewTests
     [DisplayName("Functions view returns all expected columns for C# method")]
     public void FunctionsView_ReturnsAllColumns_CSharpMethod()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/MyClass.cs")!;
         db.IndexArtifact(uri, CreateCSharpMethodArtifact(uri, "MyMethod", "MyClass", "method", isStatic: false, isAsync: true));
@@ -60,7 +60,7 @@ public class FunctionsViewTests
     [DisplayName("Functions view excludes properties")]
     public void FunctionsView_ExcludesProperties()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/MyClass.cs")!;
 
@@ -85,7 +85,7 @@ public class FunctionsViewTests
     [DisplayName("Functions view includes constructors")]
     public void FunctionsView_IncludesConstructors()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/MyClass.cs")!;
         db.IndexArtifact(uri, CreateCSharpMethodArtifact(uri, ".ctor", "MyClass", "constructor", isStatic: false, isAsync: false));
@@ -105,7 +105,7 @@ public class FunctionsViewTests
     [DisplayName("Functions view includes static methods")]
     public void FunctionsView_IncludesStaticMethods()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/MyClass.cs")!;
         db.IndexArtifact(uri, CreateCSharpMethodArtifact(uri, "StaticMethod", "MyClass", "method", isStatic: true, isAsync: false));
@@ -125,7 +125,7 @@ public class FunctionsViewTests
     [DisplayName("Functions view includes TypeScript methods")]
     public void FunctionsView_IncludesTypeScriptMethods()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/MyClass.ts")!;
         db.IndexArtifact(uri, CreateTypeScriptMethodArtifact(uri, "myMethod", "MyClass"));
@@ -146,7 +146,7 @@ public class FunctionsViewTests
     [DisplayName("Functions view includes TypeScript standalone functions")]
     public void FunctionsView_IncludesTypeScriptFunctions()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/utils.ts")!;
         db.IndexArtifact(uri, CreateTypeScriptFunctionArtifact(uri, "helperFunction"));
@@ -168,7 +168,7 @@ public class FunctionsViewTests
     [DisplayName("Functions view qualified_name fallback works")]
     public void FunctionsView_QualifiedNameFallback()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/MyClass.cs")!;
         // Create a method without qualified_name set - should fall back to declaring_type.name

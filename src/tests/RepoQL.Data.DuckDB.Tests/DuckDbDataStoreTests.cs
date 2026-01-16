@@ -12,7 +12,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Schema initialization creates all tables")]
     public void EnsureSchema_CreatesAllTables()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var results = db.Read("SELECT COUNT(*) AS cnt FROM node", r => r.GetInt64(0));
         results.Should().HaveCount(1);
@@ -23,7 +23,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Query returns dictionary results")]
     public void Query_ReturnsDictionaryResults()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var results = db.Read("SELECT 1 AS value, 'hello' AS text", r => new { Value = r.GetInt32(0), Text = r.GetString(1) });
 
@@ -36,7 +36,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Query with mapper returns typed results")]
     public void Query_WithMapper_ReturnsTypedResults()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var results = db.Read("SELECT 42 AS num", r => r.GetInt32(0));
 
@@ -48,7 +48,7 @@ public class DuckDbDataStoreTests
     [DisplayName("IndexArtifact inserts new document")]
     public void IndexArtifact_InsertsNewDocument()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var artifact = CreateTestArtifact();
@@ -69,7 +69,7 @@ public class DuckDbDataStoreTests
     [DisplayName("IndexArtifact updates existing document at same URI")]
     public void IndexArtifact_UpdatesExistingDocument()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var artifact1 = CreateTestArtifact("content v1");
@@ -90,7 +90,7 @@ public class DuckDbDataStoreTests
     [DisplayName("DeleteArtifact removes document")]
     public void DeleteArtifact_RemovesDocument()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         db.IndexArtifact(uri, CreateTestArtifact());
@@ -107,7 +107,7 @@ public class DuckDbDataStoreTests
     [DisplayName("DeleteArtifact returns false for non-existent document")]
     public void DeleteArtifact_ReturnsFalseWhenNotFound()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var deleted = db.DeleteArtifact(RepoUri.Parse("file:///nonexistent.md")!);
 
@@ -118,7 +118,7 @@ public class DuckDbDataStoreTests
     [DisplayName("ReplaceAnnotations inserts new annotations for document")]
     public void ReplaceAnnotations_InsertsAnnotations()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -145,7 +145,7 @@ public class DuckDbDataStoreTests
     [DisplayName("ReplaceAnnotations clears previous annotations from same source")]
     public void ReplaceAnnotations_ClearsOldFromSameSource()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -175,7 +175,7 @@ public class DuckDbDataStoreTests
     [DisplayName("ReplaceAnnotations returns false for non-existent document")]
     public void ReplaceAnnotations_ReturnsFalseWhenDocumentNotFound()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var replaced = db.ReplaceAnnotations(
             RepoUri.Parse("file:///nonexistent.md")!,
@@ -192,7 +192,7 @@ public class DuckDbDataStoreTests
     [DisplayName("WriteEmbeddings inserts structure embeddings for document")]
     public void WriteEmbeddings_InsertsStructureEmbeddings()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -215,7 +215,7 @@ public class DuckDbDataStoreTests
     [DisplayName("WriteEmbeddings inserts chunked full embeddings")]
     public void WriteEmbeddings_InsertsChunkedFullEmbeddings()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -244,7 +244,7 @@ public class DuckDbDataStoreTests
     [DisplayName("WriteEmbeddings supports batched inserts")]
     public void WriteEmbeddings_InsertsMoreThanOneBatch()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -276,7 +276,7 @@ public class DuckDbDataStoreTests
     [DisplayName("IndexArtifact writes edges with all fields")]
     public void IndexArtifact_WritesEdgesWithAllFields()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var artifact = CreateTestArtifactWithEdge();
@@ -303,7 +303,7 @@ public class DuckDbDataStoreTests
     [DisplayName("IndexArtifact writes composition edges with child constraint")]
     public void IndexArtifact_WritesCompositionEdges()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var artifact = CreateTestArtifactWithCompositionEdge();
@@ -446,7 +446,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Concurrent reads do not block each other")]
     public async Task ConcurrentReads_DoNotBlock()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         // Index some documents first
         for (var i = 0; i < 10; i++)
@@ -476,7 +476,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Concurrent writes are serialized correctly")]
     public async Task ConcurrentWrites_AreSerializedCorrectly()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         // Run many concurrent writes
         var tasks = new List<Task>();
@@ -501,7 +501,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Mixed concurrent reads and writes maintain consistency")]
     public async Task MixedConcurrentReadsAndWrites_MaintainConsistency()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var writeCount = 0;
         var readResults = new List<long>();
@@ -554,7 +554,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Writers block readers and vice versa appropriately")]
     public async Task WritersBlockReaders_Appropriately()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var writerStarted = new ManualResetEventSlim(false);
         var writerCanFinish = new ManualResetEventSlim(false);
@@ -604,7 +604,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Concurrent deletes and reads maintain consistency")]
     public async Task ConcurrentDeletesAndReads_MaintainConsistency()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         // First, index 20 documents
         for (var i = 0; i < 20; i++)
@@ -659,7 +659,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Reindex cleans up old child nodes")]
     public void IndexArtifact_ReindexCleansUpOldChildren()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
 
@@ -683,7 +683,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Reindex cleans up old spans")]
     public void IndexArtifact_ReindexCleansUpOldSpans()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
 
@@ -707,7 +707,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Reindex cleans up old edges")]
     public void IndexArtifact_ReindexCleansUpOldEdges()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
 
@@ -731,7 +731,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Delete cleans up embeddings")]
     public void DeleteArtifact_CleansUpEmbeddings()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -766,7 +766,7 @@ public class DuckDbDataStoreTests
     [DisplayName("ReplaceAnnotations preserves annotations from other sources")]
     public void ReplaceAnnotations_PreservesOtherSources()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -805,7 +805,7 @@ public class DuckDbDataStoreTests
     [DisplayName("WriteEmbeddings upserts on conflict")]
     public void WriteEmbeddings_UpsertsOnConflict()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -836,7 +836,7 @@ public class DuckDbDataStoreTests
     [DisplayName("WriteEmbeddings allows structure and full types to coexist")]
     public void WriteEmbeddings_StructureAndFullCoexist()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact());
@@ -866,7 +866,7 @@ public class DuckDbDataStoreTests
     [DisplayName("IndexArtifact throws on null URI")]
     public void IndexArtifact_ThrowsOnNullUri()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var act = () => db.IndexArtifact(null!, CreateTestArtifact());
 
@@ -877,7 +877,7 @@ public class DuckDbDataStoreTests
     [DisplayName("IndexArtifact throws on null artifact")]
     public void IndexArtifact_ThrowsOnNullArtifact()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var act = () => db.IndexArtifact(uri, null!);
@@ -889,7 +889,7 @@ public class DuckDbDataStoreTests
     [DisplayName("DeleteArtifact throws on null URI")]
     public void DeleteArtifact_ThrowsOnNullUri()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var act = () => db.DeleteArtifact(null!);
 
@@ -900,7 +900,7 @@ public class DuckDbDataStoreTests
     [DisplayName("ReplaceAnnotations throws on null URI")]
     public void ReplaceAnnotations_ThrowsOnNullUri()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var act = () => db.ReplaceAnnotations(null!, new List<Annotation>());
 
@@ -911,7 +911,7 @@ public class DuckDbDataStoreTests
     [DisplayName("ReplaceAnnotations throws on null annotations")]
     public void ReplaceAnnotations_ThrowsOnNullAnnotations()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.md")!;
         var act = () => db.ReplaceAnnotations(uri, null!);
@@ -923,7 +923,7 @@ public class DuckDbDataStoreTests
     [DisplayName("WriteEmbeddings throws on null list")]
     public void WriteEmbeddings_ThrowsOnNullList()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var act = () => db.WriteEmbeddings(null!);
 
@@ -934,7 +934,7 @@ public class DuckDbDataStoreTests
     [DisplayName("Schema is auto-initialized on construction")]
     public void Schema_AutoInitialized()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         // Verify tables exist (schema was auto-initialized in constructor)
         var results = db.Read("SELECT COUNT(*) AS cnt FROM node", r => r.GetInt64(0));
@@ -948,7 +948,7 @@ public class DuckDbDataStoreTests
         // This test catches the bug where a view/macro references another macro
         // that hasn't been created yet due to incorrect schema loading order.
         // If schema initialization fails, the DuckDbDataStore constructor throws.
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         // Verify key macros exist (these have dependencies on other macros/UDFs)
         var macros = db.Read(

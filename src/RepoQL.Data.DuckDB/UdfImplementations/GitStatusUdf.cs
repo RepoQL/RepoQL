@@ -28,7 +28,7 @@ public class GitStatusUdf(RepositoryConfiguration repoConfig)
         [UdfDefault("'false'")] bool includeIgnored)
     {
         if (!Repository.IsValid(_repoRoot))
-            throw new InvalidOperationException($"git_status: Not a valid git repository: {_repoRoot}");
+            yield break; // Not a git repo - return empty results
 
         using var repo = new Repository(_repoRoot);
 

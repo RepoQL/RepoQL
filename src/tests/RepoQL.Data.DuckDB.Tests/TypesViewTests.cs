@@ -13,7 +13,7 @@ public class TypesViewTests
     [DisplayName("Types view returns all expected columns for C# type")]
     public void TypesView_ReturnsAllColumns_CSharp()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/MyClass.cs")!;
         db.IndexArtifact(uri, CreateCSharpTypeArtifact(uri, "MyClass", "MyNamespace.MyClass", "class", "MyNamespace"));
@@ -58,7 +58,7 @@ public class TypesViewTests
     [DisplayName("Types view shows inheritance with extends and implements")]
     public void TypesView_ShowsInheritance()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/DerivedClass.cs")!;
         db.IndexArtifact(uri, CreateCSharpTypeWithInheritance(uri, "DerivedClass", "BaseClass", new[] { "IDisposable", "ICloneable" }));
@@ -83,7 +83,7 @@ public class TypesViewTests
     [DisplayName("Types view filters by language pattern")]
     public void TypesView_FiltersByLangPattern()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var csUri = RepoUri.Parse("file:///src/CSharpClass.cs")!;
         var tsUri = RepoUri.Parse("file:///src/TypeScriptClass.ts")!;
@@ -116,7 +116,7 @@ public class TypesViewTests
     [DisplayName("Types view includes interface types")]
     public void TypesView_IncludesInterfaces()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/IMyInterface.cs")!;
         db.IndexArtifact(uri, CreateCSharpTypeArtifact(uri, "IMyInterface", "IMyInterface", "interface", ""));
@@ -136,7 +136,7 @@ public class TypesViewTests
     [DisplayName("Types view signature falls back to headline")]
     public void TypesView_SignatureFallsBackToHeadline()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/MyClass.cs")!;
         var artifact = CreateCSharpTypeArtifact(uri, "MyClass", "MyClass", "class", "");

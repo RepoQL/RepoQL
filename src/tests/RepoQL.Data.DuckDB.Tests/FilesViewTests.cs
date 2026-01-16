@@ -12,7 +12,7 @@ public class FilesViewTests
     [DisplayName("Files view returns all expected columns")]
     public void FilesView_ReturnsAllColumns()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/example.cs")!;
         db.IndexArtifact(uri, CreateTestArtifact(uri, "line1\nline2\nline3"));
@@ -58,7 +58,7 @@ public class FilesViewTests
     [DisplayName("Source extraction works for file:// URIs")]
     public void FilesView_SourceExtraction_FileScheme()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///src/components/Button.tsx")!;
         db.IndexArtifact(uri, CreateTestArtifact(uri));
@@ -80,7 +80,7 @@ public class FilesViewTests
     [DisplayName("Source extraction works for docs:// URIs")]
     public void FilesView_SourceExtraction_DocsScheme()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("docs:///quickstart.md")!;
         db.IndexArtifact(uri, CreateTestArtifact(uri));
@@ -100,7 +100,7 @@ public class FilesViewTests
     [DisplayName("Source extraction works for github:// URIs")]
     public void FilesView_SourceExtraction_GithubScheme()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("github://owner/repo/src/main.rs")!;
         db.IndexArtifact(uri, CreateTestArtifact(uri));
@@ -121,7 +121,7 @@ public class FilesViewTests
     [DisplayName("Line count is computed correctly from text content")]
     public void FilesView_LineCount_ComputedCorrectly()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test.txt")!;
         var content = "line1\nline2\nline3\nline4\nline5";
@@ -137,7 +137,7 @@ public class FilesViewTests
     [DisplayName("Line count handles single line file")]
     public void FilesView_LineCount_SingleLine()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///single.txt")!;
         db.IndexArtifact(uri, CreateTestArtifact(uri, "just one line"));
@@ -152,7 +152,7 @@ public class FilesViewTests
     [DisplayName("Annotation counts aggregate correctly")]
     public void FilesView_AnnotationCounts_AggregateCorrectly()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///test/doc.cs")!;
         var indexResult = db.IndexArtifact(uri, CreateTestArtifact(uri));
@@ -185,7 +185,7 @@ public class FilesViewTests
     [DisplayName("Files without annotations have zero counts")]
     public void FilesView_NoAnnotations_ZeroCounts()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///clean.cs")!;
         db.IndexArtifact(uri, CreateTestArtifact(uri));
@@ -209,7 +209,7 @@ public class FilesViewTests
     [Arguments("file:///test.tar.gz", ".gz")]
     public void FilesView_ExtensionExtraction(string uriString, string? expectedExtension)
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse(uriString)!;
         db.IndexArtifact(uri, CreateTestArtifact(uri));
@@ -224,7 +224,7 @@ public class FilesViewTests
     [DisplayName("X-ray summaries are included")]
     public void FilesView_XraySummaries_Included()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///documented.cs")!;
         var artifact = CreateTestArtifactWithXray(uri,
@@ -250,7 +250,7 @@ public class FilesViewTests
     [DisplayName("Multiple files are returned correctly")]
     public void FilesView_MultipleFiles()
     {
-        using var db = new DuckDbDataStore();
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         db.IndexArtifact(RepoUri.Parse("file:///src/a.cs")!, CreateTestArtifact(RepoUri.Parse("file:///src/a.cs")!));
         db.IndexArtifact(RepoUri.Parse("file:///src/b.ts")!, CreateTestArtifact(RepoUri.Parse("file:///src/b.ts")!));

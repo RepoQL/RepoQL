@@ -13,7 +13,7 @@ public class SnippetMacroTests : IDisposable
 
     public SnippetMacroTests()
     {
-        _store = new DuckDbDataStore();
+        _store = TestServiceCollectionExtensions.CreateTestDataStore();
     }
 
     public void Dispose()
