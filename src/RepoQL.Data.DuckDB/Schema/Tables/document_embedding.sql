@@ -14,11 +14,15 @@ CREATE TABLE IF NOT EXISTS document_embedding (
     PRIMARY KEY (doc_id, node_id, chunk_index, embedding_type)
 );
 
-CREATE INDEX IF NOT EXISTS document_embedding_scope_idx ON document_embedding(scope);
+-- Removed: Low-cardinality index (2 distinct values), zonemaps provide equivalent filtering (Issue 004)
+-- CREATE INDEX IF NOT EXISTS document_embedding_scope_idx ON document_embedding(scope);
 CREATE INDEX IF NOT EXISTS document_embedding_uri_idx ON document_embedding(uri);
-CREATE INDEX IF NOT EXISTS document_embedding_model_idx ON document_embedding(model);
-CREATE INDEX IF NOT EXISTS document_embedding_doc_chunk_idx ON document_embedding(doc_id, chunk_index);
-CREATE INDEX IF NOT EXISTS document_embedding_type_idx ON document_embedding(embedding_type);
+-- Removed: Low-cardinality index (1-3 distinct values), zonemaps provide equivalent filtering (Issue 004)
+-- CREATE INDEX IF NOT EXISTS document_embedding_model_idx ON document_embedding(model);
+-- Removed: Redundant with PRIMARY KEY (doc_id, node_id, chunk_index, embedding_type) (Issue 004)
+-- CREATE INDEX IF NOT EXISTS document_embedding_doc_chunk_idx ON document_embedding(doc_id, chunk_index);
+-- Removed: Low-cardinality index (2 distinct values), zonemaps provide equivalent filtering (Issue 004)
+-- CREATE INDEX IF NOT EXISTS document_embedding_type_idx ON document_embedding(embedding_type);
 
 -- Composite index for search queries: covers (scope, embedding_type) filter + node_id join
 CREATE INDEX IF NOT EXISTS document_embedding_search_idx ON document_embedding(scope, embedding_type, node_id, dim);

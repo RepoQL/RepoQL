@@ -132,7 +132,8 @@ CREATE OR REPLACE MACRO _embedding_stats() AS TABLE (
         dim,
         model,
         COUNT(*) AS count,
-        COUNT(DISTINCT doc_id) AS unique_docs,
+        -- Use approx_count_distinct for doc_id (high cardinality) - exact count unnecessary for diagnostics
+        approx_count_distinct(doc_id) AS unique_docs,
         MIN(updated_at) AS oldest,
         MAX(updated_at) AS newest
     FROM document_embedding

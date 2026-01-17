@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS node (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS node_container_uri_lowercase_unique ON node(container_uri_lowercase);
-CREATE INDEX IF NOT EXISTS node_kind_idx ON node(kind);
+-- Removed: Low-cardinality index (~10-50 distinct values), zonemaps provide equivalent filtering (Issue 004)
+-- CREATE INDEX IF NOT EXISTS node_kind_idx ON node(kind);
 
 COMMENT ON TABLE node IS 'Property-graph vertex: documents, sections, symbols, etc.';
 COMMENT ON COLUMN node.id IS 'Node identifier (GUID).';

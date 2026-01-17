@@ -146,14 +146,14 @@ public sealed class DuckDbDataStore : IDisposable
 
     /// <summary>
     /// Applies memory, threading, and storage settings to a DuckDB connection.
-    /// Settings are read from environment variables with sensible defaults for
-    /// low-memory operation (targeting developer laptops with multiple agents).
+    /// Settings are dynamically calculated based on available hardware, with
+    /// environment variable overrides for custom configurations.
     /// </summary>
     /// <remarks>
     /// Environment variables:
     /// <list type="bullet">
-    ///   <item><c>DUCKDB_MEMORY_LIMIT</c> - Max memory (default: 8GB)</item>
-    ///   <item><c>DUCKDB_THREADS</c> - Worker threads (default: 1)</item>
+    ///   <item><c>DUCKDB_MEMORY_LIMIT</c> - Max memory (default: 60% of RAM, capped at 16GB)</item>
+    ///   <item><c>DUCKDB_THREADS</c> - Worker threads (default: physical cores estimate, capped at 8)</item>
     ///   <item><c>DUCKDB_TEMP_DIRECTORY</c> - Spill directory (default: next to database file)</item>
     /// </list>
     /// </remarks>
@@ -162,8 +162,14 @@ public sealed class DuckDbDataStore : IDisposable
     {
         var count = Interlocked.Increment(ref _configApplyCount);
 
+        // Get hardware-aware defaults
+        var (defaultThreads, defaultMemory) = GetOptimalConfig();
+
+        // Allow environment variable overrides
+        var limit = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT") ?? defaultMemory;
+        var threads = Environment.GetEnvironmentVariable("DUCKDB_THREADS") ?? defaultThreads;
+
         // Set memory limit to prevent runaway allocations
-        var limit = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT") ?? "8GB";
         ExecSetting(connection, $"SET memory_limit='{limit}';");
 
         // Enable object cache for single-reader scenarios (caches parsed expressions, schema metadata)
@@ -175,7 +181,6 @@ public sealed class DuckDbDataStore : IDisposable
 
         // Use multiple threads for parallel query execution
         // With few concurrent requests, each query can utilize more cores
-        var threads = Environment.GetEnvironmentVariable("DUCKDB_THREADS") ?? "4";
         ExecSetting(connection, $"SET threads={threads};");
 
         // Return freed memory to OS more aggressively (default 128MB holds too long)
@@ -194,12 +199,117 @@ public sealed class DuckDbDataStore : IDisposable
         Directory.CreateDirectory(tempDirPath);
         ExecSetting(connection, $"SET temp_directory='{tempDirPath}';");
 
-        // Log settings on first apply
+        // Log settings on first apply with hardware detection details
         if (count == 1)
         {
-            _logger.LogInformation("[DuckDB] Configuration: memory_limit={Limit}, threads={Threads}, object_cache=false, flush_threshold=64MB, temp_dir={TempDir}",
+            var totalMemoryMb = GetTotalAvailableMemoryMb();
+            _logger.LogInformation(
+                "[DuckDB] Hardware detected: {LogicalCores} logical cores, {TotalMemoryMb}MB total RAM",
+                Environment.ProcessorCount, totalMemoryMb);
+            _logger.LogInformation(
+                "[DuckDB] Configuration applied: memory_limit={Limit}, threads={Threads}, object_cache=true, flush_threshold=64MB, temp_dir={TempDir}",
                 limit, threads, tempDirPath);
         }
+    }
+
+    /// <summary>
+    /// Calculates optimal thread count based on available CPU cores.
+    /// Uses physical core estimate (logical cores / 2 for hyperthreaded CPUs),
+    /// capped at 8 for reasonable parallelism.
+    /// </summary>
+    private static string GetDefaultThreads()
+    {
+        // Get logical processor count
+        var logicalCores = Environment.ProcessorCount;
+
+        // Estimate physical cores (assume hyperthreading = 2x)
+        // This is a heuristic; exact detection requires platform-specific APIs
+        var estimatedPhysicalCores = logicalCores > 4 ? logicalCores / 2 : logicalCores;
+
+        // Use physical cores, capped at 8 for reasonable parallelism
+        // Leave at least 1 core for OS/other processes on multi-core systems
+        var threads = estimatedPhysicalCores > 2
+            ? Math.Min(estimatedPhysicalCores - 1, 8)
+            : estimatedPhysicalCores;
+
+        return Math.Max(1, threads).ToString();
+    }
+
+    /// <summary>
+    /// Calculates optimal memory limit based on available system RAM.
+    /// Uses 60% of available memory, capped at 16GB, minimum 512MB.
+    /// </summary>
+    private static string GetDefaultMemoryLimit()
+    {
+        try
+        {
+            var totalMemoryMb = GetTotalAvailableMemoryMb();
+
+            // Use 60% of available memory, capped at 16GB
+            // This leaves room for OS, other processes, and .NET heap
+            var targetMb = Math.Min(16384, (long)(totalMemoryMb * 0.6));
+
+            // Ensure minimum of 512MB
+            targetMb = Math.Max(512, targetMb);
+
+            return $"{targetMb}MB";
+        }
+        catch
+        {
+            // Fallback if memory detection fails
+            return "4GB";
+        }
+    }
+
+    /// <summary>
+    /// Gets total available memory in megabytes using GC memory info.
+    /// </summary>
+    private static long GetTotalAvailableMemoryMb()
+    {
+        var gcMemoryInfo = GC.GetGCMemoryInfo();
+        return gcMemoryInfo.TotalAvailableMemoryBytes / (1024 * 1024);
+    }
+
+    /// <summary>
+    /// Calculates optimal thread and memory configuration, ensuring at least 1GB per thread.
+    /// DuckDB recommends 1-4GB per thread for optimal performance.
+    /// </summary>
+    private static (string threads, string memory) GetOptimalConfig()
+    {
+        var threads = int.Parse(GetDefaultThreads());
+        var memoryStr = GetDefaultMemoryLimit();
+
+        // Parse memory value (format: "NMB" or "NGB")
+        var memoryMb = ParseMemoryMb(memoryStr);
+
+        // Ensure at least 1GB (1024MB) per thread (DuckDB recommendation: 1-4GB)
+        var memoryPerThread = memoryMb / threads;
+        if (memoryPerThread < 1024)
+        {
+            // Reduce threads to maintain minimum memory per thread
+            threads = Math.Max(1, (int)(memoryMb / 1024));
+        }
+
+        return (threads.ToString(), $"{memoryMb}MB");
+    }
+
+    /// <summary>
+    /// Parses a memory limit string (e.g., "8GB", "512MB") to megabytes.
+    /// </summary>
+    private static long ParseMemoryMb(string memoryStr)
+    {
+        memoryStr = memoryStr.Trim().ToUpperInvariant();
+
+        if (memoryStr.EndsWith("GB", StringComparison.Ordinal))
+        {
+            return long.Parse(memoryStr[..^2]) * 1024;
+        }
+        if (memoryStr.EndsWith("MB", StringComparison.Ordinal))
+        {
+            return long.Parse(memoryStr[..^2]);
+        }
+        // Assume bytes if no suffix
+        return long.Parse(memoryStr) / (1024 * 1024);
     }
 
     private static void ExecSetting(DuckDBConnection connection, string sql)

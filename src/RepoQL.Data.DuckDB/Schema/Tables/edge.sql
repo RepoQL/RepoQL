@@ -23,7 +23,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS edge_composition_single_parent ON edge(composi
 CREATE INDEX IF NOT EXISTS edge_source_idx      ON edge(source_node_id);
 CREATE INDEX IF NOT EXISTS edge_destination_idx ON edge(destination_node_id);
 CREATE INDEX IF NOT EXISTS edge_destination_uri_idx ON edge(destination_uri);
-CREATE INDEX IF NOT EXISTS edge_type_idx         ON edge(type);
+-- Removed: Low-cardinality index (~10-20 distinct values), zonemaps provide equivalent filtering (Issue 004)
+-- CREATE INDEX IF NOT EXISTS edge_type_idx         ON edge(type);
 CREATE INDEX IF NOT EXISTS edge_scope_idx        ON edge(scope_document_id);
 
 COMMENT ON TABLE edge IS 'Directed relationship between nodes with optional spans and attributes.';

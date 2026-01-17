@@ -17,11 +17,14 @@ CREATE TABLE IF NOT EXISTS annotation (
                                           UNIQUE(semantic_key)
 );
 
-CREATE INDEX IF NOT EXISTS annotation_kind_index           ON annotation(kind);
-CREATE INDEX IF NOT EXISTS annotation_severity_index       ON annotation(severity);
+-- Removed: Low-cardinality index (~5-10 distinct values), zonemaps provide equivalent filtering (Issue 004)
+-- CREATE INDEX IF NOT EXISTS annotation_kind_index           ON annotation(kind);
+-- Removed: Low-cardinality index (~3-5 distinct values), zonemaps provide equivalent filtering (Issue 004)
+-- CREATE INDEX IF NOT EXISTS annotation_severity_index       ON annotation(severity);
 CREATE INDEX IF NOT EXISTS annotation_scope_document_id_index ON annotation(scope_document_id);
 CREATE INDEX IF NOT EXISTS annotation_target_node_id_index ON annotation(target_node_id);
-CREATE INDEX IF NOT EXISTS annotation_target_edge_id_index ON annotation(target_edge_id);
+-- Removed: Very sparse index (target_edge_id rarely populated), minimal benefit (Issue 004)
+-- CREATE INDEX IF NOT EXISTS annotation_target_edge_id_index ON annotation(target_edge_id);
 CREATE INDEX IF NOT EXISTS annotation_target_span_id_index ON annotation(target_span_id);
 
 COMMENT ON TABLE annotation IS 'Out-of-band facts (lint, outline, metrics, hints)..';

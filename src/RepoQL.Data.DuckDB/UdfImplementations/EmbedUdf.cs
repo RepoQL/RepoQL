@@ -29,7 +29,7 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
     /// The dummy parameter exists because DuckDB.NET doesn't reliably support
     /// parameterless UDFs. SQL macros hide this from users.
     /// </remarks>
-    [ScalarUdf("_embed_status_internal", MacroName = "embed_status", Description = "Returns status information about the embedding provider")]
+    [ScalarUdf("_embed_status_internal", MacroName = "embed_status", Description = "Returns status information about the embedding provider", IsPure = true)]
     public string EmbedStatus([UdfDefault("''")] string? _dummy)
     {
         var providerType = _embeddingProvider?.GetType().Name ?? "null";

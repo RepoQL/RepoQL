@@ -800,9 +800,8 @@ public static class DuckDbDataStoreExtensions
         conn.Execute(tx, "DELETE FROM span WHERE document_id = ?;", documentId);
         conn.Execute(tx, "DELETE FROM edge WHERE scope_document_id = ?;", documentId);
 
-        // Delete old child nodes
-        foreach (var id in childNodesToDelete)
-            conn.Execute(tx, "DELETE FROM node WHERE id = ?;", id);
+        // Delete old child nodes in batch
+        BatchDeleteByIds(conn, tx, childNodesToDelete, "node", "id");
     }
 
     /// <summary>
@@ -865,10 +864,18 @@ public static class DuckDbDataStoreExtensions
 
     private static void BulkInsertNodes(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Node> nodes)
     {
+        // Sort for zonemap efficiency: queries typically filter by kind first, then URI patterns.
+        // Sorting before insert creates tighter min/max ranges per row group, enabling DuckDB to skip
+        // entire row groups that don't match filter predicates (potential 10x+ improvement on selective queries).
+        var sortedNodes = nodes
+            .OrderBy(n => n.Kind)
+            .ThenBy(n => n.Uri is not null ? NormalizeUri(n.Uri).ToLowerInvariant() : null)
+            .ToList();
+
         const int batchSize = 50; // Nodes have more columns, smaller batches
-        for (var offset = 0; offset < nodes.Count; offset += batchSize)
+        for (var offset = 0; offset < sortedNodes.Count; offset += batchSize)
         {
-            var batch = nodes.Skip(offset).Take(batchSize).ToList();
+            var batch = sortedNodes.Skip(offset).Take(batchSize).ToList();
             var sb = new StringBuilder();
             sb.AppendLine("INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at) VALUES");
 
@@ -945,10 +952,18 @@ public static class DuckDbDataStoreExtensions
 
     private static void BulkInsertEdgesBatch(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Edge> edges, bool useConflictHandling)
     {
+        // Sort for zonemap efficiency: deletion and traversal queries filter by document, then edge type.
+        // Sorting before insert creates tighter min/max ranges per row group, enabling DuckDB to skip
+        // entire row groups that don't match filter predicates (potential 10x+ improvement on selective queries).
+        var sortedEdges = edges
+            .OrderBy(e => e.ScopeDocumentId)
+            .ThenBy(e => e.Type)
+            .ToList();
+
         const int batchSize = 50; // Edges have many columns
-        for (var offset = 0; offset < edges.Count; offset += batchSize)
+        for (var offset = 0; offset < sortedEdges.Count; offset += batchSize)
         {
-            var batch = edges.Skip(offset).Take(batchSize).ToList();
+            var batch = sortedEdges.Skip(offset).Take(batchSize).ToList();
             var sb = new StringBuilder();
             sb.AppendLine("INSERT INTO edge (id, source_node_id, destination_node_id, destination_uri, type, is_composition, ordinal, scope_document_id, semantic_key, source_span_id, destination_span_id, composition_child_id, properties, created_at) VALUES");
 
@@ -1090,23 +1105,59 @@ public static class DuckDbDataStoreExtensions
         }
 
         // Delete in order: document_embedding, annotations, edges, spans, nodes
-        foreach (var id in toDelete)
-            conn.Execute(tx, "DELETE FROM document_embedding WHERE doc_id = ?;", id);
-
-        foreach (var id in toDelete)
-            conn.Execute(tx, "DELETE FROM annotation WHERE scope_document_id = ?;", id);
+        // Use batch DELETE with IN clause for better performance
+        BatchDeleteByIds(conn, tx, toDelete, "document_embedding", "doc_id");
+        BatchDeleteByIds(conn, tx, toDelete, "annotation", "scope_document_id");
 
         // Delete edges scoped to this document, or composition edges where this node is the source
         // Note: We intentionally don't delete edges where destination_node_id matches because those
         // are reference edges from OTHER documents pointing TO this one - they become dangling references
-        foreach (var id in toDelete)
-            conn.Execute(tx, "DELETE FROM edge WHERE scope_document_id = ? OR source_node_id = ?;", id, id);
+        BatchDeleteEdgesByIds(conn, tx, toDelete);
 
-        foreach (var id in toDelete)
-            conn.Execute(tx, "DELETE FROM span WHERE document_id = ?;", id);
+        BatchDeleteByIds(conn, tx, toDelete, "span", "document_id");
+        BatchDeleteByIds(conn, tx, toDelete, "node", "id");
+    }
 
-        foreach (var id in toDelete)
-            conn.Execute(tx, "DELETE FROM node WHERE id = ?;", id);
+    /// <summary>
+    /// Batch delete records from a table where a column matches any of the given IDs.
+    /// Uses IN clause for efficiency and chunks large lists to avoid query length limits.
+    /// </summary>
+    private static void BatchDeleteByIds(
+        DuckDBConnection conn,
+        DuckDBTransaction tx,
+        IReadOnlyCollection<Guid> ids,
+        string tableName,
+        string columnName,
+        int chunkSize = 1000)
+    {
+        if (ids.Count == 0)
+            return;
+
+        foreach (var chunk in ids.Chunk(chunkSize))
+        {
+            var idList = string.Join(",", chunk.Select(id => $"'{id}'"));
+            conn.Execute(tx, $"DELETE FROM {tableName} WHERE {columnName} IN ({idList});");
+        }
+    }
+
+    /// <summary>
+    /// Batch delete edges where scope_document_id OR source_node_id matches any of the given IDs.
+    /// Uses IN clause for efficiency and chunks large lists to avoid query length limits.
+    /// </summary>
+    private static void BatchDeleteEdgesByIds(
+        DuckDBConnection conn,
+        DuckDBTransaction tx,
+        IReadOnlyCollection<Guid> ids,
+        int chunkSize = 1000)
+    {
+        if (ids.Count == 0)
+            return;
+
+        foreach (var chunk in ids.Chunk(chunkSize))
+        {
+            var idList = string.Join(",", chunk.Select(id => $"'{id}'"));
+            conn.Execute(tx, $"DELETE FROM edge WHERE scope_document_id IN ({idList}) OR source_node_id IN ({idList});");
+        }
     }
 
     #endregion

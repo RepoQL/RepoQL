@@ -115,12 +115,8 @@ filtered AS (
 ),
 fallback_nodes AS (
     SELECT node_id
-    FROM (
-        SELECT node_id, ROW_NUMBER() OVER (ORDER BY mtime DESC, node_id) AS fallback_row
-        FROM filtered
-    ) fallback
-    JOIN base_params bp ON TRUE
-    WHERE fallback_row <= bp.result_k
+    FROM filtered
+    QUALIFY ROW_NUMBER() OVER (ORDER BY mtime DESC, node_id) <= (SELECT result_k FROM base_params)
 ),
 combined_nodes AS (
     SELECT node_id FROM union_nodes

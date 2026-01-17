@@ -166,19 +166,13 @@ combined AS (
     FULL OUTER JOIN full_text_scored fs ON ss.node_id = fs.node_id
 ),
 
--- Rank and normalize
-ranked AS (
+-- Rank, filter, and normalize via QUALIFY for early termination
+limited AS (
     SELECT
         c.*,
         ROW_NUMBER() OVER (ORDER BY c.sem_score DESC, c.node_id) AS sem_rank
     FROM combined c
-),
-
-limited AS (
-    SELECT r.*
-    FROM ranked r
-    JOIN params p ON TRUE
-    WHERE r.sem_rank <= p.limit_cand
+    QUALIFY sem_rank <= (SELECT limit_cand FROM params)
 ),
 
 normalized AS (

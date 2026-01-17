@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -9,6 +10,12 @@ namespace RepoQL.Data.DuckDB.UdfFramework;
 /// </summary>
 public static class UdfHelpers
 {
+    /// <summary>
+    /// Cache for PropertyInfo arrays to avoid repeated reflection calls.
+    /// Thread-safe for concurrent access across UDF invocations.
+    /// </summary>
+    private static readonly ConcurrentDictionary<Type, PropertyInfo[]> PropertyCache = new();
+
     /// <summary>
     /// Serialize an enumerable of objects to a JSON array string for structured UDFs.
     /// </summary>
@@ -39,7 +46,9 @@ public static class UdfHelpers
 
         sb.Append('{');
         var type = item.GetType();
-        var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        var properties = PropertyCache.GetOrAdd(
+            type,
+            t => t.GetProperties(BindingFlags.Public | BindingFlags.Instance));
         bool first = true;
 
         foreach (var prop in properties)
