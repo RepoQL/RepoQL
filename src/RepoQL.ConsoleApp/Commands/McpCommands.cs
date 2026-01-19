@@ -62,11 +62,11 @@ internal class McpCommands
                                             - Assume all file types are supported
                                             - Every entity is represented by a repo URI e.g.
                                               `file:///repo/lib.cs#symbol=Foo.Bar&line=12,20`
-                                              `docs:///guidance/writing-mermaid-documents.md`
+                                              `repoql-docs:///guidance/writing-mermaid-documents.md`
                                             - Semantic mime type indicates both file type and contents e.g.`application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
                                            </CONTEXT>
 
-                                           The documentation for RepoQL is embedded (docs://), and can be read by xray, query or reading resources - consider obtaining it to be the tutorial.
+                                           The documentation for RepoQL is embedded (repoql-docs://), and can be read by xray, query or reading resources - consider obtaining it to be the tutorial.
                                            
                                            <CONCEPTS>
                                             ## Capsule: RepoUri
@@ -78,13 +78,13 @@ internal class McpCommands
                                             file:///src/App.cs                → file
                                             file:///src/App.cs#line=10,20     → lines 10–20
                                             file:///src/App.cs#symbol=Foo     → symbol named Foo
-                                            docs:///quickstart.md             → embedded documentation
+                                            repoql-docs:///quickstart.md             → embedded documentation
                                             //BOUNDARY: Line numbers are 1-based inclusive; #line=10,20 spans lines 10 through 20.
                                             
                                             **Depth**
-                                            - Schemes: file:/// (repo files), docs:/// (embedded docs), github://owner/repo etc (imports)
+                                            - Schemes: file:/// (repo files), repoql-docs:/// (embedded docs), github://owner/repo etc (imports)
                                             - Fragment params: #line=N, #line=N,M, #symbol=Class.Method
-                                            - docs:/// URIs are queryable like files; use for RepoQL's own documentation
+                                            - repoql-docs:/// URIs are queryable like files; use for RepoQL's own documentation
                                             - Query with SELECT * FROM node WHERE uri LIKE 'file:///src/%'
                                             - NotThis: not URLs; no http://; no hostname in file:///
                                             ---
@@ -123,7 +123,7 @@ internal class McpCommands
                                             **Depth**
                                             - ** matches any directory depth; * matches within one segment; trailing / matches all descendants
                                             - Patterns work in xray scope, search scope, glob_files(), and matches_glob()
-                                            - Shorthand docs/** infers file:///; full URIs like docs:/// also work
+                                            - Shorthand repoql-docs/** infers file:///; full URIs like repoql-docs:/// also work
                                             - Distinction: path-aware unlike SQL LIKE; simpler than regex
                                             - NotThis: not regex; use **/*.ts not .*\.ts$
                                             ---

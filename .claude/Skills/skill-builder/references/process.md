@@ -58,7 +58,7 @@ Not all processes need all sections. But missing recovery paths is a common and 
 | Multi-party coordination | Sequence diagram | Who does what, in what order |
 | Linear sequence | None - use list | Never diagram linear sequences |
 
-See `docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md` for syntax and best practices.
+See `repoql-docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md` for syntax and best practices.
 
 ## Required Practices
 

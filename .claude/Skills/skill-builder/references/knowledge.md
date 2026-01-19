@@ -124,9 +124,9 @@ Only the script's output consumes tokens—the script itself is free.
 
 ## Exemplars
 
-**For concepts:** `docs:///guidance/writing-and-documentation/writing-capsules.md` - capsule format demonstrating capsule format.
+**For concepts:** `repoql-docs:///guidance/writing-and-documentation/writing-capsules.md` - capsule format demonstrating capsule format.
 
-**For reference material:** `docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md` - mental model first, decision tests, structured entries, examples that tell the right story, details that ARE the source of truth.
+**For reference material:** `repoql-docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md` - mental model first, decision tests, structured entries, examples that tell the right story, details that ARE the source of truth.
 
 ## Template
 

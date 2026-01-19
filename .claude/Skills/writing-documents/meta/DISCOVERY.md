@@ -118,7 +118,7 @@ Better to mark gaps than to fabricate. Shows the shape without pretending to hav
 - Protection from mistakes (foot-guns section)
 - What it's NOT for (boundaries)
 
-**Existing Guidance**: `docs:///guidance/writing-and-documentation/writing-gestalt-documents.md`
+**Existing Guidance**: `repoql-docs:///guidance/writing-and-documentation/writing-gestalt-documents.md`
 
 ---
 
@@ -168,7 +168,7 @@ Better to mark gaps than to fabricate. Shows the shape without pretending to hav
 - One screen maximum
 - "When to Apply" for each model
 
-**Existing Guidance**: `docs:///guidance/writing-and-documentation/writing-capsules.md`
+**Existing Guidance**: `repoql-docs:///guidance/writing-and-documentation/writing-capsules.md`
 
 ---
 
@@ -231,7 +231,7 @@ Better to mark gaps than to fabricate. Shows the shape without pretending to hav
 - No timelines or estimates
 - No unsolicited recommendations
 
-**Existing Guidance**: `docs:///guidance/writing-and-documentation/answering-human-questions.md`
+**Existing Guidance**: `repoql-docs:///guidance/writing-and-documentation/answering-human-questions.md`
 
 ---
 

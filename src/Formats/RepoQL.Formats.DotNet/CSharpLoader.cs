@@ -294,6 +294,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
             IReadOnlyList<CSharpSymbolReference> references)
         {
             var tokenCount = TokenEstimator.EstimateTokensSafe(text);
+            var lineCount = text.Count(c => c == '\n') + 1;
             var artifact = new Artifact
             {
                 Digest = digest,
@@ -302,7 +303,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                 Text = text,
                 StoreUri = uri,
                 TokenCount = tokenCount,
-                Headline = BuildHeadline(uri, surface, tokenCount),
+                Headline = BuildHeadline(uri, surface, tokenCount, lineCount),
                 Summary = BuildSummary(surface),
                 Structure = BuildStructure(surface)
             };
@@ -731,26 +732,49 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
         return sb.ToString();
     }
 
-    private static string BuildHeadline(RepoUri uri, CSharpDocumentSurface surface, int? tokenCount)
+    private static string BuildHeadline(RepoUri uri, CSharpDocumentSurface surface, int? tokenCount, int lineCount)
     {
         var fileName = GetFileName(uri);
 
-        // Show actual type names instead of counts
-        var topTypes = surface.Types
-            .Take(3)
-            .Select(t => $"{t.Kind} {t.Name}")
+        // Primary type with inheritance (prefer public types)
+        var primaryType = surface.Types.FirstOrDefault(t =>
+            string.Equals(t.Accessibility, CSharpValues.Public, StringComparison.OrdinalIgnoreCase))
+            ?? surface.Types.FirstOrDefault();
+
+        var typePart = primaryType is not null
+            ? FormatTypeWithInheritance(primaryType)
+            : "(empty)";
+
+        // Top public method names (searchable content)
+        var methodNames = surface.Members
+            .Where(m => string.Equals(m.Accessibility, CSharpValues.Public, StringComparison.OrdinalIgnoreCase)
+                     && string.Equals(m.Kind, "method", StringComparison.OrdinalIgnoreCase))
+            .Take(5)
+            .Select(m => m.Name)
             .ToArray();
 
-        var tokenPart = tokenCount.HasValue ? $" | {tokenCount.Value} tokens" : string.Empty;
+        var methodPart = methodNames.Length > 0 ? string.Join(", ", methodNames) : null;
 
-        if (topTypes.Length == 0)
-            return $"{fileName} | (empty){tokenPart}";
+        // Size: lines + tokens (e.g., "450 ln, ~2.1k tok")
+        var sizePart = tokenCount.HasValue
+            ? $"{lineCount} ln, ~{tokenCount.Value / 1000.0:0.#}k tok"
+            : $"{lineCount} ln";
 
-        var typePart = string.Join(", ", topTypes);
-        if (surface.Types.Count > 3)
-            typePart += $" (+{surface.Types.Count - 3} more)";
+        // Build headline with non-empty parts
+        var parts = new[] { fileName, typePart, methodPart, sizePart }
+            .Where(p => !string.IsNullOrEmpty(p));
 
-        return $"{fileName} | {typePart}{tokenPart}";
+        return string.Join(" | ", parts);
+    }
+
+    private static string FormatTypeWithInheritance(CSharpTypeInfo type)
+    {
+        var inheritance = !string.IsNullOrWhiteSpace(type.BaseType)
+            ? $" : {type.BaseType}"
+            : type.Interfaces.Count > 0
+                ? $" : {string.Join(", ", type.Interfaces.Take(2))}"
+                : string.Empty;
+        return $"{type.Name}{inheritance}";
     }
 
     private static string BuildSummary(CSharpDocumentSurface surface)
@@ -791,9 +815,13 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
 
     private static string BuildStructure(CSharpDocumentSurface surface)
     {
-        // Symbolic notation: + public, # protected, ~ internal, - private
-        // Types: +ClassName : Base, Interfaces
-        // Members: +Method(params) → ReturnType, +Property → Type, -_field
+        // North Star format:
+        // - Complete: no truncation, all elements listed for searchability
+        // - Addressable: each element has fragment for read(uri + fragment)
+        // - Return type on left (C# syntax), no async keyword
+        // - Visibility symbols: + public, # protected, ~ internal, - private
+        // - Static modifier when applicable
+        // - Doc comments as single-line // above elements
         var sb = new StringBuilder();
         var membersByType = surface.Members
             .GroupBy(m => m.DeclaringTypeId)
@@ -810,56 +838,81 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
             _ => ' '
         };
 
+        void AppendMember(CSharpMemberInfo member, string indent)
+        {
+            var symbol = AccessibilitySymbol(member.Accessibility);
+            var staticMod = member.IsStatic ? "static " : "";
+            var fragment = $"#symbol={member.Name}";
+
+            // Doc comment on line above (single line)
+            if (!string.IsNullOrWhiteSpace(member.Summary))
+            {
+                sb.AppendLine($"{indent}// {member.Summary}");
+            }
+
+            if (string.Equals(member.Kind, "method", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(member.Kind, "constructor", StringComparison.OrdinalIgnoreCase))
+            {
+                // Return type on left, params with names
+                var returnType = !string.IsNullOrWhiteSpace(member.ReturnType) && member.ReturnType != "void"
+                    ? $"{member.ReturnType} "
+                    : "";
+                var paramText = member.Parameters.Count == 0
+                    ? "()"
+                    : $"({string.Join(", ", member.Parameters.Select(p => $"{p.Type} {p.Name}"))})";
+                sb.AppendLine($"{indent}{symbol}{staticMod}{returnType}{member.Name}{paramText}    {fragment}");
+            }
+            else if (string.Equals(member.Kind, "property", StringComparison.OrdinalIgnoreCase))
+            {
+                var returnType = !string.IsNullOrWhiteSpace(member.ReturnType) ? $"{member.ReturnType} " : "";
+                sb.AppendLine($"{indent}{symbol}{staticMod}{returnType}{member.Name}    {fragment}");
+            }
+            else // field, event, etc.
+            {
+                var typePart = !string.IsNullOrWhiteSpace(member.ReturnType) ? $"{member.ReturnType} " : "";
+                sb.AppendLine($"{indent}{symbol}{staticMod}{typePart}{member.Name}    {fragment}");
+            }
+        }
+
         void AppendType(CSharpTypeInfo type, string indent)
         {
             var symbol = AccessibilitySymbol(type.Accessibility);
+            var staticMod = type.IsStatic ? "static " : "";
             var inheritance = !string.IsNullOrWhiteSpace(type.BaseType)
                 ? $" : {type.BaseType}"
                 : (type.Interfaces.Count > 0 ? $" : {string.Join(", ", type.Interfaces)}" : string.Empty);
-            sb.AppendLine($"{indent}{symbol}{type.Kind} {type.Name}{inheritance}");
 
+            // Doc comment for type
+            if (!string.IsNullOrWhiteSpace(type.Summary))
+            {
+                sb.AppendLine($"{indent}// {type.Summary}");
+            }
+
+            sb.AppendLine($"{indent}{symbol}{staticMod}{type.Kind} {type.Name}{inheritance}");
+
+            // NO TRUNCATION - all members listed for searchability
             if (membersByType.TryGetValue(type.NodeId, out var members))
             {
-                foreach (var member in members.Take(CSharpLoaderConstants.MaxMembersInStructure))
+                foreach (var member in members)
                 {
-                    var memberSymbol = AccessibilitySymbol(member.Accessibility);
-                    var returnPart = !string.IsNullOrWhiteSpace(member.ReturnType) && member.ReturnType != "void"
-                        ? $" → {member.ReturnType}"
-                        : string.Empty;
-
-                    if (string.Equals(member.Kind, "method", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(member.Kind, "constructor", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var paramText = member.Parameters.Count == 0
-                            ? "()"
-                            : $"({string.Join(", ", member.Parameters.Select(p => p.Type))})";
-                        sb.AppendLine($"{indent}  {memberSymbol}{member.Name}{paramText}{returnPart}");
-                    }
-                    else if (string.Equals(member.Kind, "property", StringComparison.OrdinalIgnoreCase))
-                    {
-                        sb.AppendLine($"{indent}  {memberSymbol}{member.Name}{returnPart}");
-                    }
-                    else // field, event, etc.
-                    {
-                        var typePart = !string.IsNullOrWhiteSpace(member.ReturnType)
-                            ? $" : {member.ReturnType}"
-                            : string.Empty;
-                        sb.AppendLine($"{indent}  {memberSymbol}{member.Name}{typePart}");
-                    }
+                    AppendMember(member, indent + "  ");
                 }
             }
         }
 
-        foreach (var ns in surface.Namespaces.Take(CSharpLoaderConstants.MaxNamespacesInStructure))
+        // NO TRUNCATION - all namespaces listed
+        foreach (var ns in surface.Namespaces)
         {
             sb.AppendLine(ns.QualifiedName);
-            foreach (var type in surface.Types.Where(t => t.NamespaceNodeId == ns.NodeId && t.ParentTypeId is null).Take(CSharpLoaderConstants.MaxTypesPerNamespaceInStructure))
+            // NO TRUNCATION - all types listed
+            foreach (var type in surface.Types.Where(t => t.NamespaceNodeId == ns.NodeId && t.ParentTypeId is null))
             {
                 AppendType(type, "  ");
             }
         }
 
-        var globalTypes = surface.Types.Where(t => t.NamespaceNodeId is null && t.ParentTypeId is null).Take(CSharpLoaderConstants.MaxGlobalTypesInStructure).ToArray();
+        // NO TRUNCATION - all global types listed
+        var globalTypes = surface.Types.Where(t => t.NamespaceNodeId is null && t.ParentTypeId is null).ToArray();
         if (globalTypes.Length > 0)
         {
             sb.AppendLine("<global>");

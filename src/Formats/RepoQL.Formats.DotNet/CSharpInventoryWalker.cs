@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -152,18 +153,20 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
 
     public override void VisitEventFieldDeclaration(EventFieldDeclarationSyntax node)
     {
+        var summary = ExtractSummary(node);
         foreach (var variable in node.Declaration.Variables)
         {
-            AddFieldMember(variable, node.Declaration.Type.ToString(), node.Modifiers, "event");
+            AddFieldMember(variable, node.Declaration.Type.ToString(), node.Modifiers, "event", summary);
         }
         base.VisitEventFieldDeclaration(node);
     }
 
     public override void VisitFieldDeclaration(FieldDeclarationSyntax node)
     {
+        var summary = ExtractSummary(node);
         foreach (var variable in node.Declaration.Variables)
         {
-            AddFieldMember(variable, node.Declaration.Type.ToString(), node.Modifiers, "field");
+            AddFieldMember(variable, node.Declaration.Type.ToString(), node.Modifiers, "field", summary);
         }
         base.VisitFieldDeclaration(node);
     }
@@ -228,7 +231,9 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
             IsRecord: node is RecordDeclarationSyntax,
             BaseType: baseType,
             Interfaces: interfaces,
-            Span: span);
+            Span: span,
+            Modifiers: ExtractTypeModifiers(node.Modifiers),
+            Summary: ExtractSummary(node));
         Types.Add(typeInfo);
         _typeDeclarations[typeInfo.NodeId] = node;
         _declaredNodeIds[node] = typeInfo.NodeId;
@@ -240,7 +245,7 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
         });
     }
 
-    private void AddFieldMember(VariableDeclaratorSyntax variable, string typeName, SyntaxTokenList modifiers, string kind)
+    private void AddFieldMember(VariableDeclaratorSyntax variable, string typeName, SyntaxTokenList modifiers, string kind, string? summary)
     {
         if (_typeStack.Count == 0) return;
         var declaring = _typeStack.Peek();
@@ -259,7 +264,8 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
             ReturnType: typeName,
             DeclaringTypeDisplay: declaring.QualifiedName,
             Parameters: Array.Empty<CSharpParameterInfo>(),
-            Span: span);
+            Span: span,
+            Summary: summary);
         Members.Add(memberInfo);
         _memberDeclarations[memberId] = variable;
         _declaredNodeIds[variable] = memberId;
@@ -284,7 +290,8 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
             ReturnType: returnType?.ToString(),
             DeclaringTypeDisplay: declaring.QualifiedName,
             Parameters: BuildParameters(parameterList),
-            Span: span);
+            Span: span,
+            Summary: ExtractSummary(node));
         Members.Add(memberInfo);
         _memberDeclarations[memberId] = node;
         _declaredNodeIds[node] = memberId;
@@ -382,5 +389,82 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
         private readonly Action _onDispose;
         public Scope(Action onDispose) => _onDispose = onDispose;
         public void Dispose() => _onDispose();
+    }
+
+    private static IReadOnlyList<string> ExtractTypeModifiers(SyntaxTokenList modifiers)
+    {
+        var result = new List<string>();
+        foreach (var m in modifiers)
+        {
+            switch (m.Kind())
+            {
+                case SyntaxKind.StaticKeyword: result.Add("static"); break;
+                case SyntaxKind.PartialKeyword: result.Add("partial"); break;
+                case SyntaxKind.SealedKeyword: result.Add("sealed"); break;
+                case SyntaxKind.AbstractKeyword: result.Add("abstract"); break;
+                case SyntaxKind.ReadOnlyKeyword: result.Add("readonly"); break;
+            }
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<string> ExtractMemberModifiers(SyntaxTokenList modifiers, bool isAsync)
+    {
+        var result = new List<string>();
+        foreach (var m in modifiers)
+        {
+            switch (m.Kind())
+            {
+                case SyntaxKind.StaticKeyword: result.Add("static"); break;
+                case SyntaxKind.VirtualKeyword: result.Add("virtual"); break;
+                case SyntaxKind.OverrideKeyword: result.Add("override"); break;
+                case SyntaxKind.AbstractKeyword: result.Add("abstract"); break;
+                case SyntaxKind.SealedKeyword: result.Add("sealed"); break;
+                case SyntaxKind.ReadOnlyKeyword: result.Add("readonly"); break;
+                case SyntaxKind.ConstKeyword: result.Add("const"); break;
+                case SyntaxKind.NewKeyword: result.Add("new"); break;
+                case SyntaxKind.ExternKeyword: result.Add("extern"); break;
+                case SyntaxKind.VolatileKeyword: result.Add("volatile"); break;
+            }
+        }
+        // async is detected separately (not always in modifiers list for some syntax forms)
+        if (isAsync && !result.Contains("async"))
+            result.Add("async");
+        return result;
+    }
+
+    private static string? ExtractSummary(SyntaxNode node)
+    {
+        var trivia = node.GetLeadingTrivia()
+            .FirstOrDefault(t => t.IsKind(SyntaxKind.SingleLineDocumentationCommentTrivia)
+                              || t.IsKind(SyntaxKind.MultiLineDocumentationCommentTrivia));
+
+        if (trivia == default)
+            return null;
+
+        var structure = trivia.GetStructure();
+        if (structure is null)
+            return null;
+
+        var summaryElement = structure.DescendantNodes()
+            .OfType<XmlElementSyntax>()
+            .FirstOrDefault(e => e.StartTag.Name.ToString() == "summary");
+
+        if (summaryElement is null)
+            return null;
+
+        // Extract text content from the summary element
+        var textParts = summaryElement.Content
+            .OfType<XmlTextSyntax>()
+            .SelectMany(t => t.TextTokens)
+            .Select(t => t.ValueText.Trim())
+            .Where(s => !string.IsNullOrWhiteSpace(s));
+
+        var text = string.Join(" ", textParts).Trim();
+
+        // Collapse multiple whitespace to single space
+        text = Regex.Replace(text, @"\s+", " ");
+
+        return string.IsNullOrWhiteSpace(text) ? null : text;
     }
 }

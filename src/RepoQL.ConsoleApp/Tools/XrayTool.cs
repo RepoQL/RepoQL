@@ -114,7 +114,7 @@ internal sealed class XrayTool(
         3. tokenBudget=2000, intent=examine, scope=file:///src/Auth/**, keywords="JWT validation" → Read the code
 
         Quick references:
-        - What docs exist? → intent=explore, scope=docs://**
+        - What docs exist? → intent=explore, scope=repoql-docs://**
         - Understand architecture → intent=explore, scope=file:///src/**, keywords="How is this organized?"
         - Find a feature → intent=find, keywords="Where is caching implemented?"
         - Debug specific code → intent=examine, scope=file:///path/to/file.cs, keywords="error handling"

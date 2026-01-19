@@ -49,7 +49,7 @@ file:///
 //BOUNDARY: Input must be JSON array of URI strings. Empty array returns empty string.
 
 **Depth**
-- Groups URIs by scheme (file:///, docs:///, etc.)
+- Groups URIs by scheme (file:///, repoql-docs:///, etc.)
 - Sorts alphabetically, directories before files
 - Uses box-drawing characters for tree structure
 
@@ -152,11 +152,11 @@ Trees with multiple URI schemes show each scheme as a top-level branch.
 
 **Example**
 ```sql
-SELECT tree((SELECT json_group_array(uri) FROM Files WHERE uri LIKE 'file://%' OR uri LIKE 'docs://%'));
+SELECT tree((SELECT json_group_array(uri) FROM Files WHERE uri LIKE 'file://%' OR uri LIKE 'repoql-docs://%'));
 ```
 Output:
 ```
-docs:///
+repoql-docs:///
 ├── quickstart.md
 └── repoql/
     └── tools/

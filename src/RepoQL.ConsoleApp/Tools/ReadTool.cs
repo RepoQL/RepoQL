@@ -57,7 +57,7 @@ internal sealed class ReadTool(
         Use read when you KNOW the URI; use xray when you need to FIND it.
         **Example**
         + read("file:///src/Auth.cs", 2000)           -> you know the file
-        + read("docs:///quickstart.md // How?", 1500) -> known doc, specific question
+        + read("repoql-docs:///quickstart.md // How?", 1500) -> known doc, specific question
         - read("file:///src/**/*.cs", 50000)          -> too broad, use xray explore
         **Depth**
         - xray: discover what exists, find by concept, understand architecture
@@ -109,7 +109,7 @@ internal sealed class ReadTool(
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> ReadAsync(
-        [Description("URI or glob pattern (e.g., file:///path, docs:///file.md). Append ' // <question>' for LLM synthesis.")]
+        [Description("URI or glob pattern (e.g., file:///path, repoql-docs:///file.md). Append ' // <question>' for LLM synthesis.")]
         string uri,
         [Description("Token budget - determines representation depth (full/structure/headline)")]
         int tokenBudget,

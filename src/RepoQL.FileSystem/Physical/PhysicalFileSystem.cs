@@ -10,7 +10,7 @@ namespace RepoQL.FileSystem.Physical;
 /// <summary>
 /// A repository-backed content store with canonical URIs. By default it emits <c>file:///rel/path</c> URIs but the
 /// constructor allows overriding scheme/authority/path prefixes so the same implementation can project directories as
-/// <c>docs:///...</c>, <c>github://owner/repo/... </c>, etc.
+/// <c>repoql-docs:///...</c>, <c>github://owner/repo/... </c>, etc.
 /// </summary>
 /// <remarks>Create a repository store backed by <paramref name="rootPath"/>.</remarks>
 public sealed class PhysicalFileSystem(

@@ -1244,7 +1244,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     JOIN node d ON d.id = s.document_id
                     JOIN artifact a ON a.id = d.artifact_id
                     WHERE (matches_glob(n.uri, '{escapedGlob}', default_scheme := 'file:///')
-                           OR matches_glob(n.uri, '{escapedGlob}', default_scheme := 'docs:///'))
+                           OR matches_glob(n.uri, '{escapedGlob}', default_scheme := 'repoql-docs:///'))
                     ORDER BY n.uri
                     LIMIT 100
                     """;
@@ -1263,7 +1263,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     JOIN artifact a ON a.id = n.artifact_id
                     WHERE n.kind = 'document'
                       AND (matches_glob(n.uri, '{escapedGlob}', default_scheme := 'file:///')
-                           OR matches_glob(n.uri, '{escapedGlob}', default_scheme := 'docs:///'))
+                           OR matches_glob(n.uri, '{escapedGlob}', default_scheme := 'repoql-docs:///'))
                     ORDER BY n.uri
                     LIMIT 100
                     """;

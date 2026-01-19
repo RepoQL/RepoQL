@@ -7,7 +7,7 @@ categories: ["Reference[100%]"]
 
 # SQL Reference
 
-Macros and UDFs for the query tool. Use `docs:///quickstart.md` for SQL patterns; this covers function signatures.
+Macros and UDFs for the query tool. Use `repoql-docs:///quickstart.md` for SQL patterns; this covers function signatures.
 
 ---
 
@@ -368,7 +368,7 @@ WHERE scope = 'object' AND kind LIKE '%class%';
 
 ## See Also
 
-- `docs:///quickstart.md` - SQL patterns and capsules
-- `docs:///advanced-search.md` - Search scoring details
-- `docs:///formats/csharp.md` - C# specific views and queries
-- `docs:///formats/markdown.md` - Markdown specific views
+- `repoql-docs:///quickstart.md` - SQL patterns and capsules
+- `repoql-docs:///advanced-search.md` - Search scoring details
+- `repoql-docs:///formats/csharp.md` - C# specific views and queries
+- `repoql-docs:///formats/markdown.md` - Markdown specific views

@@ -113,6 +113,8 @@ internal sealed record CSharpNamespaceInfo(
 /// <param name="BaseType">The base type name, if any.</param>
 /// <param name="Interfaces">The list of implemented interface names.</param>
 /// <param name="Span">The location of this type in the document.</param>
+/// <param name="Modifiers">The list of type modifiers (static, partial, sealed, abstract, readonly).</param>
+/// <param name="Summary">The extracted XML doc comment summary, if available.</param>
 /// <param name="SymbolKey">The Roslyn symbol key for semantic lookups, if available.</param>
 internal sealed record CSharpTypeInfo(
     Guid NodeId,
@@ -130,6 +132,8 @@ internal sealed record CSharpTypeInfo(
     string? BaseType,
     IReadOnlyList<string> Interfaces,
     DocumentSpan Span,
+    IReadOnlyList<string> Modifiers,
+    string? Summary = null,
     string? SymbolKey = null);
 
 /// <summary>
@@ -147,6 +151,8 @@ internal sealed record CSharpTypeInfo(
 /// <param name="DeclaringTypeDisplay">Display name of the declaring type.</param>
 /// <param name="Parameters">The list of parameters for methods and constructors.</param>
 /// <param name="Span">The location of this member in the document.</param>
+/// <param name="Modifiers">The list of member modifiers (static, async, virtual, override, etc.).</param>
+/// <param name="Summary">The extracted XML doc comment summary, if available.</param>
 /// <param name="SymbolKey">The Roslyn symbol key for semantic lookups, if available.</param>
 internal sealed record CSharpMemberInfo(
     Guid NodeId,
@@ -161,6 +167,8 @@ internal sealed record CSharpMemberInfo(
     string? DeclaringTypeDisplay,
     IReadOnlyList<CSharpParameterInfo> Parameters,
     DocumentSpan Span,
+    IReadOnlyList<string> Modifiers,
+    string? Summary = null,
     string? SymbolKey = null);
 
 /// <summary>

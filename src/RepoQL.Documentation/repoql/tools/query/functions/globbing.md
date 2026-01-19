@@ -106,7 +106,7 @@ Semicolon joins multiple patterns; URI matches if ANY positive pattern matches.
 SELECT * FROM glob_files('src/**;lib/**;tools/**');
 
 -- Mixed schemes
-SELECT * FROM glob_files('file:///src/**;docs:///**');
+SELECT * FROM glob_files('file:///src/**;repoql-docs:///**');
 ```
 
 **Depth**

@@ -508,7 +508,7 @@ message XrayIndexerStatus {
 // ----- Read: token-budget-aware content retrieval -----
 
 message ReadRequest {
-  // URI or glob pattern (e.g., file:///path, docs:///file.md, file:///**/*.cs).
+  // URI or glob pattern (e.g., file:///path, repoql-docs:///file.md, file:///**/*.cs).
   // Append ' // <question>' for LLM synthesis via xray Understand.
   string uri = 1;
   // Token budget - determines representation depth (full/structure/headline).

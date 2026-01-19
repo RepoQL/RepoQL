@@ -3,7 +3,7 @@ using RepoQL.Contracts;
 namespace RepoQL.Indexing.FileSystems.Imports;
 
 /// <summary>
-/// Strategy interface for translating an arbitrary URI (github://, docs://, future providers) into a mounted
+/// Strategy interface for translating an arbitrary URI (github://, repoql-docs://, future providers) into a mounted
 /// <see cref="CompositeFileSystemMount"/>. Importers resolve/download the backing content and hand the manager a mount
 /// that the engine can consume immediately.
 /// </summary>

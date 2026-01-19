@@ -12,7 +12,7 @@ Capsules are the ideal format for encoding concepts:
 - Depth clarifies without changing the idea
 - Boundary prevents unsafe extrapolation
 
-For concept-heavy knowledge skills, use capsule format throughout. See `docs:///guidance/writing-and-documentation/writing-capsules.md` for full specification.
+For concept-heavy knowledge skills, use capsule format throughout. See `repoql-docs:///guidance/writing-and-documentation/writing-capsules.md` for full specification.
 
 ---
 
@@ -38,7 +38,7 @@ A reference entry uses consistent sections so readers can scan predictably.
 - Pattern from mermaid-diagram-guide.md
 - Consistency enables scanning; variation forces reading
 - Not all sections required - use what serves the content
-- SeeAlso: `docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md`
+- SeeAlso: `repoql-docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md`
 
 ---
 
@@ -86,9 +86,9 @@ Most knowledge skills blend these. Lead with mental model, then choose structure
 
 ## Exemplars
 
-**For concepts:** `docs:///guidance/writing-and-documentation/writing-capsules.md` — capsule format demonstrating capsule format.
+**For concepts:** `repoql-docs:///guidance/writing-and-documentation/writing-capsules.md` — capsule format demonstrating capsule format.
 
-**For reference material:** `docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md` — mental model first, decision tests, structured entries, examples that tell the right story, details that ARE the source of truth.
+**For reference material:** `repoql-docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md` — mental model first, decision tests, structured entries, examples that tell the right story, details that ARE the source of truth.
 
 ---
 

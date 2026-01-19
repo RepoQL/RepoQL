@@ -41,12 +41,12 @@ xray intent=Understand keywords="How does JWT validation work?" tokenBudget=2000
 ```
 
 **Key parameters:**
-- `scope`: Glob pattern (`file:///src/**/*.cs`, `docs:///**`)
+- `scope`: Glob pattern (`file:///src/**/*.cs`, `repoql-docs:///**`)
 - `keywords`: Search terms (questions work best for Understand)
 - `boost`: Regex to elevate matches (`(?i)service|handler`)
 - `penalize`: Regex to demote (`(?i)test|mock`)
 
-See `docs:///repoql/tools/xray/using-xray.md` for details.
+See `repoql-docs:///repoql/tools/xray/using-xray.md` for details.
 
 ---
 
@@ -68,7 +68,7 @@ read("file:///src/Auth.cs // How does auth work?", 2000) -- LLM synthesis
 - Budget < full cost → structure
 - Budget >= full cost → complete content
 
-See `docs:///repoql/tools/read/read-command.md` for details.
+See `repoql-docs:///repoql/tools/read/read-command.md` for details.
 
 ---
 
@@ -101,7 +101,7 @@ SELECT target_uri, severity, message FROM Annotations WHERE severity = 'error';
 | `Functions` | Methods, constructors | name, signature, declaring_type |
 | `Annotations` | Lint errors, warnings | severity, message, target_uri |
 
-See `docs:///repoql/tools/query/views/files.md`, `types.md`, `functions.md`, `annotations.md`.
+See `repoql-docs:///repoql/tools/query/views/files.md`, `types.md`, `functions.md`, `annotations.md`.
 
 ### Search
 
@@ -121,7 +121,7 @@ FROM search('error handling', k := 5) s,
 WHERE sn.is_focus;
 ```
 
-See `docs:///repoql/tools/query/functions/search.md`.
+See `repoql-docs:///repoql/tools/query/functions/search.md`.
 
 ---
 
@@ -141,9 +141,9 @@ Five tables underpin everything:
 - `file:///src/auth.cs` - whole file
 - `file:///src/auth.cs#line=42,50` - line range
 - `file:///src/auth.cs#symbol=AuthService.Validate` - symbol
-- `docs:///quickstart.md` - embedded documentation
+- `repoql-docs:///quickstart.md` - embedded documentation
 
-See `docs:///repoql/tools/query/core-tables.md`.
+See `repoql-docs:///repoql/tools/query/core-tables.md`.
 
 ---
 
@@ -151,19 +151,19 @@ See `docs:///repoql/tools/query/core-tables.md`.
 
 Each file format has specialized macros and views:
 
-### C# (`docs:///repoql/tools/query/formats/csharp.md`)
+### C# (`repoql-docs:///repoql/tools/query/formats/csharp.md`)
 ```sql
 SELECT * FROM csharp_types WHERE kind = 'class';
 SELECT * FROM csharp_members WHERE kind = 'method';
 ```
 
-### Markdown (`docs:///repoql/tools/query/formats/markdown.md`)
+### Markdown (`repoql-docs:///repoql/tools/query/formats/markdown.md`)
 ```sql
 SELECT document_uri, level, text FROM markdown_headings;
 SELECT document_uri, href, link_text FROM markdown_links;
 ```
 
-### Excel (`docs:///repoql/tools/query/formats/xlsx.md`)
+### Excel (`repoql-docs:///repoql/tools/query/formats/xlsx.md`)
 ```sql
 SELECT * FROM xlsx('file:///data/expenses.xlsx');
 SELECT * FROM xlsx_sheets('file:///data/workbook.xlsx');
@@ -220,7 +220,7 @@ For complex analysis via the query tool:
 | Top-N per group | `QUALIFY row_number() OVER(...) <= n` |
 | Exclude columns | `SELECT * EXCLUDE (large_column)` |
 
-See `docs:///repoql/tools/query/sql-reference.md` for full reference.
+See `repoql-docs:///repoql/tools/query/sql-reference.md` for full reference.
 
 ---
 
@@ -228,21 +228,21 @@ See `docs:///repoql/tools/query/sql-reference.md` for full reference.
 
 | Topic | URI |
 |-------|-----|
-| This quickstart | `docs:///quickstart.md` |
-| xray tool | `docs:///repoql/tools/xray/using-xray.md` |
-| read tool | `docs:///repoql/tools/read/read-command.md` |
-| search function | `docs:///repoql/tools/query/functions/search.md` |
-| Core tables | `docs:///repoql/tools/query/core-tables.md` |
-| Files view | `docs:///repoql/tools/query/views/files.md` |
-| Types view | `docs:///repoql/tools/query/views/types.md` |
-| Functions view | `docs:///repoql/tools/query/views/functions.md` |
-| Annotations view | `docs:///repoql/tools/query/views/annotations.md` |
-| SQL reference | `docs:///repoql/tools/query/sql-reference.md` |
-| C# format | `docs:///repoql/tools/query/formats/csharp.md` |
-| Markdown format | `docs:///repoql/tools/query/formats/markdown.md` |
-| Excel format | `docs:///repoql/tools/query/formats/xlsx.md` |
+| This quickstart | `repoql-docs:///quickstart.md` |
+| xray tool | `repoql-docs:///repoql/tools/xray/using-xray.md` |
+| read tool | `repoql-docs:///repoql/tools/read/read-command.md` |
+| search function | `repoql-docs:///repoql/tools/query/functions/search.md` |
+| Core tables | `repoql-docs:///repoql/tools/query/core-tables.md` |
+| Files view | `repoql-docs:///repoql/tools/query/views/files.md` |
+| Types view | `repoql-docs:///repoql/tools/query/views/types.md` |
+| Functions view | `repoql-docs:///repoql/tools/query/views/functions.md` |
+| Annotations view | `repoql-docs:///repoql/tools/query/views/annotations.md` |
+| SQL reference | `repoql-docs:///repoql/tools/query/sql-reference.md` |
+| C# format | `repoql-docs:///repoql/tools/query/formats/csharp.md` |
+| Markdown format | `repoql-docs:///repoql/tools/query/formats/markdown.md` |
+| Excel format | `repoql-docs:///repoql/tools/query/formats/xlsx.md` |
 
 **Explore docs:**
 ```
-xray intent=Explore scope="docs:///**" tokenBudget=2000
+xray intent=Explore scope="repoql-docs:///**" tokenBudget=2000
 ```

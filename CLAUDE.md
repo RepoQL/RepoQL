@@ -76,7 +76,7 @@ Everything is a **node**; relationships are **edge**s; locations are **span**s; 
 **RepoURI** addresses everything precisely:
 - `file:///src/Foo.cs#line=42` - Line in file
 - `file:///src/Foo.cs#symbol=Bar.Baz` - Symbol location
-- `docs:///quickstart.md` - Embedded documentation
+- `repoql-docs:///quickstart.md` - Embedded documentation
 
 ### Virtual File System
 
@@ -85,7 +85,7 @@ Multiple URI schemes unified under single interface:
 | Scheme | Source | Notes |
 |--------|--------|-------|
 | `file://` | Physical disk | Primary content |
-| `docs://` | Embedded resources | RepoQL's own docs, queryable |
+| `repoql-docs://` | Embedded resources | RepoQL's own docs, queryable |
 | `github://owner/repo` | Imported repos | Via `import` tool |
 
 **Implication**: Cross-scheme queries work seamlessly. Query embedded docs alongside code.
@@ -117,7 +117,7 @@ CLI and MCP server share the same core. Use CLI for local debugging/reindexing; 
 | Gotcha | Explanation |
 |--------|-------------|
 | Tests prefer `dotnet run` over `dotnet test` | TUnit uses Microsoft.Testing.Platform; `dotnet run` gives cleaner filtering syntax |
-| Embedded docs are queryable | `docs:///quickstart.md` lives in database. Query: `SELECT * FROM node WHERE uri LIKE 'docs://%'` |
+| Embedded docs are queryable | `repoql-docs:///quickstart.md` lives in database. Query: `SELECT * FROM node WHERE uri LIKE 'repoql-docs://%'` |
 | Don't read files to understand structure | X-ray summaries (`headline`, `summary`, `structure` on `artifact`) are pre-computed |
 | Spans: 1-based lines, 0-based chars | `#line=42` = line 42 (inclusive). `#char=100,150` = bytes [100,150) |
 | Mocking uses FakeItEasy | `A.Fake<T>()`, `A.CallTo(() => fake.Method(A<string>._)).Returns(...)` |

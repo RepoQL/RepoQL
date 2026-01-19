@@ -261,9 +261,9 @@ internal class UriPatternMatcherTests
     }
 
     [Test]
-    public void DocsScheme_Supported()
+    public void RepoqlDocsScheme_Supported()
     {
-        var result = UriPatternMatcher.Matches("docs:///quickstart.md", "docs:///quickstart.md");
+        var result = UriPatternMatcher.Matches("repoql-docs:///quickstart.md", "repoql-docs:///quickstart.md");
         result.Should().BeTrue();
     }
 

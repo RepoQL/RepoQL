@@ -21,7 +21,7 @@ public class TreeUdf
     /// <summary>
     /// Formats a list of URIs as an ASCII tree grouped by scheme with folder counts.
     /// </summary>
-    /// <param name="urisJson">JSON array of URI strings, e.g. ["file:///src/a.cs", "docs:///readme.md"]</param>
+    /// <param name="urisJson">JSON array of URI strings, e.g. ["file:///src/a.cs", "repoql-docs:///readme.md"]</param>
     /// <param name="foldersOnly">If true, shows only folders with file type counts (e.g., "src/ (3 cs, 2 json)")</param>
     /// <returns>ASCII tree string with box-drawing characters</returns>
     [ScalarUdf("_tree_internal", MacroName = "tree", IsPure = true,

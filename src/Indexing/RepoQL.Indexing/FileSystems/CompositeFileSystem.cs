@@ -15,7 +15,7 @@ namespace RepoQL.Indexing.FileSystems;
 /// The type itself is intentionally stateful but dumb: it knows how to route URIs, enumerate files, and fan-out
 /// watchers. Mount lifecycle is coordinated by <see cref="ICompositeFileSystemManager"/>, which owns a single
 /// instance of this composite and calls into <see cref="AddOrUpdateMount"/> / <see cref="RemoveMount"/> when the
-/// application adds default mounts (repo root, docs://) or dynamic imports (e.g., github://&lt;repo&gt;).
+/// application adds default mounts (repo root, repoql-docs://) or dynamic imports (e.g., github://&lt;repo&gt;).
 /// </para>
 /// </summary>
 public sealed class CompositeFileSystem : IMultiFileSystem
