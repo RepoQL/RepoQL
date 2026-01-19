@@ -1,4 +1,7 @@
-CREATE VIEW IF NOT EXISTS csharp_namespaces AS
+-- C# structural views for querying types and members
+-- These views expose indexed C# entities with strongly-typed columns
+
+CREATE OR REPLACE VIEW csharp_namespaces AS
 SELECT
     ns.id                AS namespace_id,
     doc.uri              AS document_uri,
@@ -12,17 +15,18 @@ LEFT JOIN span AS s ON s.id = ns.span_id
 LEFT JOIN node AS doc ON doc.id = s.document_id
 WHERE ns.kind = 'csharp.namespace';
 
-CREATE VIEW IF NOT EXISTS csharp_types AS
+CREATE OR REPLACE VIEW csharp_types AS
 SELECT
     t.id                       AS type_id,
     doc.uri                    AS document_uri,
     t.properties->>'qualified_name' AS qualified_name,
     t.properties->>'name'           AS name,
-    t.properties->>'kind'           AS kind,
+    TRY_CAST(t.properties->>'kind' AS csharp_type_kind) AS kind,
     t.properties->>'namespace'      AS namespace,
-    t.properties->>'accessibility'  AS accessibility,
-    t.properties->>'base_type'      AS base_type,
-    t.properties->'interfaces'      AS interfaces,
+    TRY_CAST(t.properties->>'accessibility' AS csharp_accessibility) AS accessibility,
+    t.properties->>'extends'        AS extends,
+    json_extract(t.properties, '$.implements') AS implements,
+    json_extract(t.properties, '$.modifiers')  AS modifiers,
     TRY_CAST(t.properties->>'is_partial' AS BOOLEAN) AS is_partial,
     TRY_CAST(t.properties->>'is_static' AS BOOLEAN)  AS is_static,
     TRY_CAST(t.properties->>'is_record' AS BOOLEAN)  AS is_record,
@@ -33,7 +37,7 @@ LEFT JOIN span AS s ON s.id = t.span_id
 LEFT JOIN node AS doc ON doc.id = s.document_id
 WHERE t.kind = 'csharp.type';
 
-CREATE VIEW IF NOT EXISTS csharp_members AS
+CREATE OR REPLACE VIEW csharp_members AS
 WITH parent_types AS (
     SELECT
         e.destination_node_id AS member_id,
@@ -47,12 +51,13 @@ SELECT
     t.id                      AS declaring_type_id,
     t.properties->>'qualified_name' AS declaring_type,
     m.properties->>'name'          AS name,
-    m.properties->>'kind'          AS kind,
-    m.properties->>'accessibility' AS accessibility,
+    TRY_CAST(m.properties->>'kind' AS csharp_member_kind) AS kind,
+    TRY_CAST(m.properties->>'accessibility' AS csharp_accessibility) AS accessibility,
+    json_extract(m.properties, '$.modifiers') AS modifiers,
     TRY_CAST(m.properties->>'is_static' AS BOOLEAN) AS is_static,
     TRY_CAST(m.properties->>'is_async' AS BOOLEAN)  AS is_async,
     m.properties->>'return_type'   AS return_type,
-    m.properties->'parameters'     AS parameters,
+    json_extract(m.properties, '$.parameters') AS parameters,
     m.span_id,
     m.properties AS properties
 FROM node AS m

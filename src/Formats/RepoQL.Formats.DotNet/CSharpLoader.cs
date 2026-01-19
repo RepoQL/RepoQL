@@ -51,6 +51,9 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
         documentationMode: DocumentationMode.Parse,
         kind: SourceCodeKind.Regular);
 
+    private static readonly Lazy<string> CSharpEnumsSql = new(
+        () => ReadEmbeddedResource("RepoQL.Formats.DotNet.Schema.csharp_enums.sql"));
+
     private static readonly Lazy<string> CSharpViewsSql = new(
         () => ReadEmbeddedResource("RepoQL.Formats.DotNet.Schema.csharp_views.sql"));
 
@@ -338,6 +341,13 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                     ["is_static"] = type.IsStatic,
                     ["is_record"] = type.IsRecord
                 };
+                if (type.Modifiers.Count > 0)
+                {
+                    var modifiersArr = new JsonArray();
+                    foreach (var mod in type.Modifiers)
+                        modifiersArr.Add((JsonNode?)JsonValue.Create(mod));
+                    typeProps["modifiers"] = modifiersArr;
+                }
                 if (!string.IsNullOrWhiteSpace(type.BaseType))
                     typeProps["extends"] = type.BaseType;
                 if (type.Interfaces.Count > 0)
@@ -384,6 +394,13 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
                     ["return_type"] = member.ReturnType ?? string.Empty,
                     ["declaring_type"] = member.DeclaringTypeDisplay ?? string.Empty
                 };
+                if (member.Modifiers.Count > 0)
+                {
+                    var modifiersArr = new JsonArray();
+                    foreach (var mod in member.Modifiers)
+                        modifiersArr.Add((JsonNode?)JsonValue.Create(mod));
+                    memberProps["modifiers"] = modifiersArr;
+                }
 
                 if (member.Parameters.Count > 0)
                 {
@@ -605,6 +622,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
     /// </remarks>
     public IEnumerable<FormatSqlScript> GetSchemaScripts()
     {
+        yield return new FormatSqlScript("csharp_enums", CSharpEnumsSql.Value);
         yield return new FormatSqlScript("csharp_views", CSharpViewsSql.Value);
     }
 

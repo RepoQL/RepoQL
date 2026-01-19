@@ -607,8 +607,40 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         DateTime dt => Value.ForString(dt.ToString("O")),
         Guid g => Value.ForString(g.ToString()),
         byte[] bytes => Value.ForString(Convert.ToBase64String(bytes)),
+        // Handle DuckDB collections from read_json_auto - use native protobuf types
+        System.Collections.IList list => ToProtoListValue(list),
+        System.Collections.IDictionary dict => Value.ForStruct(ToProtoStruct(dict)),
         _ => Value.ForString(value.ToString() ?? string.Empty)
     };
+
+    /// <summary>
+    /// Convert a collection to protobuf ListValue.
+    /// Used for DuckDB arrays from read_json_auto.
+    /// </summary>
+    private static Value ToProtoListValue(System.Collections.IList list)
+    {
+        var listValue = new ListValue();
+        foreach (var item in list)
+        {
+            listValue.Values.Add(ToProtoValue(item));
+        }
+        return new Value { ListValue = listValue };
+    }
+
+    /// <summary>
+    /// Convert a dictionary to protobuf Struct.
+    /// Used for DuckDB structs from read_json_auto.
+    /// </summary>
+    private static Struct ToProtoStruct(System.Collections.IDictionary dict)
+    {
+        var protoStruct = new Struct();
+        foreach (System.Collections.DictionaryEntry entry in dict)
+        {
+            var key = entry.Key?.ToString() ?? "";
+            protoStruct.Fields[key] = ToProtoValue(entry.Value);
+        }
+        return protoStruct;
+    }
 
     private static string InferDbType(object? sample)
     {

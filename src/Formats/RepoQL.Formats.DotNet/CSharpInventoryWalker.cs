@@ -265,6 +265,7 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
             DeclaringTypeDisplay: declaring.QualifiedName,
             Parameters: Array.Empty<CSharpParameterInfo>(),
             Span: span,
+            Modifiers: ExtractMemberModifiers(modifiers, false),
             Summary: summary);
         Members.Add(memberInfo);
         _memberDeclarations[memberId] = variable;
@@ -291,6 +292,7 @@ internal sealed class CSharpInventoryWalker : CSharpSyntaxWalker
             DeclaringTypeDisplay: declaring.QualifiedName,
             Parameters: BuildParameters(parameterList),
             Span: span,
+            Modifiers: ExtractMemberModifiers(modifiers, isAsync),
             Summary: ExtractSummary(node));
         Members.Add(memberInfo);
         _memberDeclarations[memberId] = node;
