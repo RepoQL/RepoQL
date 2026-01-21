@@ -1,319 +1,253 @@
 ---
 name: writing-documents
-description: Guides effective documentation creation. Use when writing new documents, improving existing docs, or reviewing documentation quality. Activates existing guidance based on document purpose. Prevents cascading harm from wrong information.
-tags: [documentation, writing, skill, constraints, quality]
+description: Guides effective documentation creation. Activates relevant guidance for gestalt, reference, research, design, plan, flow, findings, concepts, or process documents. Prevents cascading harm from wrong information.
+tags: [documentation, writing, skill, quality]
 zones: { constraint: 40, knowledge: 30, wisdom: 25, process: 5 }
 ---
 
 # Writing Documents
 
-Every document written becomes context for future agents. Wrong information compounds—one fabricated fact becomes gospel. Prevent harm first, enable quality second.
+Wrong information is worse than missing information. One fabricated fact becomes gospel for every future agent. Prevent harm first, enable quality second.
 
 ---
 
-## Before Writing: Two Assessments
+## What Kind of Document?
 
-Both must be completed and recorded in YAML frontmatter before writing begins.
+| If the reader wants to... | Write a... | Key insight |
+|---------------------------|------------|-------------|
+| Understand something | **gestalt** | Essential essence, not everything |
+| Look something up | **reference** | Data in CSV, guidance in markdown |
+| Inform a decision | **research** | Synthesis without prescription |
+| Know how to build it | **design** | "Yep, that will work" before code |
+| Know what to build next | **plan** | Reviewed by humans, implemented by agents |
+| See a process end-to-end | **flow** | Stages, actors, handoffs |
+| Get a question answered | **findings** | Answer before evidence |
+| Carry wisdom forward | **concepts** | Capsule format |
+| Follow a procedure | **process** | High-agency (outcomes) or low-agency (steps) |
 
-### Document Frontmatter
+Each type has guidance in `references/{type}/`. Read it before writing.
 
-All documents require:
+---
+
+## Before Writing
+
+### Audience and Purpose
 
 ```yaml
 ---
-description: One sentence explaining what this document is and why it exists
-tags: [searchable, terms, for, discovery]
-audience: { human: 70, agent: 40 }
-purpose: { gestalt: 60, concepts: 0, reference: 20, research: 0, findings: 0, flow: 0, plan: 0, design: 0, high-agency-process: 15, low-agency-process: 5 }
+description: One sentence - what this is and why it exists
+tags: [searchable, terms]
+audience: { human: 60, agent: 40 }
+purpose: { gestalt: 0, reference: 0, research: 0, design: 0, plan: 0, flow: 0, findings: 0, concepts: 0, high-agency-process: 0, low-agency-process: 0 }
 ---
 ```
 
-### Assessment 1: Audience
+Distribute 100 points for audience and 100 for purpose. Dominant purpose determines which guidance to follow.
 
-Score each independently (0-100). Be honest - some files will never be read by humans.
+**Required**: Read at least your dominant audience guide before writing. Read both if blended.
+- `references/audiences/agent.md`
+- `references/audiences/human.md`
 
-| Audience | Score |
-|----------|-------|
-| human | 0-100 |
-| agent | 0-100 |
-
-SeeAlso: `references/human.md`, `references/agent.md`
-
-### Assessment 2: Purpose
-
-Distribute 100 points:
-
-| Purpose | Points | What Reader Wants |
-|---------|--------|-------------------|
-| gestalt | ___ | Condensed understanding of how something works and relates to wider context. High understanding, low detail. |
-| concepts | ___ | Experience crystallized into wisdom. Things that fit nicely into capsules. Mental models. |
-| reference | ___ | Store of knowledge or facts. Makes finding or understanding things easier. |
-| research | ___ | Information to make well-informed decisions later. Pure knowledge transfer, NO conclusions or next steps. |
-| findings | ___ | Answer a question effectively and comprehensively. |
-| flow | ___ | High-level steps of how a thing happens. Understanding what needs to occur to achieve a goal. |
-| plan | ___ | What will be done and in what order. Alignment on approach before execution. |
-| design | ___ | How something should be built. Architectural decisions, structure, trade-offs. |
-| high-agency-process | ___ | Generalizable guidance that leaves space for judgment calls. |
-| low-agency-process | ___ | Formalized steps to effectively achieve a specific goal. |
-| **Total** | **100** | |
-
----
-
-## Constraints: Hard Rules
-
-These prevent harm. Violations compound across every future agent.
-
-### Rule 1: Only Record What You Can Verify
-
-Evidence hierarchy (prefer higher):
-1. 📄 Code — Directly observed in source
-2. 📚 Docs — Stated in existing documentation
-3. 🧠 Synthesis — Derived from multiple verified sources
-4. 👤 User — Confirmed by domain expert
-5. 💭 Intuition — Inferred from patterns (mark as low confidence)
-
-### Rule 2: When in Doubt, Omit
-
-- **Wrong information** → Incorrect decisions, breaking changes
-- **Missing information** → Extra research time, clarification
-
-Missing is recoverable. Wrong is destructive.
-
-### Anti-Patterns
-
-| Pattern | Problem | Instead |
-|---------|---------|---------|
-| Timestamps | Git tracks this; becomes misleading | Omit |
-| "Currently" | Will become false | State the pattern |
-| "Planned for" | Plans change | Document what IS |
-| Quarterly data | Stale immediately | Omit or mark point-in-time |
-| Unverified claims | Compound as gospel | Verify or omit |
-| Speculation about intent | Often wrong | Describe what exists |
-| Estimates | Always wrong | Omit |
-
-### Honest Incompleteness
-
-```markdown
-🚧 **STUB** - Limited context, needs domain expert input
-```
-
-Better to mark gaps than to fabricate.
-
----
-
-## Purpose Capsules
-
-### Capsule: GestaltDoc
-
-**Invariant**
-Condense understanding of how something works and fits into wider context.
-
-**Example**
-Service gestalt explains what it does, key patterns, dependencies, and pointers to depth.
-//BOUNDARY: High understanding, low detail. Not a reference or how-to.
-
-**Depth**
-- Purpose upfront, three concepts that matter
-- Decision tables, progressive disclosure via links
-- SeeAlso: `writing-gestalt-documents.md`
-
-### Capsule: ConceptDoc
-
-**Invariant**
-Crystallize experience into transferable mental models using capsule format.
-
-**Example**
-Wrong information is worse than missing information. Captures truth that reshapes behavior across contexts.
-//BOUNDARY: Must use capsule format. Cannot be done without reading full guidance.
-
-**Depth**
-- Invariant ≤30 tokens, Example, Boundary, Depth
-- Questions do the work; one screen maximum
-- SeeAlso: `writing-capsules.md` (MUST read in full)
-
-### Capsule: ReferenceDoc
-
-**Invariant**
-Store knowledge for lookup that would otherwise require extensive reading.
-
-**Example**
-Mermaid guide with When to Use, When NOT to Use, decision trees, copy-paste examples.
-//BOUNDARY: Structured entries, not prose. Not for understanding; use gestalt.
-
-**Depth**
-- When to Use and When NOT to Use equally important
-- Consistent entry structure throughout
-- Exemplar: `mermaid-diagram-guide.md`
-
-### Capsule: ResearchDoc
-
-**Invariant**
-Transfer knowledge for future decisions without conclusions or recommendations.
-
-**Example**
-Vendor comparison listing features, pricing, limitations. Reader synthesizes; document stays neutral.
-//BOUNDARY: No recommendations, no next steps, no opinion. Sources essential.
-
-**Depth**
-- Enables well-informed decisions later
-- Let the reader do the thinking
-
-### Capsule: FindingsDoc
-
-**Invariant**
-Answer a specific question comprehensively with grounded evidence.
-
-**Example**
-Question at top, answer front-loaded, sources as blockquotes near claims they support.
-//BOUNDARY: No speculation, no timelines, no unsolicited recommendations.
-
-**Depth**
-- Answers BEFORE diagrams and evidence
-- Effect, not just action: Sets X which stops email
-- SeeAlso: `references/findings.md`
-
-### Capsule: FlowDoc
-
-**Invariant**
-Describe high-level steps of how a thing happens for understanding, not instruction.
-
-**Example**
-SMS flow: User triggers, Queue, Rate limit, Provider, Delivery receipt, Status update.
-//BOUNDARY: Descriptive, not prescriptive. Use before design to find cross-cutting concerns.
-
-**Depth**
-- Sequence diagrams, flowcharts valuable
-- Identifies stages, actors, handoffs
-
-### Capsule: PlanDoc
-
-**Invariant**
-Specify what will be done and in what order for alignment before execution.
-
-**Example**
-Phase 1 Core messaging, Phase 2 Templates, Phase 3 Analytics. Goals, dependencies, milestones.
-//BOUNDARY: Actionable and specific. Granular but above code level. Evolves with work.
-
-**Depth**
-- Used after flow and design are understood
-- Makes architectural decisions actionable
-
-### Capsule: DesignDoc
-
-**Invariant**
-Document how something should be built with architectural decisions and rationale.
-
-**Example**
-SMS Service: Queue-based with provider abstraction. Trade-off noted: complexity vs vendor lock-in.
-//BOUNDARY: Problem, constraints, options, choice, trade-offs. Record of decisions.
-
-**Depth**
-- Shaped by concepts, flows, research
-- Reviewed against high-agency process guidance
-
-### Capsule: HighAgencyProcess
-
-**Invariant**
-Provide generalizable guidance that leaves space for judgment calls.
-
-**Example**
-Ensure the user understands the impact before proceeding. Outcome prescribed, method trusted.
-//BOUNDARY: Prescribe outcomes, not steps. Achieve X not Do A then B then C.
-
-**Depth**
-- Trust the agent to find the path
-- Used to guide research, review designs, shape plans
-
-### Capsule: LowAgencyProcess
-
-**Invariant**
-Formalize steps where order matters and skipping causes harm.
-
-**Example**
-Deployment: build, test, stage, approve, deploy. Skipping test breaks production.
-//BOUNDARY: Use only when skip or reorder causes harm. Otherwise use high-agency.
-
-**Depth**
-- Prerequisites, steps with verification, recovery paths, completion criteria
-- Test: Skip or reorder causes harm? Low-agency. Suboptimal? High-agency.
-
----
-
-## How Purposes Work Together
-
-Documents form an ecosystem. Example: building an SMS service.
+**Example**: Communication service documentation
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        UNDERSTANDING                            │
-├─────────────────────────────────────────────────────────────────┤
-│  high-agency-process ──→ informs HOW to do research             │
-│           │                                                     │
-│           ↓                                                     │
-│       research ──────────→ captured findings, vendor analysis   │
-│           │                                                     │
-│           ↓                                                     │
-│        flow ─────────────→ how SMS sending conceptually happens │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                          SHAPING                                │
-├─────────────────────────────────────────────────────────────────┤
-│  concepts ───────────────→ encode design goals and ethos        │
-│      +                                                          │
-│   flow + research ───────→ shape design documents               │
-│      +                                                          │
-│  high-agency-process ────→ review designs                       │
-│           │                                                     │
-│           ↓                                                     │
-│       design ────────────→ architectural decisions, trade-offs  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ↓
-┌─────────────────────────────────────────────────────────────────┐
-│                         EXECUTING                               │
-├─────────────────────────────────────────────────────────────────┤
-│  concepts + flows + designs + high-agency-process               │
-│           │                                                     │
-│           ↓                                                     │
-│        plan ─────────────→ granular specification (above code)  │
-│           │                                                     │
-│           ↓                                                     │
-│  low-agency-process ─────→ implement specific plan elements     │
-└─────────────────────────────────────────────────────────────────┘
-
-     findings ─────────────→ answer ad-hoc questions throughout
-     gestalt ──────────────→ orient newcomers at any stage
-     reference ────────────→ lookup facts when needed
+docs/communication/
+├── README.md                           # gestalt:90 reference:10        human:70 agent:30
+├── gestalt.md                          # gestalt:100                    agent:100  ← max info/token
+├── configuration.md                    # reference:85 low-agency:15     human:40 agent:60
+├── error-codes.md                      # reference:80 gestalt:20        human:60 agent:40
+├── error-codes.csv
+│
+├── research/
+│   ├── esp-comparison.md               # research:90 reference:10       human:50 agent:50
+│   ├── deliverability-factors.md       # research:70 concepts:30        human:40 agent:60
+│   └── inbox-placement-2024.md         # research:85 findings:15        human:60 agent:40
+│
+├── flows/
+│   ├── sending.md                      # flow:80 gestalt:20             human:70 agent:30
+│   ├── bounce-handling.md              # flow:85 reference:15           human:60 agent:40
+│   └── suppression.md                  # flow:70 reference:30           human:50 agent:50
+│
+├── designs/
+│   ├── architecture.md                 # design:75 gestalt:25           human:55 agent:45
+│   ├── batch-processor.md              # design:90 flow:10              human:45 agent:55
+│   └── adr/
+│       └── 001-ses-over-sendgrid.md    # design:60 research:40          human:70 agent:30
+│
+├── plans/
+│   └── rate-limiting.md                # plan:95 design:5               human:30 agent:70
+│
+├── runbooks/
+│   ├── incident-response.md            # low-agency:90 reference:10     human:80 agent:20
+│   └── ip-warmup.md                    # low-agency:70 research:30      human:60 agent:40
+│
+└── troubleshooting/
+    ├── gmail-rejections.md             # findings:70 reference:30       human:50 agent:50
+    └── debugging-templates.md          # reference:50 low-agency:50     human:65 agent:35
 ```
 
-**Key insight**: Documents support each other. A design doc without flow analysis misses cross-cutting concerns. A plan without design lacks architectural grounding. Research without process guidance produces inconsistent results.
+---
+
+## Hard Rules
+
+### Only Record What You Can Verify
+
+Evidence hierarchy:
+1. 📄 Code — directly observed
+2. 📚 Docs — stated in documentation
+3. 🧠 Synthesis — derived from verified sources
+4. 👤 User — confirmed by expert
+5. 💭 Intuition — feels right, but I can't prove it
+
+### When in Doubt, Omit
+
+Missing prompts research. Wrong causes bad decisions.
+
+### Never Write
+
+| Pattern | Problem |
+|---------|---------|
+| Timestamps | Git tracks; becomes misleading |
+| "Currently" | Will become false |
+| "Planned for" | Plans change |
+| Estimates | Always wrong |
+| Speculation about intent | Often wrong |
+
+Mark gaps honestly: `**STUB** - needs expert input`
 
 ---
 
-## Final Step: Rewrite as Whole
+## Purpose Guidance
 
-After completing a document:
+### Gestalt
+**Re-hydrate understanding. Enable good instincts.**
 
-1. Read what you've written
-2. Think about coherence
-3. Rewrite as replacement (not edits)
+Essential essence in first paragraph. 2-4 concepts that unlock understanding. Pointers to depth, not duplication. After reading: can you UNDERSTAND, not just navigate?
 
-Many edits seldom result in documents that flow. This produces documents that communicate clearly.
+→ `references/gestalt/gestalt.md`
+
+### Reference
+**Data in CSV. Guidance in markdown.**
+
+Enumerate finite sets; teach discovery for infinite sets. Every entry needs "When NOT to use."
+
+→ `references/reference/reference.md`
+
+### Research
+**Synthesis without prescription.**
+
+"Fastest in benchmarks" is synthesis. "You should use X" is prescription. Purpose first — if you don't know what the downstream goal of this research is, ask.
+
+→ `references/research/research.md`
+
+### Design
+
+**Enables "Yep, that will work" before any code.**
+
+Establish north star. Check inputs: research, flows, gaps. Primary job: contain complexity, bring flows, research and design goals together into a coherent architecture.
+
+→ `references/design/design.md`
+
+### Plan
+
+**Reviewed by humans. Implemented by agents.**
+
+Specific scope and done criteria, implementation left to judgment. EARS syntax for testable requirements. Enables section shows what becomes possible. Delete when complete.
+
+→ `references/plan/plan.md`
+
+### Flow
+**Stages, actors, handoffs.**
+
+Descriptive, not prescriptive. Concrete enough to discuss, abstract enough to leave implementation open. Use before design to find cross-cutting concerns.
+
+→ `references/flow/flow.md`
+
+### Findings
+**Answer the question. Answer before evidence.**
+
+Question at top, answer front-loaded, sources near claims. No speculation, no timelines, no unsolicited recommendations.
+
+→ `references/findings/findings.md`
+
+### Concepts
+**Crystallized wisdom in capsule format.**
+
+Capsules are powerful because they're token-efficient, timeless, and composable. The invariant forces precision — if you can't compress it to one line, you may not understand it yet. Agents can select and combine capsules without averaging conflicting ideas.
+
+Must read the capsule specification in full before writing.
+
+→ `references/concepts/capsules.md`
+
+### Process
+**High-agency**: 
+
+Prescribe outcomes, trust agent to color between the lines. Flexible, generalizable and relies heavily on agent judgment and intelligence.
+**Low-agency**: 
+
+Skip or reorder causes harm. Strong guardrails. Scripted steps with verification.
+
+→ `references/high-agency-process/high-agency-process.md`, `references/low-agency-process/low-agency-process.md`
 
 ---
 
-## Checklist (non-negotiables)
+## How Documents Support Each Other
 
-- [ ] Frontmatter complete: description, tags, audience, purpose
-- [ ] Audience and purpose scores recorded before writing
-- [ ] Only verified information included; when in doubt, omit
-- [ ] No timestamps, no currently statements, no planned-for promises
-- [ ] No speculation about intent; describe what exists
-- [ ] Purpose capsule guidance followed for dominant purpose
-- [ ] Rewritten as cohesive whole at end
-- [ ] Document findable, trustworthy, maintainable
+```mermaid
+flowchart LR
+    subgraph UNDERSTANDING
+        research --> flow
+    end
+    subgraph SHAPING
+        flow --> design
+        concepts --> design
+    end
+    subgraph EXECUTING
+        design --> plan --> code
+    end
+```
+
+| Document | Feeds into | When to use |
+|----------|------------|-------------|
+| research | flow, design, *ambient knowledge* | Exploring options, building domain expertise |
+| flow | design | Mapping processes |
+| concepts | design | Crystallizing wisdom |
+| design | plan | Defining architecture |
+| plan | code | Scoping work |
+| gestalt | *any stage* | Re-hydrating understanding |
+| reference | *any stage* | Looking up facts |
+| findings | *any stage* | Answering questions |
+
+Research also builds ambient expertise — an agent with research documents becomes expert in that domain, making better decisions across many future tasks.
+
+A design without flow misses how it will actually be used. A plan without design lacks grounding and the big picture. Research without knowing why misses the point.
+
+---
+
+## After Writing
+
+### Rewrite as Cohesive Whole
+
+Edits accumulate. Each patch respects existing structure even when structure no longer serves content. Editing asks "what's wrong?" Writing asks "what should this be?"
+
+**The technique**:
+1. Read the original fully
+2. Replace content with `*Replacing with a reformulated cohesive whole after deep thought*`
+3. Write fresh
+
+The placeholder clears your mental slate. You've absorbed the content; now write what it should be, not what it was.
+
+---
+
+## Checklist
+
+- [ ] Frontmatter complete with audience and purpose scores
+- [ ] Dominant purpose guidance read and followed
+- [ ] Only verified information; gaps marked honestly
+- [ ] No timestamps, "currently", estimates, speculation
+- [ ] Findable, trustworthy, maintainable
+- [ ] Rewritten as cohesive whole
+- [ ] Limited 'Claude-isms'
 
 ---
 

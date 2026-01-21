@@ -64,8 +64,8 @@ I used judgment: combine when they share decision criteria, split when they have
 ### Exemplars Location
 
 The knowledge.md references exemplars:
-- `repoql-docs:///guidance/writing-and-documentation/writing-capsules.md`
-- `repoql-docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md`
+- `docs:///guidance/writing-and-documentation/writing-capsules.md`
+- `docs:///guidance/writing-and-documentation/mermaid-diagram-guide.md`
 
 These were helpful but required going outside the skill to find. Would be cleaner to have exemplar links in the template itself.
 

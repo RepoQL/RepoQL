@@ -7,6 +7,17 @@ description: This skill guides intentional skill design. Use when creating, impr
 
 A skill encodes what cannot be derived from first principles. Before writing, understand what you're encoding.
 
+## Track Progress
+
+Use your todo tool to track these checkpoints:
+- [ ] Discovery sufficient to attempt zone assessment
+- [ ] Zone assessment completed (100 points distributed)
+- [ ] `writing-documents` skill invoked before writing each document
+- [ ] Self-check passed
+- [ ] Testing completed
+
+---
+
 ## Skill Structure
 
 ```
@@ -165,6 +176,8 @@ Note: High constraint doesn't automatically mean low agency. "These outcomes mus
 ---
 
 ## Before Writing
+
+**Invoke the `writing-documents` skill now.** Skills are documents. Their effectiveness depends on writing quality. Know how to write well before writing skill files.
 
 With your distribution clear, ask:
 
