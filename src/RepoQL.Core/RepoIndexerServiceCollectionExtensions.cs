@@ -431,7 +431,8 @@ public static class RepoIndexerServiceCollectionExtensions
                 sp.GetRequiredService<IEmbeddingProvider>(),
                 scripts,
                 sp.GetService<ILogger<DuckDbDataStore>>(),
-                sp);  // Pass IServiceProvider for UDF service resolution
+                sp,  // Pass IServiceProvider for UDF service resolution
+                sp.GetService<DuckDbStartupOptions>());
 
             return db;
         });

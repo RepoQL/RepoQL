@@ -1,5 +1,6 @@
 using System.Data;
 using System.Diagnostics;
+using System.Globalization;
 using System.Reflection;
 using DuckDB.NET.Data;
 using DuckDB.NET.Native;
@@ -32,13 +33,16 @@ public sealed class DuckDbDataStore : IDisposable
     private readonly bool _isInMemory;
     private readonly IServiceProvider? _serviceProvider;
     private readonly UdfRegistry _udfRegistry;
+    private readonly DuckDbStartupOptions _startupOptions;
     private static readonly AsyncLocal<IServiceScope?> _currentScope = new();
     private static readonly AsyncLocal<bool> _inQueryContext = new();
     private bool _schemaInitialized;
     private bool _disposed;
     private bool _databaseInvalidated;
+    private bool _databaseFileExisted;
     private int _consecutiveFailures;
     private const int MaxConsecutiveFailuresBeforeRecovery = 3;
+    private const int SchemaVersion = 1;
 
     /// <summary>
     /// Indicates that a database recovery occurred and data may have been lost.
@@ -76,21 +80,31 @@ public sealed class DuckDbDataStore : IDisposable
     public static T? GetService<T>() where T : class
         => _currentScope.Value?.ServiceProvider.GetService<T>();
 
+    /// <summary>
+    /// Purpose: Force schema initialization for startup validation.
+    /// Complexity: Exposes a single entry point without leaking internal locking.
+    /// </summary>
+    public void InitializeSchema()
+        => EnsureSchema();
+
     public DuckDbDataStore(
         string? path = null,
         IEmbeddingProvider? embeddingProvider = null,
         IEnumerable<FormatSqlScript>? formatSchemaScripts = null,
         ILogger<DuckDbDataStore>? logger = null,
-        IServiceProvider? serviceProvider = null)
+        IServiceProvider? serviceProvider = null,
+        DuckDbStartupOptions? startupOptions = null)
     {
         _path = path;
         _logger = logger ?? NullLogger<DuckDbDataStore>.Instance;
         _embeddingProvider = embeddingProvider;
         _formatSchemaScripts = formatSchemaScripts?.ToArray() ?? [];
         _isInMemory = path is null or ":memory:";
+        _databaseFileExisted = !_isInMemory && !string.IsNullOrWhiteSpace(path) && File.Exists(path);
         _serviceProvider = serviceProvider;
         // Always create UdfRegistry - it handles missing serviceProvider gracefully
         _udfRegistry = new UdfRegistry(serviceProvider);
+        _startupOptions = startupOptions ?? DuckDbStartupOptionsBuilder.Build(path);
 
         _logger.LogDebug("[DuckDB] Initializing data store (path={Path}, inMemory={IsInMemory})",
             _isInMemory ? ":memory:" : path, _isInMemory);
@@ -114,7 +128,8 @@ public sealed class DuckDbDataStore : IDisposable
             _logger.LogDebug("[DuckDB] Opening database file: {Path}", _path);
 
             // Check if database file exists and get its size
-            if (File.Exists(_path))
+            _databaseFileExisted = File.Exists(_path);
+            if (_databaseFileExisted)
             {
                 var fileInfo = new FileInfo(_path!);
                 _logger.LogDebug("[DuckDB] Existing database file: {Size:N0} bytes, modified {Modified}",
@@ -162,15 +177,9 @@ public sealed class DuckDbDataStore : IDisposable
     private void ApplyConnectionConfiguration(DuckDBConnection connection)
     {
         var count = Interlocked.Increment(ref _configApplyCount);
+        var limit = _startupOptions.MemoryLimit;
+        var threads = _startupOptions.Threads;
 
-        // Get hardware-aware defaults
-        var (defaultThreads, defaultMemory) = GetOptimalConfig();
-
-        // Allow environment variable overrides
-        var limit = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT") ?? defaultMemory;
-        var threads = Environment.GetEnvironmentVariable("DUCKDB_THREADS") ?? defaultThreads;
-
-        // Set memory limit to prevent runaway allocations
         ExecSetting(connection, $"SET memory_limit='{limit}';");
 
         // Enable object cache for single-reader scenarios (caches parsed expressions, schema metadata)
@@ -188,22 +197,14 @@ public sealed class DuckDbDataStore : IDisposable
         ExecSetting(connection, "SET allocator_flush_threshold='64MB';");
 
         // Ensure spills go to a deterministic temp directory (relative to database, not CWD)
-        var tempDir = Environment.GetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY");
-        if (string.IsNullOrEmpty(tempDir) && !string.IsNullOrEmpty(_path))
-        {
-            // Default to temp directory next to the database file
-            var dbDir = Path.GetDirectoryName(Path.GetFullPath(_path));
-            tempDir = Path.Combine(dbDir ?? ".", "index.duckdb.tmp");
-        }
-        tempDir ??= ".repoql/index.duckdb.tmp";
-        var tempDirPath = Path.GetFullPath(tempDir).Replace("\\", "/", StringComparison.Ordinal);
+        var tempDirPath = Path.GetFullPath(_startupOptions.TempDirectory).Replace('\\', '/');
         Directory.CreateDirectory(tempDirPath);
         ExecSetting(connection, $"SET temp_directory='{tempDirPath}';");
 
         // Log settings on first apply with hardware detection details
         if (count == 1)
         {
-            var totalMemoryMb = GetTotalAvailableMemoryMb();
+            var totalMemoryMb = DuckDbDefaults.GetTotalAvailableMemoryMb();
             _logger.LogInformation(
                 "[DuckDB] Hardware detected: {LogicalCores} logical cores, {TotalMemoryMb}MB total RAM",
                 Environment.ProcessorCount, totalMemoryMb);
@@ -213,105 +214,6 @@ public sealed class DuckDbDataStore : IDisposable
         }
     }
 
-    /// <summary>
-    /// Calculates optimal thread count based on available CPU cores.
-    /// Uses physical core estimate (logical cores / 2 for hyperthreaded CPUs),
-    /// capped at 8 for reasonable parallelism.
-    /// </summary>
-    private static string GetDefaultThreads()
-    {
-        // Get logical processor count
-        var logicalCores = Environment.ProcessorCount;
-
-        // Estimate physical cores (assume hyperthreading = 2x)
-        // This is a heuristic; exact detection requires platform-specific APIs
-        var estimatedPhysicalCores = logicalCores > 4 ? logicalCores / 2 : logicalCores;
-
-        // Use physical cores, capped at 8 for reasonable parallelism
-        // Leave at least 1 core for OS/other processes on multi-core systems
-        var threads = estimatedPhysicalCores > 2
-            ? Math.Min(estimatedPhysicalCores - 1, 8)
-            : estimatedPhysicalCores;
-
-        return Math.Max(1, threads).ToString();
-    }
-
-    /// <summary>
-    /// Calculates optimal memory limit based on available system RAM.
-    /// Uses 60% of available memory, capped at 16GB, minimum 512MB.
-    /// </summary>
-    private static string GetDefaultMemoryLimit()
-    {
-        try
-        {
-            var totalMemoryMb = GetTotalAvailableMemoryMb();
-
-            // Use 60% of available memory, capped at 16GB
-            // This leaves room for OS, other processes, and .NET heap
-            var targetMb = Math.Min(16384, (long)(totalMemoryMb * 0.6));
-
-            // Ensure minimum of 512MB
-            targetMb = Math.Max(512, targetMb);
-
-            return $"{targetMb}MB";
-        }
-        catch
-        {
-            // Fallback if memory detection fails
-            return "4GB";
-        }
-    }
-
-    /// <summary>
-    /// Gets total available memory in megabytes using GC memory info.
-    /// </summary>
-    private static long GetTotalAvailableMemoryMb()
-    {
-        var gcMemoryInfo = GC.GetGCMemoryInfo();
-        return gcMemoryInfo.TotalAvailableMemoryBytes / (1024 * 1024);
-    }
-
-    /// <summary>
-    /// Calculates optimal thread and memory configuration, ensuring at least 1GB per thread.
-    /// DuckDB recommends 1-4GB per thread for optimal performance.
-    /// </summary>
-    private static (string threads, string memory) GetOptimalConfig()
-    {
-        var threads = int.Parse(GetDefaultThreads());
-        var memoryStr = GetDefaultMemoryLimit();
-
-        // Parse memory value (format: "NMB" or "NGB")
-        var memoryMb = ParseMemoryMb(memoryStr);
-
-        // Ensure at least 1GB (1024MB) per thread (DuckDB recommendation: 1-4GB)
-        var memoryPerThread = memoryMb / threads;
-        if (memoryPerThread < 1024)
-        {
-            // Reduce threads to maintain minimum memory per thread
-            threads = Math.Max(1, (int)(memoryMb / 1024));
-        }
-
-        return (threads.ToString(), $"{memoryMb}MB");
-    }
-
-    /// <summary>
-    /// Parses a memory limit string (e.g., "8GB", "512MB") to megabytes.
-    /// </summary>
-    private static long ParseMemoryMb(string memoryStr)
-    {
-        memoryStr = memoryStr.Trim().ToUpperInvariant();
-
-        if (memoryStr.EndsWith("GB", StringComparison.Ordinal))
-        {
-            return long.Parse(memoryStr[..^2]) * 1024;
-        }
-        if (memoryStr.EndsWith("MB", StringComparison.Ordinal))
-        {
-            return long.Parse(memoryStr[..^2]);
-        }
-        // Assume bytes if no suffix
-        return long.Parse(memoryStr) / (1024 * 1024);
-    }
 
     private static void ExecSetting(DuckDBConnection connection, string sql)
     {
@@ -735,10 +637,8 @@ public sealed class DuckDbDataStore : IDisposable
 
         try
         {
-            // Close existing connection (reader == writer, so only close once)
             _logger.LogDebug("[DuckDB] Closing existing connection...");
-            try { _connection?.Close(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error closing connection"); }
-            try { _connection?.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing connection"); }
+            CloseConnections();
 
             // For file-based databases, check if we need to delete corrupted files
             if (!_isInMemory && _path is not null)
@@ -785,6 +685,67 @@ public sealed class DuckDbDataStore : IDisposable
             }
 
             throw new InvalidOperationException($"Database recovery failed: {ex.Message}", ex);
+        }
+    }
+
+    private void CloseConnections()
+    {
+        try { _connection?.Close(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error closing connection"); }
+        try { _connection?.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing connection"); }
+
+        lock (_reentrantConnectionLock)
+        {
+            try { _reentrantConnection?.Close(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error closing reentrant connection"); }
+            try { _reentrantConnection?.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing reentrant connection"); }
+            _reentrantConnection = null;
+        }
+    }
+
+    private static void DeleteDatabaseFiles(string path)
+    {
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+
+        var walPath = path + ".wal";
+        if (File.Exists(walPath))
+        {
+            File.Delete(walPath);
+        }
+    }
+
+    /// <summary>
+    /// Purpose: Recreate the database file when schema or corruption recovery requires a rebuild.
+    /// Complexity: Coordinates connection teardown, file deletion, and schema reinitialization.
+    /// </summary>
+    public void RecreateDatabase()
+    {
+        if (_isInMemory || _path is null)
+            throw new InvalidOperationException("Cannot recreate an in-memory database.");
+
+        _lock.Wait();
+        try
+        {
+            _logger.LogWarning("[DuckDB] Recreating database at {Path}", _path);
+
+            CloseConnections();
+
+            DeleteDatabaseFiles(_path);
+
+            _schemaInitialized = false;
+            _databaseInvalidated = false;
+            _consecutiveFailures = 0;
+            _databaseFileExisted = false;
+
+            InitializeConnections();
+            EnsureSchemaInternal();
+
+            RecoveryOccurred = true;
+        }
+        finally
+        {
+            _lock.Release();
         }
     }
 
@@ -966,6 +927,26 @@ public sealed class DuckDbDataStore : IDisposable
         }
     }
 
+    private void EnsureSchemaCompatibility()
+    {
+        if (_isInMemory || !_databaseFileExisted)
+            return;
+
+        var storedVersion = TryReadMetadataValue(MetadataKeySchemaVersion);
+        var expectedVersion = SchemaVersion.ToString(CultureInfo.InvariantCulture);
+
+        if (string.IsNullOrWhiteSpace(storedVersion))
+        {
+            throw new DuckDbSchemaMismatchException("Schema version metadata missing.");
+        }
+
+        if (!string.Equals(storedVersion, expectedVersion, StringComparison.Ordinal))
+        {
+            throw new DuckDbSchemaMismatchException(
+                $"Schema version {storedVersion} does not match expected {expectedVersion}.");
+        }
+    }
+
     private void EnsureSchemaInternal()
     {
         if (_schemaInitialized) return;
@@ -975,6 +956,8 @@ public sealed class DuckDbDataStore : IDisposable
 
         try
         {
+            EnsureSchemaCompatibility();
+
             if (!_isInMemory)
             {
                 _connection.Execute("SET wal_autocheckpoint = '16MB';");
@@ -1061,6 +1044,8 @@ public sealed class DuckDbDataStore : IDisposable
             }
             _logger.LogDebug("[DuckDB] Core schema scripts applied ({Count} scripts)", schemaScripts.Length);
 
+            EnsureSchemaVersion();
+
             foreach (var script in _formatSchemaScripts)
             {
                 try
@@ -1129,8 +1114,48 @@ public sealed class DuckDbDataStore : IDisposable
         _connection.Execute(reader.ReadToEnd());
     }
 
+    private const string MetadataKeySchemaVersion = "schema_version";
     private const string MetadataKeyAssemblyVersion = "assembly_version";
     private const string EmbeddedDocsScheme = "repoql-docs://";
+
+    private void EnsureSchemaVersion()
+    {
+        var version = SchemaVersion.ToString(CultureInfo.InvariantCulture);
+        UpsertMetadataValue(MetadataKeySchemaVersion, version);
+    }
+
+    private string? TryReadMetadataValue(string key)
+    {
+        try
+        {
+            using var cmd = _connection.CreateCommand();
+            cmd.CommandText = "SELECT value FROM metadata WHERE key = $key";
+            cmd.Parameters.Add(new DuckDBParameter("key", key));
+            return cmd.ExecuteScalar() as string;
+        }
+        catch (DuckDBException ex) when (IsMissingMetadataTable(ex))
+        {
+            return null;
+        }
+    }
+
+    private static bool IsMissingMetadataTable(DuckDBException ex)
+    {
+        var message = ex.Message ?? string.Empty;
+        return message.Contains("metadata", StringComparison.OrdinalIgnoreCase) &&
+               message.Contains("does not exist", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void UpsertMetadataValue(string key, string value)
+    {
+        using var cmd = _connection.CreateCommand();
+        cmd.CommandText = @"
+            INSERT INTO metadata (key, value, updated_at) VALUES ($key, $value, now())
+            ON CONFLICT (key) DO UPDATE SET value = $value, updated_at = now()";
+        cmd.Parameters.Add(new DuckDBParameter("key", key));
+        cmd.Parameters.Add(new DuckDBParameter("value", value));
+        cmd.ExecuteNonQuery();
+    }
 
     /// <summary>
     /// Checks if the assembly version changed since last run. If so, deletes all
@@ -1145,11 +1170,7 @@ public sealed class DuckDbDataStore : IDisposable
 
         try
         {
-            // Get stored version
-            using var selectCmd = _connection.CreateCommand();
-            selectCmd.CommandText = "SELECT value FROM metadata WHERE key = $key";
-            selectCmd.Parameters.Add(new DuckDBParameter("key", MetadataKeyAssemblyVersion));
-            var storedVersion = selectCmd.ExecuteScalar() as string;
+            var storedVersion = TryReadMetadataValue(MetadataKeyAssemblyVersion);
 
             if (storedVersion == currentVersion)
             {
@@ -1171,14 +1192,7 @@ public sealed class DuckDbDataStore : IDisposable
                 _logger.LogDebug("[DuckDB] First run, setting version to {Version}", currentVersion);
             }
 
-            // Update stored version
-            using var upsertCmd = _connection.CreateCommand();
-            upsertCmd.CommandText = @"
-                INSERT INTO metadata (key, value, updated_at) VALUES ($key, $value, now())
-                ON CONFLICT (key) DO UPDATE SET value = $value, updated_at = now()";
-            upsertCmd.Parameters.Add(new DuckDBParameter("key", MetadataKeyAssemblyVersion));
-            upsertCmd.Parameters.Add(new DuckDBParameter("value", currentVersion));
-            upsertCmd.ExecuteNonQuery();
+            UpsertMetadataValue(MetadataKeyAssemblyVersion, currentVersion);
         }
         catch (Exception ex)
         {

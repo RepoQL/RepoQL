@@ -51,6 +51,7 @@ internal sealed class SelfTestRunner
         {
             AppendExistingHostReport(sb, repoRoot);
             AppendSocketBindReport(sb, repoRoot);
+            AppendDatabaseInitReport(sb, repoRoot);
         }
 
         // Connection check
@@ -279,6 +280,15 @@ internal sealed class SelfTestRunner
     private static void AppendSocketBindReport(StringBuilder sb, string repoRoot)
     {
         if (!HostDiagnosticsStore.TryReadReport(repoRoot, "socket-bind.json", out SocketBindReport? report) || report is null)
+            return;
+
+        sb.AppendLine(report.ToString());
+        sb.AppendLine();
+    }
+
+    private static void AppendDatabaseInitReport(StringBuilder sb, string repoRoot)
+    {
+        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "database-init.json", out DatabaseInitReport? report) || report is null)
             return;
 
         sb.AppendLine(report.ToString());

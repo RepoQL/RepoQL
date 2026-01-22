@@ -10,14 +10,35 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// and symbol names against wildcard patterns.
 ///
 /// Complexity: Delegates to RepoUriGlobMatcher, UriPatternMatcher, and SymbolPatternMatcher.
-/// All functions are pure and null-safe with three-valued logic.
+/// Normalizes absolute paths in patterns to repo-relative URIs before matching (when repo root is available).
+/// All functions are null-safe with three-valued logic.
 /// </summary>
 [UdfClass]
 public class GlobMatchUdf
 {
+    private readonly string? _repoRoot;
+
+    /// <summary>
+    /// Creates a GlobMatchUdf with repository configuration for absolute path normalization.
+    /// </summary>
+    public GlobMatchUdf(RepositoryConfiguration repoConfig)
+    {
+        _repoRoot = repoConfig.Path;
+    }
+
+    /// <summary>
+    /// Creates a GlobMatchUdf without repository configuration.
+    /// Absolute paths in patterns will not be normalized.
+    /// </summary>
+    public GlobMatchUdf()
+    {
+        _repoRoot = null;
+    }
+
     /// <summary>
     /// Matches a URI against a single glob pattern.
     /// Returns NULL for invalid inputs (three-valued logic).
+    /// Normalizes absolute paths in the pattern to repo-relative URIs.
     /// </summary>
     [ScalarUdf("repoql_glob_match", IsPure = true)]
     public string? GlobMatch(
@@ -26,7 +47,12 @@ public class GlobMatchUdf
         [UdfDefault("true")] bool ignoreCase,
         [UdfDefault("NULL")] string? defaultScheme)
     {
-        var matched = RepoUriGlobMatcher.IsMatch(uri, pattern, ignoreCase, defaultScheme);
+        // Normalize pattern to convert absolute paths to repo-relative (when repo root is available)
+        var normalizedPattern = _repoRoot != null
+            ? GlobPatternNormalizer.NormalizePattern(pattern, _repoRoot)
+            : pattern;
+
+        var matched = RepoUriGlobMatcher.IsMatch(uri, normalizedPattern, ignoreCase, defaultScheme);
         if (matched is null)
             return null;
 
@@ -38,6 +64,7 @@ public class GlobMatchUdf
     /// Supports semicolon-delimited patterns, negative patterns with ! prefix,
     /// and fragment patterns like #symbol=MyClass.* and #line=10,*.
     /// Returns TRUE for NULL/blank patterns (matches everything).
+    /// Normalizes absolute paths in patterns to repo-relative URIs.
     /// </summary>
     [ScalarUdf("repoql_matches_glob", IsPure = true)]
     public string? MatchesGlob(
@@ -54,7 +81,12 @@ public class GlobMatchUdf
         if (string.IsNullOrWhiteSpace(patternSpec))
             return "true";
 
-        var matched = UriPatternMatcher.Matches(uri, patternSpec, ignoreCase, defaultScheme ?? "file:///");
+        // Normalize pattern to convert absolute paths to repo-relative (when repo root is available)
+        var normalizedPattern = _repoRoot != null
+            ? GlobPatternNormalizer.NormalizePattern(patternSpec, _repoRoot)
+            : patternSpec;
+
+        var matched = UriPatternMatcher.Matches(uri, normalizedPattern, ignoreCase, defaultScheme ?? "file:///");
         if (matched is null)
             return null;
 

@@ -1,4 +1,6 @@
 using AwesomeAssertions;
+using Microsoft.Extensions.DependencyInjection;
+using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Tests;
@@ -228,5 +230,99 @@ internal class MatchesGlobSqlTests
         var rows = store.Query("SELECT * FROM glob_files('!**/*.md')").ToList();
         rows.Should().HaveCount(1);
         rows[0]["uri"]?.ToString().Should().Be("file:///repo/src/App.cs");
+    }
+
+    // === Absolute Path Normalization ===
+
+    private static DuckDbDataStore CreateStoreWithRepoRoot(string repoRoot)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(new RepositoryConfiguration { Path = repoRoot });
+        var serviceProvider = services.BuildServiceProvider();
+
+        return new DuckDbDataStore(":memory:", serviceProvider: serviceProvider);
+    }
+
+    [Test]
+    public void MatchesGlob_WindowsAbsoluteUri_NormalizesToRelative()
+    {
+        // Use a Windows-style repo root
+        using var store = CreateStoreWithRepoRoot("C:/Source/TestRepo");
+
+        // The absolute URI should be normalized to relative and match
+        var rows = store.Query("SELECT matches_glob('file:///src/App.cs', 'file:///C:/Source/TestRepo/src/**/*.cs') AS matched").ToList();
+        rows.Should().HaveCount(1);
+        Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
+    }
+
+    [Test]
+    public void MatchesGlob_BareWindowsPath_NormalizesToRelative()
+    {
+        using var store = CreateStoreWithRepoRoot("C:/Source/TestRepo");
+
+        // Bare Windows path should be normalized to file:/// URI and match
+        var rows = store.Query(@"SELECT matches_glob('file:///src/App.cs', 'C:/Source/TestRepo/src/**/*.cs') AS matched").ToList();
+        rows.Should().HaveCount(1);
+        Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
+    }
+
+    [Test]
+    public void MatchesGlob_AbsolutePath_WithNegativePattern_NormalizesCorrectly()
+    {
+        using var store = CreateStoreWithRepoRoot("C:/Source/TestRepo");
+
+        // Both positive and negative absolute patterns should be normalized
+        // src/App.cs matches src/** but NOT tests/**
+        var rows = store.Query(@"SELECT matches_glob('file:///src/App.cs', 'C:/Source/TestRepo/src/**;!C:/Source/TestRepo/tests/**') AS matched").ToList();
+        rows.Should().HaveCount(1);
+        Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
+
+        // tests/Test.cs matches src/** but IS excluded by tests/**
+        rows = store.Query(@"SELECT matches_glob('file:///tests/Test.cs', 'C:/Source/TestRepo/src/**;C:/Source/TestRepo/tests/**;!C:/Source/TestRepo/tests/**') AS matched").ToList();
+        rows.Should().HaveCount(1);
+        Convert.ToBoolean(rows[0]["matched"]).Should().BeFalse();
+    }
+
+    [Test]
+    public void GlobFiles_AbsoluteWindowsPath_ReturnsMatchingDocuments()
+    {
+        using var store = CreateStoreWithRepoRoot("C:/Source/TestRepo");
+
+        // Insert test documents with repo-relative URIs
+        store.ExecuteRaw("""
+            INSERT INTO node (id, kind, uri, container_uri_lowercase, properties, created_at, updated_at)
+            VALUES
+                ('11111111-1111-1111-1111-111111111111', 'document', 'file:///src/App.cs', 'file:///src/app.cs', '{}', NOW(), NOW()),
+                ('22222222-2222-2222-2222-222222222222', 'document', 'file:///tests/Test.cs', 'file:///tests/test.cs', '{}', NOW(), NOW()),
+                ('33333333-3333-3333-3333-333333333333', 'document', 'file:///lib/Helper.cs', 'file:///lib/helper.cs', '{}', NOW(), NOW())
+            """);
+
+        // Query with absolute Windows path - should normalize and match
+        var rows = store.Query("SELECT * FROM glob_files('C:/Source/TestRepo/src/**')").ToList();
+        rows.Should().HaveCount(1);
+        rows[0]["uri"]?.ToString().Should().Be("file:///src/App.cs");
+    }
+
+    [Test]
+    public void MatchesGlob_PathOutsideRepo_DoesNotMatch()
+    {
+        using var store = CreateStoreWithRepoRoot("C:/Source/TestRepo");
+
+        // Path outside repo should NOT be normalized (stays as-is) and won't match repo-relative URIs
+        var rows = store.Query("SELECT matches_glob('file:///src/App.cs', 'C:/Other/Project/src/**') AS matched").ToList();
+        rows.Should().HaveCount(1);
+        Convert.ToBoolean(rows[0]["matched"]).Should().BeFalse();
+    }
+
+    [Test]
+    public void MatchesGlob_UnixAbsolutePath_NormalizesToRelative()
+    {
+        // Use a Unix-style repo root
+        using var store = CreateStoreWithRepoRoot("/home/user/repo");
+
+        // The absolute path should be normalized to relative and match
+        var rows = store.Query("SELECT matches_glob('file:///src/App.cs', '/home/user/repo/src/**/*.cs') AS matched").ToList();
+        rows.Should().HaveCount(1);
+        Convert.ToBoolean(rows[0]["matched"]).Should().BeTrue();
     }
 }

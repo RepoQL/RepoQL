@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Diagnostics.CodeAnalysis;
 using System.Net.Sockets;
 using Grpc.Core;
 using Grpc.Health.V1;
@@ -32,7 +31,6 @@ using Serilog;
 using Spectre.Console;
 using ConsoleAppFramework;
 using Microsoft.Extensions.Configuration;
-using System.Runtime.InteropServices;
 
 namespace RepoQL.ConsoleApp.Commands;
 
@@ -114,6 +112,8 @@ internal class HostCommands(IAnsiConsole console)
             });
             builder.WebHost.ConfigureKestrel(options => { GrpcServerHelper.ConfigureUnixSocket(options, repo); });
             serilogLogger.Information("Phase: database init");
+            var dbInit = DatabaseInitCoordinator.Prepare(repo, serilogLogger);
+            builder.Services.AddSingleton(dbInit.Options);
             builder.Services.AddRepoIndexer(repo);
 
             // Search services for ExploreOrchestrator (server-side, using DuckDbDataStore directly)
@@ -163,6 +163,9 @@ internal class HostCommands(IAnsiConsole console)
                     app.Logger.LogWarning(error, "Failed to remove host PID file at {Path}.", pidFile.FilePath);
                 }
             });
+
+            await DatabaseInitCoordinator.InitializeAsync(app.Services, repo, dbInit.Report, serilogLogger, CancellationToken.None)
+                .ConfigureAwait(false);
 
             // Always log startup info
             app.Logger.LogInformation("[Host] cwd={WorkingDirectory} repository={Repository} resolved repo={ResolvedRepository}", cwd, repository, repo);
@@ -279,7 +282,8 @@ internal class HostCommands(IAnsiConsole console)
             if (shutdownResult.Success && pid > 0)
             {
                 WriteStatus(implicitStart, logger, $"Detected existing RepoQL host (PID {pid}); requesting shutdown...", MarkupStyle.Warning);
-                var exited = await WaitForProcessExitAsync(pid, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+                var exited = await ProcessTermination.WaitForExitAsync(pid, TimeSpan.FromSeconds(5), cancellationToken)
+                    .ConfigureAwait(false);
                 if (exited)
                 {
                     report.ProcessRunning = false;
@@ -291,13 +295,13 @@ internal class HostCommands(IAnsiConsole console)
 
             if (pid > 0)
             {
-                if (TryGetRepoQlProcess(pid, out var process))
+                if (RepoQlProcessInspector.TryGetRepoQlProcess(pid, out var process))
                 {
                     report.ProcessRunning = true;
                     report.ProcessName = process.ProcessName;
                     report.KillAttempted = true;
                     WriteStatus(implicitStart, logger, $"Process {pid} did not exit; forcing termination.", MarkupStyle.Error);
-                    var killed = await TryKillProcessAsync(process, cancellationToken).ConfigureAwait(false);
+                    var killed = await ProcessTermination.TryTerminateAsync(process, cancellationToken).ConfigureAwait(false);
                     report.KillSucceeded = killed;
                     if (!killed)
                     {
@@ -390,95 +394,6 @@ internal class HostCommands(IAnsiConsole console)
         }
     }
 
-    private static bool TryGetRepoQlProcess(int pid, [NotNullWhen(true)] out Process? process)
-    {
-        process = null;
-        try
-        {
-            var candidate = Process.GetProcessById(pid);
-            if (candidate.HasExited)
-            {
-                candidate.Dispose();
-                return false;
-            }
-
-            if (!IsRepoQlProcess(candidate))
-            {
-                candidate.Dispose();
-                return false;
-            }
-
-            process = candidate;
-            return true;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
-    }
-
-    private static bool IsRepoQlProcess(Process process)
-    {
-        var name = process.ProcessName;
-        if (!string.IsNullOrWhiteSpace(name) &&
-            name.Contains("repoql", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        try
-        {
-            var path = process.MainModule?.FileName;
-            if (!string.IsNullOrWhiteSpace(path) &&
-                path.Contains("repoql", StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        catch
-        {
-            // Ignore restricted process info.
-        }
-
-        return false;
-    }
-
-    private static async Task<bool> TryKillProcessAsync(Process process, CancellationToken cancellationToken)
-    {
-        try
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                process.Kill(entireProcessTree: true);
-                return await WaitForProcessExitAsync(process.Id, TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
-            }
-
-            if (UnixSignal.TrySendTerm(process.Id))
-            {
-                if (await WaitForProcessExitAsync(process.Id, TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false))
-                    return true;
-            }
-
-            if (UnixSignal.TrySendKill(process.Id))
-            {
-                return await WaitForProcessExitAsync(process.Id, TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
-            }
-
-            return false;
-        }
-        catch (ArgumentException)
-        {
-            return true;
-        }
-        catch (InvalidOperationException)
-        {
-            return true;
-        }
-        finally
-        {
-            process.Dispose();
-        }
-    }
 
     private void WriteStatus(bool implicitStart, Serilog.ILogger logger, string message, MarkupStyle style)
     {
@@ -511,60 +426,6 @@ internal class HostCommands(IAnsiConsole console)
     }
 
     private readonly record struct ShutdownAttemptResult(bool Success, int ProcessId, string? Error);
-
-    /// <summary>
-    /// Purpose: Send Unix signals for graceful or forceful termination.
-    /// Complexity: Wraps libc kill calls with minimal surface for host takeover.
-    /// </summary>
-    private static class UnixSignal
-    {
-        private const int SigTerm = 15;
-        private const int SigKill = 9;
-
-        [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
-        [DllImport("libc", SetLastError = true)]
-        private static extern int kill(int pid, int sig);
-
-        public static bool TrySendTerm(int pid)
-            => kill(pid, SigTerm) == 0;
-
-        public static bool TrySendKill(int pid)
-            => kill(pid, SigKill) == 0;
-    }
-
-    private static async Task<bool> WaitForProcessExitAsync(int pid, TimeSpan timeout, CancellationToken cancellationToken)
-    {
-        var sw = Stopwatch.StartNew();
-        while (sw.Elapsed < timeout)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!IsProcessRunning(pid))
-            {
-                return true;
-            }
-
-            await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-        }
-
-        return false;
-    }
-
-    private static bool IsProcessRunning(int pid)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
-    }
 
     private static async Task WaitForRepositoryAvailabilityAsync(string repo, TimeSpan timeout, CancellationToken cancellationToken)
     {
