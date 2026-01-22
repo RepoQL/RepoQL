@@ -16,6 +16,7 @@ using OpenTelemetry.Trace;
 using RepoQL.Contracts;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Host;
+using RepoQL.ConsoleApp.Logging;
 using RepoQL.ConsoleApp.Search;
 using RepoQL.Core;
 using RepoQL.Indexing.Hosting;
@@ -25,6 +26,7 @@ using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
 using RepoQL.Xray;
 using RepoQL.Xray.Search;
+using Serilog;
 using Spectre.Console;
 using ConsoleAppFramework;
 using Microsoft.Extensions.Configuration;
@@ -39,11 +41,31 @@ internal class HostCommands(IAnsiConsole console)
         var cwd = Directory.GetCurrentDirectory();
         repository ??= cwd;
         var repo = ProgramHelpers.ResolveRepo(repository);
+        var (serilogLogger, _) = HostLogging.Initialize(repo);
+        var version = HostLogging.GetHostVersion();
+        serilogLogger.Information("Host starting (pid={Pid} version={Version})", Environment.ProcessId, version);
+        serilogLogger.Information("Phase: preflight");
 
         // Always try to shutdown existing host to prevent multiple hosts writing to the same database
         // This prevents write-write conflicts from concurrent access
         await TryShutdownExistingHostAsync(repo, CancellationToken.None).ConfigureAwait(false);
-        await WaitForRepositoryAvailabilityAsync(repo, TimeSpan.FromSeconds(45), CancellationToken.None).ConfigureAwait(false);
+        var hostLock = await WaitForHostLockAsync(repo, TimeSpan.FromSeconds(45), implicitStart, serilogLogger, CancellationToken.None)
+            .ConfigureAwait(false);
+        if (hostLock is null)
+        {
+            if (!implicitStart)
+            {
+                var lockPath = HostLock.GetLockPath(repo);
+                console.MarkupLine($"[yellow]Host already running; lock held at {Markup.Escape(lockPath)}[/]");
+            }
+
+            return;
+        }
+
+        try
+        {
+            await WaitForRepositoryAvailabilityAsync(repo, TimeSpan.FromSeconds(45), CancellationToken.None).ConfigureAwait(false);
+        serilogLogger.Information("Phase: socket bind");
         var builder = WebApplication.CreateSlimBuilder([]);
         builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
         builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
@@ -76,6 +98,9 @@ internal class HostCommands(IAnsiConsole console)
                 .AddAspNetCoreInstrumentation())
             .UseOtlpExporter();
 
+        builder.Logging.AddSerilog(serilogLogger, dispose: false);
+
+        serilogLogger.Information("Phase: services start");
         builder.Services.AddGrpc();
         builder.Services.AddSingleton<HealthServiceImpl>();
         builder.Services.AddSingleton(new RepositoryConfiguration { Path = repo });
@@ -86,6 +111,7 @@ internal class HostCommands(IAnsiConsole console)
             StartedAtUtc = DateTime.UtcNow
         });
         builder.WebHost.ConfigureKestrel(options => { GrpcServerHelper.ConfigureUnixSocket(options, repo); });
+        serilogLogger.Information("Phase: database init");
         builder.Services.AddRepoIndexer(repo);
 
         // Search services for XrayOrchestrator (server-side, using DuckDbDataStore directly)
@@ -119,6 +145,7 @@ internal class HostCommands(IAnsiConsole console)
         builder.Services.AddHostedService<PipelineHealthPublisher>();
 
         var app = builder.Build();
+        HostLogging.RegisterShutdown(app.Lifetime, app.Logger);
         
         // Always log startup info
         app.Logger.LogInformation("[Host] cwd={WorkingDirectory} repository={Repository} resolved repo={ResolvedRepository}", cwd, repository, repo);
@@ -127,7 +154,14 @@ internal class HostCommands(IAnsiConsole console)
         var health = app.Services.GetRequiredService<HealthServiceImpl>();
         health.SetStatus(string.Empty, HealthCheckResponse.Types.ServingStatus.Serving);
         health.SetStatus("repoql.v1.RepoQL", HealthCheckResponse.Types.ServingStatus.Serving);
+        app.Logger.LogInformation("Phase: ready");
+        app.Logger.LogInformation("Host ready");
         await app.RunAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            hostLock.Dispose();
+        }
     }
 
     /// <summary>
@@ -319,6 +353,51 @@ internal class HostCommands(IAnsiConsole console)
         const int ErrorSharingViolation = unchecked((int)0x80070020);
         const int ErrorLockViolation = unchecked((int)0x80070021);
         return ex.HResult == ErrorSharingViolation || ex.HResult == ErrorLockViolation;
+    }
+
+    private static async Task<HostLock?> WaitForHostLockAsync(
+        string repo,
+        TimeSpan timeout,
+        bool implicitStart,
+        Serilog.ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        var lockPath = HostLock.GetLockPath(repo);
+        var sw = Stopwatch.StartNew();
+        var loggedWait = false;
+
+        while (sw.Elapsed < timeout)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var hostLock = HostLock.TryAcquire(repo, out var failure, out var error);
+            if (hostLock is not null)
+            {
+                logger.Information("Host lock acquired (path={Path})", lockPath);
+                return hostLock;
+            }
+
+            if (failure == HostLockFailure.Unauthorized || failure == HostLockFailure.Error)
+            {
+                throw new InvalidOperationException($"Failed to acquire host lock at {lockPath}.", error);
+            }
+
+            if (implicitStart)
+            {
+                logger.Information("Host lock held by another process (path={Path}); exiting implicit host start.", lockPath);
+                return null;
+            }
+
+            if (!loggedWait)
+            {
+                logger.Information("Host lock held by another process; waiting for release (path={Path}).", lockPath);
+                loggedWait = true;
+            }
+
+            await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+        }
+
+        logger.Warning("Host lock still held after {TimeoutSeconds}s (path={Path})", timeout.TotalSeconds, lockPath);
+        return null;
     }
 
 }

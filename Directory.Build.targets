@@ -14,4 +14,12 @@
             <JavaDownloadDirectory>$([System.Environment]::GetFolderPath(SpecialFolder.UserProfile))/.jre/</JavaDownloadDirectory>
         </Antlr4>
     </ItemGroup>
+
+    <!-- TUnit sees it as a test project otherwise and it exits with code 8 (no tests run) which confuses claude -->
+    <PropertyGroup Condition="'$(MSBuildProjectName)' == 'RepoQL.Testing'">
+        <IsTestProject>false</IsTestProject>
+        <UseTestingPlatform>false</UseTestingPlatform>
+        <TestingPlatformDotnetTestSupport>false</TestingPlatformDotnetTestSupport>
+        <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
+    </PropertyGroup>
 </Project>

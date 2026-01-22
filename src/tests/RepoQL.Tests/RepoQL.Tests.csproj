@@ -16,6 +16,7 @@
       <PackageReference Include="TUnit" Version="0.75.30" />
       <PackageReference Include="AwesomeAssertions" Version="9.2.1" />
       <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.1.0" />
+      <PackageReference Include="Serilog" Version="4.0.0" />
         <PackageReference Include="Grpc.AspNetCore" Version="2.62.0" />
         <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="9.0.0" />
 </ItemGroup>

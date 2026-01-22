@@ -236,9 +236,22 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 LeaseRegistry.Upsert(clientId, beatAt);
             }
         }
-        catch (OperationCanceledException) { }
-        catch (IOException ex) when (ex.Message.Contains("client reset the request stream", StringComparison.OrdinalIgnoreCase)) { }
-        finally { if (!string.IsNullOrWhiteSpace(clientId)) LeaseRegistry.Remove(clientId!); }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("Client lease stream cancelled");
+        }
+        catch (IOException ex) when (ex.Message.Contains("client reset the request stream", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogDebug(ex, "Client lease stream reset");
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(clientId))
+            {
+                LeaseRegistry.Remove(clientId!);
+                _logger.LogInformation("Client disconnected (clientId={ClientId})", clientId);
+            }
+        }
 
         var state = context.GetHttpContext().RequestServices.GetRequiredService<HostState>();
         return new ClientLeaseSummary

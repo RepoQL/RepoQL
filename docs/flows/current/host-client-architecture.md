@@ -71,7 +71,37 @@ flowchart TD
 
 **WSL exception**: On WSL accessing Windows mounts (NTFS via drvfs), Unix sockets don't work. The host writes its actual socket path to `.repoql/socket.path`, and clients read that file first.
 
-**Race condition**: Two clients can simultaneously detect "no host" and both launch. The second host's `serve` command will shut down the first, but there's a window where both are starting. No file lock currently prevents this.
+**Race condition**: Two clients can simultaneously detect "no host" and both launch. A host lock (`.repoql/host.lock`) now serializes startup: only one process acquires the lock; the other exits (implicit) or reports that a host is already running.
+
+### Simultaneous Startup (host.lock)
+
+```mermaid
+sequenceDiagram
+    participant A as Host A
+    participant B as Host B
+    participant L as .repoql/host.lock
+    participant S as Socket
+    participant D as DuckDB
+
+    A->>A: TryShutdownExistingHost
+    B->>B: TryShutdownExistingHost
+
+    A->>L: Acquire lock (exclusive)
+    L-->>A: Success
+    B->>L: Acquire lock (exclusive)
+    L-->>B: Locked
+
+    alt B implicit start
+        B-->>B: Exit quietly
+    else B explicit serve
+        B-->>B: Log "host already running"
+    end
+
+    A->>S: Bind socket
+    S-->>A: Success
+    A->>D: Open database
+    D-->>A: Success
+```
 
 ---
 
@@ -237,7 +267,7 @@ ls -la .repoql/repoql.sock
 ## Known Reliability Issues
 
 **1. Launch Race Condition**
-Two clients can simultaneously detect "no host" and both launch. No file lock coordinates this.
+Two clients can simultaneously detect "no host" and both launch. The host lock coordinates this and prevents dual-host startup, but stale or inaccessible locks can still block startup.
 
 **2. Silent Heartbeat Failures**
 The heartbeat loop (`RepoQlClient.cs:629-645`) has no try/catch. Failures are swallowed; client doesn't know its lease is invalid.
