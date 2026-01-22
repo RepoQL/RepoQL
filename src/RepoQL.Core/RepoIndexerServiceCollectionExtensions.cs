@@ -150,6 +150,9 @@ public static class RepoIndexerServiceCollectionExtensions
             var lf = sp.GetService<ILoggerFactory>();
             var log = lf?.CreateLogger("RepoQL.Embeddings");
             var mode = sp.GetRequiredService<EmbeddingModeOptions>().Mode;
+            var degradation = sp.GetService<IServiceDegradationTracker>();
+            string? failureMessage = null;
+            var onnxLogger = sp.GetService<ILogger<OnnxEmbeddingProvider>>();
 
             if (mode == EmbeddingMode.None)
             {
@@ -160,32 +163,47 @@ public static class RepoIndexerServiceCollectionExtensions
             // Use OpenRouter cloud embeddings if API key is present
             if (useOpenRouter)
             {
-                log?.LogInformation("Embedding provider: using OpenRouter (all-MiniLM-L6-v2, 384 dims, mode=Full)");
-                return new RepoQL.LLM.Client.OpenRouterEmbeddingProvider(
-                    apiKey: openRouterKey,
-                    logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterEmbeddingProvider>>());
+                try
+                {
+                    log?.LogInformation("Embedding provider: using OpenRouter (all-MiniLM-L6-v2, 384 dims, mode=Full)");
+                    return new RepoQL.LLM.Client.OpenRouterEmbeddingProvider(
+                        apiKey: openRouterKey,
+                        logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterEmbeddingProvider>>());
+                }
+                catch (Exception ex)
+                {
+                    failureMessage = $"OpenRouter embeddings failed: {ex.Message}";
+                    log?.LogWarning(ex, "Embedding provider: OpenRouter initialization failed; falling back");
+                }
             }
 
             // No API key - use local ONNX embeddings
             // Prefer explicit ONNX model path via env
-            var onnxPath = Environment.GetEnvironmentVariable("REPOQL_EMBED_MODEL_PATH");
-            var maxTokens = 256;
-            if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_MAX_TOKENS"), out var mt) && mt > 0) maxTokens = mt;
+            var onnxPath = GetEmbeddingModelPath();
+            var maxTokens = GetEmbeddingMaxTokens();
             if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
             {
-                var onnx = new OnnxEmbeddingProvider(onnxPath, sp.GetService<ILogger<OnnxEmbeddingProvider>>()!, maxTokens);
-                if (onnx.Enabled) return onnx;
-                onnx.Dispose();
-                log?.LogWarning("Embedding provider: ONNX failed to initialize from explicit path {Path}; falling back", onnxPath);
+                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, out var error);
+                if (onnx is not null)
+                    return onnx;
+
+                if (error is null)
+                {
+                    failureMessage = $"ONNX failed to initialize from explicit path {onnxPath}";
+                    log?.LogWarning("Embedding provider: ONNX failed to initialize from explicit path {Path}; falling back", onnxPath);
+                }
+                else
+                {
+                    failureMessage = $"ONNX failed to initialize from explicit path {onnxPath}: {error.Message}";
+                    log?.LogWarning(error, "Embedding provider: ONNX failed to initialize from explicit path {Path}; falling back", onnxPath);
+                }
             }
 
             // Load the shipped model: Embeddings/Model/embedding_model.onnx (quantized int8)
             // If not present, extract from embedded resources in the entry assembly on first run.
             try
             {
-                var baseDir = AppContext.BaseDirectory;
-                var modelDir = Path.Combine(baseDir, "Embeddings", "Model");
-                var shipped = Path.Combine(modelDir, "embedding_model.onnx");
+                var (_, modelDir, shipped) = GetEmbeddingModelPaths();
 
                 if (!File.Exists(shipped))
                 {
@@ -202,14 +220,29 @@ public static class RepoIndexerServiceCollectionExtensions
                 if (File.Exists(shipped))
                 {
                     log?.LogInformation("Embedding provider: using model at {Path}", shipped);
-                    var onnx = new OnnxEmbeddingProvider(shipped, sp.GetService<ILogger<OnnxEmbeddingProvider>>()!, maxTokens);
-                    if (onnx.Enabled) return onnx;
-                    onnx.Dispose();
-                    log?.LogWarning("Embedding provider: shipped model failed to initialize; falling back");
+                    var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, out var error);
+                    if (onnx is not null)
+                        return onnx;
+
+                    if (error is null)
+                    {
+                        failureMessage = "Shipped ONNX model failed to initialize";
+                        log?.LogWarning("Embedding provider: shipped model failed to initialize; falling back");
+                    }
+                    else
+                    {
+                        failureMessage = $"Shipped ONNX model failed to initialize: {error.Message}";
+                        log?.LogWarning(error, "Embedding provider: shipped model failed to initialize; falling back");
+                    }
+                }
+                else
+                {
+                    failureMessage ??= "No shipped ONNX model found";
                 }
             }
             catch (Exception ex)
             {
+                failureMessage = $"Embedding provider failed to initialize: {ex.Message}";
                 log?.LogWarning(ex, "Embedding provider: embedding failed to initialize");
                 // swallow and fall back to hashed provider
             }
@@ -219,6 +252,11 @@ public static class RepoIndexerServiceCollectionExtensions
             var dim = 384;
             if (int.TryParse(dimEnv, out var parsed) && parsed > 0) dim = parsed;
             log?.LogInformation("Embedding provider: using hashed fallback with dim={Dim}", dim);
+            if (!string.IsNullOrWhiteSpace(failureMessage))
+            {
+                degradation?.MarkDegraded(ServiceDegradationKind.Embeddings,
+                    $"Embeddings degraded; using hashed fallback. {failureMessage}");
+            }
             return new HashedEmbeddingProvider(dim);
         });
 
@@ -228,6 +266,9 @@ public static class RepoIndexerServiceCollectionExtensions
             var lf = sp.GetService<ILoggerFactory>();
             var log = lf?.CreateLogger("RepoQL.Embeddings.Local");
             var mode = sp.GetRequiredService<EmbeddingModeOptions>().Mode;
+            var degradation = sp.GetService<IServiceDegradationTracker>();
+            string? failureMessage = null;
+            var onnxLogger = sp.GetService<ILogger<OnnxEmbeddingProvider>>();
 
             if (mode == EmbeddingMode.None)
             {
@@ -236,27 +277,32 @@ public static class RepoIndexerServiceCollectionExtensions
             }
 
             // Always use local ONNX for speed
-            var onnxPath = Environment.GetEnvironmentVariable("REPOQL_EMBED_MODEL_PATH");
-            var maxTokens = 256;
-            if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_MAX_TOKENS"), out var mt) && mt > 0) maxTokens = mt;
+            var onnxPath = GetEmbeddingModelPath();
+            var maxTokens = GetEmbeddingMaxTokens();
 
             if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
             {
-                var onnx = new OnnxEmbeddingProvider(onnxPath, sp.GetService<ILogger<OnnxEmbeddingProvider>>()!, maxTokens);
-                if (onnx.Enabled)
+                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, out var error);
+                if (onnx is not null)
                 {
                     log?.LogInformation("Local embedding provider: using ONNX from explicit path");
                     return onnx;
                 }
-                onnx.Dispose();
-                log?.LogError("Local embedding provider: ONNX from explicit path failed to initialize");
-                throw new InvalidOperationException($"Failed to initialize ONNX embedding provider from {onnxPath}");
+
+                if (error is null)
+                {
+                    failureMessage = $"Local ONNX failed to initialize from explicit path {onnxPath}";
+                    log?.LogError("Local embedding provider: ONNX from explicit path failed to initialize");
+                }
+                else
+                {
+                    failureMessage = $"Local ONNX failed to initialize from explicit path {onnxPath}: {error.Message}";
+                    log?.LogError(error, "Local embedding provider: ONNX from explicit path failed to initialize");
+                }
             }
 
             // Load shipped model
-            var baseDir = AppContext.BaseDirectory;
-            var modelDir = Path.Combine(baseDir, "Embeddings", "Model");
-            var shipped = Path.Combine(modelDir, "embedding_model.onnx");
+            var (baseDir, modelDir, shipped) = GetEmbeddingModelPaths();
             log?.LogInformation("Local embedding provider: looking for ONNX at {Path} (baseDir={BaseDir})", shipped, baseDir);
 
             // Extract from embedded resources if not already present
@@ -274,18 +320,32 @@ public static class RepoIndexerServiceCollectionExtensions
 
             if (File.Exists(shipped))
             {
-                var onnx = new OnnxEmbeddingProvider(shipped, sp.GetService<ILogger<OnnxEmbeddingProvider>>()!, maxTokens);
-                if (onnx.Enabled)
+                var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, out var error);
+                if (onnx is not null)
                 {
                     log?.LogInformation("Local embedding provider: using shipped ONNX model from {Path}", shipped);
                     return onnx;
                 }
-                onnx.Dispose();
-                log?.LogWarning("Local embedding provider: ONNX model at {Path} failed to initialize, returning disabled", shipped);
-                return new DisabledEmbeddingProvider();
+
+                if (error is null)
+                {
+                    failureMessage = $"Local ONNX model at {shipped} failed to initialize";
+                    log?.LogWarning("Local embedding provider: ONNX model at {Path} failed to initialize, returning disabled", shipped);
+                }
+                else
+                {
+                    failureMessage = $"Local ONNX model at {shipped} failed to initialize: {error.Message}";
+                    log?.LogWarning(error, "Local embedding provider: ONNX model at {Path} failed to initialize", shipped);
+                }
             }
 
             log?.LogWarning("Local embedding provider: no ONNX model found at {Path}, returning disabled", shipped);
+            failureMessage ??= "No local ONNX model found";
+            if (!string.IsNullOrWhiteSpace(failureMessage))
+            {
+                degradation?.MarkDegraded(ServiceDegradationKind.Embeddings,
+                    $"Local embeddings disabled. {failureMessage}");
+            }
             return new DisabledEmbeddingProvider();
         });
 
@@ -443,11 +503,26 @@ public static class RepoIndexerServiceCollectionExtensions
         {
             var logger = sp.GetService<ILogger<McpClientRegistry>>();
             var options = McpConfigOptions.FromEnvironment();
-            return McpClientRegistry.CreateFromDirectoryWithGlobals(
-                resolvedRoot,
-                includeGlobalAgents: options.IncludeGlobalAgents,
-                selfServerName: options.SelfServerName,
-                logger);
+            var degradation = sp.GetService<IServiceDegradationTracker>();
+
+            try
+            {
+                return McpClientRegistry.CreateFromDirectoryWithGlobals(
+                    resolvedRoot,
+                    includeGlobalAgents: options.IncludeGlobalAgents,
+                    selfServerName: options.SelfServerName,
+                    logger);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "MCP configuration failed; MCP tools will be disabled.");
+                degradation?.MarkDegraded(ServiceDegradationKind.Mcp,
+                    $"MCP configuration failed: {ex.Message}");
+                return McpClientRegistry.CreateFromConfigs(
+                    new Dictionary<string, McpServerConfig>(StringComparer.OrdinalIgnoreCase),
+                    selfServerName: options.SelfServerName,
+                    logger);
+            }
         });
         // Register IMcpToolCaller for UDF resolution - McpClientRegistry implements this interface
         services.AddSingleton<IMcpToolCaller>(sp => sp.GetRequiredService<McpClientRegistry>());
@@ -563,7 +638,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<IndexingEngine>(),
             sp.GetRequiredService<IOptions<RepoqlHostOptions>>(),
             sp.GetService<ILogger<RepoqlHost>>(),
-            sp.GetRequiredService<IIndexingCoordinator>()));
+            sp.GetRequiredService<IIndexingCoordinator>(),
+            sp.GetService<IServiceDegradationTracker>()));
         services.AddHostedService(sp => sp.GetRequiredService<RepoqlHost>());
 
         return services;
@@ -601,6 +677,48 @@ public static class RepoIndexerServiceCollectionExtensions
             UriPredicate = uri => string.Equals(uri.Scheme, store.Scheme, StringComparison.OrdinalIgnoreCase)
         });
         return services;
+    }
+
+    private static int GetEmbeddingMaxTokens()
+    {
+        var maxTokens = 256;
+        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_MAX_TOKENS"), out var parsed) && parsed > 0)
+            maxTokens = parsed;
+        return maxTokens;
+    }
+
+    private static string? GetEmbeddingModelPath()
+        => Environment.GetEnvironmentVariable("REPOQL_EMBED_MODEL_PATH");
+
+    private static (string BaseDir, string ModelDir, string ShippedPath) GetEmbeddingModelPaths()
+    {
+        var baseDir = AppContext.BaseDirectory;
+        var modelDir = Path.Combine(baseDir, "Embeddings", "Model");
+        var shipped = Path.Combine(modelDir, "embedding_model.onnx");
+        return (baseDir, modelDir, shipped);
+    }
+
+    private static OnnxEmbeddingProvider? TryCreateOnnxProvider(
+        string path,
+        ILogger<OnnxEmbeddingProvider>? logger,
+        int maxTokens,
+        out Exception? error)
+    {
+        error = null;
+        try
+        {
+            var onnx = new OnnxEmbeddingProvider(path, logger, maxTokens);
+            if (onnx.Enabled)
+                return onnx;
+
+            onnx.Dispose();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            error = ex;
+            return null;
+        }
     }
 
     private static void ExtractEmbeddedModelIfAvailable(string destinationModelDir, ILogger? log)

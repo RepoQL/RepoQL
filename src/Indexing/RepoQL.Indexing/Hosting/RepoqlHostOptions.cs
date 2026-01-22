@@ -10,6 +10,12 @@ public sealed class RepoqlHostOptions
     /// <summary>Whether to watch mounted file systems for incremental changes.</summary>
     public bool EnableWatching { get; set; } = true;
 
+    /// <summary>Enable polling fallback when watching fails to initialize.</summary>
+    public bool EnablePollingFallback { get; set; } = true;
+
+    /// <summary>Polling interval used when watcher fallback is active.</summary>
+    public TimeSpan PollingInterval { get; set; } = TimeSpan.FromSeconds(5);
+
     /// <summary>Indexing options used for any artifacts queued by the host.</summary>
     public IndexItemOptions DefaultIndexItemOptions { get; set; } = IndexItemOptions.Default;
 

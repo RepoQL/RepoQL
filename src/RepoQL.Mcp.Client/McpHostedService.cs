@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Mcp.Client;
@@ -13,15 +14,18 @@ public sealed class McpHostedService : IHostedService
 {
     private readonly McpClientRegistry _registry;
     private readonly DuckDbDataStore _store;
+    private readonly IServiceDegradationTracker? _degradation;
     private readonly ILogger _logger;
 
     public McpHostedService(
         McpClientRegistry registry,
         DuckDbDataStore store,
+        IServiceDegradationTracker? degradation = null,
         ILogger<McpHostedService>? logger = null)
     {
         _registry = registry;
         _store = store;
+        _degradation = degradation;
         _logger = logger ?? NullLogger<McpHostedService>.Instance;
     }
 
@@ -54,6 +58,7 @@ public sealed class McpHostedService : IHostedService
         catch (Exception ex)
         {
             _logger.LogError(ex, "MCP integration failed - tools will not be available via SQL");
+            _degradation?.MarkDegraded(ServiceDegradationKind.Mcp, $"MCP integration failed: {ex.Message}");
         }
     }
 

@@ -30,29 +30,50 @@ internal sealed class DocumentSearchService : IDocumentSearchService
         {
             var escapedQuestion = EscapeSql(question!);
 
-            // Build scope parameter for hybrid_search (uses SQL LIKE pattern)
-            // Note: search() still uses LIKE pattern; matches_glob used for explore mode
-            var scopeParam = hasScope
-                ? $", scope := '{EscapeSql(scope!.Split(';')[0])}'"
-                : "";
-
             // Use search for semantic + lexical search
-            // search returns document-level results directly
-            sql = $"""
-                SELECT
-                    hs.uri,
-                    hs.headline,
-                    hs.structure,
-                    substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
-                    ri.lang,
-                    ri.mime as semantic_type,
-                    hs.score,
-                    ri.doc_id
-                FROM search('{escapedQuestion}'{scopeParam}, k := {limit * 3}) hs
-                LEFT JOIN repo_index ri ON ri.uri = hs.uri AND ri.scope = 'document'
-                ORDER BY hs.score DESC
-                LIMIT {limit}
-                """;
+            // If scope provided, pre-filter with glob_files (handles absolute path normalization)
+            // then intersect with search results
+            if (hasScope)
+            {
+                var escapedScope = EscapeSql(scope!);
+                sql = $"""
+                    WITH scope_docs AS (
+                        SELECT uri FROM glob_files('{escapedScope}')
+                    )
+                    SELECT
+                        hs.uri,
+                        hs.headline,
+                        hs.structure,
+                        substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
+                        ri.lang,
+                        ri.mime as semantic_type,
+                        hs.score,
+                        ri.doc_id
+                    FROM search('{escapedQuestion}', k := {limit * 3}) hs
+                    JOIN scope_docs sd ON sd.uri = hs.uri
+                    LEFT JOIN repo_index ri ON ri.uri = hs.uri AND ri.scope = 'document'
+                    ORDER BY hs.score DESC
+                    LIMIT {limit}
+                    """;
+            }
+            else
+            {
+                sql = $"""
+                    SELECT
+                        hs.uri,
+                        hs.headline,
+                        hs.structure,
+                        substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
+                        ri.lang,
+                        ri.mime as semantic_type,
+                        hs.score,
+                        ri.doc_id
+                    FROM search('{escapedQuestion}', k := {limit * 3}) hs
+                    LEFT JOIN repo_index ri ON ri.uri = hs.uri AND ri.scope = 'document'
+                    ORDER BY hs.score DESC
+                    LIMIT {limit}
+                    """;
+            }
         }
         else if (hasScope)
         {

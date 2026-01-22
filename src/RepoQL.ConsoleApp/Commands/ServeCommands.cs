@@ -101,15 +101,19 @@ internal class HostCommands(IAnsiConsole console)
             builder.Logging.AddSerilog(serilogLogger, dispose: false);
 
             serilogLogger.Information("Phase: services start");
-            builder.Services.AddGrpc();
+            builder.Services.AddGrpc(options => options.Interceptors.Add<DegradationWarningInterceptor>());
+            builder.Services.AddSingleton<DegradationWarningInterceptor>();
             builder.Services.AddSingleton<HealthServiceImpl>();
             builder.Services.AddSingleton(new RepositoryConfiguration { Path = repo });
-            builder.Services.AddSingleton(new HostState
+            var hostState = new HostState
             {
                 RepositoryPath = repo,
                 ImplicitStart = implicitStart,
                 StartedAtUtc = DateTime.UtcNow
-            });
+            };
+            builder.Services.AddSingleton(hostState);
+            builder.Services.AddSingleton<ServiceDegradationTracker>(_ => new ServiceDegradationTracker(hostState, repo));
+            builder.Services.AddSingleton<IServiceDegradationTracker>(sp => sp.GetRequiredService<ServiceDegradationTracker>());
             builder.WebHost.ConfigureKestrel(options => { GrpcServerHelper.ConfigureUnixSocket(options, repo); });
             serilogLogger.Information("Phase: database init");
             var dbInit = DatabaseInitCoordinator.Prepare(repo, serilogLogger);
@@ -134,7 +138,7 @@ internal class HostCommands(IAnsiConsole console)
                 sp.GetService<ILlmProvider>()
             ));
 
-            builder.Services.AddGrpc();
+            // gRPC already configured above
             builder.Services.AddSingleton<HostMetrics>();
             // Restore persisted mounts BEFORE other hosted services start
             builder.Services.AddHostedService<MountRestorationService>();
@@ -174,6 +178,8 @@ internal class HostCommands(IAnsiConsole console)
             var health = app.Services.GetRequiredService<HealthServiceImpl>();
             health.SetStatus(string.Empty, HealthCheckResponse.Types.ServingStatus.Serving);
             health.SetStatus("repoql.v1.RepoQL", HealthCheckResponse.Types.ServingStatus.Serving);
+            var degradationTracker = app.Services.GetRequiredService<ServiceDegradationTracker>();
+            degradationTracker.AttachHealth(health);
             app.Logger.LogInformation("Phase: ready");
             app.Logger.LogInformation("Host ready");
             await app.RunAsync().ConfigureAwait(false);

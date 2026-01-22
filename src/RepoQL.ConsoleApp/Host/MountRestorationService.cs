@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem.Physical;
 using RepoQL.Indexing.FileSystems;
@@ -16,14 +17,17 @@ internal sealed class MountRestorationService : IHostedService
     private readonly DuckDbDataStore _db;
     private readonly ICompositeFileSystemManager _mountManager;
     private readonly ILogger<MountRestorationService> _logger;
+    private readonly IServiceDegradationTracker? _degradation;
 
     public MountRestorationService(
         DuckDbDataStore db,
         ICompositeFileSystemManager mountManager,
+        IServiceDegradationTracker? degradation = null,
         ILogger<MountRestorationService>? logger = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _mountManager = mountManager ?? throw new ArgumentNullException(nameof(mountManager));
+        _degradation = degradation;
         _logger = logger ?? NullLogger<MountRestorationService>.Instance;
     }
 
@@ -37,7 +41,18 @@ internal sealed class MountRestorationService : IHostedService
 
     private void RestorePersistedMounts()
     {
-        var mounts = _db.GetAllMounts();
+        List<string> failed = [];
+        IReadOnlyList<FileSystemMountRecord> mounts;
+        try
+        {
+            mounts = _db.GetAllMounts();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load persisted mounts.");
+            _degradation?.MarkDegraded(ServiceDegradationKind.Mounts, $"Failed to load persisted mounts: {ex.Message}");
+            return;
+        }
         if (mounts.Count == 0)
         {
             _logger.LogDebug("No persisted mounts to restore");
@@ -55,6 +70,7 @@ internal sealed class MountRestorationService : IHostedService
                     _logger.LogWarning("Mount {Id} local path missing at {Path}, removing from database",
                         record.Id, record.LocalPath);
                     _db.DeleteMount(record.Id);
+                    failed.Add($"{record.Id} ({record.LocalPath})");
                     continue;
                 }
 
@@ -79,8 +95,15 @@ internal sealed class MountRestorationService : IHostedService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to restore mount {Id}", record.Id);
+                _logger.LogWarning(ex, "Failed to restore mount {Id}", record.Id);
+                failed.Add($"{record.Id} ({record.Authority ?? record.LocalPath})");
             }
+        }
+
+        if (failed.Count > 0)
+        {
+            _degradation?.MarkDegraded(ServiceDegradationKind.Mounts,
+                $"Failed to restore {failed.Count} mount(s): {string.Join(", ", failed)}");
         }
     }
 }

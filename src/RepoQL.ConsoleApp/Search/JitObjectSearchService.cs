@@ -252,34 +252,63 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
         string? penalizePattern,
         ObjectSearchConfig config)
     {
-        // Build scope LIKE pattern for search
-        var scopeLike = !string.IsNullOrWhiteSpace(scope) && scope != "%"
-            ? ConvertGlobToLike(scope)
-            : null;
+        var hasScope = !string.IsNullOrWhiteSpace(scope) && scope != "%";
 
         // Use search for document selection with boost/penalize patterns
-        var sql = $"""
-            SELECT
-                uri,
-                headline,
-                structure,
-                source,
-                sem_score,
-                bm25_score,
-                struct_mentions,
-                body_mentions,
-                deranked,
-                score
-            FROM search(
-                {EscapeSqlString(signals.RawQuery)},
-                scope := {(scopeLike != null ? EscapeSqlString(scopeLike) : "NULL")},
-                boost_pattern := {(!string.IsNullOrWhiteSpace(boostPattern) ? EscapeSqlString(boostPattern) : "NULL")},
-                negative_pattern := {(!string.IsNullOrWhiteSpace(penalizePattern) ? EscapeSqlString(penalizePattern) : "NULL")},
-                k := {config.MaxDocumentsToExpand * 3}
-            )
-            ORDER BY score DESC
-            LIMIT {config.MaxDocumentsToExpand * 2}
-            """;
+        // If scope provided, pre-filter with glob_files (handles absolute path normalization)
+        string sql;
+        if (hasScope)
+        {
+            sql = $"""
+                WITH scope_docs AS (
+                    SELECT uri FROM glob_files({EscapeSqlString(scope!)})
+                )
+                SELECT
+                    s.uri,
+                    s.headline,
+                    s.structure,
+                    s.source,
+                    s.sem_score,
+                    s.bm25_score,
+                    s.struct_mentions,
+                    s.body_mentions,
+                    s.deranked,
+                    s.score
+                FROM search(
+                    {EscapeSqlString(signals.RawQuery)},
+                    boost_pattern := {(!string.IsNullOrWhiteSpace(boostPattern) ? EscapeSqlString(boostPattern) : "NULL")},
+                    negative_pattern := {(!string.IsNullOrWhiteSpace(penalizePattern) ? EscapeSqlString(penalizePattern) : "NULL")},
+                    k := {config.MaxDocumentsToExpand * 3}
+                ) s
+                JOIN scope_docs sd ON sd.uri = s.uri
+                ORDER BY s.score DESC
+                LIMIT {config.MaxDocumentsToExpand * 2}
+                """;
+        }
+        else
+        {
+            sql = $"""
+                SELECT
+                    uri,
+                    headline,
+                    structure,
+                    source,
+                    sem_score,
+                    bm25_score,
+                    struct_mentions,
+                    body_mentions,
+                    deranked,
+                    score
+                FROM search(
+                    {EscapeSqlString(signals.RawQuery)},
+                    boost_pattern := {(!string.IsNullOrWhiteSpace(boostPattern) ? EscapeSqlString(boostPattern) : "NULL")},
+                    negative_pattern := {(!string.IsNullOrWhiteSpace(penalizePattern) ? EscapeSqlString(penalizePattern) : "NULL")},
+                    k := {config.MaxDocumentsToExpand * 3}
+                )
+                ORDER BY score DESC
+                LIMIT {config.MaxDocumentsToExpand * 2}
+                """;
+        }
 
         try
         {
