@@ -19,7 +19,7 @@ using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
-using RepoQL.Xray;
+using RepoQL.Explore;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoStageStatus = RepoQL.Contracts.StageStatus;
@@ -39,7 +39,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly ILlmProvider? _llmProvider;
     private readonly EmbeddingMode _embeddingMode;
-    private readonly XrayOrchestrator _xrayOrchestrator;
+    private readonly ExploreOrchestrator _exploreOrchestrator;
     private readonly StatusEventAggregator _statusAggregator;
     private readonly ILogger<RepoQlServiceImpl> _logger;
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
@@ -58,7 +58,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         ICompositeFileSystemManager mountManager,
         DocumentPreviewService previewService,
         IHostApplicationLifetime hostLifetime,
-        XrayOrchestrator xrayOrchestrator,
+        ExploreOrchestrator exploreOrchestrator,
         StatusEventAggregator statusAggregator,
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
@@ -76,7 +76,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _mountManager = mountManager ?? throw new ArgumentNullException(nameof(mountManager));
         _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
-        _xrayOrchestrator = xrayOrchestrator ?? throw new ArgumentNullException(nameof(xrayOrchestrator));
+        _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
         _statusAggregator = statusAggregator ?? throw new ArgumentNullException(nameof(statusAggregator));
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
     }
@@ -84,7 +84,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     public override async Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
     {
         // No barrier - queries execute immediately with whatever data is available.
-        // XrayTool handles "call again to wait" pattern for semantic readiness.
+        // ExploreTool handles "call again to wait" pattern for semantic readiness.
         var resp = new RawQueryResponse();
         var sw = System.Diagnostics.Stopwatch.StartNew();
         try
@@ -1060,7 +1060,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             _ => CoordinatorPipelineStage.Discovery
         };
 
-    public override async Task<XrayResponse> Xray(XrayRequest request, ServerCallContext context)
+    public override async Task<ExploreResponse> Explore(ExploreRequest request, ServerCallContext context)
     {
         var sw = Stopwatch.StartNew();
 
@@ -1072,15 +1072,15 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             // Map intent
             var intent = request.Intent switch
             {
-                XrayIntent.Explore => Intent.Explore,
-                XrayIntent.Find => Intent.Find,
-                XrayIntent.Examine => Intent.Examine,
-                XrayIntent.Understand => Intent.Understand,
-                _ => Intent.Explore
+                ExploreIntent.Inventory => Intent.Inventory,
+                ExploreIntent.Locate => Intent.Locate,
+                ExploreIntent.Inspect => Intent.Inspect,
+                ExploreIntent.Explain => Intent.Explain,
+                _ => Intent.Inventory
             };
 
             // Build query
-            var query = new XrayQuery(
+            var query = new ExploreQuery(
                 TokenBudget: request.TokenBudget,
                 Intent: intent,
                 Scope: string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope,
@@ -1091,19 +1091,19 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             );
 
             // Execute via orchestrator (pass stopwatch for accurate timing in output)
-            var result = await _xrayOrchestrator.ExecuteAsync(query, status, context.CancellationToken, sw).ConfigureAwait(false);
+            var result = await _exploreOrchestrator.ExecuteAsync(query, status, context.CancellationToken, sw).ConfigureAwait(false);
 
             // Update status with elapsed time
             var hasKeywords = !string.IsNullOrWhiteSpace(request.Keywords);
             var isReady = status.IndexPending == 0 && (!hasKeywords || status.SemanticReady);
 
             // Build response
-            var response = new XrayResponse
+            var response = new ExploreResponse
             {
                 Success = true,
                 RenderedOutput = result.RenderedOutput,
                 Truncated = result.Truncated,
-                Status = new XrayIndexerStatus
+                Status = new ExploreIndexerStatus
                 {
                     IndexPending = status.IndexPending,
                     SemanticReady = status.SemanticReady,
@@ -1113,17 +1113,17 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             };
 
             // Map structured results
-            foreach (var xrayResult in result.Results)
+            foreach (var exploreResult in result.Results)
             {
-                response.Results.Add(ToProtoXrayResult(xrayResult));
+                response.Results.Add(ToProtoExploreResult(exploreResult));
             }
 
             return response;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Xray query failed");
-            return new XrayResponse
+            _logger.LogError(ex, "Explore query failed");
+            return new ExploreResponse
             {
                 Success = false,
                 Error = ex.Message
@@ -1143,9 +1143,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             // Create content provider using the database
             var contentProvider = new DatabaseReadContentProvider(_db);
 
-            // Create orchestrator with xray for question handling (large content)
+            // Create orchestrator with explore for question handling (large content)
             // and LLM for direct synthesis (small content)
-            var orchestrator = new ReadOrchestrator(contentProvider, _xrayOrchestrator, _llmProvider);
+            var orchestrator = new ReadOrchestrator(contentProvider, _exploreOrchestrator, _llmProvider);
 
             // Execute
             var result = await orchestrator.ExecuteAsync(
@@ -1163,7 +1163,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 Representation = result.Representation ?? "",
                 FilesRead = result.FilesRead,
                 FilesOmitted = result.FilesOmitted,
-                Status = new XrayIndexerStatus
+                Status = new ExploreIndexerStatus
                 {
                     IndexPending = status.IndexPending,
                     SemanticReady = status.SemanticReady,
@@ -1462,9 +1462,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         return result;
     }
 
-    private static XrayResultItem ToProtoXrayResult(XrayResult result)
+    private static ExploreResultItem ToProtoExploreResult(ExploreResult result)
     {
-        var item = new XrayResultItem
+        var item = new ExploreResultItem
         {
             Uri = result.Uri,
             Confidence = result.Confidence
@@ -1487,7 +1487,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         {
             foreach (var child in result.ChildObjects)
             {
-                item.Children.Add(ToProtoXrayResult(child));
+                item.Children.Add(ToProtoExploreResult(child));
             }
         }
 

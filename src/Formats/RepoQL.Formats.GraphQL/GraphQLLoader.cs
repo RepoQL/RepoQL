@@ -84,16 +84,16 @@ public sealed partial class GraphQLLoader(ILogger<GraphQLLoader>? logger = null)
         var state = document.GetMetadataOrDefault<GraphQLDocumentState>(StateMetadataKey)
                     ?? throw new InvalidOperationException("GraphQL document missing state metadata.");
 
-        var rendererModel = GraphQLXrayModelBuilder.Build(document, state);
+        var rendererModel = GraphQLExploreModelBuilder.Build(document, state);
 
         string? headline = null;
         string? summary = null;
         string? structure = null;
         try
         {
-            headline = _renderer.RenderAsync("xray/headline", rendererModel).GetAwaiter().GetResult().Trim();
-            summary = _renderer.RenderAsync("xray/summary", rendererModel).GetAwaiter().GetResult().Trim();
-            structure = _renderer.RenderAsync("xray/structure", rendererModel).GetAwaiter().GetResult().Trim();
+            headline = _renderer.RenderAsync("explore/headline", rendererModel).GetAwaiter().GetResult().Trim();
+            summary = _renderer.RenderAsync("explore/summary", rendererModel).GetAwaiter().GetResult().Trim();
+            structure = _renderer.RenderAsync("explore/structure", rendererModel).GetAwaiter().GetResult().Trim();
         }
         catch (Exception ex)
         {

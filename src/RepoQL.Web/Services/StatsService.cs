@@ -109,7 +109,7 @@ internal sealed class StatsService
             var withSummary = GetLong(row, response.Columns, "with_summary");
             var withStructure = GetLong(row, response.Columns, "with_structure");
             var sampleUri = GetString(row, response.Columns, "sample_uri");
-            var xrayCoverage = fileCount > 0 ? (int)((withHeadline + withSummary + withStructure) / (fileCount * 3.0) * 100) : 0;
+            var exploreCoverage = fileCount > 0 ? (int)((withHeadline + withSummary + withStructure) / (fileCount * 3.0) * 100) : 0;
 
             results.Add(new MediaTypeDetail(
                 MediaLabel: label,
@@ -117,7 +117,7 @@ internal sealed class StatsService
                 WithHeadline: withHeadline,
                 WithSummary: withSummary,
                 WithStructure: withStructure,
-                XRayCoverage: xrayCoverage,
+                ExploreCoverage: exploreCoverage,
                 SampleUri: sampleUri));
         }
 
@@ -358,9 +358,9 @@ internal sealed class StatsService
     }
 
     /// <summary>
-    /// Gets the overall X-ray coverage percentage (files with headline/summary/structure).
+    /// Gets the overall Explore coverage percentage (files with headline/summary/structure).
     /// </summary>
-    public async Task<int> GetXrayCoverageAsync(CancellationToken cancellationToken = default)
+    public async Task<int> GetExploreCoverageAsync(CancellationToken cancellationToken = default)
     {
         try
         {
@@ -370,7 +370,7 @@ internal sealed class StatsService
                 """
                 SELECT
                     COUNT(*) as total,
-                    COUNT(*) FILTER (WHERE headline IS NOT NULL OR summary IS NOT NULL OR structure IS NOT NULL) as with_xray
+                    COUNT(*) FILTER (WHERE headline IS NOT NULL OR summary IS NOT NULL OR structure IS NOT NULL) as with_explore
                 FROM artifact
                 """,
                 cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -378,8 +378,8 @@ internal sealed class StatsService
             if (result.Rows.Count > 0)
             {
                 var total = GetLong(result.Rows[0], result.Columns, "total");
-                var withXray = GetLong(result.Rows[0], result.Columns, "with_xray");
-                return total > 0 ? (int)(withXray * 100 / total) : 0;
+                var withExplore = GetLong(result.Rows[0], result.Columns, "with_explore");
+                return total > 0 ? (int)(withExplore * 100 / total) : 0;
             }
             return 0;
         }

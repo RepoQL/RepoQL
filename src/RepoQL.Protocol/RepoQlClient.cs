@@ -22,9 +22,9 @@ namespace RepoQL.Protocol;
 /// Socket discovery mirrors the server: prefer ".repoql/socket.path" mapping (WSL Windows mount case),
 /// otherwise use ".repoql/repoql.sock" under the repository root discovered by <see cref="RepoLocator.FindRepoRoot"/>.
 /// </remarks>
-public sealed class RepoQlClient : IRepoQlClient
+public class RepoQlConnectionClient : IRepoQlClient
 {
-    private enum ConnectionMode
+    protected enum ConnectionMode
     {
         ExternalChannel,
         Managed
@@ -40,19 +40,29 @@ public sealed class RepoQlClient : IRepoQlClient
     private CancellationTokenSource? _leaseCts;
     private AsyncClientStreamingCall<ClientLeaseBeat, ClientLeaseSummary>? _leaseCall;
     private readonly ILogger _logger;
+    private string? _activeSocketPath;
 
     public GrpcChannel Channel => _channel ?? throw new InvalidOperationException("RepoQL client is not connected.");
 
-    private RepoQlClient(GrpcChannel channel, TimeSpan? defaultTimeout, ILogger<RepoQlClient>? logger = null)
+    protected Contracts.RepoQL.RepoQLClient? Client => _client;
+    protected GrpcChannel? ChannelInternal => _channel;
+    protected ConnectionMode Mode => _mode;
+    protected string? RepoRoot => _repoDirectory?.RepoRoot;
+    protected string? ConfiguredSocketPath => _configuredSocketPath;
+    protected string? ActiveSocketPath => _activeSocketPath;
+    protected ILogger Logger => _logger;
+    protected bool IsManaged => _mode == ConnectionMode.Managed;
+
+    protected RepoQlConnectionClient(GrpcChannel channel, TimeSpan? defaultTimeout, ILogger? logger = null)
     {
         _mode = ConnectionMode.ExternalChannel;
         _channel = channel;
         _client = new Contracts.RepoQL.RepoQLClient(channel);
         _defaultTimeout = defaultTimeout;
-        _logger = logger ?? NullLogger<RepoQlClient>.Instance;
+        _logger = logger ?? NullLogger.Instance;
     }
 
-    private RepoQlClient(RepoQlClientOptions options, string repoPath, string? socketPath, ILogger? logger = null)
+    protected RepoQlConnectionClient(RepoQlClientOptions options, string repoPath, string? socketPath, ILogger? logger = null)
     {
         _mode = ConnectionMode.Managed;
         _repoDirectory = new RepoDirectoryAccessor(repoPath);
@@ -61,36 +71,7 @@ public sealed class RepoQlClient : IRepoQlClient
         _logger = logger ?? NullLogger.Instance;
     }
 
-    /// <summary>
-    /// Create a client from an existing <see cref="GrpcChannel"/> (useful for in-memory tests with TestServer).
-    /// </summary>
-    public static RepoQlClient FromChannel(GrpcChannel channel, TimeSpan? defaultTimeout = null, ILogger<RepoQlClient>? logger = null)
-        => new RepoQlClient(channel, defaultTimeout, logger);
-
-    /// <summary>
-    /// Create a client connected to the repository's RepoQL server over a Unix domain socket.
-    /// </summary>
-    /// <param name="options">Optional configuration for socket discovery and default timeouts.</param>
-    /// <param name="cancellationToken"></param>
-    public static async Task<IRepoQlClient> CreateAsync(RepoQlClientOptions? options = null, ILogger? logger = null, CancellationToken cancellationToken = default)
-    {
-        options ??= new RepoQlClientOptions();
-        if (!RepoLocator.TryFindRepoRoot(options.RepositoryPath, out var repoPath, out var searchedFrom))
-        {
-            throw new RepoRootNotFoundException(searchedFrom ?? Directory.GetCurrentDirectory());
-        }
-
-        logger ??= NullLogger.Instance;
-        logger.LogInformation("RepoQlClient: creating managed connection (repoRoot='{RepoRoot}', socketOverride='{SocketOverride}').",
-            repoPath,
-            options.SocketPath ?? "<null>");
-
-        var client = new RepoQlClient(options, repoPath, options.SocketPath, logger);
-        await client.EnsureConnectedAsync(forceReconnect: true, cancellationToken).ConfigureAwait(false);
-        return client;
-    }
-
-    private async Task EnsureConnectedAsync(bool forceReconnect, CancellationToken cancellationToken)
+    protected virtual async Task EnsureConnectedAsync(bool forceReconnect, CancellationToken cancellationToken)
     {
         if (_mode == ConnectionMode.ExternalChannel)
         {
@@ -137,6 +118,7 @@ public sealed class RepoQlClient : IRepoQlClient
             allowReResolve,
             TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_START_TIMEOUT_MS", 120_000)),
             cancellationToken).ConfigureAwait(false);
+        _activeSocketPath = finalSocketPath;
 
         var handler = new SocketsHttpHandler
         {
@@ -167,7 +149,7 @@ public sealed class RepoQlClient : IRepoQlClient
         EstablishLeaseOrThrow(repoDirectory.RepoRoot, TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_LEASE_START_TIMEOUT_MS", 5000)));
     }
 
-    private void DisposeChannel()
+    protected virtual void DisposeChannel()
     {
         var leaseCts = Interlocked.Exchange(ref _leaseCts, null);
         if (leaseCts != null)
@@ -182,34 +164,17 @@ public sealed class RepoQlClient : IRepoQlClient
         var channel = Interlocked.Exchange(ref _channel, null);
         channel?.Dispose();
         _client = null;
+        _activeSocketPath = null;
     }
 
-    private async Task<T> InvokeWithReconnectAsync<T>(Func<Contracts.RepoQL.RepoQLClient, CancellationToken, Task<T>> call, CancellationToken cancellationToken)
+    protected virtual async Task<T> InvokeWithReconnectAsync<T>(Func<Contracts.RepoQL.RepoQLClient, CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
     {
-        var maxAttempts = _mode == ConnectionMode.Managed ? 2 : 1;
-        Exception? last = null;
-
-        for (var attempt = 0; attempt < maxAttempts; attempt++)
-        {
-            await EnsureConnectedAsync(forceReconnect: attempt > 0, cancellationToken).ConfigureAwait(false);
-            var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
-
-            try
-            {
-                return await call(client, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (attempt == 0 && _mode == ConnectionMode.Managed && ShouldAttemptReconnect(ex))
-            {
-                _logger.LogWarning(ex, "RepoQlClient: first attempt failed; disposing channel and retrying.");
-                last = ex;
-                DisposeChannel();
-            }
-        }
-
-        throw last ?? new InvalidOperationException("RepoQL client operation failed.");
+        await EnsureConnectedAsync(forceReconnect: false, cancellationToken).ConfigureAwait(false);
+        var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
+        return await operation(client, cancellationToken).ConfigureAwait(false);
     }
 
-    private static bool ShouldAttemptReconnect(Exception ex)
+    protected static bool ShouldAttemptReconnect(Exception ex)
         => ex switch
         {
             RpcException rpc when rpc.StatusCode is StatusCode.Unavailable or StatusCode.Internal => true,
@@ -221,7 +186,7 @@ public sealed class RepoQlClient : IRepoQlClient
             _ => false
         };
 
-    private DateTime? ComputeDeadline(TimeSpan? overrideTimeout = null)
+    protected DateTime? ComputeDeadline(TimeSpan? overrideTimeout = null)
     {
         var effective = overrideTimeout ?? _defaultTimeout;
         return effective.HasValue ? DateTime.UtcNow + effective.Value : (DateTime?)null;
@@ -292,7 +257,7 @@ public sealed class RepoQlClient : IRepoQlClient
         throw new TimeoutException($"RepoQL host did not become ready within {timeout.TotalMilliseconds} ms (socket: {currentSocketPath}).{diagnosticInfo}");
     }
 
-    private static async Task<Socket?> ConnectAsync(string socketPath, CancellationToken cancellationToken)
+    protected static async Task<Socket?> ConnectAsync(string socketPath, CancellationToken cancellationToken)
     {
         try
         {
@@ -303,7 +268,7 @@ public sealed class RepoQlClient : IRepoQlClient
         catch { return null; }
     }
 
-    private static async Task<bool> TryHealthCheckAsync(string socketPath, CancellationToken cancellationToken)
+    protected static async Task<bool> TryHealthCheckAsync(string socketPath, CancellationToken cancellationToken)
     {
         var socket = await ConnectAsync(socketPath, cancellationToken).ConfigureAwait(false);
         if (socket is null)
@@ -319,7 +284,7 @@ public sealed class RepoQlClient : IRepoQlClient
         }
     }
 
-    private static bool HealthServing(Socket socket)
+    protected static bool HealthServing(Socket socket)
     {
         try
         {
@@ -605,7 +570,7 @@ public sealed class RepoQlClient : IRepoQlClient
         var clientId = Guid.NewGuid().ToString();
         var pid = Environment.ProcessId;
         var tool = AppDomain.CurrentDomain.FriendlyName;
-        var ver = typeof(RepoQlClient).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+        var ver = typeof(RepoQlConnectionClient).Assembly.GetName().Version?.ToString() ?? "0.0.0";
         var startedAt = DateTime.UtcNow.ToString("O");
 
         // Send first beat and ensure it succeeds within timeout
@@ -628,21 +593,37 @@ public sealed class RepoQlClient : IRepoQlClient
         // Start background beat loop
         _ = Task.Run(async () =>
         {
-            while (!_leaseCts.IsCancellationRequested)
+            try
             {
-                await Task.Delay(TimeSpan.FromSeconds(10), _leaseCts.Token).ConfigureAwait(false);
-                await leaseCall.RequestStream.WriteAsync(new ClientLeaseBeat
+                while (!_leaseCts.IsCancellationRequested)
                 {
-                    ClientId = clientId,
-                    Pid = pid,
-                    Tool = tool,
-                    Version = ver,
-                    RepoPath = repoPath,
-                    StartedAt = startedAt,
-                    BeatAt = DateTime.UtcNow.ToString("O")
-                }).ConfigureAwait(false);
+                    await Task.Delay(TimeSpan.FromSeconds(10), _leaseCts.Token).ConfigureAwait(false);
+                    await leaseCall.RequestStream.WriteAsync(new ClientLeaseBeat
+                    {
+                        ClientId = clientId,
+                        Pid = pid,
+                        Tool = tool,
+                        Version = ver,
+                        RepoPath = repoPath,
+                        StartedAt = startedAt,
+                        BeatAt = DateTime.UtcNow.ToString("O")
+                    }).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (_leaseCts.IsCancellationRequested)
+            {
+                // Expected during shutdown
+            }
+            catch (Exception ex)
+            {
+                OnLeaseFaulted(ex);
             }
         }, _leaseCts.Token);
+    }
+
+    protected virtual void OnLeaseFaulted(Exception ex)
+    {
+        _logger.LogDebug(ex, "RepoQlClient: lease stream faulted.");
     }
 
     /// <inheritdoc />
@@ -660,53 +641,21 @@ public sealed class RepoQlClient : IRepoQlClient
         }, cancellationToken);
 
     /// <inheritdoc />
-    public async IAsyncEnumerable<RawQueryRow> ExecuteRawQueryStreamAsync(
+    public virtual async IAsyncEnumerable<RawQueryRow> ExecuteRawQueryStreamAsync(
         string sql,
         IEnumerable<object?>? parameters = null,
         int? rowLimit = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var attempt = 0;
-        while (true)
+        await EnsureConnectedAsync(forceReconnect: false, cancellationToken).ConfigureAwait(false);
+        var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
+        var req = BuildRawQueryRequest(sql, parameters, rowLimit);
+        var deadline = ComputeDeadline();
+        using var call = client.ExecuteRawQueryStream(req, deadline: deadline, cancellationToken: cancellationToken);
+
+        while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
-            await EnsureConnectedAsync(forceReconnect: attempt > 0, cancellationToken).ConfigureAwait(false);
-            var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
-            var req = BuildRawQueryRequest(sql, parameters, rowLimit);
-            var deadline = ComputeDeadline();
-            using var call = client.ExecuteRawQueryStream(req, deadline: deadline, cancellationToken: cancellationToken);
-            var emitted = false;
-            Exception? failure = null;
-
-            while (true)
-            {
-                bool moved;
-                try
-                {
-                    moved = await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    failure = ex;
-                    break;
-                }
-
-                if (!moved)
-                {
-                    yield break;
-                }
-
-                emitted = true;
-                yield return call.ResponseStream.Current;
-            }
-
-            if (failure != null && !emitted && attempt == 0 && _mode == ConnectionMode.Managed && ShouldAttemptReconnect(failure))
-            {
-                DisposeChannel();
-                attempt++;
-                continue;
-            }
-
-            throw failure ?? new InvalidOperationException("RepoQL stream failed unexpectedly.");
+            yield return call.ResponseStream.Current;
         }
     }
 
@@ -726,14 +675,14 @@ public sealed class RepoQlClient : IRepoQlClient
             return await client.GetDocumentSummariesAsync(req, deadline: deadline, cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
         }, cancellationToken);
 
-    public ValueTask DisposeAsync()
+    public virtual ValueTask DisposeAsync()
     {
         DisposeChannel();
         _repoDirectory?.Dispose();
         return ValueTask.CompletedTask;
     }
 
-    private static RawQueryRequest BuildRawQueryRequest(string sql, IEnumerable<object?>? parameters, int? rowLimit, int tokenBudget = 0)
+    protected static RawQueryRequest BuildRawQueryRequest(string sql, IEnumerable<object?>? parameters, int? rowLimit, int tokenBudget = 0)
     {
         var req = new RawQueryRequest
         {
@@ -803,48 +752,16 @@ public sealed class RepoQlClient : IRepoQlClient
     }
 
 
-    public async IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, TimeSpan? timeout = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public virtual async IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, TimeSpan? timeout = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var attempt = 0;
-        while (true)
+        await EnsureConnectedAsync(forceReconnect: false, cancellationToken).ConfigureAwait(false);
+        var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
+        var deadline = ComputeDeadline(timeout);
+        using var call = client.ReindexAll(new ReindexRequest { Clear = clear }, deadline: deadline, cancellationToken: cancellationToken);
+
+        while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
-            await EnsureConnectedAsync(forceReconnect: attempt > 0, cancellationToken).ConfigureAwait(false);
-            var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
-            var deadline = ComputeDeadline(timeout);
-            using var call = client.ReindexAll(new ReindexRequest { Clear = clear }, deadline: deadline, cancellationToken: cancellationToken);
-            var emitted = false;
-            Exception? failure = null;
-
-            while (true)
-            {
-                bool moved;
-                try
-                {
-                    moved = await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    failure = ex;
-                    break;
-                }
-
-                if (!moved)
-                {
-                    yield break;
-                }
-
-                emitted = true;
-                yield return call.ResponseStream.Current;
-            }
-
-            if (failure != null && !emitted && attempt == 0 && _mode == ConnectionMode.Managed && ShouldAttemptReconnect(failure))
-            {
-                DisposeChannel();
-                attempt++;
-                continue;
-            }
-
-            throw failure ?? new InvalidOperationException("RepoQL stream failed unexpectedly.");
+            yield return call.ResponseStream.Current;
         }
     }
 
@@ -917,9 +834,9 @@ public sealed class RepoQlClient : IRepoQlClient
             return response;
         }, cancellationToken);
 
-    public Task<XrayResponse> XrayAsync(
+    public Task<ExploreResponse> ExploreAsync(
         int tokenBudget,
-        XrayIntent intent,
+        ExploreIntent intent,
         string? scope = null,
         string? keywords = null,
         string? boost = null,
@@ -928,7 +845,7 @@ public sealed class RepoQlClient : IRepoQlClient
         CancellationToken cancellationToken = default)
         => InvokeWithReconnectAsync(async (client, ct) =>
         {
-            var request = new Contracts.XrayRequest
+            var request = new Contracts.ExploreRequest
             {
                 TokenBudget = tokenBudget,
                 Intent = intent
@@ -945,7 +862,7 @@ public sealed class RepoQlClient : IRepoQlClient
             if (limit.HasValue)
                 request.Limit = limit.Value;
 
-            var response = await client.XrayAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            var response = await client.ExploreAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
             return response;
         }, cancellationToken);
 
@@ -965,51 +882,15 @@ public sealed class RepoQlClient : IRepoQlClient
             return response;
         }, cancellationToken);
 
-    public async IAsyncEnumerable<StatusEvent> WatchStatusAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public virtual async IAsyncEnumerable<StatusEvent> WatchStatusAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var attempt = 0;
-        while (true)
+        await EnsureConnectedAsync(forceReconnect: false, cancellationToken).ConfigureAwait(false);
+        var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
+        using var call = client.WatchStatus(new WatchStatusRequest(), cancellationToken: cancellationToken);
+
+        while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
-            await EnsureConnectedAsync(forceReconnect: attempt > 0, cancellationToken).ConfigureAwait(false);
-            var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
-            // No deadline for status stream - it should run indefinitely
-            using var call = client.WatchStatus(new WatchStatusRequest(), cancellationToken: cancellationToken);
-            var emitted = false;
-            Exception? failure = null;
-
-            while (true)
-            {
-                bool moved;
-                try
-                {
-                    moved = await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    failure = ex;
-                    break;
-                }
-
-                if (!moved)
-                {
-                    yield break;
-                }
-
-                emitted = true;
-                yield return call.ResponseStream.Current;
-            }
-
-            if (failure != null && !emitted && attempt == 0 && _mode == ConnectionMode.Managed && ShouldAttemptReconnect(failure))
-            {
-                DisposeChannel();
-                attempt++;
-                continue;
-            }
-
-            if (failure != null)
-                throw failure;
-
-            yield break;
+            yield return call.ResponseStream.Current;
         }
     }
 }

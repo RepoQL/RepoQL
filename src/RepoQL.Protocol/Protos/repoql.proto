@@ -46,8 +46,8 @@ service RepoQL {
   // Run the hot-path pipeline for a single document without persisting results.
   rpc PreviewDocument(PreviewDocumentRequest) returns (PreviewDocumentResponse);
 
-  // Execute an xray query returning both structured results and pre-rendered output.
-  rpc Xray(XrayRequest) returns (XrayResponse);
+  // Execute an explore query returning both structured results and pre-rendered output.
+  rpc Explore(ExploreRequest) returns (ExploreResponse);
 
   // Read repository content with token-budget-aware representation selection.
   rpc Read(ReadRequest) returns (ReadResponse);
@@ -262,7 +262,7 @@ enum PipelineStage {
   PIPELINE_STAGE_FILTER = 11;
   PIPELINE_STAGE_CLASSIFY = 12;
   PIPELINE_STAGE_PARSE = 13;
-  PIPELINE_STAGE_XRAY = 14;
+  PIPELINE_STAGE_EXPLORE = 14;
   PIPELINE_STAGE_COMMIT = 15;
   // Granular idle processing stages
   PIPELINE_STAGE_PRUNE = 20;
@@ -431,13 +431,13 @@ message PreviewDocumentResponse {
   repeated PreviewStageTiming stages = 6;
 }
 
-// ----- Xray: semantic search with structured + rendered output -----
+// ----- Explore: semantic search with structured + rendered output -----
 
-message XrayRequest {
+message ExploreRequest {
   // Maximum tokens to invest in the response.
   int32 token_budget = 1;
   // Search intent (zoom level).
-  XrayIntent intent = 2;
+  ExploreIntent intent = 2;
   // Scope filter (glob pattern or URI).
   string scope = 3;
   // Search keywords for semantic search.
@@ -450,15 +450,15 @@ message XrayRequest {
   int32 limit = 7;
 }
 
-enum XrayIntent {
-  XRAY_INTENT_UNSPECIFIED = 0;
-  XRAY_INTENT_EXPLORE = 1;
-  XRAY_INTENT_FIND = 2;
-  XRAY_INTENT_EXAMINE = 3;
-  XRAY_INTENT_UNDERSTAND = 4;
+enum ExploreIntent {
+  EXPLORE_INTENT_UNSPECIFIED = 0;
+  EXPLORE_INTENT_INVENTORY = 1;
+  EXPLORE_INTENT_LOCATE = 2;
+  EXPLORE_INTENT_INSPECT = 3;
+  EXPLORE_INTENT_EXPLAIN = 4;
 }
 
-message XrayResponse {
+message ExploreResponse {
   // True if the query executed successfully.
   bool success = 1;
   // Error message if success is false.
@@ -466,14 +466,14 @@ message XrayResponse {
   // Pre-rendered markdown output for display/MCP.
   string rendered_output = 3;
   // Structured results for programmatic use.
-  repeated XrayResultItem results = 4;
+  repeated ExploreResultItem results = 4;
   // True if results were truncated due to token budget.
   bool truncated = 5;
   // Current indexer status with readiness info.
-  XrayIndexerStatus status = 6;
+  ExploreIndexerStatus status = 6;
 }
 
-message XrayResultItem {
+message ExploreResultItem {
   // File or symbol URI.
   string uri = 1;
   // Confidence score 1-100.
@@ -491,10 +491,10 @@ message XrayResultItem {
   // Semantic type for grouping.
   string semantic_type = 8;
   // Nested child objects.
-  repeated XrayResultItem children = 9;
+  repeated ExploreResultItem children = 9;
 }
 
-message XrayIndexerStatus {
+message ExploreIndexerStatus {
   // Number of items pending indexing (>0 means incomplete).
   int32 index_pending = 1;
   // True if semantic search (embeddings) is ready.
@@ -529,7 +529,7 @@ message ReadResponse {
   // Number of files omitted due to budget constraints.
   int32 files_omitted = 6;
   // Current indexer status with readiness info.
-  XrayIndexerStatus status = 7;
+  ExploreIndexerStatus status = 7;
 }
 
 // ----- WatchStatus: real-time status streaming -----
@@ -655,8 +655,8 @@ message StatsSnapshotEvent {
   int64 total_files = 1;
   // Total nodes in the graph.
   int64 total_nodes = 2;
-  // Percentage of files with xray coverage (headline/summary).
-  int32 xray_coverage_percent = 3;
+  // Percentage of files with explore coverage (headline/summary).
+  int32 explore_coverage_percent = 3;
   // True if embeddings are ready for semantic search.
   bool embeddings_ready = 4;
 }

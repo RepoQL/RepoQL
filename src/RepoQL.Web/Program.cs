@@ -16,7 +16,7 @@ builder.Services.AddScoped<DocumentExplorerService>();
 builder.Services.AddMudServices();
 builder.Services.AddScoped<StatsService>();
 builder.Services.AddScoped<FormatPreviewService>();
-builder.Services.AddScoped<XrayService>();
+builder.Services.AddScoped<ExploreService>();
 
 var app = builder.Build();
 

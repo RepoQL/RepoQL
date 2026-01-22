@@ -10,7 +10,7 @@ namespace RepoQL.ConsoleApp.Helpers;
 internal static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers MCP client-side services. Does NOT register search services or XrayOrchestrator
+    /// Registers MCP client-side services. Does NOT register search services or ExploreOrchestrator
     /// (those are registered in ServeCommands for the server-side only).
     /// </summary>
     public static IServiceCollection AddRepoQlConsoleServices(this IServiceCollection services, bool prewarmClient = true)

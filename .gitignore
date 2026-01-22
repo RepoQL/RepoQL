@@ -25,3 +25,4 @@ artifacts/
 node_modules/
 Examples/
 **/tmpclaude*-cwd
+/nul

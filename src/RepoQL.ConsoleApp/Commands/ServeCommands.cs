@@ -24,8 +24,8 @@ using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
-using RepoQL.Xray;
-using RepoQL.Xray.Search;
+using RepoQL.Explore;
+using RepoQL.Explore.Search;
 using Serilog;
 using Spectre.Console;
 using ConsoleAppFramework;
@@ -114,10 +114,10 @@ internal class HostCommands(IAnsiConsole console)
         serilogLogger.Information("Phase: database init");
         builder.Services.AddRepoIndexer(repo);
 
-        // Search services for XrayOrchestrator (server-side, using DuckDbDataStore directly)
+        // Search services for ExploreOrchestrator (server-side, using DuckDbDataStore directly)
         builder.Services.AddSingleton<IDocumentSearchService, DocumentSearchService>();
         builder.Services.AddSingleton<IObjectSearchService, ObjectSearchService>();
-        builder.Services.AddSingleton<IXraySearchEngine, XraySearchEngine>();
+        builder.Services.AddSingleton<IExploreSearchEngine, ExploreSearchEngine>();
         // JIT object search uses local ONNX for fast JIT embeddings
         builder.Services.AddSingleton<IJitObjectSearchService>(sp =>
         {
@@ -126,8 +126,8 @@ internal class HostCommands(IAnsiConsole console)
             var logger = sp.GetService<ILogger<JitObjectSearchService>>();
             return new JitObjectSearchService(store, embeddingProvider, logger);
         });
-        builder.Services.AddSingleton(sp => new XrayOrchestrator(
-            sp.GetRequiredService<IXraySearchEngine>(),
+        builder.Services.AddSingleton(sp => new ExploreOrchestrator(
+            sp.GetRequiredService<IExploreSearchEngine>(),
             sp.GetService<IJitObjectSearchService>(),
             sp.GetService<ILlmProvider>()
         ));

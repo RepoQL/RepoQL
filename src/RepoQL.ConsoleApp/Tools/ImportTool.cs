@@ -80,7 +80,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
                 To query the imported content, use:
                 - File search: SELECT uri, score FROM search('keywords', scope := '{uriPattern}%', k := 10)
-                - Xray scan: Use scope="{uriPattern}/**" with the xray tool
+                - Explore scan: Use scope="{uriPattern}/**" with the explore tool
                 - Document list: SELECT uri, headline FROM Files WHERE uri LIKE '{uriPattern}%'
 
                 Note: Re-importing the same repository will perform an incremental update.

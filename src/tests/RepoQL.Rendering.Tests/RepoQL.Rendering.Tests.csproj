@@ -17,7 +17,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\..\RepoQL.Xray\RepoQL.Xray.csproj" />
+      <ProjectReference Include="..\..\RepoQL.Explore\RepoQL.Explore.csproj" />
     </ItemGroup>
 
 </Project>

@@ -265,7 +265,7 @@ public sealed class PHPLoaderTests
 
     [Test]
     [DisplayName("Generates X-ray headline with method names")]
-    public async Task Materialize_GeneratesXrayHeadline()
+    public async Task Materialize_GeneratesExploreHeadline()
     {
         var scope = CreateLoader();
         const string source = """
@@ -290,7 +290,7 @@ public sealed class PHPLoaderTests
 
     [Test]
     [DisplayName("Generates X-ray structure without truncation")]
-    public async Task Materialize_GeneratesXrayStructure()
+    public async Task Materialize_GeneratesExploreStructure()
     {
         var scope = CreateLoader();
         const string source = """

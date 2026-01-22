@@ -80,7 +80,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.TypeScript.T
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Sql", "src\Formats\RepoQL.Formats.Sql\RepoQL.Formats.Sql.csproj", "{5D36F096-C1F2-4DE1-BBEA-A69F9258F638}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Xray", "src\RepoQL.Xray\RepoQL.Xray.csproj", "{71DBB5E1-097C-4B41-A19F-305D084822B6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Explore", "src\RepoQL.Explore\RepoQL.Explore.csproj", "{71DBB5E1-097C-4B41-A19F-305D084822B6}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Rendering.Tests", "src\tests\RepoQL.Rendering.Tests\RepoQL.Rendering.Tests.csproj", "{054E306B-CCF9-4E7C-A339-7F9938675239}"
 EndProject

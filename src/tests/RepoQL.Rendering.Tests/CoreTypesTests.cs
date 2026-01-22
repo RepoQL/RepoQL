@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.Rendering.Tests.TestData;
-using RepoQL.Xray;
+using RepoQL.Explore;
 
 namespace RepoQL.Rendering.Tests;
 
@@ -10,7 +10,7 @@ public class CoreTypesTests
     [DisplayName("Intent enum has expected values")]
     public void Intent_HasExpectedValues()
     {
-        Enum.GetValues<Intent>().Should().BeEquivalentTo([Intent.Explore, Intent.Find, Intent.Examine, Intent.Understand]);
+        Enum.GetValues<Intent>().Should().BeEquivalentTo([Intent.Inventory, Intent.Locate, Intent.Inspect, Intent.Explain]);
     }
 
     [Test]
@@ -33,10 +33,10 @@ public class CoreTypesTests
     }
 
     [Test]
-    [DisplayName("XrayResult can be constructed with all fields")]
-    public void XrayResult_CanBeConstructedWithAllFields()
+    [DisplayName("ExploreResult can be constructed with all fields")]
+    public void ExploreResult_CanBeConstructedWithAllFields()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///test.cs#line=10,20",
             Confidence: 95,
             Kind: "method",
@@ -56,10 +56,10 @@ public class CoreTypesTests
     }
 
     [Test]
-    [DisplayName("XrayResult can be constructed with nullable fields as null")]
-    public void XrayResult_CanHaveNullFields()
+    [DisplayName("ExploreResult can be constructed with nullable fields as null")]
+    public void ExploreResult_CanHaveNullFields()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///test.cs",
             Confidence: 50,
             Kind: null,
@@ -77,11 +77,11 @@ public class CoreTypesTests
     }
 
     [Test]
-    [DisplayName("XrayResult records are equal when fields match")]
-    public void XrayResult_RecordEquality()
+    [DisplayName("ExploreResult records are equal when fields match")]
+    public void ExploreResult_RecordEquality()
     {
-        var result1 = new XrayResult("file:///a.cs", 80, "class", "Headline", null, null, null);
-        var result2 = new XrayResult("file:///a.cs", 80, "class", "Headline", null, null, null);
+        var result1 = new ExploreResult("file:///a.cs", 80, "class", "Headline", null, null, null);
+        var result2 = new ExploreResult("file:///a.cs", 80, "class", "Headline", null, null, null);
 
         result1.Should().Be(result2);
         (result1 == result2).Should().BeTrue();
@@ -92,13 +92,13 @@ public class CoreTypesTests
     public void RenderingContext_CanBeConstructed()
     {
         var context = new RenderingContext(
-            Intent: Intent.Find,
+            Intent: Intent.Locate,
             TokenBudget: 2000,
             Limit: 50,
             HasSearchCriteria: true
         );
 
-        context.Intent.Should().Be(Intent.Find);
+        context.Intent.Should().Be(Intent.Locate);
         context.TokenBudget.Should().Be(2000);
         context.Limit.Should().Be(50);
         context.HasSearchCriteria.Should().BeTrue();
@@ -108,7 +108,7 @@ public class CoreTypesTests
     [DisplayName("RenderingContext limit can be null")]
     public void RenderingContext_LimitCanBeNull()
     {
-        var context = new RenderingContext(Intent.Explore, 1000, null, false);
+        var context = new RenderingContext(Intent.Inventory, 1000, null, false);
 
         context.Limit.Should().BeNull();
     }

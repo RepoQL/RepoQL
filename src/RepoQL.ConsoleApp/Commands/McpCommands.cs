@@ -66,7 +66,7 @@ internal class McpCommands
                                             - Semantic mime type indicates both file type and contents e.g.`application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
                                            </CONTEXT>
 
-                                           The documentation for RepoQL is embedded (repoql-docs://), and can be read by xray, query or reading resources - consider obtaining it to be the tutorial.
+                                           The documentation for RepoQL is embedded (repoql-docs://), and can be read by explore, query or reading resources - consider obtaining it to be the tutorial.
                                            
                                            <CONCEPTS>
                                             ## Capsule: RepoUri
@@ -122,7 +122,7 @@ internal class McpCommands
                                             
                                             **Depth**
                                             - ** matches any directory depth; * matches within one segment; trailing / matches all descendants
-                                            - Patterns work in xray scope, search scope, glob_files(), and matches_glob()
+                                            - Patterns work in explore scope, search scope, glob_files(), and matches_glob()
                                             - Shorthand repoql-docs/** infers file:///; full URIs like repoql-docs:/// also work
                                             - Distinction: path-aware unlike SQL LIKE; simpler than regex
                                             - NotThis: not regex; use **/*.ts not .*\.ts$
@@ -130,16 +130,16 @@ internal class McpCommands
                                            </CONCEPTS>
                                            
                                            <REMEMBER>
-                                            - Xray should be your first tool for finding and understanding. Intent and the token budget controls how tokens are spent in the response.
-                                            - Use Query to do what xray cannot with all the power of SQL including applying semantic search and regex across files - don't use it to do what xray can.
-                                            - Always map the territory with xray before reading whole files
+                                            - Explore should be your first tool for finding and understanding. Intent and the token budget controls how tokens are spent in the response.
+                                            - Use Query to do what explore cannot with all the power of SQL including applying semantic search and regex across files - don't use it to do what explore can.
+                                            - Always map the territory with explore before reading whole files
                                             - Use the read tool to fetch content from known URIs with token-budget-aware representation. Use read(uri // question, budget) to have an LLM answer questions about specific files.
                                            </REMEMBER>
                                            """;
                 })
                 .WithStdioServerTransport()
                 .WithTools<QueryTool>()
-                .WithTools<XrayTool>()
+                .WithTools<ExploreTool>()
                 .WithTools<ReadTool>()
                 .WithTools<ImportTool>()
 #if DEBUG

@@ -1,11 +1,11 @@
 using System.Text.RegularExpressions;
 using AwesomeAssertions;
-using RepoQL.Xray.Search;
+using RepoQL.Explore.Search;
 
 namespace RepoQL.Rendering.Tests;
 
 /// <summary>
-/// Tests for pattern boost feature in xray tool.
+/// Tests for pattern boost feature in explore tool.
 /// Verifies that regex patterns can boost and penalize search results.
 /// </summary>
 internal class PatternBoosterTests

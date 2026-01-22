@@ -116,7 +116,7 @@ public interface IRepoQlClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Execute an xray query and return both structured results and pre-rendered output.
+    /// Execute an explore query and return both structured results and pre-rendered output.
     /// </summary>
     /// <param name="tokenBudget">Maximum tokens to invest in the response.</param>
     /// <param name="intent">Search intent (zoom level).</param>
@@ -126,9 +126,9 @@ public interface IRepoQlClient : IAsyncDisposable
     /// <param name="penalize">Optional comma-separated regex patterns to de-rank matches.</param>
     /// <param name="limit">Optional max results to show (null = auto-calculate).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<XrayResponse> XrayAsync(
+    Task<ExploreResponse> ExploreAsync(
         int tokenBudget,
-        XrayIntent intent,
+        ExploreIntent intent,
         string? scope = null,
         string? keywords = null,
         string? boost = null,

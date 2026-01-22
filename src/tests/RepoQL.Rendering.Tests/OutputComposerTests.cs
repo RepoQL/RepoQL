@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using RepoQL.Xray;
+using RepoQL.Explore;
 
 namespace RepoQL.Rendering.Tests;
 
@@ -20,7 +20,7 @@ public class OutputComposerTests
     [DisplayName("Single compact item formats correctly")]
     public void Given_SingleCompactItem_Then_FormatsCorrectly()
     {
-        var xrayResult = new XrayResult(
+        var exploreResult = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 85,
             Kind: null,
@@ -28,12 +28,12 @@ public class OutputComposerTests
             Structure: null,
             Snippet: null,
             Lang: null);
-        var decision = new RenderingDecision(xrayResult, Representation.Compact, 10);
+        var decision = new RenderingDecision(exploreResult, Representation.Compact, 10);
         var result = new DecisionResult([decision], 0, null);
 
         var output = OutputComposer.Compose(result, showConfidence: true);
 
-        output.Should().Be(" 85% file:///src/Auth.cs\n  Auth service");
+        output.Should().Be(" 85% file:///src/Auth.cs  Auth service");
     }
 
     [Test]
@@ -43,10 +43,10 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 90, null, "A", null, null, null),
+                new ExploreResult("file:///a.cs", 90, null, "A", null, null, null),
                 Representation.Compact, 10),
             new RenderingDecision(
-                new XrayResult("file:///b.cs", 80, null, "B", null, null, null),
+                new ExploreResult("file:///b.cs", 80, null, "B", null, null, null),
                 Representation.Compact, 10),
         };
         var result = new DecisionResult(decisions, 0, null);
@@ -55,10 +55,8 @@ public class OutputComposerTests
 
         // Should have only single newline between items
         output.Should().Be(
-            " 90% file:///a.cs\n" +
-            "  A\n" +
-            " 80% file:///b.cs\n" +
-            "  B");
+            " 90% file:///a.cs  A\n" +
+            " 80% file:///b.cs  B");
     }
 
     [Test]
@@ -68,10 +66,10 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 90, null, "A", "- Line1\n- Line2", null, null),
+                new ExploreResult("file:///a.cs", 90, null, "A", "- Line1\n- Line2", null, null),
                 Representation.Standard, 20),
             new RenderingDecision(
-                new XrayResult("file:///b.cs", 80, null, "B", null, null, null),
+                new ExploreResult("file:///b.cs", 80, null, "B", null, null, null),
                 Representation.Compact, 10),
         };
         var result = new DecisionResult(decisions, 0, null);
@@ -89,10 +87,10 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 95, "method", null, null, "code here", "csharp"),
+                new ExploreResult("file:///a.cs", 95, "method", null, null, "code here", "csharp"),
                 Representation.Rich, 30),
             new RenderingDecision(
-                new XrayResult("file:///b.cs", 80, null, "B", null, null, null),
+                new ExploreResult("file:///b.cs", 80, null, "B", null, null, null),
                 Representation.Compact, 10),
         };
         var result = new DecisionResult(decisions, 0, null);
@@ -110,7 +108,7 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 90, null, "A", null, null, null),
+                new ExploreResult("file:///a.cs", 90, null, "A", null, null, null),
                 Representation.Compact, 10),
         };
         var omittedByType = new Dictionary<string, int>
@@ -132,7 +130,7 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 95, null, null, null, "code", "cs"),
+                new ExploreResult("file:///a.cs", 95, null, null, null, "code", "cs"),
                 Representation.Rich, 30),
         };
         var omittedByType = new Dictionary<string, int> { ["code.csharp"] = 3 };
@@ -150,14 +148,14 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 90, null, "A", null, null, null),
+                new ExploreResult("file:///a.cs", 90, null, "A", null, null, null),
                 Representation.Compact, 10),
         };
         var result = new DecisionResult(decisions, 2, null);
 
         var output = OutputComposer.Compose(result, showConfidence: true);
 
-        output.Should().Contain("A\n[More: 2]");
+        output.Should().Contain("  A\n[More: 2]");
     }
 
     [Test]
@@ -167,7 +165,7 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 90, null, "A", null, null, null),
+                new ExploreResult("file:///a.cs", 90, null, "A", null, null, null),
                 Representation.Compact, 10),
         };
         var result = new DecisionResult(decisions, 0, null);
@@ -175,7 +173,7 @@ public class OutputComposerTests
         var output = OutputComposer.Compose(result, showConfidence: false);
 
         output.Should().NotContain("90%");
-        output.Should().Be("file:///a.cs\nA");
+        output.Should().Be("file:///a.cs  A");
     }
 
     [Test]
@@ -185,10 +183,10 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 90, null, "A", null, null, null),
+                new ExploreResult("file:///a.cs", 90, null, "A", null, null, null),
                 Representation.Standard, 10),
             new RenderingDecision(
-                new XrayResult("file:///b.cs", 80, null, "B", null, null, null),
+                new ExploreResult("file:///b.cs", 80, null, "B", null, null, null),
                 Representation.Standard, 10),
         };
         var result = new DecisionResult(decisions, 0, null);
@@ -206,7 +204,7 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 90, null, "A", null, null, null),
+                new ExploreResult("file:///a.cs", 90, null, "A", null, null, null),
                 Representation.Compact, 10),
         };
         var omittedByType = new Dictionary<string, int> { ["code.csharp"] = 5 };
@@ -225,7 +223,7 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new XrayResult("file:///a.cs", 90, null, "A", null, null, null),
+                new ExploreResult("file:///a.cs", 90, null, "A", null, null, null),
                 Representation.Compact, 10),
         };
         var result = new DecisionResult(decisions, 0, null);

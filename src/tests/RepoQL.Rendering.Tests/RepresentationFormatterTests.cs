@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using RepoQL.Xray;
+using RepoQL.Explore;
 
 namespace RepoQL.Rendering.Tests;
 
@@ -11,7 +11,7 @@ public class RepresentationFormatterTests
     [DisplayName("Minimal shows headline only")]
     public void Given_Minimal_Then_ShowsHeadlineOnly()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 85,
             Kind: null,
@@ -31,7 +31,7 @@ public class RepresentationFormatterTests
     [DisplayName("Minimal truncates headline at newline")]
     public void Given_MinimalWithMultilineHeadline_Then_TruncatesAtNewline()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 85,
             Kind: null,
@@ -49,7 +49,7 @@ public class RepresentationFormatterTests
     [DisplayName("Minimal without headline uses filename")]
     public void Given_MinimalNoHeadline_Then_UsesFilename()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth/JwtService.cs",
             Confidence: 50,
             Kind: null,
@@ -67,7 +67,7 @@ public class RepresentationFormatterTests
     [DisplayName("Minimal extracts filename ignoring fragment")]
     public void Given_MinimalWithFragment_Then_ExtractsFilenameWithoutFragment()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs#line=42,58",
             Confidence: 90,
             Kind: "method",
@@ -87,7 +87,7 @@ public class RepresentationFormatterTests
     [DisplayName("Compact with confidence shows confidence, uri, and headline")]
     public void Given_CompactWithConfidence_Then_FormatsCorrectly()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 85,
             Kind: null,
@@ -98,14 +98,14 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatCompact(result, showConfidence: true);
 
-        output.Should().Be(" 85% file:///src/Auth.cs\n  Auth service");
+        output.Should().Be(" 85% file:///src/Auth.cs  Auth service");
     }
 
     [Test]
     [DisplayName("Compact without confidence omits confidence")]
     public void Given_CompactWithoutConfidence_Then_OmitsConfidence()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 85,
             Kind: null,
@@ -116,14 +116,14 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatCompact(result, showConfidence: false);
 
-        output.Should().Be("file:///src/Auth.cs\nAuth service");
+        output.Should().Be("file:///src/Auth.cs  Auth service");
     }
 
     [Test]
     [DisplayName("Compact with kind shows kind badge")]
     public void Given_CompactWithKind_Then_ShowsKindBadge()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs#line=42",
             Confidence: 90,
             Kind: "method",
@@ -134,14 +134,14 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatCompact(result, showConfidence: true);
 
-        output.Should().Be(" 90% [method] file:///src/Auth.cs#line=42\n  ValidateToken");
+        output.Should().Be(" 90% file:///src/Auth.cs#line=42  ValidateToken");
     }
 
     [Test]
     [DisplayName("Compact truncates headline to single line")]
     public void Given_CompactWithMultilineHeadline_Then_TruncatesAtNewline()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 85,
             Kind: null,
@@ -152,14 +152,14 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatCompact(result, showConfidence: true);
 
-        output.Should().Be(" 85% file:///src/Auth.cs\n  First line");
+        output.Should().Be(" 85% file:///src/Auth.cs  First line");
     }
 
     [Test]
     [DisplayName("Compact without headline shows only uri line")]
     public void Given_CompactNoHeadline_Then_OnlyUri()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 50,
             Kind: null,
@@ -179,7 +179,7 @@ public class RepresentationFormatterTests
     [DisplayName("Standard includes structure")]
     public void Given_Standard_Then_IncludesStructure()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 85,
             Kind: null,
@@ -190,14 +190,14 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatStandard(result, showConfidence: true);
 
-        output.Should().Be(" 85% file:///src/Auth.cs\n  AuthController - 8 endpoints\n  - Login, Logout\n  - Register");
+        output.Should().Be(" 85% file:///src/Auth.cs  AuthController - 8 endpoints\n  - Login, Logout\n  - Register");
     }
 
     [Test]
     [DisplayName("Standard without structure shows headline only")]
     public void Given_StandardNoStructure_Then_ShowsHeadline()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 70,
             Kind: null,
@@ -208,7 +208,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatStandard(result, showConfidence: true);
 
-        output.Should().Be(" 70% file:///src/Auth.cs\n  Auth module");
+        output.Should().Be(" 70% file:///src/Auth.cs  Auth module");
     }
 
     // Rich format tests
@@ -217,7 +217,7 @@ public class RepresentationFormatterTests
     [DisplayName("Rich shows snippet in code fence")]
     public void Given_Rich_Then_ShowsCodeFence()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs#line=42",
             Confidence: 98,
             Kind: "method",
@@ -228,14 +228,14 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatRich(result, showConfidence: true);
 
-        output.Should().Be(" 98% [method] file:///src/Auth.cs#line=42\n```csharp\npublic bool Validate() { return true; }\n```");
+        output.Should().Be(" 98% file:///src/Auth.cs#line=42\n```csharp\npublic bool Validate() { return true; }\n```");
     }
 
     [Test]
     [DisplayName("Rich without snippet shows only uri")]
     public void Given_RichNoSnippet_Then_ShowsOnlyUri()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 90,
             Kind: null,
@@ -253,7 +253,7 @@ public class RepresentationFormatterTests
     [DisplayName("Rich snippet ending with newline preserves it")]
     public void Given_RichSnippetWithNewline_Then_PreservesNewline()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
             Confidence: 80,
             Kind: null,
@@ -273,9 +273,9 @@ public class RepresentationFormatterTests
     [DisplayName("Confidence is right-aligned with % suffix")]
     public void Given_VariousConfidences_Then_RightAligned()
     {
-        var result5 = new XrayResult("file:///a.cs", 5, null, "Headline", null, null, null);
-        var result50 = new XrayResult("file:///a.cs", 50, null, "Headline", null, null, null);
-        var result100 = new XrayResult("file:///a.cs", 100, null, "Headline", null, null, null);
+        var result5 = new ExploreResult("file:///a.cs", 5, null, "Headline", null, null, null);
+        var result50 = new ExploreResult("file:///a.cs", 50, null, "Headline", null, null, null);
+        var result100 = new ExploreResult("file:///a.cs", 100, null, "Headline", null, null, null);
 
         var out5 = RepresentationFormatter.FormatCompact(result5, showConfidence: true);
         var out50 = RepresentationFormatter.FormatCompact(result50, showConfidence: true);
@@ -374,7 +374,7 @@ public class RepresentationFormatterTests
     [DisplayName("Format dispatches to correct formatter")]
     public void Given_Decision_Then_DispatchesToCorrectFormatter()
     {
-        var result = new XrayResult(
+        var result = new ExploreResult(
             Uri: "file:///test.cs",
             Confidence: 75,
             Kind: null,

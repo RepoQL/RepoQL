@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.Rendering.Tests.TestData;
-using RepoQL.Xray;
+using RepoQL.Explore;
 
 namespace RepoQL.Rendering.Tests;
 
@@ -10,9 +10,9 @@ public class DecisionEngineTests
     [DisplayName("Empty results returns empty decisions")]
     public void Given_EmptyResults_When_Decide_Then_ReturnsEmpty()
     {
-        var context = new RenderingContext(Intent.Find, TokenBudget: 1000, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Locate, TokenBudget: 1000, Limit: null, HasSearchCriteria: true);
 
-        var result = DecisionEngine.Decide(Array.Empty<XrayResult>(), context);
+        var result = DecisionEngine.Decide(Array.Empty<ExploreResult>(), context);
 
         result.Decisions.Should().BeEmpty();
         result.OmittedCount.Should().Be(0);
@@ -31,7 +31,7 @@ public class DecisionEngineTests
             ResultBuilder.Create(30),
         };
         // Small budget creates high pressure
-        var context = new RenderingContext(Intent.Find, TokenBudget: 200, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Locate, TokenBudget: 200, Limit: null, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -47,7 +47,7 @@ public class DecisionEngineTests
         var results = Enumerable.Range(0, 6)
             .Select(i => ResultBuilder.Create(60 + i * 2))
             .ToArray();
-        var context = new RenderingContext(Intent.Find, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Locate, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -63,7 +63,7 @@ public class DecisionEngineTests
         var results = Enumerable.Range(0, 20)
             .Select(i => ResultBuilder.Create(50 + i))
             .ToArray();
-        var context = new RenderingContext(Intent.Explore, TokenBudget: 5000, Limit: 5, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Inventory, TokenBudget: 5000, Limit: 5, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -81,7 +81,7 @@ public class DecisionEngineTests
             ResultBuilder.Create(60),
             ResultBuilder.Create(30),
         };
-        var context = new RenderingContext(Intent.Find, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Locate, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -97,7 +97,7 @@ public class DecisionEngineTests
             ResultBuilder.Create(95, snippetLength: 100),
             ResultBuilder.Create(60),
         };
-        var context = new RenderingContext(Intent.Examine, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Inspect, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -113,7 +113,7 @@ public class DecisionEngineTests
             ResultBuilder.Create(70),
             ResultBuilder.Create(65),
         };
-        var context = new RenderingContext(Intent.Explore, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Inventory, TokenBudget: 2000, Limit: null, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -131,7 +131,7 @@ public class DecisionEngineTests
             ResultBuilder.Create(90, snippetLength: 500),
         };
         // Budget too small for two Rich items
-        var context = new RenderingContext(Intent.Examine, TokenBudget: 150, Limit: 2, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Inspect, TokenBudget: 150, Limit: 2, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -152,7 +152,7 @@ public class DecisionEngineTests
             ResultBuilder.Create(30, semanticType: "markdown.doc"),
             ResultBuilder.Create(20, semanticType: "markdown.doc"),
         };
-        var context = new RenderingContext(Intent.Explore, TokenBudget: 2000, Limit: 2, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Inventory, TokenBudget: 2000, Limit: 2, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -169,7 +169,7 @@ public class DecisionEngineTests
         var results = Enumerable.Range(0, 50)
             .Select(i => ResultBuilder.Create(20 + i, snippetLength: 100))
             .ToArray();
-        var context = new RenderingContext(Intent.Find, TokenBudget: 500, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Locate, TokenBudget: 500, Limit: null, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -182,7 +182,7 @@ public class DecisionEngineTests
     public void Given_TinyBudget_When_Decide_Then_AtLeastOneResult()
     {
         var results = new[] { ResultBuilder.Create(80) };
-        var context = new RenderingContext(Intent.Find, TokenBudget: 10, Limit: null, HasSearchCriteria: true);
+        var context = new RenderingContext(Intent.Locate, TokenBudget: 10, Limit: null, HasSearchCriteria: true);
 
         var result = DecisionEngine.Decide(results, context);
 
@@ -198,7 +198,7 @@ public class DecisionEngineTests
             .Select(i => ResultBuilder.Create(50 + i % 30))
             .ToArray();
         var context = new RenderingContext(
-            Intent: Intent.Explore,
+            Intent: Intent.Inventory,
             TokenBudget: 5000,
             Limit: null,
             HasSearchCriteria: false);  // No search criteria
@@ -218,7 +218,7 @@ public class DecisionEngineTests
             .Select(i => ResultBuilder.Create(50 + i % 30))
             .ToArray();
         var context = new RenderingContext(
-            Intent: Intent.Explore,
+            Intent: Intent.Inventory,
             TokenBudget: 5000,
             Limit: null,
             HasSearchCriteria: true);  // Has search criteria
@@ -238,7 +238,7 @@ public class DecisionEngineTests
             .Select(i => ResultBuilder.Create(60))
             .ToArray();
         var context = new RenderingContext(
-            Intent: Intent.Explore,
+            Intent: Intent.Inventory,
             TokenBudget: 5000,
             Limit: null,
             HasSearchCriteria: false);  // No search criteria, but <=100 results

@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
-using RepoQL.Xray.Search;
+using RepoQL.Explore.Search;
 
 namespace RepoQL.ConsoleApp.Search;
 
@@ -1172,4 +1172,4 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
     }
 }
 
-// IJitObjectSearchService and JitObjectSearchResult are defined in RepoQL.Xray.Search
+// IJitObjectSearchService and JitObjectSearchResult are defined in RepoQL.Explore.Search

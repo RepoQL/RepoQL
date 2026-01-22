@@ -23,7 +23,10 @@ internal static class ErrorClassifier
 
     private static bool IsInfrastructureErrorCore(Exception ex) => ex switch
     {
+        RepoQlDiagnosticsException => true,
+
         // gRPC connection/server errors
+        RpcException rpc when IsUserRpcError(rpc) => false,
         RpcException rpc when rpc.StatusCode is StatusCode.Unavailable or StatusCode.Internal => true,
 
         // Socket/network errors
@@ -57,6 +60,14 @@ internal static class ErrorClassifier
         _ => false
     };
 
+    private static bool IsUserRpcError(RpcException rpc)
+    {
+        if (rpc.StatusCode is StatusCode.InvalidArgument or StatusCode.FailedPrecondition or StatusCode.OutOfRange)
+            return true;
+
+        return IsSqlError(rpc.Status.Detail) || IsSqlError(rpc.Message);
+    }
+
     private static bool IsSqlError(string message)
     {
         // DuckDB error patterns
@@ -75,6 +86,9 @@ internal static class ErrorClassifier
     /// </summary>
     public static string GetCleanMessage(Exception ex)
     {
+        if (ex is RepoQlDiagnosticsException diag && diag.InnerException is not null)
+            return GetCleanMessage(diag.InnerException);
+
         var message = ex.Message;
 
         // Handle RpcException - extract the Detail from the Status

@@ -298,7 +298,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                 .OrderByDescending(g => g.Count())
                 .ToDictionary(g => g.Key, g => g.Count());
 
-            var xrayMetadata = BuildXrayMetadata(state, fileName);
+            var exploreMetadata = BuildExploreMetadata(state, fileName);
 
             string? topLang = null;
             if (langCounts.Count > 0)
@@ -325,18 +325,18 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                 ["links_count"] = state.Surface.Links.Count,
                 ["images_count"] = imagesCount,
                 ["tables_count"] = tablesCount,
-                ["frontmatter_keys"] = xrayMetadata.FrontmatterPairs.Count,
+                ["frontmatter_keys"] = exploreMetadata.FrontmatterPairs.Count,
                 ["code_lang_counts"] = langCounts,
-                ["title"] = xrayMetadata.Title,
-                ["display_title"] = xrayMetadata.DisplayTitle,
-                ["document_type_label"] = xrayMetadata.DocumentType,
-                ["topics"] = xrayMetadata.Topics,
+                ["title"] = exploreMetadata.Title,
+                ["display_title"] = exploreMetadata.DisplayTitle,
+                ["document_type_label"] = exploreMetadata.DocumentType,
+                ["topics"] = exploreMetadata.Topics,
                 ["top_lang"] = topLang,
-                ["tags"] = xrayMetadata.TagsForHeadline,
-                ["tags_or_headings"] = xrayMetadata.TagsOrHeadings,
-                ["headline_uses_tags"] = xrayMetadata.TagsForHeadline.Count > 0,
-                ["important_headings"] = xrayMetadata.ImportantHeadings,
-                ["frontmatter_pairs"] = xrayMetadata.FrontmatterPairs,
+                ["tags"] = exploreMetadata.TagsForHeadline,
+                ["tags_or_headings"] = exploreMetadata.TagsOrHeadings,
+                ["headline_uses_tags"] = exploreMetadata.TagsForHeadline.Count > 0,
+                ["important_headings"] = exploreMetadata.ImportantHeadings,
+                ["frontmatter_pairs"] = exploreMetadata.FrontmatterPairs,
                 ["headings"] = state.Surface.Headings.Select(h => new Dictionary<string, object?>
                 {
                     ["level"] = h.Level,
@@ -351,9 +351,9 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                 ["capsules_count"] = state.Surface.Capsules.Count
             };
 
-            headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
-            summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
-            structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
+            headline = _renderer.RenderAsync("explore/headline", model).GetAwaiter().GetResult();
+            summary = _renderer.RenderAsync("explore/summary", model).GetAwaiter().GetResult();
+            structure = _renderer.RenderAsync("explore/structure", model).GetAwaiter().GetResult();
             }
             catch
             {
@@ -597,7 +597,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
             CreatedAt = timestamp
         };
 
-    private XrayMetadata BuildXrayMetadata(MarkdownDocumentState state, string fileName)
+    private ExploreMetadata BuildExploreMetadata(MarkdownDocumentState state, string fileName)
     {
         var frontmatter = GetFrontmatter(state.Surface.DocumentProperties);
         var frontmatterPairs = BuildFrontmatterPairs(frontmatter);
@@ -646,7 +646,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                 .ToList();
         }
 
-        return new XrayMetadata(
+        return new ExploreMetadata(
             Title: title,
             DisplayTitle: displayTitle,
             DocumentType: documentType,
@@ -815,7 +815,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
         return string.Join(" | ", parts);
     }
 
-    private sealed record XrayMetadata(
+    private sealed record ExploreMetadata(
         string Title,
         string DisplayTitle,
         string DocumentType,

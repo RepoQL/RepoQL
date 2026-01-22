@@ -21,7 +21,7 @@ namespace RepoQL.Indexing.Indexing.Pipelines.Parsing;
 /// <see cref="Records"/> contains graph data:
 /// </para>
 /// <list type="bullet">
-/// <item><description>Artifacts: Content blobs with xray summaries (headline, summary, structure)</description></item>
+/// <item><description>Artifacts: Content blobs with explore summaries (headline, summary, structure)</description></item>
 /// <item><description>Nodes: Document node + child nodes (headings, functions, etc.)</description></item>
 /// <item><description>Spans: Line/character ranges for nodes</description></item>
 /// <item><description>Edges: Relationships between nodes (HAS_PART, REFERS_TO, etc.)</description></item>

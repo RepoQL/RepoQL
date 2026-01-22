@@ -132,7 +132,7 @@ internal class InstallCommand(IAnsiConsole console)
         console.MarkupLine("[dim]To use RepoQL with your agent:[/]");
         console.MarkupLine("[dim]1. Restart your agent application[/]");
         console.MarkupLine("[dim]2. RepoQL will be available as an MCP server[/]");
-        console.MarkupLine("[dim]3. The agent can use 'query' and 'xray' tools to explore repositories[/]");
+        console.MarkupLine("[dim]3. The agent can use 'query' and 'explore' tools to explore repositories[/]");
     }
 
     private static void RegisterAgent(List<AgentInfo> agents, AgentType type, string name, string? configPath, string? executablePath = null)

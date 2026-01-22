@@ -106,9 +106,9 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer
             if (_renderer is not null)
             {
                 var model = BuildTemplateModel(document, state, parseResult, tokenCount);
-                headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
-                summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
-                structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
+                headline = _renderer.RenderAsync("explore/headline", model).GetAwaiter().GetResult();
+                summary = _renderer.RenderAsync("explore/summary", model).GetAwaiter().GetResult();
+                structure = _renderer.RenderAsync("explore/structure", model).GetAwaiter().GetResult();
             }
         }
         catch (Exception ex)

@@ -567,11 +567,11 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
         try
         {
             var fileName = GetFileName(document.Uri);
-            var model = BuildXrayModel(state, fileName);
+            var model = BuildExploreModel(state, fileName);
 
             // Render summary and structure first so we can calculate token count for headline
-            summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
-            structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
+            summary = _renderer.RenderAsync("explore/summary", model).GetAwaiter().GetResult();
+            structure = _renderer.RenderAsync("explore/structure", model).GetAwaiter().GetResult();
 
             // For binary formats, estimate tokens from the text representation (summary + structure)
             var textForTokens = string.Join("\n", new[] { summary, structure }.Where(s => !string.IsNullOrEmpty(s)));
@@ -580,7 +580,7 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
             // Add token count to model for headline template
             model["token_count"] = tokenCount ?? 0;
 
-            headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
+            headline = _renderer.RenderAsync("explore/headline", model).GetAwaiter().GetResult();
         }
         catch
         {
@@ -821,7 +821,7 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
         };
     }
 
-    private Dictionary<string, object?> BuildXrayModel(XlsxDocumentState state, string fileName)
+    private Dictionary<string, object?> BuildExploreModel(XlsxDocumentState state, string fileName)
     {
         var surface = state.Surface;
 

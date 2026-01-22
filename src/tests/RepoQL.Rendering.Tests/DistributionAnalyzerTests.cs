@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.Rendering.Tests.TestData;
-using RepoQL.Xray;
+using RepoQL.Explore;
 
 namespace RepoQL.Rendering.Tests;
 
@@ -10,7 +10,7 @@ public class DistributionAnalyzerTests
     [DisplayName("Empty results returns empty analysis with Even shape")]
     public void Given_EmptyResults_When_Analyze_Then_ReturnsEmptyEven()
     {
-        var results = Array.Empty<XrayResult>();
+        var results = Array.Empty<ExploreResult>();
 
         var analysis = DistributionAnalyzer.Analyze(results);
 

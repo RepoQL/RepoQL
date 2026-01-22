@@ -32,7 +32,7 @@
         <span class="metric-label">Files</span>
     </div>
     <div class="metric-card">
-        <span class="metric-value">@_xrayCoverage%</span>
+        <span class="metric-value">@_exploreCoverage%</span>
         <span class="metric-label">X-ray Coverage</span>
     </div>
     <div class="metric-card">
@@ -395,7 +395,7 @@
     private StatsOverview _overview = new(0, 0, 0, 0, Array.Empty<MediaSlice>(), Array.Empty<AnnotationSummary>());
     private List<MediaSlice> _mediaBreakdown = new();
     private HealthCheckResults _healthChecks = new(Array.Empty<HealthCheck>());
-    private int _xrayCoverage;
+    private int _exploreCoverage;
     private bool _embeddingsReady;
     private string _searchQuery = "";
     private CancellationTokenSource? _loadCts;
@@ -446,7 +446,7 @@
 
     private void OnStatsChanged(object? sender, StatsSnapshotEvent stats)
     {
-        _xrayCoverage = stats.XrayCoveragePercent;
+        _exploreCoverage = stats.ExploreCoveragePercent;
         _embeddingsReady = stats.EmbeddingsReady;
         _ = InvokeAsync(StateHasChanged);
     }
@@ -461,7 +461,7 @@
             var overviewTask = StatsService.GetOverviewAsync(_loadCts.Token);
             var healthTask = StatsService.GetHealthChecksAsync(_loadCts.Token);
             var embeddingsTask = StatsService.AreEmbeddingsReadyAsync(_loadCts.Token);
-            var xrayTask = StatsService.GetXrayCoverageAsync(_loadCts.Token);
+            var xrayTask = StatsService.GetExploreCoverageAsync(_loadCts.Token);
 
             await Task.WhenAll(overviewTask, healthTask, embeddingsTask, xrayTask).ConfigureAwait(false);
 
@@ -471,7 +471,7 @@
                 _mediaBreakdown = _overview.MediaBreakdown.ToList();
                 _healthChecks = healthTask.Result;
                 _embeddingsReady = embeddingsTask.Result;
-                _xrayCoverage = xrayTask.Result;
+                _exploreCoverage = xrayTask.Result;
             });
         }
         catch (OperationCanceledException) { }

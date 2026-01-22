@@ -156,9 +156,9 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
             ["has_multiple_objects"] = state.Objects.Count > 1
         };
 
-        var headline = _renderer.RenderAsync("xray/headline", model).GetAwaiter().GetResult();
-        var summary = _renderer.RenderAsync("xray/summary", model).GetAwaiter().GetResult();
-        var structure = _renderer.RenderAsync("xray/structure", model).GetAwaiter().GetResult();
+        var headline = _renderer.RenderAsync("explore/headline", model).GetAwaiter().GetResult();
+        var summary = _renderer.RenderAsync("explore/summary", model).GetAwaiter().GetResult();
+        var structure = _renderer.RenderAsync("explore/structure", model).GetAwaiter().GetResult();
 
         var artifact = new Artifact
         {

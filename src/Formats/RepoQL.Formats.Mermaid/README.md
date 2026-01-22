@@ -25,11 +25,11 @@ Mermaid diagram loader + analyzer for RepoQL with X‑ray summaries rendered via
 
 ## X‑ray templates
 
-Embedded under `Templates/xray` and included as resources:
+Embedded under `Templates/explore` and included as resources:
 
-- `xray/headline.liquid`
-- `xray/summary.liquid`
-- `xray/structure.liquid`
+- `explore/headline.liquid`
+- `explore/summary.liquid`
+- `explore/structure.liquid`
 
 Model keys available to templates:
 

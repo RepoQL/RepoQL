@@ -6,5 +6,5 @@ internal sealed record MediaTypeDetail(
     long WithHeadline,
     long WithSummary,
     long WithStructure,
-    int XRayCoverage,
+    int ExploreCoverage,
     string SampleUri);

@@ -282,7 +282,7 @@ public sealed class TerraformLoaderTests
 
     [Test]
     [DisplayName("Generates X-ray headline")]
-    public async Task Materialize_GeneratesXrayHeadline()
+    public async Task Materialize_GeneratesExploreHeadline()
     {
         var loader = new TerraformLoader();
         const string source = """
@@ -305,7 +305,7 @@ public sealed class TerraformLoaderTests
 
     [Test]
     [DisplayName("Generates X-ray structure")]
-    public async Task Materialize_GeneratesXrayStructure()
+    public async Task Materialize_GeneratesExploreStructure()
     {
         var loader = new TerraformLoader();
         const string source = """

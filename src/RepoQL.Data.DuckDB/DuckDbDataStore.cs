@@ -1,5 +1,6 @@
 using System.Data;
 using System.Diagnostics;
+using System.Reflection;
 using DuckDB.NET.Data;
 using DuckDB.NET.Native;
 using Microsoft.Extensions.DependencyInjection;
@@ -70,7 +71,7 @@ public sealed class DuckDbDataStore : IDisposable
 
     /// <summary>
     /// Resolves a service from the current AsyncLocal scope.
-    /// Used by UDFs to access services like XrayOrchestrator.
+    /// Used by UDFs to access services like ExploreOrchestrator.
     /// </summary>
     public static T? GetService<T>() where T : class
         => _currentScope.Value?.ServiceProvider.GetService<T>();
@@ -1007,6 +1008,7 @@ public sealed class DuckDbDataStore : IDisposable
 
             var schemaScripts = new[]
             {
+                "Tables/metadata.sql",
                 "Tables/artifact.sql",
                 "Tables/node.sql",
                 "Tables/span.sql",
@@ -1039,8 +1041,8 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/search_symbol.sql",
                 "Tables/file_system_mount.sql",
                 "Views/filesystems.sql",
-                "Macros/xray.sql",
-                "Macros/xray_structured.sql",
+                "Macros/explore.sql",
+                "Macros/explore_structured.sql",
                 "Macros/parse.sql",
                 // Git history tables, views, and macros
                 "Tables/git_commit.sql",
@@ -1073,6 +1075,9 @@ public sealed class DuckDbDataStore : IDisposable
 
             if (_formatSchemaScripts.Count > 0)
                 _logger.LogDebug("[DuckDB] Format schema scripts applied ({Count} scripts)", _formatSchemaScripts.Count);
+
+            // Check if assembly version changed - if so, invalidate embedded documentation cache
+            CheckAndUpdateVersion();
 
             _schemaInitialized = true;
 
@@ -1122,6 +1127,131 @@ public sealed class DuckDbDataStore : IDisposable
             ?? throw new InvalidOperationException($"Resource '{resourceName}' not found.");
         using var reader = new StreamReader(stream);
         _connection.Execute(reader.ReadToEnd());
+    }
+
+    private const string MetadataKeyAssemblyVersion = "assembly_version";
+    private const string EmbeddedDocsScheme = "repoql-docs://";
+
+    /// <summary>
+    /// Checks if the assembly version changed since last run. If so, deletes all
+    /// embedded documentation artifacts so they get re-indexed with fresh content.
+    /// </summary>
+    private void CheckAndUpdateVersion()
+    {
+        var currentVersion = typeof(DuckDbDataStore).Assembly
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? typeof(DuckDbDataStore).Assembly.GetName().Version?.ToString()
+            ?? "unknown";
+
+        try
+        {
+            // Get stored version
+            using var selectCmd = _connection.CreateCommand();
+            selectCmd.CommandText = "SELECT value FROM metadata WHERE key = $key";
+            selectCmd.Parameters.Add(new DuckDBParameter("key", MetadataKeyAssemblyVersion));
+            var storedVersion = selectCmd.ExecuteScalar() as string;
+
+            if (storedVersion == currentVersion)
+            {
+                _logger.LogDebug("[DuckDB] Version unchanged ({Version}), embedded docs cache valid", currentVersion);
+                return;
+            }
+
+            if (storedVersion is not null)
+            {
+                _logger.LogInformation("[DuckDB] Version changed from {OldVersion} to {NewVersion}, invalidating embedded docs cache",
+                    storedVersion, currentVersion);
+
+                // Delete all artifacts with repoql-docs:// URIs
+                var deleteCount = DeleteArtifactsByUriPrefix(EmbeddedDocsScheme);
+                _logger.LogInformation("[DuckDB] Deleted {Count} embedded documentation artifacts for re-indexing", deleteCount);
+            }
+            else
+            {
+                _logger.LogDebug("[DuckDB] First run, setting version to {Version}", currentVersion);
+            }
+
+            // Update stored version
+            using var upsertCmd = _connection.CreateCommand();
+            upsertCmd.CommandText = @"
+                INSERT INTO metadata (key, value, updated_at) VALUES ($key, $value, now())
+                ON CONFLICT (key) DO UPDATE SET value = $value, updated_at = now()";
+            upsertCmd.Parameters.Add(new DuckDBParameter("key", MetadataKeyAssemblyVersion));
+            upsertCmd.Parameters.Add(new DuckDBParameter("value", currentVersion));
+            upsertCmd.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[DuckDB] Version check failed, embedded docs may be stale");
+        }
+    }
+
+    /// <summary>
+    /// Deletes all artifacts whose URI starts with the given prefix.
+    /// Used to invalidate embedded documentation cache on version change.
+    /// </summary>
+    private int DeleteArtifactsByUriPrefix(string uriPrefix)
+    {
+        // Get all artifact IDs matching the prefix
+        using var selectCmd = _connection.CreateCommand();
+        selectCmd.CommandText = "SELECT id FROM artifact WHERE uri LIKE $prefix || '%'";
+        selectCmd.Parameters.Add(new DuckDBParameter("prefix", uriPrefix));
+
+        var idsToDelete = new List<long>();
+        using (var reader = selectCmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                idsToDelete.Add(reader.GetInt64(0));
+            }
+        }
+
+        if (idsToDelete.Count == 0)
+            return 0;
+
+        // Delete in batches to avoid parameter limits
+        foreach (var id in idsToDelete)
+        {
+            // Delete embeddings first (foreign key constraint)
+            using var deleteEmbedCmd = _connection.CreateCommand();
+            deleteEmbedCmd.CommandText = "DELETE FROM document_embedding WHERE artifact_id = $id";
+            deleteEmbedCmd.Parameters.Add(new DuckDBParameter("id", id));
+            deleteEmbedCmd.ExecuteNonQuery();
+
+            // Delete annotations
+            using var deleteAnnotCmd = _connection.CreateCommand();
+            deleteAnnotCmd.CommandText = "DELETE FROM annotation WHERE artifact_id = $id";
+            deleteAnnotCmd.Parameters.Add(new DuckDBParameter("id", id));
+            deleteAnnotCmd.ExecuteNonQuery();
+
+            // Delete spans
+            using var deleteSpanCmd = _connection.CreateCommand();
+            deleteSpanCmd.CommandText = "DELETE FROM span WHERE node_id IN (SELECT id FROM node WHERE artifact_id = $id)";
+            deleteSpanCmd.Parameters.Add(new DuckDBParameter("id", id));
+            deleteSpanCmd.ExecuteNonQuery();
+
+            // Delete edges (both directions)
+            using var deleteEdgeCmd = _connection.CreateCommand();
+            deleteEdgeCmd.CommandText = @"
+                DELETE FROM edge WHERE source_node_id IN (SELECT id FROM node WHERE artifact_id = $id)
+                   OR destination_node_id IN (SELECT id FROM node WHERE artifact_id = $id)";
+            deleteEdgeCmd.Parameters.Add(new DuckDBParameter("id", id));
+            deleteEdgeCmd.ExecuteNonQuery();
+
+            // Delete nodes
+            using var deleteNodeCmd = _connection.CreateCommand();
+            deleteNodeCmd.CommandText = "DELETE FROM node WHERE artifact_id = $id";
+            deleteNodeCmd.Parameters.Add(new DuckDBParameter("id", id));
+            deleteNodeCmd.ExecuteNonQuery();
+
+            // Delete artifact
+            using var deleteArtCmd = _connection.CreateCommand();
+            deleteArtCmd.CommandText = "DELETE FROM artifact WHERE id = $id";
+            deleteArtCmd.Parameters.Add(new DuckDBParameter("id", id));
+            deleteArtCmd.ExecuteNonQuery();
+        }
+
+        return idsToDelete.Count;
     }
 
     /// <summary>

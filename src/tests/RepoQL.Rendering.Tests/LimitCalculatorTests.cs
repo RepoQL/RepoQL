@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.Rendering.Tests.TestData;
-using RepoQL.Xray;
+using RepoQL.Explore;
 
 namespace RepoQL.Rendering.Tests;
 
@@ -10,9 +10,9 @@ public class LimitCalculatorTests
     [DisplayName("Zero results returns zero limit")]
     public void Given_ZeroResults_When_Calculate_Then_ReturnsZero()
     {
-        var distribution = DistributionAnalyzer.Analyze(Array.Empty<XrayResult>());
+        var distribution = DistributionAnalyzer.Analyze(Array.Empty<ExploreResult>());
 
-        var limit = LimitCalculator.Calculate(distribution, Intent.Find, 1000, 0);
+        var limit = LimitCalculator.Calculate(distribution, Intent.Locate, 1000, 0);
 
         limit.Should().Be(0);
     }
@@ -44,7 +44,7 @@ public class LimitCalculatorTests
         };
         var distribution = DistributionAnalyzer.Analyze(results);
 
-        var limit = LimitCalculator.Calculate(distribution, Intent.Find, 2000, results.Length);
+        var limit = LimitCalculator.Calculate(distribution, Intent.Locate, 2000, results.Length);
 
         // Top tier (2) + min(middle tier, 5) = 7
         limit.Should().BeLessThanOrEqualTo(10, "focuses on top + limited middle tier");
@@ -58,7 +58,7 @@ public class LimitCalculatorTests
         var results = Enumerable.Range(0, 20).Select(i => ResultBuilder.Create(60 + i % 10)).ToArray();
         var distribution = DistributionAnalyzer.Analyze(results);
 
-        var limit = LimitCalculator.Calculate(distribution, Intent.Find, 800, results.Length);
+        var limit = LimitCalculator.Calculate(distribution, Intent.Locate, 800, results.Length);
 
         // 800 tokens / ~40 per compact = 20
         limit.Should().BeGreaterThan(10, "maximizes coverage within budget");
@@ -72,8 +72,8 @@ public class LimitCalculatorTests
         var results = Enumerable.Range(0, 50).Select(i => ResultBuilder.Create(60)).ToArray();
         var distribution = DistributionAnalyzer.Analyze(results);
 
-        var exploreLimit = LimitCalculator.Calculate(distribution, Intent.Explore, 600, results.Length);
-        var findLimit = LimitCalculator.Calculate(distribution, Intent.Find, 600, results.Length);
+        var exploreLimit = LimitCalculator.Calculate(distribution, Intent.Inventory, 600, results.Length);
+        var findLimit = LimitCalculator.Calculate(distribution, Intent.Locate, 600, results.Length);
 
         // Base: 600/40 = 15, Explore: 15*1.5 = 22, Find: 15
         exploreLimit.Should().BeGreaterThan(findLimit, "Explore biases toward breadth");
@@ -87,8 +87,8 @@ public class LimitCalculatorTests
         var results = Enumerable.Range(0, 50).Select(i => ResultBuilder.Create(60)).ToArray();
         var distribution = DistributionAnalyzer.Analyze(results);
 
-        var readLimit = LimitCalculator.Calculate(distribution, Intent.Examine, 600, results.Length);
-        var findLimit = LimitCalculator.Calculate(distribution, Intent.Find, 600, results.Length);
+        var readLimit = LimitCalculator.Calculate(distribution, Intent.Inspect, 600, results.Length);
+        var findLimit = LimitCalculator.Calculate(distribution, Intent.Locate, 600, results.Length);
 
         // Base: 600/40 = 15, Read: 15*0.5 = 7, Find: 15
         readLimit.Should().BeLessThan(findLimit, "Read biases toward depth (fewer items)");
@@ -101,7 +101,7 @@ public class LimitCalculatorTests
         var results = new[] { ResultBuilder.Create(80), ResultBuilder.Create(75) };
         var distribution = DistributionAnalyzer.Analyze(results);
 
-        var limit = LimitCalculator.Calculate(distribution, Intent.Explore, 10000, results.Length);
+        var limit = LimitCalculator.Calculate(distribution, Intent.Inventory, 10000, results.Length);
 
         limit.Should().BeLessThanOrEqualTo(results.Length);
     }
@@ -113,7 +113,7 @@ public class LimitCalculatorTests
         var results = new[] { ResultBuilder.Create(50) };
         var distribution = DistributionAnalyzer.Analyze(results);
 
-        var limit = LimitCalculator.Calculate(distribution, Intent.Examine, 100, results.Length);
+        var limit = LimitCalculator.Calculate(distribution, Intent.Inspect, 100, results.Length);
 
         limit.Should().BeGreaterThanOrEqualTo(1);
     }

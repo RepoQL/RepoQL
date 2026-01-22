@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Protocol;
 
 namespace RepoQL.ConsoleApp.Tools;
 
@@ -10,7 +11,7 @@ namespace RepoQL.ConsoleApp.Tools;
 ///
 /// Purpose: Provides agents with a dedicated read interface that automatically selects the most
 /// appropriate representation level (full content, structure, or headline) based on available
-/// token budget. Supports both direct content fetch and LLM-powered synthesis via xray Understand.
+/// token budget. Supports both direct content fetch and LLM-powered synthesis via explore Understand.
 ///
 /// Complexity: Delegates all work to the server via gRPC. The client simply forwards the request
 /// and returns the pre-rendered response.
@@ -46,7 +47,7 @@ internal sealed class ReadTool(
         read("file:///src/Auth.cs // How does JWT validation work?", 2000)
         read("file:///src/**/*.cs // What patterns are used for error handling?", 3000)
         **Depth**
-        - Internally uses xray Understand pipeline (search + LLM synthesis)
+        - Internally uses explore Understand pipeline (search + LLM synthesis)
         - Budget controls LLM response size
         - Citations as file:///path#line=N,M - always verify before trusting
         - Broad questions dilute; focused questions concentrate relevance
@@ -54,15 +55,15 @@ internal sealed class ReadTool(
 
         ### Capsule: WhenToUse
         **Invariant**
-        Use read when you KNOW the URI; use xray when you need to FIND it.
+        Use read when you KNOW the URI; use explore when you need to FIND it.
         **Example**
         + read("file:///src/Auth.cs", 2000)           -> you know the file
         + read("repoql-docs:///quickstart.md // How?", 1500) -> known doc, specific question
-        - read("file:///src/**/*.cs", 50000)          -> too broad, use xray explore
+        - read("file:///src/**/*.cs", 50000)          -> too broad, use explore Examine
         **Depth**
-        - xray: discover what exists, find by concept, understand architecture
+        - explore: discover what exists, find by concept, understand architecture
         - read: retrieve known content, answer questions about specific files
-        - Workflow: xray explore -> xray find -> read specific files
+        - Workflow: explore Explore -> explore Find -> read specific files
         ---
 
         <EXAMPLES>
@@ -136,6 +137,11 @@ internal sealed class ReadTool(
         catch (Exception ex)
         {
             var cleanMessage = ErrorClassifier.GetCleanMessage(ex);
+
+            if (ex is RepoQlDiagnosticsException diagnosticsException)
+            {
+                return $"Error: {cleanMessage}\n\n{diagnosticsException.Diagnostics}";
+            }
 
             // Infrastructure errors get diagnostics appended
             if (ErrorClassifier.IsInfrastructureError(ex))

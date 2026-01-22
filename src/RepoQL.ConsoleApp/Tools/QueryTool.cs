@@ -4,7 +4,8 @@ using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
-using RepoQL.Xray;
+using RepoQL.Protocol;
+using RepoQL.Explore;
 
 namespace RepoQL.ConsoleApp.Tools;
 
@@ -25,10 +26,10 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         <DECISION>
         | Need | Tool |
         |------|------|
-        | "What exists? Where is X?" | xray |
+        | "What exists? Where is X?" | explore |
         | "Show me this file/symbol" | read |
         | "How many? Which ones? What pattern?" | **query** |
-        
+
         Query when: aggregating, complex filtering, joining results, regex extraction, graph traversal.
         </DECISION>
         
@@ -146,7 +147,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         SELECT uri FROM Files WHERE uri LIKE 'repoql-docs:///repoql/tools/query/%';
         ```
 
-        Or: `xray(intent='Find', scope='repoql-docs:///**', keywords='xlsx excel functions')`
+        Or: `explore(intent='Find', scope='repoql-docs:///**', keywords='xlsx excel functions')`
 
         Key docs:
         - `repoql-docs:///quickstart.md` - SQL patterns, capsules
@@ -181,7 +182,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         - search() finds, snippet() shows context, LATERAL composes them
         - Format-specific views/functions documented at repoql-docs:///repoql/tools/query/formats/*
         - Large results auto-summarize; repeat query for full output
-        - Docs at `repoql-docs:///` - query or xray them to learn more
+        - Docs at `repoql-docs:///` - query or explore them to learn more
         </REMEMBER>
         """;
 
@@ -215,7 +216,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
             _lastBudgetExceededQuery = null;
             var output = result.Lines.Length > 0
                 ? string.Join(Environment.NewLine, result.Lines)
-                : "No results. Try a different query, or explore the docs with: xray intent=Explore scope=\"repoql-docs:///**\"";
+                : "No results. Try a different query, or explore the docs with: explore intent=Explore scope=\"repoql-docs:///**\"";
 
             // Check token budget (even after server summarization - summary might still exceed)
             if (tokenBudget > 0 && !isRepeatRequest)
@@ -254,6 +255,11 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         {
             var cleanMessage = ErrorClassifier.GetCleanMessage(ex);
             await Console.Error.WriteLineAsync(cleanMessage);
+
+            if (ex is RepoQlDiagnosticsException diagnosticsException)
+            {
+                return $"Error: {cleanMessage}\n\n{diagnosticsException.Diagnostics}";
+            }
 
             // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))

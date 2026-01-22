@@ -9,7 +9,7 @@ GraphQL format handler design for RepoQL. This document captures the intended be
 - Loader parses query documents _and_ type system SDL (schema definition language) using the Antlr-generated lexer/parser.
 - Materializer emits graph nodes for operations, fragments, type definitions, enum values, directives, and field selections.
 - Analyzer provides lint-style diagnostics for common GraphQL correctness and hygiene issues.
-- X‑ray headline/summary/structure are rendered via Liquid templates embedded in `Templates/xray`.
+- X‑ray headline/summary/structure are rendered via Liquid templates embedded in `Templates/explore`.
 
 ## Loader Responsibilities
 
@@ -46,7 +46,7 @@ GraphQL format handler design for RepoQL. This document captures the intended be
 The materializer produces RepoQL graph artefacts and X‑ray strings.
 
 - **Artifacts**
-  - Populates headline/summary/structure via Liquid templates hosted in `Templates/xray`.
+  - Populates headline/summary/structure via Liquid templates hosted in `Templates/explore`.
   - Headline highlights document kind, operation counts, fragment counts, and the first few type definitions while omitting null/zero values so the line stays signal-rich.
   - Summary surfaces the elements most likely to require human attention (operations, fragments, schema entry points) in <20 lines to help answer “do I need to read this?”.
   - Structure outputs a detailed outline (operations with top-level fields, fragments with type conditions, types with field signatures) with no hard cap but targets <100 lines to make the raw document optional reading.
@@ -72,7 +72,7 @@ The materializer produces RepoQL graph artefacts and X‑ray strings.
 
 ## X-ray Templates
 
-Templates mirror existing formats and live under `Templates/xray/{headline,summary,structure}.liquid`.
+Templates mirror existing formats and live under `Templates/explore/{headline,summary,structure}.liquid`.
 
 Model keys made available:
 

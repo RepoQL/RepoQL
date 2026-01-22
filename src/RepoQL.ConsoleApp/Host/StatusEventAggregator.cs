@@ -125,16 +125,16 @@ public sealed class StatusEventAggregator : IDisposable
     /// <summary>
     /// Publish a stats snapshot event.
     /// </summary>
-    public void PublishStats(long totalFiles, long totalNodes, int xrayCoveragePercent, bool embeddingsReady)
+    public void PublishStats(long totalFiles, long totalNodes, int exploreCoveragePercent, bool embeddingsReady)
     {
         var evt = new StatusEvent
         {
             Timestamp = Timestamp.FromDateTimeOffset(DateTimeOffset.UtcNow),
             Stats = new StatsSnapshotEvent
             {
+                ExploreCoveragePercent = exploreCoveragePercent,
                 TotalFiles = totalFiles,
                 TotalNodes = totalNodes,
-                XrayCoveragePercent = xrayCoveragePercent,
                 EmbeddingsReady = embeddingsReady
             }
         };
@@ -308,7 +308,7 @@ public sealed class StatusEventAggregator : IDisposable
         "filter" => PipelineStage.Filter,
         "classify" => PipelineStage.Classify,
         "parse" => PipelineStage.Parse,
-        "xray" => PipelineStage.Xray,
+        "explore" => PipelineStage.Explore,
         "commit" => PipelineStage.Commit,
         "prune" => PipelineStage.Prune,
         "structure_embedding" => PipelineStage.StructEmbed,

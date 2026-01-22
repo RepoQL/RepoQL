@@ -1,15 +1,15 @@
-using RepoQL.Xray;
+using RepoQL.Explore;
 
 namespace RepoQL.Rendering.Tests.TestData;
 
 /// <summary>
-/// Helper to create synthetic XrayResults for testing.
+/// Helper to create synthetic ExploreResults for testing.
 /// Uses controlled string lengths for predictable token estimation.
 /// </summary>
 public static class ResultBuilder
 {
     /// <summary>
-    /// Create a synthetic XrayResult with controlled field lengths.
+    /// Create a synthetic ExploreResult with controlled field lengths.
     /// </summary>
     /// <param name="confidence">Confidence score 1-100.</param>
     /// <param name="headlineLength">Length of headline string.</param>
@@ -18,7 +18,7 @@ public static class ResultBuilder
     /// <param name="kind">Kind badge for objects, or null for documents.</param>
     /// <param name="uri">Custom URI, or auto-generated if null.</param>
     /// <param name="semanticType">Semantic type for truncation breakdown (e.g., "code.csharp").</param>
-    public static XrayResult Create(
+    public static ExploreResult Create(
         int confidence,
         int headlineLength = 50,
         int? structureLength = null,
@@ -27,7 +27,7 @@ public static class ResultBuilder
         string? uri = null,
         string? semanticType = null)
     {
-        return new XrayResult(
+        return new ExploreResult(
             Uri: uri ?? $"file:///test/file{confidence}.cs",
             Confidence: confidence,
             Kind: kind,
@@ -42,19 +42,19 @@ public static class ResultBuilder
     /// <summary>
     /// Create a document result (no kind badge).
     /// </summary>
-    public static XrayResult Document(int confidence, int headlineLength = 50, int? structureLength = null)
+    public static ExploreResult Document(int confidence, int headlineLength = 50, int? structureLength = null)
         => Create(confidence, headlineLength, structureLength, snippetLength: null, kind: null);
 
     /// <summary>
     /// Create an object result (with kind badge and snippet).
     /// </summary>
-    public static XrayResult ObjectResult(int confidence, string kind = "method", int snippetLength = 200)
+    public static ExploreResult ObjectResult(int confidence, string kind = "method", int snippetLength = 200)
         => Create(confidence, headlineLength: 50, structureLength: null, snippetLength: snippetLength, kind: kind);
 
     /// <summary>
     /// Create a document result with child objects.
     /// </summary>
-    public static XrayResult DocumentWithChildren(
+    public static ExploreResult DocumentWithChildren(
         int confidence,
         int childCount,
         int headlineLength = 50,
@@ -64,7 +64,7 @@ public static class ResultBuilder
             .Select(i => Create(confidence - i * 5, childHeadlineLength, kind: "method", uri: $"file:///test/file{confidence}.cs#method{i}"))
             .ToList();
 
-        return new XrayResult(
+        return new ExploreResult(
             Uri: $"file:///test/file{confidence}.cs",
             Confidence: confidence,
             Kind: null,

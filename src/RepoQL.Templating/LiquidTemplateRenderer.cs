@@ -19,7 +19,7 @@ namespace RepoQL.Templating;
 ///   1) Add Liquid templates to your project, mark them as EmbeddedResource.
 ///   2) Choose a resource root (e.g., "My.Assembly.Namespace.Templates").
 ///   3) new LiquidTemplateRenderer(typeof(SomeTypeInYourAssembly).Assembly, "My.Assembly.Namespace.Templates").
-///   4) await renderer.RenderAsync("xray/headline", new { Name = "AuthService", Methods = 5 });
+///   4) await renderer.RenderAsync("explore/headline", new { Name = "AuthService", Methods = 5 });
 /// </summary>
 public sealed class LiquidTemplateRenderer : ITemplateRenderer
 {

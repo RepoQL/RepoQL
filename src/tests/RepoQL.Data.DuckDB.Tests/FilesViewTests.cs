@@ -222,12 +222,12 @@ public class FilesViewTests
 
     [Test]
     [DisplayName("X-ray summaries are included")]
-    public void FilesView_XraySummaries_Included()
+    public void FilesView_ExploreSummaries_Included()
     {
         using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
         var uri = RepoUri.Parse("file:///documented.cs")!;
-        var artifact = CreateTestArtifactWithXray(uri,
+        var artifact = CreateTestArtifactWithExplore(uri,
             headline: "A well-documented class",
             summary: "Contains utility methods for data processing",
             structure: "- Class DataProcessor\n  - Method Process()");
@@ -302,7 +302,7 @@ public class FilesViewTests
         };
     }
 
-    private static ParsedArtifact CreateTestArtifactWithXray(RepoUri uri, string? headline = null, string? summary = null, string? structure = null)
+    private static ParsedArtifact CreateTestArtifactWithExplore(RepoUri uri, string? headline = null, string? summary = null, string? structure = null)
     {
         var artifactId = Guid.NewGuid();
         var docId = Guid.NewGuid();

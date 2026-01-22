@@ -109,7 +109,7 @@ public sealed class StageMetricsListener : IDisposable
         // Hot path stages
         var classify = GetSnapshot("classification", 0, 0);
         var parse = GetSnapshot("parsing", 0, 0);
-        var xray = GetSnapshot("single_file_analysis", 0, 0);
+        var explore = GetSnapshot("single_file_analysis", 0, 0);
         var commit = GetSnapshot("batch", 0, 0);
         var hotpath = GetSnapshot("hotpath", queued, inProgress);
 
@@ -132,7 +132,7 @@ public sealed class StageMetricsListener : IDisposable
                 new StageMetrics { Stage = "filter", ProcessedTotal = 0 },    // No timing for filter
                 new StageMetrics { Stage = "classify", AvgDurationMs = classify.AvgDurationMs, PeakDurationMs = classify.PeakDurationMs, ProcessedTotal = classify.ProcessedTotal, Busy = classify.ThroughputPerSec > 0 },
                 new StageMetrics { Stage = "parse", AvgDurationMs = parse.AvgDurationMs, PeakDurationMs = parse.PeakDurationMs, ProcessedTotal = parse.ProcessedTotal, Busy = parse.ThroughputPerSec > 0 },
-                new StageMetrics { Stage = "xray", AvgDurationMs = xray.AvgDurationMs, PeakDurationMs = xray.PeakDurationMs, ProcessedTotal = xray.ProcessedTotal, Busy = xray.ThroughputPerSec > 0 },
+                new StageMetrics { Stage = "explore", AvgDurationMs = explore.AvgDurationMs, PeakDurationMs = explore.PeakDurationMs, ProcessedTotal = explore.ProcessedTotal, Busy = explore.ThroughputPerSec > 0 },
                 new StageMetrics { Stage = "commit", AvgDurationMs = commit.AvgDurationMs, PeakDurationMs = commit.PeakDurationMs, ProcessedTotal = commit.ProcessedTotal, Busy = commit.ThroughputPerSec > 0 }
             ]
         };

@@ -234,9 +234,9 @@ public sealed class SlnLoader(ITemplateRenderer? renderer = null) : IFormatLoade
             ["folders_display"] = foldersDisplay
         };
 
-        var headline = _renderer.RenderAsync("xray/headline-sln", model).GetAwaiter().GetResult();
-        var summary = _renderer.RenderAsync("xray/summary-sln", model).GetAwaiter().GetResult();
-        var structure = _renderer.RenderAsync("xray/structure-sln", model).GetAwaiter().GetResult();
+        var headline = _renderer.RenderAsync("explore/headline-sln", model).GetAwaiter().GetResult();
+        var summary = _renderer.RenderAsync("explore/summary-sln", model).GetAwaiter().GetResult();
+        var structure = _renderer.RenderAsync("explore/structure-sln", model).GetAwaiter().GetResult();
 
         var artifact = new Artifact
         {

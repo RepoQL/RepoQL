@@ -30,10 +30,10 @@ using RepoQL.Templating;
 var renderer = new LiquidTemplateRenderer(typeof(Program).Assembly, "My.Parser.Assembly.Templates");
 
 // Object model (properties accessible via `model.*` in templates)
-var text = await renderer.RenderAsync("xray/headline", new { Name = "AuthService", Methods = 5 });
+var text = await renderer.RenderAsync("explore/headline", new { Name = "AuthService", Methods = 5 });
 
 // Dictionary model (keys become top-level variables in templates)
-var text2 = await renderer.RenderAsync("xray/summary", new Dictionary<string, object?>
+var text2 = await renderer.RenderAsync("explore/summary", new Dictionary<string, object?>
 {
     ["name"] = "AuthService",
     ["publicMethods"] = new[] { "ProcessPayment", "RefundPayment" }
@@ -42,7 +42,7 @@ var text2 = await renderer.RenderAsync("xray/summary", new Dictionary<string, ob
 
 ## Template conventions
 
-- Use relative names like `xray/headline` (extension optional) when calling `RenderAsync`.
+- Use relative names like `explore/headline` (extension optional) when calling `RenderAsync`.
 - Include other templates with `{% include 'partials/footer.liquid' %}`.
 - Keep x-ray output within target budgets (1, ~5-10, ~15-25) as per design.
 
