@@ -1,5 +1,3 @@
-using AwesomeAssertions;
-
 namespace RepoQL.Protocol.Tests;
 
 /// <summary>

@@ -1,7 +1,8 @@
-using System.Security.Cryptography;
-using System.Text;
+using System.Runtime.InteropServices;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
-using RepoQL.Contracts;
+using Microsoft.Extensions.FileProviders;
+using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
 
 namespace RepoQL.ConsoleApp.Host;
@@ -11,76 +12,60 @@ public static class GrpcServerHelper
     public static void ConfigureUnixSocket(KestrelServerOptions options, string? repositoryPath = null)
     {
         var repoPath = Path.GetFullPath(repositoryPath ?? Directory.GetCurrentDirectory());
-        var socketPath = GetActualSocketPath(repoPath);
-        var transport = new UnixSocketTransport(socketPath);
-        transport.EnsureCleanForBinding();
-        options.ListenUnixSocket(socketPath, listenOptions => { listenOptions.Protocols = HttpProtocols.Http2; });
-        SetSocketPermissions(socketPath);
-    }
+        var overridePath = Environment.GetEnvironmentVariable("REPOQL_SOCKET");
+        var socketPath = RepoqlSocketPathResolver.ResolvePhysical(repoPath, overridePath, enableWslMapping: true);
+        var report = BuildBindReport(repoPath, socketPath);
 
-    private static string GetActualSocketPath(string repositoryPath)
-    {
-        if (IsWslWindowsMount(repositoryPath))
-        {
-            var repoHash = ComputeStableHash(repositoryPath);
-            var socketDir = Path.Combine("/tmp", "repoql", repoHash);
-            Directory.CreateDirectory(socketDir);
-
-            var repoqlDir = RepoLocator.EnsureRepoqlDirectory(repositoryPath);
-            var mappingFile = Path.Combine(repoqlDir, "socket.path");
-
-            var socketPath = Path.Combine(socketDir, "repoql.sock");
-            File.WriteAllText(mappingFile, socketPath + Environment.NewLine);
-            return socketPath;
-        }
-
-        var localRepoqlDir = RepoLocator.EnsureRepoqlDirectory(repositoryPath);
-        return Path.GetFullPath(Path.Combine(localRepoqlDir, "repoql.sock"));
-    }
-
-    private static bool IsWslWindowsMount(string path)
-    {
-        // Check if we're running in WSL
-        if (!File.Exists("/proc/sys/fs/binfmt_misc/WSLInterop") && !File.Exists("/proc/sys/fs/binfmt_misc/WSLInterop-late"))
-            return false;
-
-        // Standard /mnt/<drive> paths
-        if (path.StartsWith("/mnt/", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // Check if the path is on a drvfs (Windows) filesystem by reading /proc/mounts
         try
         {
-            var mounts = File.ReadAllLines("/proc/mounts");
-            foreach (var mount in mounts)
-            {
-                var parts = mount.Split(' ');
-                if (parts.Length >= 3 && parts[2].Equals("drvfs", StringComparison.OrdinalIgnoreCase))
-                {
-                    var mountPoint = parts[1];
-                    if (path.StartsWith(mountPoint, StringComparison.Ordinal) &&
-                        (path.Length == mountPoint.Length || path[mountPoint.Length] == '/'))
-                        return true;
-                }
-            }
+            var transport = new UnixSocketTransport(socketPath);
+            transport.EnsureCleanForBinding();
+            options.ListenUnixSocket(socketPath, listenOptions => { listenOptions.Protocols = HttpProtocols.Http2; });
+            SetSocketPermissions(socketPath);
+            report.BindSucceeded = true;
         }
-        catch
+        catch (Exception ex)
         {
-            // If we can't read /proc/mounts, fall back to path heuristics
+            report.BindSucceeded = false;
+            report.BindError = ex.Message;
+            HostDiagnosticsStore.TryWriteReport(repoPath, "socket-bind.json", report);
+            throw;
         }
 
-        return false;
+        HostDiagnosticsStore.TryWriteReport(repoPath, "socket-bind.json", report);
     }
 
-    private static string ComputeStableHash(string value)
+    private static SocketBindReport BuildBindReport(string repoPath, string socketPath)
     {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
-        var builder = new StringBuilder(bytes.Length * 2);
-        foreach (var b in bytes)
+        var report = new SocketBindReport
         {
-            builder.Append(b.ToString("x2"));
+            SocketPath = socketPath,
+            PathLength = socketPath.Length,
+            Platform = GetPlatformLabel(),
+            PlatformLimit = OperatingSystem.IsMacOS() ? 104 : 108,
+            WslRedirected = false
+        };
+
+        using var repoRootProvider = new PhysicalFileProvider(repoPath);
+        var mappingFile = repoRootProvider.GetRepoqlFileInfo(RepoqlPaths.SocketMapFileName);
+        if (mappingFile.Exists)
+        {
+            report.MappingFilePath = mappingFile.PhysicalPath ?? RepoqlPaths.GetSocketMappingPath(repoPath);
+            var mapped = repoRootProvider.TryReadRepoqlSocketMapping();
+            report.WslRedirected = string.IsNullOrWhiteSpace(mapped)
+                ? true
+                : string.Equals(mapped, socketPath, StringComparison.Ordinal);
         }
-        return builder.ToString();
+
+        return report;
+    }
+
+    private static string GetPlatformLabel()
+    {
+        if (OperatingSystem.IsWindows()) return "windows";
+        if (OperatingSystem.IsMacOS()) return "macos";
+        if (OperatingSystem.IsLinux()) return "linux";
+        return RuntimeInformation.RuntimeIdentifier;
     }
 
     private static void SetSocketPermissions(string socketPath)

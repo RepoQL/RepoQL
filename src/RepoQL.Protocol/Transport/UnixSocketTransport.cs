@@ -1,5 +1,4 @@
 using System.Net.Sockets;
-using RepoQL.Contracts;
 
 namespace RepoQL.Protocol.Transport;
 
@@ -20,7 +19,7 @@ public sealed class UnixSocketTransport
     /// <param name="socketPath">Optional socket path. Uses platform defaults if not provided.</param>
     public UnixSocketTransport(string? socketPath = null)
     {
-        _socketPath = socketPath ?? GetDefaultSocketPath();
+        _socketPath = NormalizeSocketPath(socketPath ?? GetDefaultSocketPath());
         ValidateSocketPath();
     }
 
@@ -100,10 +99,8 @@ public sealed class UnixSocketTransport
     {
         // Socket should be colocated with the database in the repository
         // Default to current directory's .repoql folder
-        var currentDir = Directory.GetCurrentDirectory();
-        var repoqlDir = RepoLocator.EnsureRepoqlDirectory(currentDir);
-
-        return Path.Combine(repoqlDir, "repoql.sock");
+        var currentDir = Path.GetFullPath(Directory.GetCurrentDirectory());
+        return RepoqlSocketPathResolver.ResolvePhysical(currentDir);
     }
 
     private void ValidateSocketPath()
@@ -114,14 +111,12 @@ public sealed class UnixSocketTransport
         }
 
         // Check path length limits - applies to all platforms using AF_UNIX
-        // Unix domain socket path limit is typically 108 characters (sun_path in sockaddr_un)
-        // Windows AF_UNIX also has this limit
-        const int MaxUnixSocketPathLength = 108;
-        if (_socketPath.Length >= MaxUnixSocketPathLength)
+        var maxLength = OperatingSystem.IsMacOS() ? 104 : 108;
+        if (_socketPath.Length >= maxLength)
         {
             throw new ArgumentException(
                 $"Socket path too long ({_socketPath.Length} chars). " +
-                $"Maximum is {MaxUnixSocketPathLength - 1} characters. " +
+                $"Maximum is {maxLength - 1} characters. " +
                 $"Path: {_socketPath}",
                 nameof(_socketPath));
         }
@@ -149,8 +144,12 @@ public sealed class UnixSocketTransport
     /// </summary>
     /// <returns>True if a stale socket was removed, false otherwise.</returns>
     public static bool TryCleanupStaleSocket(string? socketPath = null)
+        => TryCleanupStaleSocket(socketPath, out _);
+
+    public static bool TryCleanupStaleSocket(string? socketPath, out Exception? error)
     {
-        var path = socketPath ?? GetDefaultSocketPath();
+        error = null;
+        var path = NormalizeSocketPath(socketPath ?? GetDefaultSocketPath());
 
         if (!File.Exists(path))
             return false;
@@ -186,8 +185,9 @@ public sealed class UnixSocketTransport
                 File.Delete(tempPath);
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                error = ex;
                 return false;
             }
         }
@@ -200,8 +200,9 @@ public sealed class UnixSocketTransport
                 File.Delete(path);
                 return true;
             }
-            catch
+            catch (Exception ex)
             {
+                error = ex;
                 return false;
             }
         }
@@ -227,4 +228,7 @@ public sealed class UnixSocketTransport
             Directory.CreateDirectory(directory);
         }
     }
+
+    private static string NormalizeSocketPath(string path)
+        => path.Replace('\\', '/');
 }

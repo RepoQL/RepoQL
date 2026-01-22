@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Sockets;
 using Grpc.Core;
 using Grpc.Health.V1;
@@ -14,6 +15,7 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using RepoQL.Contracts;
+using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.ConsoleApp.Logging;
@@ -30,6 +32,7 @@ using Serilog;
 using Spectre.Console;
 using ConsoleAppFramework;
 using Microsoft.Extensions.Configuration;
+using System.Runtime.InteropServices;
 
 namespace RepoQL.ConsoleApp.Commands;
 
@@ -48,7 +51,7 @@ internal class HostCommands(IAnsiConsole console)
 
         // Always try to shutdown existing host to prevent multiple hosts writing to the same database
         // This prevents write-write conflicts from concurrent access
-        await TryShutdownExistingHostAsync(repo, CancellationToken.None).ConfigureAwait(false);
+        await TryShutdownExistingHostAsync(repo, implicitStart, serilogLogger, CancellationToken.None).ConfigureAwait(false);
         var hostLock = await WaitForHostLockAsync(repo, TimeSpan.FromSeconds(45), implicitStart, serilogLogger, CancellationToken.None)
             .ConfigureAwait(false);
         if (hostLock is null)
@@ -65,98 +68,112 @@ internal class HostCommands(IAnsiConsole console)
         try
         {
             await WaitForRepositoryAvailabilityAsync(repo, TimeSpan.FromSeconds(45), CancellationToken.None).ConfigureAwait(false);
-        serilogLogger.Information("Phase: socket bind");
-        var builder = WebApplication.CreateSlimBuilder([]);
-        builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
-        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["Logging:LogLevel:Default"] = "Information",
-            ["Logging:LogLevel:Grpc"] = "Warning",
-            ["Logging:LogLevel:Microsoft"] = "Warning",
-            ["Logging:LogLevel:System"] = "Warning"
-        });
-        builder.Configuration.AddEnvironmentVariables();
-        builder.Host.UseConsoleLifetime();
-        // Reduce graceful shutdown timeout from default 30s to 5s
-        // The indexing queues will be cancelled immediately on shutdown
-        builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(5));
-        builder.Logging.ClearProviders();
-        if (!implicitStart)
-        {
-            builder.Logging.AddSimpleConsole(sc => sc.SingleLine = true);
+            serilogLogger.Information("Phase: socket bind");
+            var builder = WebApplication.CreateSlimBuilder([]);
+            builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true, reloadOnChange: true);
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Logging:LogLevel:Default"] = "Information",
+                ["Logging:LogLevel:Grpc"] = "Warning",
+                ["Logging:LogLevel:Microsoft"] = "Warning",
+                ["Logging:LogLevel:System"] = "Warning"
+            });
+            builder.Configuration.AddEnvironmentVariables();
+            builder.Host.UseConsoleLifetime();
+            // Reduce graceful shutdown timeout from default 30s to 5s
+            // The indexing queues will be cancelled immediately on shutdown
+            builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(5));
+            builder.Logging.ClearProviders();
+            if (!implicitStart)
+            {
+                builder.Logging.AddSimpleConsole(sc => sc.SingleLine = true);
+            }
 
-        }
+            builder.Logging.AddOpenTelemetry();
+            builder.Services.AddOpenTelemetry()
+                .WithMetrics(m => m
+                    .AddMeter("RepoQL.*")
+                    .AddAspNetCoreInstrumentation()
+                    .AddRuntimeInstrumentation())
+                .WithTracing(t => t
+                    .AddSource("RepoQL.*")
+                    .AddAspNetCoreInstrumentation())
+                .UseOtlpExporter();
 
-        builder.Logging.AddOpenTelemetry();
-        builder.Services.AddOpenTelemetry()
-            .WithMetrics(m => m
-                .AddMeter("RepoQL.*")
-                .AddAspNetCoreInstrumentation()
-                .AddRuntimeInstrumentation())
-            .WithTracing(t => t
-                .AddSource("RepoQL.*")
-                .AddAspNetCoreInstrumentation())
-            .UseOtlpExporter();
+            builder.Logging.AddSerilog(serilogLogger, dispose: false);
 
-        builder.Logging.AddSerilog(serilogLogger, dispose: false);
+            serilogLogger.Information("Phase: services start");
+            builder.Services.AddGrpc();
+            builder.Services.AddSingleton<HealthServiceImpl>();
+            builder.Services.AddSingleton(new RepositoryConfiguration { Path = repo });
+            builder.Services.AddSingleton(new HostState
+            {
+                RepositoryPath = repo,
+                ImplicitStart = implicitStart,
+                StartedAtUtc = DateTime.UtcNow
+            });
+            builder.WebHost.ConfigureKestrel(options => { GrpcServerHelper.ConfigureUnixSocket(options, repo); });
+            serilogLogger.Information("Phase: database init");
+            builder.Services.AddRepoIndexer(repo);
 
-        serilogLogger.Information("Phase: services start");
-        builder.Services.AddGrpc();
-        builder.Services.AddSingleton<HealthServiceImpl>();
-        builder.Services.AddSingleton(new RepositoryConfiguration { Path = repo });
-        builder.Services.AddSingleton(new HostState
-        {
-            RepositoryPath = repo, 
-            ImplicitStart = implicitStart, 
-            StartedAtUtc = DateTime.UtcNow
-        });
-        builder.WebHost.ConfigureKestrel(options => { GrpcServerHelper.ConfigureUnixSocket(options, repo); });
-        serilogLogger.Information("Phase: database init");
-        builder.Services.AddRepoIndexer(repo);
+            // Search services for ExploreOrchestrator (server-side, using DuckDbDataStore directly)
+            builder.Services.AddSingleton<IDocumentSearchService, DocumentSearchService>();
+            builder.Services.AddSingleton<IObjectSearchService, ObjectSearchService>();
+            builder.Services.AddSingleton<IExploreSearchEngine, ExploreSearchEngine>();
+            // JIT object search uses local ONNX for fast JIT embeddings
+            builder.Services.AddSingleton<IJitObjectSearchService>(sp =>
+            {
+                var store = sp.GetRequiredService<DuckDbDataStore>();
+                var embeddingProvider = sp.GetKeyedService<IEmbeddingProvider>("local");
+                var logger = sp.GetService<ILogger<JitObjectSearchService>>();
+                return new JitObjectSearchService(store, embeddingProvider, logger);
+            });
+            builder.Services.AddSingleton(sp => new ExploreOrchestrator(
+                sp.GetRequiredService<IExploreSearchEngine>(),
+                sp.GetService<IJitObjectSearchService>(),
+                sp.GetService<ILlmProvider>()
+            ));
 
-        // Search services for ExploreOrchestrator (server-side, using DuckDbDataStore directly)
-        builder.Services.AddSingleton<IDocumentSearchService, DocumentSearchService>();
-        builder.Services.AddSingleton<IObjectSearchService, ObjectSearchService>();
-        builder.Services.AddSingleton<IExploreSearchEngine, ExploreSearchEngine>();
-        // JIT object search uses local ONNX for fast JIT embeddings
-        builder.Services.AddSingleton<IJitObjectSearchService>(sp =>
-        {
-            var store = sp.GetRequiredService<DuckDbDataStore>();
-            var embeddingProvider = sp.GetKeyedService<IEmbeddingProvider>("local");
-            var logger = sp.GetService<ILogger<JitObjectSearchService>>();
-            return new JitObjectSearchService(store, embeddingProvider, logger);
-        });
-        builder.Services.AddSingleton(sp => new ExploreOrchestrator(
-            sp.GetRequiredService<IExploreSearchEngine>(),
-            sp.GetService<IJitObjectSearchService>(),
-            sp.GetService<ILlmProvider>()
-        ));
+            builder.Services.AddGrpc();
+            builder.Services.AddSingleton<HostMetrics>();
+            // Restore persisted mounts BEFORE other hosted services start
+            builder.Services.AddHostedService<MountRestorationService>();
+            builder.Services.AddHostedService<IdleShutdownHostedService>();
+            builder.Services.AddSingleton<InitialIndexingBarrier>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<InitialIndexingBarrier>());
+            builder.Services.AddSingleton<IInitialIndexingBarrier>(sp => sp.GetRequiredService<InitialIndexingBarrier>());
+            builder.Services.AddSingleton<IQueryBarrier, QueryBarrier>();
+            builder.Services.AddSingleton<StatusEventAggregator>();
+            builder.Services.AddHostedService<PipelineHealthPublisher>();
 
-        builder.Services.AddGrpc();
-        builder.Services.AddSingleton<HostMetrics>();
-        // Restore persisted mounts BEFORE other hosted services start
-        builder.Services.AddHostedService<MountRestorationService>();
-        builder.Services.AddHostedService<IdleShutdownHostedService>();
-        builder.Services.AddSingleton<InitialIndexingBarrier>();
-        builder.Services.AddHostedService(sp => sp.GetRequiredService<InitialIndexingBarrier>());
-        builder.Services.AddSingleton<IInitialIndexingBarrier>(sp => sp.GetRequiredService<InitialIndexingBarrier>());
-        builder.Services.AddSingleton<IQueryBarrier, QueryBarrier>();
-        builder.Services.AddSingleton<StatusEventAggregator>();
-        builder.Services.AddHostedService<PipelineHealthPublisher>();
+            var app = builder.Build();
+            HostLogging.RegisterShutdown(app.Lifetime, app.Logger);
+            var pidFile = new HostPidFile(repo);
+            app.Lifetime.ApplicationStarted.Register(() =>
+            {
+                if (!pidFile.TryWrite(Environment.ProcessId, out var error))
+                {
+                    app.Logger.LogWarning(error, "Failed to write host PID file at {Path}.", pidFile.FilePath);
+                }
+            });
+            app.Lifetime.ApplicationStopping.Register(() =>
+            {
+                if (!pidFile.TryDelete(out var error))
+                {
+                    app.Logger.LogWarning(error, "Failed to remove host PID file at {Path}.", pidFile.FilePath);
+                }
+            });
 
-        var app = builder.Build();
-        HostLogging.RegisterShutdown(app.Lifetime, app.Logger);
-        
-        // Always log startup info
-        app.Logger.LogInformation("[Host] cwd={WorkingDirectory} repository={Repository} resolved repo={ResolvedRepository}", cwd, repository, repo);
-        app.MapGrpcService<RepoQlServiceImpl>();
-        app.MapGrpcService<HealthServiceImpl>();
-        var health = app.Services.GetRequiredService<HealthServiceImpl>();
-        health.SetStatus(string.Empty, HealthCheckResponse.Types.ServingStatus.Serving);
-        health.SetStatus("repoql.v1.RepoQL", HealthCheckResponse.Types.ServingStatus.Serving);
-        app.Logger.LogInformation("Phase: ready");
-        app.Logger.LogInformation("Host ready");
-        await app.RunAsync().ConfigureAwait(false);
+            // Always log startup info
+            app.Logger.LogInformation("[Host] cwd={WorkingDirectory} repository={Repository} resolved repo={ResolvedRepository}", cwd, repository, repo);
+            app.MapGrpcService<RepoQlServiceImpl>();
+            app.MapGrpcService<HealthServiceImpl>();
+            var health = app.Services.GetRequiredService<HealthServiceImpl>();
+            health.SetStatus(string.Empty, HealthCheckResponse.Types.ServingStatus.Serving);
+            health.SetStatus("repoql.v1.RepoQL", HealthCheckResponse.Types.ServingStatus.Serving);
+            app.Logger.LogInformation("Phase: ready");
+            app.Logger.LogInformation("Host ready");
+            await app.RunAsync().ConfigureAwait(false);
         }
         finally
         {
@@ -197,59 +214,322 @@ internal class HostCommands(IAnsiConsole console)
         console.MarkupLine("[green]Repopulation complete[/]");
     }
 
-    private async Task TryShutdownExistingHostAsync(string repo, CancellationToken cancellationToken)
+    private async Task TryShutdownExistingHostAsync(
+        string repo,
+        bool implicitStart,
+        Serilog.ILogger logger,
+        CancellationToken cancellationToken)
     {
-        var socketPath = ProgramHelpers.ResolveSocketPath(repo);
-        if (!File.Exists(socketPath))
-            return;
-
-        if (UnixSocketTransport.TryCleanupStaleSocket(socketPath))
-            return;
+        var resolvedRoot = Path.GetFullPath(repo);
+        var overridePath = Environment.GetEnvironmentVariable("REPOQL_SOCKET");
+        var socketPath = RepoqlSocketPathResolver.ResolvePhysical(resolvedRoot, overridePath, enableWslMapping: true);
+        var report = new ExistingHostReport
+        {
+            SocketPath = socketPath,
+            SocketExists = File.Exists(socketPath)
+        };
 
         try
         {
-            var handler = new SocketsHttpHandler
+            if (!report.SocketExists)
             {
-                ConnectCallback = async (_, ct) =>
-                {
-                    var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-                    await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), ct).ConfigureAwait(false);
-                    return new NetworkStream(socket, ownsSocket: true);
-                }
-            };
+                return;
+            }
 
-            using var channel = GrpcChannel.ForAddress("http://unix", new GrpcChannelOptions
+            var probeResult = await ProbeSocketAsync(socketPath, cancellationToken).ConfigureAwait(false);
+            report.ProbeResult = probeResult.ToString();
+            if (probeResult != SocketProbeResult.Active)
             {
-                HttpHandler = handler,
+                if (probeResult == SocketProbeResult.PlatformUnsupported)
+                {
+                    logger.Warning("Unix sockets not supported; treating socket as stale (path={Path}).", socketPath);
+                }
+
+                report.SocketCleanupAttempted = true;
+                if (!UnixSocketTransport.TryCleanupStaleSocket(socketPath, out var cleanupError) && File.Exists(socketPath))
+                {
+                    report.SocketCleanupSucceeded = false;
+                    report.SocketCleanupError = cleanupError?.Message;
+                    throw new InvalidOperationException(
+                        $"Failed to remove stale socket at {socketPath}. {cleanupError?.Message}");
+                }
+
+                report.SocketCleanupSucceeded = true;
+                return;
+            }
+
+            report.ShutdownAttempted = true;
+            var shutdownResult = await TryRequestShutdownAsync(socketPath, cancellationToken).ConfigureAwait(false);
+            report.ShutdownSucceeded = shutdownResult.Success;
+            report.ShutdownProcessId = shutdownResult.ProcessId > 0 ? shutdownResult.ProcessId : null;
+            report.ShutdownError = shutdownResult.Error;
+            if (!shutdownResult.Success && !string.IsNullOrWhiteSpace(shutdownResult.Error))
+            {
+                logger.Warning("Shutdown RPC failed ({Error}).", shutdownResult.Error);
+            }
+
+            var pidFile = new HostPidFile(repo);
+            var pidFileFound = pidFile.TryRead(out var filePid);
+            report.PidFileFound = pidFileFound;
+            report.PidFileValue = pidFileFound ? filePid : null;
+            var pid = shutdownResult.ProcessId > 0
+                ? shutdownResult.ProcessId
+                : (pidFileFound ? filePid : 0);
+
+            if (shutdownResult.Success && pid > 0)
+            {
+                WriteStatus(implicitStart, logger, $"Detected existing RepoQL host (PID {pid}); requesting shutdown...", MarkupStyle.Warning);
+                var exited = await WaitForProcessExitAsync(pid, TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+                if (exited)
+                {
+                    report.ProcessRunning = false;
+                    pidFile.TryDelete(out _);
+                    UnixSocketTransport.TryCleanupStaleSocket(socketPath, out _);
+                    return;
+                }
+            }
+
+            if (pid > 0)
+            {
+                if (TryGetRepoQlProcess(pid, out var process))
+                {
+                    report.ProcessRunning = true;
+                    report.ProcessName = process.ProcessName;
+                    report.KillAttempted = true;
+                    WriteStatus(implicitStart, logger, $"Process {pid} did not exit; forcing termination.", MarkupStyle.Error);
+                    var killed = await TryKillProcessAsync(process, cancellationToken).ConfigureAwait(false);
+                    report.KillSucceeded = killed;
+                    if (!killed)
+                    {
+                        logger.Warning("Failed to terminate existing host (pid={Pid}).", pid);
+                    }
+                    else
+                    {
+                        pidFile.TryDelete(out _);
+                        report.ProcessRunning = false;
+                    }
+                }
+                else
+                {
+                    report.ProcessRunning = false;
+                    logger.Warning("PID file found but process {Pid} is not RepoQL; skipping force kill.", pid);
+                    pidFile.TryDelete(out _);
+                }
+            }
+            else
+            {
+                report.ProcessRunning = false;
+                logger.Warning("Shutdown failed and no RepoQL PID file found; skipping force kill.");
+                pidFile.TryDelete(out _);
+            }
+
+            report.SocketCleanupAttempted = true;
+            if (!UnixSocketTransport.TryCleanupStaleSocket(socketPath, out var finalCleanupError) && File.Exists(socketPath))
+            {
+                report.SocketCleanupSucceeded = false;
+                report.SocketCleanupError = finalCleanupError?.Message;
+                throw new InvalidOperationException(
+                    $"Unable to remove stale socket at {socketPath}. {finalCleanupError?.Message}");
+            }
+
+            report.SocketCleanupSucceeded = true;
+        }
+        finally
+        {
+            HostDiagnosticsStore.TryWriteReport(repo, "existing-host.json", report);
+        }
+    }
+
+    private static async Task<SocketProbeResult> ProbeSocketAsync(string socketPath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), cancellationToken).ConfigureAwait(false);
+            return SocketProbeResult.Active;
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return SocketProbeResult.PlatformUnsupported;
+        }
+        catch (SocketException)
+        {
+            return SocketProbeResult.Stale;
+        }
+        catch (IOException)
+        {
+            return SocketProbeResult.Stale;
+        }
+    }
+
+    private static async Task<ShutdownAttemptResult> TryRequestShutdownAsync(string socketPath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var transport = new UnixSocketTransport(socketPath);
+            using var channel = GrpcChannel.ForAddress(UnixSocketTransport.Address, new GrpcChannelOptions
+            {
+                HttpHandler = transport.CreateHandler(),
                 Credentials = ChannelCredentials.Insecure
             });
 
             var client = new RepoQL.Contracts.RepoQL.RepoQLClient(channel);
-            var response = await client.ShutdownHostAsync(new ShutdownHostRequest(), cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (response.ProcessId > 0)
+            var response = await client.ShutdownHostAsync(
+                new ShutdownHostRequest(),
+                deadline: DateTime.UtcNow.AddSeconds(5),
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+            return new ShutdownAttemptResult(true, response.ProcessId, null);
+        }
+        catch (RpcException ex)
+        {
+            return new ShutdownAttemptResult(false, 0, $"{ex.StatusCode}: {ex.Status.Detail}");
+        }
+        catch (Exception ex)
+        {
+            return new ShutdownAttemptResult(false, 0, ex.Message);
+        }
+    }
+
+    private static bool TryGetRepoQlProcess(int pid, [NotNullWhen(true)] out Process? process)
+    {
+        process = null;
+        try
+        {
+            var candidate = Process.GetProcessById(pid);
+            if (candidate.HasExited)
             {
-                console.MarkupLine($"[yellow]Detected existing RepoQL host (PID {response.ProcessId}); requesting shutdown...[/]");
-                var exited = await WaitForProcessExitAsync(response.ProcessId, TimeSpan.FromSeconds(60), cancellationToken).ConfigureAwait(false);
-                if (!exited)
-                {
-                    console.MarkupLine($"[red]Process {response.ProcessId} did not exit gracefully; force killing...[/]");
-                    ForceKillProcess(response.ProcessId, console);
-                    await Task.Delay(1000, cancellationToken).ConfigureAwait(false); // Give OS time to release resources
-                }
+                candidate.Dispose();
+                return false;
             }
+
+            if (!IsRepoQlProcess(candidate))
+            {
+                candidate.Dispose();
+                return false;
+            }
+
+            process = candidate;
+            return true;
         }
-        catch (RpcException ex) when (ex.StatusCode == Grpc.Core.StatusCode.Unavailable)
+        catch (ArgumentException)
         {
-            // host not reachable; stale socket will be cleaned up later
+            return false;
         }
-        catch (SocketException)
+        catch (InvalidOperationException)
         {
-            // stale socket
+            return false;
         }
-        catch (IOException)
+    }
+
+    private static bool IsRepoQlProcess(Process process)
+    {
+        var name = process.ProcessName;
+        if (!string.IsNullOrWhiteSpace(name) &&
+            name.Contains("repoql", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        try
         {
-            // stale mapping file
+            var path = process.MainModule?.FileName;
+            if (!string.IsNullOrWhiteSpace(path) &&
+                path.Contains("repoql", StringComparison.OrdinalIgnoreCase))
+                return true;
         }
+        catch
+        {
+            // Ignore restricted process info.
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> TryKillProcessAsync(Process process, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                process.Kill(entireProcessTree: true);
+                return await WaitForProcessExitAsync(process.Id, TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+            }
+
+            if (UnixSignal.TrySendTerm(process.Id))
+            {
+                if (await WaitForProcessExitAsync(process.Id, TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false))
+                    return true;
+            }
+
+            if (UnixSignal.TrySendKill(process.Id))
+            {
+                return await WaitForProcessExitAsync(process.Id, TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+            }
+
+            return false;
+        }
+        catch (ArgumentException)
+        {
+            return true;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
+        }
+        finally
+        {
+            process.Dispose();
+        }
+    }
+
+    private void WriteStatus(bool implicitStart, Serilog.ILogger logger, string message, MarkupStyle style)
+    {
+        logger.Information(message);
+        if (implicitStart)
+            return;
+
+        var color = style switch
+        {
+            MarkupStyle.Warning => "yellow",
+            MarkupStyle.Error => "red",
+            _ => "white"
+        };
+
+        console.MarkupLine($"[{color}]{Markup.Escape(message)}[/]");
+    }
+
+    private enum SocketProbeResult
+    {
+        Active,
+        Stale,
+        PlatformUnsupported
+    }
+
+    private enum MarkupStyle
+    {
+        Info,
+        Warning,
+        Error
+    }
+
+    private readonly record struct ShutdownAttemptResult(bool Success, int ProcessId, string? Error);
+
+    /// <summary>
+    /// Purpose: Send Unix signals for graceful or forceful termination.
+    /// Complexity: Wraps libc kill calls with minimal surface for host takeover.
+    /// </summary>
+    private static class UnixSignal
+    {
+        private const int SigTerm = 15;
+        private const int SigKill = 9;
+
+        [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
+        [DllImport("libc", SetLastError = true)]
+        private static extern int kill(int pid, int sig);
+
+        public static bool TrySendTerm(int pid)
+            => kill(pid, SigTerm) == 0;
+
+        public static bool TrySendKill(int pid)
+            => kill(pid, SigKill) == 0;
     }
 
     private static async Task<bool> WaitForProcessExitAsync(int pid, TimeSpan timeout, CancellationToken cancellationToken)
@@ -267,27 +547,6 @@ internal class HostCommands(IAnsiConsole console)
         }
 
         return false;
-    }
-
-    private static void ForceKillProcess(int pid, IAnsiConsole console)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            process.Kill(entireProcessTree: true);
-        }
-        catch (ArgumentException)
-        {
-            // Process already exited - that's fine
-        }
-        catch (InvalidOperationException ex)
-        {
-            console.MarkupLine($"[red]Failed to kill process {pid}: {Markup.Escape(ex.Message)}[/]");
-        }
-        catch (System.ComponentModel.Win32Exception ex)
-        {
-            console.MarkupLine($"[red]Failed to kill process {pid}: {Markup.Escape(ex.Message)}[/]");
-        }
     }
 
     private static bool IsProcessRunning(int pid)

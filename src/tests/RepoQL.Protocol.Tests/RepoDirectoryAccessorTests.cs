@@ -1,6 +1,3 @@
-using AwesomeAssertions;
-using TUnit.Assertions.Extensions;
-
 namespace RepoQL.Protocol.Tests;
 
 public class RepoDirectoryAccessorTests
@@ -13,16 +10,19 @@ public class RepoDirectoryAccessorTests
 
         var path = accessor.ResolveSocketPath();
 
-        path.Should().Be(Path.Combine(accessor.RepoqlDirectory, "repoql.sock"));
+        var expected = RepoqlSocketPathResolver.NormalizeSocketPath(
+            RepoqlPaths.GetDefaultSocketPath(accessor.RepoRoot),
+            accessor.RepoRoot);
+        path.Should().Be(expected);
     }
 
     [Test]
     public void ResolveSocketPath_UsesMappingWhenPresent()
     {
         using var temp = new TempRepo();
-        var repoqlDir = Path.Combine(temp.Path, ".repoql");
+        var repoqlDir = RepoqlPaths.GetRepoqlDirectoryPath(temp.Path);
         Directory.CreateDirectory(repoqlDir);
-        File.WriteAllText(Path.Combine(repoqlDir, "socket.path"), "/tmp/repoql/custom.sock");
+        File.WriteAllText(Path.Combine(repoqlDir, RepoqlPaths.SocketMapFileName), "/tmp/repoql/custom.sock");
 
         using var accessor = new RepoDirectoryAccessor(temp.Path);
 

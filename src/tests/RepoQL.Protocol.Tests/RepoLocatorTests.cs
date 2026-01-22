@@ -1,7 +1,3 @@
-using System.IO;
-using AwesomeAssertions;
-using RepoQL.Contracts;
-
 namespace RepoQL.Protocol.Tests;
 
 public class RepoLocatorTests
@@ -15,7 +11,11 @@ public class RepoLocatorTests
         Directory.CreateDirectory(nested);
         File.WriteAllText(Path.Combine(markerRoot, ".git"), string.Empty);
 
-        var found = RepoLocator.TryFindRepoRoot(nested, out var root, out var searchedFrom, allowFallback: false);
+        var found = RepoQL.Contracts.RepoLocator.TryFindRepoRoot(
+            nested,
+            out var root,
+            out var searchedFrom,
+            allowFallback: false);
 
         found.Should().BeTrue();
         root.Should().Be(Path.GetFullPath(markerRoot));

@@ -4,6 +4,7 @@ using Grpc.Health.V1;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using RepoQL.Contracts;
+using RepoQL.Protocol;
 
 namespace RepoQL.Orchestrator;
 
@@ -16,7 +17,7 @@ internal sealed class RepoQlHostHealthCheck : IHealthCheck
         try
         {
             var repoRoot = RepoLocator.FindRepoRoot();
-            var socketPath = ResolveSocketPath(repoRoot);
+            var socketPath = RepoqlSocketPathResolver.ResolvePhysical(repoRoot);
 
             var handler = new SocketsHttpHandler
             {
@@ -51,28 +52,4 @@ internal sealed class RepoQlHostHealthCheck : IHealthCheck
         }
     }
 
-    private static string ResolveSocketPath(string repositoryPath)
-    {
-        var repoRoot = Path.GetFullPath(repositoryPath);
-        var repoqlDir = Path.Combine(repoRoot, ".repoql");
-        var mappingFile = Path.Combine(repoqlDir, "socket.path");
-
-        if (File.Exists(mappingFile))
-        {
-            try
-            {
-                var mapped = File.ReadAllText(mappingFile).Trim();
-                if (!string.IsNullOrWhiteSpace(mapped))
-                {
-                    return mapped;
-                }
-            }
-            catch
-            {
-                // fall back to default path
-            }
-        }
-
-        return Path.Combine(repoqlDir, "repoql.sock");
-    }
 }

@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using Grpc.Net.Client;
+using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 
@@ -32,9 +33,9 @@ internal sealed class SelfTestRunner
 
         // Socket path
         string? socketPath = null;
-        if (repoFound && repoqlDir != null)
+        if (repoFound && repoRoot != null && repoqlDir != null)
         {
-            socketPath = CheckSocketPath(sb, repoqlDir);
+            socketPath = CheckSocketPath(sb, repoRoot);
         }
         else
         {
@@ -45,6 +46,12 @@ internal sealed class SelfTestRunner
 
         // Host launch info
         AppendHostInfo(sb);
+
+        if (repoFound && repoRoot != null)
+        {
+            AppendExistingHostReport(sb, repoRoot);
+            AppendSocketBindReport(sb, repoRoot);
+        }
 
         // Connection check
         var connected = false;
@@ -135,7 +142,7 @@ internal sealed class SelfTestRunner
 
         sb.AppendLine($"  Resolved root: {repoRoot}");
 
-        var repoqlDir = Path.Combine(repoRoot!, ".repoql");
+        var repoqlDir = RepoqlPaths.GetRepoqlDirectoryPath(repoRoot!);
         var repoqlExists = Directory.Exists(repoqlDir);
         sb.AppendLine($"  .repoql dir: {(repoqlExists ? "exists" : "MISSING")}");
 
@@ -151,26 +158,42 @@ internal sealed class SelfTestRunner
         return (true, repoRoot, repoqlExists ? repoqlDir : null);
     }
 
-    private static string? CheckSocketPath(StringBuilder sb, string repoqlDir)
+    private static string? CheckSocketPath(StringBuilder sb, string repoRoot)
     {
         sb.AppendLine("Socket:");
 
-        // Check for socket.path mapping file (WSL case)
-        var socketPathFile = Path.Combine(repoqlDir, "socket.path");
+        using var repoRootProvider = new PhysicalFileProvider(repoRoot);
+        var mappingFile = repoRootProvider.GetRepoqlFileInfo(RepoqlPaths.SocketMapFileName);
         string socketPath;
 
-        if (File.Exists(socketPathFile))
+        if (mappingFile.Exists)
         {
-            var mapped = File.ReadAllText(socketPathFile).Trim();
-            sb.AppendLine($"  Mapping file: {socketPathFile}");
-            sb.AppendLine($"  Mapped to: {mapped}");
-            socketPath = mapped;
+            var rawMapping = repoRootProvider.TryReadRepoqlFileText(RepoqlPaths.SocketMapFileName);
+            var mappingPath = mappingFile.PhysicalPath ?? RepoqlPaths.GetSocketMappingPath(repoRoot);
+            sb.AppendLine($"  Mapping file: {mappingPath}");
+            if (rawMapping is null)
+            {
+                sb.AppendLine("  Mapped to: <unreadable>");
+                socketPath = RepoqlPaths.GetDefaultSocketPath(repoRoot);
+            }
+            else
+            {
+                var mapped = rawMapping.Trim();
+                sb.AppendLine(string.IsNullOrWhiteSpace(mapped)
+                    ? "  Mapped to: <empty>"
+                    : $"  Mapped to: {mapped}");
+                socketPath = string.IsNullOrWhiteSpace(mapped)
+                    ? RepoqlPaths.GetDefaultSocketPath(repoRoot)
+                    : mapped;
+            }
         }
         else
         {
-            socketPath = Path.Combine(repoqlDir, "repoql.sock");
+            socketPath = RepoqlPaths.GetDefaultSocketPath(repoRoot);
             sb.AppendLine($"  Path: {socketPath}");
         }
+
+        socketPath = RepoqlSocketPathResolver.NormalizeSocketPath(socketPath, repoRoot);
 
         // Check if socket file exists
         var socketExists = File.Exists(socketPath);
@@ -241,6 +264,24 @@ internal sealed class SelfTestRunner
             }
         }
 
+        sb.AppendLine();
+    }
+
+    private static void AppendExistingHostReport(StringBuilder sb, string repoRoot)
+    {
+        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "existing-host.json", out ExistingHostReport? report) || report is null)
+            return;
+
+        sb.AppendLine(report.ToString());
+        sb.AppendLine();
+    }
+
+    private static void AppendSocketBindReport(StringBuilder sb, string repoRoot)
+    {
+        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "socket-bind.json", out SocketBindReport? report) || report is null)
+            return;
+
+        sb.AppendLine(report.ToString());
         sb.AppendLine();
     }
 
