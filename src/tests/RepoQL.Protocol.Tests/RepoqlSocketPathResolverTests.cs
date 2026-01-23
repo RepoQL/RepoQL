@@ -55,6 +55,29 @@ public class RepoqlSocketPathResolverTests
         mapped.Should().BeNull();
     }
 
+    [Test]
+    public void Resolve_UsesRedirectWhenDefaultPathTooLong()
+    {
+        var repoRoot = BuildLongRepoRoot();
+        var provider = new NullFileProvider();
+        var writer = new TestRepoqlFileWriter(repoRoot);
+
+        var resolved = RepoqlSocketPathResolver.Resolve(repoRoot, provider, writer: writer);
+
+        var fullRoot = Path.GetFullPath(repoRoot);
+        var defaultSocket = RepoqlSocketPathResolver.NormalizeSocketPath(
+            RepoqlPaths.GetDefaultSocketPath(fullRoot),
+            fullRoot);
+        var limit = GetPlatformSocketPathLimit();
+
+        defaultSocket.Length.Should().BeGreaterThanOrEqualTo(limit);
+        resolved.Should().NotBe(defaultSocket);
+        resolved.Length.Should().BeLessThan(limit);
+        writer.LastRelativePath.Should().Be(RepoqlPaths.SocketMapFileName);
+        writer.LastContents.Should().NotBeNull();
+        writer.LastContents!.Trim().Replace('\\', '/').Should().Be(resolved);
+    }
+
     private sealed class TempRepo : IDisposable
     {
         public TempRepo()
@@ -77,4 +100,52 @@ public class RepoqlSocketPathResolverTests
             }
         }
     }
+
+    private sealed class TestRepoqlFileWriter : IRepoqlFileWriter
+    {
+        public TestRepoqlFileWriter(string repoRoot)
+        {
+            RepoRoot = Path.GetFullPath(repoRoot);
+            RepoqlDirectory = RepoqlPaths.GetRepoqlDirectoryPath(RepoRoot);
+        }
+
+        public string RepoRoot { get; }
+
+        public string RepoqlDirectory { get; }
+
+        public string? LastRelativePath { get; private set; }
+
+        public string? LastContents { get; private set; }
+
+        public void WriteAllText(string relativePath, string contents)
+        {
+            LastRelativePath = relativePath;
+            LastContents = contents;
+        }
+    }
+
+    private static string BuildLongRepoRoot()
+    {
+        var baseRoot = Path.Combine("repoql", "long-path");
+        var limit = GetPlatformSocketPathLimit();
+        var length = 0;
+
+        while (length < 200)
+        {
+            var root = Path.Combine(baseRoot, new string('a', length));
+            var fullRoot = Path.GetFullPath(root);
+            var defaultSocket = RepoqlSocketPathResolver.NormalizeSocketPath(
+                RepoqlPaths.GetDefaultSocketPath(fullRoot),
+                fullRoot);
+            if (defaultSocket.Length >= limit)
+                return root;
+
+            length += 10;
+        }
+
+        return Path.Combine(baseRoot, new string('a', length));
+    }
+
+    private static int GetPlatformSocketPathLimit()
+        => OperatingSystem.IsMacOS() ? 104 : 108;
 }

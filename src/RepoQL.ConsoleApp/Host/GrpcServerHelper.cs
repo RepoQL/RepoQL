@@ -43,7 +43,7 @@ public static class GrpcServerHelper
             PathLength = socketPath.Length,
             Platform = GetPlatformLabel(),
             PlatformLimit = OperatingSystem.IsMacOS() ? 104 : 108,
-            WslRedirected = false
+            SocketRedirected = false
         };
 
         using var repoRootProvider = new PhysicalFileProvider(repoPath);
@@ -52,7 +52,7 @@ public static class GrpcServerHelper
         {
             report.MappingFilePath = mappingFile.PhysicalPath ?? RepoqlPaths.GetSocketMappingPath(repoPath);
             var mapped = repoRootProvider.TryReadRepoqlSocketMapping();
-            report.WslRedirected = string.IsNullOrWhiteSpace(mapped)
+            report.SocketRedirected = string.IsNullOrWhiteSpace(mapped)
                 ? true
                 : string.Equals(mapped, socketPath, StringComparison.Ordinal);
         }

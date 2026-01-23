@@ -46,7 +46,6 @@ internal sealed class ConnectionCircuitBreaker(int threshold, TimeSpan window)
     {
         get
         {
-            Trim(DateTime.UtcNow);
             return _failures.Count;
         }
     }

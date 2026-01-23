@@ -12,7 +12,7 @@ internal sealed class SocketBindReport
     public int PathLength { get; set; }
     public string Platform { get; set; } = "unknown";
     public int PlatformLimit { get; set; }
-    public bool WslRedirected { get; set; }
+    public bool SocketRedirected { get; set; }
     public string? MappingFilePath { get; set; }
     public bool BindSucceeded { get; set; }
     public string? BindError { get; set; }
@@ -25,7 +25,7 @@ internal sealed class SocketBindReport
         builder.AppendLine($"  path_length: {PathLength}");
         builder.AppendLine($"  platform: {Platform}");
         builder.AppendLine($"  platform_limit: {PlatformLimit}");
-        builder.AppendLine($"  wsl_redirected: {WslRedirected}");
+        builder.AppendLine($"  socket_redirected: {SocketRedirected}");
         if (!string.IsNullOrWhiteSpace(MappingFilePath))
             builder.AppendLine($"  mapping_file: {MappingFilePath}");
         builder.AppendLine($"  bind_succeeded: {BindSucceeded}");

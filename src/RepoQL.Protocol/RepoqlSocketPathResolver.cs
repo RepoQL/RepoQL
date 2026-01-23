@@ -50,7 +50,14 @@ public static class RepoqlSocketPathResolver
         }
 
         var defaultSocket = RepoqlPaths.GetDefaultSocketPath(resolvedRoot);
-        return NormalizeSocketPath(defaultSocket, resolvedRoot);
+        var normalizedDefault = NormalizeSocketPath(defaultSocket, resolvedRoot);
+        if (writer != null && IsSocketPathTooLong(normalizedDefault))
+        {
+            var socketPath = ResolveRedirectedSocketPath(resolvedRoot, writer);
+            return NormalizeSocketPath(socketPath, resolvedRoot);
+        }
+
+        return normalizedDefault;
     }
 
     public static string NormalizeSocketPath(string path, string repoRoot)
@@ -74,6 +81,41 @@ public static class RepoqlSocketPathResolver
         var socketPath = Path.Combine(socketDir, RepoqlPaths.SocketFileName);
         writer.WriteAllText(RepoqlPaths.SocketMapFileName, socketPath + Environment.NewLine);
         return socketPath;
+    }
+
+    private static string ResolveRedirectedSocketPath(string repoRoot, IRepoqlFileWriter writer)
+    {
+        var repoHash = ComputeStableHash(repoRoot);
+        var tempRoot = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var maxLength = GetMaxSocketPathLength();
+
+        foreach (var baseDir in GetSocketBaseDirectories(tempRoot))
+        {
+            var maxHashLength = GetMaxHashLength(baseDir, maxLength);
+            if (maxHashLength <= 0)
+                continue;
+
+            var hashFragment = repoHash[..Math.Min(repoHash.Length, maxHashLength)];
+            var socketDir = Path.Combine(baseDir, hashFragment);
+            Directory.CreateDirectory(socketDir);
+            var socketPath = Path.Combine(socketDir, RepoqlPaths.SocketFileName);
+            writer.WriteAllText(RepoqlPaths.SocketMapFileName, socketPath + Environment.NewLine);
+            return socketPath;
+        }
+
+        var fallbackFileName = "rql.sock";
+        var fallbackSocket = Path.Combine(tempRoot, fallbackFileName);
+        if (fallbackSocket.Length > maxLength)
+        {
+            var root = Path.GetPathRoot(tempRoot)?.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (!string.IsNullOrWhiteSpace(root))
+            {
+                fallbackSocket = Path.Combine(root, fallbackFileName);
+            }
+        }
+
+        writer.WriteAllText(RepoqlPaths.SocketMapFileName, fallbackSocket + Environment.NewLine);
+        return fallbackSocket;
     }
 
     private static bool IsWslWindowsMount(string path)
@@ -112,6 +154,29 @@ public static class RepoqlSocketPathResolver
         }
 
         return false;
+    }
+
+    private static bool IsSocketPathTooLong(string socketPath)
+        => socketPath.Length >= GetPlatformSocketPathLimit();
+
+    private static int GetPlatformSocketPathLimit()
+        => OperatingSystem.IsMacOS() ? 104 : 108;
+
+    private static int GetMaxSocketPathLength()
+        => GetPlatformSocketPathLimit() - 1;
+
+    private static IEnumerable<string> GetSocketBaseDirectories(string tempRoot)
+    {
+        yield return Path.Combine(tempRoot, "repoql");
+        yield return Path.Combine(tempRoot, "rql");
+        yield return tempRoot;
+    }
+
+    private static int GetMaxHashLength(string baseDir, int maxLength)
+    {
+        var fileLength = RepoqlPaths.SocketFileName.Length;
+        var separators = 2;
+        return maxLength - baseDir.Length - fileLength - separators;
     }
 
     private static string ComputeStableHash(string value)
