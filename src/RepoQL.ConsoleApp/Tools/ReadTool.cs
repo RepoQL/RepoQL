@@ -146,7 +146,7 @@ internal sealed class ReadTool(
             // Infrastructure errors get diagnostics appended
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
-                var diagnostics = await _selfTestRunner.RunAsync(cancel).ConfigureAwait(false);
+                var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancel).ConfigureAwait(false);
                 return $"Error: {cleanMessage}\n\n{diagnostics}";
             }
             return $"Error: {cleanMessage}";

@@ -70,8 +70,8 @@ When the host is starting up, clients get a clear ready/not-ready signal via sta
 
 ### Idle Shutdown Behavior
 
-- Implicit starts launched by MCP skip idle grace (shutdown immediately when leases drop to zero).
-- CLI implicit starts keep the existing grace to avoid churn during quick successive commands.
+- Implicit starts launched by MCP use a 10-second grace period (minimum time for client to connect before idle shutdown).
+- CLI implicit starts keep the existing 45-second grace to avoid churn during quick successive commands.
 
 ### Stall Detection (Deferred)
 

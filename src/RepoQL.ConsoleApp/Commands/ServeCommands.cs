@@ -101,8 +101,13 @@ internal class HostCommands(IAnsiConsole console)
             builder.Logging.AddSerilog(serilogLogger, dispose: false);
 
             serilogLogger.Information("Phase: services start");
-            builder.Services.AddGrpc(options => options.Interceptors.Add<DegradationWarningInterceptor>());
+            builder.Services.AddGrpc(options =>
+            {
+                options.Interceptors.Add<DegradationWarningInterceptor>();
+                options.Interceptors.Add<HealthDiagnosticsInterceptor>();
+            });
             builder.Services.AddSingleton<DegradationWarningInterceptor>();
+            builder.Services.AddSingleton<HealthDiagnosticsInterceptor>();
             builder.Services.AddSingleton<HealthServiceImpl>();
             builder.Services.AddSingleton(new RepositoryConfiguration { Path = repo });
             var hostState = new HostState
@@ -186,6 +191,7 @@ internal class HostCommands(IAnsiConsole console)
                 try
                 {
                     await barrier.InitialScanCompleted.ConfigureAwait(false);
+                    hostState.InitialIndexingCompleted = true;
                     health.SetStatus(string.Empty, HealthCheckResponse.Types.ServingStatus.Serving);
                     health.SetStatus("repoql.v1.RepoQL", HealthCheckResponse.Types.ServingStatus.Serving);
                     app.Logger.LogInformation("Phase: ready");

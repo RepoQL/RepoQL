@@ -222,7 +222,7 @@ internal sealed class ExploreTool(
             // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
-                var diagnostics = await _selfTestRunner.RunAsync(cancellationToken);
+                var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancellationToken);
                 return $"Error: Search failed. {ExtractErrorMessage(ex)}\n\n{diagnostics}";
             }
             return $"Error: Search failed. {ExtractErrorMessage(ex)}";

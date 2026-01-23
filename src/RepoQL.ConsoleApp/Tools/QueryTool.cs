@@ -200,7 +200,14 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         // Special command: run diagnostics
         if (sql.Trim().Equals(":diagnostics:", StringComparison.OrdinalIgnoreCase))
         {
-            return await selfTestRunner.RunAsync(cancel);
+            try
+            {
+                return await selfTestRunner.RunAsync(DiagnosticCollectionMode.Full, cancel);
+            }
+            catch (Exception ex)
+            {
+                return $"Diagnostics failed: {ex.GetType().Name}: {ex.Message}\n\nStack trace:\n{ex.StackTrace}";
+            }
         }
 
         try
@@ -264,7 +271,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
             // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
-                var diagnostics = await selfTestRunner.RunAsync(cancel);
+                var diagnostics = await selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancel);
                 return $"Error: {cleanMessage}\n\n{diagnostics}";
             }
 

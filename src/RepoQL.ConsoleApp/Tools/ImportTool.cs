@@ -94,7 +94,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
             // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
-                var diagnostics = await _selfTestRunner.RunAsync(cancellationToken);
+                var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancellationToken);
                 return $"Import failed: {cleanMessage}\n\n{diagnostics}";
             }
 

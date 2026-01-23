@@ -82,7 +82,7 @@ internal sealed class SelfTestTool(SelfTestRunner runner, IMcpServer mcpServer)
         sb.AppendLine();
 
         // Then add the regular diagnostics
-        var diagnostics = await runner.RunAsync(cancellationToken);
+        var diagnostics = await runner.RunAsync(DiagnosticCollectionMode.Full, cancellationToken);
         sb.Append(diagnostics);
 
         return sb.ToString();

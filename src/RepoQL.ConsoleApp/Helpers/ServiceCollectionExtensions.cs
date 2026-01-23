@@ -28,6 +28,7 @@ internal static class ServiceCollectionExtensions
         services.AddSingleton<RepoResourceService>();
 
         // Diagnostics
+        services.AddSingleton<DiagnosticsCollector>();
         services.AddSingleton<SelfTestRunner>();
 
         services.AddLiquidTemplatingFromEmbedded(
