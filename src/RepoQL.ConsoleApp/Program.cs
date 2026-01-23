@@ -22,6 +22,9 @@ if (isMcpMode)
     AnsiConsole.Profile.Capabilities.Links = false;
     AnsiConsole.Profile.Capabilities.Interactive = false;
 
+    if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("REPOQL_IMPLICIT_SOURCE")))
+        Environment.SetEnvironmentVariable("REPOQL_IMPLICIT_SOURCE", "mcp");
+
     // Force auto-flush on stdout to prevent WSL buffering delays
     // This ensures JSON-RPC responses are sent immediately
     Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });

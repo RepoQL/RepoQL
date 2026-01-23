@@ -12,7 +12,7 @@ internal sealed class IdleShutdownHostedService(
 {
     private readonly TimeSpan _poll = TimeSpan.FromSeconds(5);
     private readonly TimeSpan _leaseTtl = TimeSpan.FromSeconds(GetEnvInt("REPOQL_LEASE_TTL_SECONDS", 30));
-    private readonly TimeSpan _idleGrace = TimeSpan.FromSeconds(GetEnvInt("REPOQL_IDLE_GRACE_SECONDS", 45));
+    private readonly TimeSpan _idleGrace = GetIdleGrace();
     private double _idleSecondsRemaining = -1;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -60,4 +60,18 @@ internal sealed class IdleShutdownHostedService(
 
     private static int GetEnvInt(string name, int dflt)
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
+
+    private static TimeSpan GetIdleGrace()
+    {
+        if (IsMcpImplicitSource())
+            return TimeSpan.FromSeconds(10); // Minimum grace for client to connect
+
+        return TimeSpan.FromSeconds(GetEnvInt("REPOQL_IDLE_GRACE_SECONDS", 45));
+    }
+
+    private static bool IsMcpImplicitSource()
+        => string.Equals(
+            Environment.GetEnvironmentVariable("REPOQL_IMPLICIT_SOURCE"),
+            "mcp",
+            StringComparison.OrdinalIgnoreCase);
 }

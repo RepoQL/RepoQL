@@ -49,6 +49,20 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private static int GetEnvInt(string name, int dflt)
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
 
+    private static int GetIdleGraceSeconds()
+    {
+        if (IsMcpImplicitSource())
+            return 0;
+
+        return GetEnvInt("REPOQL_IDLE_GRACE_SECONDS", 45);
+    }
+
+    private static bool IsMcpImplicitSource()
+        => string.Equals(
+            Environment.GetEnvironmentVariable("REPOQL_IMPLICIT_SOURCE"),
+            "mcp",
+            StringComparison.OrdinalIgnoreCase);
+
     public RepoQlServiceImpl(
         DuckDbDataStore db,
         RepositoryConfiguration repoConfig,
@@ -259,7 +273,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             ServerStartedAt = state.StartedAtUtc.ToString("O", CultureInfo.InvariantCulture),
             ImplicitStart = state.ImplicitStart,
             ActiveClients = LeaseRegistry.Count,
-            ShutdownAfterIdleSeconds = GetEnvInt("REPOQL_IDLE_GRACE_SECONDS", 45)
+            ShutdownAfterIdleSeconds = GetIdleGraceSeconds()
         };
     }
 

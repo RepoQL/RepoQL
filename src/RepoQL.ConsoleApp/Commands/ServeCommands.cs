@@ -176,12 +176,29 @@ internal class HostCommands(IAnsiConsole console)
             app.MapGrpcService<RepoQlServiceImpl>();
             app.MapGrpcService<HealthServiceImpl>();
             var health = app.Services.GetRequiredService<HealthServiceImpl>();
-            health.SetStatus(string.Empty, HealthCheckResponse.Types.ServingStatus.Serving);
-            health.SetStatus("repoql.v1.RepoQL", HealthCheckResponse.Types.ServingStatus.Serving);
+            health.SetStatus(string.Empty, HealthCheckResponse.Types.ServingStatus.NotServing);
+            health.SetStatus("repoql.v1.RepoQL", HealthCheckResponse.Types.ServingStatus.NotServing);
             var degradationTracker = app.Services.GetRequiredService<ServiceDegradationTracker>();
             degradationTracker.AttachHealth(health);
-            app.Logger.LogInformation("Phase: ready");
-            app.Logger.LogInformation("Host ready");
+            var barrier = app.Services.GetRequiredService<IInitialIndexingBarrier>();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await barrier.InitialScanCompleted.ConfigureAwait(false);
+                    health.SetStatus(string.Empty, HealthCheckResponse.Types.ServingStatus.Serving);
+                    health.SetStatus("repoql.v1.RepoQL", HealthCheckResponse.Types.ServingStatus.Serving);
+                    app.Logger.LogInformation("Phase: ready");
+                    app.Logger.LogInformation("Host ready");
+                }
+                catch (OperationCanceledException) when (app.Lifetime.ApplicationStopping.IsCancellationRequested)
+                {
+                }
+                catch (Exception ex)
+                {
+                    app.Logger.LogWarning(ex, "Initial indexing barrier failed; health check remains NOT_SERVING");
+                }
+            });
             await app.RunAsync().ConfigureAwait(false);
         }
         finally

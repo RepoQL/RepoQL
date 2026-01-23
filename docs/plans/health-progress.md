@@ -5,24 +5,22 @@ Implements: [Reliability Design](../designs/reliability.md) — Health Check sec
 ## Scope
 
 **Covers:**
-- Health check extended with startup phase and progress
-- Startup grace period (don't idle-shutdown during init)
-- Progress reporting during indexing
-- Stall detection
-- Readiness gating
+- Readiness gating via standard gRPC health checks
+- Stage-level health registration (pipeline + degradation)
+- Progress visibility via existing status stream (no new trackers)
 
 **Does not cover:**
 - Service degradation reporting (Plan: Service Degradation)
 - Diagnostic data collection (Plan: Diagnostics)
 - Channel recovery (Plan: Connection Recovery)
+- New server-side progress trackers or stall detection (deferred)
+- New GetStatus RPC (use existing status stream)
 
 ## Enables
 
 Once Health Progress exists:
-- **Progress visibility** — "Indexing... 45% (1247/2771 files)" instead of just "not ready"
-- **No premature timeout** — client waits for startup instead of failing
-- **Stall detection** — "Stuck on large-file.json for 60 seconds"
-- **No idle-shutdown race** — grace period protects slow startup
+- **Standard readiness** — clients use gRPC health Watch/Check for ready vs not-ready
+- **Fewer band-aids** — progress comes from existing status events, not new monitors
 
 ## Prerequisites
 
@@ -31,7 +29,7 @@ Once Health Progress exists:
 
 ## North Star
 
-When the host is starting up, the client sees exactly what's happening and how far along it is — not just "not ready" but "Indexing file 1247 of 2771 (45%)".
+When the host is starting up, clients get a clear ready/not-ready signal via standard gRPC health checks and can pull richer progress detail from the existing status stream when needed.
 
 ## Done Criteria
 
@@ -59,54 +57,36 @@ When the host is starting up, the client sees exactly what's happening and how f
 - When Watch stream errors (connection lost), trigger channel recovery
 - When Check times out, trigger channel recovery (host unresponsive/deadlocked)
 
-### Extended Status (Progress)
+### Readiness Gating
 
-- For detailed progress, add a separate `GetStatus` RPC (not part of standard health check)
-- GetStatus shall return:
-  - Phase: `preflight`, `socket_bind`, `database_init`, `services_start`, `indexing`, `ready`
-  - Progress percent (0-100) when indexing
-  - Files total and completed when indexing
-  - Current file when indexing
-  - Uptime in seconds
+- Base service health ("" and `repoql.v1.RepoQL`) is NOT_SERVING until initial indexing barrier completes.
+- Once the barrier completes, the service switches to SERVING.
+- Per-stage and per-service health continues to flow via `PipelineHealthPublisher` and service degradation tracker.
 
-### Phase Reporting
+### Progress Visibility (No New Tracker)
 
-- Each startup phase shall update health status as it begins
-- When entering `indexing` phase, report file counts
-- When indexing progresses, update progress percent
-- When indexing completes, transition to `ready`
+- Clients rely on `WatchStatus` (stream) and `GetPipelineStatus` (poll) for progress context.
+- No new server-side monitor/snapshotter is added for progress.
 
-### Startup Grace Period
+### Idle Shutdown Behavior
 
-- The host shall not idle-shutdown while phase != `ready`
-- The startup grace period shall be configurable (default: 5 minutes)
-- When startup exceeds grace period, log warning but don't force shutdown
-- Idle timer starts only after phase = `ready`
+- Implicit starts launched by MCP skip idle grace (shutdown immediately when leases drop to zero).
+- CLI implicit starts keep the existing grace to avoid churn during quick successive commands.
 
-### Progress Tracking
+### Stall Detection (Deferred)
 
-- The indexer shall report current file being processed
-- The indexer shall report files completed vs total
-- Progress updates shall occur at least every 5 seconds during active indexing
-- The health check shall include timestamp of last progress update
-
-### Stall Detection
-
-- When progress unchanged for 60 seconds during indexing, flag as potentially stalled
-- Include current file in stall warning (helps identify problematic files)
-- Stall flag is informational, not an error (large files take time)
+- Explicit stall detection is deferred until we can implement it holistically.
+- Note in client UX as a future enhancement (derived from repeated status snapshots).
 
 ### Client Integration
 
-- Client health check should display phase and progress
-- When phase is `indexing`, show progress bar or percentage
-- When progress stalled, show warning with current file
+- Client health check uses gRPC health for readiness.
+- Richer progress comes from `WatchStatus`/`GetPipelineStatus` (no new RPC required).
 
 ## Constraints
 
 - **Don't block on health check** — return current state immediately, don't wait
-- **Progress is best-effort** — some operations don't have progress (e.g., schema migration)
-- **Grace period has limit** — eventually log concern, but don't force shutdown
+- **Progress is best-effort** — use existing pipeline status; avoid new monitors
 
 ## References
 
@@ -117,7 +97,6 @@ When the host is starting up, the client sees exactly what's happening and how f
 ## Error Policy
 
 Health check never fails — always returns current state:
-1. If startup failed, return phase where it failed + error
-2. If stalled, return stall info + current file
-3. If degraded, return degraded services list
-4. Always return something useful
+1. If not ready, return NOT_SERVING for base service ("" and `repoql.v1.RepoQL`).
+2. If degraded, return NOT_SERVING for the relevant per-service health keys.
+3. For detail, use `WatchStatus`/`GetPipelineStatus` rather than extending health payloads.
