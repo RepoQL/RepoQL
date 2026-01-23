@@ -94,9 +94,18 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
       - uses: actions/setup-java@v4
+        id: java
         with:
           distribution: 'temurin'
           java-version: '17'
+      - name: Export Java home
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "JAVA_HOME=${{ steps.java.outputs.java-home }}" >> "$GITHUB_ENV"
+          echo "${{ steps.java.outputs.java-home }}/bin" >> "$GITHUB_PATH"
+      - name: Verify Java
+        run: java -version
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
