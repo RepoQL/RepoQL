@@ -30,15 +30,15 @@ internal sealed class DiagnosticReportToStringTests
         };
 
         var output = report.ToString();
-        output.Should().Contain("RepoQL diagnostics");
+        output.Should().Contain("RepoQL: DOWN");
         output.Should().Contain("problems:");
+        output.Should().Contain("Stale socket");
         output.Should().Contain("Host not ready");
-        output.Should().Contain("facts:");
-        output.Should().Contain("environment:");
-        output.Should().Contain("socket:");
-        output.Should().Contain("health:");
-        output.Should().Contain("artifacts:");
-        output.Should().Contain("probe_failures:");
-        output.Should().Contain("host log (last 1):");
+        output.Should().Contain("Previous host crashed");
+        output.Should().Contain("status: no connection");
+        output.Should().Contain("host: v1.2.3");
+        output.Should().Contain("repo: repo");
+        output.Should().Contain("host log:");
+        output.Should().Contain("- ERROR: boom");
     }
 }

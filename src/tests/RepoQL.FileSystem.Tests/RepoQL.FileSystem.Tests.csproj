@@ -6,15 +6,15 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="AwesomeAssertions.Analyzers" Version="9.0.8">
+        <PackageReference Include="AwesomeAssertions.Analyzers">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
-        <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" Version="2.0.1" />
-        <PackageReference Include="TUnit" Version="0.75.30" />
-        <PackageReference Include="AwesomeAssertions" Version="9.2.1" />
-        <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.1.0" />
-        <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1" />
+        <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+        <PackageReference Include="TUnit" />
+        <PackageReference Include="AwesomeAssertions" />
+        <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+        <PackageReference Include="DuckDB.NET.Data.Full" />
     </ItemGroup>
 
   <ItemGroup>

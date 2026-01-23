@@ -5,7 +5,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="ModelContextProtocol" Version="0.4.0-preview.3" />
+        <PackageReference Include="ModelContextProtocol" />
     </ItemGroup>
 
     <ItemGroup>

@@ -12,9 +12,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="TUnit" Version="0.75.30" />
-    <PackageReference Include="FakeItEasy" Version="8.3.0" />
-    <PackageReference Include="AwesomeAssertions" Version="9.2.1" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="FakeItEasy" />
+    <PackageReference Include="AwesomeAssertions" />
   </ItemGroup>
 
   <ItemGroup>

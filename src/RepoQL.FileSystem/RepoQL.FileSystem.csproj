@@ -7,11 +7,11 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="Ignore" Version="0.2.1" />
-      <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" Version="9.0.8" />
-      <PackageReference Include="Microsoft.Extensions.FileProviders.Physical" Version="9.0.8" />
-      <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.0.5" />
-      <PackageReference Include="Mime-Detective" Version="25.8.1" />
+      <PackageReference Include="Ignore" />
+      <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
+      <PackageReference Include="Microsoft.Extensions.FileProviders.Physical" />
+      <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+      <PackageReference Include="Mime-Detective" />
     </ItemGroup>
 
     <ItemGroup>

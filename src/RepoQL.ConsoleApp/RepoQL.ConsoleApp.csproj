@@ -31,31 +31,31 @@
     </PropertyGroup>
 
     <ItemGroup>
-      <PackageReference Include="ConsoleAppFramework" Version="5.6.1">
+      <PackageReference Include="ConsoleAppFramework">
         <PrivateAssets>all</PrivateAssets>
         <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       </PackageReference>
-      <PackageReference Include="DuckDB.NET.Data.Full" Version="1.4.1" GeneratePathProperty="true" />
-      <PackageReference Include="LibGit2Sharp.NativeBinaries" Version="2.0.322" GeneratePathProperty="true" />
-      <PackageReference Include="JetBrains.Annotations" Version="2025.2.1" />
-      <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" GeneratePathProperty="true" />
-      <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
-        <PackageReference Include="Spectre.Console" Version="0.50.0" />
-        <PackageReference Include="ModelContextProtocol" Version="0.4.0-preview.3" />
-      <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="9.0.8" />
-      <PackageReference Include="Google.Protobuf" Version="3.27.1" />
-      <PackageReference Include="Grpc.AspNetCore" Version="2.62.0" />
-      <PackageReference Include="Grpc.AspNetCore.Server" Version="2.62.0" />
-      <PackageReference Include="Grpc.HealthCheck" Version="2.62.0" />
-      <PackageReference Include="Serilog.AspNetCore" Version="8.0.0" />
-      <PackageReference Include="Serilog.Enrichers.Process" Version="3.0.0" />
-      <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
-      <PackageReference Include="OpenTelemetry" Version="1.12.0" />
-      <PackageReference Include="OpenTelemetry.Api" Version="1.12.0" />
-      <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.12.0" />
-        <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.12.0" />
-        <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.12.0" />
-        <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" Version="1.12.0" />
+      <PackageReference Include="DuckDB.NET.Data.Full" GeneratePathProperty="true" />
+      <PackageReference Include="LibGit2Sharp.NativeBinaries" GeneratePathProperty="true" />
+      <PackageReference Include="JetBrains.Annotations" />
+      <PackageReference Include="Microsoft.ML.OnnxRuntime" GeneratePathProperty="true" />
+      <PackageReference Include="Microsoft.Extensions.Hosting" />
+        <PackageReference Include="Spectre.Console" />
+        <PackageReference Include="ModelContextProtocol" />
+      <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
+      <PackageReference Include="Google.Protobuf" />
+      <PackageReference Include="Grpc.AspNetCore" />
+      <PackageReference Include="Grpc.AspNetCore.Server" />
+      <PackageReference Include="Grpc.HealthCheck" />
+      <PackageReference Include="Serilog.AspNetCore" />
+      <PackageReference Include="Serilog.Enrichers.Process" />
+      <PackageReference Include="Serilog.Sinks.File" />
+      <PackageReference Include="OpenTelemetry" />
+      <PackageReference Include="OpenTelemetry.Api" />
+      <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+        <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+        <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+        <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
     </ItemGroup>
 
     <!-- Ensure duckdb native library is always copied alongside trimmed single-file publishes -->

@@ -7,11 +7,11 @@
     </PropertyGroup>
 
   <ItemGroup>
-      <PackageReference Include="LLMSharp.Anthropic.Tokenizer" Version="2.0.3" />
-      <PackageReference Include="Microsoft.Extensions.FileProviders.Abstractions" Version="9.0.5" />
-      <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.0.5" />
-      <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="9.0.5" />
-      <PackageReference Include="System.IO.Hashing" Version="9.0.3" />
+      <PackageReference Include="LLMSharp.Anthropic.Tokenizer" />
+      <PackageReference Include="Microsoft.Extensions.FileProviders.Abstractions" />
+      <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+      <PackageReference Include="System.Diagnostics.DiagnosticSource" />
+      <PackageReference Include="System.IO.Hashing" />
   </ItemGroup>
 
 

@@ -10,7 +10,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RepoQL.Protocol\RepoQL.Protocol.csproj" />
-    <PackageReference Include="MudBlazor" Version="6.12.0" />
+    <PackageReference Include="MudBlazor" />
   </ItemGroup>
 
 </Project>
