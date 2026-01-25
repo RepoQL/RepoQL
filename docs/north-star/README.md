@@ -10,7 +10,7 @@ This document describes the **broad categories of capability** that RepoQL enabl
 
 | Tool | Purpose |
 |------|---------|
-| `xray` | Find and understand content by semantic query |
+| `explore` | Find and understand content by semantic query |
 | `query` | SQL over the knowledge graph - aggregation, traversal, joins |
 | `read` | Fetch specific content with budget-aware representation |
 | `import` | Bring external data sources into the knowledge graph |
@@ -30,7 +30,7 @@ These compose with standard agent tools (Edit, Write, Bash) and external MCP ser
 - Scoped search within specific areas of the codebase
 - Exploration when you don't know what you're looking for yet
 
-*The synergies (PPR, MMR, clustering, focused snippets) make this richer—returning not just matches but related context, organized for understanding.*
+*The synergies (PPR, MMR, clustering, focused snippets) make this richer—returning not just matches but related context, organized for understanding. Use Inventory to discover, Locate to find, Inspect to examine structure, Explain to synthesize understanding.*
 
 ### 2. Query & Aggregate
 
@@ -51,7 +51,7 @@ These compose with standard agent tools (Edit, Write, Bash) and external MCP ser
 - "Explain this code" → with context from callers, callees, tests
 - "What is the architecture?" → derived from structure and relationships
 
-*The xray Understand intent does synthesis. Budget allocation ensures the right mix of sources.*
+*The explore Explain intent does synthesis. Budget allocation ensures the right mix of sources.*
 
 ### 4. Trace & Correlate
 
@@ -120,14 +120,14 @@ These compose with standard agent tools (Edit, Write, Bash) and external MCP ser
 ### The Funnel: Broad → Narrow → Deep
 
 ```
-xray (explore)  →  query (filter)  →  read (details)
-"what's here?"     "which ones?"       "show me"
+explore (Inventory)  →  query (filter)  →  read (details)
+"what's here?"          "which ones?"       "show me"
 ```
 
 ### The Expand: Specific → Related → Context
 
 ```
-read (known)  →  query (edges)  →  xray (understand)
+read (known)  →  query (edges)  →  explore (Explain)
 "this file"       "what's connected?"   "how does it all work?"
 ```
 
@@ -152,13 +152,13 @@ query (data)  →  aggregate  →  export/visualize
 
 | Goal | Modalities Combined |
 |------|---------------------|
-| Find cause of regression | Search (concept) + History (when changed) + Understand (why) |
+| Find cause of regression | Locate (concept) + History (when changed) + Explain (why) |
 | Assess technical debt | Aggregate (issues) + History (hotspots) + Correlate (overlap) |
-| Prepare for refactor | Query (dependencies) + Trace (usages) + Understand (patterns) |
-| Onboard to codebase | Navigate (structure) + Understand (architecture) + Explore (key areas) |
+| Prepare for refactor | Query (dependencies) + Trace (usages) + Explain (patterns) |
+| Onboard to codebase | Navigate (structure) + Explain (architecture) + Inventory (key areas) |
 | Add new feature | Search (similar) + Understand (patterns) + Modify (implement) |
 | Review PR | History (changes) + Correlate (related files) + Understand (impact) |
-| Document feature | Trace (code↔docs) + Understand (behavior) + Analyze (coverage) |
+| Document feature | Trace (code↔docs) + Explain (behavior) + Analyze (coverage) |
 | Debug issue | Search (error) + Trace (call chain) + History (recent changes) |
 
 ---
@@ -171,7 +171,7 @@ For each modality, "great" means:
 |----------|--------------|
 | **Search** | Finds relevant content even with imprecise queries; shows related context; no redundancy |
 | **Query** | Returns precise answers; traverses graph accurately; aggregates correctly |
-| **Understand** | Synthesizes coherent explanation from multiple sources; cites evidence |
+| **Explain** | Synthesizes coherent explanation from multiple sources; cites evidence |
 | **Trace** | Finds connections across content types; surfaces non-obvious relationships |
 | **Analyze** | Handles various data formats; joins sources meaningfully; exports usefully |
 | **History** | Surfaces relevant changes; identifies patterns; correlates with current state |
