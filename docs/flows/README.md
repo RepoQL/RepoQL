@@ -20,12 +20,13 @@ flows/
 
 | Flow | Description |
 |------|-------------|
-| `host-client-architecture.md` | MCP client ↔ gRPC host connection lifecycle |
-| `indexing.md` | File discovery → parsing → embedding pipeline |
+| [indexing/](current/indexing/) | File discovery → parsing → embedding pipeline (17 documents) |
+| [mcp/failure-modes/](current/mcp/failure-modes/) | Detection and diagnosis of MCP client-side failures |
+| [host/failure-modes/](current/host/failure-modes/) | Detection and handling of host startup/runtime failures |
 
 ### Future
 
 | Flow | Description |
 |------|-------------|
-| `mcp/failure-modes/` | Detection and diagnosis of MCP client-side failures |
-| `host/failure-modes/` | Detection and handling of host startup/runtime failures |
+| [read/](future/read/) | Read tool modifiers: representation, search, graph, diagnostics, history (19 documents) |
+| [operations/](future/operations/) | Operation tracking, ready gating, and progress streaming (4 documents) |
