@@ -1,0 +1,32 @@
+{
+  "name": "@clawdbot/repoql",
+  "version": "0.1.0",
+  "description": "Clawdbot plugin for RepoQL - queryable knowledge graph for repositories",
+  "main": "index.ts",
+  "keywords": [
+    "clawdbot",
+    "clawdbot-plugin",
+    "repoql",
+    "code-understanding",
+    "mcp"
+  ],
+  "author": "Stuart Wilson",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stuartcwilson/RepoQL.git",
+    "directory": "clawdbot-plugin"
+  },
+  "clawdbot": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@sinclair/typebox": "^0.34.48"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

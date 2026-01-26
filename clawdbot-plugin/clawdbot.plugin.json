@@ -1,0 +1,42 @@
+{
+  "id": "repoql",
+  "name": "RepoQL",
+  "description": "Queryable knowledge graph for repositories. X-ray vision for code understanding.",
+  "version": "0.1.0",
+  "kind": "tool",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "exePath": {
+        "type": "string",
+        "description": "Path to repoql executable. Auto-detected from PATH if not set."
+      },
+      "autoServe": {
+        "type": "boolean",
+        "description": "Automatically start repoql serve on plugin load.",
+        "default": true
+      },
+      "workspaceAsRepo": {
+        "type": "boolean", 
+        "description": "Use the agent workspace as the repository root.",
+        "default": true
+      }
+    }
+  },
+  "uiHints": {
+    "exePath": {
+      "label": "RepoQL Executable Path",
+      "placeholder": "C:\\path\\to\\repoql.exe (or leave blank to auto-detect)"
+    },
+    "autoServe": {
+      "label": "Auto-start Serve",
+      "help": "Start the repoql serve process automatically when the plugin loads."
+    },
+    "workspaceAsRepo": {
+      "label": "Use Workspace as Repository",
+      "help": "Index the agent's workspace directory."
+    }
+  },
+  "skills": ["skills/repoql"]
+}
