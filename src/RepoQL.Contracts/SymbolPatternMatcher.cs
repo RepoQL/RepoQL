@@ -66,11 +66,29 @@ public static class SymbolPatternMatcher
 
         return wildcard switch
         {
-            WildcardType.None => qualifiedName.Equals(baseSymbol, StringComparison.OrdinalIgnoreCase),
+            WildcardType.None => IsExactOrSuffixMatch(qualifiedName, baseSymbol),
             WildcardType.DirectChildren => IsDirectChild(qualifiedName, baseSymbol),
             WildcardType.AllDescendants => IsDescendant(qualifiedName, baseSymbol),
             _ => false
         };
+    }
+
+    /// <summary>
+    /// Tests if a qualified name matches a pattern exactly or by suffix.
+    /// Suffix match allows "Method" to match "Namespace.Class.Method".
+    /// </summary>
+    /// <param name="qualifiedName">The fully qualified symbol name.</param>
+    /// <param name="pattern">The pattern to match (without wildcards).</param>
+    /// <returns>True if exact match or if qualifiedName ends with ".pattern".</returns>
+    private static bool IsExactOrSuffixMatch(string qualifiedName, string pattern)
+    {
+        // Exact match
+        if (qualifiedName.Equals(pattern, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Suffix match: qualifiedName ends with ".pattern"
+        var suffix = "." + pattern;
+        return qualifiedName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

@@ -847,15 +847,22 @@ public class UdfRegistry
             else
                 paramDefs.Add(paramName);
 
-            // First 2 params go direct (cast to VARCHAR since all UDFs use string params),
-            // rest go in JSON
-            if (udfArgs.Count < 2)
+            if (parameters.Length <= 4)
+            {
+                // For <=4 params, pass directly (DuckDB UDFs are registered as VARCHAR params)
                 udfArgs.Add($"{paramName}::VARCHAR");
+            }
             else
-                jsonFields.Add($"'{paramName}', {paramName}");
+            {
+                // For 5+ params, first 2 direct, rest packed into JSON
+                if (udfArgs.Count < 2)
+                    udfArgs.Add($"{paramName}::VARCHAR");
+                else
+                    jsonFields.Add($"'{paramName}', {paramName}");
+            }
         }
 
-        // If we have JSON fields, add the json_object
+        // If we have JSON fields, add the json_object (5+ params only)
         if (jsonFields.Count > 0)
             udfArgs.Add($"json_object({string.Join(", ", jsonFields)})");
 

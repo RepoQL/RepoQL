@@ -183,7 +183,15 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         try
         {
             var escapedPattern = uriPattern.Replace("'", "''");
-            var sql = $"SELECT tree(list(uri)) FROM Files WHERE uri LIKE '{escapedPattern}%'";
+            var sql = $"""
+                SELECT tree(
+                    json_group_array(uri ORDER BY uri),
+                    json_group_array(headline ORDER BY uri),
+                    false
+                )
+                FROM Files
+                WHERE uri LIKE '{escapedPattern}%'
+                """;
             var result = await _queryExecutor.ExecuteAsync(sql, 1, ResultFormat.Toon, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             var tree = string.Join(Environment.NewLine, result.Lines);

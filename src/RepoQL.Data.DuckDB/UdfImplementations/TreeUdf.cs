@@ -19,14 +19,18 @@ public class TreeUdf
     private const string Space = "    ";
 
     /// <summary>
-    /// Formats a list of URIs as an ASCII tree grouped by scheme with folder counts.
+    /// Formats a list of URIs as an ASCII tree grouped by scheme with optional headlines.
     /// </summary>
     /// <param name="urisJson">JSON array of URI strings, e.g. ["file:///src/a.cs", "repoql-docs:///readme.md"]</param>
+    /// <param name="headlinesJson">JSON array of headline strings (aligned with urisJson), e.g. ["Foo | 10 ln", null]</param>
     /// <param name="foldersOnly">If true, shows only folders with file type counts (e.g., "src/ (3 cs, 2 json)")</param>
     /// <returns>ASCII tree string with box-drawing characters</returns>
     [ScalarUdf("_tree_internal", MacroName = "tree", IsPure = true,
-        Description = "Format URIs as ASCII tree grouped by scheme with folder counts")]
-    public string FormatTree(string urisJson, [UdfDefault("false")] bool foldersOnly)
+        Description = "Format URIs as ASCII tree grouped by scheme with optional headlines")]
+    public string FormatTree(
+        string urisJson,
+        string headlinesJson,
+        [UdfDefault("false")] bool foldersOnly)
     {
         if (string.IsNullOrWhiteSpace(urisJson))
             return string.Empty;
@@ -35,7 +39,28 @@ public class TreeUdf
         if (uris.Count == 0)
             return string.Empty;
 
-        var byScheme = GroupByScheme(uris);
+        var headlines = ParseHeadlineArray(headlinesJson);
+        if (headlines.Count < uris.Count)
+        {
+            while (headlines.Count < uris.Count)
+                headlines.Add(null);
+        }
+        else if (headlines.Count > uris.Count)
+        {
+            headlines = headlines.Take(uris.Count).ToList();
+        }
+
+        var entries = new List<TreeEntry>(uris.Count);
+        for (var i = 0; i < uris.Count; i++)
+        {
+            entries.Add(new TreeEntry(uris[i], headlines[i]));
+        }
+
+        if (entries.Count == 0)
+            return string.Empty;
+
+        var byScheme = GroupByScheme(entries);
+        var showHeadlines = headlines.Any(h => !string.IsNullOrWhiteSpace(h));
 
         var sb = new StringBuilder();
         var schemeList = byScheme.OrderBy(kv => kv.Key).ToList();
@@ -45,7 +70,7 @@ public class TreeUdf
             var (scheme, paths) = schemeList[i];
             var tree = BuildTree(paths);
             var isLastScheme = i == schemeList.Count - 1;
-            RenderTree(sb, scheme, tree, isLastScheme, foldersOnly);
+            RenderTree(sb, scheme, tree, isLastScheme, foldersOnly, showHeadlines);
         }
 
         return sb.ToString().TrimEnd();
@@ -96,12 +121,13 @@ public class TreeUdf
         return result;
     }
 
-    private static Dictionary<string, List<string>> GroupByScheme(List<string> uris)
+    private static Dictionary<string, List<TreeEntry>> GroupByScheme(List<TreeEntry> entries)
     {
-        var result = new Dictionary<string, List<string>>();
+        var result = new Dictionary<string, List<TreeEntry>>();
 
-        foreach (var uri in uris)
+        foreach (var entry in entries)
         {
+            var uri = entry.Uri;
             var schemeEnd = uri.IndexOf("://", StringComparison.Ordinal);
             if (schemeEnd < 0)
                 continue;
@@ -121,23 +147,23 @@ public class TreeUdf
 
             if (!result.TryGetValue(scheme, out var paths))
             {
-                paths = new List<string>();
+                paths = new List<TreeEntry>();
                 result[scheme] = paths;
             }
 
-            paths.Add(path);
+            paths.Add(new TreeEntry(path, entry.Headline));
         }
 
         return result;
     }
 
-    private static TreeNode BuildTree(List<string> paths)
+    private static TreeNode BuildTree(List<TreeEntry> paths)
     {
         var root = new TreeNode { Name = "" };
 
-        foreach (var path in paths)
+        foreach (var entry in paths)
         {
-            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            var segments = entry.Path.Split('/', StringSplitOptions.RemoveEmptyEntries);
             var current = root;
 
             for (var i = 0; i < segments.Length; i++)
@@ -154,6 +180,8 @@ public class TreeUdf
                 if (isFile)
                 {
                     child.IsFile = true;
+                    if (!string.IsNullOrWhiteSpace(entry.Headline) && string.IsNullOrWhiteSpace(child.Headline))
+                        child.Headline = entry.Headline;
                     // Count this file in the parent folder
                     current.FileCount++;
 
@@ -190,21 +218,21 @@ public class TreeUdf
         return filename[(dotIndex + 1)..].ToLowerInvariant();
     }
 
-    private static void RenderTree(StringBuilder sb, string scheme, TreeNode root, bool isLastScheme, bool foldersOnly)
+    private static void RenderTree(StringBuilder sb, string scheme, TreeNode root, bool isLastScheme, bool foldersOnly, bool showHeadlines)
     {
         sb.AppendLine(scheme);
 
         // Filter children based on mode
         var children = root.Children
             .Where(kv => !foldersOnly || !kv.Value.IsFile) // In folders-only mode, skip files at root
-            .OrderBy(kv => kv.Value.IsFile) // Folders first
+            .OrderBy(kv => !kv.Value.IsFile) // Files first, then folders
             .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         for (var i = 0; i < children.Count; i++)
         {
             var isLast = i == children.Count - 1;
-            RenderNode(sb, children[i].Value, "", isLast, foldersOnly);
+            RenderNode(sb, children[i].Value, "", isLast, foldersOnly, showHeadlines);
         }
 
         // Add blank line between schemes (but not after last)
@@ -212,9 +240,8 @@ public class TreeUdf
             sb.AppendLine();
     }
 
-    private static void RenderNode(StringBuilder sb, TreeNode node, string prefix, bool isLast, bool foldersOnly)
+    private static void RenderNode(StringBuilder sb, TreeNode node, string prefix, bool isLast, bool foldersOnly, bool showHeadlines)
     {
-        var branch = isLast ? LastBranch : Branch;
         var name = node.Name;
 
         // Add folder indicator and counts for non-file nodes with children
@@ -238,22 +265,39 @@ public class TreeUdf
             name += "/";
         }
 
+        // For files with headlines, use the full headline as the display name
+        if (node.IsFile && !string.IsNullOrWhiteSpace(node.Headline))
+        {
+            name = node.Headline;
+        }
+
         sb.Append(prefix);
-        sb.Append(branch);
+
+        // Folders get box-drawing branch (├── or └──)
+        // Files get continuation (│) if more items follow, spaces if last
+        if (node.IsFile)
+        {
+            sb.Append(isLast ? Space : Vertical);
+        }
+        else
+        {
+            sb.Append(isLast ? LastBranch : Branch);
+        }
+
         sb.AppendLine(name);
 
         // Render children (skip files in folders-only mode)
         var childPrefix = prefix + (isLast ? Space : Vertical);
         var children = node.Children
             .Where(kv => !foldersOnly || !kv.Value.IsFile)
-            .OrderBy(kv => kv.Value.IsFile) // Folders first
+            .OrderBy(kv => !kv.Value.IsFile) // Files first, then folders
             .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         for (var i = 0; i < children.Count; i++)
         {
             var childIsLast = i == children.Count - 1;
-            RenderNode(sb, children[i].Value, childPrefix, childIsLast, foldersOnly);
+            RenderNode(sb, children[i].Value, childPrefix, childIsLast, foldersOnly, showHeadlines);
         }
     }
 
@@ -281,10 +325,48 @@ public class TreeUdf
         public Dictionary<string, TreeNode> Children { get; } = new();
         public int FileCount { get; set; }
         public bool IsFile { get; set; }
+        public string? Headline { get; set; }
         /// <summary>
         /// Counts of direct child files by extension (e.g., "cs" -> 3, "json" -> 2).
         /// Only populated for folder nodes. Extension is lowercase without dot.
         /// </summary>
         public Dictionary<string, int> FilesByExtension { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed record TreeEntry(string Uri, string? Headline)
+    {
+        public string Path => Uri;
+    }
+
+    private static List<string?> ParseHeadlineArray(string input)
+    {
+        var result = new List<string?>();
+        if (string.IsNullOrWhiteSpace(input))
+            return result;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(input);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var element in doc.RootElement.EnumerateArray())
+                {
+                    if (element.ValueKind == JsonValueKind.Null)
+                    {
+                        result.Add(null);
+                        continue;
+                    }
+
+                    var headline = element.GetString();
+                    result.Add(string.IsNullOrWhiteSpace(headline) ? null : headline);
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            return result;
+        }
+
+        return result;
     }
 }

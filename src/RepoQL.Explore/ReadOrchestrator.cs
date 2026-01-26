@@ -107,7 +107,7 @@ public sealed partial class ReadOrchestrator
             var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
 
             // Try full tree first
-            var fullTree = await _contentProvider.FormatAsTreeAsync(uris, foldersOnly: false, cancellationToken).ConfigureAwait(false)
+            var fullTree = await _contentProvider.FormatAsTreeAsync(uris, foldersOnly: false, includeHeadlines: true, cancellationToken).ConfigureAwait(false)
                            ?? string.Join("\n", uris);
             var fullTreeTokens = CoreTokenEstimator.EstimateTokens(fullTree);
 
@@ -124,7 +124,7 @@ public sealed partial class ReadOrchestrator
             }
 
             // Full tree doesn't fit - try folders-only
-            var foldersTree = await _contentProvider.FormatAsTreeAsync(uris, foldersOnly: true, cancellationToken).ConfigureAwait(false)
+            var foldersTree = await _contentProvider.FormatAsTreeAsync(uris, foldersOnly: true, includeHeadlines: false, cancellationToken).ConfigureAwait(false)
                               ?? "(folders-only not supported)";
             var foldersTreeTokens = CoreTokenEstimator.EstimateTokens(foldersTree);
 
@@ -169,72 +169,9 @@ public sealed partial class ReadOrchestrator
 
     /// <summary>
     /// Execute direct read without LLM synthesis. Applies progressive disclosure based on budget.
+    /// Uses matches_glob for all URIs - handles exact URIs, globs, and fragment patterns uniformly.
     /// </summary>
     private async Task<ReadExecutionResult> ExecuteDirectAsync(
-        string uri,
-        int tokenBudget,
-        IndexerStatus status,
-        CancellationToken cancellationToken,
-        Stopwatch? stopwatch)
-    {
-        try
-        {
-            // Handle glob patterns
-            if (IsGlobPattern(uri))
-            {
-                return await ExecuteGlobAsync(uri, tokenBudget, status, cancellationToken, stopwatch).ConfigureAwait(false);
-            }
-
-            // Single file/resource
-            return await ExecuteSingleAsync(uri, tokenBudget, status, cancellationToken, stopwatch).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            return new ReadExecutionResult(
-                Success: false,
-                Error: $"Error reading {uri}: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Execute read for a single resource with progressive disclosure.
-    /// </summary>
-    private async Task<ReadExecutionResult> ExecuteSingleAsync(
-        string uri,
-        int tokenBudget,
-        IndexerStatus status,
-        CancellationToken cancellationToken,
-        Stopwatch? stopwatch)
-    {
-        var document = await _contentProvider.FetchDocumentAsync(uri, cancellationToken).ConfigureAwait(false);
-
-        if (document is null)
-        {
-            return new ReadExecutionResult(
-                Success: false,
-                Error: $"No content found for: {uri}");
-        }
-
-        var (output, level, costs) = SelectRepresentation(document, tokenBudget);
-
-        // Build output with status footer (including representation hint if not full)
-        var tokens = CoreTokenEstimator.EstimateTokens(output);
-        var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
-        var hint = RepresentationFormatter.FormatRepresentationHint(level, costs);
-        var footer = RepresentationFormatter.FormatStatusFooter(statusWithTiming, tokens, hint);
-
-        return new ReadExecutionResult(
-            Success: true,
-            RenderedOutput: $"{output}\n{footer}",
-            Representation: level,
-            FilesRead: 1,
-            FilesOmitted: 0);
-    }
-
-    /// <summary>
-    /// Execute read for multiple files matching a glob pattern, distributing budget across matches.
-    /// </summary>
-    private async Task<ReadExecutionResult> ExecuteGlobAsync(
         string globUri,
         int tokenBudget,
         IndexerStatus status,
@@ -273,9 +210,27 @@ public sealed partial class ReadOrchestrator
             // Include file if it fits or if it's the first one
             if (fileTokens <= remainingBudget || filesIncluded == 0)
             {
-                if (sb.Length > 0) sb.Append("\n\n");
-                sb.Append($"--- {doc.Uri} ---\n");
-                sb.Append(fileOutput);
+                // For single result, render without separator
+                if (documents.Count == 1)
+                {
+                    sb.Append(fileOutput);
+                }
+                // For headlines, compact format: uri | headline (one line each, no blank lines)
+                // Strip filename from headline since URI already contains it
+                else if (level == "headline")
+                {
+                    if (sb.Length > 0) sb.AppendLine();
+                    sb.Append(doc.Uri);
+                    sb.Append(" | ");
+                    sb.Append(StripFilenameFromHeadline(fileOutput));
+                }
+                // For structure/full content, use separators
+                else
+                {
+                    if (sb.Length > 0) sb.Append("\n\n");
+                    sb.AppendLine($"--- {doc.Uri} ---");
+                    sb.Append(fileOutput);
+                }
                 remainingBudget -= fileTokens;
                 filesIncluded++;
 
@@ -301,14 +256,31 @@ public sealed partial class ReadOrchestrator
         var tokens = CoreTokenEstimator.EstimateTokens(output);
         var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
 
-        // Add representation summary if not all files are at full representation
-        var hint = FormatGlobRepresentationHint(levelCounts, maxFullCost);
+        // For single result, use single-file formatting; for multiple, use glob formatting
+        string? hint;
+        string representation;
+        if (documents.Count == 1 && filesIncluded == 1)
+        {
+            var singleLevel = levelCounts.Keys.First();
+            var singleCosts = new RepresentationCosts(
+                maxFullCost > 0 ? maxFullCost : null,
+                levelCounts.ContainsKey("structure") ? tokens : null,
+                levelCounts.ContainsKey("headline") ? tokens : null);
+            hint = RepresentationFormatter.FormatRepresentationHint(singleLevel, singleCosts);
+            representation = singleLevel;
+        }
+        else
+        {
+            hint = FormatGlobRepresentationHint(levelCounts, maxFullCost);
+            representation = "glob";
+        }
+
         var footer = RepresentationFormatter.FormatStatusFooter(statusWithTiming, tokens, hint);
 
         return new ReadExecutionResult(
             Success: true,
             RenderedOutput: $"{output}\n{footer}",
-            Representation: "glob",
+            Representation: representation,
             FilesRead: filesIncluded,
             FilesOmitted: filesOmitted);
     }
@@ -352,17 +324,8 @@ public sealed partial class ReadOrchestrator
         CancellationToken cancellationToken,
         Stopwatch? stopwatch)
     {
-        // First, fetch the content
-        IReadOnlyList<ReadDocument> documents;
-        if (IsGlobPattern(uri))
-        {
-            documents = await _contentProvider.FetchGlobAsync(uri, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            var doc = await _contentProvider.FetchDocumentAsync(uri, cancellationToken).ConfigureAwait(false);
-            documents = doc is not null ? [doc] : [];
-        }
+        // Fetch content - matches_glob handles exact URIs, globs, and fragment patterns uniformly
+        var documents = await _contentProvider.FetchGlobAsync(uri, cancellationToken).ConfigureAwait(false);
 
         if (documents.Count == 0)
         {
@@ -536,8 +499,18 @@ public sealed partial class ReadOrchestrator
         return ($"(No content available for {doc.Uri})", "none", costs);
     }
 
-    private static bool IsGlobPattern(string uri)
-        => uri.Contains('*') || uri.Contains('?') || uri.Contains(';') || uri.Contains('!');
+    /// <summary>
+    /// Strips the filename prefix from a headline since the URI already contains it.
+    /// Headlines are formatted as "filename | rest..." - returns "rest..." trimmed.
+    /// </summary>
+    private static string StripFilenameFromHeadline(string headline)
+    {
+        var separatorIndex = headline.IndexOf(" | ", StringComparison.Ordinal);
+        if (separatorIndex < 0)
+            return headline.TrimEnd();
+
+        return headline[(separatorIndex + 3)..].TrimEnd();
+    }
 
 }
 
@@ -579,14 +552,12 @@ public sealed record RepresentationCosts(
 public interface IReadContentProvider
 {
     /// <summary>
-    /// Fetch a single document by URI.
+    /// Fetch documents matching a URI pattern. Uses matches_glob internally, so handles:
+    /// - Exact URIs: file:///path/file.cs
+    /// - Glob patterns: file:///path/**/*.cs
+    /// - Fragment patterns: file:///path/file.cs#symbol=Method
     /// </summary>
-    Task<ReadDocument?> FetchDocumentAsync(string uri, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Fetch multiple documents matching a glob pattern.
-    /// </summary>
-    Task<IReadOnlyList<ReadDocument>> FetchGlobAsync(string globUri, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ReadDocument>> FetchGlobAsync(string uriPattern, CancellationToken cancellationToken);
 
     /// <summary>
     /// Get ASCII tree of repository structure for a scope. Returns null if not supported.
@@ -600,6 +571,7 @@ public interface IReadContentProvider
     /// </summary>
     /// <param name="uris">List of URIs to format.</param>
     /// <param name="foldersOnly">If true, shows only folders with file type counts.</param>
+    /// <param name="includeHeadlines">If true, supplies headlines so tree can append them to file nodes.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<string?> FormatAsTreeAsync(IReadOnlyList<string> uris, bool foldersOnly, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+    Task<string?> FormatAsTreeAsync(IReadOnlyList<string> uris, bool foldersOnly, bool includeHeadlines, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
 }

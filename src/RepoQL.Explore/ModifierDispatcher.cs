@@ -67,16 +67,7 @@ public sealed class ModifierDispatcher
                 budgetOverridden: true);
         }
 
-        IReadOnlyList<ReadDocument> documents;
-        if (IsGlobPattern(request.Pattern))
-        {
-            documents = await _contentProvider.FetchGlobAsync(request.Pattern, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            var document = await _contentProvider.FetchDocumentAsync(request.Pattern, cancellationToken).ConfigureAwait(false);
-            documents = document is not null ? [document] : [];
-        }
+        var documents = await _contentProvider.FetchGlobAsync(request.Pattern, cancellationToken).ConfigureAwait(false);
 
         ModifierResult result;
         try
@@ -249,9 +240,6 @@ public sealed class ModifierDispatcher
             _ => $"{tokens / 1000.0:F0}k tok"
         };
     }
-
-    private static bool IsGlobPattern(string uri)
-        => uri.Contains('*') || uri.Contains('?') || uri.Contains(';') || uri.Contains('!');
 }
 
 /// <summary>

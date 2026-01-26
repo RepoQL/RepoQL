@@ -87,10 +87,23 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         SELECT uri FROM glob_files('src/**/*.cs;!src/**/tests/**');
         ```
         
-        **tree(uris_json, foldersOnly)** - format URIs as ASCII directory tree
+        **tree(uris_json, headlines_json, foldersOnly)** - format URIs as ASCII directory tree (headlines appended when provided)
         ```sql
-        SELECT tree((SELECT json_group_array(uri) FROM glob_files('src/**')));
-        SELECT tree((SELECT json_group_array(uri) FROM glob_files('src/**')), foldersOnly := true);
+        SELECT tree(
+            json_group_array(uri ORDER BY uri),
+            json_group_array(headline ORDER BY uri),
+            false
+        )
+        FROM Files
+        WHERE uri LIKE 'file:///src/%';
+
+        SELECT tree(
+            json_group_array(uri ORDER BY uri),
+            json_group_array(headline ORDER BY uri),
+            true
+        )
+        FROM Files
+        WHERE uri LIKE 'file:///src/%';
         ```
         
         **Composition with LATERAL** - expand each row

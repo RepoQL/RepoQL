@@ -59,7 +59,7 @@ public class TreeUdfTests : IDisposable
     [DisplayName("tree with empty array returns empty string")]
     public void Tree_EmptyArray_ReturnsEmpty()
     {
-        var results = _db.Read("SELECT tree('[]')", r => r.IsDBNull(0) ? null : r.GetString(0));
+        var results = _db.Read("SELECT tree('[]', '[]', false)", r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
         results[0].Should().BeEmpty();
@@ -69,7 +69,7 @@ public class TreeUdfTests : IDisposable
     [DisplayName("tree with null/whitespace input returns empty string")]
     public void Tree_NullInput_ReturnsEmpty()
     {
-        var results = _db.Read("SELECT tree('')", r => r.IsDBNull(0) ? null : r.GetString(0));
+        var results = _db.Read("SELECT tree('', '[]', false)", r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
         results[0].Should().BeEmpty();
@@ -80,7 +80,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_SingleFile_RendersCorrectly()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///src/test.cs"]')""",
+            """SELECT tree('["file:///src/test.cs"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -95,7 +95,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_MultipleSchemes_GroupsCorrectly()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///a.cs", "repoql-docs:///readme.md"]')""",
+            """SELECT tree('["file:///a.cs", "repoql-docs:///readme.md"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -109,7 +109,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_FolderCounts_Displayed()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///src/a.cs", "file:///src/b.cs", "file:///src/c.cs"]')""",
+            """SELECT tree('["file:///src/a.cs", "file:///src/b.cs", "file:///src/c.cs"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -122,7 +122,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_NestedFolders_RendersCorrectly()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///src/Models/User.cs", "file:///src/Models/Order.cs", "file:///src/Services/UserService.cs"]')""",
+            """SELECT tree('["file:///src/Models/User.cs", "file:///src/Models/Order.cs", "file:///src/Services/UserService.cs"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -138,7 +138,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_BoxDrawingCharacters_Used()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///a.cs", "file:///b.cs"]')""",
+            """SELECT tree('["file:///a.cs", "file:///b.cs"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -153,7 +153,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_FoldersBeforeFiles()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///src/file.cs", "file:///src/subdir/nested.cs"]')""",
+            """SELECT tree('["file:///src/file.cs", "file:///src/subdir/nested.cs"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -170,7 +170,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_GithubScheme_Works()
     {
         var results = _db.Read(
-            """SELECT tree('["github://owner/repo/src/main.go"]')""",
+            """SELECT tree('["github://owner/repo/src/main.go"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -183,7 +183,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_ArraySyntax_Works()
     {
         var results = _db.Read(
-            """SELECT tree(['file:///a.cs', 'file:///b.cs'])""",
+            """SELECT tree(['file:///a.cs', 'file:///b.cs'], '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -198,7 +198,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_SingleFileCount_UsesSingular()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///src/only.cs"]')""",
+            """SELECT tree('["file:///src/only.cs"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -212,7 +212,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_FoldersOnly_HidesFilesAndShowsTypeCounts()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///src/a.cs", "file:///src/b.cs", "file:///src/config.json", "file:///lib/helper.cs"]', true)""",
+            """SELECT tree('["file:///src/a.cs", "file:///src/b.cs", "file:///src/config.json", "file:///lib/helper.cs"]', '[]', true)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -236,7 +236,7 @@ public class TreeUdfTests : IDisposable
     public void Tree_FoldersOnlyFalse_ShowsFiles()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///src/a.cs", "file:///src/b.cs"]', false)""",
+            """SELECT tree('["file:///src/a.cs", "file:///src/b.cs"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
@@ -245,5 +245,18 @@ public class TreeUdfTests : IDisposable
         // Should contain file names
         tree.Should().Contain("a.cs");
         tree.Should().Contain("b.cs");
+    }
+
+    [Test]
+    [DisplayName("tree appends headlines to file nodes when provided")]
+    public void Tree_Headlines_WhenProvided()
+    {
+        var results = _db.Read(
+            """SELECT tree('["file:///src/a.cs"]', '["Alpha headline"]', false)""",
+            r => r.IsDBNull(0) ? null : r.GetString(0));
+
+        results.Should().HaveCount(1);
+        var tree = results[0]!;
+        tree.Should().Contain("a.cs | Alpha headline");
     }
 }

@@ -143,6 +143,10 @@ internal class HostCommands(IAnsiConsole console)
                 sp.GetService<ILlmProvider>()
             ));
             builder.Services.AddSingleton<IReadContentProvider, DatabaseReadContentProvider>();
+            builder.Services.AddSingleton<IModifierHandler, HeadlineHandler>();
+            builder.Services.AddSingleton<IModifierHandler, TreeHandler>();
+            builder.Services.AddSingleton<IModifierHandler, StructureHandler>();
+            builder.Services.AddSingleton<IModifierHandler, ContentHandler>();
             builder.Services.AddSingleton(sp => new ReadOrchestrator(
                 sp.GetRequiredService<IReadContentProvider>(),
                 sp.GetRequiredService<ExploreOrchestrator>(),
@@ -556,3 +560,4 @@ internal class HostCommands(IAnsiConsole console)
     }
 
 }
+
