@@ -142,6 +142,12 @@ internal class HostCommands(IAnsiConsole console)
                 sp.GetService<IJitObjectSearchService>(),
                 sp.GetService<ILlmProvider>()
             ));
+            builder.Services.AddSingleton<IReadContentProvider, DatabaseReadContentProvider>();
+            builder.Services.AddSingleton(sp => new ReadOrchestrator(
+                sp.GetRequiredService<IReadContentProvider>(),
+                sp.GetRequiredService<ExploreOrchestrator>(),
+                sp.GetService<ILlmProvider>(),
+                sp.GetServices<IModifierHandler>()));
 
             // gRPC already configured above
             builder.Services.AddSingleton<HostMetrics>();

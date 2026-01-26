@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using System.Text.RegularExpressions;
 using RepoQL.Contracts;
 using CoreTokenEstimator = RepoQL.Contracts.TokenEstimator;
 
@@ -24,6 +23,7 @@ public sealed partial class ReadOrchestrator
     private readonly IReadContentProvider _contentProvider;
     private readonly ExploreOrchestrator _exploreOrchestrator;
     private readonly ILlmProvider? _llmProvider;
+    private readonly ModifierDispatcher _modifierDispatcher;
 
     /// <summary>
     /// Token threshold above which we use explore Understand pipeline instead of direct LLM call.
@@ -34,17 +34,19 @@ public sealed partial class ReadOrchestrator
     public ReadOrchestrator(
         IReadContentProvider contentProvider,
         ExploreOrchestrator exploreOrchestrator,
-        ILlmProvider? llmProvider = null)
+        ILlmProvider? llmProvider = null,
+        IEnumerable<IModifierHandler>? modifierHandlers = null)
     {
         _contentProvider = contentProvider ?? throw new ArgumentNullException(nameof(contentProvider));
         _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
         _llmProvider = llmProvider;
+        _modifierDispatcher = new ModifierDispatcher(_contentProvider, modifierHandlers);
     }
 
     /// <summary>
     /// Execute a read operation and return rendered output.
     /// </summary>
-    /// <param name="uri">URI or glob pattern. May contain ' // question' for LLM synthesis or ' => tree' for tree format.</param>
+    /// <param name="uri">URI or glob pattern. Modifier syntax is handled by the dispatcher.</param>
     /// <param name="tokenBudget">Token budget for representation selection.</param>
     /// <param name="status">Current indexer status.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
@@ -64,22 +66,11 @@ public sealed partial class ReadOrchestrator
 
         var trimmedUri = uri.Trim();
 
-        // Check for tree syntax: <glob> => tree
-        var treeMatch = TreePattern().Match(trimmedUri);
-        if (treeMatch.Success)
-        {
-            var globPattern = treeMatch.Groups[1].Value.Trim();
-            return await ExecuteTreeAsync(globPattern, tokenBudget, status, cancellationToken, stopwatch).ConfigureAwait(false);
-        }
-
-        // Check for question syntax: <uri> // <question>
-        var questionMatch = QuestionPattern().Match(trimmedUri);
-        if (questionMatch.Success)
-        {
-            var targetUri = questionMatch.Groups[1].Value;
-            var question = questionMatch.Groups[2].Value;
-            return await ExecuteWithQuestionAsync(targetUri, question, tokenBudget, status, cancellationToken, stopwatch).ConfigureAwait(false);
-        }
+        var modifierResult = await _modifierDispatcher
+            .TryExecuteAsync(trimmedUri, tokenBudget, status, cancellationToken, stopwatch)
+            .ConfigureAwait(false);
+        if (modifierResult is not null)
+            return modifierResult;
 
         return await ExecuteDirectAsync(trimmedUri, tokenBudget, status, cancellationToken, stopwatch).ConfigureAwait(false);
     }
@@ -548,11 +539,6 @@ public sealed partial class ReadOrchestrator
     private static bool IsGlobPattern(string uri)
         => uri.Contains('*') || uri.Contains('?') || uri.Contains(';') || uri.Contains('!');
 
-    [GeneratedRegex(@"^(\S+)\s+//\s+(.+)$")]
-    private static partial Regex QuestionPattern();
-
-    [GeneratedRegex(@"^(.+?)\s+=>\s*tree\s*$", RegexOptions.IgnoreCase)]
-    private static partial Regex TreePattern();
 }
 
 /// <summary>

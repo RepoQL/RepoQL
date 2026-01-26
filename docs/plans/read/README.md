@@ -12,7 +12,7 @@ Plans for implementing the read tool modifier system.
 
 | # | Plan | Status | Complexity |
 |---|------|--------|------------|
-| 1 | [modifier-dispatcher](modifier-dispatcher.md) | Pending | Medium |
+| 1 | modifier-dispatcher | Done | Medium |
 | 2 | [headline](headline.md) | Pending | Trivial |
 | 3 | [structure](structure.md) | Pending | Trivial |
 | 4 | [content](content.md) | Pending | Trivial |
