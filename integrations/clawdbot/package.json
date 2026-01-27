@@ -1,8 +1,9 @@
 {
   "name": "@clawdbot/repoql",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Clawdbot plugin for RepoQL - queryable knowledge graph for repositories",
   "main": "index.ts",
+  "type": "module",
   "keywords": [
     "clawdbot",
     "clawdbot-plugin",
@@ -15,18 +16,21 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/stuartcwilson/RepoQL.git",
-    "directory": "clawdbot-plugin"
+    "directory": "integrations/clawdbot"
   },
   "clawdbot": {
     "extensions": [
       "./index.ts"
     ]
   },
-  "peerDependencies": {
+  "dependencies": {
     "@sinclair/typebox": "^0.34.48"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^22.0.0",
     "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }
