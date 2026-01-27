@@ -36,7 +36,7 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
         if (string.IsNullOrWhiteSpace(keywords))
         {
             return Task.FromResult(BuildSimpleResult(
-                "Missing search keywords. Usage: file:///path => find: <keywords>",
+                "Missing search keywords. Usage: <uri-pattern> => find: <keywords>",
                 filesConsulted: [],
                 tokenBudget: tokenBudget));
         }
@@ -49,35 +49,29 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
                 tokenBudget: tokenBudget));
         }
 
-        var fileUris = ExtractFileUris(documents);
-        if (fileUris.Count == 0)
+        var documentUris = ExtractDocumentUris(documents);
+        if (documentUris.Count == 0)
         {
             return Task.FromResult(BuildSimpleResult(
-                "Find is only available for file:/// URIs.",
+                "No valid URIs found in matched documents.",
                 filesConsulted: documents.Select(d => d.Uri).ToArray(),
                 tokenBudget: tokenBudget));
         }
 
-        // Build scope pattern for search
-        var scopePattern = BuildScopePattern(fileUris);
-
         // Execute semantic search within scope
-        var searchResults = ExecuteSearch(keywords, scopePattern, ct);
+        var searchResults = ExecuteSearch(keywords, documentUris, ct);
 
         if (searchResults.Count == 0)
         {
             return Task.FromResult(BuildSimpleResult(
-                $"No semantic matches for '{keywords}' in {fileUris.Count} file(s).",
-                filesConsulted: fileUris,
+                $"No semantic matches for '{keywords}' in {documentUris.Count} file(s).",
+                filesConsulted: documentUris,
                 tokenBudget: tokenBudget));
         }
 
-        // Filter to results above threshold and within matched files
+        // Filter to results above threshold
         var filteredResults = searchResults
             .Where(r => r.Score >= MinScoreThreshold)
-            .Where(r => fileUris.Any(uri =>
-                r.Uri.StartsWith(uri, StringComparison.OrdinalIgnoreCase) ||
-                uri.StartsWith(r.Uri, StringComparison.OrdinalIgnoreCase)))
             .OrderByDescending(r => r.Score)
             .Take(MaxResults)
             .ToList();
@@ -88,8 +82,8 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
         {
             var bestScore = searchResults.Max(r => r.Score);
             return Task.FromResult(BuildSimpleResult(
-                $"No strong semantic matches for '{keywords}' in {fileUris.Count} file(s). Best score: {bestScore:F2} (threshold: {MinScoreThreshold:F2})",
-                filesConsulted: fileUris,
+                $"No strong semantic matches for '{keywords}' in {documentUris.Count} file(s). Best score: {bestScore:F2} (threshold: {MinScoreThreshold:F2})",
+                filesConsulted: documentUris,
                 tokenBudget: tokenBudget,
                 warning: "All matches below relevance threshold"));
         }
@@ -112,7 +106,7 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
             TotalAvailable: filteredResults.Count,
             Shown: shownCount,
             ExceedsBudget: tokenCount > tokenBudget,
-            Metadata: new ResultMetadata(fileUris, null, extra)));
+            Metadata: new ResultMetadata(documentUris, null, extra)));
     }
 
     private static ModifierResult BuildSimpleResult(
@@ -133,7 +127,7 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
             Metadata: new ResultMetadata(filesConsulted, warning, new Dictionary<string, object>()));
     }
 
-    private static IReadOnlyList<string> ExtractFileUris(IReadOnlyList<ReadDocument> documents)
+    private static IReadOnlyList<string> ExtractDocumentUris(IReadOnlyList<ReadDocument> documents)
     {
         var uris = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var doc in documents)
@@ -141,14 +135,12 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
             if (string.IsNullOrWhiteSpace(doc.Uri))
                 continue;
 
+            // Strip fragment from URI to get base document URI
             if (RepoUri.TryParse(doc.Uri, out var repoUri))
             {
-                if (string.Equals(repoUri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
-                {
-                    uris.Add(repoUri.Container.AbsoluteUri);
-                }
+                uris.Add(repoUri.Container.AbsoluteUri);
             }
-            else if (doc.Uri.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+            else
             {
                 var hashIndex = doc.Uri.IndexOf('#', StringComparison.Ordinal);
                 uris.Add(hashIndex > 0 ? doc.Uri[..hashIndex] : doc.Uri);
@@ -158,58 +150,24 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
         return uris.ToList();
     }
 
-    private static string BuildScopePattern(IReadOnlyList<string> fileUris)
-    {
-        if (fileUris.Count == 1)
-        {
-            return fileUris[0] + "%";
-        }
-
-        // For multiple files, find common prefix
-        var commonPrefix = FindCommonPrefix(fileUris);
-        if (!string.IsNullOrEmpty(commonPrefix) && commonPrefix.Length > 10)
-        {
-            return commonPrefix + "%";
-        }
-
-        // Fallback to file:/// prefix
-        return "file:///%";
-    }
-
-    private static string FindCommonPrefix(IReadOnlyList<string> strings)
-    {
-        if (strings.Count == 0)
-            return string.Empty;
-
-        var first = strings[0];
-        var prefixLength = first.Length;
-
-        foreach (var s in strings.Skip(1))
-        {
-            prefixLength = Math.Min(prefixLength, s.Length);
-            for (var i = 0; i < prefixLength; i++)
-            {
-                if (char.ToLowerInvariant(first[i]) != char.ToLowerInvariant(s[i]))
-                {
-                    prefixLength = i;
-                    break;
-                }
-            }
-        }
-
-        return first[..prefixLength];
-    }
-
-    private IReadOnlyList<FindResult> ExecuteSearch(string keywords, string scopePattern, CancellationToken ct)
+    private IReadOnlyList<FindResult> ExecuteSearch(string keywords, IReadOnlyList<string> documentUris, CancellationToken ct)
     {
         var results = new List<FindResult>();
+
+        if (documentUris.Count == 0)
+            return results;
 
         try
         {
             var escapedKeywords = EscapeSqlLiteral(keywords);
-            var escapedScope = EscapeSqlLiteral(scopePattern);
 
-            // Use _search_candidates with scope filtering
+            // Build URI filter - strip fragments from result URIs for matching
+            var uriConditions = documentUris
+                .Select(uri => $"REPLACE(uri, '#' || SPLIT_PART(uri, '#', 2), '') = '{EscapeSqlLiteral(uri)}'")
+                .ToList();
+            var uriFilter = string.Join(" OR ", uriConditions);
+
+            // Use _search_candidates and filter with WHERE clause
             var sql = $"""
                 SELECT
                     uri,
@@ -223,10 +181,9 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
                     bm25_score
                 FROM _search_candidates(
                     '{escapedKeywords}',
-                    uri_glob := '{escapedScope}',
-                    k := {MaxResults * 2}
+                    k := {MaxResults * 4}
                 )
-                WHERE scope = 'document'
+                WHERE scope = 'document' AND ({uriFilter})
                 ORDER BY score DESC
                 LIMIT {MaxResults * 2}
                 """;

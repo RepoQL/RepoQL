@@ -38,8 +38,7 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
             LEFT JOIN node doc ON doc.id = s.document_id
             JOIN artifact a ON a.id = COALESCE(n.artifact_id, doc.artifact_id)
             WHERE {(hasFragment ? "" : "n.kind = 'document' AND ")}
-                  (matches_glob(n.uri, '{escapedPattern}', default_scheme := 'file:///')
-                   OR matches_glob(n.uri, '{escapedPattern}', default_scheme := 'repoql-docs:///'))
+                  matches_glob(n.uri, '{escapedPattern}')
             ORDER BY n.uri
             LIMIT 100
             """;
@@ -74,7 +73,6 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
             FROM node n
             JOIN artifact a ON a.id = n.artifact_id
             WHERE n.kind = 'document'
-              AND n.uri LIKE 'file:///%'
             LIMIT 500
             """;
 

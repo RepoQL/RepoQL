@@ -80,7 +80,7 @@ internal sealed class FindHandlerTests
     }
 
     [Test]
-    public async Task FindHandler_NonFileUri_ReturnsError()
+    public async Task FindHandler_NonFileUri_IsAccepted()
     {
         using var context = new FindTestContext();
 
@@ -101,7 +101,8 @@ internal sealed class FindHandlerTests
             tokenBudget: 1000,
             ct: CancellationToken.None);
 
-        result.Content.Should().Contain("only available for file:/// URIs");
+        // Should not reject based on URI scheme - will search (may find no matches without full infrastructure)
+        result.Content.Should().NotContain("only available for file:/// URIs");
     }
 
     [Test]
