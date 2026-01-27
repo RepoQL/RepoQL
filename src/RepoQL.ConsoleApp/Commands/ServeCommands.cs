@@ -150,6 +150,7 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton<IModifierHandler, ContentHandler>();
             builder.Services.AddSingleton<IModifierHandler, LintHandler>();
             builder.Services.AddSingleton<IModifierHandler, HistoryHandler>();
+            builder.Services.AddSingleton<IModifierHandler, BlameHandler>();
             builder.Services.AddSingleton(sp => new ReadOrchestrator(
                 sp.GetRequiredService<IReadContentProvider>(),
                 sp.GetRequiredService<ExploreOrchestrator>(),

@@ -66,6 +66,15 @@ public sealed partial class ReadOrchestrator
 
         var trimmedUri = uri.Trim();
 
+        // Check for question syntax before modifier dispatch
+        // Question syntax: "pattern => question: How does X work?"
+        if (TryParseQuestion(trimmedUri, out var pattern, out var question))
+        {
+            return await ExecuteWithQuestionAsync(
+                pattern!, question!, tokenBudget, status, cancellationToken, stopwatch)
+                .ConfigureAwait(false);
+        }
+
         var modifierResult = await _modifierDispatcher
             .TryExecuteAsync(trimmedUri, tokenBudget, status, cancellationToken, stopwatch)
             .ConfigureAwait(false);
@@ -73,6 +82,39 @@ public sealed partial class ReadOrchestrator
             return modifierResult;
 
         return await ExecuteDirectAsync(trimmedUri, tokenBudget, status, cancellationToken, stopwatch).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Parse question syntax from input. Format: "pattern => question: text"
+    /// </summary>
+    /// <param name="input">The input string to parse.</param>
+    /// <param name="pattern">Output: the URI pattern before the separator.</param>
+    /// <param name="question">Output: the question text after "question:".</param>
+    /// <returns>True if valid question syntax was found, false otherwise.</returns>
+    private static bool TryParseQuestion(string input, out string? pattern, out string? question)
+    {
+        pattern = null;
+        question = null;
+
+        var separatorIndex = input.IndexOf("=>", StringComparison.Ordinal);
+        if (separatorIndex < 0)
+            return false;
+
+        var patternPart = input[..separatorIndex].Trim();
+        var remainder = input[(separatorIndex + 2)..].Trim();
+
+        // Check for "question:" prefix (case-insensitive)
+        if (!remainder.StartsWith("question:", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var questionPart = remainder[9..].Trim(); // "question:".Length == 9
+
+        if (string.IsNullOrWhiteSpace(patternPart) || string.IsNullOrWhiteSpace(questionPart))
+            return false;
+
+        pattern = patternPart;
+        question = questionPart;
+        return true;
     }
 
     /// <summary>
@@ -324,6 +366,14 @@ public sealed partial class ReadOrchestrator
         CancellationToken cancellationToken,
         Stopwatch? stopwatch)
     {
+        // Check LLM availability early - question syntax requires LLM
+        if (_llmProvider is null || !_llmProvider.Enabled)
+        {
+            return new ReadExecutionResult(
+                Success: false,
+                Error: "LLM not configured. Set OPENROUTER_API_KEY environment variable to enable question synthesis.");
+        }
+
         // Fetch content - matches_glob handles exact URIs, globs, and fragment patterns uniformly
         var documents = await _contentProvider.FetchGlobAsync(uri, cancellationToken).ConfigureAwait(false);
 
@@ -347,14 +397,14 @@ public sealed partial class ReadOrchestrator
 
         var contentTokens = CoreTokenEstimator.EstimateTokens(allContent.ToString());
 
-        // If content is small enough and LLM is available, call directly
-        if (contentTokens < LargeContentThreshold && _llmProvider is { Enabled: true })
+        // If content is small enough, call LLM directly
+        if (contentTokens < LargeContentThreshold)
         {
             return await ExecuteDirectLlmAsync(
                 documents, allContent.ToString(), question, tokenBudget, status, stopwatch, cancellationToken).ConfigureAwait(false);
         }
 
-        // Large content or no LLM: delegate to explore's Understand pipeline
+        // Large content: delegate to explore's Understand pipeline for search + synthesis
         return await ExecuteExploreExplainAsync(uri, question, tokenBudget, status, stopwatch, cancellationToken).ConfigureAwait(false);
     }
 
