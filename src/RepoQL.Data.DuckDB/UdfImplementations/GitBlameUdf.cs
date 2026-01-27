@@ -58,10 +58,11 @@ public class GitBlameUdf(RepositoryConfiguration repoConfig)
 
         foreach (var hunk in blame)
         {
-            var hunkStart = hunk.FinalStartLineNumber;
+            // LibGit2Sharp's FinalStartLineNumber is 0-based, convert to 1-based
+            var hunkStart = hunk.FinalStartLineNumber + 1;
             var hunkEnd = hunkStart + hunk.LineCount - 1;
 
-            // Apply line filters
+            // Apply line filters (user provides 1-based line numbers)
             var effectiveStart = startLine.HasValue ? Math.Max(hunkStart, startLine.Value) : hunkStart;
             var effectiveEnd = endLine.HasValue ? Math.Min(hunkEnd, endLine.Value) : hunkEnd;
 
