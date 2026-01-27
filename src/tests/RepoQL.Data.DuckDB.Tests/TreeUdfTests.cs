@@ -114,7 +114,7 @@ public class TreeUdfTests : IDisposable
 
         results.Should().HaveCount(1);
         var tree = results[0]!;
-        tree.Should().Contain("(3 files)");
+        tree.Should().Contain("(3 cs)");
     }
 
     [Test]
@@ -129,28 +129,28 @@ public class TreeUdfTests : IDisposable
         var tree = results[0]!;
         tree.Should().Contain("Models/");
         tree.Should().Contain("Services/");
-        tree.Should().Contain("(2 files)"); // Models has 2 files
-        tree.Should().Contain("(1 file)");  // Services has 1 file
+        tree.Should().Contain("(2 cs)"); // Models has 2 cs files
+        tree.Should().Contain("(1 cs)"); // Services has 1 cs file
     }
 
     [Test]
-    [DisplayName("tree uses correct box-drawing characters")]
+    [DisplayName("tree uses correct box-drawing characters for folders")]
     public void Tree_BoxDrawingCharacters_Used()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///a.cs", "file:///b.cs"]', '[]', false)""",
+            """SELECT tree('["file:///src/a.cs", "file:///lib/b.cs"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
         var tree = results[0]!;
-        // Should have branch characters
-        tree.Should().Contain("├── ");
-        tree.Should().Contain("└── ");
+        // Should have branch characters for folders (files don't get branch chars)
+        tree.Should().Contain("├── "); // First folder (lib/ alphabetically, but src/ comes after)
+        tree.Should().Contain("└── "); // Last folder
     }
 
     [Test]
-    [DisplayName("tree orders folders before files")]
-    public void Tree_FoldersBeforeFiles()
+    [DisplayName("tree orders files before folders")]
+    public void Tree_FilesBeforeFolders()
     {
         var results = _db.Read(
             """SELECT tree('["file:///src/file.cs", "file:///src/subdir/nested.cs"]', '[]', false)""",
@@ -159,10 +159,10 @@ public class TreeUdfTests : IDisposable
         results.Should().HaveCount(1);
         var tree = results[0]!;
 
-        // subdir should appear before file.cs in the output
-        var subdirIndex = tree.IndexOf("subdir/", StringComparison.Ordinal);
+        // file.cs should appear before subdir in the output (files first, then folders)
         var fileIndex = tree.IndexOf("file.cs", StringComparison.Ordinal);
-        subdirIndex.Should().BeLessThan(fileIndex, "folders should be listed before files");
+        var subdirIndex = tree.IndexOf("subdir/", StringComparison.Ordinal);
+        fileIndex.Should().BeLessThan(subdirIndex, "files should be listed before folders");
     }
 
     [Test]
@@ -194,8 +194,8 @@ public class TreeUdfTests : IDisposable
     }
 
     [Test]
-    [DisplayName("tree singular file count for single file in folder")]
-    public void Tree_SingleFileCount_UsesSingular()
+    [DisplayName("tree shows type count for single file in folder")]
+    public void Tree_SingleFileCount_ShowsType()
     {
         var results = _db.Read(
             """SELECT tree('["file:///src/only.cs"]', '[]', false)""",
@@ -203,8 +203,7 @@ public class TreeUdfTests : IDisposable
 
         results.Should().HaveCount(1);
         var tree = results[0]!;
-        tree.Should().Contain("(1 file)");
-        tree.Should().NotContain("(1 files)");
+        tree.Should().Contain("(1 cs)");
     }
 
     [Test]
@@ -248,15 +247,16 @@ public class TreeUdfTests : IDisposable
     }
 
     [Test]
-    [DisplayName("tree appends headlines to file nodes when provided")]
+    [DisplayName("tree uses headline as display name when provided")]
     public void Tree_Headlines_WhenProvided()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///src/a.cs"]', '["Alpha headline"]', false)""",
+            """SELECT tree('["file:///src/a.cs"]', '["a.cs | Alpha class | 50 ln"]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
         var tree = results[0]!;
-        tree.Should().Contain("a.cs | Alpha headline");
+        // Headline replaces filename entirely
+        tree.Should().Contain("a.cs | Alpha class | 50 ln");
     }
 }

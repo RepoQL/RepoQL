@@ -31,17 +31,16 @@ internal sealed class TreeHandlerTests
     [Test]
     public async Task FallsBackToNamesWhenHeadlinesExceedBudget()
     {
+        var headline = string.Join(' ', Enumerable.Repeat("Alpha", 20));
         var baseTree = "file:///\n└── src/\n    └── a.cs | " + headline;
         var namesTree = "file:///\n└── src/\n    └── a.cs";
         var foldersTree = "file:///\n└── src/ (1 cs)";
-        var headline = string.Join(' ', Enumerable.Repeat("Alpha", 20));
         var documents = new[]
         {
             new ReadDocument("file:///src/a.cs", null, null, headline, null, null)
         };
         var handler = new TreeHandler(new StubContentProvider(baseTree, namesTree, foldersTree));
 
-        var namesTree = "file:///\n└── src/\n    └── a.cs";
         var headlinesTree = baseTree;
         var namesTokens = TokenEstimator.EstimateTokens(namesTree);
         var headlinesTokens = TokenEstimator.EstimateTokens(headlinesTree);
@@ -68,7 +67,6 @@ internal sealed class TreeHandlerTests
         };
         var handler = new TreeHandler(new StubContentProvider(baseTree, namesTree, foldersTree));
 
-        var namesTree = "file:///\n└── src/\n    ├── a.cs\n    ├── b.cs\n    └── c.cs";
         var namesTokens = TokenEstimator.EstimateTokens(namesTree);
         var foldersTokens = TokenEstimator.EstimateTokens(foldersTree);
         namesTokens.Should().BeGreaterThan(foldersTokens);

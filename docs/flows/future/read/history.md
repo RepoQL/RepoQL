@@ -10,7 +10,7 @@ History answers "what changed here and why?"—understanding evolution, finding 
 |---------|------|
 | Run git log, parse output | Structured history with context |
 | See all commits, wade through noise | Filter by keywords to find relevant changes |
-| Commits without diff context | Commits with relevant change snippets |
+| Commits without diff context | Commits with change summaries |
 
 ## Trigger
 
@@ -45,8 +45,8 @@ History includes:
 
 Ranking considers:
 - Commit message content
-- Diff content (what was added/removed)
-- Semantic similarity to keywords
+- Author name/email
+- File names touched in the commit
 
 ### 4. Result Formatting
 **Actor**: Read tool
@@ -56,7 +56,7 @@ Ranking considers:
 Result elements:
 - Commit hash, author, date
 - Full commit message
-- Diff excerpt for matched files (if budget allows)
+- Diff summary for matched files (insertions/deletions)
 - Files changed count
 
 ### 5. Budget Fitting

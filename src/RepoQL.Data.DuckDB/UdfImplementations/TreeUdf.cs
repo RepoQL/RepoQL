@@ -229,10 +229,11 @@ public class TreeUdf
             .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        var hasFolders = children.Any(kv => !kv.Value.IsFile);
         for (var i = 0; i < children.Count; i++)
         {
             var isLast = i == children.Count - 1;
-            RenderNode(sb, children[i].Value, "", isLast, foldersOnly, showHeadlines);
+            RenderNode(sb, children[i].Value, "", isLast, foldersOnly, showHeadlines, hasFolders);
         }
 
         // Add blank line between schemes (but not after last)
@@ -240,7 +241,7 @@ public class TreeUdf
             sb.AppendLine();
     }
 
-    private static void RenderNode(StringBuilder sb, TreeNode node, string prefix, bool isLast, bool foldersOnly, bool showHeadlines)
+    private static void RenderNode(StringBuilder sb, TreeNode node, string prefix, bool isLast, bool foldersOnly, bool showHeadlines, bool parentHasFolders)
     {
         var name = node.Name;
 
@@ -248,15 +249,10 @@ public class TreeUdf
         if (!node.IsFile && node.Children.Count > 0)
         {
             name += "/";
-            if (foldersOnly)
+            if (node.FileCount > 0)
             {
-                // Show type counts (e.g., "3 cs, 2 json")
+                // Show type counts (e.g., "3 cs, 2 sql")
                 name += FormatTypeCounts(node);
-            }
-            else if (node.FileCount > 0)
-            {
-                var fileWord = node.FileCount == 1 ? "file" : "files";
-                name += $" ({node.FileCount} {fileWord})";
             }
         }
         else if (!node.IsFile && node.Children.Count == 0)
@@ -274,10 +270,10 @@ public class TreeUdf
         sb.Append(prefix);
 
         // Folders get box-drawing branch (├── or └──)
-        // Files get continuation (│) if more items follow, spaces if last
+        // Files get │ if parent has subfolders (to connect visually), otherwise just spaces
         if (node.IsFile)
         {
-            sb.Append(isLast ? Space : Vertical);
+            sb.Append(parentHasFolders ? Vertical : Space);
         }
         else
         {
@@ -294,10 +290,11 @@ public class TreeUdf
             .ThenBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        var hasFolders = children.Any(kv => !kv.Value.IsFile);
         for (var i = 0; i < children.Count; i++)
         {
             var childIsLast = i == children.Count - 1;
-            RenderNode(sb, children[i].Value, childPrefix, childIsLast, foldersOnly, showHeadlines);
+            RenderNode(sb, children[i].Value, childPrefix, childIsLast, foldersOnly, showHeadlines, hasFolders);
         }
     }
 

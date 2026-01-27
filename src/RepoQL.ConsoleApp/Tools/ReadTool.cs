@@ -94,16 +94,42 @@ internal sealed class ReadTool(
         Multiple files with question:
           read("file:///src/Auth/**/*.cs // How is the refresh token rotated?", 3000)
 
-        Directory tree (structure overview):
+        Tree overview:
           read("file:///src/** => tree", 2000)
+
+        History with keyword filter:
+          read("file:///src/Auth.cs => history: token", 1500)
         </EXAMPLES>
 
-        <BUDGET_GUIDE>
-        - 500-1000: Headlines only - inventory what's there
-        - 1000-3000: Structure - understand shape without full code
-        - 3000-10000: Full content - read actual code
-        - With question: Budget controls answer length (1500-3000 typical)
-        </BUDGET_GUIDE>
+        ### Capsule: Modifiers
+        **Invariant**
+        Append ` => modifier` to request a specific view of the content.
+        **Example**
+        read("file:///src/** => tree", 2000)       // folder structure
+        read("file:///src/Auth.cs => history", 1500) // what changed
+        //BOUNDARY: Default is content; modifiers override progressive disclosure.
+        **Depth**
+        - tree: folder structure with file counts by type
+        - headline: one-line summary per file
+        - structure: signatures without bodies
+        - history: commits affecting file; `: keyword` filters by message/author
+        - lint: diagnostics; `: errors` or `: warnings` filters severity
+        - SeeAlso: `ReadBasic` for default behavior
+        ---
+
+        ### Capsule: BudgetAsInvestment
+        **Invariant**
+        Budget is how much context you spend to get the answer; invest wisely.
+        **Example**
+        Low confidence what you need? Start small: read("file:///src/**", 500)
+        Know exactly what you need? Invest more: read("file:///src/Auth.cs", 5000)
+        **Depth**
+        - 500: inventory scan; see what exists before committing
+        - 1500: understand shape; enough for navigation decisions
+        - 3000: read implementation; enough for most single-file tasks
+        - 5000+: deep dive; multiple files or complex analysis
+        - NotThis: large budget on broad glob wastes tokens on low-relevance files
+        ---
         """;
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "read"), Description(ReadInstructions)]
