@@ -488,6 +488,98 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(30_000)]
+    [DisplayName("FM-005: Processes orphaned epoch when later epoch completes first")]
+    public async Task Given_EpochNCompletesWhileEpochN1Processing_When_HotPathIdle_Then_BothEpochsProcessed(CancellationToken token)
+    {
+        // This test verifies the FM-005 fix for the race condition where epoch N completes
+        // while epoch N+1 is still processing. Without the fix, epoch N's pending items
+        // would never be processed because HotPathIdle wouldn't fire for it.
+        //
+        // Timeline being tested:
+        // t0: Item A enqueued to epoch 0
+        // t1: Begin epoch 1, Item B enqueued to epoch 1
+        // t2: Item A completes (epoch 0 idle) but State != AllIdle (epoch 1 busy)
+        //     → HotPathIdle SKIPPED for epoch 0 (the race condition)
+        // t3: Item B completes, epoch 1 idle, State = AllIdle
+        //     → HotPathIdle fires for epoch 1
+        //     → FM-005 fix: ALL pending epochs are enqueued, not just epoch 1
+        // t4: Both epoch 0 and 1 items processed
+
+        // Gate A completes before B to create the race condition
+        var gateA = NewTaskCompletionSource<bool>();
+        var gateB = NewTaskCompletionSource<bool>();
+        var itemAUri = "file:///repo/fm005/item-a.md";
+        var itemBUri = "file:///repo/fm005/item-b.md";
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 2, // Allow parallel processing
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1
+            });
+        });
+
+        // Configure parser to wait on item-specific gates
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Returns(Task.FromResult(PipelineResult.Success));
+        A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async call =>
+            {
+                var item = call.GetArgument<IndexItem>(0)!;
+                if (item.Uri.ToString().Contains("item-a"))
+                    await gateA.Task.ConfigureAwait(false);
+                else if (item.Uri.ToString().Contains("item-b"))
+                    await gateB.Task.ConfigureAwait(false);
+                return PipelineResult.Success;
+            });
+        A.CallTo(() => context.SingleFileAnalyzer.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Returns(Task.FromResult(PipelineResult.Success));
+
+        await using var engine = context.Engine;
+
+        // Enqueue item A in epoch 0
+        await engine.EnqueueItemAsync(CreateRawArtifact(itemAUri), IndexItemOptions.Default, token);
+
+        // Wait for item A to be picked up by a worker
+        await Task.Delay(50, token);
+
+        // Begin new epoch and enqueue item B in epoch 1 BEFORE item A completes
+        var epoch1 = engine.BeginNewEpoch();
+        epoch1.Should().Be(1);
+        await engine.EnqueueItemAsync(CreateRawArtifact(itemBUri), IndexItemOptions.Default, token);
+
+        // Wait for item B to be picked up
+        await Task.Delay(50, token);
+
+        // Now release item A first - this creates the race condition
+        // Epoch 0 becomes idle, but State != AllIdle because epoch 1 is still busy
+        gateA.SetResult(true);
+
+        // Give time for epoch 0 to complete and schedule its analysis
+        await Task.Delay(100, token);
+
+        // At this point, epoch 0's items are in _pendingStructureEmbeddings but HotPathIdle
+        // hasn't fired because epoch 1 is still running
+
+        // Now release item B - HotPathIdle should fire and process BOTH epochs
+        gateB.SetResult(true);
+
+        // Wait for everything to settle
+        await engine.WaitForAsync(IndexingState.AllIdle, token);
+
+        // FM-005 fix verification: GetPendingIdleProcessingCount should be 0
+        // Without the fix, epoch 0's items would remain orphaned and this would be > 0
+        // Give a brief moment for idle processing to complete
+        await Task.Delay(200, token);
+        engine.GetPendingIdleProcessingCount().Should().Be(0,
+            "all epochs should be processed including orphaned epoch 0 (FM-005 fix)");
+    }
+
+    [Test]
+    [Timeout(30_000)]
     [DisplayName("Dispatches completed items to analysis once hot path is idle")]
     public async Task Given_ItemCompletes_When_HotPathIdle_Then_AnalysisRuns(CancellationToken token)
     {

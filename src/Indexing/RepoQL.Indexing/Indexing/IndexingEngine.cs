@@ -354,6 +354,13 @@ public partial class IndexingEngine : IAsyncDisposable
         Shutdown.Token.Register(() => _analysisEpochChannel.Writer.TryComplete());
         _idleProcessingTask = Task.Run(ProcessIdleEpochsAsync);
 
+        // FM-007 fix: Observe faults on the idle processing task to detect silent death.
+        // Without this, if ProcessIdleEpochsAsync throws before entering its main loop,
+        // the task dies silently and no idle processing ever runs.
+        _ = _idleProcessingTask.ContinueWith(
+            t => Logger.LogCritical(t.Exception, "ProcessIdleEpochsAsync died unexpectedly. Idle processing has stopped."),
+            TaskContinuationOptions.OnlyOnFaulted);
+
         RegisterStageCounter(IndexingState.ClassificationBusy, IndexingState.ClassificationIdle);
         RegisterStageCounter(IndexingState.ParsingBusy, IndexingState.ParsingIdle);
         RegisterStageCounter(IndexingState.SingleFileAnalysisBusy, IndexingState.SingleFileAnalysisIdle);
@@ -901,7 +908,16 @@ public partial class IndexingEngine : IAsyncDisposable
             }
 
             if (!startedProcessing)
+            {
+                // FM-008 visibility: Log when idle processing is skipped due to empty items.
+                // This can happen if all items in the epoch failed or were filtered during hot path.
+                // Pruning will NOT run in this case - stale documents may remain if this is a reindex.
+                Logger.LogDebug(
+                    "Idle processing skipped for epochs {MinEpoch}-{MaxEpoch}: no items pending. " +
+                    "If this occurs during reindex, stale documents may not be pruned.",
+                    epochs.Min(), epochs.Max());
                 return;
+            }
 
             var structureEmbedItems = consolidatedStructureItems.ToArray();
             var pendingItems = consolidatedAnalysisItems.ToArray();
@@ -941,45 +957,70 @@ public partial class IndexingEngine : IAsyncDisposable
                 }
             }
 
+            // FM-009 fix: Wrap embedding phases in try-catch to prevent item loss.
+            // If embedding fails, we still want to enqueue items for multi-file analysis.
+            // The items are already committed to the database - embeddings can be regenerated later.
+
             // Structure embedding phase (fast, enables immediate semantic search)
-            using (ActivitySource.StartActivity("structure_embedding_phase", ActivityKind.Internal))
+            try
             {
-                var structureTimer = Stopwatch.StartNew();
-                await VectorCoordinator.GenerateStructureEmbeddingsAsync(structureEmbedItems, Shutdown.Token).ConfigureAwait(false);
-                structureTimer.Stop();
-                Metrics?.IdlePhaseDuration.Record(structureTimer.Elapsed.TotalMilliseconds, new TagList
+                using (ActivitySource.StartActivity("structure_embedding_phase", ActivityKind.Internal))
                 {
-                    { "phase", "structure_embedding" }
-                });
+                    var structureTimer = Stopwatch.StartNew();
+                    await VectorCoordinator.GenerateStructureEmbeddingsAsync(structureEmbedItems, Shutdown.Token).ConfigureAwait(false);
+                    structureTimer.Stop();
+                    Metrics?.IdlePhaseDuration.Record(structureTimer.Elapsed.TotalMilliseconds, new TagList
+                    {
+                        { "phase", "structure_embedding" }
+                    });
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.LogError(ex, "Structure embedding failed for {Count} items. Items will proceed without embeddings.", structureEmbedItems.Length);
             }
 
             // Full-text vector refresh phase
-            using (ActivitySource.StartActivity("vector_refresh_phase", ActivityKind.Internal))
+            try
             {
-                var vectorTimer = Stopwatch.StartNew();
-                if (pendingItems.Length > 0)
+                using (ActivitySource.StartActivity("vector_refresh_phase", ActivityKind.Internal))
                 {
-                    // Use an item from the highest epoch for vector refresh
-                    var latest = pendingItems.MaxBy(i => i.Epoch) ?? pendingItems[0];
-                    await VectorCoordinator.ApplyAsync(latest, Shutdown.Token).ConfigureAwait(false);
+                    var vectorTimer = Stopwatch.StartNew();
+                    if (pendingItems.Length > 0)
+                    {
+                        // Use an item from the highest epoch for vector refresh
+                        var latest = pendingItems.MaxBy(i => i.Epoch) ?? pendingItems[0];
+                        await VectorCoordinator.ApplyAsync(latest, Shutdown.Token).ConfigureAwait(false);
+                    }
+                    vectorTimer.Stop();
+                    Metrics?.IdlePhaseDuration.Record(vectorTimer.Elapsed.TotalMilliseconds, new TagList
+                    {
+                        { "phase", "vector_refresh" }
+                    });
                 }
-                vectorTimer.Stop();
-                Metrics?.IdlePhaseDuration.Record(vectorTimer.Elapsed.TotalMilliseconds, new TagList
-                {
-                    { "phase", "vector_refresh" }
-                });
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.LogError(ex, "Vector refresh failed. Full-text search may be incomplete until next refresh.");
             }
 
             // VSS HNSW index refresh phase
-            using (ActivitySource.StartActivity("vss_index_phase", ActivityKind.Internal))
+            try
             {
-                var vssTimer = Stopwatch.StartNew();
-                await VectorCoordinator.RefreshVssIndexAsync(Shutdown.Token).ConfigureAwait(false);
-                vssTimer.Stop();
-                Metrics?.IdlePhaseDuration.Record(vssTimer.Elapsed.TotalMilliseconds, new TagList
+                using (ActivitySource.StartActivity("vss_index_phase", ActivityKind.Internal))
                 {
-                    { "phase", "vss_index" }
-                });
+                    var vssTimer = Stopwatch.StartNew();
+                    await VectorCoordinator.RefreshVssIndexAsync(Shutdown.Token).ConfigureAwait(false);
+                    vssTimer.Stop();
+                    Metrics?.IdlePhaseDuration.Record(vssTimer.Elapsed.TotalMilliseconds, new TagList
+                    {
+                        { "phase", "vss_index" }
+                    });
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Logger.LogError(ex, "VSS index refresh failed. Semantic search may be degraded until next refresh.");
             }
 
             // Multi-file analysis enqueue phase
