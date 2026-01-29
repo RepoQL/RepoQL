@@ -72,11 +72,16 @@ This timeout only triggers when "workers are idle but queue has items". If a wor
 
 ---
 
-## FM-002: Operations Without Timeouts Can Hang Indefinitely
+## FM-002: Operations Without Timeouts Can Hang Indefinitely ✅ MITIGATED
 
-**Severity**: Critical
+**Severity**: Critical → **Mitigated**
 **Likelihood**: Medium (depends on file types, network storage)
-**Detection**: Hard (no per-operation timing)
+**Detection**: Now observable via per-operation timing and slow operation warnings
+
+> **Resolution**: FM-001's per-item timeout (default 5 minutes) bounds all operations within
+> `IndexItemAsync`. Additionally, per-operation timing metrics are now recorded for `catalog_init`
+> and `digest` operations. Operations exceeding 30 seconds trigger warning logs to help identify
+> bottlenecks before they reach the item timeout.
 
 ### Description
 

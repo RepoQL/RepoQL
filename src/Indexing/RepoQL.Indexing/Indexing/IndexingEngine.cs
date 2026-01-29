@@ -511,9 +511,19 @@ public partial class IndexingEngine : IAsyncDisposable
                 return;
             }
 
+            // FM-002 mitigation: Track per-operation timing for slow operation detection
             currentStage = "catalog_init";
+            var catalogTimer = Stopwatch.StartNew();
             await DocumentCatalog.EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
+            catalogTimer.Stop();
+            RecordOperationDuration("catalog_init", catalogTimer.Elapsed, item);
+
+            currentStage = "digest";
+            var digestTimer = Stopwatch.StartNew();
             var digestBytes = await item.RawArtifact.Digest.WithCancellation(cancellationToken).ConfigureAwait(false);
+            digestTimer.Stop();
+            RecordOperationDuration("digest", digestTimer.Elapsed, item);
+
             var digestHex = Convert.ToHexString(digestBytes);
             item.DigestHex = digestHex;
 
@@ -641,6 +651,41 @@ public partial class IndexingEngine : IAsyncDisposable
             { "read_only", item.IsReadOnly }
         });
     }
+
+    /// <summary>
+    /// Records operation duration and logs warning for slow operations (FM-002 observability).
+    /// </summary>
+    /// <remarks>
+    /// Operations exceeding 30 seconds are logged as warnings to help identify
+    /// potential hangs before they reach the per-item timeout (FM-001).
+    /// </remarks>
+    private void RecordOperationDuration(string operation, TimeSpan elapsed, IndexItem item)
+    {
+        var mime = item.MediaType?.ToString()
+                   ?? item.RawArtifact.ProvisionalMediaType.Value?.ToString()
+                   ?? "unknown";
+
+        // Record as stage duration metric for consistency
+        Metrics?.StageDuration.Record(elapsed.TotalMilliseconds, new TagList
+        {
+            { "stage", operation },
+            { "status", "Success" },
+            { "mime", mime },
+            { "read_only", item.IsReadOnly }
+        });
+
+        // FM-002: Warn on slow operations (>30s) to help identify potential hangs
+        if (elapsed.TotalSeconds > SlowOperationThresholdSeconds)
+        {
+            LogSlowOperation(Logger, operation, item.Uri, elapsed.TotalSeconds, SlowOperationThresholdSeconds);
+        }
+    }
+
+    /// <summary>
+    /// Threshold in seconds for logging slow operation warnings.
+    /// Operations exceeding this duration are logged to help identify bottlenecks.
+    /// </summary>
+    private const double SlowOperationThresholdSeconds = 30.0;
 
     private void ScheduleAnalysis(IndexItem item)
     {
@@ -1370,5 +1415,8 @@ public partial class IndexingEngine : IAsyncDisposable
 
     [LoggerMessage(LogLevel.Warning, "{Uri} timed out after {ElapsedSeconds:F1}s (FM-001 mitigation: item skipped, epoch counter decremented)")]
     static partial void LogItemTimedOut(ILogger<IndexingEngine> logger, RepoUri uri, double elapsedSeconds);
+
+    [LoggerMessage(LogLevel.Warning, "Slow operation detected: {Operation} took {ElapsedSeconds:F1}s for {Uri} (threshold={ThresholdSeconds:F0}s). Consider investigating if this pattern repeats.")]
+    static partial void LogSlowOperation(ILogger<IndexingEngine> logger, string operation, RepoUri uri, double elapsedSeconds, double thresholdSeconds);
     #endregion
 }
