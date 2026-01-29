@@ -816,39 +816,44 @@ public partial class IndexingEngine : IAsyncDisposable
         {
             while (await reader.WaitToReadAsync(Shutdown.Token).ConfigureAwait(false))
             {
+                // FM-010 fix: Drain ALL pending epochs from the channel to prevent starvation.
+                // When file changes occur rapidly, epochs can queue up faster than embedding
+                // can process them. By draining all epochs at once and consolidating their
+                // items, we ensure we catch up during bursts instead of falling further behind.
+                var epochsToDrain = new List<long>();
                 while (reader.TryRead(out var epoch))
                 {
-                    // Check if there's actually work to do for this epoch
-                    // Must check BOTH _pendingAnalysis (non-read-only items) AND _pendingStructureEmbeddings (all items including read-only)
-                    bool hasWork;
-                    lock (_analysisLock)
-                    {
-                        var hasAnalysis = _pendingAnalysis.TryGetValue(epoch, out var analysisBacklog) && analysisBacklog.Count > 0;
-                        var hasEmbeddings = _pendingStructureEmbeddings.TryGetValue(epoch, out var embedBacklog) && embedBacklog.Count > 0;
-                        hasWork = hasAnalysis || hasEmbeddings;
-                    }
+                    epochsToDrain.Add(epoch);
+                }
 
-                    if (!hasWork)
-                        continue;
+                if (epochsToDrain.Count == 0)
+                    continue;
 
-                    try
-                    {
-                        // Update _lastReleasedEpoch BEFORE processing to prevent race condition:
-                        // If ScheduleAnalysis adds items during ReleaseAnalysisAsync, it will see
-                        // that this epoch is being released and re-enqueue it.
-                        if (epoch > Interlocked.Read(ref _lastReleasedEpoch))
-                            Interlocked.Exchange(ref _lastReleasedEpoch, epoch);
+                // Log when consolidating multiple epochs (helps diagnose starvation)
+                if (epochsToDrain.Count > 1)
+                {
+                    Logger.LogDebug(
+                        "FM-010: Consolidating {EpochCount} epochs ({MinEpoch}-{MaxEpoch}) to prevent embedding starvation.",
+                        epochsToDrain.Count, epochsToDrain.Min(), epochsToDrain.Max());
+                }
 
-                        await ReleaseAnalysisAsync(epoch).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
-                    {
-                        return;
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogError(ex, "Idle post-processing failed for epoch {Epoch}.", epoch);
-                    }
+                try
+                {
+                    // Update _lastReleasedEpoch to the highest epoch we're processing
+                    var maxEpoch = epochsToDrain.Max();
+                    if (maxEpoch > Interlocked.Read(ref _lastReleasedEpoch))
+                        Interlocked.Exchange(ref _lastReleasedEpoch, maxEpoch);
+
+                    await ReleaseConsolidatedAnalysisAsync(epochsToDrain).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Idle post-processing failed for epochs {MinEpoch}-{MaxEpoch}.",
+                        epochsToDrain.Min(), epochsToDrain.Max());
                 }
             }
         }
@@ -857,25 +862,37 @@ public partial class IndexingEngine : IAsyncDisposable
         }
     }
 
-    private async Task ReleaseAnalysisAsync(long epoch)
+    /// <summary>
+    /// Releases analysis for multiple epochs consolidated into a single batch.
+    /// This is the FM-010 fix for embedding starvation - by processing all pending
+    /// epochs together, we prevent unbounded queue growth during rapid file changes.
+    /// </summary>
+    private async Task ReleaseConsolidatedAnalysisAsync(List<long> epochs)
     {
         var epochTimer = Stopwatch.StartNew();
         Exception? failure = null;
         var startedProcessing = false;
+        var consolidatedStructureItems = new List<IndexItem>();
+        var consolidatedAnalysisItems = new List<IndexItem>();
+
         try
         {
-            Queue<IndexItem>? structureEmbedQueue = null;
-            Queue<IndexItem>? analysisQueue = null;
             lock (_analysisLock)
             {
-                _pendingStructureEmbeddings.Remove(epoch, out structureEmbedQueue);
-                _pendingAnalysis.Remove(epoch, out analysisQueue);
+                // Collect items from ALL epochs being processed
+                foreach (var epoch in epochs)
+                {
+                    if (_pendingStructureEmbeddings.Remove(epoch, out var structureQueue))
+                    {
+                        consolidatedStructureItems.AddRange(structureQueue);
+                    }
+                    if (_pendingAnalysis.Remove(epoch, out var analysisQueue))
+                    {
+                        consolidatedAnalysisItems.AddRange(analysisQueue);
+                    }
+                }
 
-                // Atomically increment the active processing counter BEFORE releasing the lock.
-                // This ensures GetPendingIdleProcessingCount() never sees zero while we have work to do.
-                // The counter is decremented in the finally block.
-                var hasWork = (structureEmbedQueue is not null && structureEmbedQueue.Count > 0) ||
-                              (analysisQueue is not null && analysisQueue.Count > 0);
+                var hasWork = consolidatedStructureItems.Count > 0 || consolidatedAnalysisItems.Count > 0;
                 if (hasWork)
                 {
                     Interlocked.Increment(ref _activeIdleProcessingCount);
@@ -886,12 +903,15 @@ public partial class IndexingEngine : IAsyncDisposable
             if (!startedProcessing)
                 return;
 
-            var structureEmbedItems = structureEmbedQueue?.ToArray() ?? Array.Empty<IndexItem>();
-            var pendingItems = analysisQueue?.ToArray() ?? Array.Empty<IndexItem>();
+            var structureEmbedItems = consolidatedStructureItems.ToArray();
+            var pendingItems = consolidatedAnalysisItems.ToArray();
+            var maxEpoch = epochs.Max();
 
             // Create span for the entire idle phase processing
             using var idleSpan = ActivitySource.StartActivity("idle_processing", ActivityKind.Internal);
-            idleSpan?.SetTag("epoch", epoch);
+            idleSpan?.SetTag("epochs_consolidated", epochs.Count);
+            idleSpan?.SetTag("epoch_min", epochs.Min());
+            idleSpan?.SetTag("epoch_max", maxEpoch);
             idleSpan?.SetTag("structure_embed_count", structureEmbedItems.Length);
             idleSpan?.SetTag("analysis_count", pendingItems.Length);
 
@@ -922,7 +942,6 @@ public partial class IndexingEngine : IAsyncDisposable
             }
 
             // Structure embedding phase (fast, enables immediate semantic search)
-            // Uses structureEmbedItems which includes ALL items (even read-only imports)
             using (ActivitySource.StartActivity("structure_embedding_phase", ActivityKind.Internal))
             {
                 var structureTimer = Stopwatch.StartNew();
@@ -934,23 +953,14 @@ public partial class IndexingEngine : IAsyncDisposable
                 });
             }
 
-            // NOTE: VectorCoordinator.ApplyAsync marks items for full-text embedding but doesn't flush the writer.
-            // For imports, embedding refresh is triggered in RepoQlServiceImpl.ImportRepository after
-            // the writer flush completes. For file watching, embeddings update on subsequent idle cycles.
-
             // Full-text vector refresh phase
             using (ActivitySource.StartActivity("vector_refresh_phase", ActivityKind.Internal))
             {
                 var vectorTimer = Stopwatch.StartNew();
                 if (pendingItems.Length > 0)
                 {
-                    var latest = pendingItems[0];
-                    for (var i = 1; i < pendingItems.Length; i++)
-                    {
-                        if (pendingItems[i].Epoch > latest.Epoch)
-                            latest = pendingItems[i];
-                    }
-
+                    // Use an item from the highest epoch for vector refresh
+                    var latest = pendingItems.MaxBy(i => i.Epoch) ?? pendingItems[0];
                     await VectorCoordinator.ApplyAsync(latest, Shutdown.Token).ConfigureAwait(false);
                 }
                 vectorTimer.Stop();
@@ -960,7 +970,7 @@ public partial class IndexingEngine : IAsyncDisposable
                 });
             }
 
-            // VSS HNSW index refresh phase (rebuilds in-memory HNSW indexes for fast semantic search)
+            // VSS HNSW index refresh phase
             using (ActivitySource.StartActivity("vss_index_phase", ActivityKind.Internal))
             {
                 var vssTimer = Stopwatch.StartNew();
@@ -990,12 +1000,11 @@ public partial class IndexingEngine : IAsyncDisposable
         catch (Exception ex)
         {
             failure = ex;
-            Volatile.Write(ref _lastError, $"Epoch {epoch}: {ex.Message}");
-            Logger.LogError(ex, "Failed to dispatch analysis work for epoch {Epoch}", epoch);
+            Volatile.Write(ref _lastError, $"Epochs {epochs.Min()}-{epochs.Max()}: {ex.Message}");
+            Logger.LogError(ex, "Failed to dispatch analysis work for epochs {MinEpoch}-{MaxEpoch}", epochs.Min(), epochs.Max());
         }
         finally
         {
-            // Decrement active processing counter so WaitForPipelineAsync knows idle work is done
             if (startedProcessing)
             {
                 Interlocked.Decrement(ref _activeIdleProcessingCount);
@@ -1003,20 +1012,20 @@ public partial class IndexingEngine : IAsyncDisposable
 
             epochTimer.Stop();
 
-            // Record epoch metrics
-            var epochSize = _epochTracker.GetEpochTotalItems(epoch);
-            if (epochSize > 0)
+            // Record consolidated epoch metrics
+            var totalItems = consolidatedStructureItems.Count;
+            if (totalItems > 0)
             {
-                Metrics?.EpochSize.Record(epochSize);
+                Metrics?.EpochSize.Record(totalItems);
                 Metrics?.EpochDuration.Record(epochTimer.Elapsed.TotalMilliseconds);
-                Metrics?.EpochsCompleted.Add(1);
+                Metrics?.EpochsCompleted.Add(epochs.Count); // Count all consolidated epochs
             }
 
-            // Clear peak tracking to prevent memory leaks
-            _epochTracker.ClearEpochPeak(epoch);
-
-            // Note: hot_path_epoch activity is completed in OnHotPathIdle before idle processing starts
-            // The idle_processing span is tracked separately via ActivitySource.StartActivity above
+            // Clear peak tracking for all processed epochs
+            foreach (var epoch in epochs)
+            {
+                _epochTracker.ClearEpochPeak(epoch);
+            }
         }
     }
 

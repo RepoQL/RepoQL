@@ -1060,11 +1060,16 @@ private const int DefaultTimeoutSeconds = 120;
 
 ---
 
-## FM-010: Embedding Starvation Under Continuous Changes
+## FM-010: Embedding Starvation Under Continuous Changes ✅ MITIGATED
 
-**Severity**: High
+**Severity**: High → **Mitigated**
 **Likelihood**: Medium (active development, auto-save, CI builds)
-**Detection**: Medium (epoch queue growth observable)
+**Detection**: Observable via debug logs when epochs are consolidated
+
+> **Resolution**: `ProcessIdleEpochsAsync` now drains ALL pending epochs from the channel
+> before processing. Items from multiple epochs are consolidated into a single batch,
+> ensuring we catch up during bursts instead of falling further behind. Debug logs show
+> when epochs are being consolidated (e.g., "Consolidating 5 epochs (10-14)").
 
 ### Description
 
