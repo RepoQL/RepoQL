@@ -50,6 +50,22 @@ public class IndexingEngineOptions
     /// Default: 100,000 items.
     /// </summary>
     public int AnalysisQueueSize {  get; init; } = 100_000;
+
+    /// <summary>
+    /// Maximum time allowed for processing a single item in the hot-path queue.
+    /// If an item exceeds this duration, it is considered timed out and skipped.
+    /// This prevents stuck items from blocking the entire pipeline (FM-001 mitigation).
+    /// Default: 5 minutes (sufficient for most Roslyn compilations, TypeScript parsing, etc.).
+    /// Set to null to disable per-item timeout (not recommended).
+    /// </summary>
+    public TimeSpan? HotPathItemTimeout { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Maximum time allowed for processing a single item in the analysis queue.
+    /// Analysis items typically involve multi-file operations and may take longer.
+    /// Default: 10 minutes. Set to null to disable timeout.
+    /// </summary>
+    public TimeSpan? AnalysisItemTimeout { get; init; } = TimeSpan.FromMinutes(10);
 }
 
 /// <summary>
@@ -153,6 +169,21 @@ public partial class IndexingEngine : IAsyncDisposable
     internal int ActiveIdleProcessingCount => Volatile.Read(ref _activeIdleProcessingCount);
     internal string? LastError => Volatile.Read(ref _lastError);
     internal long CurrentEpoch => _epochTracker.CurrentEpoch;
+    internal int HotPathTimeoutCount => IndexerQueue.TimeoutCount;
+    internal int AnalysisTimeoutCount => AnalysisQueue.TimeoutCount;
+
+    /// <summary>
+    /// Gets items currently being processed in the hot-path queue with their durations.
+    /// Useful for diagnosing potentially stuck items.
+    /// </summary>
+    internal IReadOnlyList<(IndexItem Item, TimeSpan Duration)> GetHotPathInFlightItems()
+        => IndexerQueue.GetInFlightItems();
+
+    /// <summary>
+    /// Gets items currently being processed in the analysis queue with their durations.
+    /// </summary>
+    internal IReadOnlyList<(IndexItem Item, TimeSpan Duration)> GetAnalysisInFlightItems()
+        => AnalysisQueue.GetInFlightItems();
 
     internal bool HasPendingAnalysis(long epoch)
     {
@@ -276,7 +307,15 @@ public partial class IndexingEngine : IAsyncDisposable
             async (item, c) =>
             {
                 await IndexItemAsync(item, c);
-            }, Shutdown.Token, meter: null, comparer: new IndexItemComparer());
+            },
+            Shutdown.Token,
+            itemTimeout: Options.HotPathItemTimeout,
+            meter: null,
+            comparer: new IndexItemComparer(),
+            logger: Logger)
+        {
+            OnItemTimeout = HandleHotPathItemTimeout
+        };
         AnalysisQueue = new WorkQueue<IndexItem>(
             "AnalysisQueue",
             Options.AnalysisQueueSize,
@@ -284,7 +323,12 @@ public partial class IndexingEngine : IAsyncDisposable
             async (item, c) =>
             {
                 await AnalyzeItemAsync(item, c);
-            }, Shutdown.Token, meter: null, comparer: new IndexItemComparer());
+            },
+            Shutdown.Token,
+            itemTimeout: Options.AnalysisItemTimeout,
+            meter: null,
+            comparer: new IndexItemComparer(),
+            logger: Logger);
 
         _classificationStage = new StageContext(
             IndexingState.ClassificationBusy,
@@ -646,7 +690,19 @@ public partial class IndexingEngine : IAsyncDisposable
         CompleteEpochActivity(args.Epoch, success: true);
 
         Metrics?.IdleCycles.Add(1);
-        EnqueueIdleEpoch(args.Epoch);
+
+        // FM-005 fix: Enqueue ALL epochs with pending work, not just the triggering one.
+        // This handles the race condition where epoch N completes while epoch N+1 is processing,
+        // causing HotPathIdle to be skipped for epoch N. By enqueuing all pending epochs here,
+        // we ensure no epoch is orphaned.
+        lock (_analysisLock)
+        {
+            foreach (var epoch in _pendingStructureEmbeddings.Keys)
+            {
+                EnqueueIdleEpoch(epoch);
+            }
+        }
+
         // Start a fresh epoch so subsequent work participates in idle post-processing again.
         _epochTracker.BeginNewEpoch();
     }
@@ -1024,7 +1080,51 @@ public partial class IndexingEngine : IAsyncDisposable
         }
         AddEpochTag(item.Epoch, "analysis.result", "Success");
     }
-    
+
+    /// <summary>
+    /// Handles hot-path item timeout. Called by WorkQueue when an item exceeds the configured timeout.
+    /// This is critical for FM-001 mitigation: ensures epoch counters remain balanced and pipeline doesn't stall.
+    /// </summary>
+    private void HandleHotPathItemTimeout(IndexItem item, TimeSpan elapsed)
+    {
+        var mime = item.MediaType?.ToString()
+                   ?? item.RawArtifact.ProvisionalMediaType.Value?.ToString()
+                   ?? "unknown";
+
+        // Record timeout in metrics
+        Metrics?.FilesErrored.Add(1, new TagList
+        {
+            { "mime_type", mime },
+            { "error_type", "TimeoutException" },
+            { "stage", "timeout" }
+        });
+
+        // Store last error for diagnostics
+        Volatile.Write(ref _lastError, $"{item.Uri}: Timed out after {elapsed.TotalSeconds:F1}s");
+
+        // Add epoch tag for tracing
+        AddEpochTag(item.Epoch, "index.result", "timeout");
+        AddEpochTag(item.Epoch, "index.timeout_duration_ms", elapsed.TotalMilliseconds);
+
+        // CRITICAL: Decrement epoch counter to prevent epoch imbalance (FM-003)
+        // The item was incremented when enqueued, and normally decremented in IndexItemAsync's finally block.
+        // Since IndexItemAsync was cancelled mid-processing, we must decrement here.
+        var epochBecameIdle = _epochTracker.Decrement(item.Epoch);
+        if (epochBecameIdle && State == IndexingState.AllIdle)
+        {
+            try
+            {
+                HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "HotPathIdle handler failed for epoch {Epoch} during timeout handling", item.Epoch);
+            }
+        }
+
+        LogItemTimedOut(Logger, item.Uri, elapsed.TotalSeconds);
+    }
+
     public IndexingState State { get; private set; } = IndexingState.AllIdle;
 
     public async ValueTask<bool> WaitForAsync(IndexingState state, CancellationToken cancellationToken)
@@ -1267,5 +1367,8 @@ public partial class IndexingEngine : IAsyncDisposable
 
     [LoggerMessage(LogLevel.Error, "{Uri} failed during analysis")]
     static partial void LogUriFailedDuringAnalysis(ILogger<IndexingEngine> logger, Exception ex, RepoUri uri);
+
+    [LoggerMessage(LogLevel.Warning, "{Uri} timed out after {ElapsedSeconds:F1}s (FM-001 mitigation: item skipped, epoch counter decremented)")]
+    static partial void LogItemTimedOut(ILogger<IndexingEngine> logger, RepoUri uri, double elapsedSeconds);
     #endregion
 }
