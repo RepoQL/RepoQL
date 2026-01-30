@@ -166,6 +166,37 @@ read("file:///src/Services/AuthService.cs", 3000)
 
 ---
 
+## Capsule: Modifiers
+
+**Invariant**
+Append ` => modifier` to request a specific view of the content.
+
+**Example**
+```
+read("file:///src/** => tree", 2000)           -- folder structure with files
+read("file:///src/** => tree: folders", 500)   -- folders only with file counts
+read("file:///src/** => tree: headlines", 3000) -- folders + files + summaries
+read("file:///src/Auth.cs => history", 1500)   -- what changed
+read("file:///src/Auth.cs => blame", 2000)     -- who changed each line
+read("file:///src/** => lint: errors", 1000)   -- show errors only
+```
+//BOUNDARY: Default is content; modifiers override progressive disclosure.
+
+**Depth**
+- `tree`: folder structure with detail levels:
+  - `folders`: directory tree with file counts by type
+  - `files`: folders + individual file names (default)
+  - `headlines`: folders + files + one-line summaries
+- `headline`: one-line summary per file
+- `structure`: signatures without bodies
+- `content`: full file content (explicit default)
+- `history`: commits affecting file; `: keyword` filters by message/author
+- `blame`: git blame showing who changed each line
+- `lint`: diagnostics; `: errors` or `: warnings` filters severity
+- `find`: semantic search within matched files; `: keywords` to search
+
+---
+
 ## Common Mistakes
 
 | Mistake | Fix |

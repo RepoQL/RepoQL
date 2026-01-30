@@ -94,8 +94,14 @@ internal sealed class ReadTool(
         Multiple files with question:
           read("file:///src/Auth/**/*.cs // How is the refresh token rotated?", 3000)
 
-        Tree overview:
+        Tree overview (default shows files):
           read("file:///src/** => tree", 2000)
+
+        Tree with folders only:
+          read("file:///src/** => tree: folders", 500)
+
+        Tree with headlines:
+          read("file:///src/** => tree: headlines", 5000)
 
         History with keyword filter:
           read("file:///src/Auth.cs => history: token", 1500)
@@ -105,15 +111,20 @@ internal sealed class ReadTool(
         **Invariant**
         Append ` => modifier` to request a specific view of the content.
         **Example**
-        read("file:///src/** => tree", 2000)       // folder structure
-        read("file:///src/Auth.cs => history", 1500) // what changed
+        read("file:///src/** => tree", 2000)           // folder structure with files
+        read("file:///src/** => tree: folders", 500)   // folders only with file counts
+        read("file:///src/** => tree: headlines", 3000) // folders + files + summaries
+        read("file:///src/Auth.cs => history", 1500)   // what changed
         //BOUNDARY: Default is content; modifiers override progressive disclosure.
         **Depth**
-        - tree: folder structure with file counts by type
+        - tree: folder structure (detail: `folders`, `files` (default), `headlines`)
         - headline: one-line summary per file
         - structure: signatures without bodies
+        - content: full file content (explicit default behavior)
         - history: commits affecting file; `: keyword` filters by message/author
+        - blame: git blame for file showing who changed each line
         - lint: diagnostics; `: errors` or `: warnings` filters severity
+        - find: semantic search within matched files; `: keywords` to search
         - SeeAlso: `ReadBasic` for default behavior
         ---
 
