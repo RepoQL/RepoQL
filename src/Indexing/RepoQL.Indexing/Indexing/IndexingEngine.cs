@@ -164,6 +164,7 @@ public partial class IndexingEngine : IAsyncDisposable
     private string? _lastError;
     private IArtifactPruner ArtifactPruner { get; }
     internal IVectorIndexCoordinator VectorCoordinator { get; }
+    private UriRegistry? UriRegistry { get; }
 
     // Diagnostic accessors (used by IndexingEngineDiagnosticsProvider)
     internal int ActiveIdleProcessingCount => Volatile.Read(ref _activeIdleProcessingCount);
@@ -284,10 +285,12 @@ public partial class IndexingEngine : IAsyncDisposable
         IVectorIndexCoordinator? vectorCoordinator = null,
         IndexingEngineOptions? options = null,
         ILogger<IndexingEngine>? logger = null,
-        IndexingMetrics? metrics = null)
+        IndexingMetrics? metrics = null,
+        UriRegistry? uriRegistry = null)
     {
         Database = db;
         Filter = filter ?? new RepoGitIgnoreFilter(".");
+        UriRegistry = uriRegistry;
         Classifier = classifier ?? new ClassificationPipeline( []);
         Parser = parser ?? new ParsingPipeline([]);
         SingleFileAnalyzer = singleFileAnalyzer ?? new SingleFileAnalysisPipeline([]);
@@ -502,6 +505,9 @@ public partial class IndexingEngine : IAsyncDisposable
             { "read_only", item.IsReadOnly.ToString().ToLowerInvariant() }
         });
 
+        // Update URI registry to track indexing state
+        UriRegistry?.SetIndexing(item.Uri);
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -579,6 +585,14 @@ public partial class IndexingEngine : IAsyncDisposable
                 });
 
                 status = "success";
+
+                // Update URI registry with indexed status and symbols
+                if (UriRegistry is not null)
+                {
+                    var symbols = ExtractSymbolsFromRecords(item.Records);
+                    UriRegistry.SetIndexed(item.Uri, symbols);
+                }
+
                 ScheduleAnalysis(item);
                 // NOTE: Once WriteOperation dispatch is in place, hook DocumentCatalog.ApplyUpsert/Delete
                 //       through the writer's OnCommitted callback to keep the cache authoritative.
@@ -606,6 +620,9 @@ public partial class IndexingEngine : IAsyncDisposable
                 { "stage", currentStage }
             });
             LogUriFailedDuringIndexing(Logger, ex, item.Uri);
+
+            // Update URI registry with failed status
+            UriRegistry?.SetFailed(item.Uri, $"{currentStage}: {ex.Message}");
             return;
         }
         finally
@@ -1326,6 +1343,31 @@ public partial class IndexingEngine : IAsyncDisposable
         }
 
         return state;
+    }
+
+    /// <summary>
+    /// Extracts symbol URIs from parsed records for the URI registry.
+    /// </summary>
+    private static IReadOnlyDictionary<RepoUri, string> ExtractSymbolsFromRecords(Records? records)
+    {
+        if (records is null)
+            return new Dictionary<RepoUri, string>().AsReadOnly();
+
+        var symbols = new Dictionary<RepoUri, string>();
+        foreach (var node in records.Nodes)
+        {
+            // Skip document nodes - we only want symbols (types, functions, etc.)
+            if (string.Equals(node.Kind, "document", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // Skip nodes without a URI
+            if (node.Uri is null)
+                continue;
+
+            symbols[node.Uri] = node.Kind;
+        }
+
+        return symbols.AsReadOnly();
     }
 
     private sealed class StageCounter

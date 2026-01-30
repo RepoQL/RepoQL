@@ -137,7 +137,8 @@ public class UriRegistryUdf
     /// Returns registry summary statistics.
     /// </summary>
     [StructuredUdf("_registry_summary_internal", Description = "Returns registry summary statistics")]
-    public IEnumerable<RegistrySummaryRow> RegistrySummary()
+    public IEnumerable<RegistrySummaryRow> RegistrySummary(
+        [UdfDefault("''")] string? _dummy)
     {
         var summary = _registry.GetSummary();
 
