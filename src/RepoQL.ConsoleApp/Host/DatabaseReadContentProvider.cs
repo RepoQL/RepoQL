@@ -63,7 +63,8 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
     public Task<string?> GetRepoTreeAsync(string? scope, CancellationToken cancellationToken)
     {
         // Generate ASCII tree of repository structure using the tree() macro.
-        // Limit to reasonable size to avoid bloating context.
+        // Include headlines for full context - the tree with headlines typically fits
+        // within ~20k tokens even for large repos, and gives the LLM useful file summaries.
         var sql = """
             SELECT tree(
                 json_group_array(n.uri ORDER BY n.uri),
@@ -73,7 +74,6 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
             FROM node n
             JOIN artifact a ON a.id = n.artifact_id
             WHERE n.kind = 'document'
-            LIMIT 500
             """;
 
         try
