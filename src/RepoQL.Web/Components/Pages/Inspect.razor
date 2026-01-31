@@ -50,7 +50,17 @@ else
 
     <!-- File Metadata Section -->
     <section class="card metadata-section">
-        <h2 class="file-uri">@meta.Uri</h2>
+        <div class="file-header">
+            <h2 class="file-uri">@meta.Uri</h2>
+            <div class="git-actions">
+                <button class="btn-git" @onclick="() => NavigateToBlame(meta.Uri)" title="View blame for this file">
+                    Blame
+                </button>
+                <button class="btn-git" @onclick="() => NavigateToHistory(meta.Uri)" title="View history for this file">
+                    History
+                </button>
+            </div>
+        </div>
         <div class="meta-grid">
             <div class="meta-item">
                 <span class="meta-label">Language</span>
@@ -229,6 +239,38 @@ else
         flex-wrap: wrap;
     }
 
+    .file-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    .git-actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-shrink: 0;
+    }
+
+    .btn-git {
+        padding: 0.4rem 0.75rem;
+        background: #f8fafc;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: #374151;
+        transition: all 0.15s;
+    }
+
+    .btn-git:hover {
+        background: #eff6ff;
+        border-color: #93c5fd;
+        color: #245dc1;
+    }
+
     .header-left {
         display: flex;
         align-items: center;
@@ -283,9 +325,9 @@ else
         font-size: 1.1rem;
         font-family: ui-monospace, SFMono-Regular, monospace;
         word-break: break-all;
-        margin-top: 0;
-        margin-bottom: 1rem;
+        margin: 0;
         color: #1f2937;
+        flex: 1;
     }
 
     .meta-grid {
@@ -693,6 +735,18 @@ else
         {
             NavigationManager.NavigateTo($"/{entry.View}");
         }
+    }
+
+    private void NavigateToBlame(string uri)
+    {
+        var encodedUri = Uri.EscapeDataString(uri);
+        NavigationManager.NavigateTo($"/git/blame?uri={encodedUri}");
+    }
+
+    private void NavigateToHistory(string uri)
+    {
+        var encodedUri = Uri.EscapeDataString(uri);
+        NavigationManager.NavigateTo($"/git/history?uri={encodedUri}");
     }
 
     private static string FormatKind(string kind) => kind switch
