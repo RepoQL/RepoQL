@@ -1,0 +1,730 @@
+@page "/annotations"
+@inject AnnotationsService AnnotationsService
+@inject NavigationManager NavigationManager
+@implements IDisposable
+
+<PageTitle>Annotations</PageTitle>
+
+<h1>Annotations</h1>
+
+<!-- Summary Bar -->
+<div class="summary-bar">
+    <button class="summary-item @(_severityFilter == null ? "active" : "")" @onclick="() => SetSeverityFilter(null)">
+        <span class="summary-label">All</span>
+        <span class="summary-count">@_summary.Total</span>
+    </button>
+    <button class="summary-item error @(_severityFilter == "error" ? "active" : "")" @onclick='() => SetSeverityFilter("error")'>
+        <span class="summary-icon">X</span>
+        <span class="summary-label">Errors</span>
+        <span class="summary-count">@_summary.ErrorCount</span>
+    </button>
+    <button class="summary-item warning @(_severityFilter == "warning" ? "active" : "")" @onclick='() => SetSeverityFilter("warning")'>
+        <span class="summary-icon">!</span>
+        <span class="summary-label">Warnings</span>
+        <span class="summary-count">@_summary.WarningCount</span>
+    </button>
+    <button class="summary-item info @(_severityFilter == "info" ? "active" : "")" @onclick='() => SetSeverityFilter("info")'>
+        <span class="summary-icon">i</span>
+        <span class="summary-label">Info</span>
+        <span class="summary-count">@_summary.InfoCount</span>
+    </button>
+</div>
+
+<!-- Filters and Controls -->
+<div class="controls-bar">
+    <div class="filters">
+        <div class="filter-group">
+            <label>Rule:</label>
+            <select @bind="_ruleFilter" @bind:after="OnFiltersChanged">
+                <option value="">All Rules</option>
+                @foreach (var rule in _ruleIds)
+                {
+                    <option value="@rule">@rule</option>
+                }
+            </select>
+        </div>
+        <div class="filter-group">
+            <label>Path:</label>
+            <input type="text"
+                   placeholder="file:///src/**"
+                   @bind="_filePattern"
+                   @bind:event="oninput"
+                   @onkeydown="HandleFilterKeyDown" />
+        </div>
+        @if (HasActiveFilters)
+        {
+            <button class="btn-clear" @onclick="ClearFilters">Clear Filters</button>
+        }
+    </div>
+
+    <div class="grouping">
+        <label>Group by:</label>
+        <div class="group-options">
+            <label class="radio-label">
+                <input type="radio" name="grouping" value="rule" checked="@(_grouping == "rule")" @onchange='() => SetGrouping("rule")' />
+                Rule
+            </label>
+            <label class="radio-label">
+                <input type="radio" name="grouping" value="file" checked="@(_grouping == "file")" @onchange='() => SetGrouping("file")' />
+                File
+            </label>
+            <label class="radio-label">
+                <input type="radio" name="grouping" value="none" checked="@(_grouping == "none")" @onchange='() => SetGrouping("none")' />
+                None
+            </label>
+        </div>
+    </div>
+</div>
+
+<!-- Content -->
+<div class="annotations-content">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="loading-spinner"></div>
+            <span>Loading annotations...</span>
+        </div>
+    }
+    else if (_summary.Total == 0)
+    {
+        <div class="empty-state">
+            @if (HasActiveFilters)
+            {
+                <p>No annotations match the current filters.</p>
+                <button class="btn secondary" @onclick="ClearFilters">Clear Filters</button>
+            }
+            else
+            {
+                <p>No annotations in repository.</p>
+                <p class="hint">Annotations include errors, warnings, and diagnostics from indexed files.</p>
+            }
+        </div>
+    }
+    else if (_grouping == "rule")
+    {
+        <div class="annotation-groups">
+            @foreach (var group in _ruleGroups)
+            {
+                var isExpanded = _expandedGroups.Contains(group.RuleId);
+                <div class="annotation-group">
+                    <button class="group-header" @onclick="() => ToggleGroup(group.RuleId)">
+                        <span class="expand-icon">@(isExpanded ? "-" : "+")</span>
+                        <span class="group-title">@group.RuleId</span>
+                        <span class="group-message">@TruncateMessage(group.Message)</span>
+                        <span class="group-count">(@group.TotalCount)</span>
+                    </button>
+                    @if (isExpanded)
+                    {
+                        <div class="group-items">
+                            @foreach (var item in group.Annotations)
+                            {
+                                <div class="annotation-item @item.Severity">
+                                    <span class="severity-icon">@GetSeverityIcon(item.Severity)</span>
+                                    <button class="item-uri" @onclick="() => NavigateToFile(item.Uri, item.Line)">
+                                        @TruncateUri(item.Uri)@(item.Line.HasValue ? $":{item.Line}" : "")
+                                    </button>
+                                </div>
+                            }
+                            @if (group.TotalCount > group.Annotations.Count)
+                            {
+                                <div class="more-indicator">+@(group.TotalCount - group.Annotations.Count) more</div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+    else if (_grouping == "file")
+    {
+        <div class="annotation-groups">
+            @foreach (var group in _fileGroups)
+            {
+                var isExpanded = _expandedGroups.Contains(group.Uri);
+                <div class="annotation-group">
+                    <button class="group-header" @onclick="() => ToggleGroup(group.Uri)">
+                        <span class="expand-icon">@(isExpanded ? "-" : "+")</span>
+                        <span class="group-title">@TruncateUri(group.Uri)</span>
+                        <span class="group-count">(@group.Count issues)</span>
+                    </button>
+                    @if (isExpanded)
+                    {
+                        <div class="group-items">
+                            @foreach (var item in group.Annotations)
+                            {
+                                <div class="annotation-item @item.Severity">
+                                    <span class="severity-icon">@GetSeverityIcon(item.Severity)</span>
+                                    <span class="item-rule">@item.RuleId</span>
+                                    <span class="item-message">@TruncateMessage(item.Message)</span>
+                                    @if (item.Line.HasValue)
+                                    {
+                                        <span class="item-line">:@item.Line</span>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <!-- Flat list -->
+        <div class="annotation-list">
+            @foreach (var item in _flatList)
+            {
+                <div class="annotation-item flat @item.Severity">
+                    <span class="severity-icon">@GetSeverityIcon(item.Severity)</span>
+                    <button class="item-uri" @onclick="() => NavigateToFile(item.Uri, item.Line)">
+                        @TruncateUri(item.Uri)@(item.Line.HasValue ? $":{item.Line}" : "")
+                    </button>
+                    <span class="item-rule">@item.RuleId</span>
+                    <span class="item-message">@TruncateMessage(item.Message)</span>
+                </div>
+            }
+            @if (_hasMore)
+            {
+                <button class="btn-load-more" @onclick="LoadMore" disabled="@_isLoadingMore">
+                    @if (_isLoadingMore)
+                    {
+                        <text>Loading...</text>
+                    }
+                    else
+                    {
+                        <text>Load More (@_totalCount total)</text>
+                    }
+                </button>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .summary-bar {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+    }
+
+    .summary-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 1rem;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: white;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+
+    .summary-item:hover {
+        border-color: #245dc1;
+    }
+
+    .summary-item.active {
+        border-color: #245dc1;
+        background: #eff6ff;
+    }
+
+    .summary-item.error .summary-icon { color: #dc2626; }
+    .summary-item.warning .summary-icon { color: #d97706; }
+    .summary-item.info .summary-icon { color: #2563eb; }
+
+    .summary-icon {
+        font-weight: bold;
+        width: 1.25rem;
+        text-align: center;
+    }
+
+    .summary-label {
+        font-size: 0.9rem;
+        color: #64748b;
+    }
+
+    .summary-count {
+        font-weight: 600;
+        font-size: 1.1rem;
+        color: #1f2937;
+    }
+
+    .controls-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.5rem;
+        flex-wrap: wrap;
+        padding: 1rem;
+        background: #f8fafc;
+        border-radius: 8px;
+    }
+
+    .filters {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .filter-group {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .filter-group label {
+        font-size: 0.85rem;
+        color: #64748b;
+    }
+
+    .filter-group select,
+    .filter-group input {
+        padding: 0.4rem 0.6rem;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 0.85rem;
+    }
+
+    .filter-group input {
+        width: 180px;
+    }
+
+    .btn-clear {
+        padding: 0.4rem 0.8rem;
+        border: none;
+        background: #fee2e2;
+        color: #991b1b;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.85rem;
+    }
+
+    .btn-clear:hover {
+        background: #fecaca;
+    }
+
+    .grouping {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .grouping label {
+        font-size: 0.85rem;
+        color: #64748b;
+    }
+
+    .group-options {
+        display: flex;
+        gap: 1rem;
+    }
+
+    .radio-label {
+        display: flex;
+        align-items: center;
+        gap: 0.3rem;
+        cursor: pointer;
+        font-size: 0.9rem;
+    }
+
+    .annotations-content {
+        min-height: 300px;
+    }
+
+    .loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        padding: 3rem;
+        color: #64748b;
+    }
+
+    .loading-spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid #e5e7eb;
+        border-top-color: #245dc1;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 3rem;
+        color: #64748b;
+    }
+
+    .empty-state .hint {
+        font-size: 0.9rem;
+        margin-top: 0.5rem;
+    }
+
+    .annotation-groups {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+
+    .annotation-group {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .group-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        width: 100%;
+        padding: 0.75rem 1rem;
+        background: #f8fafc;
+        border: none;
+        cursor: pointer;
+        text-align: left;
+        font-size: 0.9rem;
+    }
+
+    .group-header:hover {
+        background: #f1f5f9;
+    }
+
+    .expand-icon {
+        width: 1.25rem;
+        text-align: center;
+        font-weight: bold;
+        color: #64748b;
+    }
+
+    .group-title {
+        font-weight: 600;
+        color: #1f2937;
+    }
+
+    .group-message {
+        flex: 1;
+        color: #64748b;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .group-count {
+        color: #64748b;
+        font-size: 0.85rem;
+    }
+
+    .group-items {
+        padding: 0.5rem 1rem 1rem;
+        background: white;
+    }
+
+    .annotation-item {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid #f3f4f6;
+        font-size: 0.9rem;
+    }
+
+    .annotation-item:last-child {
+        border-bottom: none;
+    }
+
+    .annotation-item.flat {
+        padding: 0.6rem 0.75rem;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        margin-bottom: 0.5rem;
+    }
+
+    .annotation-item.error .severity-icon { color: #dc2626; }
+    .annotation-item.warning .severity-icon { color: #d97706; }
+    .annotation-item.info .severity-icon { color: #2563eb; }
+
+    .severity-icon {
+        width: 1.25rem;
+        text-align: center;
+        font-weight: bold;
+        flex-shrink: 0;
+    }
+
+    .item-uri {
+        background: none;
+        border: none;
+        color: #245dc1;
+        cursor: pointer;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 0.85rem;
+        padding: 0;
+        text-align: left;
+    }
+
+    .item-uri:hover {
+        text-decoration: underline;
+    }
+
+    .item-rule {
+        color: #64748b;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 0.8rem;
+        flex-shrink: 0;
+    }
+
+    .item-message {
+        flex: 1;
+        color: #4b5563;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .item-line {
+        color: #64748b;
+        font-size: 0.85rem;
+    }
+
+    .more-indicator {
+        padding: 0.5rem;
+        color: #64748b;
+        font-size: 0.85rem;
+        font-style: italic;
+    }
+
+    .annotation-list {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .btn-load-more {
+        padding: 0.75rem 1.5rem;
+        margin-top: 1rem;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        background: white;
+        cursor: pointer;
+        font-size: 0.9rem;
+        align-self: center;
+    }
+
+    .btn-load-more:hover:not(:disabled) {
+        background: #f3f4f6;
+    }
+
+    .btn-load-more:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    .btn.secondary {
+        padding: 0.5rem 1rem;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        background: white;
+        cursor: pointer;
+    }
+
+    .btn.secondary:hover {
+        background: #f3f4f6;
+    }
+</style>
+
+@code {
+    private AnnotationCounts _summary = new(0, 0, 0, 0);
+    private IReadOnlyList<string> _ruleIds = [];
+    private IReadOnlyList<AnnotationRuleGroup> _ruleGroups = [];
+    private IReadOnlyList<AnnotationFileGroup> _fileGroups = [];
+    private IReadOnlyList<AnnotationItem> _flatList = [];
+
+    private string? _severityFilter;
+    private string _ruleFilter = "";
+    private string _filePattern = "";
+    private string _grouping = "rule";
+
+    private HashSet<string> _expandedGroups = [];
+    private int _totalCount;
+    private bool _hasMore;
+    private int _offset;
+
+    private bool _isLoading = true;
+    private bool _isLoadingMore;
+    private CancellationTokenSource? _loadCts;
+
+    private bool HasActiveFilters =>
+        _severityFilter is not null ||
+        !string.IsNullOrEmpty(_ruleFilter) ||
+        !string.IsNullOrEmpty(_filePattern);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadRuleIdsAsync();
+        await LoadDataAsync();
+    }
+
+    private async Task LoadRuleIdsAsync()
+    {
+        _ruleIds = await AnnotationsService.GetRuleIdsAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        _loadCts?.Cancel();
+        _loadCts = new CancellationTokenSource();
+
+        _isLoading = true;
+        _offset = 0;
+        StateHasChanged();
+
+        try
+        {
+            var filters = new AnnotationFilters(
+                Severity: _severityFilter,
+                RuleId: string.IsNullOrEmpty(_ruleFilter) ? null : _ruleFilter,
+                FilePattern: string.IsNullOrEmpty(_filePattern) ? null : _filePattern);
+
+            // Load summary
+            _summary = await AnnotationsService.GetSummaryAsync(filters.FilePattern, _loadCts.Token);
+
+            // Load data based on grouping
+            switch (_grouping)
+            {
+                case "rule":
+                    _ruleGroups = await AnnotationsService.GetAnnotationsByRuleAsync(filters, ct: _loadCts.Token);
+                    _expandedGroups = _ruleGroups.Take(3).Select(g => g.RuleId).ToHashSet();
+                    break;
+                case "file":
+                    _fileGroups = await AnnotationsService.GetAnnotationsByFileAsync(filters, ct: _loadCts.Token);
+                    _expandedGroups = _fileGroups.Take(3).Select(g => g.Uri).ToHashSet();
+                    break;
+                default:
+                    var result = await AnnotationsService.GetAnnotationsAsync(filters, ct: _loadCts.Token);
+                    _flatList = result.Annotations;
+                    _totalCount = result.TotalCount;
+                    _hasMore = result.HasMore;
+                    _offset = result.Annotations.Count;
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignored
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadMore()
+    {
+        if (_isLoadingMore || !_hasMore)
+            return;
+
+        _isLoadingMore = true;
+        StateHasChanged();
+
+        try
+        {
+            var filters = new AnnotationFilters(
+                Severity: _severityFilter,
+                RuleId: string.IsNullOrEmpty(_ruleFilter) ? null : _ruleFilter,
+                FilePattern: string.IsNullOrEmpty(_filePattern) ? null : _filePattern);
+
+            var result = await AnnotationsService.GetAnnotationsAsync(filters, limit: 100, offset: _offset);
+            _flatList = [.. _flatList, .. result.Annotations];
+            _hasMore = result.HasMore;
+            _offset += result.Annotations.Count;
+        }
+        finally
+        {
+            _isLoadingMore = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SetSeverityFilter(string? severity)
+    {
+        _severityFilter = severity;
+        await LoadDataAsync();
+    }
+
+    private async Task SetGrouping(string grouping)
+    {
+        _grouping = grouping;
+        _expandedGroups.Clear();
+        await LoadDataAsync();
+    }
+
+    private async Task OnFiltersChanged()
+    {
+        await LoadDataAsync();
+    }
+
+    private async Task HandleFilterKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await LoadDataAsync();
+        }
+    }
+
+    private async Task ClearFilters()
+    {
+        _severityFilter = null;
+        _ruleFilter = "";
+        _filePattern = "";
+        await LoadDataAsync();
+    }
+
+    private void ToggleGroup(string key)
+    {
+        if (_expandedGroups.Contains(key))
+            _expandedGroups.Remove(key);
+        else
+            _expandedGroups.Add(key);
+    }
+
+    private void NavigateToFile(string uri, int? line)
+    {
+        var encodedUri = Uri.EscapeDataString(uri);
+        NavigationManager.NavigateTo($"/inspect?uri={encodedUri}");
+    }
+
+    private static string GetSeverityIcon(string severity) => severity switch
+    {
+        "error" => "X",
+        "warning" => "!",
+        "info" => "i",
+        "hint" => "*",
+        _ => "?"
+    };
+
+    private static string TruncateUri(string uri)
+    {
+        if (uri.Length <= 60)
+            return uri;
+        return uri[..30] + "..." + uri[^25..];
+    }
+
+    private static string TruncateMessage(string message)
+    {
+        if (message.Length <= 80)
+            return message;
+        return message[..77] + "...";
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
+}

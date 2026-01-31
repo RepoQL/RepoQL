@@ -57,7 +57,7 @@ Plan 1: Foundation + Status
 | Inspect | Complete |
 | Search | Complete |
 | Read | Complete |
-| Annotations | Not started |
+| Annotations | Complete |
 | Imports | Not started |
 | Git | Not started |
 
