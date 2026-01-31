@@ -402,4 +402,255 @@ internal class UriRegistryTests
         range.End.Should().Be(42);
         range.Length.Should().Be(1);
     }
+
+    // === LineRangeCalculator.Union Tests ===
+
+    [Test]
+    public void Union_EmptyInput_ReturnsEmpty()
+    {
+        var ranges = Array.Empty<LineRange>();
+
+        var result = ranges.Union();
+
+        result.Should().BeEmpty();
+    }
+
+    [Test]
+    public void Union_SingleRange_ReturnsSameRange()
+    {
+        var ranges = new[] { new LineRange(10, 20) };
+
+        var result = ranges.Union();
+
+        result.Should().HaveCount(1);
+        result[0].Should().Be(new LineRange(10, 20));
+    }
+
+    [Test]
+    public void Union_OverlappingRanges_MergesIntoOne()
+    {
+        var ranges = new[] { new LineRange(10, 30), new LineRange(25, 45) };
+
+        var result = ranges.Union();
+
+        result.Should().HaveCount(1);
+        result[0].Should().Be(new LineRange(10, 45));
+    }
+
+    [Test]
+    public void Union_AdjacentRanges_MergesIntoOne()
+    {
+        var ranges = new[] { new LineRange(10, 20), new LineRange(21, 30) };
+
+        var result = ranges.Union();
+
+        result.Should().HaveCount(1);
+        result[0].Should().Be(new LineRange(10, 30));
+    }
+
+    [Test]
+    public void Union_NonOverlappingRanges_PreservesBoth()
+    {
+        var ranges = new[] { new LineRange(10, 20), new LineRange(30, 40) };
+
+        var result = ranges.Union();
+
+        result.Should().HaveCount(2);
+        result[0].Should().Be(new LineRange(10, 20));
+        result[1].Should().Be(new LineRange(30, 40));
+    }
+
+    [Test]
+    public void Union_UnsortedRanges_ReturnsSorted()
+    {
+        var ranges = new[] { new LineRange(50, 60), new LineRange(10, 20), new LineRange(30, 40) };
+
+        var result = ranges.Union();
+
+        result.Should().HaveCount(3);
+        result[0].Should().Be(new LineRange(10, 20));
+        result[1].Should().Be(new LineRange(30, 40));
+        result[2].Should().Be(new LineRange(50, 60));
+    }
+
+    [Test]
+    public void Union_MultipleOverlapping_MergesAll()
+    {
+        var ranges = new[]
+        {
+            new LineRange(10, 30),
+            new LineRange(25, 45),
+            new LineRange(40, 60),
+            new LineRange(55, 70)
+        };
+
+        var result = ranges.Union();
+
+        result.Should().HaveCount(1);
+        result[0].Should().Be(new LineRange(10, 70));
+    }
+
+    [Test]
+    public void Union_InvalidRanges_AreFiltered()
+    {
+        var ranges = new[]
+        {
+            new LineRange(10, 20),
+            new LineRange(30, 10), // Invalid: start > end
+            LineRange.Empty,
+            new LineRange(40, 50)
+        };
+
+        var result = ranges.Union();
+
+        result.Should().HaveCount(2);
+        result[0].Should().Be(new LineRange(10, 20));
+        result[1].Should().Be(new LineRange(40, 50));
+    }
+
+    // === LineRangeCalculator.Subtract Tests ===
+
+    [Test]
+    public void Subtract_EmptyIncluded_ReturnsEmpty()
+    {
+        var included = Array.Empty<LineRange>().ToList();
+        var excluded = new List<LineRange> { new(30, 40) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().BeEmpty();
+    }
+
+    [Test]
+    public void Subtract_EmptyExcluded_ReturnsIncluded()
+    {
+        var included = new List<LineRange> { new(10, 80) };
+        var excluded = Array.Empty<LineRange>().ToList();
+
+        var result = included.Subtract(excluded);
+
+        result.Should().HaveCount(1);
+        result[0].Should().Be(new LineRange(10, 80));
+    }
+
+    [Test]
+    public void Subtract_MiddleExclusion_SplitsRange()
+    {
+        var included = new List<LineRange> { new(10, 80) };
+        var excluded = new List<LineRange> { new(30, 40) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().HaveCount(2);
+        result[0].Should().Be(new LineRange(10, 29));
+        result[1].Should().Be(new LineRange(41, 80));
+    }
+
+    [Test]
+    public void Subtract_StartExclusion_TrimsStart()
+    {
+        var included = new List<LineRange> { new(10, 80) };
+        var excluded = new List<LineRange> { new(10, 30) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().HaveCount(1);
+        result[0].Should().Be(new LineRange(31, 80));
+    }
+
+    [Test]
+    public void Subtract_EndExclusion_TrimsEnd()
+    {
+        var included = new List<LineRange> { new(10, 80) };
+        var excluded = new List<LineRange> { new(60, 80) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().HaveCount(1);
+        result[0].Should().Be(new LineRange(10, 59));
+    }
+
+    [Test]
+    public void Subtract_FullExclusion_ReturnsEmpty()
+    {
+        var included = new List<LineRange> { new(10, 80) };
+        var excluded = new List<LineRange> { new(10, 80) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().BeEmpty();
+    }
+
+    [Test]
+    public void Subtract_LargerExclusion_ReturnsEmpty()
+    {
+        var included = new List<LineRange> { new(20, 40) };
+        var excluded = new List<LineRange> { new(10, 80) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().BeEmpty();
+    }
+
+    [Test]
+    public void Subtract_MultipleExclusions_CarvesBoth()
+    {
+        var included = new List<LineRange> { new(10, 80) };
+        var excluded = new List<LineRange> { new(20, 30), new(50, 60) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().HaveCount(3);
+        result[0].Should().Be(new LineRange(10, 19));
+        result[1].Should().Be(new LineRange(31, 49));
+        result[2].Should().Be(new LineRange(61, 80));
+    }
+
+    [Test]
+    public void Subtract_NonOverlappingExclusion_NoEffect()
+    {
+        var included = new List<LineRange> { new(10, 20) };
+        var excluded = new List<LineRange> { new(30, 40) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().HaveCount(1);
+        result[0].Should().Be(new LineRange(10, 20));
+    }
+
+    [Test]
+    public void Subtract_SingleLineRange_Works()
+    {
+        var included = new List<LineRange> { new(5, 5) };
+        var excluded = new List<LineRange> { new(5, 5) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().BeEmpty();
+    }
+
+    [Test]
+    public void Subtract_ExclusionAtLine1_Works()
+    {
+        var included = new List<LineRange> { new(1, 100) };
+        var excluded = new List<LineRange> { new(1, 30) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().HaveCount(1);
+        result[0].Should().Be(new LineRange(31, 100));
+    }
+
+    [Test]
+    public void Subtract_MultipleIncludedRanges_ProcessesAll()
+    {
+        var included = new List<LineRange> { new(10, 30), new(50, 70) };
+        var excluded = new List<LineRange> { new(20, 60) };
+
+        var result = included.Subtract(excluded);
+
+        result.Should().HaveCount(2);
+        result[0].Should().Be(new LineRange(10, 19));
+        result[1].Should().Be(new LineRange(61, 70));
+    }
 }
