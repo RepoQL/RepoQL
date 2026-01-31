@@ -590,7 +590,8 @@ public partial class IndexingEngine : IAsyncDisposable
                 if (UriRegistry is not null)
                 {
                     var symbols = ExtractSymbolsFromRecords(item.Records);
-                    UriRegistry.SetIndexed(item.Uri, symbols);
+                    var lineCount = ExtractLineCount(item.Records);
+                    UriRegistry.SetIndexed(item.Uri, lineCount, symbols);
                 }
 
                 ScheduleAnalysis(item);
@@ -1346,14 +1347,17 @@ public partial class IndexingEngine : IAsyncDisposable
     }
 
     /// <summary>
-    /// Extracts symbol URIs from parsed records for the URI registry.
+    /// Extracts symbol URIs with span data from parsed records for the URI registry.
     /// </summary>
-    private static IReadOnlyDictionary<RepoUri, string> ExtractSymbolsFromRecords(Records? records)
+    internal static IReadOnlyDictionary<RepoUri, SymbolEntry> ExtractSymbolsFromRecords(Records? records)
     {
         if (records is null)
-            return new Dictionary<RepoUri, string>().AsReadOnly();
+            return new Dictionary<RepoUri, SymbolEntry>().AsReadOnly();
 
-        var symbols = new Dictionary<RepoUri, string>();
+        // Build span lookup for efficient access
+        var spanLookup = records.Spans.ToDictionary(s => s.Id);
+
+        var symbols = new Dictionary<RepoUri, SymbolEntry>();
         foreach (var node in records.Nodes)
         {
             // Skip document nodes - we only want symbols (types, functions, etc.)
@@ -1364,10 +1368,42 @@ public partial class IndexingEngine : IAsyncDisposable
             if (node.Uri is null)
                 continue;
 
-            symbols[node.Uri] = node.Kind;
+            // Look up span for this node
+            int startLine = 0, endLine = 0;
+            if (node.SpanId.HasValue && spanLookup.TryGetValue(node.SpanId.Value, out var span))
+            {
+                startLine = span.StartLine ?? 0;
+                endLine = span.EndLine ?? 0;
+            }
+
+            symbols[node.Uri] = new SymbolEntry(node.Kind, startLine, endLine);
         }
 
         return symbols.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Extracts line count from the artifact text in records.
+    /// </summary>
+    internal static int ExtractLineCount(Records? records)
+    {
+        if (records is null || records.Artifacts.Length == 0)
+            return 0;
+
+        // Use the first artifact (primary document)
+        var text = records.Artifacts[0].Text;
+        if (string.IsNullOrEmpty(text))
+            return 0;
+
+        // Count newlines + 1 (a file with no newlines has 1 line)
+        var lineCount = 1;
+        foreach (var c in text)
+        {
+            if (c == '\n')
+                lineCount++;
+        }
+
+        return lineCount;
     }
 
     private sealed class StageCounter

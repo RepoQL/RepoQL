@@ -8,6 +8,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="RepoQL.Indexing.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
       <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
       <ProjectReference Include="..\..\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
       <ProjectReference Include="..\..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />

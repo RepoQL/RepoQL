@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using FakeItEasy;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing;
 using RepoQL.Indexing.Indexing.Commit;
@@ -12,6 +13,7 @@ using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Indexing.Indexing.State;
 using RepoQL.Testing;
 using RepoQL.Testing.Indexing;
+using ModelSpan = RepoQL.Contracts.Models.Span;
 
 namespace RepoQL.Indexing.Tests.Indexing;
 
@@ -997,5 +999,259 @@ public class IndexingEngineTests
         public bool AnalysisStarted => AnalysisSignal.Task.IsCompleted;
 
         public void ReleaseParsing() => ParsingGate?.TrySetResult(true);
+    }
+
+    // === Symbol Extraction with Spans Tests ===
+
+    [Test]
+    [DisplayName("ExtractSymbolsFromRecords returns empty dictionary when records is null")]
+    public void ExtractSymbolsFromRecords_NullRecords_ReturnsEmptyDictionary()
+    {
+        var result = IndexingEngine.ExtractSymbolsFromRecords(null);
+
+        result.Should().NotBeNull();
+        result.Should().BeEmpty();
+    }
+
+    [Test]
+    [DisplayName("ExtractSymbolsFromRecords extracts spans from nodes")]
+    public void ExtractSymbolsFromRecords_NodesWithSpans_ExtractsLineRanges()
+    {
+        // Arrange
+        var docNode = new Node { Kind = "document", Uri = CreateUri("file:///test.cs") };
+        var classSpan = new ModelSpan { DocumentId = Guid.NewGuid(), StartLine = 5, EndLine = 20 };
+        var methodSpan = new ModelSpan { DocumentId = Guid.NewGuid(), StartLine = 10, EndLine = 15 };
+
+        var classNode = new Node
+        {
+            Kind = "class",
+            Uri = CreateUri("file:///test.cs#symbol=MyClass"),
+            SpanId = classSpan.Id
+        };
+        var methodNode = new Node
+        {
+            Kind = "method",
+            Uri = CreateUri("file:///test.cs#symbol=MyClass.Method"),
+            SpanId = methodSpan.Id
+        };
+
+        var records = new Records
+        {
+            Artifacts = [],
+            Nodes = [docNode, classNode, methodNode],
+            Spans = [classSpan, methodSpan],
+            Edges = [],
+            Annotations = [],
+            AnnotationSources = []
+        };
+
+        // Act
+        var result = IndexingEngine.ExtractSymbolsFromRecords(records);
+
+        // Assert
+        result.Should().HaveCount(2);
+        result.Should().ContainKey(classNode.Uri!);
+        result.Should().ContainKey(methodNode.Uri!);
+
+        var classEntry = result[classNode.Uri!];
+        classEntry.Kind.Should().Be("class");
+        classEntry.StartLine.Should().Be(5);
+        classEntry.EndLine.Should().Be(20);
+
+        var methodEntry = result[methodNode.Uri!];
+        methodEntry.Kind.Should().Be("method");
+        methodEntry.StartLine.Should().Be(10);
+        methodEntry.EndLine.Should().Be(15);
+    }
+
+    [Test]
+    [DisplayName("ExtractSymbolsFromRecords handles nodes without spans")]
+    public void ExtractSymbolsFromRecords_NodeWithoutSpan_ReturnsZeroSpan()
+    {
+        // Arrange
+        var docNode = new Node { Kind = "document", Uri = CreateUri("file:///test.cs") };
+        var classNode = new Node
+        {
+            Kind = "class",
+            Uri = CreateUri("file:///test.cs#symbol=MyClass"),
+            SpanId = null // No span
+        };
+
+        var records = new Records
+        {
+            Artifacts = [],
+            Nodes = [docNode, classNode],
+            Spans = [],
+            Edges = [],
+            Annotations = [],
+            AnnotationSources = []
+        };
+
+        // Act
+        var result = IndexingEngine.ExtractSymbolsFromRecords(records);
+
+        // Assert
+        result.Should().HaveCount(1);
+        var entry = result[classNode.Uri!];
+        entry.Kind.Should().Be("class");
+        entry.StartLine.Should().Be(0);
+        entry.EndLine.Should().Be(0);
+    }
+
+    [Test]
+    [DisplayName("ExtractSymbolsFromRecords skips document nodes")]
+    public void ExtractSymbolsFromRecords_DocumentNode_IsSkipped()
+    {
+        // Arrange
+        var docNode = new Node { Kind = "document", Uri = CreateUri("file:///test.cs") };
+
+        var records = new Records
+        {
+            Artifacts = [],
+            Nodes = [docNode],
+            Spans = [],
+            Edges = [],
+            Annotations = [],
+            AnnotationSources = []
+        };
+
+        // Act
+        var result = IndexingEngine.ExtractSymbolsFromRecords(records);
+
+        // Assert
+        result.Should().BeEmpty();
+    }
+
+    [Test]
+    [DisplayName("ExtractSymbolsFromRecords handles spans with null line numbers")]
+    public void ExtractSymbolsFromRecords_SpanWithNullLines_ReturnsZero()
+    {
+        // Arrange
+        var span = new ModelSpan { DocumentId = Guid.NewGuid(), StartLine = null, EndLine = null };
+        var node = new Node
+        {
+            Kind = "field",
+            Uri = CreateUri("file:///test.cs#symbol=MyClass.Field"),
+            SpanId = span.Id
+        };
+
+        var records = new Records
+        {
+            Artifacts = [],
+            Nodes = [node],
+            Spans = [span],
+            Edges = [],
+            Annotations = [],
+            AnnotationSources = []
+        };
+
+        // Act
+        var result = IndexingEngine.ExtractSymbolsFromRecords(records);
+
+        // Assert
+        var entry = result[node.Uri!];
+        entry.StartLine.Should().Be(0);
+        entry.EndLine.Should().Be(0);
+    }
+
+    // === Line Count Extraction Tests ===
+
+    [Test]
+    [DisplayName("ExtractLineCount returns 0 when records is null")]
+    public void ExtractLineCount_NullRecords_ReturnsZero()
+    {
+        var result = IndexingEngine.ExtractLineCount(null);
+        result.Should().Be(0);
+    }
+
+    [Test]
+    [DisplayName("ExtractLineCount returns 0 when no artifacts")]
+    public void ExtractLineCount_NoArtifacts_ReturnsZero()
+    {
+        var records = new Records
+        {
+            Artifacts = [],
+            Nodes = [],
+            Spans = [],
+            Edges = [],
+            Annotations = [],
+            AnnotationSources = []
+        };
+
+        var result = IndexingEngine.ExtractLineCount(records);
+        result.Should().Be(0);
+    }
+
+    [Test]
+    [DisplayName("ExtractLineCount returns 0 when artifact has no text")]
+    public void ExtractLineCount_NullText_ReturnsZero()
+    {
+        var records = new Records
+        {
+            Artifacts = [new RepoQL.Contracts.Models.Artifact { Digest = "abc", Text = null }],
+            Nodes = [],
+            Spans = [],
+            Edges = [],
+            Annotations = [],
+            AnnotationSources = []
+        };
+
+        var result = IndexingEngine.ExtractLineCount(records);
+        result.Should().Be(0);
+    }
+
+    [Test]
+    [DisplayName("ExtractLineCount counts lines correctly for single line")]
+    public void ExtractLineCount_SingleLine_ReturnsOne()
+    {
+        var records = new Records
+        {
+            Artifacts = [new RepoQL.Contracts.Models.Artifact { Digest = "abc", Text = "hello world" }],
+            Nodes = [],
+            Spans = [],
+            Edges = [],
+            Annotations = [],
+            AnnotationSources = []
+        };
+
+        var result = IndexingEngine.ExtractLineCount(records);
+        result.Should().Be(1);
+    }
+
+    [Test]
+    [DisplayName("ExtractLineCount counts lines correctly for multiple lines")]
+    public void ExtractLineCount_MultipleLines_ReturnsCorrectCount()
+    {
+        var records = new Records
+        {
+            Artifacts = [new RepoQL.Contracts.Models.Artifact { Digest = "abc", Text = "line1\nline2\nline3" }],
+            Nodes = [],
+            Spans = [],
+            Edges = [],
+            Annotations = [],
+            AnnotationSources = []
+        };
+
+        var result = IndexingEngine.ExtractLineCount(records);
+        result.Should().Be(3);
+    }
+
+    [Test]
+    [DisplayName("ExtractLineCount handles trailing newline")]
+    public void ExtractLineCount_TrailingNewline_CountsCorrectly()
+    {
+        var records = new Records
+        {
+            Artifacts = [new RepoQL.Contracts.Models.Artifact { Digest = "abc", Text = "line1\nline2\n" }],
+            Nodes = [],
+            Spans = [],
+            Edges = [],
+            Annotations = [],
+            AnnotationSources = []
+        };
+
+        // Trailing newline means 3 lines (line1, line2, empty line after)
+        var result = IndexingEngine.ExtractLineCount(records);
+        result.Should().Be(3);
     }
 }
