@@ -45,9 +45,12 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     }
 
     /// <summary>
-    /// Updates a file's status to Indexed with its symbols.
+    /// Updates a file's status to Indexed with its symbols and line count.
     /// </summary>
-    public void SetIndexed(RepoUri uri, IReadOnlyDictionary<RepoUri, string> symbols)
+    /// <param name="uri">The file URI.</param>
+    /// <param name="lineCount">Total number of lines in the file.</param>
+    /// <param name="symbols">Symbol URIs mapped to their entries (kind and span).</param>
+    public void SetIndexed(RepoUri uri, int lineCount, IReadOnlyDictionary<RepoUri, SymbolEntry> symbols)
     {
         AddOrUpdate(
             uri,
@@ -58,14 +61,32 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
                 EmbeddingStatus: EmbeddingStatus.Pending,
                 EmbeddedChunkCount: 0,
                 EmbeddedAt: null,
+                LineCount: lineCount,
                 Symbols: symbols),
             (_, existing) => existing with
             {
                 Status = UriStatus.Indexed,
                 IndexedAt = DateTime.UtcNow,
                 Error = null,
+                LineCount = lineCount,
                 Symbols = symbols
             });
+    }
+
+    /// <summary>
+    /// Updates a file's status to Indexed with its symbols (backward-compatible overload).
+    /// Line count defaults to 0 (unavailable), and symbols are converted to SymbolEntry with kind only.
+    /// </summary>
+    /// <param name="uri">The file URI.</param>
+    /// <param name="symbols">Symbol URIs mapped to their kind.</param>
+    public void SetIndexed(RepoUri uri, IReadOnlyDictionary<RepoUri, string> symbols)
+    {
+        var symbolEntries = symbols.ToDictionary(
+            kvp => kvp.Key,
+            kvp => SymbolEntry.WithKindOnly(kvp.Value))
+            .AsReadOnly();
+
+        SetIndexed(uri, lineCount: 0, symbolEntries);
     }
 
     /// <summary>

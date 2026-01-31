@@ -15,7 +15,8 @@ namespace RepoQL.Contracts;
 /// <param name="EmbeddingStatus">Current embedding status.</param>
 /// <param name="EmbeddedChunkCount">Number of chunks from this file that have embeddings.</param>
 /// <param name="EmbeddedAt">When embeddings were last successfully computed.</param>
-/// <param name="Symbols">Child symbol URIs mapped to their kind (type, function, etc.).</param>
+/// <param name="LineCount">Total number of lines in the file. Zero if unavailable.</param>
+/// <param name="Symbols">Child symbol URIs mapped to their entry (kind and span).</param>
 public record FileEntry(
     UriStatus Status,
     DateTime? IndexedAt,
@@ -23,7 +24,8 @@ public record FileEntry(
     EmbeddingStatus EmbeddingStatus,
     int EmbeddedChunkCount,
     DateTime? EmbeddedAt,
-    IReadOnlyDictionary<RepoUri, string> Symbols)
+    int LineCount,
+    IReadOnlyDictionary<RepoUri, SymbolEntry> Symbols)
 {
     /// <summary>
     /// Creates a new FileEntry in Discovered state with no symbols.
@@ -35,6 +37,7 @@ public record FileEntry(
         EmbeddingStatus: EmbeddingStatus.Pending,
         EmbeddedChunkCount: 0,
         EmbeddedAt: null,
+        LineCount: 0,
         Symbols: EmptySymbols);
 
     /// <summary>
@@ -47,6 +50,7 @@ public record FileEntry(
         EmbeddingStatus: EmbeddingStatus.Pending,
         EmbeddedChunkCount: 0,
         EmbeddedAt: null,
+        LineCount: 0,
         Symbols: EmptySymbols);
 
     /// <summary>
@@ -62,6 +66,11 @@ public record FileEntry(
     /// </summary>
     public bool IsIndexed => Status == UriStatus.Indexed;
 
-    private static readonly IReadOnlyDictionary<RepoUri, string> EmptySymbols =
-        new Dictionary<RepoUri, string>().AsReadOnly();
+    /// <summary>
+    /// Returns true if line count information is available.
+    /// </summary>
+    public bool HasLineCount => LineCount > 0;
+
+    private static readonly IReadOnlyDictionary<RepoUri, SymbolEntry> EmptySymbols =
+        new Dictionary<RepoUri, SymbolEntry>().AsReadOnly();
 }

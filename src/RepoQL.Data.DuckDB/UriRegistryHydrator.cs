@@ -58,7 +58,7 @@ public class UriRegistryHydrator
             var results = _db.ReadUntrusted(query, MapNodeRow);
 
             // Group symbols by their container (file)
-            var symbolsByFile = new Dictionary<string, Dictionary<RepoUri, string>>(StringComparer.OrdinalIgnoreCase);
+            var symbolsByFile = new Dictionary<string, Dictionary<RepoUri, SymbolEntry>>(StringComparer.OrdinalIgnoreCase);
             var documents = new List<RepoUri>();
 
             foreach (var (uri, kind, containerUri) in results)
@@ -73,12 +73,13 @@ public class UriRegistryHydrator
                 else if (!string.IsNullOrEmpty(containerUri))
                 {
                     // This is a symbol - add to its container's symbol list
+                    // Note: Span data is not available during hydration; will be populated during indexing
                     if (!symbolsByFile.TryGetValue(containerUri, out var symbols))
                     {
-                        symbols = new Dictionary<RepoUri, string>();
+                        symbols = new Dictionary<RepoUri, SymbolEntry>();
                         symbolsByFile[containerUri] = symbols;
                     }
-                    symbols[uri] = kind ?? "unknown";
+                    symbols[uri] = SymbolEntry.WithKindOnly(kind ?? "unknown");
                     symbolCount++;
                 }
             }
@@ -88,7 +89,7 @@ public class UriRegistryHydrator
             {
                 var containerKey = docUri.AbsoluteUri.ToLowerInvariant();
                 var symbols = symbolsByFile.GetValueOrDefault(containerKey)
-                    ?? new Dictionary<RepoUri, string>();
+                    ?? new Dictionary<RepoUri, SymbolEntry>();
 
                 var entry = new FileEntry(
                     Status: UriStatus.Indexed,
@@ -97,6 +98,7 @@ public class UriRegistryHydrator
                     EmbeddingStatus: EmbeddingStatus.Pending, // Will be updated by embedding hydration
                     EmbeddedChunkCount: 0,
                     EmbeddedAt: null,
+                    LineCount: 0, // Line count not available during hydration; will be populated during indexing
                     Symbols: symbols.AsReadOnly());
 
                 _registry[docUri] = entry;

@@ -239,4 +239,167 @@ internal class UriRegistryTests
 
         return registry;
     }
+
+    // === SymbolEntry Tests ===
+
+    [Test]
+    public void SymbolEntry_WithSpan_HasSpanIsTrue()
+    {
+        var entry = new SymbolEntry("class", 10, 50);
+
+        entry.HasSpan.Should().BeTrue();
+        entry.Kind.Should().Be("class");
+        entry.StartLine.Should().Be(10);
+        entry.EndLine.Should().Be(50);
+    }
+
+    [Test]
+    public void SymbolEntry_WithKindOnly_HasSpanIsFalse()
+    {
+        var entry = SymbolEntry.WithKindOnly("method");
+
+        entry.HasSpan.Should().BeFalse();
+        entry.Kind.Should().Be("method");
+        entry.StartLine.Should().Be(0);
+        entry.EndLine.Should().Be(0);
+    }
+
+    [Test]
+    public void SetIndexed_WithSymbolEntries_StoresSpans()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var symbolUri = RepoUri.Parse("file:///src/App.cs#symbol=MyClass");
+
+        var symbols = new Dictionary<RepoUri, SymbolEntry>
+        {
+            { symbolUri, new SymbolEntry("class", 10, 80) }
+        }.AsReadOnly();
+
+        registry.SetIndexed(fileUri, lineCount: 100, symbols);
+
+        registry[fileUri].LineCount.Should().Be(100);
+        registry[fileUri].Symbols[symbolUri].StartLine.Should().Be(10);
+        registry[fileUri].Symbols[symbolUri].EndLine.Should().Be(80);
+        registry[fileUri].Symbols[symbolUri].HasSpan.Should().BeTrue();
+    }
+
+    [Test]
+    public void SetIndexed_BackwardCompatible_ConvertsToSymbolEntry()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var symbolUri = RepoUri.Parse("file:///src/App.cs#symbol=MyClass");
+
+        // Use old signature with string dictionary
+        var symbols = new Dictionary<RepoUri, string> { { symbolUri, "type" } };
+        registry.SetIndexed(fileUri, symbols.AsReadOnly());
+
+        // Should have converted to SymbolEntry with no span
+        registry[fileUri].LineCount.Should().Be(0);
+        registry[fileUri].Symbols[symbolUri].Kind.Should().Be("type");
+        registry[fileUri].Symbols[symbolUri].HasSpan.Should().BeFalse();
+    }
+
+    // === LineRange Tests ===
+
+    [Test]
+    public void LineRange_ValidRange_PropertiesCorrect()
+    {
+        var range = new LineRange(10, 20);
+
+        range.Start.Should().Be(10);
+        range.End.Should().Be(20);
+        range.Length.Should().Be(11);
+        range.IsEmpty.Should().BeFalse();
+        range.IsValid.Should().BeTrue();
+    }
+
+    [Test]
+    public void LineRange_Empty_IsEmptyTrue()
+    {
+        var range = LineRange.Empty;
+
+        range.IsEmpty.Should().BeTrue();
+        range.IsValid.Should().BeFalse();
+        range.Length.Should().Be(0);
+    }
+
+    [Test]
+    public void LineRange_InvalidStartGreaterThanEnd_IsEmptyTrue()
+    {
+        var range = new LineRange(20, 10);
+
+        range.IsEmpty.Should().BeTrue();
+        range.IsValid.Should().BeFalse();
+    }
+
+    [Test]
+    public void LineRange_Overlaps_OverlappingRanges_ReturnsTrue()
+    {
+        var range1 = new LineRange(10, 30);
+        var range2 = new LineRange(25, 45);
+
+        range1.Overlaps(range2).Should().BeTrue();
+        range2.Overlaps(range1).Should().BeTrue();
+    }
+
+    [Test]
+    public void LineRange_Overlaps_NonOverlapping_ReturnsFalse()
+    {
+        var range1 = new LineRange(10, 20);
+        var range2 = new LineRange(30, 40);
+
+        range1.Overlaps(range2).Should().BeFalse();
+        range2.Overlaps(range1).Should().BeFalse();
+    }
+
+    [Test]
+    public void LineRange_Overlaps_Adjacent_ReturnsFalse()
+    {
+        var range1 = new LineRange(10, 20);
+        var range2 = new LineRange(21, 30);
+
+        range1.Overlaps(range2).Should().BeFalse();
+    }
+
+    [Test]
+    public void LineRange_Contains_FullyContained_ReturnsTrue()
+    {
+        var outer = new LineRange(10, 50);
+        var inner = new LineRange(20, 40);
+
+        outer.Contains(inner).Should().BeTrue();
+        inner.Contains(outer).Should().BeFalse();
+    }
+
+    [Test]
+    public void LineRange_IsAdjacentTo_AdjacentRanges_ReturnsTrue()
+    {
+        var range1 = new LineRange(10, 20);
+        var range2 = new LineRange(21, 30);
+
+        range1.IsAdjacentTo(range2).Should().BeTrue();
+        range2.IsAdjacentTo(range1).Should().BeTrue();
+    }
+
+    [Test]
+    public void LineRange_WholeFile_CreatesCorrectRange()
+    {
+        var range = LineRange.WholeFile(200);
+
+        range.Start.Should().Be(1);
+        range.End.Should().Be(200);
+        range.Length.Should().Be(200);
+    }
+
+    [Test]
+    public void LineRange_SingleLine_CreatesCorrectRange()
+    {
+        var range = LineRange.SingleLine(42);
+
+        range.Start.Should().Be(42);
+        range.End.Should().Be(42);
+        range.Length.Should().Be(1);
+    }
 }
