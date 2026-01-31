@@ -52,7 +52,7 @@ Plan 1: Foundation + Status
 
 | Plan | Status |
 |------|--------|
-| Foundation + Status | Not started |
+| Foundation + Status | Complete |
 | Query | Not started |
 | Inspect | Not started |
 | Search | Not started |

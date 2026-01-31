@@ -10,6 +10,7 @@ builder.Services.AddRazorComponents()
 builder.Services.AddSingleton<RepoQlConnectionManager>();
 builder.Services.AddSingleton<HostStatusStore>();
 builder.Services.AddSingleton<OperationsService>();
+builder.Services.AddSingleton<INavigationState, NavigationState>();
 builder.Services.AddHostedService<HostStatusService>();
 builder.Services.AddScoped<SqlExecutionService>();
 builder.Services.AddScoped<DocumentExplorerService>();

@@ -1,0 +1,252 @@
+@inject HostStatusStore StatusStore
+@inject RepoQlConnectionManager ConnectionManager
+@implements IDisposable
+
+@* Problem Cards - surfaces issues without clicking anything *@
+@if (_problems.Count > 0)
+{
+    <div class="problem-cards">
+        @foreach (var problem in _problems)
+        {
+            <div class="problem-card @problem.Severity.ToString().ToLowerInvariant()">
+                <div class="problem-icon">@GetIcon(problem.Type)</div>
+                <div class="problem-content">
+                    <div class="problem-title">@problem.Title</div>
+                    <div class="problem-message">@problem.Message</div>
+                    @if (!string.IsNullOrEmpty(problem.Details))
+                    {
+                        <div class="problem-details">@problem.Details</div>
+                    }
+                </div>
+                @if (problem.Actions.Count > 0)
+                {
+                    <div class="problem-actions">
+                        @foreach (var action in problem.Actions)
+                        {
+                            <button class="btn-action" @onclick="action.OnClick">@action.Label</button>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+}
+
+<style>
+    .problem-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .problem-card {
+        display: flex;
+        gap: 1rem;
+        padding: 1rem;
+        border-radius: 10px;
+        border: 1px solid;
+    }
+
+    .problem-card.error {
+        background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+        border-color: #fca5a5;
+    }
+
+    .problem-card.warning {
+        background: linear-gradient(135deg, #fefce8 0%, #fef3c7 100%);
+        border-color: #fde047;
+    }
+
+    .problem-card.info {
+        background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+        border-color: #93c5fd;
+    }
+
+    .problem-icon {
+        font-size: 1.5rem;
+        flex-shrink: 0;
+        width: 2rem;
+        text-align: center;
+    }
+
+    .problem-content {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .problem-title {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #1f2937;
+        margin-bottom: 0.25rem;
+    }
+
+    .problem-message {
+        font-size: 0.9rem;
+        color: #4b5563;
+    }
+
+    .problem-details {
+        font-size: 0.8rem;
+        color: #6b7280;
+        margin-top: 0.35rem;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        word-break: break-all;
+    }
+
+    .problem-actions {
+        display: flex;
+        gap: 0.5rem;
+        align-items: flex-start;
+        flex-shrink: 0;
+    }
+
+    .btn-action {
+        padding: 0.35rem 0.75rem;
+        font-size: 0.85rem;
+        border-radius: 6px;
+        border: 1px solid #d1d5db;
+        background: white;
+        cursor: pointer;
+        font-weight: 500;
+    }
+
+    .btn-action:hover {
+        background: #f3f4f6;
+    }
+</style>
+
+@code {
+    private List<ProblemInfo> _problems = new();
+    private RepoQlConnectionManager.ConnectionState _connectionState = RepoQlConnectionManager.ConnectionState.Create(false, "");
+    private HostStatusSnapshot _hostStatus = HostStatusSnapshot.Offline("");
+    private Timer? _checkTimer;
+
+    protected override void OnInitialized()
+    {
+        _connectionState = ConnectionManager.State;
+        _hostStatus = StatusStore.Snapshot;
+
+        ConnectionManager.StateChanged += OnConnectionChanged;
+        StatusStore.SnapshotChanged += OnStatusChanged;
+        StatusStore.HealthEventAdded += OnHealthEvent;
+
+        // Check for problems periodically
+        _checkTimer = new Timer(_ => InvokeAsync(CheckProblems), null, TimeSpan.Zero, TimeSpan.FromSeconds(5));
+    }
+
+    private void OnConnectionChanged(object? sender, RepoQlConnectionManager.ConnectionState state)
+    {
+        _connectionState = state;
+        _ = InvokeAsync(() =>
+        {
+            CheckProblems();
+            StateHasChanged();
+        });
+    }
+
+    private void OnStatusChanged(object? sender, HostStatusSnapshot status)
+    {
+        _hostStatus = status;
+        _ = InvokeAsync(() =>
+        {
+            CheckProblems();
+            StateHasChanged();
+        });
+    }
+
+    private void OnHealthEvent(object? sender, HealthEvent health)
+    {
+        _ = InvokeAsync(() =>
+        {
+            CheckProblems();
+            StateHasChanged();
+        });
+    }
+
+    private void CheckProblems()
+    {
+        var problems = new List<ProblemInfo>();
+
+        // Connection Lost
+        if (!_connectionState.IsConnected)
+        {
+            problems.Add(new ProblemInfo(
+                ProblemType.ConnectionLost,
+                ProblemSeverity.Error,
+                "Connection Lost",
+                _connectionState.Description,
+                null,
+                new List<ProblemAction>
+                {
+                    new("Reconnect", async () => await TryReconnect())
+                }
+            ));
+        }
+
+        // Check health events for errors (show last 3 warnings/errors)
+        var healthEvents = StatusStore.HealthEvents;
+        var recentErrors = healthEvents
+            .Where(h => h.Type == HealthEventType.HealthEventWarning || h.Type == HealthEventType.HealthEventError)
+            .TakeLast(3)
+            .ToList();
+
+        foreach (var error in recentErrors)
+        {
+            var severity = error.Type == HealthEventType.HealthEventError ? ProblemSeverity.Error : ProblemSeverity.Warning;
+            problems.Add(new ProblemInfo(
+                ProblemType.Error,
+                severity,
+                error.Type == HealthEventType.HealthEventError ? "Error" : "Warning",
+                error.Message,
+                null,
+                new List<ProblemAction>()
+            ));
+        }
+
+        _problems = problems;
+    }
+
+    private async Task TryReconnect()
+    {
+        try
+        {
+            await ConnectionManager.GetClientAsync();
+        }
+        catch
+        {
+            // Ignore - status will update via events
+        }
+    }
+
+    private static string GetIcon(ProblemType type) => type switch
+    {
+        ProblemType.ConnectionLost => "X",
+        ProblemType.StuckFile => "!!",
+        ProblemType.StalledEmbeddings => "~",
+        ProblemType.Error => "!",
+        _ => "?"
+    };
+
+    public void Dispose()
+    {
+        ConnectionManager.StateChanged -= OnConnectionChanged;
+        StatusStore.SnapshotChanged -= OnStatusChanged;
+        StatusStore.HealthEventAdded -= OnHealthEvent;
+        _checkTimer?.Dispose();
+    }
+
+    private enum ProblemType { ConnectionLost, StuckFile, StalledEmbeddings, Error }
+    private enum ProblemSeverity { Info, Warning, Error }
+
+    private record ProblemInfo(
+        ProblemType Type,
+        ProblemSeverity Severity,
+        string Title,
+        string Message,
+        string? Details,
+        List<ProblemAction> Actions);
+
+    private record ProblemAction(string Label, Func<Task> OnClick);
+}
