@@ -22,6 +22,7 @@ builder.Services.AddScoped<ExploreService>();
 builder.Services.AddScoped<SearchService>();
 builder.Services.AddScoped<ReadService>();
 builder.Services.AddScoped<AnnotationsService>();
+builder.Services.AddScoped<ImportsService>();
 
 var app = builder.Build();
 

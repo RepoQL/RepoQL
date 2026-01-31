@@ -58,7 +58,7 @@ Plan 1: Foundation + Status
 | Search | Complete |
 | Read | Complete |
 | Annotations | Complete |
-| Imports | Not started |
+| Imports | Complete |
 | Git | Not started |
 
 *Update this table as plans are completed. Delete completed plans per lifecycle guidance.*

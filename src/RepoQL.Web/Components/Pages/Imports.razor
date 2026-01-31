@@ -1,0 +1,770 @@
+@page "/imports"
+@inject ImportsService ImportsService
+@inject NavigationManager NavigationManager
+@implements IDisposable
+
+<PageTitle>Imports</PageTitle>
+
+<div class="imports-header">
+    <h1>Imports</h1>
+    <button class="btn primary" @onclick="ToggleAddForm" disabled="@_isAdding">
+        @if (_showAddForm)
+        {
+            <text>Cancel</text>
+        }
+        else
+        {
+            <text>+ Add Import</text>
+        }
+    </button>
+</div>
+
+<!-- Add Import Form -->
+@if (_showAddForm)
+{
+    <div class="card add-form">
+        <h3>Add External Repository</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="import-uri">Repository URI</label>
+                <input id="import-uri"
+                       type="text"
+                       class="uri-input"
+                       placeholder="github://owner/repo"
+                       @bind="_newImportUri"
+                       @bind:event="oninput"
+                       @onkeydown="HandleAddKeyDown"
+                       disabled="@_isAdding" />
+            </div>
+            <button class="btn primary" @onclick="AddImportAsync" disabled="@IsAddDisabled">
+                @if (_isAdding)
+                {
+                    <text>Importing...</text>
+                }
+                else
+                {
+                    <text>Start Import</text>
+                }
+            </button>
+        </div>
+        @if (_addValidationError is not null)
+        {
+            <div class="validation-error">@_addValidationError</div>
+        }
+        @if (_addError is not null)
+        {
+            <div class="error-message">@_addError</div>
+        }
+        <p class="form-hint">
+            Format: <code>github://owner/repo</code> — Requires GITHUB_TOKEN or <code>gh auth login</code>
+        </p>
+    </div>
+}
+
+<!-- Import List -->
+<div class="imports-content">
+    @if (_isLoading)
+    {
+        <div class="loading">
+            <div class="loading-spinner"></div>
+            <span>Loading imports...</span>
+        </div>
+    }
+    else if (_imports.Count == 0)
+    {
+        <div class="empty-state">
+            <h3>No External Repositories</h3>
+            <p>Import external repositories to search and analyze their code alongside your project.</p>
+            @if (!_showAddForm)
+            {
+                <button class="btn primary" @onclick="ToggleAddForm">+ Add Import</button>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="imports-list">
+            @foreach (var import in _imports)
+            {
+                <div class="import-card @import.Status.ToString().ToLowerInvariant()">
+                    <div class="import-main">
+                        <div class="import-header">
+                            <span class="status-icon">@GetStatusIcon(import.Status)</span>
+                            <span class="import-uri">@import.Uri</span>
+                            <span class="status-badge @import.Status.ToString().ToLowerInvariant()">
+                                @GetStatusText(import.Status)
+                            </span>
+                        </div>
+
+                        <div class="import-meta">
+                            @if (import.FileCount > 0)
+                            {
+                                <span class="meta-item">@import.FileCount files</span>
+                            }
+                            @if (import.Status == ImportStatus.Indexing)
+                            {
+                                <span class="meta-item progress">
+                                    @import.IndexedCount / @import.FileCount indexed
+                                    @if (import.EmbedPercent > 0)
+                                    {
+                                        <text> | @import.EmbedPercent.ToString("F0")% embedded</text>
+                                    }
+                                </span>
+                            }
+                            else if (import.Status == ImportStatus.Ready && !string.IsNullOrEmpty(import.Languages))
+                            {
+                                <span class="meta-item languages">@TruncateLanguages(import.Languages)</span>
+                            }
+                            @if (import.MountedAt.HasValue)
+                            {
+                                <span class="meta-item date">Imported @FormatDate(import.MountedAt.Value)</span>
+                            }
+                        </div>
+
+                        @if (import.Error is not null)
+                        {
+                            <div class="import-error">@import.Error</div>
+                        }
+                    </div>
+
+                    <div class="import-actions">
+                        @if (import.Status == ImportStatus.Ready)
+                        {
+                            <button class="btn-action" @onclick="() => BrowseImport(import.Uri)" title="Browse files">
+                                Browse
+                            </button>
+                            <button class="btn-action" @onclick="() => ReindexImportAsync(import.Uri)" disabled="@IsOperationInProgress(import.Uri)">
+                                Reindex
+                            </button>
+                        }
+                        @if (import.Status == ImportStatus.Error)
+                        {
+                            <button class="btn-action" @onclick="() => RetryImportAsync(import.Uri)" disabled="@IsOperationInProgress(import.Uri)">
+                                Retry
+                            </button>
+                        }
+                        <button class="btn-action danger" @onclick="() => ConfirmRemove(import)" disabled="@IsOperationInProgress(import.Uri)">
+                            Remove
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<!-- Remove Confirmation Modal -->
+@if (_confirmRemove is not null)
+{
+    <div class="modal-overlay" @onclick="CancelRemove">
+        <div class="modal-content" @onclick:stopPropagation="true">
+            <h3>Remove Import?</h3>
+            <p>Remove <strong>@_confirmRemove.Uri</strong>?</p>
+            <p>This will delete @_confirmRemove.FileCount files from the index.</p>
+            <div class="modal-actions">
+                <button class="btn secondary" @onclick="CancelRemove">Cancel</button>
+                <button class="btn danger" @onclick="RemoveImportAsync" disabled="@_isRemoving">
+                    @if (_isRemoving)
+                    {
+                        <text>Removing...</text>
+                    }
+                    else
+                    {
+                        <text>Remove</text>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .imports-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1.5rem;
+    }
+
+    .imports-header h1 {
+        margin: 0;
+    }
+
+    .add-form {
+        margin-bottom: 1.5rem;
+        padding: 1.5rem;
+    }
+
+    .add-form h3 {
+        margin-top: 0;
+        margin-bottom: 1rem;
+    }
+
+    .form-row {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-end;
+    }
+
+    .form-group {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+
+    .form-group label {
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: #374151;
+    }
+
+    .uri-input {
+        padding: 0.5rem 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 0.9rem;
+    }
+
+    .uri-input:focus {
+        outline: none;
+        border-color: #245dc1;
+        box-shadow: 0 0 0 3px rgba(36, 93, 193, 0.15);
+    }
+
+    .form-hint {
+        margin-top: 0.75rem;
+        font-size: 0.85rem;
+        color: #64748b;
+    }
+
+    .form-hint code {
+        background: #f1f5f9;
+        padding: 0.1rem 0.3rem;
+        border-radius: 3px;
+    }
+
+    .validation-error {
+        margin-top: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        background: #fef2f2;
+        border: 1px solid #fca5a5;
+        border-radius: 6px;
+        color: #991b1b;
+        font-size: 0.9rem;
+    }
+
+    .error-message {
+        margin-top: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        background: #fef2f2;
+        color: #991b1b;
+        border-radius: 6px;
+        font-size: 0.9rem;
+    }
+
+    .imports-content {
+        min-height: 300px;
+    }
+
+    .loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        padding: 3rem;
+        color: #64748b;
+    }
+
+    .loading-spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid #e5e7eb;
+        border-top-color: #245dc1;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .empty-state {
+        text-align: center;
+        padding: 3rem;
+        background: #f8fafc;
+        border-radius: 8px;
+    }
+
+    .empty-state h3 {
+        margin-top: 0;
+        color: #374151;
+    }
+
+    .empty-state p {
+        color: #64748b;
+        margin-bottom: 1.5rem;
+    }
+
+    .imports-list {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .import-card {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1rem 1.25rem;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: white;
+        transition: border-color 0.15s;
+    }
+
+    .import-card:hover {
+        border-color: #93c5fd;
+    }
+
+    .import-card.indexing {
+        border-color: #fde68a;
+        background: #fffbeb;
+    }
+
+    .import-card.error {
+        border-color: #fca5a5;
+        background: #fef2f2;
+    }
+
+    .import-main {
+        flex: 1;
+    }
+
+    .import-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .status-icon {
+        font-weight: bold;
+        width: 1.5rem;
+        text-align: center;
+    }
+
+    .import-card.ready .status-icon { color: #22c55e; }
+    .import-card.indexing .status-icon { color: #f59e0b; }
+    .import-card.error .status-icon { color: #ef4444; }
+    .import-card.pending .status-icon { color: #94a3b8; }
+
+    .import-uri {
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 0.95rem;
+        font-weight: 500;
+        color: #1f2937;
+    }
+
+    .status-badge {
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 500;
+    }
+
+    .status-badge.ready {
+        background: #d1fae5;
+        color: #065f46;
+    }
+
+    .status-badge.indexing {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .status-badge.error {
+        background: #fee2e2;
+        color: #991b1b;
+    }
+
+    .status-badge.pending {
+        background: #e5e7eb;
+        color: #374151;
+    }
+
+    .import-meta {
+        display: flex;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .meta-item {
+        font-size: 0.85rem;
+        color: #64748b;
+    }
+
+    .meta-item.progress {
+        color: #d97706;
+    }
+
+    .meta-item.languages {
+        max-width: 300px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .import-error {
+        margin-top: 0.5rem;
+        font-size: 0.85rem;
+        color: #991b1b;
+    }
+
+    .import-actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-shrink: 0;
+    }
+
+    .btn-action {
+        padding: 0.4rem 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        background: white;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+
+    .btn-action:hover:not(:disabled) {
+        background: #f3f4f6;
+        border-color: #9ca3af;
+    }
+
+    .btn-action:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .btn-action.danger {
+        color: #dc2626;
+        border-color: #fca5a5;
+    }
+
+    .btn-action.danger:hover:not(:disabled) {
+        background: #fef2f2;
+    }
+
+    .btn {
+        padding: 0.5rem 1rem;
+        border-radius: 6px;
+        font-weight: 500;
+        cursor: pointer;
+        border: none;
+    }
+
+    .btn.primary {
+        background: #245dc1;
+        color: white;
+    }
+
+    .btn.primary:hover:not(:disabled) {
+        background: #1e4fa8;
+    }
+
+    .btn.primary:disabled {
+        background: #94a3b8;
+        cursor: not-allowed;
+    }
+
+    .btn.secondary {
+        background: white;
+        color: #374151;
+        border: 1px solid #d1d5db;
+    }
+
+    .btn.secondary:hover {
+        background: #f3f4f6;
+    }
+
+    .btn.danger {
+        background: #dc2626;
+        color: white;
+    }
+
+    .btn.danger:hover:not(:disabled) {
+        background: #b91c1c;
+    }
+
+    /* Modal */
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .modal-content {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 12px;
+        max-width: 400px;
+        width: 90%;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+
+    .modal-content h3 {
+        margin-top: 0;
+    }
+
+    .modal-actions {
+        display: flex;
+        gap: 0.75rem;
+        justify-content: flex-end;
+        margin-top: 1.5rem;
+    }
+
+    @@media (max-width: 768px) {
+        .import-card {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 1rem;
+        }
+
+        .import-actions {
+            justify-content: flex-end;
+        }
+    }
+</style>
+
+@code {
+    private IReadOnlyList<ImportInfo> _imports = [];
+    private bool _isLoading = true;
+    private bool _showAddForm;
+    private string _newImportUri = "";
+    private string? _addValidationError;
+    private string? _addError;
+    private bool _isAdding;
+    private ImportInfo? _confirmRemove;
+    private bool _isRemoving;
+    private HashSet<string> _operationsInProgress = [];
+    private CancellationTokenSource? _loadCts;
+
+    private bool IsAddDisabled => _isAdding || string.IsNullOrWhiteSpace(_newImportUri);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadImportsAsync();
+    }
+
+    private async Task LoadImportsAsync()
+    {
+        _loadCts?.Cancel();
+        _loadCts = new CancellationTokenSource();
+
+        _isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            _imports = await ImportsService.GetImportsAsync(_loadCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Ignored
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ToggleAddForm()
+    {
+        _showAddForm = !_showAddForm;
+        if (!_showAddForm)
+        {
+            _newImportUri = "";
+            _addValidationError = null;
+            _addError = null;
+        }
+    }
+
+    private async Task HandleAddKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await AddImportAsync();
+        }
+    }
+
+    private async Task AddImportAsync()
+    {
+        if (IsAddDisabled)
+            return;
+
+        _addValidationError = ImportsService.ValidateUri(_newImportUri);
+        if (_addValidationError is not null)
+            return;
+
+        _isAdding = true;
+        _addError = null;
+        StateHasChanged();
+
+        try
+        {
+            var result = await ImportsService.ImportAsync(_newImportUri.Trim());
+
+            if (result.Success)
+            {
+                _showAddForm = false;
+                _newImportUri = "";
+                await LoadImportsAsync();
+            }
+            else
+            {
+                _addError = result.Error;
+            }
+        }
+        finally
+        {
+            _isAdding = false;
+            StateHasChanged();
+        }
+    }
+
+    private void ConfirmRemove(ImportInfo import)
+    {
+        _confirmRemove = import;
+    }
+
+    private void CancelRemove()
+    {
+        _confirmRemove = null;
+    }
+
+    private async Task RemoveImportAsync()
+    {
+        if (_confirmRemove is null)
+            return;
+
+        _isRemoving = true;
+        var uri = _confirmRemove.Uri;
+        _operationsInProgress.Add(uri);
+        StateHasChanged();
+
+        try
+        {
+            var result = await ImportsService.RemoveAsync(uri);
+
+            if (result.Success)
+            {
+                _confirmRemove = null;
+                await LoadImportsAsync();
+            }
+        }
+        finally
+        {
+            _isRemoving = false;
+            _operationsInProgress.Remove(uri);
+            StateHasChanged();
+        }
+    }
+
+    private async Task ReindexImportAsync(string uri)
+    {
+        _operationsInProgress.Add(uri);
+        StateHasChanged();
+
+        try
+        {
+            await ImportsService.ReindexAsync(uri);
+            await LoadImportsAsync();
+        }
+        finally
+        {
+            _operationsInProgress.Remove(uri);
+            StateHasChanged();
+        }
+    }
+
+    private async Task RetryImportAsync(string uri)
+    {
+        _operationsInProgress.Add(uri);
+        StateHasChanged();
+
+        try
+        {
+            await ImportsService.ImportAsync(uri);
+            await LoadImportsAsync();
+        }
+        finally
+        {
+            _operationsInProgress.Remove(uri);
+            StateHasChanged();
+        }
+    }
+
+    private void BrowseImport(string uri)
+    {
+        // Navigate to Explorer with this import's scope
+        var encodedUri = Uri.EscapeDataString(uri);
+        NavigationManager.NavigateTo($"/explorer?scope={encodedUri}");
+    }
+
+    private bool IsOperationInProgress(string uri) => _operationsInProgress.Contains(uri);
+
+    private static string GetStatusIcon(ImportStatus status) => status switch
+    {
+        ImportStatus.Ready => "+",
+        ImportStatus.Indexing => "~",
+        ImportStatus.Error => "X",
+        ImportStatus.Pending => "o",
+        _ => "?"
+    };
+
+    private static string GetStatusText(ImportStatus status) => status switch
+    {
+        ImportStatus.Ready => "Ready",
+        ImportStatus.Indexing => "Indexing",
+        ImportStatus.Error => "Error",
+        ImportStatus.Pending => "Pending",
+        _ => "Unknown"
+    };
+
+    private static string TruncateLanguages(string languages)
+    {
+        if (languages.Length <= 50)
+            return languages;
+        return languages[..47] + "...";
+    }
+
+    private static string FormatDate(DateTime dt)
+    {
+        var ago = DateTime.UtcNow - dt;
+        if (ago.TotalMinutes < 1)
+            return "just now";
+        if (ago.TotalHours < 1)
+            return $"{(int)ago.TotalMinutes}m ago";
+        if (ago.TotalDays < 1)
+            return $"{(int)ago.TotalHours}h ago";
+        if (ago.TotalDays < 30)
+            return $"{(int)ago.TotalDays}d ago";
+        return dt.ToString("MMM d, yyyy");
+    }
+
+    public void Dispose()
+    {
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+    }
+}
