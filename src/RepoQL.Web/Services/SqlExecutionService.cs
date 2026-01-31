@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using RepoQL.Contracts;
@@ -29,7 +30,9 @@ internal sealed class SqlExecutionService
             _logger.LogDebug("Executing SQL (limit: {Limit})", rowLimit);
         }
 
+        var sw = Stopwatch.StartNew();
         var response = await client.ExecuteRawQueryAsync(sql, rowLimit: rowLimit, cancellationToken: cancellationToken).ConfigureAwait(false);
+        sw.Stop();
 
         var columns = response.Columns.Select(c => c.Name ?? string.Empty).ToArray();
         var rows = response.Rows
@@ -41,7 +44,8 @@ internal sealed class SqlExecutionService
             Columns: columns,
             Rows: rows,
             RowCount: response.RowCount,
-            Truncated: response.Truncated);
+            Truncated: response.Truncated,
+            Duration: sw.Elapsed);
     }
 
     private static string FormatValue(Value value)
