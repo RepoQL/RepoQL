@@ -476,6 +476,9 @@ public static class RepoIndexerServiceCollectionExtensions
         // Register metrics
         services.AddSingleton<IndexingMetrics>();
 
+        // URI registry - tracks file status, embedding status, and symbols for pattern matching
+        services.AddUriRegistry();
+
         // Unified database - DuckDbDataStore handles all reads and writes
         services.AddSingleton<DuckDbDataStore>(sp =>
         {
@@ -549,7 +552,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IEmbeddingProvider>(),
             sp.GetRequiredService<EmbeddingModeOptions>().Mode,
-            sp.GetService<ILogger<VectorIndexCoordinator>>()));
+            sp.GetService<ILogger<VectorIndexCoordinator>>(),
+            sp.GetService<UriRegistry>()));
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IDocumentCatalog>(),
@@ -594,7 +598,8 @@ public static class RepoIndexerServiceCollectionExtensions
                 sp.GetRequiredService<IVectorIndexCoordinator>(),
                 sp.GetService<IOptions<IndexingEngineOptions>>()?.Value,
                 sp.GetService<ILogger<IndexingEngine>>(),
-                sp.GetRequiredService<IndexingMetrics>());
+                sp.GetRequiredService<IndexingMetrics>(),
+                sp.GetService<UriRegistry>());
 
             // Set static provider for UDFs (they can't use DI)
             var diagnosticsProvider = new RepoQL.Indexing.Indexing.IndexingEngineDiagnosticsProvider(engine);

@@ -30,6 +30,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly EmbeddingMode _embeddingMode;
     private readonly ILogger<VectorIndexCoordinator> _logger;
+    private readonly UriRegistry? _uriRegistry;
     private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
     private long _lastRefreshedEpoch = long.MinValue;
     private volatile bool _needsRefresh;
@@ -46,8 +47,9 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         DuckDbDataStore database,
         IEmbeddingProvider embeddingProvider,
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
-        ILogger<VectorIndexCoordinator>? logger = null)
-        : this(new DuckDbVectorIndexRefresher(database, embeddingProvider, embeddingMode), database, embeddingProvider, embeddingMode, logger)
+        ILogger<VectorIndexCoordinator>? logger = null,
+        UriRegistry? uriRegistry = null)
+        : this(new DuckDbVectorIndexRefresher(database, embeddingProvider, embeddingMode), database, embeddingProvider, embeddingMode, logger, uriRegistry)
     {
     }
 
@@ -56,13 +58,15 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         DuckDbDataStore? db = null,
         IEmbeddingProvider? embeddingProvider = null,
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
-        ILogger<VectorIndexCoordinator>? logger = null)
+        ILogger<VectorIndexCoordinator>? logger = null,
+        UriRegistry? uriRegistry = null)
     {
         _refresher = refresher ?? throw new ArgumentNullException(nameof(refresher));
         _db = db;
         _embeddingProvider = embeddingProvider;
         _embeddingMode = embeddingMode;
         _logger = logger ?? NullLogger<VectorIndexCoordinator>.Instance;
+        _uriRegistry = uriRegistry;
     }
 
     public Task ApplyDeletesAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken)
@@ -101,13 +105,65 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         _logger.LogDebug("Vector index refresh triggered");
         try
         {
-        await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
+            await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
             _logger.LogDebug("Vector index refresh completed");
+
+            // Sync UriRegistry with actual embedding counts from the database
+            SyncRegistryEmbeddingStatus();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Vector index refresh failed");
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Syncs the UriRegistry embedding status from the database after full-text embedding refresh.
+    /// This ensures the registry reflects actual embedding counts including chunked documents.
+    /// </summary>
+    private void SyncRegistryEmbeddingStatus()
+    {
+        if (_uriRegistry is null || _db is null)
+            return;
+
+        try
+        {
+            // Query embedding counts per container (file)
+            const string query = """
+                SELECT
+                    repoql_uri_container(uri) as container_uri,
+                    COUNT(*) as chunk_count
+                FROM document_embedding
+                GROUP BY repoql_uri_container(uri)
+                """;
+
+            var results = _db.Read(query, record =>
+            {
+                var containerUri = record["container_uri"]?.ToString();
+                var chunkCount = Convert.ToInt32(record["chunk_count"]);
+                return (containerUri, chunkCount);
+            });
+
+            foreach (var (containerUriStr, chunkCount) in results)
+            {
+                if (string.IsNullOrEmpty(containerUriStr))
+                    continue;
+
+                if (!RepoUri.TryParse(containerUriStr, out var containerUri))
+                    continue;
+
+                if (_uriRegistry.TryGetValue(containerUri, out _))
+                {
+                    _uriRegistry.SetEmbedded(containerUri, chunkCount);
+                }
+            }
+
+            _logger.LogDebug("UriRegistry embedding status synced from database");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to sync UriRegistry embedding status from database");
         }
     }
 
@@ -315,6 +371,19 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         if (documentEmbeddings.Count > 0)
         {
             _db!.WriteEmbeddings(documentEmbeddings);
+
+            // Update UriRegistry for successfully embedded files
+            if (_uriRegistry is not null)
+            {
+                foreach (var embedding in documentEmbeddings)
+                {
+                    if (RepoUri.TryParse(embedding.Uri, out var uri))
+                    {
+                        // Structure embeddings are chunk 0, count as 1 chunk
+                        _uriRegistry.SetEmbedded(uri, 1);
+                    }
+                }
+            }
         }
 
         return documentEmbeddings.Count;

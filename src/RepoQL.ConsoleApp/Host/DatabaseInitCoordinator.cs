@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
@@ -81,6 +82,17 @@ internal static class DatabaseInitCoordinator
             {
                 store = services.GetRequiredService<DuckDbDataStore>();
                 store.InitializeSchema();
+
+                // Hydrate the UriRegistry from the database
+                var registry = services.GetService<UriRegistry>();
+                if (registry is not null)
+                {
+                    var hydratorLogger = services.GetService<ILogger<UriRegistryHydrator>>();
+                    var hydrator = new UriRegistryHydrator(store, registry, hydratorLogger);
+                    hydrator.Hydrate();
+                    hydrator.HydrateEmbeddings();
+                }
+
                 report.OpenSucceeded = true;
                 report.OpenError = null;
                 report.OpenErrorType = null;

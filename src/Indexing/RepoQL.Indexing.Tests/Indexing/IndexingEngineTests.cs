@@ -908,6 +908,70 @@ public class IndexingEngineTests
         }
     }
 
+    // === UriRegistry Integration Tests ===
+
+    [Test]
+    [Timeout(10_000)]
+    [DisplayName("UriRegistry tracks file status through indexing lifecycle")]
+    public async Task Given_UriRegistry_When_IndexingSucceeds_Then_RegistryShowsIndexedStatus(CancellationToken token)
+    {
+        // Arrange
+        var registry = new UriRegistry();
+        const string fileUriStr = "file:///repo/test-file.md";
+        var fileUri = CreateUri(fileUriStr);
+
+        var committer = A.Fake<IIndexingCommitter>();
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Returns(Task.CompletedTask);
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithUriRegistry(registry);
+            builder.WithCommitter(committer);
+        });
+
+        var item = IndexingTestItemFactory.CreateIndexItem(uri: fileUriStr);
+
+        // Act
+        await context.Engine.IndexItemAsync(item, token);
+
+        // Assert - verify the registry was updated
+        registry.Should().ContainKey(fileUri);
+        registry[fileUri].Status.Should().Be(UriStatus.Indexed);
+        registry[fileUri].IndexedAt.Should().NotBeNull();
+    }
+
+    [Test]
+    [Timeout(10_000)]
+    [DisplayName("UriRegistry tracks failed files with error message")]
+    public async Task Given_UriRegistry_When_IndexingFails_Then_RegistryShowsFailedStatus(CancellationToken token)
+    {
+        // Arrange
+        var registry = new UriRegistry();
+        const string fileUriStr = "file:///repo/failing-file.md";
+        var fileUri = CreateUri(fileUriStr);
+
+        var classifier = A.Fake<ClassificationPipeline>();
+        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Throws(new InvalidOperationException("Test classification failure"));
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithUriRegistry(registry);
+            builder.WithClassifier(classifier);
+        });
+
+        var item = IndexingTestItemFactory.CreateIndexItem(uri: fileUriStr);
+
+        // Act
+        await context.Engine.IndexItemAsync(item, token);
+
+        // Assert - verify the registry was updated with failure
+        registry.Should().ContainKey(fileUri);
+        registry[fileUri].Status.Should().Be(UriStatus.Failed);
+        registry[fileUri].Error.Should().Contain("classification");
+    }
+
     private static AnalysisHarness CreateAnalysisHarness(bool gateParsing = false) =>
         new(gateParsing);
 

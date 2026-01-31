@@ -46,6 +46,7 @@ public sealed class IndexingEngineTestBuilder
     private IVectorIndexCoordinator? _vectorCoordinator;
     private IndexingEngineOptions? _options;
     private ILogger<IndexingEngine>? _logger;
+    private UriRegistry? _uriRegistry;
 
     public IndexingEngineTestBuilder WithDataStore(DuckDbDataStore db)
     {
@@ -125,6 +126,12 @@ public sealed class IndexingEngineTestBuilder
         return this;
     }
 
+    public IndexingEngineTestBuilder WithUriRegistry(UriRegistry registry)
+    {
+        _uriRegistry = registry;
+        return this;
+    }
+
     internal IndexingEngineTestContext Build()
     {
         var classifier = _classifier ?? A.Fake<ClassificationPipeline>();
@@ -191,6 +198,8 @@ public sealed class IndexingEngineTestBuilder
         };
         var logger = _logger ?? TestLogging.CreateLogger<IndexingEngine>();
 
+        var uriRegistry = _uriRegistry;
+
         var engine = new IndexingEngine(
             db: _dataStore,
             filter: filter,
@@ -204,7 +213,8 @@ public sealed class IndexingEngineTestBuilder
             artifactPruner: artifactPruner,
             vectorCoordinator: vectorCoordinator,
             options: options,
-            logger: logger);
+            logger: logger,
+            uriRegistry: uriRegistry);
 
         return new IndexingEngineTestContext(
             engine,
@@ -220,7 +230,8 @@ public sealed class IndexingEngineTestBuilder
             artifactPruner,
             vectorCoordinator,
             options,
-            logger);
+            logger,
+            uriRegistry);
     }
 }
 
@@ -240,7 +251,8 @@ public sealed class IndexingEngineTestContext
         IArtifactPruner artifactPruner,
         IVectorIndexCoordinator vectorCoordinator,
         IndexingEngineOptions options,
-        ILogger<IndexingEngine> logger)
+        ILogger<IndexingEngine> logger,
+        UriRegistry? uriRegistry)
     {
         Engine = engine;
         Classifier = classifier;
@@ -256,6 +268,7 @@ public sealed class IndexingEngineTestContext
         VectorCoordinator = vectorCoordinator;
         Options = options;
         Logger = logger;
+        UriRegistry = uriRegistry;
     }
 
     public IndexingEngine Engine { get; }
@@ -272,4 +285,5 @@ public sealed class IndexingEngineTestContext
     public IVectorIndexCoordinator VectorCoordinator { get; }
     public IndexingEngineOptions Options { get; }
     public ILogger<IndexingEngine> Logger { get; }
+    public UriRegistry? UriRegistry { get; }
 }
