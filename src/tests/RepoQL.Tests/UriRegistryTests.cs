@@ -131,6 +131,181 @@ internal class UriRegistryTests
         matches.Single().AbsoluteUri.Should().Contain("MyClassHelper");
     }
 
+    // === Line Range Globbing Tests ===
+
+    [Test]
+    public void MatchPattern_LineRangeExclusion_SubtractsFromSymbol()
+    {
+        var registry = CreateTestRegistry();
+
+        // MyClass is lines 10-50. Exclude lines 10-15, should return partial range.
+        var matches = registry.MatchPattern("file:///src/App.cs#symbol=MyClass;!#line=10,15").ToList();
+
+        matches.Should().HaveCount(1);
+        // Remaining should be lines 16-50
+        matches.Single().AbsoluteUri.Should().Contain("#line=16,50");
+    }
+
+    [Test]
+    public void MatchPattern_LineRangeExclusion_SplitsSymbol()
+    {
+        var registry = CreateTestRegistry();
+
+        // MyClass is lines 10-50. Exclude lines 25-30, should split into two ranges.
+        var matches = registry.MatchPattern("file:///src/App.cs#symbol=MyClass;!#line=25,30").ToList();
+
+        matches.Should().HaveCount(2);
+        // Should have lines 10-24 and 31-50
+        matches.Should().Contain(m => m.AbsoluteUri.Contains("#line=10,24"));
+        matches.Should().Contain(m => m.AbsoluteUri.Contains("#line=31,50"));
+    }
+
+    [Test]
+    public void MatchPattern_LineRangeExclusion_NoOverlap_ReturnsUnchanged()
+    {
+        var registry = CreateTestRegistry();
+
+        // MyClass is lines 10-50. Exclude lines 60-70, no overlap.
+        var matches = registry.MatchPattern("file:///src/App.cs#symbol=MyClass;!#line=60,70").ToList();
+
+        matches.Should().HaveCount(1);
+        // Should return the symbol unchanged since exclusion doesn't overlap
+        matches.Single().AbsoluteUri.Should().Contain("#symbol=MyClass");
+    }
+
+    [Test]
+    public void MatchPattern_LineRangeExclusion_FullCover_ReturnsNothing()
+    {
+        var registry = CreateTestRegistry();
+
+        // MyClass is lines 10-50. Exclude lines 1-100, fully covers.
+        var matches = registry.MatchPattern("file:///src/App.cs#symbol=MyClass;!#line=1,100").ToList();
+
+        matches.Should().BeEmpty();
+    }
+
+    [Test]
+    public void MatchPattern_AllSymbolsMinusHeader_ReturnsPartialRanges()
+    {
+        var registry = CreateTestRegistry();
+
+        // Get all symbols, exclude first 12 lines (header region)
+        // MyClass (10-50) should become partial, MyClassHelper (55-90) unchanged
+        var matches = registry.MatchPattern("file:///src/App.cs#symbol=*;!#line=1,12").ToList();
+
+        matches.Should().HaveCount(2);
+        // MyClass should be trimmed to 13-50
+        matches.Should().Contain(m => m.AbsoluteUri.Contains("#line=13,50"));
+        // MyClassHelper should be unchanged (55-90 - exact match returns symbol)
+        matches.Should().Contain(m => m.AbsoluteUri.Contains("#symbol=MyClassHelper"));
+    }
+
+    [Test]
+    public void MatchPattern_WholeFile_ReturnsFileUri()
+    {
+        var registry = CreateTestRegistry();
+
+        // README.md is 20 lines, no symbols. Matching it should return file URI.
+        var matches = registry.MatchPattern("file:///README.md").ToList();
+
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Be("file:///README.md");
+    }
+
+    [Test]
+    public void MatchPattern_ExplicitLineRange_ReturnsLineRangeUri()
+    {
+        var registry = CreateTestRegistry();
+
+        // Request specific line range
+        var matches = registry.MatchPattern("file:///src/App.cs#line=5,15").ToList();
+
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Contain("#line=5,15");
+    }
+
+    // === UriSimplifier Tests ===
+
+    [Test]
+    public void UriSimplifier_WholeFile_ReturnsFileUri()
+    {
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var entry = new FileEntry(
+            Status: UriStatus.Indexed,
+            IndexedAt: DateTime.UtcNow,
+            Error: null,
+            EmbeddingStatus: EmbeddingStatus.Pending,
+            EmbeddedChunkCount: 0,
+            EmbeddedAt: null,
+            LineCount: 100,
+            Symbols: new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+
+        var result = UriSimplifier.Simplify(fileUri, new LineRange(1, 100), entry);
+
+        result.AbsoluteUri.Should().Be("file:///src/App.cs");
+    }
+
+    [Test]
+    public void UriSimplifier_ExactSymbolMatch_ReturnsSymbolUri()
+    {
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var symbolUri = RepoUri.Parse("file:///src/App.cs#symbol=MyClass");
+        var entry = new FileEntry(
+            Status: UriStatus.Indexed,
+            IndexedAt: DateTime.UtcNow,
+            Error: null,
+            EmbeddingStatus: EmbeddingStatus.Pending,
+            EmbeddedChunkCount: 0,
+            EmbeddedAt: null,
+            LineCount: 100,
+            Symbols: new Dictionary<RepoUri, SymbolEntry>
+            {
+                { symbolUri, new SymbolEntry("class", 10, 50) }
+            }.AsReadOnly());
+
+        var result = UriSimplifier.Simplify(fileUri, new LineRange(10, 50), entry);
+
+        result.AbsoluteUri.Should().Be(symbolUri.AbsoluteUri);
+    }
+
+    [Test]
+    public void UriSimplifier_PartialRange_ReturnsLineRangeUri()
+    {
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var entry = new FileEntry(
+            Status: UriStatus.Indexed,
+            IndexedAt: DateTime.UtcNow,
+            Error: null,
+            EmbeddingStatus: EmbeddingStatus.Pending,
+            EmbeddedChunkCount: 0,
+            EmbeddedAt: null,
+            LineCount: 100,
+            Symbols: new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+
+        var result = UriSimplifier.Simplify(fileUri, new LineRange(25, 75), entry);
+
+        result.AbsoluteUri.Should().Be("file:///src/App.cs#line=25,75");
+    }
+
+    [Test]
+    public void UriSimplifier_InvalidRange_ReturnsFileUri()
+    {
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var entry = new FileEntry(
+            Status: UriStatus.Indexed,
+            IndexedAt: DateTime.UtcNow,
+            Error: null,
+            EmbeddingStatus: EmbeddingStatus.Pending,
+            EmbeddedChunkCount: 0,
+            EmbeddedAt: null,
+            LineCount: 100,
+            Symbols: new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+
+        var result = UriSimplifier.Simplify(fileUri, LineRange.Empty, entry);
+
+        result.AbsoluteUri.Should().Be("file:///src/App.cs");
+    }
+
     // === Scope Readiness ===
 
     [Test]
@@ -215,27 +390,27 @@ internal class UriRegistryTests
     {
         var registry = new UriRegistry();
 
-        // File 1: App.cs with 2 symbols
+        // File 1: App.cs with 2 symbols (100 lines)
         var appUri = RepoUri.Parse("file:///src/App.cs");
         var symbol1 = RepoUri.Parse("file:///src/App.cs#symbol=MyClass");
         var symbol2 = RepoUri.Parse("file:///src/App.cs#symbol=MyClassHelper");
-        registry.SetIndexed(appUri, new Dictionary<RepoUri, string>
+        registry.SetIndexed(appUri, lineCount: 100, new Dictionary<RepoUri, SymbolEntry>
         {
-            { symbol1, "type" },
-            { symbol2, "type" }
+            { symbol1, new SymbolEntry("type", 10, 50) },
+            { symbol2, new SymbolEntry("type", 55, 90) }
         }.AsReadOnly());
 
-        // File 2: Utils.cs with 1 symbol
+        // File 2: Utils.cs with 1 symbol (80 lines)
         var utilsUri = RepoUri.Parse("file:///src/Utils.cs");
         var symbol3 = RepoUri.Parse("file:///src/Utils.cs#symbol=StringUtils");
-        registry.SetIndexed(utilsUri, new Dictionary<RepoUri, string>
+        registry.SetIndexed(utilsUri, lineCount: 80, new Dictionary<RepoUri, SymbolEntry>
         {
-            { symbol3, "type" }
+            { symbol3, new SymbolEntry("type", 5, 75) }
         }.AsReadOnly());
 
-        // File 3: README.md with no symbols
+        // File 3: README.md with no symbols (20 lines)
         var readmeUri = RepoUri.Parse("file:///README.md");
-        registry.SetIndexed(readmeUri, new Dictionary<RepoUri, string>().AsReadOnly());
+        registry.SetIndexed(readmeUri, lineCount: 20, new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
 
         return registry;
     }

@@ -14,14 +14,20 @@ namespace RepoQL.Contracts;
 public static class UriRegistryExtensions
 {
     /// <summary>
-    /// Matches URIs in the registry against a pattern specification.
+    /// Matches URIs in the registry against a pattern specification using line-range-based matching.
     /// Supports compound patterns (semicolon-delimited), negations (!prefix),
     /// and full wildcards in symbol fragments (Get*, *Handler).
+    ///
+    /// Pattern matching flow:
+    /// 1. Parse pattern into positives and negatives
+    /// 2. For each matching file, expand entities to line ranges
+    /// 3. Union positive ranges, subtract negative ranges
+    /// 4. Simplify results to canonical URIs (file, symbol, or line range)
     /// </summary>
     /// <param name="registry">The URI registry.</param>
     /// <param name="pattern">Pattern specification.</param>
     /// <param name="ignoreCase">Whether to ignore case (default true).</param>
-    /// <returns>Matching URIs (both files and symbols).</returns>
+    /// <returns>Matching URIs (files, symbols, or line ranges).</returns>
     public static IEnumerable<RepoUri> MatchPattern(
         this UriRegistry registry,
         string? pattern,
@@ -36,30 +42,187 @@ public static class UriRegistryExtensions
         }
 
         var (positives, negatives) = UriPatternMatcher.ParsePatterns(pattern);
-        var hasFragmentPattern = pattern.Contains('#', StringComparison.Ordinal);
+        var parsedPositives = positives.Select(ParsePatternComponents).ToArray();
+        var parsedNegatives = negatives.Select(ParsePatternComponents).ToArray();
 
-        foreach (var (fileUri, entry) in registry)
+        // Snapshot the registry to avoid mid-operation updates
+        var snapshot = registry.ToList();
+
+        foreach (var (fileUri, entry) in snapshot)
         {
-            // If pattern has no fragment, check if file matches
-            if (!hasFragmentPattern)
+            // Collect positive ranges for this file
+            var positiveRanges = new List<LineRange>();
+            foreach (var parsed in parsedPositives)
             {
-                if (MatchesPatternSet(fileUri.AbsoluteUri, positives, negatives, ignoreCase))
-                {
-                    yield return fileUri;
-                }
+                if (!MatchesContainer(fileUri.AbsoluteUri, parsed.Container, ignoreCase))
+                    continue;
+
+                var ranges = ExpandToLineRanges(fileUri, entry, parsed.Fragment, ignoreCase);
+                positiveRanges.AddRange(ranges);
             }
-            else
+
+            // If no positive patterns specified but negatives exist, start with whole file
+            if (positives.Length == 0 && negatives.Length > 0)
             {
-                // Pattern has fragment, check symbols
-                foreach (var (symbolUri, _) in entry.Symbols)
-                {
-                    if (MatchesPatternSet(symbolUri.AbsoluteUri, positives, negatives, ignoreCase))
-                    {
-                        yield return symbolUri;
-                    }
-                }
+                positiveRanges.Add(LineRange.WholeFile(entry.LineCount));
+            }
+
+            if (positiveRanges.Count == 0)
+                continue;
+
+            // Union positive ranges
+            var unionedRanges = positiveRanges.Union();
+
+            // Collect negative ranges for this file
+            var negativeRanges = new List<LineRange>();
+            foreach (var parsed in parsedNegatives)
+            {
+                // Check if negative applies to this file
+                if (!string.IsNullOrEmpty(parsed.Container) &&
+                    !MatchesContainer(fileUri.AbsoluteUri, parsed.Container, ignoreCase))
+                    continue;
+
+                var ranges = ExpandToLineRanges(fileUri, entry, parsed.Fragment, ignoreCase);
+                negativeRanges.AddRange(ranges);
+            }
+
+            // Subtract negative ranges
+            var finalRanges = unionedRanges.Subtract(negativeRanges.Union());
+
+            // Simplify and yield results
+            foreach (var range in finalRanges)
+            {
+                yield return UriSimplifier.Simplify(fileUri, range, entry);
             }
         }
+    }
+
+    /// <summary>
+    /// Parsed components of a pattern (container and fragment).
+    /// </summary>
+    private readonly record struct ParsedPattern(string Container, string? Fragment);
+
+    /// <summary>
+    /// Parses a pattern into container and fragment components.
+    /// </summary>
+    private static ParsedPattern ParsePatternComponents(string pattern)
+    {
+        var hashIndex = pattern.IndexOf('#', StringComparison.Ordinal);
+        if (hashIndex < 0)
+            return new ParsedPattern(pattern, null);
+
+        var container = hashIndex > 0 ? pattern[..hashIndex] : "";
+        var fragment = pattern[(hashIndex + 1)..];
+        return new ParsedPattern(container, fragment);
+    }
+
+    /// <summary>
+    /// Checks if a URI matches a container pattern.
+    /// </summary>
+    private static bool MatchesContainer(string uri, string containerPattern, bool ignoreCase)
+    {
+        if (string.IsNullOrEmpty(containerPattern))
+            return true;
+
+        return UriPatternMatcher.Matches(uri, containerPattern, ignoreCase) == true;
+    }
+
+    /// <summary>
+    /// Expands a fragment pattern to line ranges for a file.
+    /// </summary>
+    private static IEnumerable<LineRange> ExpandToLineRanges(
+        RepoUri fileUri,
+        FileEntry entry,
+        string? fragment,
+        bool ignoreCase)
+    {
+        // No fragment = whole file
+        if (string.IsNullOrEmpty(fragment))
+        {
+            if (entry.LineCount > 0)
+                yield return LineRange.WholeFile(entry.LineCount);
+            else
+                yield return new LineRange(1, int.MaxValue); // Unknown line count, use max
+            yield break;
+        }
+
+        // Parse fragment
+        var fragmentParams = ParseFragmentParams(fragment);
+
+        // Handle line= fragment
+        if (fragmentParams.TryGetValue("line", out var lineValue))
+        {
+            var range = ParseLineRange(lineValue);
+            if (range.IsValid)
+                yield return range;
+            yield break;
+        }
+
+        // Handle symbol= fragment
+        if (fragmentParams.TryGetValue("symbol", out var symbolPattern))
+        {
+            foreach (var (symbolUri, symbolEntry) in entry.Symbols)
+            {
+                // Skip symbols without spans
+                if (!symbolEntry.HasSpan)
+                    continue;
+
+                // Match symbol name against pattern
+                var symbolName = ExtractSymbolName(symbolUri);
+                if (MatchesWithWildcard(symbolName, symbolPattern, ignoreCase))
+                {
+                    yield return new LineRange(symbolEntry.StartLine, symbolEntry.EndLine);
+                }
+            }
+            yield break;
+        }
+
+        // Unknown fragment type - no ranges
+    }
+
+    /// <summary>
+    /// Extracts the symbol name from a symbol URI fragment.
+    /// </summary>
+    private static string ExtractSymbolName(RepoUri symbolUri)
+    {
+        var fragment = symbolUri.Fragment;
+        if (string.IsNullOrEmpty(fragment))
+            return string.Empty;
+
+        // Remove leading #
+        if (fragment.StartsWith('#'))
+            fragment = fragment[1..];
+
+        // Parse symbol= value
+        const string prefix = "symbol=";
+        var symbolIndex = fragment.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+        if (symbolIndex < 0)
+            return fragment;
+
+        var valueStart = symbolIndex + prefix.Length;
+        var valueEnd = fragment.IndexOf('&', valueStart);
+        return valueEnd < 0
+            ? Uri.UnescapeDataString(fragment[valueStart..])
+            : Uri.UnescapeDataString(fragment[valueStart..valueEnd]);
+    }
+
+    /// <summary>
+    /// Parses a line range value (e.g., "10,20" or "10").
+    /// </summary>
+    private static LineRange ParseLineRange(string value)
+    {
+        var parts = value.Split(',');
+        if (parts.Length == 1 && int.TryParse(parts[0], out var singleLine))
+            return LineRange.SingleLine(singleLine);
+
+        if (parts.Length == 2 &&
+            int.TryParse(parts[0], out var start) &&
+            int.TryParse(parts[1], out var end))
+        {
+            return new LineRange(start, end);
+        }
+
+        return LineRange.Empty;
     }
 
     /// <summary>
