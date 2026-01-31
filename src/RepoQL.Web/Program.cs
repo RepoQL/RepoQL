@@ -20,6 +20,7 @@ builder.Services.AddScoped<StatsService>();
 builder.Services.AddScoped<FormatPreviewService>();
 builder.Services.AddScoped<ExploreService>();
 builder.Services.AddScoped<SearchService>();
+builder.Services.AddScoped<ReadService>();
 
 var app = builder.Build();
 
