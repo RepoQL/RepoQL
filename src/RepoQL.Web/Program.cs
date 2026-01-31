@@ -14,6 +14,7 @@ builder.Services.AddSingleton<INavigationState, NavigationState>();
 builder.Services.AddHostedService<HostStatusService>();
 builder.Services.AddScoped<SqlExecutionService>();
 builder.Services.AddScoped<DocumentExplorerService>();
+builder.Services.AddScoped<InspectService>();
 builder.Services.AddMudServices();
 builder.Services.AddScoped<StatsService>();
 builder.Services.AddScoped<FormatPreviewService>();

@@ -54,7 +54,7 @@ Plan 1: Foundation + Status
 |------|--------|
 | Foundation + Status | Complete |
 | Query | Complete |
-| Inspect | Not started |
+| Inspect | Complete |
 | Search | Not started |
 | Read | Not started |
 | Annotations | Not started |
