@@ -149,6 +149,7 @@ public partial class IndexingEngine : IAsyncDisposable
     private readonly object _analysisLock = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingAnalysis = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingStructureEmbeddings = new();  // Separate from analysis - includes read-only items
+    private readonly ConcurrentDictionary<string, IndexItemOptions> _requeueRequested = new(StringComparer.OrdinalIgnoreCase);
     private readonly Channel<long> _analysisEpochChannel = Channel.CreateUnbounded<long>(new UnboundedChannelOptions
     {
         AllowSynchronousContinuations = false,
@@ -253,7 +254,10 @@ public partial class IndexingEngine : IAsyncDisposable
         {
             var enqueued = await IndexerQueue.EnqueueAsync(indexItem, cancellationToken).ConfigureAwait(false);
             if (!enqueued)
+            {
+                MarkRequeue(indexItem);
                 return false;
+            }
 
             _epochTracker.Increment(epoch);
             incremented = true;
@@ -267,6 +271,47 @@ public partial class IndexingEngine : IAsyncDisposable
             }
             throw;
         }
+    }
+
+    private static string GetQueueKey(RepoUri uri)
+        => RepoUri.Normalize(uri.Container.AbsoluteUri);
+
+    private static IndexItemOptions MergeOptions(IndexItemOptions existing, IndexItemOptions incoming)
+    {
+        if (existing == IndexItemOptions.Always || incoming == IndexItemOptions.Always)
+            return IndexItemOptions.Always;
+        return existing & incoming;
+    }
+
+    private void MarkRequeue(IndexItem item)
+    {
+        var key = GetQueueKey(item.Uri);
+        _requeueRequested.AddOrUpdate(
+            key,
+            item.Options,
+            (_, existing) => MergeOptions(existing, item.Options));
+    }
+
+    private void TryRequeue(IndexItem completedItem)
+    {
+        var key = GetQueueKey(completedItem.Uri);
+        if (!_requeueRequested.TryRemove(key, out var options))
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await EnqueueIndexItemAsync(new IndexItem(completedItem.RawArtifact, options), Shutdown.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex)
+            {
+                Logger.LogDebug(ex, "Failed to requeue {Uri} after dedupe drop.", completedItem.Uri);
+            }
+        });
     }
 
     private WorkQueue<IndexItem> IndexerQueue { get; }
@@ -637,9 +682,13 @@ public partial class IndexingEngine : IAsyncDisposable
             });
             Metrics?.RecordFileProcessed(mime, status, fileSize, overallTimer.Elapsed.TotalMilliseconds);
             AddEpochTag(item.Epoch, "index.result", status);
-            var epochBecameIdle = _epochTracker.Decrement(item.Epoch);
-            if (epochBecameIdle && State == IndexingState.AllIdle)
-                HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
+            if (item.TryMarkEpochComplete())
+            {
+                var epochBecameIdle = _epochTracker.Decrement(item.Epoch);
+                if (epochBecameIdle && State == IndexingState.AllIdle)
+                    HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
+            }
+            TryRequeue(item);
         }
     }
 
@@ -1222,16 +1271,19 @@ public partial class IndexingEngine : IAsyncDisposable
         // CRITICAL: Decrement epoch counter to prevent epoch imbalance (FM-003)
         // The item was incremented when enqueued, and normally decremented in IndexItemAsync's finally block.
         // Since IndexItemAsync was cancelled mid-processing, we must decrement here.
-        var epochBecameIdle = _epochTracker.Decrement(item.Epoch);
-        if (epochBecameIdle && State == IndexingState.AllIdle)
+        if (item.TryMarkEpochComplete())
         {
-            try
+            var epochBecameIdle = _epochTracker.Decrement(item.Epoch);
+            if (epochBecameIdle && State == IndexingState.AllIdle)
             {
-                HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "HotPathIdle handler failed for epoch {Epoch} during timeout handling", item.Epoch);
+                try
+                {
+                    HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "HotPathIdle handler failed for epoch {Epoch} during timeout handling", item.Epoch);
+                }
             }
         }
 
@@ -1429,15 +1481,15 @@ public partial class IndexingEngine : IAsyncDisposable
                 return false;
             var xKey = RepoUri.Normalize(x.Uri.Container.AbsoluteUri);
             var yKey = RepoUri.Normalize(y.Uri.Container.AbsoluteUri);
-            return StringComparer.OrdinalIgnoreCase.Equals(xKey, yKey) && x.Options == y.Options;
+            return StringComparer.OrdinalIgnoreCase.Equals(xKey, yKey);
         }
 
         public int GetHashCode(IndexItem obj)
         {
             if (obj is null)
                 return 0;
-            var key = RepoUri.Normalize(obj.Uri.Container.AbsoluteUri).ToLowerInvariant();
-            return HashCode.Combine(key, obj.Options);
+            var key = RepoUri.Normalize(obj.Uri.Container.AbsoluteUri);
+            return StringComparer.OrdinalIgnoreCase.GetHashCode(key);
         }
     }
 

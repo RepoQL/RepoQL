@@ -1129,8 +1129,8 @@ public sealed class DuckDbDataStore : IDisposable
         try
         {
             using var cmd = _connection.CreateCommand();
-            cmd.CommandText = "SELECT value FROM metadata WHERE key = $key";
-            cmd.Parameters.Add(new DuckDBParameter("key", key));
+            cmd.CommandText = "SELECT value FROM metadata WHERE key = $1";
+            cmd.Parameters.Add(new DuckDBParameter { Value = key });
             return cmd.ExecuteScalar() as string;
         }
         catch (DuckDBException ex) when (IsMissingMetadataTable(ex))
@@ -1150,10 +1150,10 @@ public sealed class DuckDbDataStore : IDisposable
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = @"
-            INSERT INTO metadata (key, value, updated_at) VALUES ($key, $value, now())
-            ON CONFLICT (key) DO UPDATE SET value = $value, updated_at = now()";
-        cmd.Parameters.Add(new DuckDBParameter("key", key));
-        cmd.Parameters.Add(new DuckDBParameter("value", value));
+            INSERT INTO metadata (key, value, updated_at) VALUES ($1, $2, now())
+            ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()";
+        cmd.Parameters.Add(new DuckDBParameter { Value = key });
+        cmd.Parameters.Add(new DuckDBParameter { Value = value });
         cmd.ExecuteNonQuery();
     }
 
@@ -1201,71 +1201,81 @@ public sealed class DuckDbDataStore : IDisposable
     }
 
     /// <summary>
-    /// Deletes all artifacts whose URI starts with the given prefix.
+    /// Deletes all documents (nodes and their artifacts) whose URI starts with the given prefix.
     /// Used to invalidate embedded documentation cache on version change.
     /// </summary>
     private int DeleteArtifactsByUriPrefix(string uriPrefix)
     {
-        // Get all artifact IDs matching the prefix
+        // Get all document node IDs and their artifact IDs matching the URI prefix
+        // URI is stored on node table; artifacts are content-addressed blobs referenced by nodes
         using var selectCmd = _connection.CreateCommand();
-        selectCmd.CommandText = "SELECT id FROM artifact WHERE uri LIKE $prefix || '%'";
-        selectCmd.Parameters.Add(new DuckDBParameter("prefix", uriPrefix));
+        selectCmd.CommandText = @"
+            SELECT id, artifact_id
+            FROM node
+            WHERE uri LIKE $1 || '%' AND kind = 'document'";
+        selectCmd.Parameters.Add(new DuckDBParameter { Value = uriPrefix });
 
-        var idsToDelete = new List<long>();
+        var nodesToDelete = new List<(Guid NodeId, Guid? ArtifactId)>();
         using (var reader = selectCmd.ExecuteReader())
         {
             while (reader.Read())
             {
-                idsToDelete.Add(reader.GetInt64(0));
+                var nodeId = reader.GetGuid(0);
+                var artifactId = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
+                nodesToDelete.Add((nodeId, artifactId));
             }
         }
 
-        if (idsToDelete.Count == 0)
+        if (nodesToDelete.Count == 0)
             return 0;
 
         // Delete in batches to avoid parameter limits
-        foreach (var id in idsToDelete)
+        foreach (var (nodeId, artifactId) in nodesToDelete)
         {
-            // Delete embeddings first (foreign key constraint)
+            // Delete embeddings (doc_id references the document node)
             using var deleteEmbedCmd = _connection.CreateCommand();
-            deleteEmbedCmd.CommandText = "DELETE FROM document_embedding WHERE artifact_id = $id";
-            deleteEmbedCmd.Parameters.Add(new DuckDBParameter("id", id));
+            deleteEmbedCmd.CommandText = "DELETE FROM document_embedding WHERE doc_id = $1";
+            deleteEmbedCmd.Parameters.Add(new DuckDBParameter { Value = nodeId });
             deleteEmbedCmd.ExecuteNonQuery();
 
-            // Delete annotations
+            // Delete annotations (scope_document_id references the document node)
             using var deleteAnnotCmd = _connection.CreateCommand();
-            deleteAnnotCmd.CommandText = "DELETE FROM annotation WHERE artifact_id = $id";
-            deleteAnnotCmd.Parameters.Add(new DuckDBParameter("id", id));
+            deleteAnnotCmd.CommandText = "DELETE FROM annotation WHERE scope_document_id = $1";
+            deleteAnnotCmd.Parameters.Add(new DuckDBParameter { Value = nodeId });
             deleteAnnotCmd.ExecuteNonQuery();
 
-            // Delete spans
+            // Delete spans (document_id references the document node)
             using var deleteSpanCmd = _connection.CreateCommand();
-            deleteSpanCmd.CommandText = "DELETE FROM span WHERE node_id IN (SELECT id FROM node WHERE artifact_id = $id)";
-            deleteSpanCmd.Parameters.Add(new DuckDBParameter("id", id));
+            deleteSpanCmd.CommandText = "DELETE FROM span WHERE document_id = $1";
+            deleteSpanCmd.Parameters.Add(new DuckDBParameter { Value = nodeId });
             deleteSpanCmd.ExecuteNonQuery();
 
-            // Delete edges (both directions)
+            // Delete edges involving any nodes from this document
             using var deleteEdgeCmd = _connection.CreateCommand();
             deleteEdgeCmd.CommandText = @"
-                DELETE FROM edge WHERE source_node_id IN (SELECT id FROM node WHERE artifact_id = $id)
-                   OR destination_node_id IN (SELECT id FROM node WHERE artifact_id = $id)";
-            deleteEdgeCmd.Parameters.Add(new DuckDBParameter("id", id));
+                DELETE FROM edge
+                WHERE source_node_id IN (SELECT id FROM node WHERE artifact_id = $1)
+                   OR destination_node_id IN (SELECT id FROM node WHERE artifact_id = $1)";
+            deleteEdgeCmd.Parameters.Add(new DuckDBParameter { Value = artifactId ?? Guid.Empty });
             deleteEdgeCmd.ExecuteNonQuery();
 
-            // Delete nodes
-            using var deleteNodeCmd = _connection.CreateCommand();
-            deleteNodeCmd.CommandText = "DELETE FROM node WHERE artifact_id = $id";
-            deleteNodeCmd.Parameters.Add(new DuckDBParameter("id", id));
-            deleteNodeCmd.ExecuteNonQuery();
+            // Delete all nodes referencing this artifact (includes child nodes)
+            if (artifactId.HasValue)
+            {
+                using var deleteNodeCmd = _connection.CreateCommand();
+                deleteNodeCmd.CommandText = "DELETE FROM node WHERE artifact_id = $1";
+                deleteNodeCmd.Parameters.Add(new DuckDBParameter { Value = artifactId.Value });
+                deleteNodeCmd.ExecuteNonQuery();
 
-            // Delete artifact
-            using var deleteArtCmd = _connection.CreateCommand();
-            deleteArtCmd.CommandText = "DELETE FROM artifact WHERE id = $id";
-            deleteArtCmd.Parameters.Add(new DuckDBParameter("id", id));
-            deleteArtCmd.ExecuteNonQuery();
+                // Delete the artifact itself
+                using var deleteArtCmd = _connection.CreateCommand();
+                deleteArtCmd.CommandText = "DELETE FROM artifact WHERE id = $1";
+                deleteArtCmd.Parameters.Add(new DuckDBParameter { Value = artifactId.Value });
+                deleteArtCmd.ExecuteNonQuery();
+            }
         }
 
-        return idsToDelete.Count;
+        return nodesToDelete.Count;
     }
 
     /// <summary>

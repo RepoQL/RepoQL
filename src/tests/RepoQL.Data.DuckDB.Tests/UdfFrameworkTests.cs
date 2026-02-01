@@ -16,6 +16,7 @@ public class UdfFrameworkTests : IDisposable
         services.AddSingleton<IEmbeddingProvider>(new TestEmbeddingProvider());
         services.AddSingleton<ILlmProvider>(new TestLlmProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
+        services.AddSingleton<UriRegistry>();
         _serviceProvider = services.BuildServiceProvider();
         _db = new DuckDbDataStore(serviceProvider: _serviceProvider);
     }

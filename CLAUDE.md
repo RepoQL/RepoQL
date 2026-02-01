@@ -191,3 +191,30 @@ RepoQL is designed to be extremely testable - almost all of it can be run entire
 **Full deploy (CLI/MCP/GRPC changes)**: Run `deploy.ps1`, which kills all running copies, publishes, and copies to the MCP server location. Ask the user to reconnect via `/mcp` afterward.
 
 If you run deploy it will kill any running instances of RepoQL on your machine - if aspire is available you should start the host there before asking the user to reconnect so that the telemetry is available
+
+## Working with Codex
+
+Codex (GPT-5.2-codex) is available as an MCP server. Use it as a symbiotic partner—yin and yang.
+
+**The pattern**: Claude translates vague intent into explicit steps; Codex executes systematically and surfaces what you wouldn't think to look for.
+
+| Task | Delegate to Codex |
+|------|-------------------|
+| Investigation | "Find all X, trace Y, identify Z" - Codex searches systematically |
+| Race conditions | Provide timing info, thread dumps - Codex traces shared state |
+| Implementation | Clear acceptance criteria + constraints - Codex executes precisely |
+| Code review | Scope + focus + constraints - Codex finds issues you'd miss |
+
+**Invocation**:
+```
+mcp__codex__codex(prompt: "...", cwd: "C:\\Source\\RepoQL")
+mcp__codex__codex-reply(threadId: "...", prompt: "follow-up")
+```
+
+**Parallel execution**: Launch multiple Codex calls in a single message for independent tasks. Example: review three different subsystems simultaneously.
+
+**Iterative refinement**: Use `threadId` for staged work: identify → propose → implement. Each call builds on the previous.
+
+**Key insight**: Codex lacks intuition for unstated intent. State the steps you want, not just the outcome. The quality of your translation determines the quality of Codex's output.
+
+See `.claude/skills/codex/` for detailed guidance and prompt templates.

@@ -50,6 +50,7 @@ namespace RepoQL.Indexing.Indexing.Pipelines;
 public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options) : IAnnotatedArtifact
 {
     private readonly IDictionary<string, object> _dictionaryImplementation =  new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+    private int _epochCompletionState;
 
     /// <summary>
     ///     The status of the item. Anything besides null is considered a final, terminal state
@@ -89,6 +90,8 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     public DocumentCatalogEntry? ExistingEntry { get; set; }
 
     internal long Epoch { get; private set; } = -1;
+
+    internal bool TryMarkEpochComplete() => Interlocked.Exchange(ref _epochCompletionState, 1) == 0;
 
     /// <summary>
     ///     Materialized graph records (artifacts, nodes, spans, edges)

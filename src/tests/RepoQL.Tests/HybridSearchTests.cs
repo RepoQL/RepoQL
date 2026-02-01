@@ -22,6 +22,8 @@ internal class SearchTests
     private static IServiceProvider CreateTestServiceProvider()
     {
         var services = new ServiceCollection();
+        services.AddSingleton(new RepositoryConfiguration { Path = Environment.CurrentDirectory });
+        services.AddSingleton<UriRegistry>();
         services.AddSingleton<IEmbeddingProvider>(new DisabledTestEmbeddingProvider());
         services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);

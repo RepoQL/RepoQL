@@ -116,8 +116,10 @@ public sealed class IndexedRepoOptions
     private static IServiceProvider CreateDefaultTestServiceProvider()
     {
         var services = new ServiceCollection();
+        services.AddSingleton(new RepositoryConfiguration { Path = Environment.CurrentDirectory });
+        services.AddSingleton<UriRegistry>();
         services.AddSingleton<IEmbeddingProvider>(new DisabledTestEmbeddingProvider());
-        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<ILlmProvider>(new DisabledTestLlmProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
         return services.BuildServiceProvider();
     }
@@ -135,6 +137,20 @@ public sealed class IndexedRepoOptions
             => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
         public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken ct = default)
             => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+    }
+
+    private sealed class DisabledTestLlmProvider : ILlmProvider
+    {
+        public bool Enabled => false;
+        public string Model => "test-disabled";
+        public Task<string> SummarizeAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
+            => Task.FromResult("LLM disabled in tests");
+        public Task<LlmSummaryResult> SummarizeWithReasoningAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
+            => Task.FromResult(new LlmSummaryResult("LLM disabled in tests"));
+        public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
+            => Task.FromResult("LLM disabled in tests");
+        public Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
+            => Task.FromResult(string.Empty);
     }
 
     private sealed class LabelClassifier : IFileClassifier

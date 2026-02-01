@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
 
@@ -218,6 +219,10 @@ internal sealed class HistoryHandlerTests
             RepoConfig = new RepositoryConfiguration { Path = RepoRoot };
             var services = new ServiceCollection();
             services.AddSingleton(RepoConfig);
+            services.AddSingleton<UriRegistry>();
+            services.AddSingleton<IEmbeddingProvider?>(sp => null);
+            services.AddSingleton<ILlmProvider?>(sp => null);
+            services.AddSingleton<IMcpToolCaller?>(sp => null);
             var provider = services.BuildServiceProvider();
 
             Store = new DuckDbDataStore(":memory:", serviceProvider: provider);

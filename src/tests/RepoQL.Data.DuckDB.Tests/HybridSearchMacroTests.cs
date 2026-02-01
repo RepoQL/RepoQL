@@ -21,6 +21,7 @@ public class SearchMacroTests : IDisposable
         services.AddSingleton<IEmbeddingProvider>(new TestEmbeddingProvider());
         services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
+        services.AddSingleton<UriRegistry>();
         _serviceProvider = services.BuildServiceProvider();
         _store = new DuckDbDataStore(serviceProvider: _serviceProvider);
 
@@ -305,6 +306,7 @@ public class SearchMacroEmbeddingDimensionTests : IDisposable
         services.AddSingleton<IEmbeddingProvider>(provider);
         services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
+        services.AddSingleton<UriRegistry>();
         _serviceProvider = services.BuildServiceProvider();
         _store = new DuckDbDataStore(embeddingProvider: provider, serviceProvider: _serviceProvider);
 

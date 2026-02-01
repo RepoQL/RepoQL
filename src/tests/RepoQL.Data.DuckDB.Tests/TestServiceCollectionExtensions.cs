@@ -26,6 +26,9 @@ public static class TestServiceCollectionExtensions
             Path = repoPath ?? Environment.CurrentDirectory
         });
 
+        // URI Registry for pattern matching UDFs
+        services.AddSingleton<UriRegistry>();
+
         // Embedding provider (disabled for most tests)
         services.AddSingleton<IEmbeddingProvider>(new DisabledEmbeddingProvider());
 
