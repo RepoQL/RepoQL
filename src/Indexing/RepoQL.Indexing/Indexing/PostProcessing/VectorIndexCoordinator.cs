@@ -132,10 +132,10 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             // Query embedding counts per container (file)
             const string query = """
                 SELECT
-                    repoql_uri_container(uri) as container_uri,
+                    repository_uri_container(uri) as container_uri,
                     COUNT(*) as chunk_count
                 FROM document_embedding
-                GROUP BY repoql_uri_container(uri)
+                GROUP BY repository_uri_container(uri)
                 """;
 
             var results = _db.Read(query, record =>
