@@ -361,9 +361,7 @@ Distilled wisdom in consistent structure: Invariant (<=30 tokens), Example, Boun
 - [llmstxt.org - The /llms.txt file](https://llmstxt.org/)
 - [Microsoft Learn - Document Intelligence Markdown Elements](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/concept/markdown-elements)
 - [Bismart - Markdown: The Best Text Format for Training AI Models](https://blog.bismart.com/en/markdown-ai-training)
-- Repository patterns: `/Users/stuartwilson/Documents/Source/pushpay-for-robots/.claude/skills/writing-documents/references/audiences/agent.md`
-- Repository patterns: `/Users/stuartwilson/Documents/Source/pushpay-for-robots/.claude/skills/writing-documents/references/audiences/human.md`
-- Repository patterns: `/Users/stuartwilson/Documents/Source/pushpay-for-robots/Ethos.md`
+- Repository patterns: internal skill references (audiences/agent.md, audiences/human.md)
 
 ---
 

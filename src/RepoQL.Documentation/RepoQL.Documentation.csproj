@@ -9,6 +9,7 @@
 
     <ItemGroup>
         <EmbeddedResource Include="**/*.md" />
+        <EmbeddedResource Include="**/*.csv" />
     </ItemGroup>
     
     <ItemGroup>

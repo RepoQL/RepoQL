@@ -33,6 +33,8 @@ Not everything belongs in markdown. Consider the format that best serves how the
 - Structure is uniform across all entries
 - Content updates frequently
 
+**Skip CSV for simple references** — HTTP status codes, format tokens, error codes under 50 entries. If readers won't query it, markdown tables are simpler.
+
 ### Capsule: DataGuidanceSplit
 
 **Invariant**
@@ -109,6 +111,8 @@ Examples should work when copied directly. This means:
 - Import statements included if relevant
 - Comments explaining non-obvious parts
 
+**Multiple languages**: Show examples in multiple languages when the concept is cross-platform (date formatting, HTTP calls). Show one language when the reference is language-specific or when the concept is language-agnostic (HTTP status codes work the same everywhere).
+
 ```csharp
 // Good: copy-paste ready
 var client = new HttpClient();
@@ -130,18 +134,18 @@ Readers don't read reference docs — they scan for what they need. Support this
 - **Code blocks stand out** — easy to spot examples
 - **Alphabetical or logical grouping** — predictable order
 
-## Common Mistakes
+## Gotchas
 
-Call out mistakes explicitly with problem and fix:
+Call out mistakes with what's wrong and why:
 
 ```markdown
-| Mistake | Problem | Fix |
-|---------|---------|-----|
-| `src/**test` | `**` not a complete segment | `src/**/test*` |
-| Using `%` wildcard | That's SQL LIKE, not glob | Use `**` and `*` |
+| Wrong | Right | Why |
+|-------|-------|-----|
+| `src/**test` | `src/**/test*` | `**` must be a complete segment |
+| Using `%` wildcard | Use `**` and `*` | `%` is SQL LIKE, not glob |
 ```
 
-This is more useful than abstract "when not to use" guidance because it shows *specific* errors readers actually make.
+This is more useful than abstract guidance because it shows *specific* errors readers actually make.
 
 ## Structure
 
@@ -173,11 +177,16 @@ This is more useful than abstract "when not to use" guidance because it shows *s
 
 ---
 
-## Common Mistakes
+## Gotchas
 
-| Mistake | Problem | Fix |
-|---------|---------|-----|
+| Wrong | Right | Why |
+|-------|-------|-----|
 | ... | ... | ... |
+
+## Defaults
+
+- [Key assumption or convention]
+- [Another default behavior]
 ```
 
 ## Worth Asking
@@ -200,8 +209,13 @@ After drafting:
 - [ ] If hybrid: flat facts in CSV, relational context in markdown
 - [ ] Decision table near the top for common needs
 - [ ] Examples are copy-paste ready
-- [ ] Common mistakes table at the end
+- [ ] Gotchas table at the end
 - [ ] Scannable in under 30 seconds
 - [ ] Clear boundary with gestalt (lookup vs understanding)
+
+## Exemplars
+
+- `exemplar.md` — Pure markdown reference (date/time formatting)
+- `exemplar-hybrid.md` + `glob-patterns.csv` — Hybrid pattern (queryable data + markdown guidance)
 
 *Find the answer. Don't read the book.*

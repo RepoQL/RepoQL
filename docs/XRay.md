@@ -35,7 +35,7 @@ Token costs: **2 → 10 → 30 → 2,000** (99.9% reduction)
 
 **Examples**:
 ```
-Pushpay.Core.csproj | Library | net48,net8.0 | 3 project refs, 25 packages
+Acme.Core.csproj | Library | net48,net8.0 | 3 project refs, 25 packages
 PaymentService.cs | 1 class, 12 methods, 3 interfaces | 450 LOC
 docker-compose.yml | 8 services | 3 networks | 2 volumes
 Authentication.md | 5 sections, 3 code examples | 2.1 KB
@@ -63,17 +63,17 @@ Authentication.md | 5 sections, 3 code examples | 2.1 KB
 
 ```yaml
 # C# project
-Name: Pushpay.Core
+Name: Acme.Core
 Type: Library
 Frameworks: net48, net8.0
-Project References: Pushpay.Base, Pushpay.RabbitFood, Equestria.Dynamo
+Project References: Acme.Base, Acme.Messaging, Acme.Data
 Key Packages: AWSSDK.S3 (3.7.0), Dapper (2.0.78), Serilog (2.12.0)
 Build: TreatWarningsAsErrors=true
 ```
 
 ```yaml
 # C# class
-Namespace: Pushpay.Services
+Namespace: Acme.Services
 Type: public class PaymentService : IPaymentService
 Purpose: Process payments, refunds, and subscription billing
 Public API: ProcessPayment(), RefundPayment(), CreateSubscription()
@@ -111,15 +111,15 @@ AWS credentials. Production environment configuration.
 
 ```yaml
 # C# project - list form
-Name: Pushpay.Core
+Name: Acme.Core
 Type: Library
 SDK: Microsoft.NET.Sdk
 Frameworks: net48, net8.0
 
 Project References: (3)
-  - file:///S:/Source/Pushpay.Base/Pushpay.Base.csproj
-  - file:///S:/Source/Pushpay.RabbitFood/Pushpay.RabbitFood.csproj
-  - file:///S:/Source/Equestria.Dynamo/Equestria.Dynamo.csproj
+  - file:///S:/Source/Acme.Base/Acme.Base.csproj
+  - file:///S:/Source/Acme.Messaging/Acme.Messaging.csproj
+  - file:///S:/Source/Acme.Data/Acme.Data.csproj
 
 Package References: (25)
   AWSSDK.Kinesis: 3.7.0.8
@@ -134,7 +134,7 @@ Build Properties:
 
 ```
 # C# class - pseudo-code outline
-namespace Pushpay.Services
+namespace Acme.Services
   public class PaymentService : IPaymentService
     public PaymentService(IPaymentGateway gateway, IRepository repo, IEventBus bus)
 

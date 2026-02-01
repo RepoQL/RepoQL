@@ -31,7 +31,7 @@ A hierarchical outline with signatures and URI fragments, enabling direct naviga
 
 **Example**
 ```
-Pushpay.Services
+Acme.Services
   +class PaymentService : IPaymentService
     // Processes payment and charges customer's payment method
     +Task<PaymentResult> ProcessPayment(PaymentRequest request)    #symbol=ProcessPayment

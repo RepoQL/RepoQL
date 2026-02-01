@@ -38,7 +38,7 @@ SES publishes an `Email Bounce` event to EventBridge when a recipient ISP reject
       "bounceType": "Permanent",
       "bounceSubType": "NoEmail",
       "bouncedRecipients": [{
-        "emailAddress": "donor@example.com",
+        "emailAddress": "user@example.com",
         "diagnosticCode": "smtp; 550 5.1.1 User unknown"
       }]
     },
@@ -76,10 +76,10 @@ SES publishes an `Email Bounce` event to EventBridge when a recipient ISP reject
 
 ```json
 {
-  "type": "com.pushpay.communication.MessageBounced",
+  "type": "com.acme.communication.MessageBounced",
   "data": {
     "messageId": "our-internal-id",
-    "recipientEmail": "donor@example.com",
+    "recipientEmail": "user@example.com",
     "bounceType": "Permanent",
     "bounceSubType": "NoEmail"
   }

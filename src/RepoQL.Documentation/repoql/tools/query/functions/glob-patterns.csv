@@ -1,0 +1,31 @@
+label,pattern,returns,tags,notes
+All C# files,**/*.cs,files,"code, csharp",Recursive from root
+All TypeScript,**/*.ts;**/*.tsx,files,"code, frontend",Includes React components
+All Python,**/*.py,files,"code, python",Recursive
+All tests,**/*Tests.cs;**/*Test.cs,files,testing,Both naming conventions
+Test files by prefix,**/Test*.cs,files,testing,Prefix wildcard pattern
+Source excluding tests,src/**;!**/test*/**,files,"code, filter",Common filter pattern
+Config files,**/*.json;**/*.yaml;**/*.yml,files,config,All config formats
+Markdown docs,**/*.md,files,docs,Documentation files
+Direct children only,src/*.cs,files,navigation,Non-recursive - one level
+Three-letter files,src/???.cs,files,search,? matches single char
+Multiple directories,src/**;lib/**;tools/**,files,search,OR multiple paths
+Exclude generated,**/*.cs;!**/*.g.cs;!**/obj/**,files,code,Skip generated code
+Exclude vendor,**/*.js;!**/node_modules/**;!**/vendor/**,files,"code, frontend",Skip dependencies
+RepoQL docs,repoql-docs://**,files,docs,Embedded documentation
+RepoQL quickstart,repoql-docs:///quickstart.md,files,docs,Specific embedded doc
+All service classes,**/*.cs#symbol=*Service,symbols,"architecture, csharp",Finds interface implementations too
+All handlers,**/*.cs#symbol=*Handler,symbols,"architecture, csharp",Command/event handlers
+All interfaces,**/*.cs#symbol=I*,symbols,"architecture, csharp",Convention: interfaces start with I
+Exact symbol,File.cs#symbol=MyClass,symbols,navigation,No wildcard - exact match
+Direct members,File.cs#symbol=MyClass.*,symbols,navigation,One level deep
+All descendants,File.cs#symbol=MyClass.**,symbols,navigation,Recursive - all nested members
+All public methods,**/*.cs#symbol=*.*,symbols,search,Direct children across files
+Symbols excluding tests,**/*.cs#symbol=*;!#symbol=*Test*,symbols,search,Skip test fixtures
+Symbols outside header,**/*.cs#symbol=*;!#line=1,30,symbols,search,Skip license/using blocks
+Specific line range,File.cs#line=50,100,lines,navigation,Lines 50-100 inclusive
+Single line,File.cs#line=42,lines,navigation,Just line 42
+Multiple specific files,Auth.cs;Config.cs;Startup.cs,files,multi-fetch,Fetch exactly these files
+Multiple snippets,Auth.cs#line=10,20;Token.cs#line=50,60,lines,multi-fetch,Two specific ranges in one call
+Multiple symbols,Auth.cs#symbol=Login;Token.cs#symbol=Refresh,symbols,multi-fetch,Specific symbols from different files
+Mixed multi-fetch,Auth.cs#symbol=Login;config.json;README.md#line=1,10,mixed,multi-fetch,Combine files/symbols/lines in one call

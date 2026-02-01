@@ -42,97 +42,37 @@ internal class McpCommands
                 {
                     s.InitializationTimeout = TimeSpan.FromSeconds(45);
                     s.ServerInstructions = """
-                                           <CONCEPT>
-                                           Treat the entities and structures contained inside repo files as a database to quickly understand repository contents and find features in many different file types
-                                           **Read unfamiliar files only after exploring with RepoQL first**
-                                           </CONCEPT>
+                                           RepoQL indexes your codebase into a queryable knowledge graph. Find things reliably without exact keywords. Understand structure without reading files. See what uses what, what breaks if you change something.
 
-                                           <PURPOSE>
-                                            - Find things reliably when you don't know exact keywords using semantic search and regex 
-                                            - Scan structures in files, avoid reading files you don't need to
-                                            - Understand contents of files without token waste (Structure, relationships, dependencies, technologies)
-                                            - See linting across many file types (annotations)
-                                            - Understand "what uses this?" and "What links to this?" and "What breaks if I change this?"
-                                           </PURPOSE>
+                                           Everything is addressable via URIs: files, symbols, line ranges, documentation.
+                                           Everything has pre-computed summaries: headlines, structure, semantic types.
+                                           You rarely need to read full content.
 
-                                           <CONTEXT>
-                                            - Dialect is DuckDB flavored SQL with custom UDFs and macros
-                                            - Assume all file types are supported
-                                            - Every entity is represented by a repo URI e.g.
-                                              `file:///repo/lib.cs#symbol=Foo.Bar&line=12,20`
-                                              `repoql-docs:///guidance/writing-mermaid-documents.md`
-                                            - Semantic mime type indicates both file type and contents e.g.`application/x-protobuf;kind=protobuf.message;schema="https://schemas.corp.com/user.proto";version=3`
-                                           </CONTEXT>
+                                           <TOOLS>
+                                           **explore** — Find and understand. Start here.
+                                           Intents: Inventory (what exists), Locate (where is X), Inspect (show me X), Explain (how does X work)
 
-                                           The documentation for RepoQL is embedded (repoql-docs://), and can be read by explore, query or reading resources - consider obtaining it to be the tutorial.
-                                           
+                                           **read** — Fetch from known URIs.
+                                           Content, structure, git history, blame, diagnostics, or answers to questions about the content.
+
+                                           **query** — SQL when you need computation or graph traversal.
+                                           </TOOLS>
+
                                            <CONCEPTS>
-                                            ## Capsule: RepoUri
-                                            
-                                            **Invariant**
-                                            URIs address any entity; scheme indicates source; fragment locates position within a file.
-                                            
-                                            **Example**
-                                            file:///src/App.cs                → file
-                                            file:///src/App.cs#line=10,20     → lines 10–20
-                                            file:///src/App.cs#symbol=Foo     → symbol named Foo
-                                            repoql-docs:///quickstart.md             → embedded documentation
-                                            //BOUNDARY: Line numbers are 1-based inclusive; #line=10,20 spans lines 10 through 20.
-                                            
-                                            **Depth**
-                                            - Schemes: file:/// (repo files), repoql-docs:/// (embedded docs), github://owner/repo etc (imports)
-                                            - Fragment params: #line=N, #line=N,M, #symbol=Class.Method
-                                            - repoql-docs:/// URIs are queryable like files; use for RepoQL's own documentation
-                                            - Query with SELECT * FROM node WHERE uri LIKE 'file:///src/%'
-                                            - NotThis: not URLs; no http://; no hostname in file:///
-                                            ---
-                                           
-                                            ## Capsule: SemanticMediaType
-                                           
-                                            **Invariant**
-                                            Media type encodes both wire format and representation; kind parameter says what the bytes mean.
-                                           
-                                            **Example**
-                                            text/markdown;kind=markdown.doc              → markdown document
-                                            text/plain;kind=code.csharp                  → C# source file
-                                            application/json;kind=config.npm-lock        → package-lock.json
-                                            application/xml;kind=dotnet.csproj           → .csproj file
-                                            //BOUNDARY: kind is representation; base MIME is format. Consumers ignoring kind still get valid MIME.
-                                           
-                                            **Depth**
-                                            - Format: type/subtype[+suffix];param=value — standard MIME with parameters
-                                            - Parameters: kind (representation), schema (validation URI), version, charset
-                                            - kind uses dot-notation: {domain}.{entity} — e.g., cs.class, markdown.doc, proto.message
-                                            - Stored in artifact.media_type; query with WHERE media_type LIKE '%kind=markdown.doc%'
-                                            - Distinction: media_type on artifact describes files; kind on node describes entities within files
-                                            - NotThis: not file extension; kind captures semantic role not syntax
-                                           ---
-                                           
-                                            ## Capsule: UriGlob
-                                            
-                                            **Invariant**
-                                            Filter files by path using glob patterns; combine with semicolons; prefix ! to exclude.
-                                            
-                                            **Example**
-                                            src/**/*.cs;!src/tests/**
-                                            Matches all C# files under src/ except those in tests/.
-                                            //BOUNDARY: Blank scope matches everything; !**/*.md excludes markdown from all files.
-                                            
-                                            **Depth**
-                                            - ** matches any directory depth; * matches within one segment; trailing / matches all descendants
-                                            - Patterns work in explore scope, search scope, glob_files(), and matches_glob()
-                                            - Shorthand repoql-docs/** infers file:///; full URIs like repoql-docs:/// also work
-                                            - Distinction: path-aware unlike SQL LIKE; simpler than regex
-                                            - NotThis: not regex; use **/*.ts not .*\.ts$
-                                            ---
+                                           **URIs**: `file:///src/Auth.cs`, `#symbol=Validate`, `#line=10,20`, `repoql-docs:///quickstart.md`
+                                           **Globs**: `src/**/*.cs`, `src/**;!**/tests/**`, `#symbol=*Handler`
+                                           **Budget**: investment not limit — more tokens = richer detail
                                            </CONCEPTS>
-                                           
-                                           <REMEMBER>
-                                            - Explore should be your first tool for finding and understanding. Intent and the token budget controls how tokens are spent in the response.
-                                            - Use Query to do what explore cannot with all the power of SQL including applying semantic search and regex across files - don't use it to do what explore can.
-                                            - Always map the territory with explore before reading whole files
-                                            - Use the read tool to fetch content from known URIs with token-budget-aware representation. Use read(uri // question, budget) to have an LLM answer questions about specific files.
-                                           </REMEMBER>
+
+                                           <DOCS>
+                                           RepoQL's documentation is embedded and queryable at repoql-docs://
+
+                                           See what's available:
+                                             read("repoql-docs://** => tree: headlines", 2000)
+
+                                           Learn how to do something:
+                                             explore(intent="Explain", scope="repoql-docs://**", keywords="how do I find all usages of a function")
+                                           </DOCS>
                                            """;
                 })
                 .WithStdioServerTransport()
