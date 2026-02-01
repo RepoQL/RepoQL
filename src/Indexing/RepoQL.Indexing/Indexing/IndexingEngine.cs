@@ -505,9 +505,6 @@ public partial class IndexingEngine : IAsyncDisposable
             { "read_only", item.IsReadOnly.ToString().ToLowerInvariant() }
         });
 
-        // Update URI registry to track indexing state
-        UriRegistry?.SetIndexing(item.Uri);
-
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -557,6 +554,9 @@ public partial class IndexingEngine : IAsyncDisposable
                 });
                 return;
             }
+
+            // Update URI registry to track indexing state - only after filtering and up-to-date checks
+            UriRegistry?.SetIndexing(item.Uri);
 
             try
             {

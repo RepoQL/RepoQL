@@ -73,11 +73,14 @@ public class UriRegistryHydrator
                 else if (!string.IsNullOrEmpty(containerUri))
                 {
                     // This is a symbol - add to its container's symbol list
+                    // Strip fragment from containerUri to get the base file path for grouping
+                    var containerKey = StripFragment(containerUri);
+
                     // Note: Span data is not available during hydration; will be populated during indexing
-                    if (!symbolsByFile.TryGetValue(containerUri, out var symbols))
+                    if (!symbolsByFile.TryGetValue(containerKey, out var symbols))
                     {
                         symbols = new Dictionary<RepoUri, SymbolEntry>();
-                        symbolsByFile[containerUri] = symbols;
+                        symbolsByFile[containerKey] = symbols;
                     }
                     symbols[uri] = SymbolEntry.WithKindOnly(kind ?? "unknown");
                     symbolCount++;
@@ -129,10 +132,10 @@ public class UriRegistryHydrator
             // Query embedding counts per container
             const string query = """
                 SELECT
-                    repoql_uri_container(uri) as container_uri,
+                    repository_uri_container(uri) as container_uri,
                     COUNT(*) as chunk_count
-                FROM embedding
-                GROUP BY repoql_uri_container(uri)
+                FROM document_embedding
+                GROUP BY repository_uri_container(uri)
                 """;
 
             var results = _db.ReadUntrusted(query, MapEmbeddingRow);
@@ -183,5 +186,14 @@ public class UriRegistryHydrator
         var containerUri = record["container_uri"]?.ToString();
         var chunkCount = Convert.ToInt32(record["chunk_count"]);
         return (containerUri, chunkCount);
+    }
+
+    /// <summary>
+    /// Strips the fragment (everything after #) from a URI string.
+    /// </summary>
+    private static string StripFragment(string uri)
+    {
+        var hashIndex = uri.IndexOf('#', StringComparison.Ordinal);
+        return hashIndex >= 0 ? uri[..hashIndex] : uri;
     }
 }
