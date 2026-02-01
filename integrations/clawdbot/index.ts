@@ -37,10 +37,9 @@ export function register(api: any): void {
 
     // Determine workspace directory
     const getWorkdir = () => {
-      if (config.workspaceAsRepo) {
-        return api.workspace ?? process.cwd();
-      }
-      return process.cwd();
+      // TEMPORARY: Hardcode GoNutz workspace for testing
+      // TODO: Get workspace from execution context or per-agent config
+      return "C:\\Source\\GoNutz";
     };
 
     // Create instance manager
@@ -53,8 +52,8 @@ export function register(api: any): void {
       logger
     );
 
-    // Register background service
-    registerService(api, manager);
+    // Register background service (with eager spawn)
+    registerService(api, manager, getWorkdir);
 
     // Register tools
     registerTools(api, manager, config, getWorkdir);

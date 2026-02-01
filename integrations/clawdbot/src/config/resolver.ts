@@ -33,6 +33,7 @@ export function resolveConfig(config: RepoQlConfig): ResolvedConfig {
     maxRestartAttempts: config.maxRestartAttempts ?? DEFAULT_CONFIG.maxRestartAttempts,
     defaultTimeoutMs: config.defaultTimeoutMs ?? DEFAULT_CONFIG.defaultTimeoutMs,
     workspaceAsRepo: config.workspaceAsRepo ?? DEFAULT_CONFIG.workspaceAsRepo,
+    workspace: config.workspace,
   };
 }
 

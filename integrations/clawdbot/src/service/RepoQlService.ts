@@ -4,7 +4,7 @@
  * Purpose: Manages MCP client lifecycle as a background service,
  *   ensuring clean startup and shutdown.
  * Complexity: Coordinates InstanceManager with Clawdbot service API
- *   and handles process exit cleanup.
+ *   and handles process exit cleanup. Eagerly spawns instance on start.
  */
 
 import type { InstanceManager } from "../lifecycle/InstanceManager.js";
@@ -21,19 +21,24 @@ export interface Logger {
 export class RepoQlService {
   private readonly manager: InstanceManager;
   private readonly logger: Logger;
+  private readonly getWorkdir: () => string;
   private exitHandler: (() => void) | null = null;
 
-  constructor(manager: InstanceManager, logger: Logger) {
+  constructor(manager: InstanceManager, logger: Logger, getWorkdir: () => string) {
     this.manager = manager;
     this.logger = logger;
+    this.getWorkdir = getWorkdir;
   }
 
   /**
    * Starts the service.
-   * Registers process exit handler and starts health checks.
+   * Eagerly spawns RepoQL instance, registers exit handler, and starts health checks.
    */
   async start(): Promise<void> {
     this.logger.info("RepoQL service starting");
+
+    // Reset the manager in case this is a restart (hot reload)
+    this.manager.reset();
 
     // Register exit handler to clean up on unexpected exit
     this.exitHandler = () => {
@@ -48,6 +53,13 @@ export class RepoQlService {
 
     // Start health check loop
     this.manager.startHealthChecks();
+
+    // Eagerly spawn instance for the workspace
+    const workdir = this.getWorkdir();
+    this.logger.info(`RepoQL service: eagerly spawning instance for ${workdir}`);
+    this.manager.getInstance(workdir).catch((err) => {
+      this.logger.warn(`RepoQL service: eager spawn failed (will retry on first tool call): ${err.message}`);
+    });
 
     this.logger.info("RepoQL service started");
   }
@@ -77,9 +89,9 @@ export class RepoQlService {
 /**
  * Registers the RepoQL background service with Clawdbot.
  */
-export function registerService(api: any, manager: InstanceManager): RepoQlService {
+export function registerService(api: any, manager: InstanceManager, getWorkdir: () => string): RepoQlService {
   const logger = api.logger;
-  const service = new RepoQlService(manager, logger);
+  const service = new RepoQlService(manager, logger, getWorkdir);
 
   api.registerService({
     id: "repoql-service",

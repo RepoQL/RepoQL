@@ -23,6 +23,9 @@ export interface RepoQlConfig {
 
   /** Use the agent workspace as the repository root. Default: true */
   workspaceAsRepo?: boolean;
+
+  /** Explicit workspace path. Overrides workspaceAsRepo when set. */
+  workspace?: string;
 }
 
 /**
@@ -34,6 +37,7 @@ export interface ResolvedConfig {
   maxRestartAttempts: number;
   defaultTimeoutMs: number;
   workspaceAsRepo: boolean;
+  workspace?: string;
 }
 
 /**

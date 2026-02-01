@@ -67,8 +67,10 @@ export class InstanceManager {
    * @throws McpConnectionError if spawn fails after max attempts
    */
   async getInstance(workdir: string): Promise<McpClient> {
+    // Auto-reset if stopped (handles hot reload where start() may not have been called yet)
     if (this.stopped) {
-      throw new McpConnectionError("InstanceManager has been stopped");
+      this.logger.info("InstanceManager: auto-resetting from stopped state");
+      this.stopped = false;
     }
 
     const key = this.normalizeWorkdir(workdir);
@@ -124,6 +126,14 @@ export class InstanceManager {
 
     await Promise.all(killPromises);
     this.logger.info("Stopped all RepoQL instances");
+  }
+
+  /**
+   * Resets the stopped state, allowing the manager to be reused after a restart.
+   */
+  reset(): void {
+    this.stopped = false;
+    this.logger.info("InstanceManager reset");
   }
 
   /**
