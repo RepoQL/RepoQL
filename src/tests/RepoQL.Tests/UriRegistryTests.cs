@@ -828,4 +828,146 @@ internal class UriRegistryTests
         result[0].Should().Be(new LineRange(10, 19));
         result[1].Should().Be(new LineRange(61, 70));
     }
+
+    // === Spanless Symbol Tests ===
+
+    [Test]
+    public void MatchPattern_SpanlessSymbol_ReturnsSymbolUri()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var symbolUri = RepoUri.Parse("file:///src/App.cs#symbol=MyClass");
+
+        // Register file with spanless symbol (HasSpan = false)
+        registry.SetIndexed(fileUri, lineCount: 100, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { symbolUri, SymbolEntry.WithKindOnly("class") }
+        }.AsReadOnly());
+
+        var matches = registry.MatchPattern("src/**/*.cs#symbol=MyClass").ToList();
+
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Be("file:///src/App.cs#symbol=MyClass");
+    }
+
+    [Test]
+    public void MatchPattern_SpanlessSymbol_WithNegativePattern_IsExcluded()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var symbol1 = RepoUri.Parse("file:///src/App.cs#symbol=MyClass");
+        var symbol2 = RepoUri.Parse("file:///src/App.cs#symbol=Helper");
+
+        // Register file with two spanless symbols
+        registry.SetIndexed(fileUri, lineCount: 100, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { symbol1, SymbolEntry.WithKindOnly("class") },
+            { symbol2, SymbolEntry.WithKindOnly("class") }
+        }.AsReadOnly());
+
+        // Match all symbols except Helper
+        var matches = registry.MatchPattern("src/**/*.cs#symbol=*;!#symbol=Helper").ToList();
+
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Be("file:///src/App.cs#symbol=MyClass");
+    }
+
+    [Test]
+    public void MatchPattern_MixedSpanAndSpanlessSymbols_ReturnsBoth()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var symbolWithSpan = RepoUri.Parse("file:///src/App.cs#symbol=MyClass");
+        var symbolWithoutSpan = RepoUri.Parse("file:///src/App.cs#symbol=Helper");
+
+        // One symbol has span, one doesn't
+        registry.SetIndexed(fileUri, lineCount: 100, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { symbolWithSpan, new SymbolEntry("class", 10, 50) },
+            { symbolWithoutSpan, SymbolEntry.WithKindOnly("function") }
+        }.AsReadOnly());
+
+        var matches = registry.MatchPattern("src/**/*.cs#symbol=*").ToList();
+
+        matches.Should().HaveCount(2);
+        matches.Should().Contain(m => m.AbsoluteUri.Contains("#symbol=MyClass"));
+        matches.Should().Contain(m => m.AbsoluteUri.Contains("#symbol=Helper"));
+    }
+
+    // === Files with LineCount == 0 Tests ===
+
+    [Test]
+    public void MatchPattern_FileWithZeroLineCount_ReturnsFileUri()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/binary.bin");
+
+        // File with LineCount == 0 (e.g., binary file or unknown size)
+        registry.SetIndexed(fileUri, lineCount: 0, new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+
+        var matches = registry.MatchPattern("src/**").ToList();
+
+        matches.Should().HaveCount(1);
+        // Should return file URI, not #line=1,2147483647
+        matches.Single().AbsoluteUri.Should().Be("file:///src/binary.bin");
+    }
+
+    [Test]
+    public void MatchPattern_NegativeOnly_FileWithZeroLineCount_NotDropped()
+    {
+        var registry = new UriRegistry();
+        var file1 = RepoUri.Parse("file:///src/keep.bin");
+        var file2 = RepoUri.Parse("file:///src/drop.txt");
+
+        // Both files have LineCount == 0
+        registry.SetIndexed(file1, lineCount: 0, new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+        registry.SetIndexed(file2, lineCount: 0, new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+
+        // Negative-only pattern: exclude .txt files
+        var matches = registry.MatchPattern("!**/*.txt").ToList();
+
+        // Should include keep.bin, not drop.txt
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Be("file:///src/keep.bin");
+    }
+
+    [Test]
+    public void LineRange_WholeFileUnknown_Properties()
+    {
+        var range = LineRange.WholeFileUnknown;
+
+        range.Start.Should().Be(1);
+        range.End.Should().Be(int.MaxValue);
+        range.IsWholeFileUnknown.Should().BeTrue();
+        range.IsValid.Should().BeTrue();
+    }
+
+    [Test]
+    public void LineRange_WholeFile_ZeroLineCount_ReturnsWholeFileUnknown()
+    {
+        var range = LineRange.WholeFile(0);
+
+        range.IsWholeFileUnknown.Should().BeTrue();
+        range.IsValid.Should().BeTrue();
+    }
+
+    [Test]
+    public void UriSimplifier_WholeFileUnknown_ReturnsFileUri()
+    {
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var entry = new FileEntry(
+            Status: UriStatus.Indexed,
+            IndexedAt: DateTime.UtcNow,
+            Error: null,
+            EmbeddingStatus: EmbeddingStatus.Pending,
+            EmbeddedChunkCount: 0,
+            EmbeddedAt: null,
+            LineCount: 0, // Unknown line count
+            Symbols: new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+
+        var result = UriSimplifier.Simplify(fileUri, LineRange.WholeFileUnknown, entry);
+
+        // Should return file URI, not a line range
+        result.AbsoluteUri.Should().Be("file:///src/App.cs");
+    }
 }

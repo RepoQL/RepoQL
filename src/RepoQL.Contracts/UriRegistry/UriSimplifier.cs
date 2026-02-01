@@ -25,6 +25,10 @@ public static class UriSimplifier
         if (!range.IsValid)
             return fileUri;
 
+        // WholeFileUnknown sentinel means "return file URI" (line count was unknown)
+        if (range.IsWholeFileUnknown)
+            return fileUri;
+
         // Check if range is whole file
         if (entry.LineCount > 0 && range.Start == 1 && range.End == entry.LineCount)
             return fileUri;

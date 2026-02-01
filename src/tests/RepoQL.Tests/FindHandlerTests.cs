@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
 
@@ -172,10 +173,54 @@ internal sealed class FindHandlerTests
             RepoConfig = new RepositoryConfiguration { Path = Path.GetTempPath() };
             var services = new ServiceCollection();
             services.AddSingleton(RepoConfig);
+            services.AddSingleton<UriRegistry>();
+            services.AddSingleton<IEmbeddingProvider>(new DisabledEmbeddingProvider());
+            services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+            services.AddSingleton<IMcpToolCaller?>(_ => null);
             var provider = services.BuildServiceProvider();
 
             Store = new DuckDbDataStore(":memory:", serviceProvider: provider);
             Handler = new FindHandler(Store);
+        }
+
+        private sealed class DisabledEmbeddingProvider : IEmbeddingProvider
+        {
+            public bool Enabled => false;
+            public string Model => "disabled";
+            public int Dimension => 384;
+
+            public Task<float[]?> EmbedQueryAsync(string text, CancellationToken ct = default)
+                => Task.FromResult<float[]?>(null);
+
+            public Task<float[]?> EmbedPassageAsync(string text, CancellationToken ct = default)
+                => Task.FromResult<float[]?>(null);
+
+            public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+                => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+
+            public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+                => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+
+            public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken ct = default)
+                => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+        }
+
+        private sealed class DisabledLlmProvider : ILlmProvider
+        {
+            public bool Enabled => false;
+            public string Model => "disabled";
+
+            public Task<string> SummarizeAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
+                => Task.FromResult("LLM disabled in tests");
+
+            public Task<LlmSummaryResult> SummarizeWithReasoningAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
+                => Task.FromResult(new LlmSummaryResult("LLM disabled in tests"));
+
+            public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
+                => Task.FromResult("LLM disabled in tests");
+
+            public Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
+                => Task.FromResult(string.Empty);
         }
 
         public RepositoryConfiguration RepoConfig { get; }

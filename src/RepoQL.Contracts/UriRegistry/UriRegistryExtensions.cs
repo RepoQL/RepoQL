@@ -50,15 +50,18 @@ public static class UriRegistryExtensions
 
         foreach (var (fileUri, entry) in snapshot)
         {
-            // Collect positive ranges for this file
+            // Collect positive ranges and spanless symbols for this file
             var positiveRanges = new List<LineRange>();
+            var spanlessPositiveSymbols = new List<RepoUri>();
+
             foreach (var parsed in parsedPositives)
             {
                 if (!MatchesContainer(fileUri.AbsoluteUri, parsed.Container, ignoreCase))
                     continue;
 
-                var ranges = ExpandToLineRanges(fileUri, entry, parsed.Fragment, ignoreCase);
-                positiveRanges.AddRange(ranges);
+                var expansion = ExpandToRangesAndSymbols(fileUri, entry, parsed.Fragment, ignoreCase);
+                positiveRanges.AddRange(expansion.Ranges);
+                spanlessPositiveSymbols.AddRange(expansion.SpanlessSymbols);
             }
 
             // If no positive patterns specified but negatives exist, start with whole file
@@ -67,40 +70,94 @@ public static class UriRegistryExtensions
                 positiveRanges.Add(LineRange.WholeFile(entry.LineCount));
             }
 
-            if (positiveRanges.Count == 0)
-                continue;
-
-            // Union positive ranges
-            var unionedRanges = positiveRanges.Union();
-
-            // Collect negative ranges for this file
-            var negativeRanges = new List<LineRange>();
-            foreach (var parsed in parsedNegatives)
+            // Process line ranges if any
+            if (positiveRanges.Count > 0)
             {
-                // Check if negative applies to this file
-                if (!string.IsNullOrEmpty(parsed.Container) &&
-                    !MatchesContainer(fileUri.AbsoluteUri, parsed.Container, ignoreCase))
-                    continue;
+                // Union positive ranges
+                var unionedRanges = positiveRanges.Union();
 
-                var ranges = ExpandToLineRanges(fileUri, entry, parsed.Fragment, ignoreCase);
-                negativeRanges.AddRange(ranges);
+                // Collect negative ranges for this file
+                var negativeRanges = new List<LineRange>();
+                foreach (var parsed in parsedNegatives)
+                {
+                    // Check if negative applies to this file
+                    if (!string.IsNullOrEmpty(parsed.Container) &&
+                        !MatchesContainer(fileUri.AbsoluteUri, parsed.Container, ignoreCase))
+                        continue;
+
+                    var expansion = ExpandToRangesAndSymbols(fileUri, entry, parsed.Fragment, ignoreCase);
+                    negativeRanges.AddRange(expansion.Ranges);
+                }
+
+                // Subtract negative ranges
+                var finalRanges = unionedRanges.Subtract(negativeRanges.Union());
+
+                // Simplify and yield results
+                foreach (var range in finalRanges)
+                {
+                    yield return UriSimplifier.Simplify(fileUri, range, entry);
+                }
             }
 
-            // Subtract negative ranges
-            var finalRanges = unionedRanges.Subtract(negativeRanges.Union());
-
-            // Simplify and yield results
-            foreach (var range in finalRanges)
+            // Process spanless symbols - check against negative symbol patterns
+            foreach (var symbolUri in spanlessPositiveSymbols)
             {
-                yield return UriSimplifier.Simplify(fileUri, range, entry);
+                if (!IsSymbolExcludedByNegatives(symbolUri, parsedNegatives, ignoreCase))
+                {
+                    yield return symbolUri;
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Checks if a symbol URI is excluded by any negative pattern.
+    /// Only symbol= patterns can exclude spanless symbols (line patterns can't apply).
+    /// </summary>
+    private static bool IsSymbolExcludedByNegatives(
+        RepoUri symbolUri,
+        ParsedPattern[] negatives,
+        bool ignoreCase)
+    {
+        var symbolName = ExtractSymbolName(symbolUri);
+
+        foreach (var parsed in negatives)
+        {
+            // Check container match (if specified)
+            if (!string.IsNullOrEmpty(parsed.Container) &&
+                !MatchesContainer(symbolUri.Container.AbsoluteUri, parsed.Container, ignoreCase))
+                continue;
+
+            // Only symbol= fragments can exclude spanless symbols
+            if (string.IsNullOrEmpty(parsed.Fragment))
+                continue; // No fragment = whole file exclusion, doesn't apply to specific symbols
+
+            var fragmentParams = ParseFragmentParams(parsed.Fragment);
+            if (fragmentParams.TryGetValue("symbol", out var negativePattern))
+            {
+                if (MatchesWithWildcard(symbolName, negativePattern, ignoreCase))
+                    return true; // Symbol is excluded
+            }
+            // Note: line= fragments can't exclude spanless symbols (we don't know their location)
+        }
+
+        return false;
     }
 
     /// <summary>
     /// Parsed components of a pattern (container and fragment).
     /// </summary>
     private readonly record struct ParsedPattern(string Container, string? Fragment);
+
+    /// <summary>
+    /// Result of expanding a pattern to line ranges, including spanless symbol matches.
+    /// </summary>
+    private readonly record struct ExpansionResult(
+        IReadOnlyList<LineRange> Ranges,
+        IReadOnlyList<RepoUri> SpanlessSymbols)
+    {
+        public static ExpansionResult Empty => new([], []);
+    }
 
     /// <summary>
     /// Parses a pattern into container and fragment components.
@@ -129,21 +186,18 @@ public static class UriRegistryExtensions
 
     /// <summary>
     /// Expands a fragment pattern to line ranges for a file.
+    /// Symbols with spans become line ranges; symbols without spans are returned separately.
     /// </summary>
-    private static IEnumerable<LineRange> ExpandToLineRanges(
+    private static ExpansionResult ExpandToRangesAndSymbols(
         RepoUri fileUri,
         FileEntry entry,
         string? fragment,
         bool ignoreCase)
     {
-        // No fragment = whole file
+        // No fragment = whole file (uses WholeFileUnknown sentinel when LineCount == 0)
         if (string.IsNullOrEmpty(fragment))
         {
-            if (entry.LineCount > 0)
-                yield return LineRange.WholeFile(entry.LineCount);
-            else
-                yield return new LineRange(1, int.MaxValue); // Unknown line count, use max
-            yield break;
+            return new ExpansionResult([LineRange.WholeFile(entry.LineCount)], []);
         }
 
         // Parse fragment
@@ -153,31 +207,41 @@ public static class UriRegistryExtensions
         if (fragmentParams.TryGetValue("line", out var lineValue))
         {
             var range = ParseLineRange(lineValue);
-            if (range.IsValid)
-                yield return range;
-            yield break;
+            return range.IsValid
+                ? new ExpansionResult([range], [])
+                : ExpansionResult.Empty;
         }
 
         // Handle symbol= fragment
         if (fragmentParams.TryGetValue("symbol", out var symbolPattern))
         {
+            var ranges = new List<LineRange>();
+            var spanlessSymbols = new List<RepoUri>();
+
             foreach (var (symbolUri, symbolEntry) in entry.Symbols)
             {
-                // Skip symbols without spans
-                if (!symbolEntry.HasSpan)
-                    continue;
-
                 // Match symbol name against pattern
                 var symbolName = ExtractSymbolName(symbolUri);
                 if (MatchesWithWildcard(symbolName, symbolPattern, ignoreCase))
                 {
-                    yield return new LineRange(symbolEntry.StartLine, symbolEntry.EndLine);
+                    if (symbolEntry.HasSpan)
+                    {
+                        // Symbol has span - use line range for set operations
+                        ranges.Add(new LineRange(symbolEntry.StartLine, symbolEntry.EndLine));
+                    }
+                    else
+                    {
+                        // Symbol has no span - collect for direct output
+                        spanlessSymbols.Add(symbolUri);
+                    }
                 }
             }
-            yield break;
+
+            return new ExpansionResult(ranges, spanlessSymbols);
         }
 
-        // Unknown fragment type - no ranges
+        // Unknown fragment type - no results
+        return ExpansionResult.Empty;
     }
 
     /// <summary>

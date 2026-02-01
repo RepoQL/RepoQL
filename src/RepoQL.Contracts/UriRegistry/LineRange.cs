@@ -53,10 +53,22 @@ public readonly record struct LineRange(int Start, int End)
     public static LineRange Empty => new(0, 0);
 
     /// <summary>
+    /// Sentinel value representing the entire file when line count is unknown.
+    /// Simplifier treats this as "return file URI directly".
+    /// </summary>
+    public static LineRange WholeFileUnknown => new(1, int.MaxValue);
+
+    /// <summary>
+    /// Returns true if this range represents "whole file with unknown size".
+    /// </summary>
+    public bool IsWholeFileUnknown => Start == 1 && End == int.MaxValue;
+
+    /// <summary>
     /// Creates a range representing the entire file given its line count.
+    /// Returns WholeFileUnknown if line count is 0 (unknown).
     /// </summary>
     public static LineRange WholeFile(int lineCount) =>
-        lineCount > 0 ? new(1, lineCount) : Empty;
+        lineCount > 0 ? new(1, lineCount) : WholeFileUnknown;
 
     /// <summary>
     /// Creates a range for a single line.

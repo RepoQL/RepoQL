@@ -10,16 +10,19 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// to SQL queries for observability and scope validation.
 ///
 /// Complexity: Delegates to UriRegistry extension methods. Returns structured results
-/// that can be consumed as tables or scalar values.
+/// that can be consumed as tables or scalar values. Normalizes absolute paths in patterns
+/// to repo-relative URIs when repo root is available.
 /// </summary>
 [UdfClass]
 public class UriRegistryUdf
 {
     private readonly UriRegistry _registry;
+    private readonly string? _repoRoot;
 
-    public UriRegistryUdf(UriRegistry registry)
+    public UriRegistryUdf(UriRegistry registry, RepositoryConfiguration repoConfig)
     {
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+        _repoRoot = repoConfig?.Path;
     }
 
     /// <summary>
@@ -168,7 +171,33 @@ public class UriRegistryUdf
         return readiness.IsReady ? "true" : "false";
     }
 
+    /// <summary>
+    /// Returns URIs matching a pattern using line-range-based globbing.
+    /// Supports compound patterns, negations, symbol wildcards, and line range exclusions.
+    /// Normalizes absolute paths in patterns to repo-relative URIs when repo root is available.
+    /// </summary>
+    /// <example>
+    /// SELECT * FROM _glob_files_internal('src/**/*.cs')
+    /// SELECT * FROM _glob_files_internal('src/**/*.cs#symbol=*')
+    /// SELECT * FROM _glob_files_internal('src/**/*.cs#symbol=*;!#line=1,30')
+    /// SELECT * FROM _glob_files_internal('C:/Source/Repo/src/**/*.cs')  -- absolute path normalized
+    /// </example>
+    [StructuredUdf("_glob_files_internal", Description = "Returns URIs matching pattern from registry using line-range globbing")]
+    public IEnumerable<GlobResult> GlobFilesInternal([UdfDefault("NULL")] string? pattern)
+    {
+        // Normalize pattern to convert absolute paths to repo-relative (when repo root is available)
+        var normalizedPattern = _repoRoot != null
+            ? GlobPatternNormalizer.NormalizePattern(pattern, _repoRoot)
+            : pattern;
+
+        foreach (var uri in _registry.MatchPattern(normalizedPattern))
+        {
+            yield return new GlobResult(uri.AbsoluteUri);
+        }
+    }
+
     // Result record types
+    public record GlobResult(string Uri);
     public record IndexerStatusRow(
         string Uri,
         string Status,

@@ -1,12 +1,46 @@
 using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Tests;
 
 internal class MatchesGlobSqlTests
 {
+    /// <summary>
+    /// Creates a DuckDbDataStore with UriRegistry support for glob_files tests.
+    /// </summary>
+    private static (DuckDbDataStore Store, UriRegistry Registry) CreateStoreWithRegistry()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(new RepositoryConfiguration { Path = "/repo" });
+        services.AddSingleton<UriRegistry>();
+        services.AddSingleton<IEmbeddingProvider?>(sp => null);
+        services.AddSingleton<ILlmProvider?>(sp => null);
+        services.AddSingleton<IMcpToolCaller?>(sp => null);
+        var serviceProvider = services.BuildServiceProvider();
+
+        var registry = serviceProvider.GetRequiredService<UriRegistry>();
+        var store = new DuckDbDataStore(":memory:", serviceProvider: serviceProvider);
+        return (store, registry);
+    }
+
+    /// <summary>
+    /// Seeds a document URI into both the database and the registry.
+    /// </summary>
+    private static void SeedDocument(DuckDbDataStore store, UriRegistry registry, string uri, Guid id)
+    {
+        var emptyJson = "{}";
+        store.ExecuteRaw($"""
+            INSERT INTO node (id, kind, uri, container_uri_lowercase, properties, created_at, updated_at)
+            VALUES ('{id}', 'document', '{uri}', '{uri.ToLowerInvariant()}', '{emptyJson}', NOW(), NOW())
+            """);
+
+        var repoUri = RepoUri.Parse(uri);
+        registry.SetIndexed(repoUri, lineCount: 100, new Dictionary<RepoUri, SymbolEntry>());
+    }
+
     // === Single Pattern ===
 
     [Test]
@@ -160,17 +194,14 @@ internal class MatchesGlobSqlTests
     [Test]
     public void GlobFiles_ReturnsMatchingDocuments()
     {
-        using var store = new DuckDbDataStore(":memory:");
+        var (store, registry) = CreateStoreWithRegistry();
+        using var _ = store;
 
-        // Insert test documents
-        store.ExecuteRaw("""
-            INSERT INTO node (id, kind, uri, container_uri_lowercase, properties, created_at, updated_at)
-            VALUES
-                ('11111111-1111-1111-1111-111111111111', 'document', 'file:///repo/src/App.cs', 'file:///repo/src/app.cs', '{}', NOW(), NOW()),
-                ('22222222-2222-2222-2222-222222222222', 'document', 'file:///repo/src/tests/Test.cs', 'file:///repo/src/tests/test.cs', '{}', NOW(), NOW()),
-                ('33333333-3333-3333-3333-333333333333', 'document', 'file:///repo/lib/Helper.cs', 'file:///repo/lib/helper.cs', '{}', NOW(), NOW()),
-                ('44444444-4444-4444-4444-444444444444', 'document', 'file:///repo/docs/readme.md', 'file:///repo/docs/readme.md', '{}', NOW(), NOW())
-            """);
+        // Seed test documents to both database and registry
+        SeedDocument(store, registry, "file:///repo/src/App.cs", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        SeedDocument(store, registry, "file:///repo/src/tests/Test.cs", Guid.Parse("22222222-2222-2222-2222-222222222222"));
+        SeedDocument(store, registry, "file:///repo/lib/Helper.cs", Guid.Parse("33333333-3333-3333-3333-333333333333"));
+        SeedDocument(store, registry, "file:///repo/docs/readme.md", Guid.Parse("44444444-4444-4444-4444-444444444444"));
 
         var rows = store.Query("SELECT * FROM glob_files('src/**')").ToList();
         rows.Should().HaveCount(2);
@@ -181,16 +212,13 @@ internal class MatchesGlobSqlTests
     [Test]
     public void GlobFiles_WithNegativePattern_ExcludesMatch()
     {
-        using var store = new DuckDbDataStore(":memory:");
+        var (store, registry) = CreateStoreWithRegistry();
+        using var _ = store;
 
-        // Insert test documents
-        store.ExecuteRaw("""
-            INSERT INTO node (id, kind, uri, container_uri_lowercase, properties, created_at, updated_at)
-            VALUES
-                ('11111111-1111-1111-1111-111111111111', 'document', 'file:///repo/src/App.cs', 'file:///repo/src/app.cs', '{}', NOW(), NOW()),
-                ('22222222-2222-2222-2222-222222222222', 'document', 'file:///repo/src/tests/Test.cs', 'file:///repo/src/tests/test.cs', '{}', NOW(), NOW()),
-                ('33333333-3333-3333-3333-333333333333', 'document', 'file:///repo/lib/Helper.cs', 'file:///repo/lib/helper.cs', '{}', NOW(), NOW())
-            """);
+        // Seed test documents to both database and registry
+        SeedDocument(store, registry, "file:///repo/src/App.cs", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        SeedDocument(store, registry, "file:///repo/src/tests/Test.cs", Guid.Parse("22222222-2222-2222-2222-222222222222"));
+        SeedDocument(store, registry, "file:///repo/lib/Helper.cs", Guid.Parse("33333333-3333-3333-3333-333333333333"));
 
         var rows = store.Query("SELECT * FROM glob_files('src/**;!src/tests/**')").ToList();
         rows.Should().HaveCount(1);
@@ -200,15 +228,13 @@ internal class MatchesGlobSqlTests
     [Test]
     public void GlobFiles_BlankPattern_ReturnsAll()
     {
-        using var store = new DuckDbDataStore(":memory:");
+        // Blank pattern uses Branch 3 (node table directly), but we still set up registry for consistency
+        var (store, registry) = CreateStoreWithRegistry();
+        using var _ = store;
 
-        // Insert test documents
-        store.ExecuteRaw("""
-            INSERT INTO node (id, kind, uri, container_uri_lowercase, properties, created_at, updated_at)
-            VALUES
-                ('11111111-1111-1111-1111-111111111111', 'document', 'file:///repo/src/App.cs', 'file:///repo/src/app.cs', '{}', NOW(), NOW()),
-                ('22222222-2222-2222-2222-222222222222', 'document', 'file:///repo/docs/readme.md', 'file:///repo/docs/readme.md', '{}', NOW(), NOW())
-            """);
+        // Seed test documents
+        SeedDocument(store, registry, "file:///repo/src/App.cs", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        SeedDocument(store, registry, "file:///repo/docs/readme.md", Guid.Parse("22222222-2222-2222-2222-222222222222"));
 
         var rows = store.Query("SELECT * FROM glob_files('')").ToList();
         rows.Should().HaveCount(2);
@@ -217,15 +243,12 @@ internal class MatchesGlobSqlTests
     [Test]
     public void GlobFiles_OnlyNegatives_ReturnsNonMatching()
     {
-        using var store = new DuckDbDataStore(":memory:");
+        var (store, registry) = CreateStoreWithRegistry();
+        using var _ = store;
 
-        // Insert test documents
-        store.ExecuteRaw("""
-            INSERT INTO node (id, kind, uri, container_uri_lowercase, properties, created_at, updated_at)
-            VALUES
-                ('11111111-1111-1111-1111-111111111111', 'document', 'file:///repo/src/App.cs', 'file:///repo/src/app.cs', '{}', NOW(), NOW()),
-                ('22222222-2222-2222-2222-222222222222', 'document', 'file:///repo/docs/readme.md', 'file:///repo/docs/readme.md', '{}', NOW(), NOW())
-            """);
+        // Seed test documents to both database and registry
+        SeedDocument(store, registry, "file:///repo/src/App.cs", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        SeedDocument(store, registry, "file:///repo/docs/readme.md", Guid.Parse("22222222-2222-2222-2222-222222222222"));
 
         var rows = store.Query("SELECT * FROM glob_files('!**/*.md')").ToList();
         rows.Should().HaveCount(1);
@@ -236,11 +259,22 @@ internal class MatchesGlobSqlTests
 
     private static DuckDbDataStore CreateStoreWithRepoRoot(string repoRoot)
     {
+        var (store, _) = CreateStoreWithRepoRootAndRegistry(repoRoot);
+        return store;
+    }
+
+    private static (DuckDbDataStore Store, UriRegistry Registry) CreateStoreWithRepoRootAndRegistry(string repoRoot)
+    {
         var services = new ServiceCollection();
         services.AddSingleton(new RepositoryConfiguration { Path = repoRoot });
+        services.AddSingleton<UriRegistry>();
+        services.AddSingleton<IEmbeddingProvider?>(sp => null);
+        services.AddSingleton<ILlmProvider?>(sp => null);
+        services.AddSingleton<IMcpToolCaller?>(sp => null);
         var serviceProvider = services.BuildServiceProvider();
 
-        return new DuckDbDataStore(":memory:", serviceProvider: serviceProvider);
+        var registry = serviceProvider.GetRequiredService<UriRegistry>();
+        return (new DuckDbDataStore(":memory:", serviceProvider: serviceProvider), registry);
     }
 
     [Test]
@@ -286,16 +320,13 @@ internal class MatchesGlobSqlTests
     [Test]
     public void GlobFiles_AbsoluteWindowsPath_ReturnsMatchingDocuments()
     {
-        using var store = CreateStoreWithRepoRoot("C:/Source/TestRepo");
+        var (store, registry) = CreateStoreWithRepoRootAndRegistry("C:/Source/TestRepo");
+        using var _ = store;
 
-        // Insert test documents with repo-relative URIs
-        store.ExecuteRaw("""
-            INSERT INTO node (id, kind, uri, container_uri_lowercase, properties, created_at, updated_at)
-            VALUES
-                ('11111111-1111-1111-1111-111111111111', 'document', 'file:///src/App.cs', 'file:///src/app.cs', '{}', NOW(), NOW()),
-                ('22222222-2222-2222-2222-222222222222', 'document', 'file:///tests/Test.cs', 'file:///tests/test.cs', '{}', NOW(), NOW()),
-                ('33333333-3333-3333-3333-333333333333', 'document', 'file:///lib/Helper.cs', 'file:///lib/helper.cs', '{}', NOW(), NOW())
-            """);
+        // Seed test documents with repo-relative URIs to both database and registry
+        SeedDocument(store, registry, "file:///src/App.cs", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        SeedDocument(store, registry, "file:///tests/Test.cs", Guid.Parse("22222222-2222-2222-2222-222222222222"));
+        SeedDocument(store, registry, "file:///lib/Helper.cs", Guid.Parse("33333333-3333-3333-3333-333333333333"));
 
         // Query with absolute Windows path - should normalize and match
         var rows = store.Query("SELECT * FROM glob_files('C:/Source/TestRepo/src/**')").ToList();
