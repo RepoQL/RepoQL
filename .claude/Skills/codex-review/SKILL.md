@@ -11,6 +11,8 @@ zones: { knowledge: 45, process: 20, constraint: 15, wisdom: 20 }
 
 Codex (GPT-5.2-codex) provides a second perspective on code changes. Use for security reviews, regression checks, or when you need another set of eyes on complex changes.
 
+**See also**: The `codex` skill for the core insight—Claude and Codex are yin and yang. Claude translates intent into explicit steps; Codex executes systematically. Your job: shape the review request well.
+
 ## Quick Reference
 
 | Need | Use | When |
@@ -184,4 +186,4 @@ RepoQL queries Codex can run:
 
 ---
 
-*State the steps, not just the outcome. Provide scope explicitly. Save the threadId.*
+*Shape the review request well. Codex finds what you wouldn't think to look for. Save the threadId.*

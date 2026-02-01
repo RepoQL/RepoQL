@@ -4,7 +4,7 @@ description: Delegate complex tasks to Codex (GPT-5.2-codex). Use for ticket com
 tags: [codex, delegation, tasks, debugging, testing, openai]
 audience: { human: 20, agent: 80 }
 purpose: { gestalt: 25, reference: 40, concepts: 25, high-agency-process: 10 }
-zones: { knowledge: 40, process: 15, constraint: 15, wisdom: 30 }
+zones: { knowledge: 35, process: 15, constraint: 15, wisdom: 35 }
 ---
 
 # Codex
@@ -42,16 +42,37 @@ Codex is highly capable but won't intuit what you wanted but didn't say.
 
 ---
 
+## Capsule: YinYang
+
+**Invariant**
+Claude and Codex are complementary partners. Claude translates vague intent into explicit steps; Codex executes systematically and surfaces what you wouldn't think to look for.
+
+**Example**
+User: "Check the indexing pipeline for issues"
+Claude translates → "Task: Investigation. Steps: 1) Find shared state 2) Trace synchronization 3) Identify races"
+Codex executes → finds 3 race conditions Claude wouldn't have looked for
+Claude synthesizes → explains findings, offers next steps
+//BOUNDARY: Neither complete alone. The handoff is where Claude adds value.
+
+**Depth**
+- Claude: inference, intent, synthesis. Asks "what did they probably mean?"
+- Codex: execution, precision, depth. Asks "what did they say?"
+- Together: vague intent → explicit steps → systematic execution → synthesized insight
+- Codex finds issues you wouldn't think to ask about—delegate investigation tasks
+- The quality of your translation determines the quality of Codex's output
+
+---
+
 ## Capsule: WhenToDelegate
 
 **Invariant**
-Delegate to Codex when the task is well-defined and you want execution. Keep in Claude when you need inference or exploration.
+Delegate to Codex when the task benefits from systematic execution. Keep in Claude when you need inference or the task is still forming.
 
 **Example**
 Well-defined ticket with acceptance criteria → Codex
 "Help me figure out what's wrong" → Claude (needs inference)
-"Find race conditions in the indexing pipeline" with thread dumps and timing → Codex
-//BOUNDARY: Codex for execution. Claude for exploration and inference.
+"Find race conditions in the indexing pipeline" with context → Codex (systematic search finds what you wouldn't ask about)
+//BOUNDARY: Claude shapes the question. Codex answers it thoroughly.
 
 ---
 
@@ -165,6 +186,16 @@ Before delegating, ensure you provide:
 | High risk / regression potential | OK with direct edits |
 | Want to review options first | Trust Codex to execute |
 
+### Iterative Refinement Pattern
+
+The most powerful pattern: **identify → propose → implement**
+
+1. **First call**: "Investigate X, identify issues" → Codex finds problems
+2. **Reply**: "Propose mitigations for issue #2" → Codex designs solutions
+3. **Reply**: "Implement the fix for the double-decrement race" → Codex writes code
+
+Each call builds on the previous. Codex retains full context via `threadId`. This lets you validate each stage before committing to the next.
+
 ---
 
 ## Direct Edits vs Review
@@ -211,4 +242,18 @@ Codex CAN apply changes directly. Control this:
 
 ---
 
-*State the steps, not just the outcome. Provide context. Save the threadId.*
+## The Handoff
+
+Your job as Claude: translate vague intent into explicit steps. This is where you add value.
+
+| User says | You translate to |
+|-----------|------------------|
+| "Check for issues" | Steps: 1) Find X 2) Trace Y 3) Identify Z |
+| "Fix the bug" | Goal + repro + expected + actual + logs |
+| "Review the changes" | Scope + focus + constraints + output format |
+
+The more explicit your translation, the better Codex performs. Vague prompts get reasonable results; step-by-step prompts get thorough, actionable results.
+
+---
+
+*Yin and yang. Claude shapes the question; Codex answers it. Save the threadId.*
