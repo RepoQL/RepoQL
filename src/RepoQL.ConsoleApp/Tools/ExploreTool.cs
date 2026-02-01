@@ -35,7 +35,7 @@ internal sealed class ExploreTool(
         Inventory  → tokenBudget=1000 keywords="payment" scope="file:///docs/**"
         Locate     → tokenBudget=1500 keywords="settlement batch" boost="(?i)payment"
         Inspect  → tokenBudget=3000 keywords="reconciliation logic"
-        Explain → tokenBudget=2000 keywords="Why does Pushpay batch payments?"
+        Explain → tokenBudget=2000 keywords="Why does TokenService use refresh tokens?"
         **Depth**
         - All intents accept: tokenBudget, keywords, scope, boost, penalize
         - Inventory: keywords optional (ranks when present); broad results
