@@ -133,10 +133,37 @@ CLI and MCP server share the same core. Use CLI for local debugging/reindexing; 
 | Find a symbol | Use `_search_candidates('ClassName', k := 10) WHERE scope='object'` or xray with keywords |
 | Propose architecture change | Read `docs/RepoqlDesign.md` first. Extend via views/macros/UDFs, never new base tables. |
 
+## Documentation Structure
+
+```
+docs/
+├── north-star/          # Vision - what agents should be able to do
+├── current-state/       # What actually works today
+│
+├── flows/
+│   ├── current/         # How processes work now
+│   └── future/          # How processes should work
+├── designs/
+│   ├── current/         # Architecture as built
+│   └── future/          # Architecture as envisioned
+├── plans/               # What to build next - scoped work
+├── research/            # Investigation and analysis
+├── knowledge/           # Crystallized wisdom and guidelines
+│
+├── RepoqlDesign.md      # Core architecture and constraints
+├── Schema.md            # Schema reference (tables, macros, UDFs)
+└── ...
+```
+
+**Current vs future.** This pattern appears throughout: north-star (future) vs current-state (present), flows/future vs flows/current. The gap between current and future is the work to be done. Keep them separate—don't update future docs to match current limitations, don't update current docs with aspirations.
+
+**Document type guidance** lives in `.claude/Skills/writing-documents/`. When writing documentation, invoke that skill to get type-specific guidance (north-star, gestalt, reference, research, design, plan, flow, findings, concepts, process).
+
 ## Key Documentation
 
 | Document | Purpose |
 |----------|---------|
+| `docs/north-star/README.md` | Vision: what RepoQL enables. **Read to understand the goal.** |
 | `docs/RepoqlDesign.md` | Architecture, constraints, extension patterns. **Read before proposing features.** |
 | `docs/Schema.md` | Core schema reference (tables, macros, UDFs) |
 | `docs/DesignEthos.md` | Agent-first design philosophy, golden rules |
