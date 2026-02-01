@@ -63,39 +63,9 @@ Enumerate finite sets; teach discovery for infinite sets.
 - Discovery patterns: naming conventions, query templates, exploration techniques
 - Tables only for common/critical items when teaching discovery
 
-## Entry Structure
-
-Every entry in a reference document should follow the same structure. Consistency is the point — readers learn the shape once, then scan.
-
-### Capsule: WhenNotToUse
-
-**Invariant**
-Every reference entry needs "When NOT to use." If everything is always appropriate, you don't need a reference.
-
-**Example**
-`analyze_golden_metrics`: When NOT to use → "You already know the specific problem" or "You need raw data, not AI analysis."
-//BOUNDARY: Prevents misuse. Enables decision-making. Not optional.
-
-**Depth**
-- Minimum entry: When to use, When NOT to use, Example
-- If you can't articulate when NOT to use, the entry lacks precision
-- "When NOT to use" often more valuable than "When to use"
-
-Minimum viable entry:
-```markdown
-### [Entry Name]
-
-**When to use:** [Conditions where this is the right choice]
-
-**When NOT to use:** [Conditions where this is wrong]
-
-**Example:**
-[Copy-paste ready code or configuration]
-```
-
 ## Decision Support
 
-Reference documents often help choose between options. Structure for comparison:
+The primary value of reference docs is helping readers choose correctly. Decision tables beat prose.
 
 **Decision tables:**
 ```markdown
@@ -126,6 +96,11 @@ Is ordering important?
 | Thread-safe | No | Yes |
 ```
 
+Decision tables are more useful than "when to use / when not to use" prose because:
+- Tables are scannable
+- Rows map needs to solutions directly
+- No boilerplate padding
+
 ## Copy-Paste Ready
 
 Examples should work when copied directly. This means:
@@ -151,10 +126,59 @@ var response = await client.GetAsync("<API_URL>");
 Readers don't read reference docs — they scan for what they need. Support this:
 
 - **Consistent headers** — same depth, same naming pattern
-- **Bold key terms** — "When to use:", "Returns:", "Throws:"
 - **Tables over prose** — faster to scan
 - **Code blocks stand out** — easy to spot examples
 - **Alphabetical or logical grouping** — predictable order
+
+## Common Mistakes
+
+Call out mistakes explicitly with problem and fix:
+
+```markdown
+| Mistake | Problem | Fix |
+|---------|---------|-----|
+| `src/**test` | `**` not a complete segment | `src/**/test*` |
+| Using `%` wildcard | That's SQL LIKE, not glob | Use `**` and `*` |
+```
+
+This is more useful than abstract "when not to use" guidance because it shows *specific* errors readers actually make.
+
+## Structure
+
+```markdown
+# [Topic]
+
+[One sentence: what this covers]
+
+## Quick Reference
+
+| Need | Solution |
+|------|----------|
+| ... | ... |
+
+---
+
+## [Category A]
+
+[Brief explanation]
+
+```
+[Examples]
+```
+
+---
+
+## [Category B]
+...
+
+---
+
+## Common Mistakes
+
+| Mistake | Problem | Fix |
+|---------|---------|-----|
+| ... | ... | ... |
+```
 
 ## Worth Asking
 
@@ -166,85 +190,18 @@ Before writing:
 
 After drafting:
 - Is every entry the same structure?
-- Does every entry have "When NOT to use"?
 - Are examples copy-paste ready?
 - Can someone find what they need in under 30 seconds?
-
-## Structure
-
-```markdown
-# [Topic] Reference
-
-[One sentence: what this reference covers and when to use it]
-
-## When to Use This Reference
-
-[Conditions where this document helps]
-
-## When NOT to Use This Reference
-
-[What this doesn't cover, where to look instead]
-
----
-
-## [Category A]
-
-### [Entry 1]
-
-**When to use:** [Conditions]
-
-**When NOT to use:** [Conditions]
-
-**Example:**
-[Code or configuration]
-
-### [Entry 2]
-...
-
----
-
-## [Category B]
-...
-
----
-
-## Quick Reference
-
-[Summary table or decision tree for common choices]
-```
-
-## What to Avoid
-
-| Pattern | Problem |
-|---------|---------|
-| Prose explanations | That's gestalt territory |
-| Inconsistent entry structure | Breaks scanning |
-| Missing "When NOT to use" | Enables misuse |
-| Placeholder examples | Not copy-paste ready |
-| Everything in markdown | Queryable might serve better |
-| No decision support | Just a list, not a reference |
+- Is there a decision table at the top?
 
 ## Checklist
 
 - [ ] Format chosen deliberately (markdown, queryable, or hybrid)
 - [ ] If hybrid: flat facts in CSV, relational context in markdown
-- [ ] Every entry follows same structure
-- [ ] "When NOT to use" present for every entry
+- [ ] Decision table near the top for common needs
 - [ ] Examples are copy-paste ready
-- [ ] Decision support included (tables, trees)
+- [ ] Common mistakes table at the end
 - [ ] Scannable in under 30 seconds
 - [ ] Clear boundary with gestalt (lookup vs understanding)
-
-## Exemplar
-
-See `exemplar.md` — service catalog demonstrating:
-- Consistent entry structure (every service same fields)
-- Quick lookup table for common needs
-- Blast radius reference for decision support
-- Entry template for maintenance
-
-Also see in the wild:
-- `docs/guidance/newrelic/service-catalog.md` — full service catalog (enumerate pattern)
-- `docs/guidance/newrelic/metrics-catalog.md` — metrics discovery (teach discovery pattern)
 
 *Find the answer. Don't read the book.*

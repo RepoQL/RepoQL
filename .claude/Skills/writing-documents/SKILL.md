@@ -1,6 +1,6 @@
 ---
 name: writing-documents
-description: Guides effective documentation creation. Activates relevant guidance for gestalt, reference, research, design, plan, flow, findings, concepts, or process documents. Prevents cascading harm from wrong information.
+description: Guides effective documentation creation. Activates relevant guidance for north-star, gestalt, reference, research, design, plan, flow, findings, concepts, or process documents. Prevents cascading harm from wrong information.
 tags: [documentation, writing, skill, quality]
 zones: { constraint: 40, knowledge: 30, wisdom: 25, process: 5 }
 ---
@@ -15,6 +15,7 @@ Wrong information is worse than missing information. One fabricated fact becomes
 
 | If the reader wants to... | Write a... | Key insight |
 |---------------------------|------------|-------------|
+| Know what great looks like | **north-star** | Vision that guides all downstream work |
 | Understand something | **gestalt** | Essential essence, not everything |
 | Look something up | **reference** | Data in CSV, guidance in markdown |
 | Inform a decision | **research** | Synthesis without prescription |
@@ -38,7 +39,7 @@ Each type has guidance in `references/{type}/`. Read it before writing.
 description: One sentence - what this is and why it exists
 tags: [searchable, terms]
 audience: { human: 60, agent: 40 }
-purpose: { gestalt: 0, reference: 0, research: 0, design: 0, plan: 0, flow: 0, findings: 0, concepts: 0, high-agency-process: 0, low-agency-process: 0 }
+purpose: { north-star: 0, gestalt: 0, reference: 0, research: 0, design: 0, plan: 0, flow: 0, findings: 0, concepts: 0, high-agency-process: 0, low-agency-process: 0 }
 ---
 ```
 
@@ -119,6 +120,13 @@ Mark gaps honestly: `**STUB** - needs expert input`
 
 ## Purpose Guidance
 
+### North Star
+**Declare what great looks like. Guide all downstream work.**
+
+The vision document that comes first. Describes the ideal from the user's perspective—capabilities, not implementation. Ancestor to many designs; each design's north star section is a shallow slice of the ancestor.
+
+→ `references/north-star/north-star.md`
+
 ### Gestalt
 **Re-hydrate understanding. Enable good instincts.**
 
@@ -195,10 +203,15 @@ Skip or reorder causes harm. Strong guardrails. Scripted steps with verification
 
 ```mermaid
 flowchart LR
+    subgraph VISION
+        north-star
+    end
     subgraph UNDERSTANDING
+        north-star --> research
         research --> flow
     end
     subgraph SHAPING
+        north-star --> design
         flow --> design
         concepts --> design
     end
@@ -209,6 +222,7 @@ flowchart LR
 
 | Document | Feeds into | When to use |
 |----------|------------|-------------|
+| north-star | research, flow, design | Declaring what great looks like |
 | research | flow, design, *ambient knowledge* | Exploring options, building domain expertise |
 | flow | design | Mapping processes |
 | concepts | design | Crystallizing wisdom |
@@ -218,9 +232,9 @@ flowchart LR
 | reference | *any stage* | Looking up facts |
 | findings | *any stage* | Answering questions |
 
-Research also builds ambient expertise — an agent with research documents becomes expert in that domain, making better decisions across many future tasks.
+North star is the ancestor—one north star may guide many designs. Research explores what's possible within the vision. Flow maps how it should work. Design makes trade-offs against the north star.
 
-A design without flow misses how it will actually be used. A plan without design lacks grounding and the big picture. Research without knowing why misses the point.
+A design without north star lacks a target to evaluate against. A design without flow misses how it will actually be used. A plan without design lacks grounding and the big picture.
 
 ---
 
