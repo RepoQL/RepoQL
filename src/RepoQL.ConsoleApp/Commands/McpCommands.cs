@@ -59,19 +59,19 @@ internal class McpCommands
                                            </TOOLS>
 
                                            <CONCEPTS>
-                                           **URIs**: `file:///src/Auth.cs`, `#symbol=Validate`, `#line=10,20`, `repoql-docs:///quickstart.md`
+                                           **URIs**: `file:///src/Auth.cs`, `#symbol=Validate`, `#line=10,20`, `help:///quickstart.md`
                                            **Globs**: `src/**/*.cs`, `src/**;!**/tests/**`, `#symbol=*Handler`
                                            **Budget**: investment not limit — more tokens = richer detail
                                            </CONCEPTS>
 
                                            <DOCS>
-                                           RepoQL's documentation is embedded and queryable at repoql-docs://
+                                           RepoQL's documentation is embedded and queryable at help://
 
                                            See what's available:
-                                             read("repoql-docs://** => tree: headlines", 2000)
+                                             read("help://** => tree: headlines", 2000)
 
                                            Learn how to do something:
-                                             explore(intent="Explain", scope="repoql-docs://**", keywords="how do I find all usages of a function")
+                                             explore(intent="Explain", scope="help://**", keywords="how do I find all usages of a function")
                                            </DOCS>
                                            """;
                 })

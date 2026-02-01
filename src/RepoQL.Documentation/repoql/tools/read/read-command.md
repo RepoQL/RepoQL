@@ -112,7 +112,7 @@ read("file:///src/**;!file:///src/generated/**", 6000) -- exclude generated
 ```
 read("file:///src/Auth.cs // How does token refresh work?", 2000)
 read("file:///src/**/*.cs // What error handling patterns are used?", 3000)
-read("repoql-docs:///api.md // List all endpoints", 1500)
+read("help:///api.md // List all endpoints", 1500)
 ```
 //BOUNDARY: Budget controls answer length. Question applies to all matched files.
 
@@ -129,12 +129,12 @@ read("repoql-docs:///api.md // List all endpoints", 1500)
 ## Capsule: SchemeSupport
 
 **Invariant**
-All indexed schemes work: `file:///`, `repoql-docs:///`, `github://owner/repo`.
+All indexed schemes work: `file:///`, `help:///`, `github://owner/repo`.
 
 **Example**
 ```
 read("file:///src/App.cs", 3000)                    -- local file
-read("repoql-docs:///quickstart.md", 2000)                 -- embedded docs
+read("help:///quickstart.md", 2000)                 -- embedded docs
 read("github://anthropics/claude-code@main/src/index.ts", 4000) -- imported repo
 ```
 //BOUNDARY: Imported repos (github://) must be imported first via import tool.

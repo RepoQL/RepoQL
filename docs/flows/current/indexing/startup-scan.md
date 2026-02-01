@@ -25,7 +25,7 @@ Enumerates all files from mounted filesystems at host startup, feeding the index
 
 ```
 RepoqlHost mount: id=primary scheme=file includeInEnum=true
-RepoqlHost mount: id=repoql-docs scheme=repoql-docs includeInEnum=true
+RepoqlHost mount: id=help scheme=help includeInEnum=true
 ```
 
 ### 2. Filesystem Enumeration
@@ -37,7 +37,7 @@ RepoqlHost mount: id=repoql-docs scheme=repoql-docs includeInEnum=true
 
 Each mount contributes files with its URI scheme:
 - `file:///` - Physical repository files
-- `repoql-docs:///` - Embedded documentation
+- `help:///` - Embedded documentation
 - `github://owner/repo/` - Imported repositories
 
 ### 3. Store Resolution

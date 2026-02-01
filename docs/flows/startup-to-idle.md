@@ -130,7 +130,7 @@ Location: RepoIndexerServiceCollectionExtensions.cs:65-646
 | Registration | Purpose |
 |--------------|---------|
 | `PhysicalFileSystem` | Primary repo filesystem |
-| `DocumentationFileSystem` | Embedded `repoql-docs://` scheme |
+| `DocumentationFileSystem` | Embedded `help://` scheme |
 | `CompositeFileSystem` | Multi-mount aggregation |
 | `IEmbeddingProvider` | OpenRouter cloud or local ONNX |
 | `FormatDescriptor`s | Loaders for Markdown, C#, TypeScript, etc. |

@@ -77,12 +77,12 @@ public class FilesViewTests
     }
 
     [Test]
-    [DisplayName("Source extraction works for repoql-docs:// URIs")]
-    public void FilesView_SourceExtraction_RepoqlDocsScheme()
+    [DisplayName("Source extraction works for help:// URIs")]
+    public void FilesView_SourceExtraction_HelpScheme()
     {
         using var db = TestServiceCollectionExtensions.CreateTestDataStore();
 
-        var uri = RepoUri.Parse("repoql-docs:///quickstart.md")!;
+        var uri = RepoUri.Parse("help:///quickstart.md")!;
         db.IndexArtifact(uri, CreateTestArtifact(uri));
 
         var rows = db.Read("SELECT source, name FROM files", r => new
@@ -92,7 +92,7 @@ public class FilesViewTests
         });
 
         rows.Should().HaveCount(1);
-        rows[0].Source.Should().Be("repoql-docs://");
+        rows[0].Source.Should().Be("help://");
         rows[0].Name.Should().Be("quickstart.md");
     }
 
@@ -254,7 +254,7 @@ public class FilesViewTests
 
         db.IndexArtifact(RepoUri.Parse("file:///src/a.cs")!, CreateTestArtifact(RepoUri.Parse("file:///src/a.cs")!));
         db.IndexArtifact(RepoUri.Parse("file:///src/b.ts")!, CreateTestArtifact(RepoUri.Parse("file:///src/b.ts")!));
-        db.IndexArtifact(RepoUri.Parse("repoql-docs:///readme.md")!, CreateTestArtifact(RepoUri.Parse("repoql-docs:///readme.md")!));
+        db.IndexArtifact(RepoUri.Parse("help:///readme.md")!, CreateTestArtifact(RepoUri.Parse("help:///readme.md")!));
 
         var rows = db.Read("SELECT name, source FROM files ORDER BY name", r => new
         {
@@ -268,7 +268,7 @@ public class FilesViewTests
         rows[1].Name.Should().Be("b.ts");
         rows[1].Source.Should().Be("file://");
         rows[2].Name.Should().Be("readme.md");
-        rows[2].Source.Should().Be("repoql-docs://");
+        rows[2].Source.Should().Be("help://");
     }
 
     private static ParsedArtifact CreateTestArtifact(RepoUri uri, string? content = null)

@@ -1116,7 +1116,7 @@ public sealed class DuckDbDataStore : IDisposable
 
     private const string MetadataKeySchemaVersion = "schema_version";
     private const string MetadataKeyAssemblyVersion = "assembly_version";
-    private const string EmbeddedDocsScheme = "repoql-docs://";
+    private const string EmbeddedDocsScheme = "help://";
 
     private void EnsureSchemaVersion()
     {
@@ -1183,7 +1183,7 @@ public sealed class DuckDbDataStore : IDisposable
                 _logger.LogInformation("[DuckDB] Version changed from {OldVersion} to {NewVersion}, invalidating embedded docs cache",
                     storedVersion, currentVersion);
 
-                // Delete all artifacts with repoql-docs:// URIs
+                // Delete all artifacts with help:// URIs
                 var deleteCount = DeleteArtifactsByUriPrefix(EmbeddedDocsScheme);
                 _logger.LogInformation("[DuckDB] Deleted {Count} embedded documentation artifacts for re-indexing", deleteCount);
             }

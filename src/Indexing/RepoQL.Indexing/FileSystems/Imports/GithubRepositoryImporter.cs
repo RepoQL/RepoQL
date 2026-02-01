@@ -167,9 +167,8 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
                 _logger.LogDebug("[GitHub] Using branch/ref: {Ref}", spec.Ref);
             }
 
-            args.Add("--depth");
-            args.Add("1");
-            _logger.LogDebug("[GitHub] Using shallow clone (depth=1)");
+            args.Add("--shallow-since=1 year ago");
+            _logger.LogDebug("[GitHub] Using shallow clone (since 1 year ago)");
 
             await RunGhAsync(args, _primary.RootPath, ct).ConfigureAwait(false);
             return;
@@ -178,24 +177,128 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         // Repo already exists - switch branch if specified, otherwise just pull
         _logger.LogInformation("[GitHub] Existing clone found at {Path}", targetRoot);
 
+        RemoveStaleIndexLock(targetRoot);
+        try
+        {
+            await RunGitAsync(["reset", "--hard", "HEAD"], targetRoot, ct).ConfigureAwait(false);
+            await RunGitAsync(["clean", "-fd"], targetRoot, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[GitHub] Failed to clean working tree at {Path}", targetRoot);
+            throw new InvalidOperationException($"Failed to clean working tree at {targetRoot}", ex);
+        }
+
         if (!string.IsNullOrWhiteSpace(spec.Ref))
         {
             _logger.LogInformation("[GitHub] Switching to branch/ref: {Ref}", spec.Ref);
 
-            // Fetch all branches first (needed for shallow clones to know about other branches)
-            await RunGitAsync(["fetch", "--all", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
+            // Fetch the requested ref with 1 year of history for blame/log support
+            // Note: This works for branches. Tags may need the initial clone to have included them.
+            await RunGitAsync(["fetch", "origin", spec.Ref!, "--shallow-since=1 year ago"], targetRoot, ct)
+                .ConfigureAwait(false);
 
             // Checkout the requested branch
             await RunGitAsync(["checkout", spec.Ref!], targetRoot, ct).ConfigureAwait(false);
 
-            // Pull latest changes
-            await RunGitAsync(["pull", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
+            // Pull latest changes only when on a branch
+            if (IsOnBranch(targetRoot))
+            {
+                await RunGitAsync(["pull", "--shallow-since=1 year ago"], targetRoot, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                _logger.LogInformation("[GitHub] Detached HEAD after checkout; skipping pull.");
+            }
         }
         else
         {
             // No specific ref - just pull latest on current branch
             _logger.LogInformation("[GitHub] Pulling latest changes on current branch");
-            await RunGitAsync(["pull", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
+            await RunGitAsync(["fetch", "origin", "--shallow-since=1 year ago"], targetRoot, ct)
+                .ConfigureAwait(false);
+            if (IsOnBranch(targetRoot))
+            {
+                await RunGitAsync(["pull", "--shallow-since=1 year ago"], targetRoot, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                _logger.LogWarning("[GitHub] Detached HEAD detected; skipping pull.");
+            }
+        }
+    }
+
+    private void RemoveStaleIndexLock(string targetRoot)
+    {
+        var lockPath = Path.Combine(targetRoot, ".git", "index.lock");
+        if (!File.Exists(lockPath))
+            return;
+
+        var lastWriteUtc = File.GetLastWriteTimeUtc(lockPath);
+        var age = DateTime.UtcNow - lastWriteUtc;
+        if (age <= TimeSpan.FromHours(1))
+        {
+            _logger.LogWarning("[GitHub] Git index lock file is present and recent (age {AgeMinutes}m). " +
+                "Skipping removal: {Path}", Math.Round(age.TotalMinutes), lockPath);
+            return;
+        }
+
+        _logger.LogWarning("[GitHub] Removing stale git index lock file (age {AgeMinutes}m): {Path}",
+            Math.Round(age.TotalMinutes), lockPath);
+        try
+        {
+            File.Delete(lockPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[GitHub] Failed to delete stale git index lock file: {Path}", lockPath);
+            throw new InvalidOperationException($"Cannot remove stale git index lock file: {lockPath}", ex);
+        }
+    }
+
+    private bool IsOnBranch(string targetRoot)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "git",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            WorkingDirectory = targetRoot
+        };
+        startInfo.ArgumentList.Add("symbolic-ref");
+        startInfo.ArgumentList.Add("HEAD");
+
+        try
+        {
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                _logger.LogWarning("[GitHub] Failed to start git to determine branch state at {Path}", targetRoot);
+                return false;
+            }
+
+            process.WaitForExit();
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+
+            if (process.ExitCode != 0)
+            {
+                if (!string.IsNullOrWhiteSpace(stderr))
+                {
+                    _logger.LogDebug("[GitHub] git symbolic-ref HEAD failed: {Stderr}", stderr.Trim());
+                }
+                return false;
+            }
+
+            if (!string.IsNullOrWhiteSpace(stdout))
+                _logger.LogDebug("[GitHub] git symbolic-ref HEAD returned: {Stdout}", stdout.Trim());
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[GitHub] Failed to determine branch state at {Path}", targetRoot);
+            return false;
         }
     }
 

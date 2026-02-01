@@ -201,7 +201,7 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
   ```sql
   SELECT COUNT(*)=0 AS pass
   FROM annotations_all('lint','warning')
-  WHERE severity='error' OR (severity='warning' AND source IN ('repoql-docs'));
+  WHERE severity='error' OR (severity='warning' AND source IN ('help'));
   ```
 
   *(deterministic queue; re‑run “until empty” after fixes)*

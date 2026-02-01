@@ -168,12 +168,12 @@ Search scope:
   ☑ Local files (file:///)
   ☑ github://anthropics/claude-code
   ☐ github://microsoft/typescript
-  ☑ Embedded docs (repoql-docs:///)
+  ☑ Embedded docs (help:///)
 ```
 
 Generates scope pattern:
 ```
-file:///%;github://anthropics/claude-code/%;repoql-docs:///%
+file:///%;github://anthropics/claude-code/%;help:///%
 ```
 
 ## Termination

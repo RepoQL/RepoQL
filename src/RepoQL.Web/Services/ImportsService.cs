@@ -24,7 +24,7 @@ internal sealed class ImportsService
     }
 
     /// <summary>
-    /// Get list of all external imports (excludes local file:// and repoql-docs://).
+    /// Get list of all external imports (excludes local file:// and help://).
     /// </summary>
     public async Task<IReadOnlyList<ImportInfo>> GetImportsAsync(CancellationToken ct = default)
     {
@@ -43,7 +43,7 @@ internal sealed class ImportsService
                     mounted_at,
                     languages
                 FROM Filesystems
-                WHERE scheme NOT IN ('file', 'repoql-docs')
+                WHERE scheme NOT IN ('file', 'help')
                 ORDER BY source_uri";
 
             var result = await client.ExecuteRawQueryAsync(sql, rowLimit: 100, cancellationToken: ct).ConfigureAwait(false);

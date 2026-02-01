@@ -87,7 +87,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<DocumentationFileSystem>();
         services.AddSingleton<CompositeFileSystemMount>(sp => new CompositeFileSystemMount
         {
-            Id = "repoql-docs",
+            Id = "help",
             FileSystem = sp.GetRequiredService<DocumentationFileSystem>(),
             IncludeInEnumeration = true,
             EnableWatching = false,

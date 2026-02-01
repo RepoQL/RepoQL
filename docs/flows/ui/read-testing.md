@@ -54,7 +54,7 @@ Input fields:
 
 | Check | Invalid Example | Error |
 |-------|-----------------|-------|
-| URI format | `src/foo` (missing scheme) | "URI must start with scheme (file:///, repoql-docs://)" |
+| URI format | `src/foo` (missing scheme) | "URI must start with scheme (file:///, help://)" |
 | Fragment syntax | `#line=abc` | "Line fragment must be numeric" |
 | Modifier conflict | `#symbol=Foo => blame` | "Blame modifier requires file, not symbol" |
 

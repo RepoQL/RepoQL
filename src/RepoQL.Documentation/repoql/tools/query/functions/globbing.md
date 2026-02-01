@@ -76,6 +76,6 @@ Powerful for gathering context from known locations without multiple round-trips
 Query `glob-patterns.csv` for copy-paste patterns:
 
 ```sql
-SELECT label, pattern, notes FROM 'repoql-docs:///repoql/tools/query/functions/glob-patterns.csv'
+SELECT label, pattern, notes FROM 'help:///repoql/tools/query/functions/glob-patterns.csv'
 WHERE tags LIKE '%testing%'
 ```

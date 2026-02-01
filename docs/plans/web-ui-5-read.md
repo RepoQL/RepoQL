@@ -58,7 +58,7 @@ Enter a read command, see exactly what an agent would get back. Adjust budget sl
 - The view shall display a Read button
 
 ### URI Input
-- The input shall accept full URIs: `file:///path`, `repoql-docs:///path`
+- The input shall accept full URIs: `file:///path`, `help:///path`
 - The input shall accept fragments: `#line=N,M`, `#symbol=Name`, `#char=N,M`
 - The input shall accept globs: `file:///src/**/*.cs`
 - The input shall accept compound patterns: `file:///a;file:///b;!file:///c`
@@ -120,7 +120,7 @@ Enter a read command, see exactly what an agent would get back. Adjust budget sl
 
 - [Web UI Design](../designs/web-ui.md) — Read View section, IReadService contract
 - [Read Testing Flow](../flows/ui/read-testing.md) — Detailed specifications
-- [Read Tool Documentation](repoql-docs:///repoql/tools/read/) — Modifier reference
+- [Read Tool Documentation](help:///repoql/tools/read/) — Modifier reference
 
 ## Error Policy
 

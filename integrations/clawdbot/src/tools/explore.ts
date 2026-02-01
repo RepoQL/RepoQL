@@ -105,7 +105,7 @@ Inventory → Locate → Inspect workflow:
 3. tokenBudget=2000, intent=inspect, scope=file:///src/Auth/**, keywords="JWT validation" → Read the code
 
 Quick references:
-- What docs exist? → intent=inventory, scope=repoql-docs://**
+- What docs exist? → intent=inventory, scope=help://**
 - Understand architecture → intent=inventory, scope=file:///src/**, keywords="How is this organized?"
 - Find a feature → intent=locate, keywords="Where is caching implemented?"
 - Debug specific code → intent=inspect, scope=file:///path/to/file.cs, keywords="error handling"

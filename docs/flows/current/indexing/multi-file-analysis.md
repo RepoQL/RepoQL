@@ -159,7 +159,7 @@ Both stages have their own state tracking but process the same items.
 │  ├── file:///src/App.cs          (local)               │
 │  ├── file:///src/Utils.cs        (local)               │
 │  ├── github://owner/repo/Lib.cs  (import, read-only)   │
-│  └── repoql-docs:///guide.md     (embedded docs)       │
+│  └── help:///guide.md     (embedded docs)       │
 │                                                         │
 │  _pendingAnalysis (excludes read-only)                  │
 │  ├── file:///src/App.cs          (local)               │

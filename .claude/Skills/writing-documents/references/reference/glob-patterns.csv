@@ -12,8 +12,8 @@ Three-letter files,src/???.cs,files,search,? matches single char
 Multiple directories,src/**;lib/**;tools/**,files,search,OR multiple paths
 Exclude generated,**/*.cs;!**/*.g.cs;!**/obj/**,files,code,Skip generated code
 Exclude vendor,**/*.js;!**/node_modules/**;!**/vendor/**,files,"code, frontend",Skip dependencies
-RepoQL docs,repoql-docs://**,files,docs,Embedded documentation
-RepoQL quickstart,repoql-docs:///quickstart.md,files,docs,Specific embedded doc
+RepoQL docs,help://**,files,docs,Embedded documentation
+RepoQL quickstart,help:///quickstart.md,files,docs,Specific embedded doc
 All service classes,**/*.cs#symbol=*Service,symbols,"architecture, csharp",Finds interface implementations too
 All handlers,**/*.cs#symbol=*Handler,symbols,"architecture, csharp",Command/event handlers
 All interfaces,**/*.cs#symbol=I*,symbols,"architecture, csharp",Convention: interfaces start with I

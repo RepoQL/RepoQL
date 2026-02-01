@@ -213,7 +213,7 @@ File-level metadata for all indexed documents.
 | Column | Description |
 |--------|-------------|
 | `uri`, `file_uri` | Document URI |
-| `source` | Origin scheme (`file://`, `github://org/repo`, `repoql-docs://`) |
+| `source` | Origin scheme (`file://`, `github://org/repo`, `help://`) |
 | `path`, `name`, `extension` | Path components |
 | `lang` | Language from media type |
 | `lines` | Line count |

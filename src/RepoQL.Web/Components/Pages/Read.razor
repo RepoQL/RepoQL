@@ -132,7 +132,7 @@
                         <li><code @onclick='() => SetUri("file:///src/**/*.cs")'>file:///src/**/*.cs</code> - Glob pattern</li>
                         <li><code @onclick='() => SetUri("file:///src/App.cs#line=10,50")'>file:///src/App.cs#line=10,50</code> - Line range</li>
                         <li><code @onclick='() => SetUri("file:///src/App.cs#symbol=MyClass")'>file:///src/App.cs#symbol=MyClass</code> - Symbol</li>
-                        <li><code @onclick='() => SetUri("repoql-docs:///quickstart.md")'>repoql-docs:///quickstart.md</code> - Embedded docs</li>
+                        <li><code @onclick='() => SetUri("help:///quickstart.md")'>help:///quickstart.md</code> - Embedded docs</li>
                     </ul>
                 </div>
             </div>
@@ -544,10 +544,10 @@
 
         // Check for valid scheme
         if (!uri.StartsWith("file:///", StringComparison.OrdinalIgnoreCase) &&
-            !uri.StartsWith("repoql-docs:///", StringComparison.OrdinalIgnoreCase) &&
+            !uri.StartsWith("help:///", StringComparison.OrdinalIgnoreCase) &&
             !uri.StartsWith("github://", StringComparison.OrdinalIgnoreCase))
         {
-            return "URI must start with a scheme (file:///, repoql-docs:///, github://)";
+            return "URI must start with a scheme (file:///, help:///, github://)";
         }
 
         return null;

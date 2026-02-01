@@ -127,12 +127,12 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         SELECT * FROM parse('id,name\n1,Alice\n2,Bob\n3,Charlie');
         ```
 
-        See `repoql-docs:///repoql/tools/query/functions/mcp.md` for full MCP documentation.
+        See `help:///repoql/tools/query/functions/mcp.md` for full MCP documentation.
         </MCP>
 
         <MORE>
         **Format-specific views** - prefixed by format (e.g., `markdown_headings`, `csharp_types`)
-        See `repoql-docs:///repoql/tools/query/formats/*` for available views per format.
+        See `help:///repoql/tools/query/formats/*` for available views per format.
         
         **Complex format functions** - e.g., `xlsx()`, `xlsx_sheets()` for Excel
         ```sql
@@ -149,24 +149,24 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         SELECT uri, score FROM related('file:///src/Auth.cs', k := 10);
         ```
 
-        **Git history** - `git_status()`, `git_diff()`, `git_blame()`, `git_hotspots`, `changes_related_to()`. See `repoql-docs:///repoql/tools/query/functions/git.md`.
+        **Git history** - `git_status()`, `git_diff()`, `git_blame()`, `git_hotspots`, `changes_related_to()`. See `help:///repoql/tools/query/functions/git.md`.
         </MORE>
         
         <LEARNING>
-        Documentation is queryable at `repoql-docs:///`. Discover more:
+        Documentation is queryable at `help:///`. Discover more:
 
         ```sql
-        SELECT uri, headline FROM Files WHERE uri LIKE 'repoql-docs://%';
-        SELECT uri FROM Files WHERE uri LIKE 'repoql-docs:///repoql/tools/query/%';
+        SELECT uri, headline FROM Files WHERE uri LIKE 'help://%';
+        SELECT uri FROM Files WHERE uri LIKE 'help:///repoql/tools/query/%';
         ```
 
-        Or: `explore(intent='Find', scope='repoql-docs:///**', keywords='xlsx excel functions')`
+        Or: `explore(intent='Find', scope='help:///**', keywords='xlsx excel functions')`
 
         Key docs:
-        - `repoql-docs:///quickstart.md` - SQL patterns, capsules
-        - `repoql-docs:///repoql/tools/query/views/*` - view details
-        - `repoql-docs:///repoql/tools/query/functions/*` - function signatures
-        - `repoql-docs:///repoql/tools/query/formats/*` - format-specific features
+        - `help:///quickstart.md` - SQL patterns, capsules
+        - `help:///repoql/tools/query/views/*` - view details
+        - `help:///repoql/tools/query/functions/*` - function signatures
+        - `help:///repoql/tools/query/formats/*` - format-specific features
         </LEARNING>
         
         <ADVANCED>
@@ -193,9 +193,9 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         <REMEMBER>
         - Views first: Files, Functions, Types, Annotations
         - search() finds, snippet() shows context, LATERAL composes them
-        - Format-specific views/functions documented at repoql-docs:///repoql/tools/query/formats/*
+        - Format-specific views/functions documented at help:///repoql/tools/query/formats/*
         - Large results auto-summarize; repeat query for full output
-        - Docs at `repoql-docs:///` - query or explore them to learn more
+        - Docs at `help:///` - query or explore them to learn more
         </REMEMBER>
         """;
 
@@ -236,7 +236,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
             _lastBudgetExceededQuery = null;
             var output = result.Lines.Length > 0
                 ? string.Join(Environment.NewLine, result.Lines)
-                : "No results. Try a different query, or explore the docs with: explore intent=Explore scope=\"repoql-docs:///**\"";
+                : "No results. Try a different query, or explore the docs with: explore intent=Explore scope=\"help:///**\"";
 
             // Check token budget (even after server summarization - summary might still exceed)
             if (tokenBudget > 0 && !isRepeatRequest)

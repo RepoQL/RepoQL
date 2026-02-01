@@ -129,7 +129,7 @@ ORDER BY uri;
 
 - [Web UI Design](../designs/web-ui.md) — Imports View section
 - [Imports Management Flow](../flows/ui/imports-management.md) — Specifications
-- [Import Tool Documentation](repoql-docs:///repoql/tools/import/) — Import syntax
+- [Import Tool Documentation](help:///repoql/tools/import/) — Import syntax
 
 ## Error Policy
 

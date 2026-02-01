@@ -88,7 +88,7 @@ internal sealed class FindHandlerTests
         var documents = new[]
         {
             new ReadDocument(
-                "repoql-docs:///quickstart.md",
+                "help:///quickstart.md",
                 TextContent: null,
                 MediaType: "text/plain",
                 Headline: null,

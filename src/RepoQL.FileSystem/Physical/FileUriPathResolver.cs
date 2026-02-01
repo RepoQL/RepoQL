@@ -9,7 +9,7 @@ internal static class FileUriPathResolver
     /// <summary>
     /// Resolves a repository URI to both a relative path (for file providers) and an absolute on-disk path rooted at
     /// <paramref name="rootPath"/>. The optional <paramref name="expectedScheme"/> parameter allows callers that
-    /// project alternative schemes (e.g., repoql-docs://, github://) to reuse the resolver while still enforcing the scheme.
+    /// project alternative schemes (e.g., help://, github://) to reuse the resolver while still enforcing the scheme.
     /// </summary>
     public static ResolvedPath Resolve(string rootPath, RepoUri repoUri, string expectedScheme = "file")
     {

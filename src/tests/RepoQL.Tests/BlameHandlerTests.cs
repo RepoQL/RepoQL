@@ -65,7 +65,7 @@ internal sealed class BlameHandlerTests
         var documents = new[]
         {
             new ReadDocument(
-                "repoql-docs:///quickstart.md",
+                "help:///quickstart.md",
                 TextContent: null,
                 MediaType: "text/plain",
                 Headline: null,

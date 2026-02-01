@@ -18,7 +18,7 @@ public sealed class EmbeddedStore : IVirtualFileSystem
 
     /// <summary>
     /// Create an embedded store for the specified assembly. Optionally override the exposed URI scheme when the store
-    /// is mounted under a custom prefix (e.g., repoql-docs:// instead of embed://).
+    /// is mounted under a custom prefix (e.g., help:// instead of embed://).
     /// </summary>
     public EmbeddedStore(Assembly asm, string? scheme = null)
     {

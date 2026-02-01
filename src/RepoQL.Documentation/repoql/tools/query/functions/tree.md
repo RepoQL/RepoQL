@@ -73,7 +73,7 @@ file:///
 //BOUNDARY: Inputs must be JSON arrays aligned by index. Empty array returns empty string.
 
 **Depth**
-- Groups URIs by scheme (file:///, repoql-docs:///, etc.)
+- Groups URIs by scheme (file:///, help:///, etc.)
 - Sorts alphabetically, directories before files
 - Uses box-drawing characters for tree structure
 - Headlines are appended when any non-empty headline is provided (pass `[]` to suppress)
@@ -234,11 +234,11 @@ SELECT tree(
     false
 )
 FROM Files
-WHERE uri LIKE 'file://%' OR uri LIKE 'repoql-docs://%';
+WHERE uri LIKE 'file://%' OR uri LIKE 'help://%';
 ```
 Output:
 ```
-repoql-docs:///
+help:///
 ├── quickstart.md
 └── repoql/
     └── tools/

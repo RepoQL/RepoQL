@@ -6,7 +6,7 @@ namespace RepoQL.Indexing.FileSystems;
 
 /// <summary>
 /// Default implementation of <see cref="ICompositeFileSystemManager"/>. It bootstrap-mounts the physical repository
-/// plus any statically registered mounts (repoql-docs://, embedded fixtures) and exposes runtime APIs so services can import
+/// plus any statically registered mounts (help://, embedded fixtures) and exposes runtime APIs so services can import
 /// additional read-only file systems. Every host resolves this manager once and uses its <see cref="FileSystem"/>
 /// facade everywhere.
 /// </summary>
@@ -18,7 +18,7 @@ public sealed class CompositeFileSystemManager : ICompositeFileSystemManager
 
     /// <summary>
     /// Creates a new manager rooted at the repository's physical file system. The primary mount is always installed
-    /// and additional mounts provided by DI (repoql-docs, tests) are layered on top in registration order.
+    /// and additional mounts provided by DI (help, tests) are layered on top in registration order.
     /// </summary>
     public CompositeFileSystemManager(
         PhysicalFileSystem primaryFileSystem,

@@ -17,7 +17,7 @@ internal sealed class RepoResourceService
     {
         Name = "document",
         Title = "RepoQL document",
-        Description = "Fetch repository content by RepoURI (file:///…, repoql-docs:///…, github://…). "
+        Description = "Fetch repository content by RepoURI (file:///…, help:///…, github://…). "
                     + "Supports #line= and #char= fragments for slicing, and glob patterns (e.g., file:///src/**/*.cs) to read multiple files.",
         UriTemplate = "{+uri}",
         MimeType = "text/plain; charset=utf-8"
@@ -134,7 +134,7 @@ internal sealed class RepoResourceService
             JOIN artifact a ON a.id = n.artifact_id
             WHERE n.kind = 'document'
               AND (glob_match(n.uri, ?, default_scheme := 'file:///')
-                   OR glob_match(n.uri, ?, default_scheme := 'repoql-docs:///'))
+                   OR glob_match(n.uri, ?, default_scheme := 'help:///'))
             ORDER BY n.uri
             LIMIT 50
             """;

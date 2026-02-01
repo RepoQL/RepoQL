@@ -45,7 +45,7 @@ internal class DocsQueriesTests
                    properties->>'description'           AS description
               FROM node
              WHERE kind='document'
-               AND lower(uri) LIKE 'repoql-docs://%'
+               AND lower(uri) LIKE 'help://%'
              ORDER BY lower(file_name)
             """).ToArray();
 
@@ -61,7 +61,7 @@ internal class DocsQueriesTests
               FROM node n
               JOIN artifact a ON a.id = n.artifact_id
              WHERE n.kind='document'
-               AND lower(n.uri) LIKE 'repoql-docs://%'
+               AND lower(n.uri) LIKE 'help://%'
                AND lower(a.media_type) LIKE '%text/markdown%'
             """);
         markdownDocs.Should().NotBeEmpty("at least one embedded doc should be markdown");

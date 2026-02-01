@@ -6,12 +6,12 @@ using RepoQL.FileSystem.Embedded;
 namespace RepoQL.Documentation;
 
 /// <summary>
-/// Virtual file system exposing the embedded documentation bundle under the <c>repoql-docs://</c> scheme. Registered
-/// automatically by <c>AddRepoIndexer</c> so every host can reference <c>repoql-docs:///…</c> without importing anything.
+/// Virtual file system exposing the embedded documentation bundle under the <c>help://</c> scheme. Registered
+/// automatically by <c>AddRepoIndexer</c> so every host can reference <c>help:///…</c> without importing anything.
 /// </summary>
 public sealed class DocumentationFileSystem : IVirtualFileSystem
 {
-    public const string Scheme = "repoql-docs";
+    public const string Scheme = "help";
     private readonly EmbeddedStore _store = new(typeof(DocumentationMarker).Assembly, Scheme);
 
     string IVirtualFileSystem.Scheme => Scheme;

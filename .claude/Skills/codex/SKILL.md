@@ -4,12 +4,29 @@ description: Delegate complex tasks to Codex (GPT-5.2-codex). Use for ticket com
 tags: [codex, delegation, tasks, debugging, testing, openai]
 audience: { human: 20, agent: 80 }
 purpose: { gestalt: 25, reference: 40, concepts: 25, high-agency-process: 10 }
-zones: { knowledge: 35, process: 15, constraint: 15, wisdom: 35 }
+zones: { knowledge: 30, process: 15, constraint: 15, wisdom: 40 }
 ---
 
 # Codex
 
 Codex (GPT-5.2-codex) excels at complex, well-defined tasks: implementing tickets, debugging with evidence, writing tests, finding race conditions, refactoring. Delegate when the task is clear and you want execution, not exploration.
+
+## Preflight / Postflight
+
+**Before delegating:**
+- Goal clear? (outcome, not just task description)
+- Agency level? (high unless you know better—see AgencyLevel capsule)
+- Constraints stated? (what NOT to do, repo rules, frameworks)
+- Context forwarded? (Codex doesn't see your conversation)
+- Fresh or continue? (reuse threadId if building on prior work)
+
+**After Codex returns:**
+- Read the diff—did it do what you expected?
+- Check the logic—any subtle bugs or missed constraints?
+- Run tests—did anything break?
+- Synthesize for user—what did we learn?
+
+*Three intelligences (user + Claude + Codex) catch what any one would miss. Don't skip the review.*
 
 ## Quick Reference
 
@@ -20,6 +37,7 @@ Codex (GPT-5.2-codex) excels at complex, well-defined tasks: implementing ticket
 | Find race conditions | `mcp__codex__codex` | Timing + thread dumps + suspected code |
 | Write tests | `mcp__codex__codex` or `codex exec` | What to test + coverage goals + fixtures |
 | Explore/survey | `mcp__codex__codex` | Focus areas + request options with tradeoffs |
+| Sounding board | `mcp__codex__codex` | Your reasoning + "what am I missing?" |
 | Code review | `codex-review` skill | See separate skill |
 
 ---
@@ -45,21 +63,44 @@ Codex is highly capable but won't intuit what you wanted but didn't say.
 ## Capsule: YinYang
 
 **Invariant**
-Claude and Codex are complementary partners. Claude translates vague intent into explicit steps; Codex executes systematically and surfaces what you wouldn't think to look for.
+Claude and Codex are complementary partners. Claude translates vague intent into clear goals; Codex executes systematically and surfaces what you wouldn't think to look for.
 
 **Example**
 User: "Check the indexing pipeline for issues"
-Claude translates → "Task: Investigation. Steps: 1) Find shared state 2) Trace synchronization 3) Identify races"
-Codex executes → finds 3 race conditions Claude wouldn't have looked for
-Claude synthesizes → explains findings, offers next steps
-//BOUNDARY: Neither complete alone. The handoff is where Claude adds value.
+Claude translates → "Investigate the indexing pipeline for race conditions. Here's the context: [relevant info]. Find issues and propose fixes."
+Codex executes → finds 3 race conditions, proposes mitigations with file:line refs
+Claude reviews → verifies the logic, runs tests, synthesizes for user
+//BOUNDARY: Neither complete alone. The handoff and the review are where Claude adds value.
 
 **Depth**
 - Claude: inference, intent, synthesis. Asks "what did they probably mean?"
 - Codex: execution, precision, depth. Asks "what did they say?"
-- Together: vague intent → explicit steps → systematic execution → synthesized insight
+- Together: vague intent → clear goals → systematic execution → reviewed synthesis
 - Codex finds issues you wouldn't think to ask about—delegate investigation tasks
-- The quality of your translation determines the quality of Codex's output
+- Respect Codex's intelligence: give outcomes, not just steps
+
+---
+
+## Capsule: AgencyLevel
+
+**Invariant**
+Match your prompting style to the task. High agency for exploration and judgment; low agency for precise execution.
+
+**Example**
+High agency: "Find race conditions in the indexing pipeline. Propose fixes with tradeoffs."
+Low agency: "Add a TryMarkEpochComplete() method to IndexItem using Interlocked.Exchange."
+//BOUNDARY: Over-prescribing wastes Codex's intelligence. Under-specifying misses constraints.
+
+**Depth**
+- **High agency** (prescribe outcomes): Investigation, debugging, architecture review, "find and fix"
+  - Give: goal, context, constraints, success criteria
+  - Let Codex: choose approach, explore, use judgment
+- **Low agency** (prescribe steps): Specific refactors, known patterns, critical constraints
+  - Give: exact steps, specific code patterns, non-negotiable requirements
+  - Use when: you know better, constraints are non-obvious, approach matters
+- Default to high agency. Codex is highly capable—trust it until proven otherwise.
+- Add constraints, not steps: "must use TUnit" beats "create a file, add [Test] attribute..."
+- SeeAlso: `.claude/skills/writing-documents/references/high-agency-process/` for deeper guidance on outcome-based delegation
 
 ---
 
@@ -161,6 +202,32 @@ Focus on: [Specific aspects]
 Output: 2-3 options with pros/cons, not a single recommendation.
 ```
 
+### Sounding Board
+
+Use Codex to challenge your thinking before committing to an approach.
+
+```
+I'm planning to [approach]. My reasoning:
+1. [Why this makes sense]
+2. [Tradeoffs I see]
+3. [Risks I'm aware of]
+
+Context: [Relevant codebase info]
+
+Questions:
+- What am I missing?
+- Are there better approaches I haven't considered?
+- What could go wrong with this plan?
+```
+
+Good for:
+- Validating architectural decisions before implementation
+- Catching blind spots in your reasoning
+- Getting a second opinion on tradeoffs
+- Stress-testing an approach before proposing to the user
+
+This is high-agency Codex use—you're asking for judgment, not execution.
+
 ---
 
 ## Context Checklist
@@ -196,6 +263,24 @@ The most powerful pattern: **identify → propose → implement**
 
 Each call builds on the previous. Codex retains full context via `threadId`. This lets you validate each stage before committing to the next.
 
+### Session Reuse vs Fresh Start
+
+| Situation | Do |
+|-----------|-----|
+| Continuing same investigation | `codex-reply` with threadId |
+| Follow-up question on findings | `codex-reply` |
+| Building on previous work | `codex-reply` |
+| Unrelated new task | Fresh `codex` call |
+| Previous session went off-track | Fresh `codex` call |
+| Want fresh perspective | Fresh `codex` call |
+| Context would confuse new task | Fresh `codex` call |
+
+**Reuse sessions** when context helps. Codex remembers what it found, what you discussed, what constraints you stated.
+
+**Start fresh** when context hurts. Stale assumptions, wrong direction, or unrelated work. A new session has no baggage.
+
+Long sessions accumulate context—useful for depth, but can become unwieldy. If a session feels confused, start fresh and re-state only what matters.
+
 ---
 
 ## Direct Edits vs Review
@@ -223,12 +308,26 @@ Codex CAN apply changes directly. Control this:
 
 ---
 
+## Codex Tendencies
+
+**Risk-averse by default**: Codex errs on the side of caution. It won't run tests after writing them unless you ask. It won't make changes it's uncertain about. This is often good, but you need to be explicit:
+- "After implementing, run `dotnet test` to verify"
+- "Apply the changes directly"
+- "Delete the old implementation"
+
+**Tool use**: Codex can use tools (git, RepoQL, file operations) but is not as fluent as Claude. Particularly weak at web search. If you need current documentation or external research, do it yourself and forward the results to Codex.
+
+**Strengths**: Deep code analysis, systematic investigation, precise implementation, finding issues you wouldn't think to look for.
+
+---
+
 ## When NOT to Use Codex
 
 - **Exploratory thinking** - Use Claude for "help me understand"
 - **Ambiguous requirements** - Clarify first, then delegate
 - **Need inference** - Claude fills in blanks; Codex doesn't
 - **Simple questions** - Overkill; just ask Claude
+- **Web research** - Claude is better at search and synthesis
 - **Code review** - Use `codex-review` skill instead
 
 ---
@@ -256,4 +355,24 @@ The more explicit your translation, the better Codex performs. Vague prompts get
 
 ---
 
-*Yin and yang. Claude shapes the question; Codex answers it. Save the threadId.*
+## The Review
+
+**You must review Codex's output immediately.** This is not optional.
+
+Codex is highly capable but can:
+- Misunderstand constraints you thought were obvious
+- Introduce subtle bugs in edge cases
+- Miss context that wasn't in the prompt
+- Over-engineer or under-engineer solutions
+
+After every Codex call:
+1. **Read the diff** - `git diff` the changed files
+2. **Check the logic** - Does it actually solve the problem?
+3. **Verify constraints** - Did it respect repo rules, frameworks, patterns?
+4. **Run tests** - Confirm nothing broke
+
+Three intelligences working together (user + Claude + Codex) catch what any one would miss. Don't break the chain by skipping review.
+
+---
+
+*Translate. Delegate. Review. Three intelligences, nothing gets past.*

@@ -12,7 +12,7 @@ public interface ICompositeFileSystemManager
     /// <summary>The live <see cref="CompositeFileSystem"/> instance shared by the application.</summary>
     CompositeFileSystem FileSystem { get; }
 
-    /// <summary>Returns a snapshot of all registered mounts (primary, repoql-docs://, imports, etc.).</summary>
+    /// <summary>Returns a snapshot of all registered mounts (primary, help://, imports, etc.).</summary>
     IReadOnlyCollection<CompositeFileSystemMount> GetMounts();
 
     /// <summary>Attempts to retrieve a mount descriptor by id.</summary>

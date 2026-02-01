@@ -94,7 +94,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                 FROM repo_index ri
                 WHERE ri.scope = 'document'
                   AND (matches_glob(ri.uri, '{escapedScope}', TRUE, 'file:///') IS TRUE
-                       OR matches_glob(ri.uri, '{escapedScope}', TRUE, 'repoql-docs:///') IS TRUE)
+                       OR matches_glob(ri.uri, '{escapedScope}', TRUE, 'help:///') IS TRUE)
                 ORDER BY ri.mtime DESC, ri.uri
                 LIMIT {limit}
                 """;
@@ -116,7 +116,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                 WHERE ri.scope = 'document'
                 ORDER BY
                     CASE
-                        WHEN ri.uri LIKE 'repoql-docs://%' THEN 0
+                        WHEN ri.uri LIKE 'help://%' THEN 0
                         WHEN ri.uri LIKE '%README%' THEN 1
                         WHEN ri.uri LIKE '%/docs/%' THEN 2
                         ELSE 3

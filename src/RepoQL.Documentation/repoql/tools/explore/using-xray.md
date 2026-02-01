@@ -87,7 +87,7 @@ xray intent=Find keywords="service" scope="file:///src/**/*.cs" tokenBudget=1500
 xray intent=Examine scope="file:///src/Services/**" tokenBudget=3000
 
 -- Embedded documentation
-xray intent=Explore scope="repoql-docs:///**" tokenBudget=1500
+xray intent=Explore scope="help:///**" tokenBudget=1500
 
 -- Exclude tests
 xray intent=Find keywords="handler" scope="file:///src/**;!**/test*" tokenBudget=1500
@@ -96,7 +96,7 @@ xray intent=Find keywords="handler" scope="file:///src/**;!**/test*" tokenBudget
 
 **Depth**
 - `file:///` - Local repository files
-- `repoql-docs:///` - Embedded RepoQL documentation
+- `help:///` - Embedded RepoQL documentation
 - `github://owner/repo` - Imported repositories
 - Patterns: `**/*.cs` (C# files), `**/Services/**` (Services dir), `!**/test*` (exclude tests)
 
@@ -168,7 +168,7 @@ Explore maps territory. Returns file inventory, language distribution, structure
 xray intent=Explore scope="file:///src/**" tokenBudget=2000
 
 -- What docs exist?
-xray intent=Explore scope="repoql-docs:///**" tokenBudget=1500
+xray intent=Explore scope="help:///**" tokenBudget=1500
 
 -- What's in this directory?
 xray intent=Explore scope="file:///src/Services/**" tokenBudget=1500
@@ -307,6 +307,6 @@ read("file:///src/Auth/TokenService.cs#line=42,80", 1500)
 
 ## See Also
 
-- `repoql-docs:///quickstart.md` - Tool overview and workflows
-- `repoql-docs:///repoql/tools/read/read-command.md` - Reading specific content
-- `repoql-docs:///repoql/tools/query/functions/search.md` - SQL search function
+- `help:///quickstart.md` - Tool overview and workflows
+- `help:///repoql/tools/read/read-command.md` - Reading specific content
+- `help:///repoql/tools/query/functions/search.md` - SQL search function

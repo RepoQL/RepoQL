@@ -45,7 +45,7 @@ read("file:///src/**/*.cs // What patterns are used for error handling?", 3000)
 Use read when you KNOW the URI; use explore when you need to FIND it.
 **Example**
 + read("file:///src/Auth.cs", 2000)           -> you know the file
-+ read("repoql-docs:///quickstart.md // How?", 1500) -> known doc, specific question
++ read("help:///quickstart.md // How?", 1500) -> known doc, specific question
 - read("file:///src/**/*.cs", 50000)          -> too broad, use explore Examine
 **Depth**
 - explore: discover what exists, find by concept, understand architecture

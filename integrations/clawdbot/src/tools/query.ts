@@ -97,7 +97,7 @@ WHERE sn.is_focus;
 
 <MORE>
 **Format-specific views** - prefixed by format (e.g., \`markdown_headings\`, \`csharp_types\`)
-See \`repoql-docs:///repoql/tools/query/formats/*\` for available views per format.
+See \`help:///repoql/tools/query/formats/*\` for available views per format.
 
 **ask()** - LLM-powered question answering on query results
 \`\`\`sql
@@ -120,9 +120,9 @@ Repeat the exact query to bypass summarization and get full results.
 <REMEMBER>
 - Views first: Files, Functions, Types, Annotations
 - search() finds, snippet() shows context, LATERAL composes them
-- Format-specific views/functions documented at repoql-docs:///repoql/tools/query/formats/*
+- Format-specific views/functions documented at help:///repoql/tools/query/formats/*
 - Large results auto-summarize; repeat query for full output
-- Docs at \`repoql-docs:///\` - query or explore them to learn more
+- Docs at \`help:///\` - query or explore them to learn more
 </REMEMBER>`;
 
 /**

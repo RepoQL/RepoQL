@@ -38,7 +38,7 @@
 
 **`annotation.source`**
 
-* **Format:** lowercase slug; suggest `producer-name` (e.g., `markdown-parser`, `repoql-docs`, `eslint`).
+* **Format:** lowercase slug; suggest `producer-name` (e.g., `markdown-parser`, `help`, `eslint`).
 
 **SemType `kind` parameter**
 

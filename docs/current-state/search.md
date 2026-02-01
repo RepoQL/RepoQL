@@ -73,7 +73,7 @@ SELECT * FROM search('authentication flow', k := 20);
 SELECT * FROM Files WHERE matches_glob(uri, 'file:///src/**/*.cs', TRUE, 'file:///');
 
 -- Mode 3: Default (no question, no scope)
-SELECT * FROM Files ORDER BY CASE WHEN uri LIKE 'repoql-docs://%' THEN 0 ELSE 1 END, mtime DESC;
+SELECT * FROM Files ORDER BY CASE WHEN uri LIKE 'help://%' THEN 0 ELSE 1 END, mtime DESC;
 ```
 
 **Depth**

@@ -188,7 +188,7 @@ RepoURI resolution
 
 **Example Schemes**
 - `file://` → PhysicalFileSystem (disk files)
-- `repoql-docs://` → DocumentationFileSystem (embedded resources)
+- `help://` → DocumentationFileSystem (embedded resources)
 - `embed://` → DocumentationFileSystem (same content, alternate scheme)
 - `github://` → GitHubFileSystem (imported repos via `import` tool)
 - `jar:file:///` → ArchiveFileSystem (future: zip/tar contents)
@@ -198,7 +198,7 @@ RepoURI resolution
 This abstraction enables RepoQL's most powerful capabilities:
 
 1. **Universal addressing**: RepoURI works across any mounted filesystem
-2. **Embedded documentation**: repoql-docs:// serves built-in guides without external files
+2. **Embedded documentation**: help:// serves built-in guides without external files
 3. **Import tool**: Mount external repos by adding new filesystem
 4. **Archive support**: Index zip/jar contents as first-class citizens
 5. **Testing**: MemoryFileSystem for fast in-memory tests
@@ -226,7 +226,7 @@ Every `IVirtualFileSystem` provides:
 CompositeFileSystem
 ├─ PrimaryMount: PhysicalFileSystem (file://)
 │   └─ Indexes: /path/to/repo/**
-├─ Mount: DocumentationFileSystem (repoql-docs://, embed://)
+├─ Mount: DocumentationFileSystem (help://, embed://)
 │   └─ Serves: Built-in guides, tutorials, references
 └─ Mount: GitHubFileSystem (github://owner/repo)
     └─ Cached: Imported external repositories
@@ -246,7 +246,7 @@ Each virtual filesystem emits change events:
 
 1. **RepoURI is locator, not path**: Same URI format works across schemes
 2. **Import = mount**: Adding `github://` source just mounts new filesystem
-3. **Cross-filesystem queries**: SQL joins work across file:// and repoql-docs:// seamlessly
+3. **Cross-filesystem queries**: SQL joins work across file:// and help:// seamlessly
 4. **Testability**: Swap PhysicalFileSystem for MemoryFileSystem in tests
 5. **Future extensibility**: Add http://, s3://, git:// schemes trivially
 
@@ -260,7 +260,7 @@ WHERE headline LIKE '%authentication%'
 
 -- Returns both:
 -- file:///src/AuthService.cs | class AuthService
--- repoql-docs:///guides/authentication.md | Authentication Guide
+-- help:///guides/authentication.md | Authentication Guide
 ```
 
 **Agent Mental Model**: "RepoQL indexes content, not just disk files. Any URI scheme can be a source."

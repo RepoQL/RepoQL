@@ -165,7 +165,7 @@ var combinedAnnotations = existingAnnotations.Length == 0
 |-----------|------------|----------|
 | Local files (`file://`) | false | Full analysis |
 | Imports (`github://`) | true | Skipped |
-| Embedded docs (`repoql-docs://`) | varies | Depends on mount config |
+| Embedded docs (`help://`) | varies | Depends on mount config |
 
 ReadOnly is set via mount configuration (`enableAnalysis = false`).
 

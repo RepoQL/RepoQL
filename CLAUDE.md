@@ -76,7 +76,7 @@ Everything is a **node**; relationships are **edge**s; locations are **span**s; 
 **RepoURI** addresses everything precisely:
 - `file:///src/Foo.cs#line=42` - Line in file
 - `file:///src/Foo.cs#symbol=Bar.Baz` - Symbol location
-- `repoql-docs:///quickstart.md` - Embedded documentation
+- `help:///quickstart.md` - Embedded documentation
 
 ### Virtual File System
 
@@ -85,7 +85,7 @@ Multiple URI schemes unified under single interface:
 | Scheme | Source | Notes |
 |--------|--------|-------|
 | `file://` | Physical disk | Primary content |
-| `repoql-docs://` | Embedded resources | RepoQL's own docs, queryable |
+| `help://` | Embedded resources | RepoQL's own docs, queryable |
 | `github://owner/repo` | Imported repos | Via `import` tool |
 
 **Implication**: Cross-scheme queries work seamlessly. Query embedded docs alongside code.
@@ -117,7 +117,7 @@ CLI and MCP server share the same core. Use CLI for local debugging/reindexing; 
 | Gotcha | Explanation |
 |--------|-------------|
 | Tests prefer `dotnet run` over `dotnet test` | TUnit uses Microsoft.Testing.Platform; `dotnet run` gives cleaner filtering syntax |
-| Embedded docs are queryable | `repoql-docs:///quickstart.md` lives in database. Query: `SELECT * FROM node WHERE uri LIKE 'repoql-docs://%'` |
+| Embedded docs are queryable | `help:///quickstart.md` lives in database. Query: `SELECT * FROM node WHERE uri LIKE 'help://%'` |
 | Don't read files to understand structure | X-ray summaries (`headline`, `summary`, `structure` on `artifact`) are pre-computed |
 | Spans: 1-based lines, 0-based chars | `#line=42` = line 42 (inclusive). `#char=100,150` = bytes [100,150) |
 | Mocking uses FakeItEasy | `A.Fake<T>()`, `A.CallTo(() => fake.Method(A<string>._)).Returns(...)` |
@@ -179,6 +179,12 @@ docs/
 
 **Golden Rules**: Schema stability. Standard formats at edges. Sensible defaults. Errors never cascade. Single writer.
 
+## Code Quality
+
+- **Abstractions must prove value**: Don't add layers "just in case". An abstraction earns its place by solving a real problem more than once.
+- **Ruthlessly cull obsolete code**: Dead code is confusion. Delete it. Git remembers.
+- **Perfection over backwards compatibility**: In most cases, prefer the clean solution over compatibility shims. We're pre-1.0—now is the time to get it right.
+
 ## Testing changes
 
 RepoQL is a complex project, and it is necessary that we have great tests in place to make maintaining it feasible as it grows in complexity.
@@ -196,7 +202,7 @@ If you run deploy it will kill any running instances of RepoQL on your machine -
 
 Codex (GPT-5.2-codex) is available as an MCP server. Use it as a symbiotic partner—yin and yang.
 
-**The pattern**: Claude translates vague intent into explicit steps; Codex executes systematically and surfaces what you wouldn't think to look for.
+**The pattern**: Claude translates vague intent into clear goals; Codex executes systematically and surfaces what you wouldn't think to look for. Respect Codex's intelligence—default to high agency (outcomes + constraints), drop to low agency (explicit steps) only when you know better.
 
 | Task | Delegate to Codex |
 |------|-------------------|
@@ -216,5 +222,7 @@ mcp__codex__codex-reply(threadId: "...", prompt: "follow-up")
 **Iterative refinement**: Use `threadId` for staged work: identify → propose → implement. Each call builds on the previous.
 
 **Key insight**: Codex lacks intuition for unstated intent. State the steps you want, not just the outcome. The quality of your translation determines the quality of Codex's output.
+
+**Critical**: Always review Codex's output immediately. Read the diff, check the logic, verify constraints, run tests. Three intelligences (user + Claude + Codex) working together catch what any one would miss. Don't break the chain.
 
 See `.claude/skills/codex/` for detailed guidance and prompt templates.

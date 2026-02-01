@@ -96,12 +96,12 @@ public class TreeUdfTests : IDisposable
     public void Tree_MultipleSchemes_GroupsCorrectly()
     {
         var results = _db.Read(
-            """SELECT tree('["file:///a.cs", "repoql-docs:///readme.md"]', '[]', false)""",
+            """SELECT tree('["file:///a.cs", "help:///readme.md"]', '[]', false)""",
             r => r.IsDBNull(0) ? null : r.GetString(0));
 
         results.Should().HaveCount(1);
         var tree = results[0]!;
-        tree.Should().Contain("repoql-docs:///");
+        tree.Should().Contain("help:///");
         tree.Should().Contain("file:///");
     }
 
