@@ -76,13 +76,15 @@ public class UriRegistryHydrator
                     // Strip fragment from containerUri to get the base file path for grouping
                     var containerKey = StripFragment(containerUri);
 
-                    // Note: Span data is not available during hydration; will be populated during indexing
                     if (!symbolsByFile.TryGetValue(containerKey, out var symbols))
                     {
                         symbols = new Dictionary<RepoUri, SymbolEntry>();
                         symbolsByFile[containerKey] = symbols;
                     }
-                    symbols[uri] = SymbolEntry.WithKindOnly(kind ?? "unknown");
+
+                    // Extract line range from symbol URI fragment for line-range operations
+                    var (startLine, endLine) = ExtractLineRange(uri);
+                    symbols[uri] = new SymbolEntry(kind ?? "unknown", startLine, endLine);
                     symbolCount++;
                 }
             }
@@ -195,5 +197,47 @@ public class UriRegistryHydrator
     {
         var hashIndex = uri.IndexOf('#', StringComparison.Ordinal);
         return hashIndex >= 0 ? uri[..hashIndex] : uri;
+    }
+
+    /// <summary>
+    /// Extracts line range from a URI's fragment (e.g., #line=20,21&amp;symbol=...).
+    /// Returns (0, 0) if no line range is present.
+    /// </summary>
+    private static (int StartLine, int EndLine) ExtractLineRange(RepoUri uri)
+    {
+        var fragment = uri.Fragment;
+        if (string.IsNullOrEmpty(fragment))
+            return (0, 0);
+
+        // Remove leading # if present
+        if (fragment.StartsWith('#'))
+            fragment = fragment[1..];
+
+        // Look for line= parameter
+        const string linePrefix = "line=";
+        var lineIndex = fragment.IndexOf(linePrefix, StringComparison.OrdinalIgnoreCase);
+        if (lineIndex < 0)
+            return (0, 0);
+
+        // Extract the value after "line="
+        var valueStart = lineIndex + linePrefix.Length;
+        var valueEnd = fragment.IndexOf('&', valueStart);
+        var lineValue = valueEnd >= 0
+            ? fragment[valueStart..valueEnd]
+            : fragment[valueStart..];
+
+        // Parse "start,end" or just "start"
+        var parts = lineValue.Split(',');
+        if (parts.Length == 1 && int.TryParse(parts[0], out var singleLine))
+            return (singleLine, singleLine);
+
+        if (parts.Length == 2 &&
+            int.TryParse(parts[0], out var start) &&
+            int.TryParse(parts[1], out var end))
+        {
+            return (start, end);
+        }
+
+        return (0, 0);
     }
 }
