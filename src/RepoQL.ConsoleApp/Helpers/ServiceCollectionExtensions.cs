@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.ConsoleApp.Resources;
+using RepoQL.ConsoleApp.Tools;
 using RepoQL.Templating;
 using Spectre.Console;
 
@@ -30,6 +31,9 @@ internal static class ServiceCollectionExtensions
         // Diagnostics
         services.AddSingleton<DiagnosticsCollector>();
         services.AddSingleton<SelfTestRunner>();
+
+        // Session orientation nudge
+        services.AddSingleton<SessionOrientation>();
 
         services.AddLiquidTemplatingFromEmbedded(
             assembly: typeof(ServiceCollectionExtensions).Assembly,

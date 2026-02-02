@@ -19,10 +19,12 @@ namespace RepoQL.ConsoleApp.Tools;
 [McpServerToolType]
 internal sealed class ReadTool(
     RepoQlClientProvider clientProvider,
-    SelfTestRunner selfTestRunner)
+    SelfTestRunner selfTestRunner,
+    SessionOrientation sessionOrientation)
 {
     private readonly RepoQlClientProvider _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
     private readonly SelfTestRunner _selfTestRunner = selfTestRunner ?? throw new ArgumentNullException(nameof(selfTestRunner));
+    private readonly SessionOrientation _sessionOrientation = sessionOrientation ?? throw new ArgumentNullException(nameof(sessionOrientation));
 
     private const string ReadInstructions = """
         <WHY>
@@ -170,6 +172,11 @@ internal sealed class ReadTool(
 
         if (tokenBudget <= 0)
             return "Error: tokenBudget must be a positive integer.";
+
+        // Check orientation (reading help:// will mark as oriented)
+        var nudge = _sessionOrientation.CheckOrientation("read", uri);
+        if (nudge != null)
+            return nudge;
 
         try
         {

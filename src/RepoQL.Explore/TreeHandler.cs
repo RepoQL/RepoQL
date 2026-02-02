@@ -79,7 +79,7 @@ public sealed class TreeHandler : IModifierHandler
             if (namesTokens <= tokenBudget)
             {
                 var warning = requestedLevel == TreeDetailLevel.Headlines
-                    ? "Showing files only - request headlines with higher budget for file summaries"
+                    ? "Showing files only - request headlines with higher budget for file headlines"
                     : null;
                 return BuildResult(namesTree, namesTokens, documents.Count, filesConsulted,
                     new Dictionary<string, object> { ["verbosity"] = "files" },
@@ -100,7 +100,7 @@ public sealed class TreeHandler : IModifierHandler
 
         var foldersWarning = requestedLevel switch
         {
-            TreeDetailLevel.Headlines => "Showing folders only - request headlines with higher budget for file summaries",
+            TreeDetailLevel.Headlines => "Showing folders only - request headlines with higher budget for file headlines",
             TreeDetailLevel.Files => "Showing folders only - request files with higher budget for file names",
             _ => null
         };

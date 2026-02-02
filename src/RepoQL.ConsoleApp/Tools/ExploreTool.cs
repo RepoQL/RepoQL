@@ -11,10 +11,12 @@ namespace RepoQL.ConsoleApp.Tools;
 [McpServerToolType]
 internal sealed class ExploreTool(
     RepoQlClientProvider clientProvider,
-    SelfTestRunner selfTestRunner)
+    SelfTestRunner selfTestRunner,
+    SessionOrientation sessionOrientation)
 {
     private readonly RepoQlClientProvider _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
     private readonly SelfTestRunner _selfTestRunner = selfTestRunner ?? throw new ArgumentNullException(nameof(selfTestRunner));
+    private readonly SessionOrientation _sessionOrientation = sessionOrientation ?? throw new ArgumentNullException(nameof(sessionOrientation));
 
     // Track last request to implement "call again to wait" pattern (static to persist across tool invocations)
     private static string? _lastRequestSignature;
@@ -159,6 +161,11 @@ internal sealed class ExploreTool(
     {
         if (tokenBudget <= 0)
             return "Error: tokenBudget must be a positive integer.";
+
+        // Check orientation
+        var nudge = _sessionOrientation.CheckOrientation("explore", uriGlob);
+        if (nudge != null)
+            return nudge;
 
         // Create request signature for "call again to wait" pattern
         var requestSignature = $"{tokenBudget}|{intent}|{uriGlob}|{keywords}|{boost}|{penalize}|{limit}";

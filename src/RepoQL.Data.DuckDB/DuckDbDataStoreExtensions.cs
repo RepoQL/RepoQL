@@ -711,23 +711,24 @@ public static class DuckDbDataStoreExtensions
                     label, row.Id, row.Kind, row.Uri ?? string.Empty);
         }
 
-        // Clean up any orphaned row with same URI but different id
-        // This handles dirty startup scenarios where deterministic IDs may differ from stored IDs
+        // Clean up any existing row with the same URI (unconditional delete).
+        // This handles cases where document IDs change between indexing runs.
+        // The unique index on container_uri_lowercase requires this cleanup before insert.
         preDelete = ReadConflicts();
-        conn.Execute(tx, "DELETE FROM node WHERE container_uri_lowercase = ? AND id != ?;", lc, document.Id);
+        conn.Execute(tx, "DELETE FROM node WHERE container_uri_lowercase = ?;", lc);
         postDelete = ReadConflicts();
 
-        // Atomic upsert using INSERT ... ON CONFLICT ... DO UPDATE
-        // Handle conflicts on id (primary key) since deterministic IDs may match existing rows
+        // Insert the document. ON CONFLICT (container_uri_lowercase) handles any remaining
+        // conflicts (e.g., from index corruption or race conditions).
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (id) DO UPDATE SET
+            ON CONFLICT (container_uri_lowercase) DO UPDATE SET
+                id = excluded.id,
                 kind = excluded.kind,
                 uri = excluded.uri,
-                container_uri_lowercase = excluded.container_uri_lowercase,
                 artifact_id = excluded.artifact_id,
                 span_id = excluded.span_id,
                 properties = excluded.properties,

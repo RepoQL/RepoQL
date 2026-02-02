@@ -10,7 +10,7 @@ using RepoQL.Explore;
 namespace RepoQL.ConsoleApp.Tools;
 
 [McpServerToolType]
-internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRunner)
+internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRunner, SessionOrientation sessionOrientation)
 {
     /// <summary>
     /// Track the last query that exceeded token budget for "repeat to confirm" pattern.
@@ -222,6 +222,11 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
                 return $"Diagnostics failed: {ex.GetType().Name}: {ex.Message}\n\nStack trace:\n{ex.StackTrace}";
             }
         }
+
+        // Check orientation
+        var nudge = sessionOrientation.CheckOrientation("query", null);
+        if (nudge != null)
+            return nudge;
 
         try
         {
