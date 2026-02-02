@@ -32,12 +32,12 @@ internal sealed class ExploreTool(
         **Invariant**
         Intent matches knowledge state: Inventory (discovery), Locate (location), Inspect (structure), Explain (synthesis).
         **Example**
-        Inventory  → tokenBudget=1000 keywords="payment" scope="file:///docs/**"
+        Inventory  → tokenBudget=1000 keywords="payment" uriGlob="file:///docs/**"
         Locate     → tokenBudget=1500 keywords="settlement batch" boost="(?i)payment"
         Inspect  → tokenBudget=3000 keywords="reconciliation logic"
         Explain → tokenBudget=2000 keywords="Why does TokenService use refresh tokens?"
         **Depth**
-        - All intents accept: tokenBudget, keywords, scope, boost, penalize
+        - All intents accept: tokenBudget, keywords, uriGlob, boost, penalize
         - Inventory: keywords optional (ranks when present); broad results
         - Locate: keywords required; ranked results with snippets
         - Inspect: keywords required; deep structure with line numbers
@@ -48,18 +48,18 @@ internal sealed class ExploreTool(
         
         ### Capsule: XRayTargeting
         **Invariant**
-        Keywords target semantically; boost/penalize adjust ranking (regex); scope filters path (glob).
+        Keywords target semantically; boost/penalize adjust ranking (regex); uriGlob filters path.
         **Example**
         keywords="authentication flow"              semantic targeting
         boost="(?i)oauth|jwt|session"               elevate matches
         penalize="(?i)test|mock|fixture"            demote matches
-        scope="file:///docs/service/**/*.md"        path filter
+        uriGlob="file:///src/**/*.cs"               path filter
         **Depth**
         - All parameters work with all intents
-        - Keywords: 2-5 word phrases; question format for Understand
+        - Keywords: 2-5 word phrases; question format for Explain
         - boost/penalize: RE2 regex (`(?i)` case-insensitive, `|` alternation)
-        - scope: glob pattern (`*` single level, `**` recursive, `*.md` extension)
-        - boost adjusts ranking; scope excludes—choose based on need
+        - uriGlob: URI + glob pattern (`*` single level, `**` recursive, `;` combine, `!` exclude)
+        - boost adjusts ranking; uriGlob filters—use both for precision
         ---
         
         ### Capsule: ExplainNarrow
@@ -91,7 +91,7 @@ internal sealed class ExploreTool(
 
         Know the uri(s) of the thing you are a looking for? Use ReadMcpResourceTool - works for objects and files, supports globbing patterns.
 
-        Filter with scope (glob), guide with keywords (semantic), rank with patterns (regex). Results ranked by confidence.
+        Filter with uriGlob, guide with keywords (semantic), rank with boost/penalize (regex). Results ranked by confidence.
         </KNOBS>
 
         <PATTERNS>
@@ -110,16 +110,16 @@ internal sealed class ExploreTool(
 
         <EXAMPLES>
         Inventory → Locate → Inspect workflow:
-        1. tokenBudget=1000, intent=inventory, scope=file:///src/** → See what modules exist
-        2. tokenBudget=1200, intent=locate, keywords="authentication validation" → Locate auth code
-        3. tokenBudget=2000, intent=inspect, scope=file:///src/Auth/**, keywords="JWT validation" → Read the code
+        1. tokenBudget=1000, intent=Inventory, uriGlob="file:///src/**" → See what modules exist
+        2. tokenBudget=1200, intent=Locate, keywords="authentication validation" → Locate auth code
+        3. tokenBudget=2000, intent=Inspect, uriGlob="file:///src/Auth/**", keywords="JWT validation" → Read the code
 
         Quick references:
-        - What docs exist? → intent=inventory, scope=help://**
-        - Understand architecture → intent=inventory, scope=file:///src/**, keywords="How is this organized?"
-        - Find a feature → intent=locate, keywords="Where is caching implemented?"
-        - Debug specific code → intent=inspect, scope=file:///path/to/file.cs, keywords="error handling"
-        - Get synthesized explanation → intent=explain, keywords="How does authentication work?"
+        - What docs exist? → intent=Inventory, uriGlob="help://**"
+        - Understand architecture → intent=Inventory, uriGlob="file:///src/**", keywords="How is this organized?"
+        - Find a feature → intent=Locate, keywords="Where is caching implemented?"
+        - Debug specific code → intent=Inspect, uriGlob="file:///path/to/file.cs", keywords="error handling"
+        - Get synthesized explanation → intent=Explain, keywords="How does authentication work?"
         </EXAMPLES>
 
         <REMEMBER>
@@ -137,7 +137,7 @@ internal sealed class ExploreTool(
     public async Task<string> ExploreAsync(
         [Description("Tokens to invest in the response")] int tokenBudget,
         [Description("What you are trying to do - see INTENT_SELECTION")] Intent intent,
-        [Description("Where to look (glob pattern), full uri, semicolon delimited list of uris")] string? scope = null,
+        [Description("URI glob pattern to filter results (e.g., file:///src/**, help://**). Combine with ; exclude with !")] string? uriGlob = null,
         [Description("Search terms for hybrid search - full sentences work best (e.g., \"How does JWT token refresh work?\")")] string? keywords = null,
         [Description("Regex patterns to boost matches, comma-separated (e.g., \"Validate.*Token,(?i)auth\")")] string? boost = null,
         [Description("Regex patterns to de-rank matches, comma-separated (e.g., \"(?i)test|mock,\\.generated\\.\")")] string? penalize = null,
@@ -148,7 +148,7 @@ internal sealed class ExploreTool(
             return "Error: tokenBudget must be a positive integer.";
 
         // Create request signature for "call again to wait" pattern
-        var requestSignature = $"{tokenBudget}|{intent}|{scope}|{keywords}|{boost}|{penalize}|{limit}";
+        var requestSignature = $"{tokenBudget}|{intent}|{uriGlob}|{keywords}|{boost}|{penalize}|{limit}";
         var isRepeatRequest = _lastRequestSignature == requestSignature;
 
         // Check if indexer is ready before executing
@@ -198,7 +198,7 @@ internal sealed class ExploreTool(
             var response = await client.ExploreAsync(
                 tokenBudget,
                 protoIntent,
-                scope,
+                uriGlob,  // Maps to internal 'scope' parameter
                 keywords,
                 boost,
                 penalize,

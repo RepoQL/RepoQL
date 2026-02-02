@@ -93,7 +93,7 @@ internal class McpCommands
                                              read("help://** => tree: folders", 500)
 
                                            Find relevant docs:
-                                             explore(intent="Locate", scope="help://**", keywords="graph traversal", tokenBudget=1500)
+                                             explore(intent="Locate", uriGlob="help://**", keywords="graph traversal", tokenBudget=1500)
 
                                            Read specific headings or files (combine with semicolon):
                                              read("help:///quickstart.md#symbol=Search;help:///quickstart.md#symbol=Query;help:///repoql/tools/read/modifiers.md", 3000)

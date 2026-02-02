@@ -160,7 +160,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         SELECT uri FROM Files WHERE uri LIKE 'help:///repoql/tools/query/%';
         ```
 
-        Or: `explore(intent='Find', scope='help:///**', keywords='xlsx excel functions')`
+        Or: `explore(intent="Locate", uriGlob="help://**", keywords="xlsx excel functions")`
 
         Key docs:
         - `help:///quickstart.md` - SQL patterns, capsules
@@ -236,7 +236,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
             _lastBudgetExceededQuery = null;
             var output = result.Lines.Length > 0
                 ? string.Join(Environment.NewLine, result.Lines)
-                : "No results. Try a different query, or explore the docs with: explore intent=Explore scope=\"help:///**\"";
+                : "No results. Try a different query, or explore the docs with: explore(intent=\"Inventory\", uriGlob=\"help://**\")";
 
             // Check token budget (even after server summarization - summary might still exceed)
             if (tokenBudget > 0 && !isRepeatRequest)

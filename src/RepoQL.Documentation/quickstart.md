@@ -70,7 +70,7 @@ read("help://** => tree: folders", 500)
 
 **Find a topic:**
 ```
-explore(intent="Locate", scope="help://**", keywords="modifiers", tokenBudget=1500)
+explore(intent="Locate", uriGlob="help://**", keywords="modifiers", tokenBudget=1500)
 ```
 
 **Read what you found:**
