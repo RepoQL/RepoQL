@@ -161,6 +161,111 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
         {
             var escapedKeywords = EscapeSqlLiteral(keywords);
 
+            // Build scope filter from document URIs
+            var scopePatterns = documentUris
+                .Select(uri => $"'{EscapeSqlLiteral(uri)}%'")
+                .ToList();
+            var scopeFilter = string.Join(" OR n.uri LIKE ", scopePatterns);
+
+            // Stage 1: Get initial semantic search results with chunk byte ranges
+            // Stage 2: Refine with zoom_and_enhance (binary chop with JIT embeddings)
+            var sql = $"""
+                WITH initial_chunks AS (
+                    SELECT
+                        n.uri,
+                        s.best_chunk_start,
+                        s.best_chunk_end,
+                        s.sem_score
+                    FROM _search_semantic('{escapedKeywords}', max_cand := {MaxResults * 2}) s
+                    JOIN node n ON n.id = s.node_id
+                    WHERE n.uri LIKE {scopeFilter}
+                ),
+                refined AS (
+                    SELECT * FROM zoom_and_enhance(
+                        (SELECT json_group_array(json_object(
+                            'uri', uri,
+                            'start_byte', best_chunk_start,
+                            'end_byte', best_chunk_end,
+                            'score', sem_score
+                        )) FROM initial_chunks),
+                        '{escapedKeywords}',
+                        min_lines := 8,
+                        max_depth := 2
+                    )
+                )
+                SELECT
+                    r.uri,
+                    r.start_line AS line_start,
+                    r.end_line AS line_end,
+                    r.score,
+                    r.depth,
+                    a.headline,
+                    (SELECT string_agg(s.text, E'\n' ORDER BY s.line_number)
+                     FROM snippet(r.uri || '#line=' || r.start_line || ',' || r.end_line, {DefaultContextLines}) s
+                    ) AS snippet
+                FROM refined r
+                JOIN node n ON n.uri = r.uri
+                JOIN artifact a ON a.id = n.artifact_id
+                ORDER BY r.score DESC
+                LIMIT {MaxResults * 2}
+                """;
+
+            var rows = _db.Query(sql);
+
+            foreach (var row in rows)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var uri = row.TryGetValue("uri", out var uriVal) ? uriVal?.ToString() : null;
+                if (string.IsNullOrWhiteSpace(uri))
+                    continue;
+
+                var headline = row.TryGetValue("headline", out var headlineVal) ? headlineVal?.ToString() : null;
+                var snippet = row.TryGetValue("snippet", out var snippetVal) ? snippetVal?.ToString() : null;
+                var lineStart = row.TryGetValue("line_start", out var lineStartVal) && lineStartVal is not null
+                    ? Convert.ToInt32(lineStartVal, CultureInfo.InvariantCulture)
+                    : (int?)null;
+                var lineEnd = row.TryGetValue("line_end", out var lineEndVal) && lineEndVal is not null
+                    ? Convert.ToInt32(lineEndVal, CultureInfo.InvariantCulture)
+                    : (int?)null;
+                var score = row.TryGetValue("score", out var scoreVal) && scoreVal is not null
+                    ? Convert.ToDouble(scoreVal, CultureInfo.InvariantCulture)
+                    : 0.0;
+
+                results.Add(new FindResult(
+                    Uri: uri!,
+                    Headline: headline,
+                    Snippet: snippet,
+                    LineStart: lineStart,
+                    LineEnd: lineEnd,
+                    Score: score,
+                    SemanticScore: score));
+            }
+        }
+        catch (Exception ex) when (ex.Message.Contains("embeddings") ||
+                                   ex.Message.Contains("embedding") ||
+                                   ex.Message.Contains("not ready") ||
+                                   ex.Message.Contains("zoom_and_enhance"))
+        {
+            // Embeddings not ready or zoom_and_enhance failed - fall back to basic search
+            return ExecuteSearchFallback(keywords, documentUris, ct);
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Fallback search without zoom_and_enhance refinement.
+    /// Used when embeddings aren't ready or zoom_and_enhance fails.
+    /// </summary>
+    private IReadOnlyList<FindResult> ExecuteSearchFallback(string keywords, IReadOnlyList<string> documentUris, CancellationToken ct)
+    {
+        var results = new List<FindResult>();
+
+        try
+        {
+            var escapedKeywords = EscapeSqlLiteral(keywords);
+
             // Build URI filter - strip fragments from result URIs for matching
             var uriConditions = documentUris
                 .Select(uri => $"REPLACE(uri, '#' || SPLIT_PART(uri, '#', 2), '') = '{EscapeSqlLiteral(uri)}'")
@@ -223,12 +328,9 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
                     SemanticScore: denseScore));
             }
         }
-        catch (Exception ex) when (ex.Message.Contains("embeddings") ||
-                                   ex.Message.Contains("embedding") ||
-                                   ex.Message.Contains("not ready"))
+        catch
         {
-            // Embeddings not ready - return empty results with appropriate message
-            return results;
+            // Search failed completely
         }
 
         return results;

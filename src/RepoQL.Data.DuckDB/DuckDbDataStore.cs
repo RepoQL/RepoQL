@@ -35,7 +35,8 @@ public sealed class DuckDbDataStore : IDisposable
     private readonly UdfRegistry _udfRegistry;
     private readonly DuckDbStartupOptions _startupOptions;
     private static readonly AsyncLocal<IServiceScope?> _currentScope = new();
-    private static readonly AsyncLocal<bool> _inQueryContext = new();
+    [ThreadStatic]
+    private static bool _inQueryContext;
     private bool _schemaInitialized;
     private bool _disposed;
     private bool _databaseInvalidated;
@@ -234,7 +235,7 @@ public sealed class DuckDbDataStore : IDisposable
 
         // Detect reentrant calls (e.g., from UDFs that query the database)
         // If already in a query context, use secondary connection to avoid deadlock
-        if (_inQueryContext.Value)
+        if (_inQueryContext)
         {
             return ExecuteReentrantRead(sql, map);
         }
@@ -246,7 +247,7 @@ public sealed class DuckDbDataStore : IDisposable
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
             _currentScope.Value = scope;
-            _inQueryContext.Value = true;
+            _inQueryContext = true;
             try
             {
                 return ExecuteRead(sql, map);
@@ -254,7 +255,7 @@ public sealed class DuckDbDataStore : IDisposable
             finally
             {
                 _currentScope.Value = previousScope;
-                _inQueryContext.Value = false;
+                _inQueryContext = false;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
@@ -370,7 +371,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
 
         // Detect reentrant calls - use secondary connection to avoid deadlock
-        if (_inQueryContext.Value)
+        if (_inQueryContext)
         {
             return ExecuteReentrantRead(sql, map);
         }
@@ -382,7 +383,7 @@ public sealed class DuckDbDataStore : IDisposable
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
             _currentScope.Value = scope;
-            _inQueryContext.Value = true;
+            _inQueryContext = true;
             try
             {
                 // Start a read-only transaction - DuckDB will reject any write attempts
@@ -402,7 +403,7 @@ public sealed class DuckDbDataStore : IDisposable
             finally
             {
                 _currentScope.Value = previousScope;
-                _inQueryContext.Value = false;
+                _inQueryContext = false;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
@@ -427,7 +428,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
 
         // Detect reentrant calls - use secondary connection to avoid deadlock
-        if (_inQueryContext.Value)
+        if (_inQueryContext)
         {
             return ExecuteReentrantScalar<T>(sql);
         }
@@ -439,7 +440,7 @@ public sealed class DuckDbDataStore : IDisposable
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
             _currentScope.Value = scope;
-            _inQueryContext.Value = true;
+            _inQueryContext = true;
             try
             {
                 return ExecuteScalar<T>(sql);
@@ -447,7 +448,7 @@ public sealed class DuckDbDataStore : IDisposable
             finally
             {
                 _currentScope.Value = previousScope;
-                _inQueryContext.Value = false;
+                _inQueryContext = false;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
