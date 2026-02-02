@@ -1,5 +1,5 @@
 ---
-description: "read(uri, tokenBudget) → content at richest level that fits budget. Supports globs, fragments, exclusions, // question syntax."
+description: "read(uri, tokenBudget) → content at richest level that fits budget. Supports globs, fragments, exclusions, => question: syntax."
 tags: ["read", "fetch", "content", "budget", "progressive", "globs", "fragments"]
 audience: ["LLMs"]
 categories: ["Reference[100%]", "Tools[100%]"]
@@ -106,18 +106,18 @@ read("file:///src/**;!file:///src/generated/**", 6000) -- exclude generated
 ## Capsule: QuestionSyntax
 
 **Invariant**
-` // question` triggers LLM synthesis. Response includes citations.
+` => question: <question>` triggers LLM synthesis. Response includes citations.
 
 **Example**
 ```
-read("file:///src/Auth.cs // How does token refresh work?", 2000)
-read("file:///src/**/*.cs // What error handling patterns are used?", 3000)
-read("help:///api.md // List all endpoints", 1500)
+read("file:///src/Auth.cs => question: How does token refresh work?", 2000)
+read("file:///src/**/*.cs => question: What error handling patterns are used?", 3000)
+read("help:///api.md => question: List all endpoints", 1500)
 ```
 //BOUNDARY: Budget controls answer length. Question applies to all matched files.
 
 **Depth**
-- Space before `//` required
+- Uses the `=> question:` modifier syntax
 - LLM reads matched content, synthesizes answer
 - Citations as `file:///path#line=N,M`
 - Focused questions → better answers
@@ -141,28 +141,28 @@ read("github://anthropics/claude-code@main/src/index.ts", 4000) -- imported repo
 
 ---
 
-## Capsule: VsXray
+## Capsule: VsExplore
 
 **Invariant**
-Use read when you KNOW the path. Use xray when you need to FIND it.
+Use read when you KNOW the path. Use explore when you need to FIND it.
 
 **Example**
 ```
 -- Know the file → read
 read("file:///src/AuthService.cs", 3000)
 
--- Don't know where → xray first
-xray(intent="Find", keywords="authentication service", scope="file:///src/**")
+-- Don't know where → explore first
+explore(intent="Locate", keywords="authentication service", scope="file:///src/**")
 -- then read specific results
 read("file:///src/Services/AuthService.cs", 3000)
 ```
-//BOUNDARY: read with broad globs wastes budget. xray Find → read specific is cheaper.
+//BOUNDARY: read with broad globs wastes budget. explore Locate → read specific is cheaper.
 
 **Depth**
-- xray Explore: What exists? (inventory)
-- xray Find: Where is X? (locate)
+- explore Inventory: What exists?
+- explore Locate: Where is X?
 - read: Get content of known URI
-- Workflow: Explore → Find → Read
+- Workflow: Inventory → Locate → Read
 
 ---
 
@@ -201,8 +201,8 @@ read("file:///src/** => lint: errors", 1000)   -- show errors only
 
 | Mistake | Fix |
 |---------|-----|
-| `read("**/*.cs", 50000)` | Too broad, use xray Find first |
+| `read("**/*.cs", 50000)` | Too broad, use explore Locate first |
 | `read("file:///src/Foo.cs", 100)` | Budget too low, will get headline only |
 | `read("src/Foo.cs", 3000)` | Missing scheme, use `file:///src/Foo.cs` |
-| `read("file:///src/Foo.cs//question", 2000)` | Missing space before `//` |
+| `read("file:///src/Foo.cs => question:...", 2000)` | Missing the actual question after colon |
 | `read("file:///src/*.cs;!/tests/", 3000)` | Exclusion path wrong, use `!**/tests/**` |
