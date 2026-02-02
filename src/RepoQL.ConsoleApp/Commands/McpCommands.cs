@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.ConsoleApp.Helpers;
@@ -79,8 +79,8 @@ internal class McpCommands
                                            </TOOLS>
 
                                            <START>
-                                           **Best 2k tokens you'll ever spend.** You don't know what you don't know — RepoQL has capabilities you won't guess. Read the map first:
-                                             read("help://** => tree: headlines", 2000)
+                                           **Best 3k tokens you'll ever spend.** You don't know what you don't know — RepoQL has capabilities you won't guess. Read the map first:
+                                             read("help://** => tree: headlines", 3000)
 
                                            Then orient in the codebase:
                                              read("file://** => tree: folders", 500)
