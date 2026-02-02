@@ -20,115 +20,117 @@ internal sealed class ExploreTool(
     private static string? _lastRequestSignature;
 
     private const string ToolInstructions = """
-        <CONCEPT>
-        The best tool for 95% of your reading and understanding needs.
-        X-ray vision files in your repo (code/docs/config/everything). See structure, find things without reading files or knowing keywords.
-        </CONCEPT>
+        <WHY>
+        Don't read blind. Traditional search finds most results—you answer confidently but with gaps. Users run subagents to verify, wasting tokens. Explore searches wide first, so you see what exists before answering. No blind spots, no verification tax.
+        </WHY>
 
-        <INTENT_SELECTION>
-        CRITICAL: Choose intent based on YOUR CURRENT KNOWLEDGE STATE, not the task type.
+        <INTENT>
+        Intent matches your knowledge state—and controls how tokens are spent.
 
-        ### Capsule: ExploreIntent
-        **Invariant**
-        Intent matches knowledge state: Inventory (discovery), Locate (location), Inspect (structure), Explain (synthesis).
-        **Example**
-        Inventory  → tokenBudget=1000 keywords="payment" uriGlob="file:///docs/**"
-        Locate     → tokenBudget=1500 keywords="settlement batch" boost="(?i)payment"
-        Inspect  → tokenBudget=3000 keywords="reconciliation logic"
-        Explain → tokenBudget=2000 keywords="Why does TokenService use refresh tokens?"
-        **Depth**
-        - All intents accept: tokenBudget, keywords, uriGlob, boost, penalize
-        - Inventory: keywords optional (ranks when present); broad results
-        - Locate: keywords required; ranked results with snippets
-        - Inspect: keywords required; deep structure with line numbers
-        - Explain: keywords required as question; prose synthesis
-        - Budget by intent: Inventory 800-2000, Locate 1000-2000, Inspect 2000-5000, Explain 1000-3000
-        - Workflow: Inventory→Locate→Inspect→Explain (accumulates knowledge)
-        ---
-        
-        ### Capsule: XRayTargeting
-        **Invariant**
-        Keywords target semantically; boost/penalize adjust ranking (regex); uriGlob filters path.
-        **Example**
-        keywords="authentication flow"              semantic targeting
-        boost="(?i)oauth|jwt|session"               elevate matches
-        penalize="(?i)test|mock|fixture"            demote matches
-        uriGlob="file:///src/**/*.cs"               path filter
-        **Depth**
-        - All parameters work with all intents
-        - Keywords: 2-5 word phrases; question format for Explain
-        - boost/penalize: RE2 regex (`(?i)` case-insensitive, `|` alternation)
-        - uriGlob: URI + glob pattern (`*` single level, `**` recursive, `;` combine, `!` exclude)
-        - boost adjusts ranking; uriGlob filters—use both for precision
-        ---
-        
-        ### Capsule: ExplainNarrow
-        **Invariant**
-        When using explain, queries must be self-contained; keywords become search terms directly.
-        **Example**
+        **Inventory**: You don't know what's there yet.
+        Breadth over depth—survey with or without keywords. Keywords optional; when provided, they rank by relevance. Returns an index, not content.
+        → tokenBudget=1000, uriGlob="file:///src/**"
+
+        **Locate**: You know the concept, not the location.
+        Balanced—detail on matches, awareness of the rest. Enough context to decide what to read next.
+        → tokenBudget=1500, keywords="authentication validation"
+
+        **Inspect**: You know the target.
+        Depth with context—concentrates tokens on relevant content and its surroundings. Shows code snippets, line numbers.
+        → tokenBudget=2500, uriGlob="file:///src/Auth/**", keywords="token validation"
+
+        **Explain**: You want understanding, not raw text.
+        Massive compression—an LLM reads far more than you'd spend (often 50k → 1k). Returns synthesis, source URIs, and reasoning—verifiable, not a black box.
+        → tokenBudget=2000, keywords="How does JWT refresh work in TokenService?"
+
+        Workflow: Inventory → Locate → Inspect → Explain (accumulate knowledge, don't skip steps)
+        </INTENT>
+
+        <PARAMETERS>
+        **tokenBudget** (required): How many tokens to invest. Budget controls detail, not result count.
+        - 800-1500: Survey/locate (breadth)
+        - 1500-3000: Inspect/understand (depth)
+        - Higher = richer detail per result, not more results
+
+        **keywords**: Semantic + lexical search terms.
+        - Concepts: "authentication flow", "error handling"
+        - Questions work best for Explain: "How does X work?"
+        - Optional for Inventory (survey mode)
+
+        **uriGlob**: Filter by path. Use Inventory first to learn structure, then narrow.
+        - file:///src/** — all source
+        - file:///src/**/*.cs — C# files only
+        - file:///src/**;!**/tests/** — exclude tests
+        - help://** — embedded documentation
+        - Combine with ; exclude with !
+
+        **boost**: Regex to elevate matches (demotes others relatively).
+        - (?i)interface|abstract — find contracts
+        - (?i)service|handler — find entry points
+        - Auth.*|Token.* — specific patterns
+
+        **penalize**: Regex to demote matches (doesn't exclude, just ranks lower).
+        - (?i)test|mock|spec|fake — demote test code
+        - (?i)generated|\\.g\\. — demote generated
+        - Case-insensitive: (?i), alternation: |
+        </PARAMETERS>
+
+        <LAYERED_APPROACH>
+        Combine parameters for precision:
+        1. uriGlob filters WHERE (path matching)
+        2. keywords finds WHAT (semantic search)
+        3. boost ranks UP (elevate matches)
+        4. penalize ranks DOWN (demote matches)
+
+        Example: Find authentication implementations, not tests:
+        → intent=Locate, uriGlob="file:///src/**", keywords="authentication", penalize="(?i)test|mock"
+
+        Example: Find interfaces in a specific area:
+        → intent=Locate, uriGlob="file:///src/Services/**", keywords="service", boost="(?i)interface|abstract"
+        </LAYERED_APPROACH>
+
+        <EXPLAIN_TIPS>
+        Explain queries must be self-contained (no conversation context):
         ✓ "What is AuthService responsible for?"
         ✓ "Why does PaymentProcessor use idempotency keys?"
-        ✗ "Explain everything about authentication"
-        ✗ "What does this service do?"
-        **Depth**
-        - No pronouns or references—explore has no conversation context
-        - Include entity names, service names, specific concepts
-        - Broad queries dilute relevance; focused queries concentrate it
-        - Derivation section shows evidence; verify citations before trusting
-        ---
+        ✗ "Explain everything about authentication" (too broad)
+        ✗ "What does this service do?" (no referent)
 
-        <KNOBS>
-        tokenBudget:
-            investment level → more tokens = richer detail. You set the budget, explore maximizes value.
-            if you want to be sure you found everything, set a high budget
-            important: budget is exactly how many tokens you want to spend on seeing the answer, it is not a maximum.
-            the underlying query is the same regardless of budget - budget controls the level of detail in the response, and attempts to maximize value given the budget and intent
+        Output includes:
+        - Answer: Synthesized explanation
+        - Evidence: Code snippets with file:///path#line=N,M citations
+        - Nuance: Caveats and related considerations
 
-        keywords: search terms for hybrid (semantic + lexical) search
-          - Questions + boost patterns work best: keywords="How does auth work?" boost="(?i)Auth.*|Validate.*"
-          - Questions alone find conceptually related content via semantic search
-          - Control results with patterns to boost or penalize matches
+        Always verify citations—read the actual lines to confirm.
+        </EXPLAIN_TIPS>
 
-        Know the uri(s) of the thing you are a looking for? Use ReadMcpResourceTool - works for objects and files, supports globbing patterns.
+        <QUICK_PATTERNS>
+        Orient in new codebase:
+        → intent=Inventory, uriGlob="file:///src/**", tokenBudget=1500
 
-        Filter with uriGlob, guide with keywords (semantic), rank with boost/penalize (regex). Results ranked by confidence.
-        </KNOBS>
+        Find where something is:
+        → intent=Locate, keywords="caching layer", tokenBudget=1500
 
-        <PATTERNS>
-        boost: RE2 regex patterns to boost matching results (comma-separated)
-          - Validate.*Token → boost results containing "ValidateToken", "ValidateAccessToken", etc.
-          - (?i)error|exception → boost error handling code (case-insensitive)
-          - Auth.* → boost anything starting with "Auth" (AuthService, Authentication, etc.)
+        Understand specific code:
+        → intent=Inspect, uriGlob="file:///src/Cache/**", keywords="invalidation", tokenBudget=2500
 
-        penalize: RE2 regex patterns to de-rank matching results (comma-separated)
-          - (?i)test|spec|mock → de-rank test files and mocks
-          - \.generated\. → de-rank generated code
-          - deprecated|obsolete → de-rank deprecated code
+        Get explanation with evidence:
+        → intent=Explain, keywords="How does the caching layer handle invalidation?", tokenBudget=2500
 
-        Note: RE2 regex (no backreferences/lookahead). Patterns applied at SQL level for true filtering.
-        </PATTERNS>
+        Find production code only:
+        → intent=Locate, keywords="database connection", penalize="(?i)test|mock", tokenBudget=1500
 
-        <EXAMPLES>
-        Inventory → Locate → Inspect workflow:
-        1. tokenBudget=1000, intent=Inventory, uriGlob="file:///src/**" → See what modules exist
-        2. tokenBudget=1200, intent=Locate, keywords="authentication validation" → Locate auth code
-        3. tokenBudget=2000, intent=Inspect, uriGlob="file:///src/Auth/**", keywords="JWT validation" → Read the code
+        Find contracts/interfaces:
+        → intent=Locate, keywords="service", boost="(?i)interface|abstract", tokenBudget=1500
+        </QUICK_PATTERNS>
 
-        Quick references:
-        - What docs exist? → intent=Inventory, uriGlob="help://**"
-        - Understand architecture → intent=Inventory, uriGlob="file:///src/**", keywords="How is this organized?"
-        - Find a feature → intent=Locate, keywords="Where is caching implemented?"
-        - Debug specific code → intent=Inspect, uriGlob="file:///path/to/file.cs", keywords="error handling"
-        - Get synthesized explanation → intent=Explain, keywords="How does authentication work?"
-        </EXAMPLES>
+        <WHEN_TO_USE_READ>
+        Know the exact URI? Use read instead:
+        - read("file:///src/Auth.cs", 3000) — fetch known file
+        - read("file:///src/** => tree: folders", 500) — see structure
 
-        <REMEMBER>
-        Start with INVENTORY when you don't know the codebase vocabulary yet.
-        Use LOCATE once you know what concepts/terms to search for.
-        Use INSPECT only after LOCATE has shown you which files matter.
-        Use EXPLAIN when you want a prose explanation synthesized by LLM.
-        Each intent serves a different knowledge state - don't skip steps.
-        </REMEMBER>
+        Explore finds. Read fetches. Use explore when you don't know where to look.
+        </WHEN_TO_USE_READ>
         """;
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "explore"), Description(ToolInstructions)]
