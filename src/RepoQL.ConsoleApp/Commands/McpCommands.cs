@@ -79,24 +79,24 @@ internal class McpCommands
                                            </TOOLS>
 
                                            <START>
-                                           Orient yourself:
-                                             read("file:///** => tree: folders", 500)
+                                           **Best 2k tokens you'll ever spend.** You don't know what you don't know — RepoQL has capabilities you won't guess. Read the map first:
+                                             read("help://** => tree: headlines", 2000)
 
-                                           Find something:
+                                           Then orient in the codebase:
+                                             read("file://** => tree: folders", 500)
+
+                                           Now you can find things without guessing:
                                              explore(intent="Locate", keywords="authentication", tokenBudget=1500)
                                            </START>
 
                                            <HELP>
-                                           RepoQL documentation is indexed at `help://` — search it like code, then read what's relevant.
+                                           RepoQL documentation is indexed at `help://` — query it like code.
 
-                                           See what exists:
-                                             read("help://** => tree: folders", 500)
+                                           Ask a question:
+                                             explore(intent="Explain", uriGlob="help://**", keywords="How do I shot web?", tokenBudget=2500)
 
                                            Find relevant docs:
                                              explore(intent="Locate", uriGlob="help://**", keywords="graph traversal", tokenBudget=1500)
-
-                                           Read specific headings or files (combine with semicolon):
-                                             read("help:///quickstart.md#symbol=Search;help:///quickstart.md#symbol=Query;help:///repoql/tools/read/modifiers.md", 3000)
                                            </HELP>
                                            """;
                 })
