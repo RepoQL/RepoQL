@@ -6,8 +6,8 @@ namespace RepoQL.ConsoleApp.Host;
 
 /// <summary>
 /// Purpose: Provides read content backed by DuckDbDataStore for the gRPC host.
-/// Complexity: Encapsulates SQL using matches_glob for unified URI pattern matching,
-/// handling exact URIs, globs, and fragment patterns uniformly.
+/// Complexity: Encapsulates SQL using glob_files() table function for unified URI pattern matching,
+/// handling exact URIs, globs, and fragment patterns (including symbol wildcards) uniformly.
 /// </summary>
 internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadContentProvider
 {
@@ -20,6 +20,7 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
         // For documents: n.artifact_id is set, no span join needed.
         // For fragments: traverse span -> document -> artifact.
         // COALESCE picks the right artifact_id for both cases.
+        // Use glob_files() table function for proper symbol pattern matching.
         var sql = $"""
             SELECT n.uri,
                    CASE WHEN s.start_line IS NOT NULL AND a.text_content IS NOT NULL
@@ -33,12 +34,12 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
                    a.headline,
                    a.summary,
                    a.structure
-            FROM node n
+            FROM glob_files('{escapedPattern}') g
+            JOIN node n ON n.uri = g.uri
             LEFT JOIN span s ON s.id = n.span_id
             LEFT JOIN node doc ON doc.id = s.document_id
             JOIN artifact a ON a.id = COALESCE(n.artifact_id, doc.artifact_id)
-            WHERE {(hasFragment ? "" : "n.kind = 'document' AND ")}
-                  matches_glob(n.uri, '{escapedPattern}')
+            {(hasFragment ? "" : "WHERE n.kind = 'document'")}
             ORDER BY n.uri
             LIMIT 100
             """;

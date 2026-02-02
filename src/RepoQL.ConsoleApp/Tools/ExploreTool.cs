@@ -27,9 +27,10 @@ internal sealed class ExploreTool(
         <INTENT>
         Intent matches your knowledge state—and controls how tokens are spent.
 
-        **Inventory**: You don't know what's there yet.
-        Breadth over depth—survey with or without keywords. Keywords optional; when provided, they rank by relevance. Returns an index, not content.
+        **Inventory**: What exists here?
+        Survey mode—see into files through headlines and tags without reading them. Breadth over depth. Keywords optional; when provided, they rank results but you still see the full landscape.
         → tokenBudget=1000, uriGlob="file:///src/**"
+        → tokenBudget=1000, uriGlob="file:///docs/**", keywords="failure", boost="(?i)error" (ranked survey)
 
         **Locate**: You know the concept, not the location.
         Balanced—detail on matches, awareness of the rest. Enough context to decide what to read next.
@@ -47,10 +48,11 @@ internal sealed class ExploreTool(
         </INTENT>
 
         <PARAMETERS>
-        **tokenBudget** (required): How many tokens to invest. Budget controls detail, not result count.
-        - 800-1500: Survey/locate (breadth)
-        - 1500-3000: Inspect/understand (depth)
-        - Higher = richer detail per result, not more results
+        **tokenBudget** (required): How many tokens you're willing to spend. This is a bet—you don't know exactly what you'll get.
+        - Start low (500-1000) and increase if you need more
+        - Different scopes, intents, and content will consume budget differently
+        - The tool maximizes value within your budget, but outcomes vary
+        Consider the stakes: if an incomplete answer has serious consequences, bet more. When the cost of being wrong is low, bet small and iterate.
 
         **keywords**: Semantic + lexical search terms.
         - Concepts: "authentication flow", "error handling"
@@ -106,7 +108,10 @@ internal sealed class ExploreTool(
 
         <QUICK_PATTERNS>
         Orient in new codebase:
-        → intent=Inventory, uriGlob="file:///src/**", tokenBudget=1500
+        → intent=Inventory, uriGlob="file:///src/**", tokenBudget=1000
+
+        Ranked survey (see everything, relevant stuff first):
+        → intent=Inventory, uriGlob="file:///docs/**", boost="(?i)failure|error", tokenBudget=1000
 
         Find where something is:
         → intent=Locate, keywords="caching layer", tokenBudget=1500

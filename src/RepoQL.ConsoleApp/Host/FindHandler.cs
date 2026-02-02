@@ -17,7 +17,7 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
 
     private const int DefaultContextLines = 2;
     private const int MaxResults = 20;
-    private const double MinScoreThreshold = 0.20;
+    private const double MinScoreThreshold = 0.10;
 
     public string ModifierName => "find";
 

@@ -25,122 +25,134 @@ internal sealed class ReadTool(
     private readonly SelfTestRunner _selfTestRunner = selfTestRunner ?? throw new ArgumentNullException(nameof(selfTestRunner));
 
     private const string ReadInstructions = """
-        Fetch repository content by URI with token-budget-aware representation selection.
+        <WHY>
+        Explore finds URIs. Read fetches content. This is the second half of the workflow.
 
-        ### Capsule: ReadBasic
-        **Invariant**
-        `read(uri, budget)` returns content at the richest level that fits the budget.
-        **Example**
-        read("file:///src/Auth.cs", 5000)              -> full content if <=5000 tokens
-        read("file:///src/Auth.cs", 500)               -> headline + structure if full too large
-        read("file:///src/Auth.cs", 50)                -> headline only
-        **Depth**
-        - Progressive disclosure: full -> structure -> headline
-        - Globs distribute budget across matches: read("file:///src/**/*.cs", 10000)
-        - Fragments work: #line=10,50, #symbol=Foo.Bar
-        ---
+        The power: you don't read whole files. Explore gives you symbol URIs like `file:///src/Auth.cs#symbol=ValidateToken`. Read fetches just that function body. Three symbols across three files? One read call, just the bodies, no waste.
+        </WHY>
 
-        ### Capsule: ReadWithQuestion
-        **Invariant**
-        Append ` => question: <question>` for LLM-synthesized answer with citations.
-        **Example**
-        read("file:///src/Auth.cs => question: How does JWT validation work?", 2000)
-        read("file:///src/**/*.cs => question: What patterns are used for error handling?", 3000)
-        **Depth**
-        - Internally uses explore Understand pipeline (search + LLM synthesis)
-        - Budget controls LLM response size
-        - Citations as file:///path#line=N,M - always verify before trusting
-        - Broad questions dilute; focused questions concentrate relevance
-        ---
+        <CORE>
+        `read(uri, budget)` returns content at the richest level that fits your budget.
 
-        ### Capsule: WhenToUse
-        **Invariant**
-        Use read when you KNOW the URI; use explore when you need to FIND it.
-        **Example**
-        + read("file:///src/Auth.cs", 2000)           -> you know the file
-        + read("help:///quickstart.md => question: How?", 1500) -> known doc, specific question
-        - read("file:///src/**/*.cs", 50000)          -> too broad, use explore Examine
-        **Depth**
-        - explore: discover what exists, find by concept, understand architecture
-        - read: retrieve known content, answer questions about specific files
-        - Workflow: explore Explore -> explore Find -> read specific files
-        ---
+        Progressive disclosure kicks in automatically:
+        - Budget allows full content? You get full content with line numbers.
+        - Too large? You get structure (signatures without bodies).
+        - Still too large? You get headlines (one-line summaries).
 
-        <EXAMPLES>
-        Single file, full content:
-          read("file:///src/Auth.cs", 5000)
+        Globs distribute budget across matches. 100 files at 10k budget = ~100 tokens each = headlines. 1 file at 10k = full content. Narrow your target to get depth.
+        </CORE>
 
-        Line range:
-          read("file:///src/Auth.cs#line=42,100", 2000)
+        <MODIFIERS>
+        Append ` => modifier` to get a specific view instead of content.
 
-        Symbol:
-          read("file:///src/Auth.cs#symbol=ValidateToken", 1500)
+        **tree**: Directory structure with progressive detail.
+        → `=> tree: folders` — just directories with file counts (cheapest)
+        → `=> tree: files` — directories + filenames (default)
+        → `=> tree: headlines` — directories + files + one-line summaries
 
-        Symbol pattern (all descendants):
-          read("file:///src/Auth.cs#symbol=AuthService.**", 3000)
+        **headline**: One-line summary per file, flat list (no tree structure).
 
-        Glob pattern:
-          read("file:///src/Services/**/*.cs", 8000)
+        **structure**: Signatures without bodies—see the shape without reading code.
 
-        Compound pattern (multiple includes):
-          read("file:///src/**/*.cs;file:///lib/**/*.cs", 10000)
+        **content**: Full file with line numbers (explicit default).
 
-        Compound with exclusions:
-          read("file:///src/**/*.cs;!file:///src/tests/**", 8000)
+        **history**: Git commits affecting the file.
+        → `=> history` — all commits, newest first
+        → `=> history: keyword` — ranks commits by relevance to keyword (doesn't filter)
 
-        With question (LLM synthesis):
-          read("file:///docs/API.md => question: What authentication methods are supported?", 2000)
+        **blame**: Line-by-line git attribution showing who changed each line and when.
 
-        Multiple files with question:
-          read("file:///src/Auth/**/*.cs => question: How is the refresh token rotated?", 3000)
+        **lint**: Diagnostics from the file.
+        → `=> lint` — all diagnostics
+        → `=> lint: errors` — errors only
+        → `=> lint: warnings` — warnings only
 
-        Tree overview (default shows files):
-          read("file:///src/** => tree", 2000)
+        **find**: Semantic search within matched files.
+        → `=> find: keywords` — ranks content by relevance, shows snippets
+        → Has quality threshold—won't show junk matches
 
-        Tree with folders only:
-          read("file:///src/** => tree: folders", 500)
+        **question**: LLM synthesis with citations.
+        → `=> question: How does X work?` — reads content, synthesizes answer
+        → Returns Answer, Evidence (with file:///path#line=N,M citations), Nuance
+        → Always verify citations before trusting
+        </MODIFIERS>
 
-        Tree with headlines:
-          read("file:///src/** => tree: headlines", 5000)
+        <PATTERNS>
+        URIs can target precisely or match broadly.
 
-        History with keyword filter:
-          read("file:///src/Auth.cs => history: token", 1500)
-        </EXAMPLES>
+        **Fragments** pinpoint within files:
+        → `#symbol=ValidateToken` — exact symbol (fully qualified name matched)
+        → `#symbol=AuthService.*` — all direct members of a class
+        → `#symbol=AuthService.**` — all descendants (nested types too)
+        → `#line=42` — single line
+        → `#line=42,100` — line range (inclusive, 1-based)
 
-        ### Capsule: Modifiers
-        **Invariant**
-        Append ` => modifier` to request a specific view of the content.
-        **Example**
-        read("file:///src/** => tree", 2000)           // folder structure with files
-        read("file:///src/** => tree: folders", 500)   // folders only with file counts
-        read("file:///src/** => tree: headlines", 3000) // folders + files + summaries
-        read("file:///src/Auth.cs => history", 1500)   // what changed
-        //BOUNDARY: Default is content; modifiers override progressive disclosure.
-        **Depth**
-        - tree: folder structure (detail: `folders`, `files` (default), `headlines`)
-        - headline: one-line summary per file
-        - structure: signatures without bodies
-        - content: full file content (explicit default behavior)
-        - history: commits affecting file; `: keyword` filters by message/author
-        - blame: git blame for file showing who changed each line
-        - lint: diagnostics; `: errors` or `: warnings` filters severity
-        - find: semantic search within matched files; `: keywords` to search
-        - SeeAlso: `ReadBasic` for default behavior
-        ---
+        **Globs** select many files:
+        → `file:///src/**/*.cs` — recursive, all .cs files
+        → `file:///src/*.cs` — non-recursive, one level only
 
-        ### Capsule: BudgetAsInvestment
-        **Invariant**
-        Budget is how much context you spend to get the answer; invest wisely.
-        **Example**
-        Low confidence what you need? Start small: read("file:///src/**", 500)
-        Know exactly what you need? Invest more: read("file:///src/Auth.cs", 5000)
-        **Depth**
-        - 500: inventory scan; see what exists before committing
-        - 1500: understand shape; enough for navigation decisions
-        - 3000: read implementation; enough for most single-file tasks
-        - 5000+: deep dive; multiple files or complex analysis
-        - NotThis: large budget on broad glob wastes tokens on low-relevance files
-        ---
+        **Combining and excluding**:
+        → `a;b;c` — match any of a, b, c
+        → `!pattern` — exclude from all includes
+        → `file:///src/**;!**/tests/**` — source without tests
+
+        **Symbol wildcards across files** (powerful):
+        → `file:///src/**/*Handler.cs#symbol=*Handler.CanHandle` — all CanHandle methods
+        → `file:///src/**/*Service.cs#symbol=*Service.*` — all members of all services
+
+        **Multiple specific symbols** (from explore results):
+        → `file:///a.cs#symbol=Foo;file:///b.cs#symbol=Bar;file:///c.cs#symbol=Baz`
+        → One call, just those three function bodies
+        </PATTERNS>
+
+        <BUDGET>
+        Budget is how many tokens you're willing to spend. This is a bet—you don't know exactly what you'll get.
+
+        - Start low and increase if you need more
+        - Different targets and modifiers consume budget differently
+        - Globs distribute across matches: 100 files at 5k = shallow; 1 file at 5k = deep
+
+        Consider the stakes: if missing context has serious consequences, bet more. When the cost of being wrong is low, bet small and iterate.
+        </BUDGET>
+
+        <QUICK_PATTERNS>
+        Orient in new codebase:
+        → read("file:///** => tree: folders", 500)
+
+        See what's in a directory:
+        → read("file:///src/Services/** => tree: headlines", 2000)
+
+        Read a specific file:
+        → read("file:///src/Auth.cs", 5000)
+
+        Read just one function:
+        → read("file:///src/Auth.cs#symbol=ValidateToken", 2000)
+
+        Read all members of a class:
+        → read("file:///src/Auth.cs#symbol=AuthService.*", 3000)
+
+        Read same method across multiple files:
+        → read("file:///src/**/*Handler.cs#symbol=*Handler.ExecuteAsync", 3000)
+
+        Combine specific symbols from explore:
+        → read("file:///a.cs#symbol=Foo;file:///b.cs#symbol=Bar", 2000)
+
+        Who changed this file:
+        → read("file:///src/Auth.cs => blame", 2000)
+
+        What changed recently:
+        → read("file:///src/Auth.cs => history", 1500)
+
+        Ask a question about code:
+        → read("file:///src/Auth/**/*.cs => question: How is token refresh implemented?", 2500)
+        </QUICK_PATTERNS>
+
+        <VS_EXPLORE>
+        Use **explore** when you need to FIND something (what exists, where is X, how does Y work).
+        Use **read** when you KNOW the URI and want the content.
+
+        Workflow: explore Inventory → explore Locate → read specific URIs
+        </VS_EXPLORE>
         """;
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "read"), Description(ReadInstructions)]
