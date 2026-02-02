@@ -1,228 +1,186 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working on RepoQL.
 
-## What is RepoQL
+## 60-Second Orientation
 
-Local, queryable knowledge graph for repositories. Indexes files into DuckDB with property-graph model (nodes, edges, spans, annotations). SQL-first query surface via macros/UDFs. Designed agent-first: maximum insight, minimum tokens.
+**What is RepoQL?** Local, queryable knowledge graph for repositories. Files → DuckDB → SQL. Agents query structure without reading files.
 
-## The Deal
+**The mindset:** This is ours. You're building the tool that makes you (and all future Claudes) smarter. Think like an owner.
 
-This is ours (yours and mine). You and all future agents working here will use it, and anything you do to improve it will make it, and you - stronger and more capable. If we succeed this will be true for many many of you across the world. Think like an owner, this is not a proof of concept or a throwaway tool - only with careful design and execution will RepoQL be successful.
+**The bet:** Everyone else builds AI. We build conventional software that makes AI dramatically more capable.
 
-## Concept
+**The mental model:**
+```
+Files → IndexItem (flow object) → Pipeline → DuckDB (5 tables)
+                                                  ↓
+Agents → explore/query/read tools → SQL + UDFs → Results
+```
 
-Everything is queryable, files, other mcp servers, git, etc. We provide access to concise, high value data and tools via macros, UDFs and indexed entities, and make them composable via sql. Agents should be able to do significantly more with significantly less token use - RepoQL should be their eyes and ears.
+**URI schemes** - everything is addressable:
+- `file:///src/Foo.cs#symbol=Bar` - code
+- `help:///quickstart.md` - embedded docs (queryable!)
+- `github://owner/repo` - imports
 
-Everyone else is trying to build AI instead of conventional software. RepoQL leverages conventional software (sometimes blended with AI, but only when we have to) to greatly augment the capabilities of the agent using it.  
+**First action** - see the shape:
+```
+read("file:///src/** => tree: folders", 1000)
+```
 
-## Key Measures of success
-
-- Will it run on a developer laptop?
-- Will it run on all supported OS's? (OSX, Windows 10+, Linux)
-- How long does it take for the index to be ready to query?
-- Can the caller be confident that the data is not stale or incomplete?
-- How much confidence can the caller have that xray and search functionality has truly found everything? (hardest question to answer is 'what don't I know?'  so its important that we answer it reliably)
-- Have we implemented functionality in a way that is consistent, intuitive, and leverages analogues that agents will already know to inherit existing proficiency and aid effective extrapolation of the concepts
-- How many tokens does it take to explain how to use the tool effectively?
-- Have we effectively used progressive disclosure so that documentation is easily discoverable but not mandatory.
+---
 
 ## Critical Constraints
 
 **Violating these causes corruption, test failures, or architectural drift.**
 
-1. **Single-writer architecture**: ALL DuckDB access MUST go through `DuckDbDataStore`. It enforces thread safety via `ReaderWriterLockSlim` - parallel writes = database corruption.
-2. **Core schema frozen**: Five tables (`artifact`, `node`, `edge`, `span`, `annotation`) never change. Extend via views/macros/UDFs only.
-3. **TUnit, not xUnit**: Tests use `[Test]` not `[Fact]`, `[Arguments]` not `[InlineData]`. `dotnet test` works for running all tests, but use `dotnet run` for filtering specific tests. Wrong attributes = tests silently not discovered. 
-4. **AwesomeAssertions, not FluentAssertions**: Same API (`using AwesomeAssertions;`), different package. FluentAssertions has license restrictions.
+| Constraint | Consequence | Rule |
+|------------|-------------|------|
+| Single writer | DB corruption | ALL DuckDB writes through `DuckDbDataStore` |
+| Schema frozen | Architectural drift | 5 tables (`artifact`, `node`, `edge`, `span`, `annotation`) never change. Extend via views/macros/UDFs |
+| TUnit not xUnit | Tests silently don't run | Use `[Test]` not `[Fact]`, `[Arguments]` not `[InlineData]` |
+| AwesomeAssertions | Compile errors | Not FluentAssertions (license). Same API: `using AwesomeAssertions;` |
 
-**RepoQL's design should follow this same composability principle as it espouses.** 
+---
 
-It should be composed of atomic pieces of functionality, that are aggregated together by a hierarchy of classes to do more and more complex things. You should need the word "and" very seldom when describing the purpose of a class.
+## Gotchas
 
-All classes must have an XML doc comment with a summary containing whatever other explanation needed and:
-- Purpose: Why the class exists, and what it offers to the wider system
-- Complexity: An accounting of the complexity contained in the class, why it is necessary, and how the rest of the system is protected from this complexity (complexity sandwich)
+| Gotcha | Explanation |
+|--------|-------------|
+| Tests prefer `dotnet run` | TUnit uses Microsoft.Testing.Platform; `dotnet run -- --treenode-filter "..."` for filtering |
+| Embedded docs are queryable | `help:///` lives in database: `SELECT * FROM Files WHERE uri LIKE 'help://%'` |
+| Don't read files for structure | X-ray summaries (`headline`, `summary`, `structure`) are pre-computed on artifacts |
+| Spans: 1-based lines, 0-based chars | `#line=42` = line 42. `#char=100,150` = bytes [100,150) |
+| Mocking uses FakeItEasy | `A.Fake<T>()`, `A.CallTo(() => fake.Method(A<string>._)).Returns(...)` |
+| Current vs Future docs | Don't update future/ to match limitations. Don't update current/ with aspirations. The gap = work to do |
 
+---
+
+## Golden Rules
+
+- Schema stability - extend via SQL surface, never new tables
+- Standard formats at edges - SQL, URIs, MIME types, SARIF
+- Sensible defaults - must "just work" without config
+- Errors never cascade - one bad file never breaks the system
+- Single writer - all DB access through `DuckDbDataStore`
+- Abstractions prove value - no layers "just in case"
+- Perfection over backwards compatibility - we're pre-1.0, get it right
+
+---
+
+## Before You Code
+
+1. **Use RepoQL to explore** - `explore(intent=Inventory, keywords="topic")` or read the tree
+2. **Read the north-star** - `docs/north-star/` for what you're building toward
+3. **Check extension patterns** - probably a view/macro/UDF, not new code
+4. **Tests are mandatory** - especially in indexing (bugs are expensive)
+5. **Class docs required** - Purpose (why it exists) + Complexity (what's contained, why, how sandwiched)
+
+The "and" test: you should rarely need "and" when describing a class's purpose.
+
+---
 
 ## Build and Test
 
 ```bash
-# Build
-dotnet build RepoQL.sln
+dotnet build RepoQL.sln                    # Build
+dotnet test RepoQL.sln                     # Test all
 
-# Test all
-dotnet test RepoQL.sln
-
-# Test specific project
-dotnet test src/tests/RepoQL.Data.DuckDB.Tests
-
-# Run single test (from test project dir, preferred for filtering)
+# Filter tests (from test project directory)
 cd src/tests/RepoQL.Data.DuckDB.Tests
 dotnet run -- --treenode-filter "/*/*/*/MyTestName*"
-dotnet run -- --output Detailed    # Verbose
-
-# Run CLI locally
-dotnet run --project src/RepoQL.ConsoleApp -- query "SELECT * FROM Files"
-dotnet run --project src/RepoQL.ConsoleApp -- xray --detail headline
+dotnet run -- --output Detailed            # Verbose output
 ```
+
+**Live testing:**
+- **Fast path (server changes):** Aspire MCP → restart host (hot reload)
+- **Full deploy:** `deploy.ps1` → kills instances, publishes, copies. User reconnects via `/mcp`
+
+---
 
 ## Architecture
 
-### Core Model
+### Core Tables (frozen)
 
-Everything is a **node**; relationships are **edge**s; locations are **span**s; lint/metrics/facts are **annotation**s.
+| Table | Purpose |
+|-------|---------|
+| `artifact` | Content bytes + x-ray summaries (headline, summary, structure) |
+| `node` | Graph vertices (documents, symbols, endpoints) |
+| `edge` | Relationships (HAS_PART, CALLS, REFERS_TO) |
+| `span` | Locations (line ranges, byte offsets) |
+| `annotation` | Out-of-band facts (lint, metrics, hints) |
 
-**RepoURI** addresses everything precisely:
-- `file:///src/Foo.cs#line=42` - Line in file
-- `file:///src/Foo.cs#symbol=Bar.Baz` - Symbol location
-- `help:///quickstart.md` - Embedded documentation
-
-### Virtual File System
-
-Multiple URI schemes unified under single interface:
-
-| Scheme | Source | Notes |
-|--------|--------|-------|
-| `file://` | Physical disk | Primary content |
-| `help://` | Embedded resources | RepoQL's own docs, queryable |
-| `github://owner/repo` | Imported repos | Via `import` tool |
-
-**Implication**: Cross-scheme queries work seamlessly. Query embedded docs alongside code.
-
-### Key SQL Macros
+### Key Views and Macros
 
 ```sql
-SELECT * FROM Files                                   -- Document inventory (view)
-search('auth JWT refresh', k := 10)                   -- Semantic search (documents)
-search('config', scope := 'file:///src/%', k := 10)  -- Scoped search
-snippet('file:///path#line=42', 3)                    -- Code preview
-annotations_for(uri, 'lint', 'warning')               -- Diagnostics
+SELECT * FROM Files                              -- Document inventory
+SELECT * FROM Types WHERE extends = 'BaseClass'  -- Type declarations
+SELECT * FROM Functions WHERE is_async           -- Callables
+
+search('auth JWT', k := 10)                      -- Semantic search
+snippet('file:///path#line=42', 3)               -- Code preview
 ```
 
 ### Project Layout
 
 | Project | Purpose |
 |---------|---------|
-| `RepoQL.ConsoleApp` | CLI tool (`repoql`) |
-| `RepoQL.McpServer` | MCP server (same core, agent-facing surface) |
-| `RepoQL.Data.DuckDB` | Graph store (single-writer enforced here) |
-| `RepoQL.Indexing` | File watching, parsing pipeline, embeddings |
-| `Formats/*` | File parsers (Markdown, C#, Mermaid, GraphQL, TypeScript) |
+| `RepoQL.ConsoleApp` | CLI + MCP host, tool handlers |
+| `RepoQL.Data.DuckDB` | Graph store, UDFs (single writer enforced here) |
+| `Indexing/RepoQL.Indexing` | Pipeline, file systems, processors |
+| `Formats/*` | File parsers (C#, Markdown, GraphQL, etc.) |
+| `RepoQL.Explore` | Search orchestration, rendering |
+| `RepoQL.Contracts` | Shared types (RepoUri, SemanticMediaType, models) |
 
-CLI and MCP server share the same core. Use CLI for local debugging/reindexing; MCP tools (`query`, `xray`, `import`) for agent integration.
-
-## Non-Obvious Truths
-
-| Gotcha | Explanation |
-|--------|-------------|
-| Tests prefer `dotnet run` over `dotnet test` | TUnit uses Microsoft.Testing.Platform; `dotnet run` gives cleaner filtering syntax |
-| Embedded docs are queryable | `help:///quickstart.md` lives in database. Query: `SELECT * FROM node WHERE uri LIKE 'help://%'` |
-| Don't read files to understand structure | X-ray summaries (`headline`, `summary`, `structure` on `artifact`) are pre-computed |
-| Spans: 1-based lines, 0-based chars | `#line=42` = line 42 (inclusive). `#char=100,150` = bytes [100,150) |
-| Mocking uses FakeItEasy | `A.Fake<T>()`, `A.CallTo(() => fake.Method(A<string>._)).Returns(...)` |
+---
 
 ## How Do I...
 
 | Task | Approach |
 |------|----------|
-| Add new file format | See `src/Indexing/RepoQL.Indexing/PROCESSOR_GUIDE.md` for complete walkthrough. |
-| Add lint rule | Emit `annotation` with `kind='lint'`, `severity`, `rule_id`, `message`. See `docs/Schema.md` §annotation. |
-| Add macro/UDF/view | See `docs/Schema.md` for patterns. Macros in `Schema/Macros/`, UDFs in `UdfImplementations/`. |
-| Query without reading files | Use `Files` view, `search()`, `snippet()` - structure is pre-indexed |
-| Find a symbol | Use `_search_candidates('ClassName', k := 10) WHERE scope='object'` or xray with keywords |
-| Propose architecture change | Read `docs/RepoqlDesign.md` first. Extend via views/macros/UDFs, never new base tables. |
+| Add file format | `src/Indexing/RepoQL.Indexing/PROCESSOR_GUIDE.md` |
+| Add SQL function | `[UdfClass]` + `[UdfMethod]` in `UdfImplementations/`, auto-discovered |
+| Add lint rule | Emit `annotation` with `kind='lint'`, `severity`, `rule_id`, `message` |
+| Find code | `explore(intent=Locate, keywords="...")` or `search()` macro |
+| Understand structure | X-ray summaries on artifacts, don't read files |
+| Propose architecture | Read `docs/RepoqlDesign.md` first. Extend via SQL surface |
 
-## Documentation Structure
-
-```
-docs/
-├── north-star/          # Vision - what agents should be able to do
-├── current-state/       # What actually works today
-│
-├── flows/
-│   ├── current/         # How processes work now
-│   └── future/          # How processes should work
-├── designs/
-│   ├── current/         # Architecture as built
-│   └── future/          # Architecture as envisioned
-├── plans/               # What to build next - scoped work
-├── research/            # Investigation and analysis
-├── knowledge/           # Crystallized wisdom and guidelines
-│
-├── RepoqlDesign.md      # Core architecture and constraints
-├── Schema.md            # Schema reference (tables, macros, UDFs)
-└── ...
-```
-
-**Current vs future.** This pattern appears throughout: north-star (future) vs current-state (present), flows/future vs flows/current. The gap between current and future is the work to be done. Keep them separate—don't update future docs to match current limitations, don't update current docs with aspirations.
-
-**Document type guidance** lives in `.claude/Skills/writing-documents/`. When writing documentation, invoke that skill to get type-specific guidance (north-star, gestalt, reference, research, design, plan, flow, findings, concepts, process).
+---
 
 ## Key Documentation
 
-| Document | Purpose |
-|----------|---------|
-| `docs/north-star/README.md` | Vision: what RepoQL enables. **Read to understand the goal.** |
-| `docs/RepoqlDesign.md` | Architecture, constraints, extension patterns. **Read before proposing features.** |
-| `docs/Schema.md` | Core schema reference (tables, macros, UDFs) |
-| `docs/DesignEthos.md` | Agent-first design philosophy, golden rules |
-| `docs/flows/indexing.md` | Indexing pipeline lifecycle and data flow |
-| `docs/XRay.md` | X-ray feature: document summaries, structure extraction |
-| `docs/knowledge/testing-guidelines.md` | TUnit, AwesomeAssertions, FakeItEasy patterns |
+| Document | When to read |
+|----------|--------------|
+| `docs/north-star/README.md` | Understanding the vision |
+| `docs/RepoqlDesign.md` | Before proposing features |
+| `docs/Schema.md` | Adding macros/UDFs/views |
+| `docs/knowledge/testing-guidelines.md` | Writing tests |
+| `docs/knowledge/format-excellence.md` | Adding file formats |
+| `docs/flows/current/indexing/` | Understanding the pipeline |
+| `docs/flows/current/*/failure-modes/` | Debugging issues |
 
-## Design Philosophy (from DesignEthos.md)
-
-1. **Agent-First**: Assume AI consumption. Prefer standards LLMs know (SQL, MIME, URIs). Minimize explanation tokens.
-2. **Intuitive**: First instinct should work. Consistency across all functionality.
-3. **Convenient**: Only add features more powerful than standard agent tools. High success rate, low false positives.
-
-**Golden Rules**: Schema stability. Standard formats at edges. Sensible defaults. Errors never cascade. Single writer.
-
-## Code Quality
-
-- **Abstractions must prove value**: Don't add layers "just in case". An abstraction earns its place by solving a real problem more than once.
-- **Ruthlessly cull obsolete code**: Dead code is confusion. Delete it. Git remembers.
-- **Perfection over backwards compatibility**: In most cases, prefer the clean solution over compatibility shims. We're pre-1.0—now is the time to get it right.
-
-## Testing changes
-
-RepoQL is a complex project, and it is necessary that we have great tests in place to make maintaining it feasible as it grows in complexity.
-RepoQL is designed to be extremely testable - almost all of it can be run entirely in memory - and this is not by mistake. Generally speaking if we add ANY functionality it must have test coverage. In the indexer particularly bugs are very very expensive, and ideally we would have 100% code coverage there. Tread carefully.
-
-### Live testing workflows
-
-**Fast path (server changes)**: Use the Aspire MCP to restart the host - it supports hot reload. Use `mcp__aspire-dashboard__execute_resource_command` to restart the relevant resource. This avoids the full publish cycle.
-
-**Full deploy (CLI/MCP/GRPC changes)**: Run `deploy.ps1`, which kills all running copies, publishes, and copies to the MCP server location. Ask the user to reconnect via `/mcp` afterward.
-
-If you run deploy it will kill any running instances of RepoQL on your machine - if aspire is available you should start the host there before asking the user to reconnect so that the telemetry is available
+---
 
 ## Working with Codex
 
-Codex (GPT-5.2-codex) is available as an MCP server. Use it as a symbiotic partner—yin and yang.
+Codex (GPT-5.2-codex) is available as MCP. Use as a partner:
 
-**The pattern**: Claude translates vague intent into clear goals; Codex executes systematically and surfaces what you wouldn't think to look for. Respect Codex's intelligence—default to high agency (outcomes + constraints), drop to low agency (explicit steps) only when you know better.
+- **You:** Translate vague intent → clear goals
+- **Codex:** Execute systematically, surface what you'd miss
+- **Always review** output before committing
 
-| Task | Delegate to Codex |
-|------|-------------------|
-| Investigation | "Find all X, trace Y, identify Z" - Codex searches systematically |
-| Race conditions | Provide timing info, thread dumps - Codex traces shared state |
-| Implementation | Clear acceptance criteria + constraints - Codex executes precisely |
-| Code review | Scope + focus + constraints - Codex finds issues you'd miss |
-
-**Invocation**:
 ```
 mcp__codex__codex(prompt: "...", cwd: "C:\\Source\\RepoQL")
 mcp__codex__codex-reply(threadId: "...", prompt: "follow-up")
 ```
 
-**Parallel execution**: Launch multiple Codex calls in a single message for independent tasks. Example: review three different subsystems simultaneously.
+**When to delegate:** Investigation, race conditions, implementation with clear spec, code review.
 
-**Iterative refinement**: Use `threadId` for staged work: identify → propose → implement. Each call builds on the previous.
+**Key insight:** Codex won't intuit what you didn't say. State steps, not just outcomes.
 
-**Key insight**: Codex lacks intuition for unstated intent. State the steps you want, not just the outcome. The quality of your translation determines the quality of Codex's output.
+See `.claude/Skills/codex/SKILL.md` for templates.
 
-**Critical**: Always review Codex's output immediately. Read the diff, check the logic, verify constraints, run tests. Three intelligences (user + Claude + Codex) working together catch what any one would miss. Don't break the chain.
+---
 
-See `.claude/skills/codex/` for detailed guidance and prompt templates.
+## One-Sentence Summary
+
+RepoQL indexes repos into a graph database so agents query structure without reading files; extend via SQL surface only; single writer; tests mandatory; think like an owner.

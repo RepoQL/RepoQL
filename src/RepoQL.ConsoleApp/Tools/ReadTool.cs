@@ -42,10 +42,10 @@ internal sealed class ReadTool(
 
         ### Capsule: ReadWithQuestion
         **Invariant**
-        Append ` // <question>` for LLM-synthesized answer with citations.
+        Append ` => question: <question>` for LLM-synthesized answer with citations.
         **Example**
-        read("file:///src/Auth.cs // How does JWT validation work?", 2000)
-        read("file:///src/**/*.cs // What patterns are used for error handling?", 3000)
+        read("file:///src/Auth.cs => question: How does JWT validation work?", 2000)
+        read("file:///src/**/*.cs => question: What patterns are used for error handling?", 3000)
         **Depth**
         - Internally uses explore Understand pipeline (search + LLM synthesis)
         - Budget controls LLM response size
@@ -58,7 +58,7 @@ internal sealed class ReadTool(
         Use read when you KNOW the URI; use explore when you need to FIND it.
         **Example**
         + read("file:///src/Auth.cs", 2000)           -> you know the file
-        + read("help:///quickstart.md // How?", 1500) -> known doc, specific question
+        + read("help:///quickstart.md => question: How?", 1500) -> known doc, specific question
         - read("file:///src/**/*.cs", 50000)          -> too broad, use explore Examine
         **Depth**
         - explore: discover what exists, find by concept, understand architecture
@@ -89,10 +89,10 @@ internal sealed class ReadTool(
           read("file:///src/**/*.cs;!file:///src/tests/**", 8000)
 
         With question (LLM synthesis):
-          read("file:///docs/API.md // What authentication methods are supported?", 2000)
+          read("file:///docs/API.md => question: What authentication methods are supported?", 2000)
 
         Multiple files with question:
-          read("file:///src/Auth/**/*.cs // How is the refresh token rotated?", 3000)
+          read("file:///src/Auth/**/*.cs => question: How is the refresh token rotated?", 3000)
 
         Tree overview (default shows files):
           read("file:///src/** => tree", 2000)
@@ -147,7 +147,7 @@ internal sealed class ReadTool(
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> ReadAsync(
-        [Description("URI or glob pattern (e.g., file:///path, help:///file.md). Append ' // <question>' for LLM synthesis.")]
+        [Description("URI or glob pattern (e.g., file:///path, help:///file.md). Append ' => question: <question>' for LLM synthesis.")]
         string uri,
         [Description("Token budget - determines representation depth (full/structure/headline)")]
         int tokenBudget,
