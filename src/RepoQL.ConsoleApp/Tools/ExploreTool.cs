@@ -125,11 +125,17 @@ internal sealed class ExploreTool(
         </QUICK_PATTERNS>
 
         <WHEN_TO_USE_READ>
-        Know the exact URI? Use read instead:
-        - read("file:///src/Auth.cs", 3000) — fetch known file
-        - read("file:///src/** => tree: folders", 500) — see structure
+        Explore finds URIs. Read fetches content. The workflow:
+        1. explore(intent=Locate, keywords="validation") → returns URIs with symbols
+        2. read("file:///src/Auth.cs#symbol=ValidateToken;file:///src/Token.cs#symbol=Refresh;file:///src/Session.cs#symbol=Check", 3000)
+           → fetches just those 3 function bodies in one call
 
-        Explore finds. Read fetches. Use explore when you don't know where to look.
+        Other read patterns:
+        - read("file:///src/Auth.cs", 3000) — whole file
+        - read("file:///src/** => tree: folders", 500) — directory structure
+        - read("file:///src/Auth.cs => question: How does this handle expiry?", 2000) — LLM synthesis
+
+        Explore when you don't know where. Read when you have URIs.
         </WHEN_TO_USE_READ>
         """;
 
