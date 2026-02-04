@@ -1,3 +1,5 @@
+using RepoQL.Contracts;
+
 namespace RepoQL.Indexing.Hosting;
 
 public sealed record PipelineStageStatusSnapshot(
@@ -19,6 +21,16 @@ public sealed record ReindexProgressSnapshot(
     TimeSpan PhaseElapsed);
 
 public sealed record ReindexRequestOptions(bool Clear);
+
+/// <summary>
+/// Reindex operation handle that streams progress and exposes the created operation.
+/// <para><b>Purpose:</b> Allow callers to track the underlying operation while iterating progress.</para>
+/// <para><b>Complexity:</b> Combines async enumeration with an operation task.</para>
+/// </summary>
+public interface IReindexOperation : IAsyncEnumerable<ReindexProgressSnapshot>
+{
+    Task<IOperation?> Operation { get; }
+}
 
 public enum CoordinatorPipelineStage
 {

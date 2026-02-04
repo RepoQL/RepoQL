@@ -8,17 +8,22 @@ Know when your files are ready to query. See what's happening. Know what went wr
 
 Operations track batches of indexing work to completion. When you import a repository, reindex files, or start the host, you get an operation that tells you when those specific files are queryable.
 
-**Enables:** [Operation Lifecycle Flow](../flows/operation-lifecycle.md)
+**Enables:** [Operation Lifecycle Flow](../flows/future/operation-lifecycle.md)
 
 **Built on:** [UriRegistry](../Schema.md#uri-registry) — source of truth for file status
 
+## Prerequisites
+
+- **URIs registered before tracking** — All URIs in scope must be registered in UriRegistry before `CreateOperation` is called. Callers discover files, register them, then create an operation to track them.
+
 ## Constraints
 
-- In-memory only — operations are transient, not persisted
-- Fixed scope — URIs defined at creation, immutable
-- Polling-based — checks UriRegistry every 500ms
-- Structure embedding — complete when indexed + structure embedded (not full-text)
-- Agnostic — operations don't know or care what triggered them; behavior is identical regardless of use case
+- **In-memory only** — operations are transient, not persisted
+- **Fixed scope** — URIs defined at creation, deduplicated, immutable
+- **Polling-based** — checks UriRegistry every 500ms with re-entrancy guard
+- **Structure embedding** — complete when indexed + structure embedded (not full-text)
+- **Agnostic** — operations don't know or care what triggered them
+- **Retained until restart** — no expiry, no limit on count
 
 **Not operations:** Unimport is a synchronous action (fast delete, no progress to track). It returns when done, no operation needed.
 
@@ -44,19 +49,19 @@ Operations track batches of indexing work to completion. When you import a repos
 ┌─────────────────────────────────────────────────────────────┐
 │                      Operation                               │
 │  - Polls UriRegistry every 500ms                            │
-│  - Appends entries to log                                   │
+│  - Appends entries to its log                               │
 │  - Updates progress, fires IProgress<T>                     │
 │  - Resolves TaskCompletionSource on completion              │
 └─────────────────────────────────────────────────────────────┘
-         │                                    │
-         ▼                                    ▼
-┌─────────────────────┐            ┌─────────────────────┐
-│    UriRegistry      │            │   OperationLog      │
-│                     │            │                     │
-│  - File status      │            │  - Append-only      │
-│  - Embedding status │            │  - Timestamped      │
-│  - Source of truth  │            │  - Queryable        │
-└─────────────────────┘            └─────────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────────┐
+                    │    UriRegistry      │
+                    │                     │
+                    │  - File status      │
+                    │  - Embedding status │
+                    │  - Source of truth  │
+                    └─────────────────────┘
 ```
 
 ---
@@ -73,9 +78,10 @@ public interface IOperationManager
 {
     /// <summary>
     /// Creates a new operation tracking the given URIs.
+    /// Scope is deduplicated by URI. All URIs must already be in UriRegistry.
     /// </summary>
-    /// <param name="description">Human-readable description (convention: "kind: detail", e.g., "import: github://foo/bar")</param>
-    /// <param name="scope">URIs to track (immutable after creation)</param>
+    /// <param name="description">Human-readable description (convention: "kind: detail")</param>
+    /// <param name="scope">URIs to track (deduplicated and immutable after creation)</param>
     /// <param name="progress">Optional progress callback</param>
     IOperation CreateOperation(
         string description,
@@ -135,14 +141,27 @@ public record OperationProgress(
     int IndexedCount,
     int EmbeddedCount,
     int FailedCount,
-    int ReadyPercent);
+    int ReadyPercent);  // (EmbeddedCount + FailedCount) * 100 / TotalFiles, or 100 if TotalFiles is 0
 
 public record OperationEntry(
     DateTimeOffset Timestamp,
-    string Type,
+    string Type,      // see Entry Types below
     string? Message,
     RepoUri? Uri);
 ```
+
+### Entry Types
+
+| Type | Meaning | Message | Uri |
+|------|---------|---------|-----|
+| `created` | Operation started | Description and file count | null |
+| `file_indexed` | File finished indexing | null | the file |
+| `file_embedded` | File has structure embedding | null | the file |
+| `file_ready` | File ready (embedding not applicable) | null | the file |
+| `file_failed` | Indexing failed | Error message | the file |
+| `embedding_failed` | Embedding failed | Error message | the file |
+| `completed` | All files terminal | Summary stats, duration | null |
+| `cancelled` | Operation cancelled | Progress at cancellation | null |
 
 ---
 
@@ -152,15 +171,17 @@ public record OperationEntry(
 
 ```
 Caller:
+    // URIs already registered in UriRegistry
     scope = [uri1, uri2, ..., uriN]
     operation = manager.CreateOperation("import: github://foo/bar", scope, progress)
 
 OperationManager:
-    operation = new Operation(description, scope, registry, progress)
+    dedupedScope = scope.Distinct()
+    operation = new Operation(description, dedupedScope, registry, progress)
     operations[operation.Id] = operation
     return operation
 
-Operation:
+Operation (constructor):
     log.Append(timestamp, "created", $"{description} ({scope.Count} files)", null)
     StartPollingTimer()
 ```
@@ -169,25 +190,43 @@ Operation:
 
 ```
 Operation:
-    for each uri in scope:
-        entry = registry.TryGetValue(uri)
+    if (polling) return          // re-entrancy guard
+    polling = true
 
-        if entry.Status == Indexed && not yet logged:
+    for each uri in scope:
+        if not registry.TryGetValue(uri, out entry):
+            // URI should exist - treat as failed
+            log.Append(timestamp, "file_failed", "URI not found in registry", uri)
+            failedCount++
+            continue
+
+        if entry.Status == Indexed && not yet logged indexed:
             log.Append(timestamp, "file_indexed", null, uri)
             indexedCount++
 
-        if entry.EmbeddingStatus == Embedded && not yet logged:
-            log.Append(timestamp, "file_embedded", null, uri)
-            embeddedCount++
-
-        if entry.Status == Failed && not yet logged:
+        if entry.Status == Failed && not yet logged failed:
             log.Append(timestamp, "file_failed", entry.Error, uri)
             failedCount++
 
-    progress.Report(new OperationProgress(...))
+        if entry.EmbeddingStatus == Embedded && not yet logged embedded:
+            log.Append(timestamp, "file_embedded", null, uri)
+            embeddedCount++
+
+        if entry.EmbeddingStatus == NotApplicable && not yet logged ready:
+            log.Append(timestamp, "file_ready", null, uri)
+            embeddedCount++
+
+        if entry.EmbeddingStatus == Failed && not yet logged embedding_failed:
+            log.Append(timestamp, "embedding_failed", entry.Error, uri)
+            failedCount++
+
+    if progress != null:
+        progress.Report(new OperationProgress(...))
 
     if (embeddedCount + failedCount) == totalFiles:
         CompleteOperation()
+
+    polling = false
 ```
 
 ### Completion
@@ -208,7 +247,7 @@ Caller:
     operation.Cancel()
 
 Operation:
-    if state != Running: return
+    if state != Running: return    // no-op if already terminal
     StopPollingTimer()
     state = Cancelled
     log.Append(timestamp, "cancelled", $"Cancelled at {embeddedCount}/{totalFiles}", null)
@@ -222,7 +261,7 @@ Operation:
 ```sql
 -- List all operations
 SELECT * FROM _operations();
--- Returns: id, description, state, total_files, indexed, embedded, failed, created_at, completed_at
+-- Returns: id, description, state, total_files, indexed_count, embedded_count, failed_count, ready_percent, created_at, completed_at
 
 -- Get single operation
 SELECT * FROM _operation('abc123');
@@ -234,10 +273,10 @@ SELECT * FROM _operation_log('abc123');
 -- Active operations only
 SELECT * FROM _operations() WHERE state = 'Running';
 
--- Failed files for an operation
+-- Failed files for an operation (indexing or embedding)
 SELECT uri, message
 FROM _operation_log('abc123')
-WHERE type = 'file_failed';
+WHERE type IN ('file_failed', 'embedding_failed');
 
 -- Time to completion
 SELECT datediff('ms', created_at, completed_at) as duration_ms
@@ -251,10 +290,11 @@ WHERE id = 'abc123';
 
 | Scenario | Behavior |
 |----------|----------|
-| UriRegistry unavailable | Skip poll cycle, continue |
-| URI disappears from registry | Log as failed, continue |
-| Caller disposes operation | Cancel gracefully |
-| Poll takes >500ms | Skip next tick, don't queue |
+| URI not in registry | Log as `file_failed`, continue |
+| UriRegistry throws | Skip poll cycle, retry next tick |
+| Poll in progress when timer fires | Skip (re-entrancy guard) |
+| Progress callback throws | Catch, log warning, continue |
+| Cancel called on non-Running | No-op |
 
 ---
 
@@ -267,12 +307,13 @@ WHERE id = 'abc123';
 | 500ms polling | Event-driven | Simpler; UriRegistry doesn't need events |
 | Structure embedding | Full embedding | Faster completion; structure sufficient for search |
 | Retain until restart | Time-based expiry | Simpler; memory acceptable for session length |
+| Dedup at creation | Reject duplicates | Simpler for callers; no error path |
 
 ## Alternatives Considered
 
 **Event-driven completion:** UriRegistry raises events on status change. Rejected: adds coupling, polling is simple and sufficient at 500ms.
 
-**Persisted operations:** Store in DuckDB for historical analysis. Rejected: adds complexity; log if needed for analytics.
+**Persisted operations:** Store in DuckDB for historical analysis. Rejected: adds complexity; can add later if needed.
 
 **Cancelable with rollback:** Cancel deletes indexed files. Rejected: wasteful; separate unimport handles cleanup.
 

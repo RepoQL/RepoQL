@@ -9,7 +9,7 @@ When you import a repository or reindex files, you need to know when they're rea
 | Without | With |
 |---------|------|
 | "Is my import done?" - check manually, hope | Await completion, get notified |
-| "Why is it slow?" - no visibility | Milestones show where time is spent |
+| "Why is it slow?" - no visibility | Progress shows what's happening |
 | "What failed?" - grep logs | Query `_operation_log` for failures |
 | "How long until ready?" - unknown | Progress shows completion percentage |
 
@@ -17,7 +17,7 @@ When you import a repository or reindex files, you need to know when they're rea
 
 Any component that wants to track a batch of work calls `OperationManager.CreateOperation` with:
 - **Description**: Human-readable identifier (convention: `"kind: detail"`, e.g., `"import: github://foo/bar"`)
-- **Scope**: Set of URIs to track
+- **Scope**: Set of URIs to track (must already be registered in UriRegistry)
 
 Operations are agnostic — they don't know or care what triggered them. The description is purely for human readability and logging.
 
@@ -27,9 +27,16 @@ The operation starts immediately and begins polling.
 
 ### 1. Creation
 **Actor**: Caller (ImportService, RepoqlHost, etc.)
-**Action**: Creates operation with scope, appends `created` entry
+**Action**: Creates operation with scope
 **Output**: Operation handle with ID, Completion task
 **Failure**: None - creation is synchronous and infallible
+
+**Precondition**: All URIs in scope are already registered in UriRegistry.
+
+The operation:
+1. Deduplicates scope by URI
+2. Appends `created` entry to log
+3. Starts polling timer
 
 ```
 | Timestamp | Type | Message | Uri |
@@ -41,21 +48,23 @@ The operation starts immediately and begins polling.
 **Actor**: Operation (internal timer, every 500ms)
 **Action**: Checks each URI in scope against UriRegistry
 **Output**: Log entries appended, Progress updated
-**Failure**: Registry unavailable - skip cycle, retry next tick
+**Failure**: UriRegistry throws - skip cycle, retry next tick
 
 For each URI in scope:
 
 | Registry State | Entry Appended | Counts Toward |
 |----------------|----------------|---------------|
-| Not found | (none) | (still discovering) |
+| Not found | `file_failed` | FailedCount |
 | Status = Indexing | (none) | (in progress) |
 | Status = Indexed | `file_indexed` | IndexedCount |
-| Status = Indexed, Embedding = Embedded | `file_embedded` | EmbeddedCount |
-| Status = Indexed, Embedding = NotApplicable | `file_ready` | EmbeddedCount |
 | Status = Failed | `file_failed` | FailedCount |
-| Embedding = Failed | `embedding_failed` | FailedCount |
+| EmbeddingStatus = Embedded | `file_embedded` | EmbeddedCount |
+| EmbeddingStatus = NotApplicable | `file_ready` | EmbeddedCount |
+| EmbeddingStatus = Failed | `embedding_failed` | FailedCount |
 
-Entries are appended only once per URI (track what's been logged).
+Entries are appended only once per URI per transition (tracked internally).
+
+Re-entrancy guard: if a poll is in progress when the timer fires, skip that tick.
 
 ### 3. Completion Check
 **Actor**: Operation (after each poll)
@@ -64,9 +73,10 @@ Entries are appended only once per URI (track what's been logged).
 **Failure**: None
 
 Terminal states for a file:
-- Indexed + Embedded (structure)
+- Indexed + Embedded
 - Indexed + NotApplicable
-- Failed (indexing or embedding)
+- Failed (indexing)
+- Failed (embedding)
 
 ```
 IsComplete = (EmbeddedCount + FailedCount) == TotalFiles
@@ -83,6 +93,8 @@ IsComplete = (EmbeddedCount + FailedCount) == TotalFiles
 | 10:00:05.230 | completed | "1,844 ready, 3 failed (5.2s)" | null |
 ```
 
+State is `Completed` if no failures, `CompletedWithFailures` if any failures.
+
 ### 4b. Termination: Cancelled
 **Actor**: Caller (via `operation.Cancel()`)
 **Action**: Stop polling, append `cancelled` entry, cancel TaskCompletionSource
@@ -94,8 +106,10 @@ IsComplete = (EmbeddedCount + FailedCount) == TotalFiles
 | 10:00:02.100 | cancelled | "Cancelled at 892/1,847 (48%)" | null |
 ```
 
+Cancel on non-Running operation is a no-op.
+
 Already-indexed files remain indexed. Caller can:
-- Restart later (new operation, catalog skips already-done files)
+- Restart later (new operation, indexer skips already-done files)
 - Unimport to remove everything
 
 ## Flow Diagram
@@ -119,26 +133,28 @@ sequenceDiagram
     participant Caller
     participant Op as Operation
     participant Reg as UriRegistry
-    participant Log as OperationLog
 
     Caller->>Op: CreateOperation(scope)
-    Op->>Log: Append "created"
+    Note over Op: Append "created" entry
     Op-->>Caller: Operation handle
 
     loop Every 500ms
-        Op->>Reg: Check each URI status
+        Op->>Reg: TryGetValue(uri) for each
         alt File indexed
-            Op->>Log: Append "file_indexed"
+            Note over Op: Append "file_indexed"
         else File embedded
-            Op->>Log: Append "file_embedded"
+            Note over Op: Append "file_embedded"
+        else File ready (N/A)
+            Note over Op: Append "file_ready"
         else File failed
-            Op->>Log: Append "file_failed"
+            Note over Op: Append "file_failed"
+        else Embedding failed
+            Note over Op: Append "embedding_failed"
         end
-        Op->>Op: Update progress counts
-        Op->>Op: Check if all terminal
+        Op->>Op: Update progress, check completion
     end
 
-    Op->>Log: Append "completed"
+    Note over Op: Append "completed"
     Op-->>Caller: Completion task resolves
 ```
 
@@ -149,7 +165,7 @@ sequenceDiagram
 | `created` | Operation started | Description, file count |
 | `file_indexed` | File finished indexing | (none) |
 | `file_embedded` | File has structure embedding | (none) |
-| `file_ready` | File ready (not applicable for embedding) | (none) |
+| `file_ready` | File ready (embedding not applicable) | (none) |
 | `file_failed` | Indexing failed | Error message |
 | `embedding_failed` | Embedding failed | Error message |
 | `completed` | All files terminal | Summary stats, duration |
@@ -157,26 +173,27 @@ sequenceDiagram
 
 ## Progress Derivation
 
-Progress can be computed from the log or cached for efficiency:
+Progress is computed from tracked counts (not re-derived from log):
 
-```sql
--- From log
-SELECT
-    (SELECT count(*) FROM log WHERE type = 'file_indexed') as indexed,
-    (SELECT count(*) FROM log WHERE type IN ('file_embedded', 'file_ready')) as embedded,
-    (SELECT count(*) FROM log WHERE type IN ('file_failed', 'embedding_failed')) as failed
+```csharp
+new OperationProgress(
+    TotalFiles: scope.Count,
+    IndexedCount: indexedCount,
+    EmbeddedCount: embeddedCount,
+    FailedCount: failedCount,
+    ReadyPercent: totalFiles == 0 ? 100 : (embeddedCount + failedCount) * 100 / totalFiles
+)
 ```
-
-Cached version updated each poll cycle for O(1) access.
 
 ## Error Handling
 
 | Error | Behaviour |
 |-------|-----------|
-| UriRegistry unavailable | Skip poll cycle, retry next tick |
-| File disappears from registry | Treat as failed, log warning |
-| Poll takes longer than interval | Skip next tick, don't queue polls |
-| Operation disposed while running | Cancel gracefully |
+| URI not in registry | Log as `file_failed`, continue |
+| UriRegistry throws | Skip poll cycle, retry next tick |
+| Poll in progress when timer fires | Skip (re-entrancy guard) |
+| Progress callback throws | Catch, log warning, continue |
+| Cancel on non-Running | No-op |
 
 ## Timing
 
@@ -191,22 +208,23 @@ Cached version updated each poll cycle for O(1) access.
 
 | Environment | How |
 |-------------|-----|
-| **Local** | Create operation with test URIs, manually update registry, verify log entries and completion |
-| **Automated tests** | Fake UriRegistry, advance through states, assert entries appended in order, completion fires |
-| **Production** | `_operation_log(id)` UDF shows full timeline. `_operations()` lists active. Alert on operations exceeding expected duration |
+| **Unit tests** | Fake UriRegistry, advance through states, assert entries appended in order, completion fires |
+| **Integration tests** | Real indexing, verify operation completes when files ready |
+| **Production** | `_operation_log(id)` UDF shows full timeline; `_operations()` lists active |
 
 **Test scenarios:**
 1. Happy path - all files complete successfully
 2. Partial failure - some files fail, operation completes with failures
 3. Cancellation - cancel mid-way, verify state preserved
-4. Empty scope - completes immediately
+4. Empty scope - completes immediately with 100% ready
 5. Large scope - performance test with 10k+ URIs
+6. URI not in registry - logged as failed, operation continues
 
 ## SQL Surface
 
 ```sql
 -- List active operations
-SELECT * FROM _operations();
+SELECT * FROM _operations() WHERE state = 'Running';
 
 -- Get operation details
 SELECT * FROM _operation('abc123');
@@ -214,36 +232,18 @@ SELECT * FROM _operation('abc123');
 -- Full event log
 SELECT * FROM _operation_log('abc123');
 
--- Failed files with errors
+-- Failed files with errors (indexing or embedding)
 SELECT uri, message, timestamp
 FROM _operation_log('abc123')
 WHERE type IN ('file_failed', 'embedding_failed');
 
 -- Time to query readiness
-SELECT
-    datediff('millisecond',
-        (SELECT timestamp FROM _operation_log('abc123') WHERE type = 'created'),
-        (SELECT timestamp FROM _operation_log('abc123') WHERE type = 'completed')
-    ) as ms;
-
--- Indexing vs embedding time
-WITH phases AS (
-    SELECT
-        min(CASE WHEN type = 'file_indexed' THEN timestamp END) as first_indexed,
-        max(CASE WHEN type = 'file_indexed' THEN timestamp END) as last_indexed,
-        min(CASE WHEN type = 'file_embedded' THEN timestamp END) as first_embedded,
-        max(CASE WHEN type IN ('file_embedded', 'file_ready') THEN timestamp END) as last_embedded
-    FROM _operation_log('abc123')
-)
-SELECT
-    datediff('ms', first_indexed, last_indexed) as indexing_ms,
-    datediff('ms', first_embedded, last_embedded) as embedding_ms
-FROM phases;
+SELECT datediff('ms', created_at, completed_at) as duration_ms
+FROM _operations()
+WHERE id = 'abc123';
 ```
 
 ## Related
 
-- [UriRegistry](../Schema.md#uri-registry) - Source of truth for file status
-- [Indexing Flow](./indexing.md) - How files move through the indexing pipeline
-- Import Flow (TODO) - Creates operations for imported repositories
-- Unimport Flow (TODO) - Removes imported data (separate from operations)
+- [Operations Design](../../designs/future/operations.md) — Architecture and contracts
+- [UriRegistry](../../Schema.md#uri-registry) — Source of truth for file status

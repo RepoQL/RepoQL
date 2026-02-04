@@ -71,6 +71,8 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     private readonly IndexingEngine _engine;
     private readonly DuckDbDataStore _db;
     private readonly GitHistoryIndexer? _gitIndexer;
+    private readonly UriRegistry? _uriRegistry;
+    private readonly IOperationManager? _operationManager;
     private readonly ILogger<IndexingCoordinator> _logger;
     private int _reindexScopes;
     private int _activeMountIndexing;
@@ -81,7 +83,9 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         DuckDbDataStore db,
         ILogger<IndexingCoordinator>? logger = null,
         ICompositeFileSystemManager? mountManager = null,
-        GitHistoryIndexer? gitIndexer = null)
+        GitHistoryIndexer? gitIndexer = null,
+        IOperationManager? operationManager = null,
+        UriRegistry? uriRegistry = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
@@ -89,6 +93,8 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         _logger = logger ?? NullLogger<IndexingCoordinator>.Instance;
         _mountManager = mountManager;
         _gitIndexer = gitIndexer;
+        _operationManager = operationManager;
+        _uriRegistry = uriRegistry;
 
         // Subscribe to mount changes for automatic indexing of new mounts
         if (_mountManager is not null)
@@ -336,9 +342,19 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
             waitAll: true,
             cancellationToken);
 
-    public async IAsyncEnumerable<ReindexProgressSnapshot> ReindexAsync(
+    public IAsyncEnumerable<ReindexProgressSnapshot> ReindexAsync(
         ReindexRequestOptions options,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
+    {
+        var operation = new ReindexOperation();
+        operation.SetSource(ReindexCoreAsync(options, cancellationToken, operation));
+        return operation;
+    }
+
+    private async IAsyncEnumerable<ReindexProgressSnapshot> ReindexCoreAsync(
+        ReindexRequestOptions options,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken,
+        ReindexOperation operation)
     {
         ArgumentNullException.ThrowIfNull(options);
         using var scope = new ReindexScope(this);
@@ -362,6 +378,10 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
 
         var artifacts = new List<EnumeratedArtifact>();
+        var trackOperation = _operationManager is not null && _uriRegistry is not null;
+        var operationScope = trackOperation ? new List<RepoUri>() : null;
+        IOperation? operationInstance = null;
+        var operationSet = false;
         var enumerateTimer = Stopwatch.StartNew();
         var enumerateActivity = StartPhaseActivity(CoordinatorReindexPhase.Enumerating);
         var enumerateCompleted = false;
@@ -381,6 +401,12 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 {
                     _logger.LogWarning("No mount resolved URI {Uri} during reindex enumeration.", resource.Uri);
                     continue;
+                }
+
+                if (trackOperation)
+                {
+                    _uriRegistry!.TryRegisterDiscovered(resource.Uri);
+                    operationScope!.Add(resource.Uri);
                 }
 
                 artifacts.Add(new EnumeratedArtifact(resource.File, store));
@@ -414,7 +440,25 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 enumerateTimer,
                 enumerateCompleted,
                 activity => activity?.AddTag("reindex.items_total", artifacts.Count));
+
+            // Ensure operation is set even on exception path (operation.SetOperation is idempotent)
+            if (!operationSet)
+            {
+                if (trackOperation && enumerateCompleted)
+                {
+                    operationInstance = _operationManager!.CreateOperation($"reindex: {operationScope!.Count} files", operationScope);
+                }
+                operation.SetOperation(operationInstance);
+            }
         }
+
+        if (trackOperation && operationInstance is null)
+        {
+            operationInstance = _operationManager!.CreateOperation($"reindex: {operationScope!.Count} files", operationScope);
+        }
+
+        operation.SetOperation(operationInstance);
+        operationSet = true;
 
         var total = artifacts.Count;
         var epoch = _engine.BeginNewEpoch();
@@ -979,6 +1023,38 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to index mount {MountId} after {Duration:F1}s", mount.Id, sw.Elapsed.TotalSeconds);
+        }
+    }
+
+    /// <summary>
+    /// Reindex operation handle returned by <see cref="ReindexAsync"/>.
+    /// <para><b>Purpose:</b> Expose the created indexing operation while streaming progress.</para>
+    /// <para><b>Complexity:</b> Wraps an async enumerable and a task completion source.</para>
+    /// </summary>
+    internal sealed class ReindexOperation : IReindexOperation
+    {
+        private IAsyncEnumerable<ReindexProgressSnapshot>? _source;
+        private readonly TaskCompletionSource<IOperation?> _operationTcs =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<IOperation?> Operation => _operationTcs.Task;
+
+        internal void SetSource(IAsyncEnumerable<ReindexProgressSnapshot> source)
+        {
+            _source = source ?? throw new ArgumentNullException(nameof(source));
+        }
+
+        internal void SetOperation(IOperation? operation)
+        {
+            _operationTcs.TrySetResult(operation);
+        }
+
+        public IAsyncEnumerator<ReindexProgressSnapshot> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+        {
+            if (_source is null)
+                throw new InvalidOperationException("Reindex operation not initialized.");
+
+            return _source.GetAsyncEnumerator(cancellationToken);
         }
     }
 

@@ -11,6 +11,7 @@ using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Core.Analysis;
 using RepoQL.Core.Analysis.EditorConfig;
+using RepoQL.Core.Operations;
 using RepoQL.Core.PlainText;
 using RepoQL.Core.Metrics;
 using RepoQL.Data.DuckDB;
@@ -479,6 +480,9 @@ public static class RepoIndexerServiceCollectionExtensions
         // URI registry - tracks file status, embedding status, and symbols for pattern matching
         services.AddUriRegistry();
 
+        // Operations - tracks indexing work batches for observability
+        services.AddSingleton<IOperationManager, OperationManager>();
+
         // Unified database - DuckDbDataStore handles all reads and writes
         services.AddSingleton<DuckDbDataStore>(sp =>
         {
@@ -624,7 +628,9 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetService<ILogger<IndexingCoordinator>>(),
             sp.GetRequiredService<ICompositeFileSystemManager>(),
-            sp.GetRequiredService<GitHistoryIndexer>()));
+            sp.GetRequiredService<GitHistoryIndexer>(),
+            sp.GetService<IOperationManager>(),
+            sp.GetService<UriRegistry>()));
 
         services.AddSingleton<IVirtualFileSystemImporter>(sp => new GithubRepositoryImporter(
             sp.GetRequiredService<PhysicalFileSystem>(),
@@ -644,7 +650,9 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<IOptions<RepoqlHostOptions>>(),
             sp.GetService<ILogger<RepoqlHost>>(),
             sp.GetRequiredService<IIndexingCoordinator>(),
-            sp.GetService<IServiceDegradationTracker>()));
+            sp.GetService<IServiceDegradationTracker>(),
+            sp.GetService<IOperationManager>(),
+            sp.GetService<UriRegistry>()));
         services.AddHostedService(sp => sp.GetRequiredService<RepoqlHost>());
 
         return services;

@@ -1,5 +1,6 @@
-using System.Threading.Channels;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -23,6 +24,9 @@ public sealed class RepoqlHost : BackgroundService
     private readonly IAsyncDisposable? _engineLifetime;
     private readonly IIndexingCoordinator? _coordinator;
     private readonly IServiceDegradationTracker? _degradation;
+    private readonly IUriFilter? _filter;
+    private readonly UriRegistry? _uriRegistry;
+    private readonly IOperationManager? _operationManager;
     private readonly RepoqlHostOptions _options;
     private readonly ILogger<RepoqlHost> _logger;
 
@@ -47,14 +51,19 @@ public sealed class RepoqlHost : BackgroundService
         IOptions<RepoqlHostOptions> options,
         ILogger<RepoqlHost>? logger = null,
         IIndexingCoordinator? coordinator = null,
-        IServiceDegradationTracker? degradation = null)
+        IServiceDegradationTracker? degradation = null,
+        IOperationManager? operationManager = null,
+        UriRegistry? uriRegistry = null)
         : this(
             fileSystem,
             (artifact, enqueueOptions, token) => engine.EnqueueItemAsync(artifact, enqueueOptions, token),
             options,
             logger,
             coordinator,
-            degradation)
+            degradation,
+            engine.Filter,
+            operationManager,
+            uriRegistry)
     {
         _engineLifetime = engine;
     }
@@ -65,7 +74,10 @@ public sealed class RepoqlHost : BackgroundService
         IOptions<RepoqlHostOptions> options,
         ILogger<RepoqlHost>? logger = null,
         IIndexingCoordinator? coordinator = null,
-        IServiceDegradationTracker? degradation = null)
+        IServiceDegradationTracker? degradation = null,
+        IUriFilter? filter = null,
+        IOperationManager? operationManager = null,
+        UriRegistry? uriRegistry = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _enqueue = enqueue ?? throw new ArgumentNullException(nameof(enqueue));
@@ -73,6 +85,9 @@ public sealed class RepoqlHost : BackgroundService
         _logger = logger ?? NullLogger<RepoqlHost>.Instance;
         _coordinator = coordinator;
         _degradation = degradation;
+        _filter = filter;
+        _operationManager = operationManager;
+        _uriRegistry = uriRegistry;
         _watchingEnabled = _options.EnableWatching;
     }
 
@@ -193,6 +208,10 @@ public sealed class RepoqlHost : BackgroundService
     private async Task EnqueueFullScanAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("RepoqlHost starting full scan across mounted file systems.");
+        var shouldTrack = _operationManager is not null && _uriRegistry is not null;
+        var scope = shouldTrack ? new List<RepoUri>() : null;
+        var shouldFilter = _options.DefaultIndexItemOptions.HasFlag(IndexItemOptions.OnlyIfNotExcluded);
+
         await foreach (var resource in _fileSystem.EnumerateAsync(cancellationToken).ConfigureAwait(false))
         {
             if (!_fileSystem.TryResolve(resource.Uri, out var store))
@@ -204,8 +223,23 @@ public sealed class RepoqlHost : BackgroundService
             if (!resource.File.Exists)
                 continue;
 
+            if (shouldTrack)
+            {
+                if (!shouldFilter || _filter is null || _filter.IncludeFile(resource.Uri))
+                {
+                    _uriRegistry!.TryRegisterDiscovered(resource.Uri);
+                    scope!.Add(resource.Uri);
+                }
+            }
+
             var artifact = new RawArtifact(resource.File, store);
             await _enqueue(artifact, _options.DefaultIndexItemOptions, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (shouldTrack)
+        {
+            var repoPath = RepoLocator.FindRepoRoot();
+            _operationManager!.CreateOperation($"startup: {repoPath}", scope!);
         }
     }
 

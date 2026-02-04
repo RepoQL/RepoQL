@@ -10,17 +10,16 @@
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
+        <PackageReference Include="AwesomeAssertions" />
+        <PackageReference Include="FakeItEasy" />
+        <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
         <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
         <PackageReference Include="TUnit" />
-        <PackageReference Include="AwesomeAssertions" />
-        <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
-        <PackageReference Include="DuckDB.NET.Data.Full" />
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
-      <ProjectReference Include="..\..\RepoQL.Core\RepoQL.Core.csproj" />
+        <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+        <ProjectReference Include="..\..\RepoQL.Core\RepoQL.Core.csproj" />
     </ItemGroup>
 
 </Project>
