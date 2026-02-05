@@ -77,18 +77,14 @@ public interface IRepoQlClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Import an external repository (e.g., github://owner/repo) and wait until selected stages are idle.
+    /// Import an external repository (e.g., github://owner/repo) and wait until all files are indexed
+    /// and have structure embeddings ready for semantic search.
     /// </summary>
     /// <param name="uri">Repository URI understood by an importer.</param>
-    /// <param name="waitStage">
-    ///     Stage to wait for after enqueueing imported files. When <c>null</c>, defaults to <see cref="PipelineStage.SemanticIndexing"/>
-    ///     to ensure embeddings are ready for search. Pass <see cref="PipelineStage.Indexing"/> when you only need parsing to finish,
-    ///     or <see cref="PipelineStage.Unspecified"/> to return immediately without blocking.
-    /// </param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<PipelineStatus> ImportRepositoryAsync(
+    /// <returns>Import result including progress and failure counts.</returns>
+    Task<ImportResult> ImportRepositoryAsync(
         string uri,
-        PipelineStage? waitStage = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

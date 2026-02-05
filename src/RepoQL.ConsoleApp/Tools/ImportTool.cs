@@ -21,17 +21,16 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         To import: Provide a URI such as `github://owner/repo@ref`.
         To remove: Prefix the URI with `-` (e.g., `-github://owner/repo`) to delete the import and all its indexed data.
 
-        Optionally specify which pipeline stage to wait for [Discovery|Indexing|SemanticIndexing|Analysis|Unspecified]. Defaults to SemanticIndexing to ensure embeddings are ready for search. Use Unspecified to return immediately.
+        Import waits for all files to be indexed and have structure embeddings ready for semantic search.
 
         To see all imports: `SELECT * FROM Filesystems`
         """;
 
-    [McpServerTool(ReadOnly = false, Destructive = false, OpenWorld = false, Name = "import"), Description(ImportInstructions)]
+    [McpServerTool(Name = "import", Title = "Import Repository", ReadOnly = false, Idempotent = false, Destructive = false, OpenWorld = false), Description(ImportInstructions)]
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> ImportAsync(
         [Description("URI to import (e.g., github://owner/repo@ref). Prefix with '-' to remove an import.")] string uri,
-        [Description("Pipeline stage to wait for before returning. Defaults to SemanticIndexing to ensure embeddings are ready; pass Indexing for faster return (hot path only) or Unspecified to return immediately.")] string waitFor = "SemanticIndexing",
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(uri))
@@ -45,16 +44,10 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
             // Repo root provided explicitly; proceed to connect and import.
         }
 
-        var parsedStage = ParseWaitStage(waitFor);
-        PipelineStage? stageFilter = parsedStage;
-
         try
         {
             var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-            var status = await client.ImportRepositoryAsync(uri.Trim(), stageFilter, cancellationToken).ConfigureAwait(false);
-
-            var stageSummary = string.Join(", ",
-                status.Stages.Select(s => $"{s.Stage}: busy={s.Busy} queued={s.Queued} inProgress={s.InProgress}"));
+            var result = await client.ImportRepositoryAsync(uri.Trim(), cancellationToken).ConfigureAwait(false);
 
             if (isRemoval)
             {
@@ -73,8 +66,20 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
             // Generate tree visualization of imported content
             var treeOutput = await GenerateTreeAsync(uriPattern, cancellationToken).ConfigureAwait(false);
 
+            // Build progress summary
+            var progressSummary = result.HasOperationProgress
+                ? $"Progress: {result.EmbeddedCount}/{result.TotalFiles} files ready"
+                  + (result.HasFailures ? $" ({result.FailedCount} failed)" : "")
+                : "";
+
+            // Build failure warning if any
+            var failureWarning = result.HasFailures
+                ? $"\n\nWARNING: {result.FailedCount} file(s) failed to index. Check logs for details."
+                : "";
+
             return $"""
                 Import completed: {uri.Trim()}
+                {progressSummary}
 
                 {treeOutput}
 
@@ -83,7 +88,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                 - Explore scan: Use uriGlob="{uriPattern}/**" with the explore tool
                 - Document list: SELECT uri, headline FROM Files WHERE uri LIKE '{uriPattern}%'
 
-                Note: Re-importing the same repository will perform an incremental update.
+                Note: Re-importing the same repository will perform an incremental update.{failureWarning}
                 """;
         }
         catch (Exception ex)
@@ -100,17 +105,6 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
             return $"Import failed: {cleanMessage}";
         }
-    }
-
-    private static PipelineStage ParseWaitStage(string waitFor)
-    {
-        if (string.IsNullOrWhiteSpace(waitFor))
-            return PipelineStage.SemanticIndexing;
-
-        if (Enum.TryParse<PipelineStage>(waitFor.Trim(), ignoreCase: true, out var parsed))
-            return parsed;
-
-        throw new ArgumentException($"Invalid pipeline stage '{waitFor}'. Expected one of Discovery, Indexing, SemanticIndexing, Analysis, or Unspecified.", nameof(waitFor));
     }
 
     private static string GetUriPattern(string importUri)

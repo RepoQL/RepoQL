@@ -146,7 +146,7 @@ internal sealed class ExploreTool(
         </WHEN_TO_USE_READ>
         """;
 
-    [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "explore"), Description(ToolInstructions)]
+    [McpServerTool(Name = "explore", Title = "Explore Repository", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(ToolInstructions)]
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> ExploreAsync(
@@ -171,31 +171,26 @@ internal sealed class ExploreTool(
         var requestSignature = $"{tokenBudget}|{intent}|{uriGlob}|{keywords}|{boost}|{penalize}|{limit}";
         var isRepeatRequest = _lastRequestSignature == requestSignature;
 
-        // Check if indexer is ready before executing
-        var preStatus = await GetIndexerStatusAsync(cancellationToken).ConfigureAwait(false);
-        var needsIndex = preStatus.IndexPending > 0;
-        var needsSemantic = !string.IsNullOrWhiteSpace(keywords) && !preStatus.SemanticReady;
+        // Only check scope readiness if doing semantic search (keywords provided)
+        var requiresSemantic = !string.IsNullOrWhiteSpace(keywords);
 
-        if ((needsIndex || needsSemantic) && !isRepeatRequest)
+        if (requiresSemantic)
         {
-            // First time seeing this request while not ready - return status and instructions
-            _lastRequestSignature = requestSignature;
-            var waitingFor = needsIndex ? $"index ({preStatus.IndexPending} pending)" : "semantic index";
-            return $"""
-                Indexing in progress - {waitingFor}
-
-                Current status: {RepresentationFormatter.FormatStatusFooter(preStatus)}
-
-                Call explore again with the same arguments to wait for indexing to complete before executing.
-                """;
-        }
-
-        if ((needsIndex || needsSemantic) && isRepeatRequest)
-        {
-            // Repeat request - wait for ready
             var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-            var stage = needsSemantic ? PipelineStage.SemanticIndexing : PipelineStage.Indexing;
-            await client.WaitForPipelineAsync(new[] { stage }, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var scopeStatus = await client.GetScopeReadinessAsync(uriGlob, cancellationToken).ConfigureAwait(false);
+
+            if (!scopeStatus.IsReady && !isRepeatRequest)
+            {
+                // First time seeing this request while scope not ready - return status and instructions
+                _lastRequestSignature = requestSignature;
+                return RepoQlClientScopeExtensions.FormatScopeNotReadyMessage(scopeStatus, uriGlob);
+            }
+
+            if (!scopeStatus.IsReady && isRepeatRequest)
+            {
+                // Repeat request - wait until scope is ready
+                await client.WaitForScopeAsync(uriGlob, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         // Clear the pending request now that we're executing
@@ -247,55 +242,6 @@ internal sealed class ExploreTool(
             }
             return $"Error: Search failed. {ExtractErrorMessage(ex)}";
         }
-    }
-
-    private async Task<IndexerStatus> GetIndexerStatusAsync(CancellationToken ct)
-    {
-        try
-        {
-            var client = await _clientProvider.GetClientAsync(ct).ConfigureAwait(false);
-            var result = await client.ExecuteRawQueryAsync("SELECT indexing_diagnostics() as diag", cancellationToken: ct).ConfigureAwait(false);
-
-            if (result.Rows.Count > 0)
-            {
-                var text = result.Rows[0].Values.FirstOrDefault()?.StringValue;
-                if (!string.IsNullOrEmpty(text))
-                {
-                    // Parse key-value format (key: value\n...)
-                    var values = ParseKeyValueText(text);
-
-                    var hotPathDepth = values.TryGetValue("hot_path_depth", out var hp) ? int.Parse(hp) : 0;
-                    var idlePending = values.TryGetValue("idle_pending", out var ip) ? int.Parse(ip) : 0;
-                    var analysisDepth = values.TryGetValue("analysis_depth", out var ad) ? int.Parse(ad) : 0;
-                    var writerPending = values.TryGetValue("writer_pending", out var wp) ? int.Parse(wp) : 0;
-                    var embedEnabled = values.TryGetValue("query_embed_enabled", out var ee) && bool.Parse(ee);
-
-                    return IndexerStatus.FromDiagnostics(hotPathDepth, idlePending, analysisDepth, writerPending, 0, embedEnabled);
-                }
-            }
-        }
-        catch
-        {
-            // Fall back to unknown status on any error
-        }
-
-        return new IndexerStatus(0, false, false, 0);
-    }
-
-    private static Dictionary<string, string> ParseKeyValueText(string text)
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var colonIndex = line.IndexOf(':');
-            if (colonIndex > 0)
-            {
-                var key = line[..colonIndex].Trim();
-                var value = line[(colonIndex + 1)..].Trim();
-                result[key] = value;
-            }
-        }
-        return result;
     }
 
     private static string ExtractErrorMessage(Exception ex)

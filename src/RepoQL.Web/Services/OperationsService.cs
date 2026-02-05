@@ -13,7 +13,7 @@ internal sealed class OperationsService
     private readonly RepoQlConnectionManager _connectionManager;
     private readonly ILogger<OperationsService> _logger;
     private readonly object _stateLock = new();
-    private OperationState _currentState = OperationState.Idle();
+    private UIOperationState _currentState = UIOperationState.Idle();
     private CancellationTokenSource? _operationCts;
 
     public OperationsService(
@@ -25,10 +25,10 @@ internal sealed class OperationsService
     }
 
     /// <summary>Fired when operation state changes.</summary>
-    public event EventHandler<OperationState>? StateChanged;
+    public event EventHandler<UIOperationState>? StateChanged;
 
     /// <summary>Current operation state.</summary>
-    public OperationState CurrentState
+    public UIOperationState CurrentState
     {
         get
         {
@@ -61,7 +61,7 @@ internal sealed class OperationsService
         _operationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var linkedToken = _operationCts.Token;
 
-        UpdateState(OperationState.Reindexing("Preparing...", 0, 0));
+        UpdateState(UIOperationState.Reindexing("Preparing...", 0, 0));
 
         IRepoQlClient? client = null;
         Exception? error = null;
@@ -74,7 +74,7 @@ internal sealed class OperationsService
         }
         catch (OperationCanceledException)
         {
-            UpdateState(OperationState.Idle("Reindex cancelled"));
+            UpdateState(UIOperationState.Idle("Reindex cancelled"));
             _logger.LogInformation("Reindex cancelled by user");
             _operationCts?.Dispose();
             _operationCts = null;
@@ -83,7 +83,7 @@ internal sealed class OperationsService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Reindex failed to connect");
-            UpdateState(OperationState.Error($"Reindex failed: {ex.Message}"));
+            UpdateState(UIOperationState.Error($"Reindex failed: {ex.Message}"));
             _operationCts?.Dispose();
             _operationCts = null;
             throw;
@@ -107,7 +107,7 @@ internal sealed class OperationsService
                 }
                 catch (OperationCanceledException)
                 {
-                    UpdateState(OperationState.Idle("Reindex cancelled"));
+                    UpdateState(UIOperationState.Idle("Reindex cancelled"));
                     _logger.LogInformation("Reindex cancelled by user");
                     error = null; // Signal cancellation
                     break;
@@ -115,7 +115,7 @@ internal sealed class OperationsService
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Reindex failed");
-                    UpdateState(OperationState.Error($"Reindex failed: {ex.Message}"));
+                    UpdateState(UIOperationState.Error($"Reindex failed: {ex.Message}"));
                     error = ex;
                     break;
                 }
@@ -125,7 +125,7 @@ internal sealed class OperationsService
                     ? (int)(progress.ProcessedItems * 100 / progress.TotalItems)
                     : 0;
 
-                UpdateState(OperationState.Reindexing(
+                UpdateState(UIOperationState.Reindexing(
                     phaseName,
                     (int)progress.ProcessedItems,
                     (int)progress.TotalItems,
@@ -144,7 +144,7 @@ internal sealed class OperationsService
 
         if (completed)
         {
-            UpdateState(OperationState.Idle("Reindex completed"));
+            UpdateState(UIOperationState.Idle("Reindex completed"));
             _logger.LogInformation("Reindex completed successfully");
         }
         else if (error is not null)
@@ -154,14 +154,12 @@ internal sealed class OperationsService
     }
 
     /// <summary>
-    /// Import an external repository.
+    /// Import an external repository and wait for all files to be indexed with structure embeddings.
     /// </summary>
     /// <param name="uri">Repository URI (e.g., github://owner/repo).</param>
-    /// <param name="waitStage">Pipeline stage to wait for before returning.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    public async Task<PipelineStatus> ImportRepositoryAsync(
+    public async Task<RepoQL.Protocol.ImportResult> ImportRepositoryAsync(
         string uri,
-        PipelineStage waitStage = PipelineStage.SemanticIndexing,
         CancellationToken cancellationToken = default)
     {
         if (IsOperationRunning)
@@ -172,38 +170,28 @@ internal sealed class OperationsService
         _operationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var linkedToken = _operationCts.Token;
 
-        var waitStageName = waitStage switch
-        {
-            PipelineStage.Unspecified => "immediate",
-            PipelineStage.Discovery => "discovery",
-            PipelineStage.Indexing => "indexing",
-            PipelineStage.SemanticIndexing => "semantic indexing",
-            PipelineStage.Analysis => "analysis",
-            _ => "unknown"
-        };
-
-        UpdateState(OperationState.Importing(uri, $"Waiting for {waitStageName}..."));
+        UpdateState(UIOperationState.Importing(uri, "Waiting for indexing..."));
 
         try
         {
             var client = await _connectionManager.GetClientAsync(linkedToken).ConfigureAwait(false);
-            var result = await client.ImportRepositoryAsync(uri, waitStage, linkedToken).ConfigureAwait(false);
+            var result = await client.ImportRepositoryAsync(uri, linkedToken).ConfigureAwait(false);
 
-            UpdateState(OperationState.Idle($"Import of {uri} completed"));
+            UpdateState(UIOperationState.Idle($"Import of {uri} completed"));
             _logger.LogInformation("Import of {Uri} completed", uri);
 
             return result;
         }
         catch (OperationCanceledException)
         {
-            UpdateState(OperationState.Idle("Import cancelled"));
+            UpdateState(UIOperationState.Idle("Import cancelled"));
             _logger.LogInformation("Import cancelled by user");
             throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Import of {Uri} failed", uri);
-            UpdateState(OperationState.Error($"Import failed: {ex.Message}"));
+            UpdateState(UIOperationState.Error($"Import failed: {ex.Message}"));
             throw;
         }
         finally
@@ -228,7 +216,7 @@ internal sealed class OperationsService
     public async Task ShutdownHostAsync(CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Requesting host shutdown");
-        UpdateState(OperationState.ShuttingDown());
+        UpdateState(UIOperationState.ShuttingDown());
 
         try
         {
@@ -239,12 +227,12 @@ internal sealed class OperationsService
             // Actually, looking at the proto, ShutdownHost is a separate RPC - we need to add it to IRepoQlClient
             // For now, simulate with a message
             _logger.LogWarning("ShutdownHost not yet implemented in IRepoQlClient - would need to add the method");
-            UpdateState(OperationState.Error("Shutdown not yet implemented"));
+            UpdateState(UIOperationState.Error("Shutdown not yet implemented"));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Shutdown request failed");
-            UpdateState(OperationState.Error($"Shutdown failed: {ex.Message}"));
+            UpdateState(UIOperationState.Error($"Shutdown failed: {ex.Message}"));
             throw;
         }
     }
@@ -257,7 +245,7 @@ internal sealed class OperationsService
         _operationCts?.Cancel();
     }
 
-    private void UpdateState(OperationState state)
+    private void UpdateState(UIOperationState state)
     {
         lock (_stateLock)
         {
@@ -291,8 +279,8 @@ internal enum OperationStatus
     Error
 }
 
-/// <summary>Current operation state snapshot.</summary>
-internal sealed record OperationState(
+/// <summary>Current UI operation state snapshot.</summary>
+internal sealed record UIOperationState(
     OperationStatus Status,
     string Message,
     int ProcessedItems,
@@ -302,18 +290,18 @@ internal sealed record OperationState(
     string? TargetUri,
     DateTimeOffset UpdatedAt)
 {
-    public static OperationState Idle(string? message = null) =>
+    public static UIOperationState Idle(string? message = null) =>
         new(OperationStatus.Idle, message ?? "Idle", 0, 0, 0, null, null, DateTimeOffset.UtcNow);
 
-    public static OperationState Reindexing(string message, int processed, int total, int percent = 0, ReindexPhase? phase = null) =>
+    public static UIOperationState Reindexing(string message, int processed, int total, int percent = 0, ReindexPhase? phase = null) =>
         new(OperationStatus.Reindexing, message, processed, total, percent, phase, null, DateTimeOffset.UtcNow);
 
-    public static OperationState Importing(string uri, string message) =>
+    public static UIOperationState Importing(string uri, string message) =>
         new(OperationStatus.Importing, message, 0, 0, 0, null, uri, DateTimeOffset.UtcNow);
 
-    public static OperationState ShuttingDown() =>
+    public static UIOperationState ShuttingDown() =>
         new(OperationStatus.ShuttingDown, "Shutting down...", 0, 0, 0, null, null, DateTimeOffset.UtcNow);
 
-    public static OperationState Error(string message) =>
+    public static UIOperationState Error(string message) =>
         new(OperationStatus.Error, message, 0, 0, 0, null, null, DateTimeOffset.UtcNow);
 }

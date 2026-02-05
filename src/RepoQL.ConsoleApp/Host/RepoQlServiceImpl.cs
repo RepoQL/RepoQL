@@ -818,13 +818,16 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             _logger.LogInformation("[Import] Parsed URI: scheme={Scheme}, authority={Authority}, path={Path}",
                 repoUri!.Scheme, repoUri.Authority, repoUri.AbsolutePath);
 
-            // Clone/sync the repository
+            // Clone/sync the repository and get the tracking operation
             _logger.LogDebug("[Import] Starting repository clone/sync...");
             var importStart = sw.ElapsedMilliseconds;
+            Contracts.IOperation? operation = null;
             try
             {
-                await importService.ImportAsync(repoUri, context.CancellationToken).ConfigureAwait(false);
-                _logger.LogInformation("[Import] Clone/sync completed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - importStart);
+                var result = await importService.ImportAsync(repoUri, context.CancellationToken).ConfigureAwait(false);
+                operation = result.Operation;
+                _logger.LogInformation("[Import] Clone/sync completed ({ElapsedMs}ms), operation={OpId}",
+                    sw.ElapsedMilliseconds - importStart, operation?.Id ?? "(none)");
             }
             catch (InvalidOperationException ex)
             {
@@ -837,71 +840,68 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 throw new RpcException(new Status(StatusCode.Internal, ex.Message));
             }
 
-            // Wait for pipeline stages
-            var waitStages = ResolveImportStages(request);
-            if (waitStages.Count > 0)
+            // Wait for operation completion (all files indexed with structure embeddings or marked NotApplicable)
+            OperationProgress? opProgress = null;
+
+            if (operation is not null)
             {
-                _logger.LogDebug("[Import] Waiting for pipeline stages: {Stages}", string.Join(", ", waitStages));
-                var pipelineStart = sw.ElapsedMilliseconds;
-                await coordinator.WaitForPipelineAsync(waitStages, waitAll: true, context.CancellationToken).ConfigureAwait(false);
-                _logger.LogInformation("[Import] Pipeline wait completed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - pipelineStart);
+                _logger.LogDebug("[Import] Waiting for operation {OpId} to complete...", operation.Id);
+                var opStart = sw.ElapsedMilliseconds;
+                try
+                {
+                    // Wait with cancellation support
+                    opProgress = await operation.Completion.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+                    _logger.LogInformation("[Import] Operation {OpId} completed in {ElapsedMs}ms: {Embedded}/{Total} embedded, {Failed} failed",
+                        operation.Id, sw.ElapsedMilliseconds - opStart, opProgress.EmbeddedCount, opProgress.TotalFiles, opProgress.FailedCount);
+                }
+                catch (OperationCanceledException)
+                {
+                    _logger.LogWarning("[Import] Operation {OpId} cancelled after {ElapsedMs}ms", operation.Id, sw.ElapsedMilliseconds - opStart);
+                    operation.Cancel();
+                    throw;
+                }
             }
             else
             {
-                _logger.LogDebug("[Import] No pipeline stages to wait for");
+                _logger.LogWarning("[Import] No operation created - UriRegistry may not be configured");
             }
 
-            // Handle embeddings
-            var waitForEmbeddings = waitStages.Contains(CoordinatorPipelineStage.Writer); // Writer = SemanticIndexing
+            // Schedule background batch embedding refresh (for full/content embeddings beyond structure)
             if (_embeddingProvider is not null && _embeddingProvider.Enabled)
             {
-                if (waitForEmbeddings)
+                _logger.LogDebug("[Import] Scheduling background batch embedding refresh");
+                var provider = _embeddingProvider;
+                var db = _db;
+                var logger = _logger;
+                var embeddingMode = _embeddingMode;
+                _ = Task.Run(async () =>
                 {
-                    _logger.LogDebug("[Import] Refreshing embeddings (synchronous)...");
-                    var embeddingStart = sw.ElapsedMilliseconds;
+                    var bgStart = Stopwatch.StartNew();
                     try
                     {
-                        var refresher = new EmbeddingRefresher(_db, _embeddingMode, _logger as ILogger<EmbeddingRefresher>);
-                        await refresher.RefreshAsync(_embeddingProvider, context.CancellationToken).ConfigureAwait(false);
-                        _logger.LogInformation("[Import] Embedding refresh completed ({ElapsedMs}ms)", sw.ElapsedMilliseconds - embeddingStart);
+                        var refresher = new EmbeddingRefresher(db, embeddingMode, logger as ILogger<EmbeddingRefresher>);
+                        await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
+                        logger.LogInformation("[Import] Background batch embedding refresh completed ({ElapsedMs}ms)", bgStart.ElapsedMilliseconds);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "[Import] Embedding refresh failed after {ElapsedMs}ms", sw.ElapsedMilliseconds - embeddingStart);
-                        throw new RpcException(new Status(StatusCode.Internal, $"Embedding refresh failed: {ex.Message}"));
+                        logger.LogError(ex, "[Import] Background batch embedding refresh failed after {ElapsedMs}ms", bgStart.ElapsedMilliseconds);
                     }
-                }
-                else
-                {
-                    _logger.LogDebug("[Import] Scheduling background embedding refresh");
-                    var provider = _embeddingProvider;
-                    var db = _db;
-                    var logger = _logger;
-                    var embeddingMode = _embeddingMode;
-                    _ = Task.Run(async () =>
-                    {
-                        var bgStart = Stopwatch.StartNew();
-                        try
-                        {
-                            var refresher = new EmbeddingRefresher(db, embeddingMode, logger as ILogger<EmbeddingRefresher>);
-                            await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
-                            logger.LogInformation("[Import] Background embedding refresh completed ({ElapsedMs}ms)", bgStart.ElapsedMilliseconds);
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.LogError(ex, "[Import] Background embedding refresh failed after {ElapsedMs}ms", bgStart.ElapsedMilliseconds);
-                        }
-                    });
-                }
-            }
-            else
-            {
-                _logger.LogDebug("[Import] Embeddings not enabled, skipping");
+                });
             }
 
             var snapshot = coordinator.GetPipelineStatus();
             _logger.LogInformation("[Import] Completed successfully for {Uri} in {ElapsedMs}ms", uri, sw.ElapsedMilliseconds);
-            return new ImportResponse { Status = ToProtoStatus(snapshot) };
+
+            var response = new ImportResponse { Status = ToProtoStatus(snapshot) };
+            if (opProgress is not null)
+            {
+                response.TotalFiles = opProgress.TotalFiles;
+                response.IndexedCount = opProgress.IndexedCount;
+                response.EmbeddedCount = opProgress.EmbeddedCount;
+                response.FailedCount = opProgress.FailedCount;
+            }
+            return response;
         }
         catch (RpcException)
         {
@@ -1055,18 +1055,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             Queued = (uint)Math.Max(0, stage.Queued),
             InProgress = (uint)Math.Max(0, stage.InProgress)
         };
-
-    private static IReadOnlyCollection<CoordinatorPipelineStage> ResolveImportStages(ImportRequest request)
-    {
-        if (!request.HasWaitStage)
-            return new[] { CoordinatorPipelineStage.Writer }; // Default to SemanticIndexing - waits for embeddings
-
-        if (request.WaitStage == ProtoPipelineStage.Unspecified)
-            return Array.Empty<CoordinatorPipelineStage>();
-
-        return new[] { MapStage(request.WaitStage) };
-    }
-
     private static CoordinatorPipelineStage MapStage(ProtoPipelineStage stage)
         => stage switch
         {

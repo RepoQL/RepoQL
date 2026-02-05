@@ -285,14 +285,18 @@ message WaitForPipelineResponse {
 message ImportRequest {
   // Repository URI to import (e.g., github://owner/repo@ref).
   string uri = 1;
-  // Stage to wait for after enqueueing imported artifacts. When omitted the server waits for
-  // SEMANTIC_INDEXING to ensure embeddings are ready for search. Pass INDEXING for hot-path only,
-  // or UNSPECIFIED to return immediately without waiting.
-  optional PipelineStage wait_stage = 2;
+  // DEPRECATED: This field is ignored. Import now always waits for operation completion
+  // (all files indexed with structure embeddings ready for semantic search).
+  optional PipelineStage wait_stage = 2 [deprecated = true];
 }
 
 message ImportResponse {
   PipelineStatus status = 1;
+  // Operation progress (if operation-based waiting was used)
+  int32 total_files = 2;
+  int32 indexed_count = 3;
+  int32 embedded_count = 4;
+  int32 failed_count = 5;
 }
 
 message GetPipelineStatusRequest {}

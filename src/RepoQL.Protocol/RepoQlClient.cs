@@ -779,9 +779,8 @@ public class RepoQlConnectionClient : IRepoQlClient
             return response.Status ?? new ProtoPipelineStatus();
         }, cancellationToken);
 
-    public Task<ProtoPipelineStatus> ImportRepositoryAsync(
+    public Task<ImportResult> ImportRepositoryAsync(
         string uri,
-        ProtoPipelineStage? waitStage = null,
         CancellationToken cancellationToken = default)
         => InvokeWithReconnectAsync(async (client, ct) =>
         {
@@ -793,11 +792,13 @@ public class RepoQlConnectionClient : IRepoQlClient
                 Uri = uri.Trim()
             };
 
-            if (waitStage.HasValue)
-                request.WaitStage = waitStage.Value;
-
             var response = await client.ImportRepositoryAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
-            return response.Status ?? new ProtoPipelineStatus();
+            return new ImportResult(
+                Status: response.Status ?? new ProtoPipelineStatus(),
+                TotalFiles: response.TotalFiles,
+                IndexedCount: response.IndexedCount,
+                EmbeddedCount: response.EmbeddedCount,
+                FailedCount: response.FailedCount);
         }, cancellationToken);
 
     public Task<ProtoPipelineStatus> GetPipelineStatusAsync(CancellationToken cancellationToken = default)

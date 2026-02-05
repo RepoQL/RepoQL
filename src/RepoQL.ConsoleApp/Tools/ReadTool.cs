@@ -26,6 +26,9 @@ internal sealed class ReadTool(
     private readonly SelfTestRunner _selfTestRunner = selfTestRunner ?? throw new ArgumentNullException(nameof(selfTestRunner));
     private readonly SessionOrientation _sessionOrientation = sessionOrientation ?? throw new ArgumentNullException(nameof(sessionOrientation));
 
+    // Track last request to implement "call again to wait" pattern (static to persist across tool invocations)
+    private static string? _lastRequestSignature;
+
     private const string ReadInstructions = """
         <WHY>
         Explore finds URIs. Read fetches content. This is the second half of the workflow.
@@ -157,7 +160,7 @@ internal sealed class ReadTool(
         </VS_EXPLORE>
         """;
 
-    [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "read"), Description(ReadInstructions)]
+    [McpServerTool(Name = "read", Title = "Read Content", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(ReadInstructions)]
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> ReadAsync(
@@ -177,6 +180,39 @@ internal sealed class ReadTool(
         var nudge = _sessionOrientation.CheckOrientation("read", uri);
         if (nudge != null)
             return nudge;
+
+        // Create request signature for "call again to wait" pattern
+        var requestSignature = $"{uri}|{tokenBudget}";
+        var isRepeatRequest = _lastRequestSignature == requestSignature;
+
+        // Check if URI requires semantic search (find or question modifiers)
+        var requiresSemantic = uri.Contains("=> find:", StringComparison.OrdinalIgnoreCase) ||
+                               uri.Contains("=> question:", StringComparison.OrdinalIgnoreCase);
+
+        if (requiresSemantic)
+        {
+            // Extract base URI (before =>) for scope check
+            var scopeUri = ExtractBaseUri(uri);
+
+            var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
+            var scopeStatus = await client.GetScopeReadinessAsync(scopeUri, cancel).ConfigureAwait(false);
+
+            if (!scopeStatus.IsReady && !isRepeatRequest)
+            {
+                // First time seeing this request while scope not ready - return status and instructions
+                _lastRequestSignature = requestSignature;
+                return RepoQlClientScopeExtensions.FormatScopeNotReadyMessage(scopeStatus, scopeUri);
+            }
+
+            if (!scopeStatus.IsReady && isRepeatRequest)
+            {
+                // Repeat request - wait until scope is ready
+                await client.WaitForScopeAsync(scopeUri, cancel).ConfigureAwait(false);
+            }
+        }
+
+        // Clear the pending request now that we're executing
+        _lastRequestSignature = null;
 
         try
         {
@@ -207,5 +243,17 @@ internal sealed class ReadTool(
             }
             return $"Error: {cleanMessage}";
         }
+    }
+
+    /// <summary>
+    /// Extract the base URI before any modifier (=> ...).
+    /// </summary>
+    private static string? ExtractBaseUri(string uri)
+    {
+        var modifierIndex = uri.IndexOf("=>", StringComparison.Ordinal);
+        if (modifierIndex <= 0)
+            return uri.Trim();
+
+        return uri[..modifierIndex].Trim();
     }
 }

@@ -97,13 +97,6 @@
             <div class="import-form">
                 <input type="text" @bind="_importUri" placeholder="github://owner/repo" class="import-input"
                        disabled="@(!_connectionState.IsConnected || _operationState.Status != OperationStatus.Idle)" />
-                <select @bind="_importWaitStage" class="import-select"
-                        disabled="@(!_connectionState.IsConnected || _operationState.Status != OperationStatus.Idle)">
-                    <option value="@PipelineStage.Unspecified">Immediate (don't wait)</option>
-                    <option value="@PipelineStage.Discovery">Wait for Discovery</option>
-                    <option value="@PipelineStage.Indexing">Wait for Indexing</option>
-                    <option value="@PipelineStage.SemanticIndexing">Wait for Semantic (default)</option>
-                </select>
                 <button class="btn primary" @onclick="StartImportAsync"
                         disabled="@(!_connectionState.IsConnected || _operationState.Status != OperationStatus.Idle || string.IsNullOrWhiteSpace(_importUri))">
                     Import
@@ -373,12 +366,11 @@
 @code {
     private RepoQlConnectionManager.ConnectionState _connectionState = RepoQlConnectionManager.ConnectionState.Create(false, "Not connected");
     private HostStatusSnapshot _hostStatus = HostStatusSnapshot.Offline("Waiting for host status");
-    private OperationState _operationState = OperationState.Idle();
+    private UIOperationState _operationState = UIOperationState.Idle();
     private PipelineStatus? _pipelineStatus;
     private Dictionary<string, string>? _diagnostics;
     private string? _diagnosticsError;
     private string _importUri = "";
-    private PipelineStage _importWaitStage = PipelineStage.SemanticIndexing;
     private System.Timers.Timer? _refreshTimer;
     private CancellationTokenSource _cts = new();
 
@@ -474,7 +466,7 @@
 
         try
         {
-            await OperationsService.ImportRepositoryAsync(_importUri, _importWaitStage, _cts.Token);
+            await OperationsService.ImportRepositoryAsync(_importUri, _cts.Token);
             _importUri = ""; // Clear on success
         }
         catch (OperationCanceledException)
@@ -504,7 +496,7 @@
         _ = InvokeAsync(StateHasChanged);
     }
 
-    private void OnOperationStateChanged(object? sender, OperationState state)
+    private void OnOperationStateChanged(object? sender, UIOperationState state)
     {
         _operationState = state;
         _ = InvokeAsync(StateHasChanged);

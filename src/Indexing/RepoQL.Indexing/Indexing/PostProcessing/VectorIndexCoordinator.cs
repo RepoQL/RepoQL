@@ -176,6 +176,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         if (!_embeddingMode.IncludesStructure())
         {
             _logger.LogDebug("Structure embedding skipped: mode={Mode}", _embeddingMode);
+            MarkItemsAsNotApplicable(items);
             return;
         }
 
@@ -183,6 +184,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         {
             _logger.LogDebug("Structure embedding skipped: db={Db}, provider={Provider}, enabled={Enabled}",
                 _db is not null, _embeddingProvider is not null, _embeddingProvider?.Enabled);
+            MarkItemsAsNotApplicable(items);
             return;
         }
 
@@ -452,4 +454,21 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     /// Gets the current embedding mode.
     /// </summary>
     public EmbeddingMode GetEmbeddingMode() => _embeddingMode;
+
+    /// <summary>
+    /// Marks all items as NotApplicable for embedding when embeddings are disabled.
+    /// This allows operations tracking these URIs to complete.
+    /// </summary>
+    private void MarkItemsAsNotApplicable(IReadOnlyList<IndexItem> items)
+    {
+        if (_uriRegistry is null)
+            return;
+
+        foreach (var item in items)
+        {
+            _uriRegistry.SetEmbeddingNotApplicable(item.Uri);
+        }
+
+        _logger.LogDebug("Marked {Count} items as embedding NotApplicable", items.Count);
+    }
 }
