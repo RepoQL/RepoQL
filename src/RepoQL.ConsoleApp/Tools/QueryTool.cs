@@ -199,7 +199,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         </REMEMBER>
         """;
 
-    [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "query"), Description(QueryInstructions)]
+    [McpServerTool(Name = "query", Title = "Query Repository", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(QueryInstructions)]
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<string> Query(
