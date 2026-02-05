@@ -1,42 +1,73 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace RepoQL.ConsoleApp.Host;
 
-internal sealed class IdleShutdownHostedService(
-    IHostApplicationLifetime lifetime,
-    ILogger<IdleShutdownHostedService> logger,
-    HostState state,
-    HostMetrics metrics
-) : BackgroundService
+internal sealed class IdleShutdownHostedService : BackgroundService
 {
-    private readonly TimeSpan _poll = TimeSpan.FromSeconds(5);
-    private readonly TimeSpan _leaseTtl = TimeSpan.FromSeconds(GetEnvInt("REPOQL_LEASE_TTL_SECONDS", 30));
-    private readonly TimeSpan _idleGrace = GetIdleGrace();
+    private readonly IHostApplicationLifetime _lifetime;
+    private readonly ILogger<IdleShutdownHostedService> _logger;
+    private readonly HostState _state;
+    private readonly HostMetrics _metrics;
+    private readonly TimeSpan _poll;
+    private readonly TimeSpan _leaseTtl;
+    private readonly TimeSpan _idleGrace;
+    private readonly TimeSpan _shutdownWatchdog;
+    private readonly Action _forceTerminate;
     private double _idleSecondsRemaining = -1;
+
+    public IdleShutdownHostedService(
+        IHostApplicationLifetime lifetime,
+        ILogger<IdleShutdownHostedService> logger,
+        HostState state,
+        HostMetrics metrics,
+        TimeSpan? pollInterval = null,
+        TimeSpan? leaseTtl = null,
+        TimeSpan? idleGrace = null,
+        TimeSpan? shutdownWatchdog = null,
+        Action? forceTerminate = null)
+    {
+        _lifetime = lifetime ?? throw new ArgumentNullException(nameof(lifetime));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _state = state ?? throw new ArgumentNullException(nameof(state));
+        _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
+        _poll = pollInterval ?? TimeSpan.FromSeconds(5);
+        _leaseTtl = leaseTtl ?? TimeSpan.FromSeconds(GetEnvInt("REPOQL_LEASE_TTL_SECONDS", 30));
+        _idleGrace = idleGrace ?? GetIdleGrace();
+        _shutdownWatchdog = shutdownWatchdog ?? GetImplicitShutdownWatchdog();
+        _forceTerminate = forceTerminate ?? ForceTerminateCurrentProcess;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        metrics.SetLeaseCountProvider(() => LeaseRegistry.Count);
-        metrics.SetWriterPendingProvider(() => 0); // Always 0 with sync writes
-        metrics.SetImplicitStartProvider(() => state.ImplicitStart ? 1 : 0);
-        metrics.SetIdleSecondsProvider(() => _idleSecondsRemaining);
+        _metrics.SetLeaseCountProvider(() => LeaseRegistry.Count);
+        _metrics.SetWriterPendingProvider(() => 0); // Always 0 with sync writes
+        _metrics.SetImplicitStartProvider(() => _state.ImplicitStart ? 1 : 0);
+        _metrics.SetIdleSecondsProvider(() => _idleSecondsRemaining);
 
-        if (!state.ImplicitStart) return;
+        if (!_state.ImplicitStart)
+            return;
 
-        logger.LogInformation("IdleShutdown: supervising implicit host; grace={Grace}s ttl={Ttl}s", _idleGrace.TotalSeconds, _leaseTtl.TotalSeconds);
+        _logger.LogInformation(
+            "IdleShutdown: supervising implicit host; grace={Grace}s ttl={Ttl}s watchdog={Watchdog}s",
+            _idleGrace.TotalSeconds,
+            _leaseTtl.TotalSeconds,
+            _shutdownWatchdog.TotalSeconds);
 
-        var idleStartUtc = (DateTime?)null;
+        DateTime? idleStartUtc = null;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 var now = DateTime.UtcNow;
                 foreach (var l in LeaseRegistry.Snapshot())
-                    if ((now - l.LastBeatUtc) > _leaseTtl) LeaseRegistry.Remove(l.ClientId);
+                {
+                    if ((now - l.LastBeatUtc) > _leaseTtl)
+                        LeaseRegistry.Remove(l.ClientId);
+                }
 
                 var active = LeaseRegistry.Count;
-
                 if (active == 0)
                 {
                     idleStartUtc ??= now;
@@ -44,22 +75,72 @@ internal sealed class IdleShutdownHostedService(
                     _idleSecondsRemaining = Math.Max(0, remaining.TotalSeconds);
                     if (remaining <= TimeSpan.Zero)
                     {
-                        logger.LogInformation("IdleShutdown: no clients for {Elapsed}s — shutting down", _idleGrace.TotalSeconds);
-                        lifetime.StopApplication();
+                        _logger.LogInformation("IdleShutdown: no clients for {Elapsed}s — shutting down", _idleGrace.TotalSeconds);
+                        _lifetime.StopApplication();
+                        ArmShutdownWatchdog(stoppingToken);
                         break;
                     }
                 }
-                else { idleStartUtc = null; _idleSecondsRemaining = -1; }
+                else
+                {
+                    idleStartUtc = null;
+                    _idleSecondsRemaining = -1;
+                }
             }
-            catch (Exception ex) { logger.LogError(ex, "IdleShutdown loop error"); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "IdleShutdown loop error");
+            }
 
-            try { await Task.Delay(_poll, stoppingToken).ConfigureAwait(false); }
-            catch (OperationCanceledException) { }
+            try
+            {
+                await Task.Delay(_poll, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
+    }
+
+    private void ArmShutdownWatchdog(CancellationToken stoppingToken)
+    {
+        if (_shutdownWatchdog <= TimeSpan.Zero)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken,
+                _lifetime.ApplicationStopped);
+
+            try
+            {
+                await Task.Delay(_shutdownWatchdog, cts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                return;
+            }
+
+            try
+            {
+                _logger.LogCritical(
+                    "IdleShutdown watchdog fired after {Timeout}s; process failed to exit after StopApplication. Forcing termination.",
+                    _shutdownWatchdog.TotalSeconds);
+                _forceTerminate();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex, "IdleShutdown watchdog failed to force process termination.");
+            }
+        }, CancellationToken.None);
     }
 
     private static int GetEnvInt(string name, int dflt)
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
+
+    private static int GetEnvIntAllowZero(string name, int dflt)
+        => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v >= 0 ? v : dflt;
 
     private static TimeSpan GetIdleGrace()
     {
@@ -68,6 +149,12 @@ internal sealed class IdleShutdownHostedService(
 
         return TimeSpan.FromSeconds(GetEnvInt("REPOQL_IDLE_GRACE_SECONDS", 45));
     }
+
+    private static TimeSpan GetImplicitShutdownWatchdog()
+        => TimeSpan.FromSeconds(GetEnvIntAllowZero("REPOQL_IMPLICIT_SHUTDOWN_WATCHDOG_SECONDS", 15));
+
+    private static void ForceTerminateCurrentProcess()
+        => Process.GetCurrentProcess().Kill(entireProcessTree: true);
 
     private static bool IsMcpImplicitSource()
         => string.Equals(
