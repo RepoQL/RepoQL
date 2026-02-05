@@ -107,6 +107,51 @@ internal class WorkQueueTests
     }
 
     [Test]
+    [DisplayName("FM-001: Non-cooperative timeout does not block subsequent items")]
+    public async Task Given_ItemIgnoresCancellation_When_ItemTimesOut_Then_WorkerContinues()
+    {
+        // Arrange
+        var processedItems = new List<int>();
+        var timedOutItems = new List<int>();
+        var neverCompletes = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var queue = new WorkQueue<int>(
+            "non_cooperative_timeout_test",
+            capacity: 10,
+            readers: 1,
+            async (item, _) =>
+            {
+                if (item == 2)
+                {
+                    // Simulate non-cooperative processor: ignores cancellation and never returns.
+                    await neverCompletes.Task.ConfigureAwait(false);
+                    return;
+                }
+
+                processedItems.Add(item);
+            },
+            CancellationToken.None,
+            itemTimeout: TimeSpan.FromMilliseconds(100),
+            logger: NullLogger.Instance)
+        {
+            OnItemTimeout = (item, _) => timedOutItems.Add(item)
+        };
+
+        // Act
+        await queue.EnqueueAsync(1, CancellationToken.None);
+        await queue.EnqueueAsync(2, CancellationToken.None);
+        await queue.EnqueueAsync(3, CancellationToken.None);
+        await queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Assert
+        processedItems.Should().Contain(1);
+        processedItems.Should().Contain(3);
+        processedItems.Should().NotContain(2);
+        timedOutItems.Should().ContainSingle().Which.Should().Be(2);
+        queue.TimeoutCount.Should().Be(1);
+    }
+
+    [Test]
     [DisplayName("FM-001: Items process normally when no timeout configured")]
     public async Task Given_NoTimeout_When_ItemTakesLong_Then_ProcessesNormally()
     {

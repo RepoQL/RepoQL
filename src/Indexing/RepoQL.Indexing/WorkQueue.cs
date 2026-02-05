@@ -23,7 +23,7 @@ namespace RepoQL.Indexing;
 /// <para>
 /// Contains thread-safe state management via <see cref="ConcurrentDictionary{TKey,TValue}"/> for deduplication,
 /// <see cref="Channel{T}"/> for bounded queueing, and interlocked operations for counters. The per-item
-/// timeout uses linked cancellation tokens to combine shutdown and timeout signals. The rest of the system
+/// timeout uses a wall-clock deadline plus cancellation tokens to combine shutdown and timeout signals. The rest of the system
 /// is protected from this complexity via simple EnqueueAsync/WhenIdleAsync API.
 /// </para>
 ///
@@ -220,37 +220,59 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             return;
         }
 
-        // Create linked token that combines shutdown + per-item timeout
+        // Create linked token that combines shutdown + per-item timeout.
+        // Processing runs on a separate task so a non-cooperative processor cannot block the worker forever.
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(_itemTimeout.Value);
+        var processingTask = Task.Run(() => processItem(item, timeoutCts.Token), CancellationToken.None);
 
         try
         {
-            await processItem(item, timeoutCts.Token).ConfigureAwait(false);
+            await processingTask.WaitAsync(_itemTimeout.Value, cancellationToken).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        catch (TimeoutException)
         {
-            // Timeout fired, not shutdown
-            var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
-            Interlocked.Increment(ref _timeoutCount);
-
-            _logger.LogWarning(
-                "WorkQueue {QueueName} item timed out after {ElapsedSeconds:F1}s (timeout={TimeoutSeconds:F0}s). Item: {Item}",
-                _name,
-                elapsed.TotalSeconds,
-                _itemTimeout.Value.TotalSeconds,
-                item);
-
-            // Invoke timeout callback so caller can clean up (e.g., decrement epoch counters)
-            try
-            {
-                OnItemTimeout?.Invoke(item, elapsed);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "WorkQueue {QueueName} OnItemTimeout callback threw exception", _name);
-            }
+            timeoutCts.Cancel();
+            HandleItemTimeout(item, startTimestamp);
+            ObserveFaultedBackgroundTask(processingTask, item);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            timeoutCts.Cancel();
+            ObserveFaultedBackgroundTask(processingTask, item);
+            throw;
+        }
+    }
+
+    private void HandleItemTimeout(T item, long startTimestamp)
+    {
+        var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+        Interlocked.Increment(ref _timeoutCount);
+
+        _logger.LogWarning(
+            "WorkQueue {QueueName} item timed out after {ElapsedSeconds:F1}s (timeout={TimeoutSeconds:F0}s). Item: {Item}",
+            _name,
+            elapsed.TotalSeconds,
+            _itemTimeout?.TotalSeconds ?? 0,
+            item);
+
+        // Invoke timeout callback so caller can clean up (e.g., decrement epoch counters).
+        try
+        {
+            OnItemTimeout?.Invoke(item, elapsed);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WorkQueue {QueueName} OnItemTimeout callback threw exception", _name);
+        }
+    }
+
+    private void ObserveFaultedBackgroundTask(Task processingTask, T item)
+    {
+        _ = processingTask.ContinueWith(
+            t => _logger.LogDebug(t.Exception, "WorkQueue {QueueName} timed-out item later faulted. Item: {Item}", _name, item),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     public ObservableGauge<int> WorkersActive { get; }
