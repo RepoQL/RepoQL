@@ -816,54 +816,38 @@ public static class DuckDbDataStoreExtensions
         IReadOnlyList<Edge> edges,
         ILogger? logger)
     {
-        // Bulk insert spans (much faster than individual inserts)
+        // Append spans in schema column order.
         if (spans.Count > 0)
-            BulkInsertSpans(conn, tx, spans);
+            AppendSpans(conn, spans);
 
-        // Bulk insert child nodes
+        // Append child nodes.
         if (children.Count > 0)
-            BulkInsertNodes(conn, tx, children);
+            AppendNodes(conn, children);
 
         // Bulk insert edges
         if (edges.Count > 0)
             BulkInsertEdges(conn, tx, edges, logger);
     }
 
-    private static void BulkInsertSpans(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Span> spans)
+    private static void AppendSpans(DuckDBConnection conn, IReadOnlyList<Span> spans)
     {
-        const int batchSize = 100; // DuckDB handles large parameter lists well
-        for (var offset = 0; offset < spans.Count; offset += batchSize)
+        using var appender = conn.CreateAppender("span");
+        foreach (var span in spans)
         {
-            var batch = spans.Skip(offset).Take(batchSize).ToList();
-            var sb = new StringBuilder();
-            sb.AppendLine("INSERT INTO span (id, document_id, start_line, start_column, end_line, end_column, start_byte, end_byte) VALUES");
-
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-
-            for (var i = 0; i < batch.Count; i++)
-            {
-                if (i > 0) sb.Append(',');
-                var p = i * 8;
-                sb.Append($"(${p + 1},${p + 2},${p + 3},${p + 4},${p + 5},${p + 6},${p + 7},${p + 8})");
-
-                var span = batch[i];
-                cmd.Parameters.Add(new DuckDBParameter { Value = span.Id });
-                cmd.Parameters.Add(new DuckDBParameter { Value = span.DocumentId });
-                cmd.Parameters.Add(new DuckDBParameter { Value = span.StartLine });
-                cmd.Parameters.Add(new DuckDBParameter { Value = span.StartColumn });
-                cmd.Parameters.Add(new DuckDBParameter { Value = span.EndLine });
-                cmd.Parameters.Add(new DuckDBParameter { Value = span.EndColumn });
-                cmd.Parameters.Add(new DuckDBParameter { Value = span.StartByte });
-                cmd.Parameters.Add(new DuckDBParameter { Value = span.EndByte });
-            }
-
-            cmd.CommandText = sb.ToString();
-            cmd.ExecuteNonQuery();
+            var row = appender.CreateRow();
+            AppendGuid(row, span.Id);
+            AppendGuid(row, span.DocumentId);
+            AppendNullableInt64(row, span.StartByte);
+            AppendNullableInt64(row, span.EndByte);
+            AppendNullableInt32(row, span.StartLine);
+            AppendNullableInt32(row, span.StartColumn);
+            AppendNullableInt32(row, span.EndLine);
+            AppendNullableInt32(row, span.EndColumn);
+            row.EndRow();
         }
     }
 
-    private static void BulkInsertNodes(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Node> nodes)
+    private static void AppendNodes(DuckDBConnection conn, IReadOnlyList<Node> nodes)
     {
         // Sort for zonemap efficiency: queries typically filter by kind first, then URI patterns.
         // Sorting before insert creates tighter min/max ranges per row group, enabling DuckDB to skip
@@ -873,39 +857,24 @@ public static class DuckDbDataStoreExtensions
             .ThenBy(n => n.Uri is not null ? NormalizeUri(n.Uri).ToLowerInvariant() : null)
             .ToList();
 
-        const int batchSize = 50; // Nodes have more columns, smaller batches
-        for (var offset = 0; offset < sortedNodes.Count; offset += batchSize)
+        using var appender = conn.CreateAppender("node");
+        foreach (var node in sortedNodes)
         {
-            var batch = sortedNodes.Skip(offset).Take(batchSize).ToList();
-            var sb = new StringBuilder();
-            sb.AppendLine("INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at) VALUES");
+            var uriStr = node.Uri is not null ? NormalizeUri(node.Uri) : null;
+            var row = appender.CreateRow();
 
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-
-            for (var i = 0; i < batch.Count; i++)
-            {
-                if (i > 0) sb.Append(',');
-                var p = i * 11;
-                sb.Append($"(${p + 1},${p + 2},${p + 3},${p + 4},${p + 5},${p + 6},${p + 7},${p + 8},${p + 9},${p + 10},${p + 11})");
-
-                var node = batch[i];
-                var uriStr = node.Uri is not null ? NormalizeUri(node.Uri) : null;
-                cmd.Parameters.Add(new DuckDBParameter { Value = node.Id });
-                cmd.Parameters.Add(new DuckDBParameter { Value = node.Kind });
-                cmd.Parameters.Add(new DuckDBParameter { Value = uriStr ?? (object)DBNull.Value });
-                cmd.Parameters.Add(new DuckDBParameter { Value = uriStr?.ToLowerInvariant() ?? (object)DBNull.Value });
-                cmd.Parameters.Add(new DuckDBParameter { Value = node.ArtifactId });
-                cmd.Parameters.Add(new DuckDBParameter { Value = node.SpanId ?? (object)DBNull.Value });
-                cmd.Parameters.Add(new DuckDBParameter { Value = node.Props.ToJsonString() ?? (object)DBNull.Value });
-                cmd.Parameters.Add(new DuckDBParameter { Value = node.Headline ?? (object)DBNull.Value });
-                cmd.Parameters.Add(new DuckDBParameter { Value = node.Structure ?? (object)DBNull.Value });
-                cmd.Parameters.Add(new DuckDBParameter { Value = node.CreatedAt.UtcDateTime });
-                cmd.Parameters.Add(new DuckDBParameter { Value = node.UpdatedAt.UtcDateTime });
-            }
-
-            cmd.CommandText = sb.ToString();
-            cmd.ExecuteNonQuery();
+            AppendGuid(row, node.Id);
+            row.AppendValue(node.Kind);
+            AppendNullableString(row, uriStr);
+            AppendNullableString(row, uriStr?.ToLowerInvariant());
+            AppendNullableGuid(row, node.ArtifactId);
+            AppendNullableGuid(row, node.SpanId);
+            row.AppendValue(node.Props.ToJsonString());
+            AppendNullableString(row, node.Headline);
+            AppendNullableString(row, node.Structure);
+            AppendTimestamp(row, node.CreatedAt.UtcDateTime);
+            AppendTimestamp(row, node.UpdatedAt.UtcDateTime);
+            row.EndRow();
         }
     }
 
@@ -944,14 +913,48 @@ public static class DuckDbDataStoreExtensions
 
         // Insert composition edges with ON CONFLICT handling (for deterministic IDs)
         if (compositionEdges.Count > 0)
-            BulkInsertEdgesBatch(conn, tx, compositionEdges, useConflictHandling: true);
+            BulkInsertCompositionEdgesBatch(conn, tx, compositionEdges);
 
-        // Insert reference edges without ON CONFLICT (NULL composition_child_id can't conflict)
+        // Insert reference edges via appender (composition_child_id remains NULL).
         if (referenceEdges.Count > 0)
-            BulkInsertEdgesBatch(conn, tx, referenceEdges, useConflictHandling: false);
+            AppendEdges(conn, referenceEdges);
     }
 
-    private static void BulkInsertEdgesBatch(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Edge> edges, bool useConflictHandling)
+    private static void AppendEdges(DuckDBConnection conn, IReadOnlyList<Edge> edges)
+    {
+        // Sort for zonemap efficiency: deletion and traversal queries filter by document, then edge type.
+        // Sorting before insert creates tighter min/max ranges per row group, enabling DuckDB to skip
+        // entire row groups that don't match filter predicates (potential 10x+ improvement on selective queries).
+        var sortedEdges = edges
+            .OrderBy(e => e.ScopeDocumentId)
+            .ThenBy(e => e.Type)
+            .ToList();
+
+        using var appender = conn.CreateAppender("edge");
+        foreach (var edge in sortedEdges)
+        {
+            var dstUriStr = edge.DstUri is not null ? NormalizeUri(edge.DstUri.ToString()) : null;
+            var row = appender.CreateRow();
+
+            AppendGuid(row, edge.Id);
+            AppendGuid(row, edge.SrcId);
+            AppendNullableGuid(row, edge.DstId);
+            AppendNullableString(row, dstUriStr);
+            row.AppendValue(edge.Type);
+            row.AppendValue(edge.IsComposition);
+            AppendNullableInt32(row, edge.Ordinal);
+            AppendNullableGuid(row, edge.ScopeDocumentId);
+            AppendNullableString(row, edge.EdgeKey);
+            AppendNullableGuid(row, edge.SrcSpanId);
+            AppendNullableGuid(row, edge.DstSpanId);
+            row.AppendNullValue(); // composition_child_id is only set for composition edges.
+            row.AppendValue(edge.Props.ToJsonString());
+            AppendTimestamp(row, edge.CreatedAt.UtcDateTime);
+            row.EndRow();
+        }
+    }
+
+    private static void BulkInsertCompositionEdgesBatch(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<Edge> edges)
     {
         // Sort for zonemap efficiency: deletion and traversal queries filter by document, then edge type.
         // Sorting before insert creates tighter min/max ranges per row group, enabling DuckDB to skip
@@ -996,12 +999,8 @@ public static class DuckDbDataStoreExtensions
                 cmd.Parameters.Add(new DuckDBParameter { Value = edge.CreatedAt.UtcDateTime });
             }
 
-            // Only use ON CONFLICT for composition edges - reference edges have NULL composition_child_id
-            // which can cause false conflicts in some DuckDB versions
-            if (useConflictHandling)
-            {
-                sb.AppendLine();
-                sb.AppendLine(@"ON CONFLICT (composition_child_id) DO UPDATE SET
+            sb.AppendLine();
+            sb.AppendLine(@"ON CONFLICT (composition_child_id) DO UPDATE SET
     id = excluded.id,
     source_node_id = excluded.source_node_id,
     destination_node_id = excluded.destination_node_id,
@@ -1015,11 +1014,52 @@ public static class DuckDbDataStoreExtensions
     destination_span_id = excluded.destination_span_id,
     properties = excluded.properties,
     created_at = excluded.created_at");
-            }
 
             cmd.CommandText = sb.ToString();
             cmd.ExecuteNonQuery();
         }
+    }
+
+    private static void AppendGuid(IDuckDBAppenderRow row, Guid value)
+    {
+        row.AppendValue(value);
+    }
+
+    private static void AppendNullableGuid(IDuckDBAppenderRow row, Guid? value)
+    {
+        if (value.HasValue)
+            row.AppendValue(value.Value);
+        else
+            row.AppendNullValue();
+    }
+
+    private static void AppendNullableString(IDuckDBAppenderRow row, string? value)
+    {
+        if (value is null)
+            row.AppendNullValue();
+        else
+            row.AppendValue(value);
+    }
+
+    private static void AppendNullableInt32(IDuckDBAppenderRow row, int? value)
+    {
+        if (value.HasValue)
+            row.AppendValue(value.Value);
+        else
+            row.AppendNullValue();
+    }
+
+    private static void AppendNullableInt64(IDuckDBAppenderRow row, long? value)
+    {
+        if (value.HasValue)
+            row.AppendValue(value.Value);
+        else
+            row.AppendNullValue();
+    }
+
+    private static void AppendTimestamp(IDuckDBAppenderRow row, DateTime value)
+    {
+        row.AppendValue(value);
     }
 
     private static IReadOnlyList<Annotation> GetAnnotationsForDocument(DuckDBConnection conn, DuckDBTransaction tx, Guid documentId)

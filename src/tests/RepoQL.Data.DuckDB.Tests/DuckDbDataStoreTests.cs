@@ -327,6 +327,282 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
+    [DisplayName("Appender span insert rolls back when transaction throws")]
+    public void AppenderSpanInsert_RollsBackOnFailure()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var spanId = Guid.NewGuid();
+        var documentId = Guid.NewGuid();
+
+        var action = () => db.WriteTransaction((conn, tx) =>
+        {
+            using var appender = conn.CreateAppender("span");
+            appender.CreateRow()
+                .AppendValue(spanId)
+                .AppendValue(documentId)
+                .AppendValue(100L)
+                .AppendValue(120L)
+                .AppendValue(2)
+                .AppendValue(3)
+                .AppendValue(2)
+                .AppendValue(20)
+                .EndRow();
+
+            throw new InvalidOperationException("fail before commit");
+        });
+
+        action.Should().Throw<InvalidOperationException>();
+        db.Read("SELECT COUNT(*) AS cnt FROM span", r => r.GetInt64(0))[0].Should().Be(0L);
+    }
+
+    [Test]
+    [DisplayName("IndexArtifact stores large span batches with exact values")]
+    public void IndexArtifact_LargeSpanBatchStoresCorrectRows()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var uri = RepoUri.Parse("file:///test/large-spans.md")!;
+        var spanCount = 550;
+        var artifact = CreateTestArtifactWithLargeSpans(spanCount);
+        var expectedById = artifact.Spans.ToDictionary(s => s.Id, s => s);
+
+        var indexResult = db.IndexArtifact(uri, artifact);
+
+        var rows = db.Read(
+            "SELECT id, document_id, start_byte, end_byte, start_line, start_column, end_line, end_column FROM span",
+            r => new
+            {
+                Id = r.GetGuid(0),
+                DocumentId = r.GetGuid(1),
+                StartByte = r.IsDBNull(2) ? (long?)null : r.GetInt64(2),
+                EndByte = r.IsDBNull(3) ? (long?)null : r.GetInt64(3),
+                StartLine = r.IsDBNull(4) ? (int?)null : r.GetInt32(4),
+                StartColumn = r.IsDBNull(5) ? (int?)null : r.GetInt32(5),
+                EndLine = r.IsDBNull(6) ? (int?)null : r.GetInt32(6),
+                EndColumn = r.IsDBNull(7) ? (int?)null : r.GetInt32(7)
+            });
+
+        rows.Should().HaveCount(spanCount);
+        foreach (var row in rows)
+        {
+            expectedById.ContainsKey(row.Id).Should().BeTrue($"span {row.Id} should exist in expected set");
+            var expected = expectedById[row.Id];
+            row.DocumentId.Should().Be(indexResult.DocumentId);
+            row.StartByte.Should().Be(expected.StartByte);
+            row.EndByte.Should().Be(expected.EndByte);
+            row.StartLine.Should().Be(expected.StartLine);
+            row.StartColumn.Should().Be(expected.StartColumn);
+            row.EndLine.Should().Be(expected.EndLine);
+            row.EndColumn.Should().Be(expected.EndColumn);
+        }
+    }
+
+    [Test]
+    [DisplayName("IndexArtifact preserves null node fields")]
+    public void IndexArtifact_NodeNullHandling_PreservesNullValues()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var artifactId = Guid.NewGuid();
+        var docId = Guid.NewGuid();
+        var childId = Guid.NewGuid();
+        var uri = RepoUri.Parse("file:///test/node-nulls.md")!;
+
+        var artifact = new ParsedArtifact
+        {
+            Artifact = new RepoQL.Contracts.Models.Artifact
+            {
+                Id = artifactId,
+                Digest = $"sha256:{Guid.NewGuid():N}",
+                Size = 10,
+                MediaType = SemanticMediaType.Parse("text/markdown")
+            },
+            DocumentNode = new Node
+            {
+                Id = docId,
+                Kind = "document",
+                Uri = uri,
+                ArtifactId = artifactId,
+                Props = new JsonObject()
+            },
+            Children =
+            [
+                new Node
+                {
+                    Id = childId,
+                    Kind = "md_paragraph",
+                    ArtifactId = null,
+                    SpanId = null,
+                    Headline = null,
+                    Structure = null,
+                    Props = new JsonObject()
+                }
+            ],
+            Spans = [],
+            Edges = []
+        };
+
+        db.IndexArtifact(uri, artifact);
+
+        var row = db.Read(
+            $"SELECT uri, container_uri_lowercase, artifact_id, span_id, headline, structure, properties FROM node WHERE id = '{childId:D}'::UUID",
+            r => new
+            {
+                UriIsNull = r.IsDBNull(0),
+                ContainerIsNull = r.IsDBNull(1),
+                ArtifactIdIsNull = r.IsDBNull(2),
+                SpanIdIsNull = r.IsDBNull(3),
+                HeadlineIsNull = r.IsDBNull(4),
+                StructureIsNull = r.IsDBNull(5),
+                Properties = r.GetString(6)
+            }).Single();
+
+        row.UriIsNull.Should().BeTrue();
+        row.ContainerIsNull.Should().BeTrue();
+        row.ArtifactIdIsNull.Should().BeTrue();
+        row.SpanIdIsNull.Should().BeTrue();
+        row.HeadlineIsNull.Should().BeTrue();
+        row.StructureIsNull.Should().BeTrue();
+        row.Properties.Should().Be("{}");
+    }
+
+    [Test]
+    [DisplayName("IndexArtifact stores mixed composition and reference edges")]
+    public void IndexArtifact_MixedEdgeTypes_AreStoredCorrectly()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var artifactId = Guid.NewGuid();
+        var docId = Guid.NewGuid();
+        var childId = Guid.NewGuid();
+        var uri = RepoUri.Parse("file:///test/mixed-edges.md")!;
+
+        var artifact = new ParsedArtifact
+        {
+            Artifact = new RepoQL.Contracts.Models.Artifact
+            {
+                Id = artifactId,
+                Digest = $"sha256:{Guid.NewGuid():N}",
+                Size = 100,
+                MediaType = SemanticMediaType.Parse("text/markdown")
+            },
+            DocumentNode = new Node
+            {
+                Id = docId,
+                Kind = "document",
+                Uri = uri,
+                ArtifactId = artifactId,
+                Props = new JsonObject()
+            },
+            Children =
+            [
+                new Node
+                {
+                    Id = childId,
+                    Kind = "md_section",
+                    ArtifactId = artifactId,
+                    Props = new JsonObject()
+                }
+            ],
+            Spans = [],
+            Edges =
+            [
+                new Edge
+                {
+                    SrcId = docId,
+                    DstId = childId,
+                    Type = "HAS_PART",
+                    IsComposition = true,
+                    Ordinal = 0
+                },
+                new Edge
+                {
+                    SrcId = docId,
+                    DstUri = RepoUri.Parse("file:///other/ref.md"),
+                    Type = "REFERS_TO",
+                    IsComposition = false
+                }
+            ]
+        };
+
+        db.IndexArtifact(uri, artifact);
+
+        var rows = db.Read(
+            "SELECT type, is_composition, composition_child_id, destination_node_id, destination_uri FROM edge ORDER BY type",
+            r => new
+            {
+                Type = r.GetString(0),
+                IsComposition = r.GetBoolean(1),
+                CompositionChildId = r.IsDBNull(2) ? (Guid?)null : r.GetGuid(2),
+                DestinationNodeId = r.IsDBNull(3) ? (Guid?)null : r.GetGuid(3),
+                DestinationUri = r.IsDBNull(4) ? null : r.GetString(4)
+            });
+
+        rows.Should().HaveCount(2);
+
+        var hasPart = rows.Single(r => r.Type == "HAS_PART");
+        hasPart.IsComposition.Should().BeTrue();
+        hasPart.DestinationNodeId.Should().NotBeNull();
+        hasPart.CompositionChildId.Should().Be(hasPart.DestinationNodeId);
+        hasPart.DestinationUri.Should().BeNull();
+
+        var refersTo = rows.Single(r => r.Type == "REFERS_TO");
+        refersTo.IsComposition.Should().BeFalse();
+        refersTo.CompositionChildId.Should().BeNull();
+        refersTo.DestinationNodeId.Should().BeNull();
+        refersTo.DestinationUri.Should().Be("file:///other/ref.md");
+    }
+
+    [Test]
+    [DisplayName("Span column values round-trip exactly")]
+    public void SpanColumnValues_RoundTripExactly()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var uri = RepoUri.Parse("file:///test/span-columns.md")!;
+        var spanId = Guid.NewGuid();
+        var artifact = CreateTestArtifactWithSpans([
+            new Span
+            {
+                Id = spanId,
+                DocumentId = Guid.NewGuid(),
+                StartByte = 12345,
+                EndByte = 12400,
+                StartLine = 22,
+                StartColumn = 4,
+                EndLine = 24,
+                EndColumn = 18
+            }
+        ]);
+
+        var indexResult = db.IndexArtifact(uri, artifact);
+
+        var row = db.Read(
+            $"SELECT id, document_id, start_byte, end_byte, start_line, start_column, end_line, end_column FROM span WHERE id = '{spanId:D}'::UUID",
+            r => new
+            {
+                Id = r.GetGuid(0),
+                DocumentId = r.GetGuid(1),
+                StartByte = r.GetInt64(2),
+                EndByte = r.GetInt64(3),
+                StartLine = r.GetInt32(4),
+                StartColumn = r.GetInt32(5),
+                EndLine = r.GetInt32(6),
+                EndColumn = r.GetInt32(7)
+            }).Single();
+
+        row.Id.Should().Be(spanId);
+        row.DocumentId.Should().Be(indexResult.DocumentId);
+        row.StartByte.Should().Be(12345L);
+        row.EndByte.Should().Be(12400L);
+        row.StartLine.Should().Be(22);
+        row.StartColumn.Should().Be(4);
+        row.EndLine.Should().Be(24);
+        row.EndColumn.Should().Be(18);
+    }
+
+    [Test]
     [DisplayName("WriteTransaction recovers after write conflict and later writes succeed")]
     public void WriteTransaction_ConflictDoesNotPoisonLaterTransactions()
     {
@@ -1161,6 +1437,79 @@ public class DuckDbDataStoreTests
                 Uri = RepoUri.Parse("file:///test/doc.md"),
                 ArtifactId = artifactId,
                 Headline = "Test Document"
+            },
+            Children = [],
+            Spans = spans,
+            Edges = []
+        };
+    }
+
+    private static ParsedArtifact CreateTestArtifactWithLargeSpans(int spanCount)
+    {
+        var artifactId = Guid.NewGuid();
+        var docId = Guid.NewGuid();
+
+        var spans = new List<Span>(spanCount);
+        for (var i = 0; i < spanCount; i++)
+        {
+            var startByte = i * 100L;
+            spans.Add(new Span
+            {
+                Id = Guid.NewGuid(),
+                DocumentId = docId,
+                StartByte = startByte,
+                EndByte = startByte + 80,
+                StartLine = i + 1,
+                StartColumn = 1,
+                EndLine = i + 1,
+                EndColumn = 40
+            });
+        }
+
+        return new ParsedArtifact
+        {
+            Artifact = new RepoQL.Contracts.Models.Artifact
+            {
+                Id = artifactId,
+                Digest = $"sha256:{Guid.NewGuid():N}",
+                Size = spanCount * 100,
+                MediaType = SemanticMediaType.Parse("text/markdown")
+            },
+            DocumentNode = new Node
+            {
+                Id = docId,
+                Kind = "document",
+                Uri = RepoUri.Parse("file:///test/large-spans.md"),
+                ArtifactId = artifactId,
+                Headline = "Large Spans"
+            },
+            Children = [],
+            Spans = spans,
+            Edges = []
+        };
+    }
+
+    private static ParsedArtifact CreateTestArtifactWithSpans(IReadOnlyList<Span> spans)
+    {
+        var artifactId = Guid.NewGuid();
+        var docId = Guid.NewGuid();
+
+        return new ParsedArtifact
+        {
+            Artifact = new RepoQL.Contracts.Models.Artifact
+            {
+                Id = artifactId,
+                Digest = $"sha256:{Guid.NewGuid():N}",
+                Size = 100,
+                MediaType = SemanticMediaType.Parse("text/markdown")
+            },
+            DocumentNode = new Node
+            {
+                Id = docId,
+                Kind = "document",
+                Uri = RepoUri.Parse("file:///test/span-columns.md"),
+                ArtifactId = artifactId,
+                Headline = "Span Column Test"
             },
             Children = [],
             Spans = spans,
