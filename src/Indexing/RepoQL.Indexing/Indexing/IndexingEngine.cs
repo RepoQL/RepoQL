@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem;
@@ -18,6 +19,7 @@ using RepoQL.Indexing.Indexing.Pipelines.Classification;
 using RepoQL.Indexing.Indexing.Pipelines.Parsing;
 using RepoQL.Indexing.Indexing.State;
 using RepoQL.Metrics;
+using static RepoQL.Contracts.Embeddings.EmbeddingModeExtensions;
 
 namespace RepoQL.Indexing.Indexing;
 
@@ -166,6 +168,8 @@ public partial class IndexingEngine : IAsyncDisposable
     private IArtifactPruner ArtifactPruner { get; }
     internal IVectorIndexCoordinator VectorCoordinator { get; }
     private UriRegistry? UriRegistry { get; }
+    private readonly IEmbeddingProvider? _embeddingProvider;
+    private readonly EmbeddingMode _embeddingMode;
 
     // Diagnostic accessors (used by IndexingEngineDiagnosticsProvider)
     internal int ActiveIdleProcessingCount => Volatile.Read(ref _activeIdleProcessingCount);
@@ -331,7 +335,9 @@ public partial class IndexingEngine : IAsyncDisposable
         IndexingEngineOptions? options = null,
         ILogger<IndexingEngine>? logger = null,
         IndexingMetrics? metrics = null,
-        UriRegistry? uriRegistry = null)
+        UriRegistry? uriRegistry = null,
+        IEmbeddingProvider? embeddingProvider = null,
+        EmbeddingMode embeddingMode = EmbeddingMode.Full)
     {
         Database = db;
         Filter = filter ?? new RepoGitIgnoreFilter(".");
@@ -348,6 +354,8 @@ public partial class IndexingEngine : IAsyncDisposable
         Options = options ??  new IndexingEngineOptions();
         Logger = logger ?? NullLogger<IndexingEngine>.Instance;
         Metrics = metrics;
+        _embeddingProvider = embeddingProvider;
+        _embeddingMode = embeddingMode;
         IndexerQueue = new WorkQueue<IndexItem>(
             "IndexingQueue",
             Options.IndexingQueueSize,
@@ -616,6 +624,9 @@ public partial class IndexingEngine : IAsyncDisposable
                 if (result != PipelineResult.Success)
                     return;
 
+                currentStage = "structure_embedding";
+                await TryGenerateStructureEmbeddingAsync(item, cancellationToken).ConfigureAwait(false);
+
                 currentStage = "commit";
                 var commitTimer = Stopwatch.StartNew();
                 await Committer.CommitAsync(item, cancellationToken).ConfigureAwait(false);
@@ -752,6 +763,46 @@ public partial class IndexingEngine : IAsyncDisposable
         if (elapsed.TotalSeconds > SlowOperationThresholdSeconds)
         {
             LogSlowOperation(Logger, operation, item.Uri, elapsed.TotalSeconds, SlowOperationThresholdSeconds);
+        }
+    }
+
+    private async Task TryGenerateStructureEmbeddingAsync(IndexItem item, CancellationToken cancellationToken)
+    {
+        item.StructureEmbedding = null;
+
+        if (!_embeddingMode.IncludesStructure())
+            return;
+
+        if (_embeddingProvider is null || !_embeddingProvider.Enabled)
+            return;
+
+        if (!VectorIndexCoordinator.TryBuildStructureEmbedding(item, out var documentNodeId, out var uri, out var payload))
+            return;
+
+        try
+        {
+            var vector = await _embeddingProvider.EmbedPassageAsync(payload, cancellationToken).ConfigureAwait(false);
+            if (vector is null || vector.Length == 0)
+                return;
+
+            item.StructureEmbedding = new DocumentEmbedding(
+                documentNodeId,
+                documentNodeId,
+                ChunkIndex: 0,
+                DocumentEmbedding.TypeStructure,
+                uri,
+                DocumentEmbedding.ScopeDocument,
+                vector,
+                _embeddingProvider.Model,
+                _embeddingProvider.Dimension);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Structure embedding generation failed in hot path for {Uri}. Commit will continue without it.", item.Uri);
         }
     }
 

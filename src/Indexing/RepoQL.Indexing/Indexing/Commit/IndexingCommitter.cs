@@ -3,10 +3,12 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.State;
+using static RepoQL.Contracts.Embeddings.EmbeddingModeExtensions;
 
 namespace RepoQL.Indexing.Indexing.Commit;
 
@@ -55,6 +57,9 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
     private readonly DuckDbDataStore _db;
     private readonly IDocumentCatalog _catalog;
     private readonly ILogger<IndexingCommitter> _logger;
+    private readonly UriRegistry? _uriRegistry;
+    private readonly IEmbeddingProvider? _embeddingProvider;
+    private readonly EmbeddingMode _embeddingMode;
 
     // Batching infrastructure
     private readonly object _batchLock = new();
@@ -73,11 +78,17 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
     public IndexingCommitter(
         DuckDbDataStore db,
         IDocumentCatalog catalog,
-        ILogger<IndexingCommitter>? logger = null)
+        ILogger<IndexingCommitter>? logger = null,
+        UriRegistry? uriRegistry = null,
+        IEmbeddingProvider? embeddingProvider = null,
+        EmbeddingMode embeddingMode = EmbeddingMode.Full)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _logger = logger ?? NullLogger<IndexingCommitter>.Instance;
+        _uriRegistry = uriRegistry;
+        _embeddingProvider = embeddingProvider;
+        _embeddingMode = embeddingMode;
         _flushTimer = new Timer(OnFlushTimer, null, FlushIntervalMs, FlushIntervalMs);
     }
 
@@ -181,7 +192,20 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
             {
                 // Batch commit to database
                 var dbItems = batch.Select(p => (p.Item.Uri, p.Artifact)).ToList();
+                var structureEmbeddings = batch
+                    .Select(p => p.Item.StructureEmbedding)
+                    .Where(e => e is not null)
+                    .Select(e => e!)
+                    .ToList();
+
                 _db.IndexArtifactBatch(dbItems);
+
+                if (structureEmbeddings.Count > 0)
+                {
+                    _db.WriteEmbeddings(structureEmbeddings);
+                }
+
+                UpdateUriRegistryEmbeddingStatus(batch.Select(p => p.Item), structureEmbeddings);
 
                 // Update catalog and complete all items
                 foreach (var pending in batch)
@@ -257,7 +281,20 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
         {
             // Index as batch (bypasses the internal queue for explicit batch calls)
             var dbItems = batchItems.Select(b => (b.Uri, b.Artifact)).ToList();
+            var structureEmbeddings = batchItems
+                .Select(b => b.Item.StructureEmbedding)
+                .Where(e => e is not null)
+                .Select(e => e!)
+                .ToList();
+
             _db.IndexArtifactBatch(dbItems);
+
+            if (structureEmbeddings.Count > 0)
+            {
+                _db.WriteEmbeddings(structureEmbeddings);
+            }
+
+            UpdateUriRegistryEmbeddingStatus(batchItems.Select(b => b.Item), structureEmbeddings);
 
             // Update catalog for all items
             foreach (var (_, _, item) in batchItems)
@@ -275,6 +312,34 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
 
         return Task.CompletedTask;
     }
+
+    private void UpdateUriRegistryEmbeddingStatus(IEnumerable<IndexItem> items, IReadOnlyList<DocumentEmbedding> writtenEmbeddings)
+    {
+        if (_uriRegistry is null)
+            return;
+
+        foreach (var embedding in writtenEmbeddings)
+        {
+            if (RepoUri.TryParse(embedding.Uri, out var uri))
+            {
+                _uriRegistry.SetEmbedded(uri, 1);
+            }
+        }
+
+        if (!StructureEmbeddingsAreNotApplicable)
+            return;
+
+        foreach (var item in items)
+        {
+            if (item.StructureEmbedding is null)
+            {
+                _uriRegistry.SetEmbeddingNotApplicable(item.Uri);
+            }
+        }
+    }
+
+    private bool StructureEmbeddingsAreNotApplicable =>
+        !_embeddingMode.IncludesStructure() || _embeddingProvider is null || !_embeddingProvider.Enabled;
 
     public void Dispose()
     {

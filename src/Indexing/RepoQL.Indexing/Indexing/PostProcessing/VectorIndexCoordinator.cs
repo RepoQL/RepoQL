@@ -191,10 +191,16 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         var timer = Stopwatch.StartNew();
 
         // Pre-count candidates to keep progress reporting accurate.
-        var totalWorkItems = CountStructureEmbeddingCandidates(items, out var withRecords, out var withArtifacts, out var withDocNodes);
+        var totalWorkItems = CountStructureEmbeddingCandidates(
+            items,
+            out var withRecords,
+            out var withArtifacts,
+            out var withDocNodes,
+            out var alreadyEmbedded);
 
-        _logger.LogInformation("Structure embedding: {Total} items, {WithRecords} with records, {WithArtifacts} with artifacts, {WithDocNodes} with docNodes, {WorkItems} work items",
-            items.Count, withRecords, withArtifacts, withDocNodes, totalWorkItems);
+        _logger.LogInformation(
+            "Structure embedding: {Total} items, {WithRecords} with records, {WithArtifacts} with artifacts, {WithDocNodes} with docNodes, {AlreadyEmbedded} already embedded, {WorkItems} work items",
+            items.Count, withRecords, withArtifacts, withDocNodes, alreadyEmbedded, totalWorkItems);
 
         if (totalWorkItems == 0)
         {
@@ -218,6 +224,9 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         var batch = new List<StructureWorkItem>(StructureEmbeddingBatchSize);
         foreach (var item in items)
         {
+            if (IsAlreadyEmbedded(item.Uri))
+                continue;
+
             if (!TryBuildStructureWorkItem(item, out var work))
                 continue;
 
@@ -247,16 +256,18 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
     private readonly record struct StructureWorkItem(Guid DocId, Guid NodeId, string Uri, string Payload);
 
-    private static int CountStructureEmbeddingCandidates(
+    private int CountStructureEmbeddingCandidates(
         IReadOnlyList<IndexItem> items,
         out int withRecords,
         out int withArtifacts,
-        out int withDocNodes)
+        out int withDocNodes,
+        out int alreadyEmbedded)
     {
         var total = 0;
         withRecords = 0;
         withArtifacts = 0;
         withDocNodes = 0;
+        alreadyEmbedded = 0;
 
         foreach (var item in items)
         {
@@ -271,15 +282,45 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             if (docNode is not null) withDocNodes++;
 
             if (artifact is not null && docNode is not null)
+            {
+                if (IsAlreadyEmbedded(item.Uri))
+                {
+                    alreadyEmbedded++;
+                    continue;
+                }
+
                 total++;
+            }
         }
 
         return total;
     }
 
+    private bool IsAlreadyEmbedded(RepoUri uri)
+    {
+        if (_uriRegistry is null)
+            return false;
+
+        return _uriRegistry.TryGetValue(uri, out var entry)
+               && entry.EmbeddingStatus == EmbeddingStatus.Embedded;
+    }
+
     private static bool TryBuildStructureWorkItem(IndexItem item, out StructureWorkItem work)
     {
         work = default;
+        if (!TryBuildStructureEmbedding(item, out var documentNodeId, out var uri, out var payload))
+            return false;
+
+        work = new StructureWorkItem(documentNodeId, documentNodeId, uri, payload);
+        return true;
+    }
+
+    internal static bool TryBuildStructureEmbedding(IndexItem item, out Guid documentNodeId, out string uri, out string payload)
+    {
+        documentNodeId = default;
+        uri = item.Uri.ToString();
+        payload = string.Empty;
+
         var records = item.Records;
         var artifacts = records?.Artifacts;
         var artifact = artifacts is { Length: > 0 } ? artifacts[0] : null;
@@ -290,15 +331,15 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         if (docNode is null)
             return false;
 
-        var payload = BuildStructurePayload(item.Uri.ToString(), artifact.Headline, artifact.Structure);
+        payload = BuildStructurePayload(uri, artifact.Headline, artifact.Structure);
         if (string.IsNullOrWhiteSpace(payload))
             return false;
 
-        work = new StructureWorkItem(docNode.Id, docNode.Id, item.Uri.ToString(), payload);
+        documentNodeId = docNode.Id;
         return true;
     }
 
-    private static Node? FindDocumentNode(Node[]? nodes)
+    internal static Node? FindDocumentNode(Node[]? nodes)
     {
         if (nodes is null || nodes.Length == 0)
             return null;
@@ -391,7 +432,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         return documentEmbeddings.Count;
     }
 
-    private static string BuildStructurePayload(string uri, string? headline, string? structure)
+    internal static string BuildStructurePayload(string uri, string? headline, string? structure)
     {
         // Build payload: relative uri + headline + structure
         var relativeUri = uri;

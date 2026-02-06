@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
 using RepoQL.Indexing.Indexing.Pipelines.Analysis;
 using RepoQL.Indexing.Indexing.State;
@@ -97,6 +98,11 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     ///     Materialized graph records (artifacts, nodes, spans, edges)
     /// </summary>
     public Records? Records { get; set; }
+
+    /// <summary>
+    ///     Optional structure embedding generated in the hot path and persisted at commit time.
+    /// </summary>
+    public DocumentEmbedding? StructureEmbedding { get; set; }
 
     public T? Get<T>(string key) => _dictionaryImplementation.TryGetValue(key, out var value) 
         ? (T)value 

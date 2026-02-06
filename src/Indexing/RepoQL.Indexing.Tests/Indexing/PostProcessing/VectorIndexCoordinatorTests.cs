@@ -64,6 +64,37 @@ internal class VectorIndexCoordinatorTests
         counts[0].Should().Be(1);
     }
 
+    [Test]
+    [DisplayName("Skips structure embedding for files already marked as embedded")]
+    public async Task Given_AlreadyEmbeddedItem_When_GenerateStructureEmbeddingsAsync_Then_SkipsThatItem()
+    {
+        var provider = new RecordingEmbeddingProvider();
+        using var database = new DuckDbDataStore(path: null, embeddingProvider: provider, logger: NullLogger<DuckDbDataStore>.Instance);
+        var registry = new UriRegistry();
+
+        var alreadyEmbeddedUri = RepoUri.Parse("file:///repo/already-embedded.md");
+        registry.TryRegisterDiscovered(alreadyEmbeddedUri);
+        registry.SetEmbedded(alreadyEmbeddedUri, 1);
+
+        var coordinator = new VectorIndexCoordinator(
+            new FakeRefresher(),
+            database,
+            provider,
+            EmbeddingMode.StructureOnly,
+            NullLogger<VectorIndexCoordinator>.Instance,
+            registry);
+
+        var items = new[]
+        {
+            BuildItem("file:///repo/already-embedded.md", includeDocNode: true, includeArtifact: true),
+            BuildItem("file:///repo/new-item.md", includeDocNode: true, includeArtifact: true)
+        };
+
+        await coordinator.GenerateStructureEmbeddingsAsync(items, CancellationToken.None);
+
+        provider.EmbedCount.Should().Be(1, "already embedded files should be skipped during idle catch-up");
+    }
+
     private static IndexItem BuildItem(string uri, bool includeDocNode, bool includeArtifact)
     {
         var item = IndexingTestItemBuilder.ForMarkdown("sample.md").WithUri(uri).WithContent("text").Build();

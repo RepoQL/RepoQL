@@ -561,7 +561,10 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IDocumentCatalog>(),
-            sp.GetService<ILogger<IndexingCommitter>>()));
+            sp.GetService<ILogger<IndexingCommitter>>(),
+            sp.GetService<UriRegistry>(),
+            sp.GetRequiredService<IEmbeddingProvider>(),
+            sp.GetRequiredService<EmbeddingModeOptions>().Mode));
 
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CSharpParser>();
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CsProjParser>();
@@ -603,7 +606,9 @@ public static class RepoIndexerServiceCollectionExtensions
                 sp.GetService<IOptions<IndexingEngineOptions>>()?.Value,
                 sp.GetService<ILogger<IndexingEngine>>(),
                 sp.GetRequiredService<IndexingMetrics>(),
-                sp.GetService<UriRegistry>());
+                sp.GetService<UriRegistry>(),
+                sp.GetRequiredService<IEmbeddingProvider>(),
+                sp.GetRequiredService<EmbeddingModeOptions>().Mode);
 
             // Set static provider for UDFs (they can't use DI)
             var diagnosticsProvider = new RepoQL.Indexing.Indexing.IndexingEngineDiagnosticsProvider(engine);

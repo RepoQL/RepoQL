@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using FakeItEasy;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing;
@@ -235,6 +236,73 @@ public class IndexingEngineTests
         // Assert
         result.Should().Be(PipelineResult.Success);
         context.ShouldMatchPipeline(item, PipelineInvocationPlan.Success);
+    }
+
+    [Test]
+    [DisplayName("Generates structure embedding before commit when enabled")]
+    public async Task Given_HotPathStructureEmbeddingEnabled_When_IndexItemAsync_Then_CommitSeesStructureEmbedding()
+    {
+        var committer = A.Fake<IIndexingCommitter>();
+        IndexItem? committedItem = null;
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Invokes(call => committedItem = call.GetArgument<IndexItem>(0))
+            .Returns(Task.CompletedTask);
+
+        var embeddingProvider = new DeterministicEmbeddingProvider();
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithCommitter(committer);
+            builder.WithEmbeddingProvider(embeddingProvider);
+            builder.WithEmbeddingMode(EmbeddingMode.StructureOnly);
+        });
+
+        var item = IndexingTestItemFactory.CreateIndexItem();
+
+        A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                var parsedItem = call.GetArgument<IndexItem>(0)!;
+                var artifactId = Guid.NewGuid();
+                parsedItem.Records = new Records
+                {
+                    Artifacts =
+                    [
+                        new Contracts.Models.Artifact
+                        {
+                            Id = artifactId,
+                            Digest = "digest",
+                            Size = 4,
+                            MediaType = SemanticMediaType.Parse("text/markdown"),
+                            Headline = "Title",
+                            Structure = "- Section"
+                        }
+                    ],
+                    Nodes =
+                    [
+                        new Node
+                        {
+                            Id = Guid.NewGuid(),
+                            Kind = "document",
+                            Uri = parsedItem.Uri,
+                            ArtifactId = artifactId
+                        }
+                    ],
+                    Spans = [],
+                    Edges = [],
+                    Annotations = [],
+                    AnnotationSources = []
+                };
+
+                return Task.FromResult(PipelineResult.Success);
+            });
+
+        await context.Engine.IndexItemAsync(item, CancellationToken.None);
+
+        committedItem.Should().NotBeNull();
+        committedItem!.StructureEmbedding.Should().NotBeNull();
+        committedItem.StructureEmbedding!.EmbeddingType.Should().Be(DocumentEmbedding.TypeStructure);
+        committedItem.StructureEmbedding.Scope.Should().Be(DocumentEmbedding.ScopeDocument);
+        embeddingProvider.PassageCalls.Should().Be(1);
     }
 
     [Test]
@@ -908,6 +976,32 @@ public class IndexingEngineTests
             await engine.AnalysisQueue.WhenIdleAsync().WaitAsync(token);
             await engine.WaitForAsync(IndexingState.AllIdle, token);
         }
+    }
+
+    private sealed class DeterministicEmbeddingProvider : IEmbeddingProvider
+    {
+        public string Model => "test-model";
+        public int Dimension => 4;
+        public bool Enabled => true;
+        public int PassageCalls { get; private set; }
+
+        public Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default)
+            => Task.FromResult<float[]?>(null);
+
+        public Task<float[]?> EmbedPassageAsync(string text, CancellationToken cancellationToken = default)
+        {
+            PassageCalls++;
+            return Task.FromResult<float[]?>(new[] { 0.1f, 0.2f, 0.3f, 0.4f });
+        }
+
+        public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+            => Task.FromResult(Array.Empty<float[]?>());
+
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+            => Task.FromResult(Array.Empty<float[]?>());
+
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
+            => Task.FromResult(Array.Empty<float[]?>());
     }
 
     // === UriRegistry Integration Tests ===

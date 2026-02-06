@@ -3,6 +3,7 @@ using FakeItEasy;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing.Commit;
@@ -87,6 +88,84 @@ public class IndexingCommitterTests
         A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._)).MustNotHaveHappened();
     }
 
+    [Test]
+    [DisplayName("Writes structure embeddings in the same commit flush and marks URI embedded")]
+    public async Task Given_ItemWithStructureEmbedding_When_CommitAsync_Then_WritesEmbeddingAndUpdatesRegistry()
+    {
+        // Arrange
+        var item = await CreatePopulatedItemAsync("file:///repo/embedded.md");
+        var documentNode = item.Records!.Nodes.First(n => string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase));
+        item.StructureEmbedding = new DocumentEmbedding(
+            documentNode.Id,
+            documentNode.Id,
+            ChunkIndex: 0,
+            DocumentEmbedding.TypeStructure,
+            item.Uri.ToString(),
+            DocumentEmbedding.ScopeDocument,
+            new[] { 0.01f, 0.02f, 0.03f, 0.04f },
+            "test-model",
+            4);
+
+        using var db = new DuckDbDataStore(); // in-memory
+        var catalog = A.Fake<IDocumentCatalog>();
+        var registry = new UriRegistry();
+        registry.TryRegisterDiscovered(item.Uri);
+        using var committer = new IndexingCommitter(
+            db,
+            catalog,
+            NullLogger<IndexingCommitter>.Instance,
+            registry,
+            new EnabledEmbeddingProvider(),
+            EmbeddingMode.Full);
+
+        // Act
+        await committer.CommitAsync(item, CancellationToken.None);
+
+        // Assert
+        var counts = db.Read(
+            "SELECT COUNT(*) FROM document_embedding WHERE embedding_type = 'structure' AND uri = 'file:///repo/embedded.md'",
+            reader => reader.GetInt64(0));
+        counts.Should().ContainSingle();
+        counts[0].Should().Be(1);
+
+        registry.Should().ContainKey(item.Uri);
+        registry[item.Uri].EmbeddingStatus.Should().Be(EmbeddingStatus.Embedded);
+        registry[item.Uri].EmbeddedChunkCount.Should().Be(1);
+    }
+
+    [Test]
+    [DisplayName("Marks URI embedding as not applicable when structure embeddings are disabled")]
+    public async Task Given_EmbeddingModeNone_When_CommitAsync_Then_MarksEmbeddingNotApplicable()
+    {
+        // Arrange
+        var item = await CreatePopulatedItemAsync("file:///repo/not-applicable.md");
+
+        using var db = new DuckDbDataStore(); // in-memory
+        var catalog = A.Fake<IDocumentCatalog>();
+        var registry = new UriRegistry();
+        registry.TryRegisterDiscovered(item.Uri);
+        using var committer = new IndexingCommitter(
+            db,
+            catalog,
+            NullLogger<IndexingCommitter>.Instance,
+            registry,
+            embeddingProvider: null,
+            embeddingMode: EmbeddingMode.None);
+
+        // Act
+        await committer.CommitAsync(item, CancellationToken.None);
+
+        // Assert
+        registry.Should().ContainKey(item.Uri);
+        registry[item.Uri].EmbeddingStatus.Should().Be(EmbeddingStatus.NotApplicable);
+
+        var counts = db.Read(
+            "SELECT COUNT(*) FROM document_embedding WHERE embedding_type = 'structure' AND uri = 'file:///repo/not-applicable.md'",
+            reader => reader.GetInt64(0));
+        counts.Should().ContainSingle();
+        counts[0].Should().Be(0);
+    }
+
     private static async Task<IndexItem> CreatePopulatedItemAsync(string uri)
     {
         var item = IndexingTestItemBuilder.ForMarkdown().WithUri(uri).WithContent("# Title").Build();
@@ -130,5 +209,27 @@ public class IndexingCommitterTests
         });
 
         return item;
+    }
+
+    private sealed class EnabledEmbeddingProvider : IEmbeddingProvider
+    {
+        public string Model => "test-model";
+        public int Dimension => 4;
+        public bool Enabled => true;
+
+        public Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default)
+            => Task.FromResult<float[]?>(null);
+
+        public Task<float[]?> EmbedPassageAsync(string text, CancellationToken cancellationToken = default)
+            => Task.FromResult<float[]?>(null);
+
+        public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+            => Task.FromResult(Array.Empty<float[]?>());
+
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+            => Task.FromResult(Array.Empty<float[]?>());
+
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
+            => Task.FromResult(Array.Empty<float[]?>());
     }
 }

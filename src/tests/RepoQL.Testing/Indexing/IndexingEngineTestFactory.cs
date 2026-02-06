@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
@@ -47,6 +48,8 @@ public sealed class IndexingEngineTestBuilder
     private IndexingEngineOptions? _options;
     private ILogger<IndexingEngine>? _logger;
     private UriRegistry? _uriRegistry;
+    private IEmbeddingProvider? _embeddingProvider;
+    private EmbeddingMode _embeddingMode = EmbeddingMode.Full;
 
     public IndexingEngineTestBuilder WithDataStore(DuckDbDataStore db)
     {
@@ -132,6 +135,18 @@ public sealed class IndexingEngineTestBuilder
         return this;
     }
 
+    public IndexingEngineTestBuilder WithEmbeddingProvider(IEmbeddingProvider embeddingProvider)
+    {
+        _embeddingProvider = embeddingProvider;
+        return this;
+    }
+
+    public IndexingEngineTestBuilder WithEmbeddingMode(EmbeddingMode embeddingMode)
+    {
+        _embeddingMode = embeddingMode;
+        return this;
+    }
+
     internal IndexingEngineTestContext Build()
     {
         var classifier = _classifier ?? A.Fake<ClassificationPipeline>();
@@ -214,7 +229,9 @@ public sealed class IndexingEngineTestBuilder
             vectorCoordinator: vectorCoordinator,
             options: options,
             logger: logger,
-            uriRegistry: uriRegistry);
+            uriRegistry: uriRegistry,
+            embeddingProvider: _embeddingProvider,
+            embeddingMode: _embeddingMode);
 
         return new IndexingEngineTestContext(
             engine,
