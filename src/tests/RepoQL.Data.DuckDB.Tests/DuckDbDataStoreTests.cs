@@ -1,4 +1,6 @@
+using System.Reflection;
 using System.Text.Json.Nodes;
+using DuckDB.NET.Data;
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
@@ -322,6 +324,105 @@ public class DuckDbDataStoreTests
         rows[0].IsComposition.Should().Be(true);
         // composition_child_id should equal destination_node_id for composition edges
         rows[0].CompositionChildId.Should().Be(rows[0].DestinationNodeId);
+    }
+
+    [Test]
+    [DisplayName("WriteTransaction recovers after write conflict and later writes succeed")]
+    public void WriteTransaction_ConflictDoesNotPoisonLaterTransactions()
+    {
+        var databasePath = CreateTemporaryDatabasePath();
+
+        try
+        {
+            using var db = TestServiceCollectionExtensions.CreateTestDataStore(databasePath: databasePath);
+            db.ExecuteRaw("""
+                CREATE TABLE tx_conflict_test (
+                    id INTEGER PRIMARY KEY,
+                    value INTEGER NOT NULL
+                );
+                INSERT INTO tx_conflict_test VALUES (1, 0);
+                """);
+
+            var conflict = () => db.WriteTransaction((conn, tx) =>
+            {
+                ExecuteNonQuery(conn, tx, "UPDATE tx_conflict_test SET value = value + 1 WHERE id = 1;");
+
+                using var competingConnection = CreateSecondaryConnection(databasePath);
+                using var competingTx = competingConnection.BeginTransaction();
+                ExecuteNonQuery(competingConnection, competingTx, "UPDATE tx_conflict_test SET value = value + 10 WHERE id = 1;");
+                competingTx.Commit();
+            });
+
+            conflict.Should()
+                .Throw<DuckDBException>()
+                .Where(ex =>
+                    ex.Message.Contains("write-write conflict", StringComparison.OrdinalIgnoreCase) ||
+                    ex.Message.Contains("conflict on update", StringComparison.OrdinalIgnoreCase));
+
+            db.WriteTransaction((conn, tx) =>
+            {
+                ExecuteNonQuery(conn, tx, "INSERT INTO tx_conflict_test VALUES (2, 100);");
+            });
+
+            var rowCount = db.WriteTransaction((conn, tx) =>
+            {
+                ExecuteNonQuery(conn, tx, "UPDATE tx_conflict_test SET value = value + 1 WHERE id = 2;");
+                return ExecuteScalar<long>(conn, tx, "SELECT COUNT(*) FROM tx_conflict_test;");
+            });
+
+            rowCount.Should().Be(2);
+        }
+        finally
+        {
+            CleanupTemporaryDatabase(databasePath);
+        }
+    }
+
+    [Test]
+    [DisplayName("WriteTransaction<T> recovers from stale already-in-transaction state")]
+    public void WriteTransactionT_RecoversFromStaleAlreadyInTransactionState()
+    {
+        var databasePath = CreateTemporaryDatabasePath();
+        DuckDBTransaction? staleTx = null;
+
+        try
+        {
+            using var db = TestServiceCollectionExtensions.CreateTestDataStore(databasePath: databasePath);
+            db.ExecuteRaw("""
+                CREATE TABLE tx_state_test (
+                    id INTEGER PRIMARY KEY,
+                    value VARCHAR NOT NULL
+                );
+                INSERT INTO tx_state_test VALUES (1, 'initial');
+                """);
+
+            var primaryConnection = GetPrimaryConnection(db);
+            staleTx = primaryConnection.BeginTransaction();
+
+            // Simulate DuckDB auto-rollback at native layer while wrapper still tracks an active transaction object.
+            primaryConnection.Execute("ROLLBACK;");
+
+            var updatedValue = db.WriteTransaction((conn, tx) =>
+            {
+                ExecuteNonQuery(conn, tx, "UPDATE tx_state_test SET value = 'recovered' WHERE id = 1;");
+                return ExecuteScalar<string>(conn, tx, "SELECT value FROM tx_state_test WHERE id = 1;");
+            });
+
+            updatedValue.Should().Be("recovered");
+        }
+        finally
+        {
+            try
+            {
+                staleTx?.Dispose();
+            }
+            catch
+            {
+                // Ignore cleanup failures in test teardown.
+            }
+
+            CleanupTemporaryDatabase(databasePath);
+        }
     }
 
     private static ParsedArtifact CreateTestArtifact(string content = "test content")
@@ -1106,6 +1207,91 @@ public class DuckDbDataStoreTests
             Spans = [],
             Edges = edges
         };
+    }
+
+    private static DuckDBConnection CreateSecondaryConnection(string databasePath)
+    {
+        var connection = new DuckDBConnection($"Data Source={databasePath};ACCESS_MODE=READ_WRITE");
+        connection.Open();
+        return connection;
+    }
+
+    private static void ExecuteNonQuery(DuckDBConnection connection, DuckDBTransaction transaction, string sql)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
+    }
+
+    private static T ExecuteScalar<T>(DuckDBConnection connection, DuckDBTransaction transaction, string sql)
+    {
+        using var cmd = connection.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = sql;
+        var result = cmd.ExecuteScalar();
+        result.Should().NotBeNull();
+        return (T)Convert.ChangeType(result!, typeof(T));
+    }
+
+    private static DuckDBConnection GetPrimaryConnection(DuckDbDataStore db)
+    {
+        var field = typeof(DuckDbDataStore).GetField("_connection", BindingFlags.Instance | BindingFlags.NonPublic);
+        field.Should().NotBeNull("DuckDbDataStore should retain its primary DuckDBConnection");
+
+        var value = field!.GetValue(db);
+        value.Should().BeOfType<DuckDBConnection>();
+        return (DuckDBConnection)value!;
+    }
+
+    private static string CreateTemporaryDatabasePath()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "RepoQL", "DuckDbDataStoreTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        return Path.Combine(directory, "store.duckdb");
+    }
+
+    private static void CleanupTemporaryDatabase(string databasePath)
+    {
+        try
+        {
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+        catch
+        {
+            // Best-effort test cleanup.
+        }
+
+        var walPath = databasePath + ".wal";
+        try
+        {
+            if (File.Exists(walPath))
+            {
+                File.Delete(walPath);
+            }
+        }
+        catch
+        {
+            // Best-effort test cleanup.
+        }
+
+        var directory = Path.GetDirectoryName(databasePath);
+        if (string.IsNullOrWhiteSpace(directory)) return;
+
+        try
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+        catch
+        {
+            // Best-effort test cleanup.
+        }
     }
 
     #endregion

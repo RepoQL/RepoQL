@@ -491,7 +491,7 @@ public sealed class DuckDbDataStore : IDisposable
         DuckDBTransaction? tx = null;
         try
         {
-            tx = _connection.BeginTransaction();
+            tx = BeginTransactionWithRecovery("WriteTransaction");
             work(_connection, tx);
             tx.Commit();
             tx = null; // Mark as committed so we don't rollback
@@ -500,22 +500,26 @@ public sealed class DuckDbDataStore : IDisposable
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
         {
             TryRollback(tx);
+            tx = null;
             HandleFatalError(ex, "WriteTransaction");
             throw;
         }
         catch (DuckDBException ex) when (IsWriteConflictError(ex))
         {
             TryRollback(tx);
+            tx = null;
             HandleWriteConflict(ex, "WriteTransaction");
             throw;
         }
         catch (Exception)
         {
             TryRollback(tx);
+            tx = null;
             throw;
         }
         finally
         {
+            TryDispose(tx);
             _lock.Release();
         }
     }
@@ -537,6 +541,29 @@ public sealed class DuckDbDataStore : IDisposable
             _logger.LogError(rollbackEx, "[DuckDB] Transaction rollback failed - connection corrupted, marking for recovery");
             _databaseInvalidated = true;
         }
+        finally
+        {
+            TryDispose(tx);
+        }
+    }
+
+    private void TryDispose(DuckDBTransaction? tx)
+    {
+        if (tx is null) return;
+        try
+        {
+            tx.Dispose();
+        }
+        catch (DuckDBException ex) when (ex.ErrorType == DuckDBErrorType.Transaction && ex.ErrorCode == 10)
+        {
+            // "No transaction active" — expected when DuckDB already auto-rolled-back.
+            // Dispose internally calls Rollback which throws this; safe to ignore.
+        }
+        catch (Exception disposeEx)
+        {
+            _logger.LogError(disposeEx, "[DuckDB] Transaction dispose failed - connection may be corrupted, marking for recovery");
+            _databaseInvalidated = true;
+        }
     }
 
     public T WriteTransaction<T>(Func<DuckDBConnection, DuckDBTransaction, T> work)
@@ -553,7 +580,7 @@ public sealed class DuckDbDataStore : IDisposable
         DuckDBTransaction? tx = null;
         try
         {
-            tx = _connection.BeginTransaction();
+            tx = BeginTransactionWithRecovery("WriteTransaction<T>");
             var result = work(_connection, tx);
             tx.Commit();
             tx = null; // Mark as committed so we don't rollback
@@ -563,25 +590,91 @@ public sealed class DuckDbDataStore : IDisposable
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
         {
             TryRollback(tx);
+            tx = null;
             HandleFatalError(ex, "WriteTransaction<T>");
             throw;
         }
         catch (DuckDBException ex) when (IsWriteConflictError(ex))
         {
             TryRollback(tx);
+            tx = null;
             HandleWriteConflict(ex, "WriteTransaction<T>");
             throw;
         }
         catch (Exception)
         {
             TryRollback(tx);
+            tx = null;
             throw;
         }
         finally
         {
+            TryDispose(tx);
             _lock.Release();
         }
     }
+
+    private DuckDBTransaction BeginTransactionWithRecovery(string operation)
+    {
+        try
+        {
+            return _connection.BeginTransaction();
+        }
+        catch (InvalidOperationException ex) when (IsAlreadyInTransactionError(ex))
+        {
+            _logger.LogWarning(ex,
+                "[DuckDB] Connection reported an active transaction during {Operation}. Attempting stale transaction recovery.",
+                operation);
+
+            TryClearStaleTransactionState();
+
+            try
+            {
+                return _connection.BeginTransaction();
+            }
+            catch (InvalidOperationException retryEx) when (IsAlreadyInTransactionError(retryEx))
+            {
+                _logger.LogError(retryEx,
+                    "[DuckDB] Stale transaction recovery failed during {Operation}. Marking database invalidated and attempting full recovery.",
+                    operation);
+
+                _databaseInvalidated = true;
+                AttemptRecovery();
+                return _connection.BeginTransaction();
+            }
+        }
+    }
+
+    private void TryClearStaleTransactionState()
+    {
+        var activeTransaction = GetActiveTransactionReference();
+        if (activeTransaction is not null)
+        {
+            TryDispose(activeTransaction);
+        }
+
+        try
+        {
+            _connection.Execute("ROLLBACK;");
+        }
+        catch (DuckDBException ex) when (ex.ErrorType == DuckDBErrorType.Transaction && ex.ErrorCode == 10)
+        {
+            // No active transaction in native engine.
+        }
+        catch (Exception rollbackEx)
+        {
+            _logger.LogDebug(rollbackEx, "[DuckDB] ROLLBACK during stale transaction recovery failed");
+        }
+    }
+
+    private DuckDBTransaction? GetActiveTransactionReference()
+    {
+        var field = typeof(DuckDBConnection).GetField("_activeTransaction", BindingFlags.Instance | BindingFlags.NonPublic);
+        return field?.GetValue(_connection) as DuckDBTransaction;
+    }
+
+    private static bool IsAlreadyInTransactionError(InvalidOperationException ex)
+        => ex.Message.Contains("Already in a transaction", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Executes raw SQL statements (for macro registration from external sources).
