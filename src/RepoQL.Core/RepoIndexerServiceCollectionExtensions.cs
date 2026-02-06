@@ -607,7 +607,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 sp.GetService<ILogger<IndexingEngine>>(),
                 sp.GetRequiredService<IndexingMetrics>(),
                 sp.GetService<UriRegistry>(),
-                sp.GetRequiredService<IEmbeddingProvider>(),
+                sp.GetRequiredKeyedService<IEmbeddingProvider>("local"),
                 sp.GetRequiredService<EmbeddingModeOptions>().Mode);
 
             // Set static provider for UDFs (they can't use DI)
