@@ -30,7 +30,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 {
     private readonly DuckDbDataStore _db;
     private readonly RepositoryConfiguration repoConfig;
-    private readonly IInitialIndexingBarrier barrier;
     private readonly IIndexingCoordinator coordinator;
     private readonly IFileSystemImportService importService;
     private readonly ICompositeFileSystemManager _mountManager;
@@ -67,7 +66,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     public RepoQlServiceImpl(
         DuckDbDataStore db,
         RepositoryConfiguration repoConfig,
-        IInitialIndexingBarrier barrier,
         IIndexingCoordinator coordinator,
         IFileSystemImportService importService,
         ICompositeFileSystemManager mountManager,
@@ -83,7 +81,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
-        this.barrier = barrier ?? throw new ArgumentNullException(nameof(barrier));
         _embeddingProvider = embeddingProvider;
         _llmProvider = llmProvider;
         _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
@@ -308,7 +305,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     public override async Task<GetDocumentSummariesResponse> GetDocumentSummaries(GetDocumentSummariesRequest request, ServerCallContext context)
     {
-        await barrier.InitialScanCompleted.WaitAsync(context.CancellationToken).ConfigureAwait(false);
         var resp = new GetDocumentSummariesResponse();
         var kinds = request.Kinds.Count > 0 ? request.Kinds.Select(k => k.Trim()).ToArray() : ["outline"];
         var minSeverity = string.IsNullOrWhiteSpace(request.MinSeverity) ? null : request.MinSeverity.Trim();
@@ -390,8 +386,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     public override async Task<PreviewDocumentResponse> PreviewDocument(PreviewDocumentRequest request, ServerCallContext context)
     {
-        await barrier.InitialScanCompleted.WaitAsync(context.CancellationToken).ConfigureAwait(false);
-
         if (string.IsNullOrWhiteSpace(request.Uri))
             throw new RpcException(new Status(StatusCode.InvalidArgument, "uri is required."));
 
@@ -792,10 +786,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
         try
         {
-            _logger.LogDebug("[Import] Waiting for initial scan barrier...");
-            await barrier.InitialScanCompleted.WaitAsync(context.CancellationToken).ConfigureAwait(false);
-            _logger.LogDebug("[Import] Initial scan barrier passed ({ElapsedMs}ms)", sw.ElapsedMilliseconds);
-
             if (string.IsNullOrWhiteSpace(request.Uri))
             {
                 _logger.LogWarning("[Import] Rejected: empty URI");

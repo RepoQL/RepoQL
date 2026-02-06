@@ -36,11 +36,6 @@ public class RepoQlGrpcTests
         }
     }
 
-    private sealed class ImmediateBarrier : IInitialIndexingBarrier
-    {
-        public Task InitialScanCompleted { get; } = Task.CompletedTask;
-    }
-
     private static async Task<TestServer> StartServerAsync()
     {
         var repoPath = Path.Combine(Path.GetTempPath(), "repoql-tests", Guid.NewGuid().ToString("n"));
@@ -59,7 +54,6 @@ public class RepoQlGrpcTests
                 // Satisfy RepoQlServiceImpl DI
                 services.AddSingleton(new RepositoryConfiguration { Path = repoPath });
                 services.AddSingleton(new HostState { RepositoryPath = repoPath, ImplicitStart = false, StartedAtUtc = DateTime.UtcNow });
-                services.AddSingleton<IInitialIndexingBarrier, ImmediateBarrier>();
             });
             webBuilder.Configure(app =>
             {
