@@ -22,181 +22,120 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         DuckDB SQL for computation on the indexed repository.
         Use query when you need to COMPUTE (aggregate, filter, join, extract) - not just DISCOVER.
         </CONCEPT>
-        
+
         <DECISION>
         | Need | Tool |
         |------|------|
         | "What exists? Where is X?" | explore |
         | "Show me this file/symbol" | read |
         | "How many? Which ones? What pattern?" | **query** |
-
-        Query when: aggregating, complex filtering, joining results, regex extraction, graph traversal.
         </DECISION>
-        
+
         <VIEWS>
-        Primary views - cover 90% of queries. Start here:
-        
-        **Files** - documents with diagnostics
-        `uri, lang, lines, error_count, warning_count, headline, summary, structure`
+        Start here — these cover 90% of queries:
+
+        **Files** — `uri, lang, lines, error_count, warning_count, headline, summary, structure`
         ```sql
-        SELECT uri, error_count FROM Files WHERE lang = 'code.csharp' AND error_count > 0;
         SELECT lang, COUNT(*), SUM(lines) FROM Files GROUP BY lang;
         ```
-        
-        **Functions** - methods/constructors across languages
-        `name, qualified_name, declaring_type, signature, return_type, is_async, start_line`
+
+        **Functions** — `name, qualified_name, declaring_type, signature, return_type, is_async`
         ```sql
         SELECT name, signature FROM Functions WHERE declaring_type = 'UserService';
-        SELECT file_uri, name FROM Functions WHERE is_async AND return_type LIKE '%Task%';
-        ```
-        
-        **Types** - classes/interfaces/structs
-        `name, qualified_name, type_kind, namespace, extends, implements, start_line`
-        ```sql
-        SELECT name, file_uri FROM Types WHERE extends = 'BaseService';
-        SELECT name FROM Types WHERE type_kind = 'interface';
-        ```
-        
-        **Annotations** - errors/warnings/lint
-        `resolved_target_uri, severity, rule_id, message`
-        ```sql
-        SELECT resolved_target_uri, message FROM Annotations WHERE severity = 'error';
-        SELECT rule_id, COUNT(*) FROM Annotations GROUP BY rule_id ORDER BY 2 DESC;
-        ```
-        </VIEWS>
-        
-        <FUNCTIONS>
-        **search(q, k)** - semantic + lexical document search
-        ```sql
-        SELECT uri, score FROM search('authentication', k := 10);
         ```
 
-        **search_symbol(q, scope, kind_filter, k)** - find functions, classes, methods by name
+        **Types** — `name, qualified_name, type_kind, namespace, extends, implements`
+        ```sql
+        SELECT name, file_uri FROM Types WHERE extends = 'BaseService';
+        ```
+
+        **Annotations** — `resolved_target_uri, severity, rule_id, message`
+        ```sql
+        SELECT rule_id, COUNT(*) FROM Annotations GROUP BY rule_id ORDER BY 2 DESC;
+        ```
+
+        **annotations_for(uri, kinds, min_severity)** — diagnostics for one document
+        ```sql
+        SELECT rule_id, message FROM annotations_for('file:///src/api.cs', 'lint', 'warning');
+        ```
+        </VIEWS>
+
+        <FUNCTIONS>
+        **search(q, k, scope, boost_pattern, negative_pattern)** → uri, score — semantic + lexical
+        ```sql
+        SELECT uri, score FROM search('authentication', k := 10);
+        SELECT uri, score FROM search('parser', scope := 'file:///src/%', boost_pattern := 'markdown|yaml', negative_pattern := '(?i)test');
+        ```
+
+        **search_symbol(q, scope, kind_filter, k)** → symbol, uri — find functions, classes, methods by name
         ```sql
         SELECT symbol, uri FROM search_symbol('ValidateToken');
         SELECT symbol FROM search_symbol('Service', kind_filter := 'type', scope := 'src/**/*.cs');
         ```
-        
-        **snippet(uri, context)** - code preview around location
+
+        **snippet(uri, context)** → line_number, text, is_focus — code preview
         ```sql
         SELECT line_number, text FROM snippet('file:///src/api.cs#line=42', 3);
         ```
-        
-        **glob_files(pattern)** - path pattern matching
-        ```sql
-        SELECT uri FROM glob_files('src/**/*.cs;!src/**/tests/**');
-        ```
-        
-        **tree(uris_json, headlines_json, foldersOnly)** - format URIs as ASCII directory tree (headlines appended when provided)
-        ```sql
-        SELECT tree(
-            json_group_array(uri ORDER BY uri),
-            json_group_array(headline ORDER BY uri),
-            false
-        )
-        FROM Files
-        WHERE uri LIKE 'file:///src/%';
+        Fragments: `#line=42`, `#line=42,100`, `#symbol=ClassName.MethodName`, `#char=100,150`
 
-        SELECT tree(
-            json_group_array(uri ORDER BY uri),
-            json_group_array(headline ORDER BY uri),
-            true
-        )
-        FROM Files
-        WHERE uri LIKE 'file:///src/%';
-        ```
-        
-        **Composition with LATERAL** - expand each row
-        ```sql
-        SELECT s.uri, sn.text 
-        FROM search('config', k := 5) s, LATERAL snippet(s.uri, 2) sn 
-        WHERE sn.is_focus;
-        ```
+        **glob_files(pattern)** → uri — `SELECT uri FROM glob_files('src/**/*.cs;!**/tests/**');`
+        **related(uri, k)** → uri, score — find similar documents
+        **ask(context_json, question, max_tokens)** → text — LLM synthesis on query results
         </FUNCTIONS>
 
-        <MCP>
-        **External MCP tools** - call other MCP servers, results as SQL rows
+        <COMPOSITION>
+        Every operation returns a table. SQL joins and CTEs compose them.
+
+        **LATERAL** — expand each row with a correlated function:
         ```sql
-        SELECT * FROM mcp_tools();                    -- list available tools
-        SELECT * FROM mcp_tool_params();              -- list parameters with docs
-        SELECT * FROM context7_resolve_library_id(libraryname := 'react', query := 'hooks');
+        SELECT s.uri, sn.text
+        FROM search('config', k := 5) s, LATERAL snippet(s.uri, 2) sn
+        WHERE sn.is_focus;
         ```
 
-        **parse(text)** - convert CSV/TSV/YAML/JSON/JSONL to rows
+        **parse()** — inline CSV/JSON/YAML as ad-hoc lookup tables:
         ```sql
-        SELECT * FROM parse('id,name\n1,Alice\n2,Bob\n3,Charlie');
+        SELECT f.uri, o.team FROM Files f
+        JOIN parse('pattern,team\n**/Auth/**,Security\n**/Core/**,Platform') o
+        ON f.uri LIKE o.pattern;
         ```
 
-        See `help:///repoql/tools/query/functions/mcp.md` for full MCP documentation.
-        </MCP>
+        **Recursive CTEs** — graph traversal for dependencies:
+        ```sql
+        WITH RECURSIVE deps AS (
+          SELECT destination_node_id as id, 1 as depth FROM edge
+          WHERE source_node_id = @start AND type = 'IMPORTS'
+          UNION ALL
+          SELECT e.destination_node_id, d.depth + 1 FROM edge e
+          JOIN deps d ON e.source_node_id = d.id WHERE d.depth < 5
+        )
+        SELECT n.uri, f.lines FROM deps d
+        JOIN node n ON d.id = n.id JOIN Files f ON n.uri = f.uri;
+        ```
+
+        **Search + enrich** — join search results with metadata:
+        ```sql
+        SELECT s.uri, f.lang, f.lines FROM search('error', k := 20) s JOIN Files f ON s.uri = f.uri;
+        ```
+        </COMPOSITION>
 
         <MORE>
-        **Format-specific views** - prefixed by format (e.g., `markdown_headings`, `csharp_types`)
-        See `help:///repoql/tools/query/formats/*` for available views per format.
-        
-        **Complex format functions** - e.g., `xlsx()`, `xlsx_sheets()` for Excel
-        ```sql
-        SELECT * FROM xlsx('file:///data/report.xlsx');
-        ```
-        
-        **ask()** - LLM-powered question answering on query results
-        ```sql
-        SELECT ask((SELECT json_group_array(json_object('uri', uri)) FROM search('auth', k := 5)), 'How is auth implemented?');
-        ```
-        
-        **related()** - find similar documents
-        ```sql
-        SELECT uri, score FROM related('file:///src/Auth.cs', k := 10);
-        ```
+        Look up syntax at `help:///repoql/tools/query/` when needed:
 
-        **Git history** - `git_status()`, `git_diff()`, `git_blame()`, `git_hotspots`, `changes_related_to()`. See `help:///repoql/tools/query/functions/git.md`.
+        - **Git**: git_status(), git_diff(), git_blame(), git_hotspots, changes_related_to()
+        - **MCP**: mcp_tools(), mcp_tool_params() — call external MCP servers from SQL, results as rows
+        - **Data**: parse(text) for CSV/JSON/YAML; xlsx(), xlsx_sheets(), xlsx_union() for Excel
+        - **Format views**: markdown_headings, csharp_types, etc. — `help:///repoql/tools/query/formats/*`
+        - **Regex**: regexp_extract_all() for pattern extraction across codebase
+        - **DuckDB patterns**: QUALIFY, PIVOT/UNPIVOT, list comprehensions, window functions
+        - **Base tables** (prefer views): artifact, node, edge, span, annotation
         </MORE>
-        
-        <LEARNING>
-        Documentation is queryable at `help:///`. Discover more:
 
-        ```sql
-        SELECT uri, headline FROM Files WHERE uri LIKE 'help://%';
-        SELECT uri FROM Files WHERE uri LIKE 'help:///repoql/tools/query/%';
-        ```
-
-        Or: `explore(intent="Locate", uriGlob="help://**", keywords="xlsx excel functions")`
-
-        Key docs:
-        - `help:///quickstart.md` - SQL patterns, capsules
-        - `help:///repoql/tools/query/views/*` - view details
-        - `help:///repoql/tools/query/functions/*` - function signatures
-        - `help:///repoql/tools/query/formats/*` - format-specific features
-        </LEARNING>
-        
-        <ADVANCED>
-        **Graph traversal** - "what calls/uses this?"
-        ```sql
-        SELECT src.uri FROM edge e JOIN node src ON e.source_node_id = src.id
-        WHERE e.type = 'CALLS' AND e.destination_node_id = (SELECT id FROM node WHERE uri = @target);
-        ```
-        
-        **Regex extraction** - find patterns across codebase
-        ```sql
-        SELECT uri, regexp_extract_all(text_content, 'TODO:\s*(.+)', 1) AS todos
-        FROM Files f JOIN artifact a ON f.artifact_id = a.id WHERE text_content LIKE '%TODO:%';
-        ```
-        
-        **Base tables** (prefer views): artifact, node, edge, span, annotation
-        </ADVANCED>
-        
         <BUDGET>
-        Large results are auto-summarized when they exceed your token budget.
+        Large results auto-summarize when they exceed your token budget.
         Repeat the exact query to bypass summarization and get full results.
         </BUDGET>
-        
-        <REMEMBER>
-        - Views first: Files, Functions, Types, Annotations
-        - search() finds, snippet() shows context, LATERAL composes them
-        - Format-specific views/functions documented at help:///repoql/tools/query/formats/*
-        - Large results auto-summarize; repeat query for full output
-        - Docs at `help:///` - query or explore them to learn more
-        </REMEMBER>
         """;
 
     [McpServerTool(Name = "query", Title = "Query Repository", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(QueryInstructions)]

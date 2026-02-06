@@ -1,35 +1,32 @@
 # CLAUDE.md
 
-Guidance for Claude Code working on RepoQL.
+## What Is RepoQL
 
-## 60-Second Orientation
-
-**What is RepoQL?** Local, queryable knowledge graph for repositories. Files → DuckDB → SQL. Agents query structure without reading files.
-
-**The mindset:** This is ours. You're building the tool that makes you (and all future Claudes) smarter. Think like an owner.
+Local, queryable knowledge graph for repositories. Files → DuckDB → SQL. Agents query structure without reading files.
 
 **The bet:** Everyone else builds AI. We build conventional software that makes AI dramatically more capable.
 
-**The mental model:**
+**The aesthetic:** A beautifully crafted Japanese tool — simple, effective, intuitive, durable. LLM desire paths made manifest. If your first instinct doesn't work, it's our bug. If a feature needs a tutorial, it's the wrong shape.
+
 ```
 Files → IndexItem (flow object) → Pipeline → DuckDB (5 tables)
                                                   ↓
 Agents → explore/query/read tools → SQL + UDFs → Results
 ```
 
-**URI schemes** - everything is addressable:
-- `file:///src/Foo.cs#symbol=Bar` - code
-- `help:///quickstart.md` - embedded docs (queryable!)
-- `github://owner/repo` - imports
+**Everything is addressable:**
+- `file:///src/Foo.cs#symbol=Bar` — code
+- `help:///quickstart.md` — embedded docs (queryable)
+- `github://owner/repo` — imports
 
-**First action** - see the shape:
+**First action** — see the shape:
 ```
 read("file:///src/** => tree: folders", 1000)
 ```
 
 ---
 
-## Critical Constraints
+## Hard Constraints
 
 **Violating these causes corruption, test failures, or architectural drift.**
 
@@ -39,43 +36,47 @@ read("file:///src/** => tree: folders", 1000)
 | Schema frozen | Architectural drift | 5 tables (`artifact`, `node`, `edge`, `span`, `annotation`) never change. Extend via views/macros/UDFs |
 | TUnit not xUnit | Tests silently don't run | Use `[Test]` not `[Fact]`, `[Arguments]` not `[InlineData]` |
 | AwesomeAssertions | Compile errors | Not FluentAssertions (license). Same API: `using AwesomeAssertions;` |
+| Tests mandatory | Bugs in indexing are expensive | Especially for pipeline, format loaders, UDFs |
+| Errors never cascade | One bad file breaks trust | A single parse failure must never stop indexing |
+| Perfection > compatibility | We're pre-1.0 | Get it right rather than accumulate debt |
 
 ---
 
 ## Gotchas
 
-| Gotcha | Explanation |
-|--------|-------------|
+| Gotcha | Detail |
+|--------|--------|
 | Tests prefer `dotnet run` | TUnit uses Microsoft.Testing.Platform; `dotnet run -- --treenode-filter "..."` for filtering |
-| Embedded docs are queryable | `help:///` lives in database: `SELECT * FROM Files WHERE uri LIKE 'help://%'` |
 | Don't read files for structure | X-ray summaries (`headline`, `summary`, `structure`) are pre-computed on artifacts |
 | Spans: 1-based lines, 0-based chars | `#line=42` = line 42. `#char=100,150` = bytes [100,150) |
 | Mocking uses FakeItEasy | `A.Fake<T>()`, `A.CallTo(() => fake.Method(A<string>._)).Returns(...)` |
 | Current vs Future docs | Don't update future/ to match limitations. Don't update current/ with aspirations. The gap = work to do |
+| Class docs required | Purpose (why it exists) + Complexity (what's contained). The "and" test: rarely need "and" in a class's purpose |
 
 ---
 
-## Golden Rules
+## Finding Documentation
 
-- Schema stability - extend via SQL surface, never new tables
-- Standard formats at edges - SQL, URIs, MIME types, SARIF
-- Sensible defaults - must "just work" without config
-- Errors never cascade - one bad file never breaks the system
-- Single writer - all DB access through `DuckDbDataStore`
-- Abstractions prove value - no layers "just in case"
-- Perfection over backwards compatibility - we're pre-1.0, get it right
+RepoQL's own docs live at `help://` — queryable with the same tools you use on code. This is the primary documentation surface.
 
----
+```
+explore(intent="Locate", uriGlob="help://**", keywords="your question", tokenBudget=2000)
+read("help://** => tree: headlines", 2000)
+```
 
-## Before You Code
+**Key docs** (also available as files when `help://` is unavailable):
 
-1. **Use RepoQL to explore** - `explore(intent=Inventory, keywords="topic")` or read the tree
-2. **Read the north-star** - `docs/north-star/` for what you're building toward
-3. **Check extension patterns** - probably a view/macro/UDF, not new code
-4. **Tests are mandatory** - especially in indexing (bugs are expensive)
-5. **Class docs required** - Purpose (why it exists) + Complexity (what's contained, why, how sandwiched)
+| Topic | help:// | File path |
+|-------|---------|-----------|
+| Vision | `help:///` | `docs/north-star/README.md` |
+| Design | `help:///` | `docs/RepoqlDesign.md` |
+| Schema | `help:///` | `docs/Schema.md` |
+| Testing | `help:///` | `docs/knowledge/testing-guidelines.md` |
+| Format authoring | `help:///` | `docs/knowledge/format-excellence.md` |
+| Indexing pipeline | `help:///` | `docs/flows/current/indexing/` |
+| Failure modes | `help:///` | `docs/flows/current/*/failure-modes/` |
 
-The "and" test: you should rarely need "and" when describing a class's purpose.
+When you write docs for RepoQL, they become part of `help://` and are immediately queryable by all agents.
 
 ---
 
@@ -137,26 +138,13 @@ snippet('file:///path#line=42', 3)               -- Code preview
 
 | Task | Approach |
 |------|----------|
+| Find anything | `explore(intent=Locate, keywords="...")` or `search()` macro |
+| Understand structure | X-ray summaries on artifacts — don't read files |
 | Add file format | `src/Indexing/RepoQL.Indexing/PROCESSOR_GUIDE.md` |
 | Add SQL function | `[UdfClass]` + `[UdfMethod]` in `UdfImplementations/`, auto-discovered |
 | Add lint rule | Emit `annotation` with `kind='lint'`, `severity`, `rule_id`, `message` |
-| Find code | `explore(intent=Locate, keywords="...")` or `search()` macro |
-| Understand structure | X-ray summaries on artifacts, don't read files |
 | Propose architecture | Read `docs/RepoqlDesign.md` first. Extend via SQL surface |
-
----
-
-## Key Documentation
-
-| Document | When to read |
-|----------|--------------|
-| `docs/north-star/README.md` | Understanding the vision |
-| `docs/RepoqlDesign.md` | Before proposing features |
-| `docs/Schema.md` | Adding macros/UDFs/views |
-| `docs/knowledge/testing-guidelines.md` | Writing tests |
-| `docs/knowledge/format-excellence.md` | Adding file formats |
-| `docs/flows/current/indexing/` | Understanding the pipeline |
-| `docs/flows/current/*/failure-modes/` | Debugging issues |
+| Find docs | `explore(uriGlob="help://**", keywords="topic")` |
 
 ---
 
@@ -181,6 +169,4 @@ See `.claude/Skills/codex/SKILL.md` for templates.
 
 ---
 
-## One-Sentence Summary
-
-RepoQL indexes repos into a graph database so agents query structure without reading files; extend via SQL surface only; single writer; tests mandatory; think like an owner.
+RepoQL indexes repos into a graph database so agents query structure without reading files. Extend via SQL surface only. Single writer. Tests mandatory. Build the tool you'd never want to work without.
