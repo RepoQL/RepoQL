@@ -77,6 +77,8 @@ static bool ShouldPrewarmClient(string[] commandLineArgs)
             "serve" => false,
             "query" => true,
             "explore" => true,
+            "read" => true,
+            "import" => true,
             "reindex" => true,
             "mcp" => true,
             _ => false
