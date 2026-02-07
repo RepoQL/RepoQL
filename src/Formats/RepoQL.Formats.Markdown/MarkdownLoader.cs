@@ -798,21 +798,12 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
             .Where(h => h.Level == heading.Level + 1 &&
                         h.SectionSpan.StartLine >= heading.SectionSpan.StartLine &&
                         h.SectionSpan.EndLine <= heading.SectionSpan.EndLine)
-            .Take(4)
             .Select(h => h.Text.Trim())
             .ToList();
 
         if (childHeadings.Count > 0)
         {
-            var remaining = surface.Headings.Count(h =>
-                h.Level == heading.Level + 1 &&
-                h.SectionSpan.StartLine >= heading.SectionSpan.StartLine &&
-                h.SectionSpan.EndLine <= heading.SectionSpan.EndLine) - childHeadings.Count;
-
-            var subheadingText = string.Join(", ", childHeadings);
-            if (remaining > 0)
-                subheadingText += $", +{remaining} more";
-            parts.Add(subheadingText);
+            parts.Add(string.Join(", ", childHeadings));
         }
 
         // Count code blocks in this section
