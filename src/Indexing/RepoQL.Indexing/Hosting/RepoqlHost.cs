@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -27,6 +28,7 @@ public sealed class RepoqlHost : BackgroundService
     private readonly IUriFilter? _filter;
     private readonly UriRegistry? _uriRegistry;
     private readonly IOperationManager? _operationManager;
+    private readonly IndexingEngine? _engine;
     private readonly RepoqlHostOptions _options;
     private readonly ILogger<RepoqlHost> _logger;
 
@@ -66,6 +68,7 @@ public sealed class RepoqlHost : BackgroundService
             uriRegistry)
     {
         _engineLifetime = engine;
+        _engine = engine;
     }
 
     internal RepoqlHost(
@@ -208,6 +211,8 @@ public sealed class RepoqlHost : BackgroundService
     private async Task EnqueueFullScanAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("RepoqlHost starting full scan across mounted file systems.");
+        var scanTimer = Stopwatch.StartNew();
+        var fileCount = 0;
         var shouldTrack = _operationManager is not null && _uriRegistry is not null;
         var scope = shouldTrack ? new List<RepoUri>() : null;
         var shouldFilter = _options.DefaultIndexItemOptions.HasFlag(IndexItemOptions.OnlyIfNotExcluded);
@@ -234,12 +239,19 @@ public sealed class RepoqlHost : BackgroundService
 
             var artifact = new RawArtifact(resource.File, store);
             await _enqueue(artifact, _options.DefaultIndexItemOptions, cancellationToken).ConfigureAwait(false);
+            fileCount++;
         }
+
+        scanTimer.Stop();
 
         if (shouldTrack)
         {
             var repoPath = RepoLocator.FindRepoRoot();
-            _operationManager!.CreateOperation($"startup: {repoPath}", scope!);
+            var operation = _operationManager!.CreateOperation($"startup: {repoPath}", scope!);
+            operation.RecordMilestone("scan_complete", $"{fileCount} files, {scanTimer.Elapsed.TotalSeconds:F1}s");
+
+            if (_engine is not null)
+                _engine.MilestoneCallback = operation.RecordMilestone;
         }
     }
 

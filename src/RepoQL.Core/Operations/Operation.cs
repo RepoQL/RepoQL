@@ -102,6 +102,18 @@ public sealed class Operation : IOperation
         }
     }
 
+    public void RecordMilestone(string name, string? detail = null)
+    {
+        lock (_stateLock)
+        {
+            if (State != OperationState.Running)
+                return;
+
+            var message = detail is null ? name : $"{name}: {detail}";
+            _log.Add(new OperationEntry(DateTimeOffset.UtcNow, OperationEntry.TypeMilestone, message, null));
+        }
+    }
+
     private void Poll()
     {
         if (Interlocked.Exchange(ref _polling, 1) == 1)

@@ -45,4 +45,12 @@ public interface IOperation
     /// No-op if already in terminal state.
     /// </summary>
     void Cancel();
+
+    /// <summary>
+    /// Records a lifecycle milestone (scan_complete, hot_path_complete, ready, etc.).
+    /// Thread-safe. No-op if operation is not in Running state.
+    /// </summary>
+    /// <param name="name">Milestone name (e.g., "scan_complete", "hot_path_complete").</param>
+    /// <param name="detail">Optional detail (e.g., "1481 files, 1.2s").</param>
+    void RecordMilestone(string name, string? detail = null);
 }

@@ -36,4 +36,7 @@ public record OperationEntry(
 
     /// <summary>Entry type: operation cancelled.</summary>
     public const string TypeCancelled = "cancelled";
+
+    /// <summary>Entry type: lifecycle milestone (scan_complete, hot_path_complete, ready, etc.).</summary>
+    public const string TypeMilestone = "milestone";
 }

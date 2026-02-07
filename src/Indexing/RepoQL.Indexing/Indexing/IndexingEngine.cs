@@ -165,6 +165,14 @@ public partial class IndexingEngine : IAsyncDisposable
     private long _lastReleasedEpoch = long.MinValue;
     private int _activeIdleProcessingCount;
     private string? _lastError;
+    private long _firstEpochStartTicks;
+    private int _readyLogged;
+
+    /// <summary>
+    /// Optional callback invoked at each lifecycle milestone during idle processing.
+    /// Called from worker threads — must be thread-safe.
+    /// </summary>
+    public Action<string, string?>? MilestoneCallback { get; set; }
     private IArtifactPruner ArtifactPruner { get; }
     internal IVectorIndexCoordinator VectorCoordinator { get; }
     private UriRegistry? UriRegistry { get; }
@@ -535,6 +543,11 @@ public partial class IndexingEngine : IAsyncDisposable
     public long BeginNewEpoch()
     {
         var epoch = _epochTracker.BeginNewEpoch();
+
+        // Record wall-clock start time for the very first epoch (used for "indexing ready" log)
+        if (epoch == 1)
+            Interlocked.CompareExchange(ref _firstEpochStartTicks, Stopwatch.GetTimestamp(), 0);
+
         StartEpochActivity(epoch);
         return epoch;
     }
@@ -817,6 +830,18 @@ public partial class IndexingEngine : IAsyncDisposable
         }
     }
 
+    private void RecordMilestone(string name, string? detail = null)
+    {
+        try
+        {
+            MilestoneCallback?.Invoke(name, detail);
+        }
+        catch
+        {
+            // Milestone callbacks should never fail engine operations.
+        }
+    }
+
     /// <summary>
     /// Threshold in seconds for logging slow operation warnings.
     /// Operations exceeding this duration are logged to help identify bottlenecks.
@@ -869,6 +894,10 @@ public partial class IndexingEngine : IAsyncDisposable
     {
         // Complete the hot path epoch span before starting idle processing
         CompleteEpochActivity(args.Epoch, success: true);
+
+        var epochItems = _epochTracker.GetEpochTotalItems(args.Epoch);
+        var epochElapsed = _epochTracker.GetEpochElapsed(args.Epoch);
+        RecordMilestone("hot_path_complete", $"{epochItems} files, {epochElapsed.TotalSeconds:F1}s");
 
         Metrics?.IdleCycles.Add(1);
 
@@ -1084,6 +1113,8 @@ public partial class IndexingEngine : IAsyncDisposable
                     await DeleteStaleDocumentsAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
                     await VectorCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
                 }
+
+                RecordMilestone("prune", $"{prunedCount} removed, {pruneTimer.Elapsed.TotalMilliseconds:F1}ms");
             }
 
             // FM-009 fix: Wrap embedding phases in try-catch to prevent item loss.
@@ -1102,6 +1133,8 @@ public partial class IndexingEngine : IAsyncDisposable
                     {
                         { "phase", "structure_embedding" }
                     });
+
+                    RecordMilestone("structure_embeddings", $"{structureEmbedItems.Length} items, {structureTimer.Elapsed.TotalMilliseconds:F1}ms");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1126,6 +1159,8 @@ public partial class IndexingEngine : IAsyncDisposable
                     {
                         { "phase", "vector_refresh" }
                     });
+
+                    RecordMilestone("vector_refresh", $"{pendingItems.Length} items, {vectorTimer.Elapsed.TotalMilliseconds:F1}ms");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1145,6 +1180,8 @@ public partial class IndexingEngine : IAsyncDisposable
                     {
                         { "phase", "vss_index" }
                     });
+
+                    RecordMilestone("vss_index", $"{vssTimer.Elapsed.TotalMilliseconds:F1}ms");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -1165,6 +1202,7 @@ public partial class IndexingEngine : IAsyncDisposable
                 {
                     { "phase", "multi_file_analysis" }
                 });
+
             }
         }
         catch (Exception ex)
@@ -1189,6 +1227,14 @@ public partial class IndexingEngine : IAsyncDisposable
                 Metrics?.EpochSize.Record(totalItems);
                 Metrics?.EpochDuration.Record(epochTimer.Elapsed.TotalMilliseconds);
                 Metrics?.EpochsCompleted.Add(epochs.Count); // Count all consolidated epochs
+
+                // Record "ready" milestone once — the first time idle processing completes after startup
+                var startTicks = Interlocked.Read(ref _firstEpochStartTicks);
+                if (startTicks > 0 && Interlocked.Exchange(ref _readyLogged, 1) == 0)
+                {
+                    var totalElapsed = Stopwatch.GetElapsedTime(startTicks);
+                    RecordMilestone("ready", $"{totalItems} files, {totalElapsed.TotalSeconds:F1}s");
+                }
             }
 
             // Clear peak tracking for all processed epochs
@@ -1563,6 +1609,7 @@ public partial class IndexingEngine : IAsyncDisposable
         private long _currentEpoch;
         private readonly Dictionary<long, int> _pendingByEpoch = new();
         private readonly Dictionary<long, int> _peakByEpoch = new();
+        private readonly Dictionary<long, long> _epochStartTicks = new();
         private readonly object _lock = new();
 
         public long CurrentEpoch => Interlocked.Read(ref _currentEpoch);
@@ -1592,6 +1639,10 @@ public partial class IndexingEngine : IAsyncDisposable
                 _pendingByEpoch.TryGetValue(epoch, out var count);
                 var newCount = count + 1;
                 _pendingByEpoch[epoch] = newCount;
+
+                // Record epoch start time on first item
+                if (count == 0)
+                    _epochStartTicks[epoch] = Stopwatch.GetTimestamp();
 
                 // Track peak for this epoch
                 _peakByEpoch.TryGetValue(epoch, out var peak);
@@ -1633,6 +1684,19 @@ public partial class IndexingEngine : IAsyncDisposable
         }
 
         /// <summary>
+        /// Gets the elapsed time since the first item was enqueued for this epoch.
+        /// </summary>
+        public TimeSpan GetEpochElapsed(long epoch)
+        {
+            lock (_lock)
+            {
+                return _epochStartTicks.TryGetValue(epoch, out var startTicks)
+                    ? Stopwatch.GetElapsedTime(startTicks)
+                    : TimeSpan.Zero;
+            }
+        }
+
+        /// <summary>
         /// Clears peak tracking for completed epochs to prevent memory leaks.
         /// Call after epoch metrics are recorded.
         /// </summary>
@@ -1641,6 +1705,7 @@ public partial class IndexingEngine : IAsyncDisposable
             lock (_lock)
             {
                 _peakByEpoch.Remove(epoch);
+                _epochStartTicks.Remove(epoch);
             }
         }
     }
