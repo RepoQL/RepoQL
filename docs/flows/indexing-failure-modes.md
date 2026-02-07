@@ -2,6 +2,25 @@
 
 This document catalogs failure modes that can cause indexing to never complete. Each failure mode includes the root cause, detection difficulty, and potential mitigations.
 
+## Status Summary (as of 2026-02-05)
+
+| FM | Issue | Status |
+|----|-------|--------|
+| FM-001 | Stuck Item Blocks Pipeline | ✅ Mitigated |
+| FM-002 | Operations Without Timeouts | ✅ Mitigated |
+| FM-003 | Epoch Counter Imbalance | ⚠️ Low risk |
+| FM-004 | WaitForIdleAsync Blocks Forever | ✅ Mitigated |
+| FM-005 | Orphaned Epoch Items | ✅ Mitigated |
+| FM-006 | Worker Attrition | ✅ Mitigated |
+| FM-007 | ProcessIdleEpochsAsync Death | ✅ Mitigated |
+| FM-008 | Empty Epoch Skips Pruning | ⚠️ Partial (logging only) |
+| FM-009 | Embedding Failure Item Loss | ⚠️ Partial (items survive, no retry) |
+| FM-010 | Embedding Starvation | ✅ Mitigated |
+
+**Remaining work:**
+- FM-008: Separate pruning from item processing to handle empty epochs during reindex
+- FM-009: Implement retry queue for failed embedding epochs
+
 ---
 
 ## FM-001: Stuck Item Blocks Entire Pipeline ✅ MITIGATED
@@ -172,11 +191,15 @@ Any of these hangs → FM-001 (worker stuck) → entire pipeline stalls.
 
 ---
 
-## FM-003: Epoch Counter Imbalance Prevents Idle
+## FM-003: Epoch Counter Imbalance Prevents Idle ⚠️ LOW RISK
 
-**Severity**: High
+**Severity**: High → **Low Risk**
 **Likelihood**: Low (requires code bug)
 **Detection**: Very Hard (counter mismatch not logged)
+
+> **Status**: No explicit staleness detection implemented, but risk is significantly reduced by
+> FM-001's per-item timeout (stuck items eventually complete) and FM-006's worker exception handling
+> (workers no longer die silently). The main scenarios that would cause imbalance are now covered.
 
 ### Description
 
@@ -226,11 +249,16 @@ If an item is enqueued but never processed (queue corruption, worker death), the
 
 ---
 
-## FM-004: WaitForIdleAsync Blocks Forever When Worker Stuck
+## FM-004: WaitForIdleAsync Blocks Forever When Worker Stuck ✅ MITIGATED
 
-**Severity**: Critical
+**Severity**: Critical → **Mitigated**
 **Likelihood**: High (directly caused by FM-001)
 **Detection**: Easy (caller never returns) but root cause hard
+
+> **Resolution**: `WaitForStageCompleteAsync` now checks the timeout **inside** the polling loop,
+> not after `WaitForAsync` returns. Progress detection resets the timer when queue depth changes.
+> Additional check for `ActiveIdleProcessingCount > 0` handles idle processing scenarios.
+> Polling interval prevents tight spinning while ensuring the timeout is always enforced.
 
 ### Description
 
@@ -375,11 +403,16 @@ All callers of `WaitForIdleAsync` hang:
 
 ---
 
-## FM-005: Orphaned Epoch Items Block WaitForPipelineAsync
+## FM-005: Orphaned Epoch Items Block WaitForPipelineAsync ✅ MITIGATED
 
-**Severity**: Critical
+**Severity**: Critical → **Mitigated**
 **Likelihood**: High (common during active development with file watcher)
 **Detection**: Medium (pending count stays non-zero)
+
+> **Resolution**: `OnHotPathIdle` now implements catch-up logic (mitigation #2). Instead of only
+> enqueuing `args.Epoch`, it iterates over ALL epochs in `_pendingStructureEmbeddings.Keys` and
+> enqueues each one. This handles the race condition where epoch N completes while N+1 is processing.
+> Additionally, `ReleaseConsolidatedAnalysisAsync` collects items from ALL epochs in a batch.
 
 ### Description
 
@@ -645,11 +678,16 @@ The item is marked complete even when the worker dies. But:
 
 ---
 
-## FM-007: ProcessIdleEpochsAsync Silent Death
+## FM-007: ProcessIdleEpochsAsync Silent Death ✅ MITIGATED
 
-**Severity**: Critical
+**Severity**: Critical → **Mitigated**
 **Likelihood**: Low (requires early failure)
-**Detection**: Very Hard (fire-and-forget task, no health check)
+**Detection**: Very Hard → **Medium** (now logged on fault)
+
+> **Resolution**: Eager exception observation implemented via `ContinueWith` with
+> `TaskContinuationOptions.OnlyOnFaulted`. When the task faults, it logs immediately at
+> `LogCritical` level rather than waiting for shutdown. The death is no longer silent.
+> Note: Automatic restart and health metrics are not implemented - only logging.
 
 ### Description
 
@@ -760,11 +798,16 @@ ProcessIdleEpochsAsync dies
 
 ---
 
-## FM-008: Empty Epoch Skips Pruning During Reindex
+## FM-008: Empty Epoch Skips Pruning During Reindex ⚠️ PARTIAL
 
 **Severity**: High
 **Likelihood**: Low (requires all items to fail)
-**Detection**: Medium (pruned count = 0 in logs)
+**Detection**: Medium → **Easy** (explicit warning log added)
+
+> **Partial Mitigation**: Debug logging now explicitly warns when pruning is skipped due to
+> empty epochs during reindex: "If this occurs during reindex, stale documents may not be pruned."
+> However, the underlying issue remains - pruning still does not run for empty epochs.
+> The recommended fix (separate pruning from item processing, track enumerated URIs) is not implemented.
 
 ### Description
 
@@ -876,11 +919,19 @@ Scenario: Corrupt repository
 
 ---
 
-## FM-009: Embedding Provider Failure Causes Item Loss
+## FM-009: Embedding Provider Failure Causes Item Loss ⚠️ PARTIAL
 
-**Severity**: High
+**Severity**: High → **Medium**
 **Likelihood**: Medium (network issues, API rate limits, provider outages)
 **Detection**: Medium (error logged, but item loss is silent)
+
+> **Partial Mitigation**: Embedding phases now have individual try-catch blocks in
+> `ReleaseConsolidatedAnalysisAsync`. Structure embedding, vector refresh, and VSS index refresh
+> are each wrapped separately. Multi-file analysis enqueue always runs regardless of embedding
+> failures. Items are no longer completely lost - they proceed to analysis even if embeddings fail.
+>
+> **Remaining gap**: No retry queue for failed epochs. Embeddings that fail are simply missing
+> until the file changes again. Circuit breaker and fallback embeddings are not implemented.
 
 ### Description
 
