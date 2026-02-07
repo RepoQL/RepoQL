@@ -53,6 +53,7 @@ The harness exposes both under a unified MCP interface. Claude doesn't need to k
 Host state?
 ├── ready     → Forward to host
 ├── starting  → Wait briefly, then forward or fail
+├── building  → Fail with "building" context
 ├── deploying → Fail with "deploying" context
 └── crashed   → Fail with crash context
 ```
@@ -71,7 +72,22 @@ Host state?
 
 Wait threshold: ~5 seconds. Short enough to not hide problems, long enough to cover normal startup.
 
-### 3c. Deploying State - Fail Fast
+### 3c. Building State - Fail Fast
+**Actor**: Harness
+**Action**: Returns immediately with building context
+**Output**: Error with retry guidance
+**Failure**: None - this is intentional behavior
+
+```json
+{
+  "error": "host_building",
+  "message": "RepoQL is rebuilding. Retry in ~15 seconds.",
+  "retry_after_ms": 15000,
+  "build_started_at": "2026-02-02T12:00:00Z"
+}
+```
+
+### 3d. Deploying State - Fail Fast
 **Actor**: Harness
 **Action**: Returns immediately with deploying context
 **Output**: Error with retry guidance
@@ -80,13 +96,13 @@ Wait threshold: ~5 seconds. Short enough to not hide problems, long enough to co
 ```json
 {
   "error": "host_deploying",
-  "message": "RepoQL is restarting after deploy. Retry in ~10 seconds.",
-  "retry_after_ms": 10000,
+  "message": "RepoQL is being deployed. Retry in ~30 seconds.",
+  "retry_after_ms": 30000,
   "deploy_started_at": "2026-02-02T12:00:00Z"
 }
 ```
 
-### 3d. Crashed State - Fail Fast
+### 3e. Crashed State - Fail Fast
 **Actor**: Harness
 **Action**: Returns immediately with crash context
 **Output**: Error with crash details and suggested actions
@@ -165,11 +181,14 @@ flowchart TD
     J -->|No| K[Fail: starting timeout]
     K --> R
 
-    D -->|deploying| L[Fail: deploying]
+    D -->|building| L[Fail: building]
     L --> R
 
-    D -->|crashed| M[Fail: crashed]
+    D -->|deploying| M[Fail: deploying]
     M --> R
+
+    D -->|crashed| N[Fail: crashed]
+    N --> R
 ```
 
 ## State Transitions
@@ -181,13 +200,18 @@ stateDiagram-v2
     starting --> ready: Health check passes
     starting --> crashed: Startup fails
 
+    ready --> building: build() called
     ready --> deploying: deploy() called
     ready --> crashed: Unexpected exit
 
-    deploying --> starting: New host launching
-    deploying --> crashed: Deploy fails
+    building --> starting: Build succeeds, host launching
+    building --> crashed: Build fails (after restart attempt)
+
+    deploying --> starting: Deploy succeeds, host launching
+    deploying --> crashed: Deploy fails (after restart attempt)
 
     crashed --> starting: restart() called
+    crashed --> building: build() called
     crashed --> deploying: deploy() called
 ```
 
@@ -197,8 +221,9 @@ stateDiagram-v2
 |-------|------------|---------|--------|
 | `ready` (timeout) | `host_timeout` | "Host didn't respond" | Check status first |
 | `starting` | `host_starting` | "Host is starting" | Auto-wait, then retry |
-| `deploying` | `host_deploying` | "Deploy in progress" | Wait for completion |
-| `crashed` | `host_crashed` | "Host crashed" | Need restart/deploy |
+| `building` | `host_building` | "Build in progress" | Wait ~15 seconds |
+| `deploying` | `host_deploying` | "Deploy in progress" | Wait ~30 seconds |
+| `crashed` | `host_crashed` | "Host crashed" | Need restart/deploy/build |
 
 ## Timeout Handling
 
@@ -246,6 +271,6 @@ The harness should be invisible in timing for normal operations.
 
 ## Related
 
-- Build-Deploy-Activate flow (causes `deploying` state)
+- Build-Deploy-Activate flow (causes `building` or `deploying` state)
 - Unexpected Exit flow (causes `crashed` state)
 - Telemetry Query flow (uses request_id for correlation)

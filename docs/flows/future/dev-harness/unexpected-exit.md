@@ -91,9 +91,10 @@ Tool calls received after crash return:
 **Failure**: None - waiting is the correct behavior
 
 The agent can:
-- Call `harness.restart()` to bring host back up
+- Call `harness.restart()` to bring host back up (same code)
+- Call `harness.build()` to rebuild and restart (if code was changed)
+- Call `harness.deploy()` to publish and replace (full deployment)
 - Call `harness.logs()` to investigate further
-- Call `harness.deploy()` to rebuild with a fix
 - Ask the human for help
 
 ## Termination
@@ -142,8 +143,9 @@ Flow completes when:
 
   "actions": {
     "restart": "harness.restart()",
-    "investigate": "harness.logs({ crash_id: 'crash_abc123' })",
-    "rebuild": "harness.deploy()"
+    "rebuild": "harness.build()",
+    "redeploy": "harness.deploy()",
+    "investigate": "harness.logs({ crash_id: 'crash_abc123' })"
   }
 }
 ```
@@ -221,6 +223,7 @@ sequenceDiagram
 | Scenario | Exit Code | Harness Requested? | Classification |
 |----------|-----------|-------------------|----------------|
 | `harness.restart()` | 0 | Yes | Expected |
+| `harness.build()` | 0 | Yes | Expected |
 | `harness.deploy()` | 0 | Yes | Expected |
 | Host calls `Environment.Exit(0)` | 0 | No | **Unexpected** |
 | Unhandled exception | 1 | No | **Unexpected** |

@@ -272,6 +272,7 @@ This enables: "Show me everything about that request that failed."
 | Harness state | Telemetry available? |
 |---------------|---------------------|
 | Host ready | Yes - live data |
+| Host building | Yes - historical data |
 | Host deploying | Yes - historical data |
 | Host crashed | Yes - includes crash context |
 | Host starting | Yes - historical data |
