@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics;
 using System.Text;
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
@@ -114,6 +115,10 @@ public static class DuckDbDataStoreExtensions
         return store.WriteTransaction((conn, tx) =>
         {
             var results = new List<IndexResult>(items.Count);
+            var sw = new Stopwatch();
+            long cleanupTicks = 0, upsertArtifactTicks = 0, upsertDocTicks = 0, insertContentTicks = 0;
+            int totalSpans = 0, totalNodes = 0, totalEdges = 0, updateCount = 0;
+
             foreach (var (uri, artifact) in items)
             {
                 // 1. Check if this is an update
@@ -123,17 +128,24 @@ public static class DuckDbDataStoreExtensions
                 // 2. If updating, clean up old content BEFORE upserting (handles ID changes)
                 if (existingDoc is not null)
                 {
+                    sw.Restart();
                     CleanupDocumentContent(conn, tx, existingDoc.Id);
+                    cleanupTicks += sw.ElapsedTicks;
+                    updateCount++;
                 }
 
                 // 3. Upsert artifact
+                sw.Restart();
                 var savedArtifact = UpsertArtifact(conn, tx, artifact.Artifact);
+                upsertArtifactTicks += sw.ElapsedTicks;
 
                 // 4. Create document node with artifact ID
                 var docNode = artifact.DocumentNode with { ArtifactId = savedArtifact.Id };
 
                 // 5. Upsert document
+                sw.Restart();
                 var savedDoc = UpsertDocumentByUri(conn, tx, uri, docNode, store.Logger);
+                upsertDocTicks += sw.ElapsedTicks;
 
                 // 6. Remap children with correct artifact IDs
                 var children = artifact.Children.Select(c =>
@@ -146,10 +158,28 @@ public static class DuckDbDataStoreExtensions
                 // 8. Remap edges with scope document ID
                 var edges = artifact.Edges.Select(e => e with { ScopeDocumentId = savedDoc.Id }).ToList();
 
+                totalSpans += spans.Count;
+                totalNodes += children.Count;
+                totalEdges += edges.Count;
+
                 // 9. Insert new document content
+                sw.Restart();
                 InsertDocumentContent(conn, tx, children, spans, edges, store.Logger);
+                insertContentTicks += sw.ElapsedTicks;
 
                 results.Add(new IndexResult(savedDoc.Id, isUpdate));
+            }
+
+            if (store.Logger?.IsEnabled(LogLevel.Debug) == true)
+            {
+                var freq = (double)Stopwatch.Frequency / 1000.0;
+                store.Logger.LogDebug(
+                    "[DuckDB] Batch breakdown ({Count} items, {Updates} updates): " +
+                    "cleanup={CleanupMs:F1}ms, artifact_upsert={ArtifactMs:F1}ms, doc_upsert={DocMs:F1}ms, " +
+                    "insert_content={ContentMs:F1}ms (spans={Spans}, nodes={Nodes}, edges={Edges})",
+                    items.Count, updateCount,
+                    cleanupTicks / freq, upsertArtifactTicks / freq, upsertDocTicks / freq,
+                    insertContentTicks / freq, totalSpans, totalNodes, totalEdges);
             }
 
             return results;

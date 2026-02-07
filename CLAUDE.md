@@ -72,7 +72,7 @@ read("help://** => tree: headlines", 2000)
 | Design | `help:///` | `docs/RepoqlDesign.md` |
 | Schema | `help:///` | `docs/Schema.md` |
 | Testing | `help:///` | `docs/knowledge/testing-guidelines.md` |
-| Format authoring | `help:///` | `docs/knowledge/format-excellence.md` |
+| Format vision | `help:///` | `docs/north-star/formats.md` |
 | Indexing pipeline | `help:///` | `docs/flows/current/indexing/` |
 | Failure modes | `help:///` | `docs/flows/current/*/failure-modes/` |
 

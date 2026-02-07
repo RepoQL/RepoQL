@@ -198,15 +198,21 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
                     .Select(e => e!)
                     .ToList();
 
+                var dbSw = Stopwatch.StartNew();
                 _db.IndexArtifactBatch(dbItems);
+                var dbMs = dbSw.Elapsed.TotalMilliseconds;
 
+                var embedMs = 0.0;
                 if (structureEmbeddings.Count > 0)
                 {
+                    dbSw.Restart();
                     _db.WriteEmbeddings(structureEmbeddings);
+                    embedMs = dbSw.Elapsed.TotalMilliseconds;
                 }
 
                 UpdateUriRegistryEmbeddingStatus(batch.Select(p => p.Item), structureEmbeddings);
 
+                dbSw.Restart();
                 // Update catalog and complete all items
                 foreach (var pending in batch)
                 {
@@ -221,9 +227,13 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
                     _catalog.ApplyUpsert(entry);
                     pending.Completion.TrySetResult();
                 }
+                var catalogMs = dbSw.Elapsed.TotalMilliseconds;
 
-                _logger.LogDebug("Committed batch of {Count} items in {ElapsedMs:F1}ms ({PerItem:F1}ms/item)",
-                    batch.Count, sw.Elapsed.TotalMilliseconds, sw.Elapsed.TotalMilliseconds / batch.Count);
+                _logger.LogDebug(
+                    "Committed batch of {Count} items in {ElapsedMs:F1}ms ({PerItem:F1}ms/item) " +
+                    "[db={DbMs:F1}ms, embed={EmbedMs:F1}ms, catalog={CatalogMs:F1}ms]",
+                    batch.Count, sw.Elapsed.TotalMilliseconds, sw.Elapsed.TotalMilliseconds / batch.Count,
+                    dbMs, embedMs, catalogMs);
             }
             catch (Exception ex)
             {
