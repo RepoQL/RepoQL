@@ -163,9 +163,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         }
 
         // Check orientation
-        var nudge = sessionOrientation.CheckOrientation("query", null);
-        if (nudge != null)
-            return nudge;
+        var orientationFooter = sessionOrientation.CheckOrientation(null);
 
         try
         {
@@ -213,7 +211,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
                 result.ExecutionTimeMs);
             var tokens = TokenEstimator.EstimateTokens(output);
             var footer = RepresentationFormatter.FormatStatusFooter(status, tokens);
-            return $"{output}\n{footer}";
+            return $"{output}\n{footer}" + orientationFooter;
         }
         catch (Exception ex)
         {

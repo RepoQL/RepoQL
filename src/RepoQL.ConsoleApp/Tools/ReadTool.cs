@@ -177,9 +177,7 @@ internal sealed class ReadTool(
             return "Error: tokenBudget must be a positive integer.";
 
         // Check orientation (reading help:// will mark as oriented)
-        var nudge = _sessionOrientation.CheckOrientation("read", uri);
-        if (nudge != null)
-            return nudge;
+        var orientationFooter = _sessionOrientation.CheckOrientation(uri);
 
         // Create request signature for "call again to wait" pattern
         var requestSignature = $"{uri}|{tokenBudget}";
@@ -224,7 +222,7 @@ internal sealed class ReadTool(
                 return $"Error: {response.Error}";
             }
 
-            return response.RenderedOutput;
+            return response.RenderedOutput + orientationFooter;
         }
         catch (Exception ex)
         {

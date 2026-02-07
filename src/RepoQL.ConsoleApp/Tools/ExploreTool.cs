@@ -163,9 +163,7 @@ internal sealed class ExploreTool(
             return "Error: tokenBudget must be a positive integer.";
 
         // Check orientation
-        var nudge = _sessionOrientation.CheckOrientation("explore", uriGlob);
-        if (nudge != null)
-            return nudge;
+        var orientationFooter = _sessionOrientation.CheckOrientation(uriGlob);
 
         // Create request signature for "call again to wait" pattern
         var requestSignature = $"{tokenBudget}|{intent}|{uriGlob}|{keywords}|{boost}|{penalize}|{limit}";
@@ -225,7 +223,7 @@ internal sealed class ExploreTool(
                 return $"Error: {response.Error}";
             }
 
-            return response.RenderedOutput;
+            return response.RenderedOutput + orientationFooter;
         }
         catch (Exception ex)
         {
