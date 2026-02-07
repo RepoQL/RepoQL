@@ -104,6 +104,52 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     /// </summary>
     public DocumentEmbedding? StructureEmbedding { get; set; }
 
+    /// <summary>
+    ///     Vendor/library/minified files get lightweight parsing (content searchable, minimal graph structure).
+    ///     Set by <see cref="Indexing.IndexingEngine"/> based on URI patterns before parsing stage.
+    /// </summary>
+    public bool IsLightweight { get; set; }
+
+    /// <summary>
+    /// Checks if a URI matches patterns for lightweight parsing: vendor libraries, minified files,
+    /// source maps, and lock files. These are still searchable but don't need full AST structure.
+    /// </summary>
+    internal static bool MatchesLightweightPattern(string uriString)
+    {
+        // Vendor/library paths
+        if (uriString.Contains("/wwwroot/lib/", StringComparison.OrdinalIgnoreCase) ||
+            uriString.Contains("/node_modules/", StringComparison.OrdinalIgnoreCase) ||
+            uriString.Contains("/vendor/", StringComparison.OrdinalIgnoreCase) ||
+            uriString.Contains("/bower_components/", StringComparison.OrdinalIgnoreCase) ||
+            uriString.Contains("/third_party/", StringComparison.OrdinalIgnoreCase) ||
+            uriString.Contains("/third-party/", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Minified files
+        if (uriString.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase) ||
+            uriString.EndsWith(".min.css", StringComparison.OrdinalIgnoreCase) ||
+            uriString.EndsWith(".min.map", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Source maps (huge, low structural value)
+        if (uriString.EndsWith(".css.map", StringComparison.OrdinalIgnoreCase) ||
+            uriString.EndsWith(".js.map", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Bundle files
+        if (uriString.EndsWith(".bundle.js", StringComparison.OrdinalIgnoreCase) ||
+            uriString.EndsWith(".bundle.css", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Lock files
+        if (uriString.EndsWith("/package-lock.json", StringComparison.OrdinalIgnoreCase) ||
+            uriString.EndsWith("/yarn.lock", StringComparison.OrdinalIgnoreCase) ||
+            uriString.EndsWith("/pnpm-lock.yaml", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
+    }
+
     public T? Get<T>(string key) => _dictionaryImplementation.TryGetValue(key, out var value) 
         ? (T)value 
         : default;

@@ -16,6 +16,13 @@ namespace RepoQL.Indexing.Indexing.Pipelines.Parsing;
 /// <see cref="IndexItem.Records"/> and stops the chain.
 /// </para>
 ///
+/// <para><strong>Lightweight Files</strong></para>
+/// <para>
+/// Vendor libraries, minified files, and source maps are marked <see cref="IndexItem.IsLightweight"/>
+/// and skip format-specific parsers entirely, falling through to the plain text fallback.
+/// Content remains searchable but no AST structure is generated.
+/// </para>
+///
 /// <para><strong>Records Structure</strong></para>
 /// <para>
 /// <see cref="Records"/> contains graph data:
@@ -47,6 +54,42 @@ namespace RepoQL.Indexing.Indexing.Pipelines.Parsing;
 public class ParsingPipeline(IEnumerable<IAsyncPipeline<IClassifiedArtifact, Records?>> processors, ILogger<ParsingPipeline>? logger = null)
     : PipelinePhase<IClassifiedArtifact, Records?>("Parsing", processors, logger)
 {
+    public override async Task<PipelineResult> ProcessItemAsync(IClassifiedArtifact item, CancellationToken cancellationToken)
+    {
+        // Lightweight files skip format-specific parsers → fall through to PlainTextParser (always last)
+        if (item is IndexItem { IsLightweight: true } indexItem && Processors.Count > 0)
+        {
+            var fallback = Processors[^1];
+            Logger.LogDebug("[Parsing] Lightweight skip for {Uri} → {Fallback}",
+                item.Uri, fallback.GetType().Name);
+
+            try
+            {
+                var (result, status) = await fallback.ProcessAsync(
+                    item,
+                    // PlainTextParser never calls next, but provide a no-op just in case
+                    _ => Task.FromResult<(Records?, PipelineResult)>((null, PipelineResult.Success)),
+                    cancellationToken).ConfigureAwait(false);
+
+                if (status == PipelineResult.Success && result != null)
+                    await ApplyResultAsync(indexItem, result, cancellationToken);
+
+                return status;
+            }
+            catch (OperationCanceledException)
+            {
+                return PipelineResult.Cancelled;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "{Uri} failed during lightweight parsing", item.Uri);
+                return PipelineResult.Error;
+            }
+        }
+
+        return await base.ProcessItemAsync(item, cancellationToken);
+    }
+
     protected override Task ApplyResultAsync(IndexItem item, Records? result, CancellationToken cancellationToken = default)
     {
         item.Records = result;

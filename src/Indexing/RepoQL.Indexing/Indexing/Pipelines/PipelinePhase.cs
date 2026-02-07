@@ -16,7 +16,7 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
     protected readonly Histogram<double> PhaseDuration;
     
     protected ILogger<PipelinePhase<TInput, TResult>> Logger { get; }
-    private readonly IReadOnlyList<IAsyncPipeline<TInput, TResult>> _processors;
+    protected IReadOnlyList<IAsyncPipeline<TInput, TResult>> Processors { get; }
 
     [SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase")]
     protected PipelinePhase(string name, IEnumerable<IAsyncPipeline<TInput, TResult>> processors, 
@@ -24,7 +24,7 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
     {
         Name = name;
         Logger = logger ?? NullLogger<PipelinePhase<TInput, TResult>>.Instance;
-        _processors = CreateProcessorList(processors);
+        Processors = CreateProcessorList(processors);
         ItemsInFlight = IndexingEngine.Meter.CreateUpDownCounter<long>($"repoql.indexing.{Name.ToLowerInvariant()}.processing");
         ItemsProcessed = IndexingEngine.Meter.CreateCounter<long>($"repoql.indexing.{Name.ToLowerInvariant()}.processed");
         PhaseDuration = IndexingEngine.Meter.CreateHistogram<double>($"repoql.indexing.{Name.ToLowerInvariant()}.duration");
@@ -47,7 +47,7 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
                 Logger.LogTrace("[{Phase}] Starting processors for {Uri}", Name, item.Uri);
             }
 
-            if (_processors.Count == 0)
+            if (Processors.Count == 0)
                 return PipelineResult.Success;
 
             var (result, status) = await InvokeProcessorAsync(0, item, cancellationToken).ConfigureAwait(false);
@@ -76,12 +76,12 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
 
     private Task<(TResult? Result, PipelineResult PipelineStatus)> InvokeProcessorAsync(int index, TInput item, CancellationToken cancellationToken)
     {
-        if (index >= _processors.Count)
+        if (index >= Processors.Count)
             return Task.FromResult((default(TResult), PipelineResult.Success));
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        var processor = _processors[index];
+        var processor = Processors[index];
         var processorName = processor.GetType().Name;
         if (Logger.IsEnabled(LogLevel.Trace))
         {
@@ -90,19 +90,19 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
 
         async Task<(TResult? Result, PipelineResult PipelineStatus)> RunAsync()
         {
+            var processorSw = Stopwatch.StartNew();
             var output = await processor.ProcessAsync(
                 item,
                 nextItem => InvokeProcessorAsync(index + 1, nextItem, cancellationToken),
                 cancellationToken).ConfigureAwait(false);
+            processorSw.Stop();
 
-            if (Logger.IsEnabled(LogLevel.Trace))
+            if (processorSw.ElapsedMilliseconds > 50 || Logger.IsEnabled(LogLevel.Trace))
             {
-                Logger.LogTrace(
-                    "[{Phase}] {Processor} finished for {Uri} (Status={Status})",
-                    Name,
-                    processorName,
-                    item.Uri,
-                    output.PipelineStatus);
+                Logger.LogDebug(
+                    "[{Phase}] {Processor} for {Uri}: {ElapsedMs:F1}ms (Status={Status})",
+                    Name, processorName, item.Uri,
+                    processorSw.Elapsed.TotalMilliseconds, output.PipelineStatus);
             }
 
             return output;

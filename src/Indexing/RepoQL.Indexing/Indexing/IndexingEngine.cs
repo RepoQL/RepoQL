@@ -625,7 +625,10 @@ public partial class IndexingEngine : IAsyncDisposable
                     return;
 
                 currentStage = "structure_embedding";
+                var embedTimer = Stopwatch.StartNew();
                 await TryGenerateStructureEmbeddingAsync(item, cancellationToken).ConfigureAwait(false);
+                embedTimer.Stop();
+                RecordStageDuration("structure_embedding", embedTimer.Elapsed.TotalMilliseconds, PipelineResult.Success, item);
 
                 currentStage = "commit";
                 var commitTimer = Stopwatch.StartNew();
@@ -781,9 +784,17 @@ public partial class IndexingEngine : IAsyncDisposable
 
         try
         {
+            var embedSw = Stopwatch.StartNew();
             var vector = await _embeddingProvider.EmbedPassageAsync(payload, cancellationToken).ConfigureAwait(false);
+            embedSw.Stop();
             if (vector is null || vector.Length == 0)
                 return;
+
+            if (embedSw.ElapsedMilliseconds > 50)
+            {
+                Logger.LogDebug("Structure embedding for {Uri}: {ElapsedMs:F1}ms",
+                    item.Uri, embedSw.Elapsed.TotalMilliseconds);
+            }
 
             item.StructureEmbedding = new DocumentEmbedding(
                 documentNodeId,
@@ -1237,6 +1248,9 @@ public partial class IndexingEngine : IAsyncDisposable
         });
         if (pipelineResult != PipelineResult.Success)
             return pipelineResult;
+
+        // Lightweight detection: vendor/minified/sourcemap files get plain-text-only parsing
+        item.IsLightweight = IndexItem.MatchesLightweightPattern(item.Uri.ToString());
 
         // Parsing stage
         var parseTimer = Stopwatch.StartNew();
