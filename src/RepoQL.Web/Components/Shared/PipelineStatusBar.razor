@@ -99,7 +99,7 @@
 </style>
 
 @code {
-    private OperationState _state = OperationState.Idle();
+    private UIOperationState _state = UIOperationState.Idle();
 
     protected override void OnInitialized()
     {
@@ -107,7 +107,7 @@
         OperationsService.StateChanged += OnStateChanged;
     }
 
-    private void OnStateChanged(object? sender, OperationState state)
+    private void OnStateChanged(object? sender, UIOperationState state)
     {
         _state = state;
         _ = InvokeAsync(StateHasChanged);
