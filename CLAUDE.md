@@ -61,7 +61,7 @@ RepoQL's own docs live at `help://` — queryable with the same tools you use on
 
 ```
 explore(intent="Locate", uriGlob="help://**", keywords="your question", tokenBudget=2000)
-read("help://** => tree: headlines", 2000)
+read("help://** => tree: headlines", 3000)
 ```
 
 **Key docs** (also available as files when `help://` is unavailable):

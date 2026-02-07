@@ -117,11 +117,11 @@ WHERE sn.is_focus;
 ### Graph Traversal
 
 ```sql
--- What calls this function?
-SELECT src.uri FROM edge e
-JOIN node src ON e.source_node_id = src.id
-WHERE e.type = 'CALLS'
-AND e.destination_node_id = (SELECT id FROM node WHERE uri = 'file:///src/Auth.cs#symbol=ValidateToken');
+-- What symbols are inside this file?
+SELECT child.kind, child.name FROM edge e
+JOIN node child ON e.destination_node_id = child.id
+WHERE e.type = 'HAS_PART'
+AND e.source_node_id = (SELECT id FROM node WHERE uri = 'file:///src/Auth.cs');
 ```
 
 ### Regex Extraction

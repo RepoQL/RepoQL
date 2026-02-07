@@ -16,10 +16,10 @@ categories: ["Guide[100%]"]
 See the shape before reading anything:
 
 ```
-read("file:///** => tree: folders", 500)
+read("file:///** => tree: folders", 750)
 ```
 
-This costs ~100 tokens and shows every directory. Start here, always.
+Shows every directory at a glance. Start here, always.
 
 ---
 
@@ -65,7 +65,7 @@ The documentation is indexed. Search it like code.
 
 **See what exists:**
 ```
-read("help://** => tree: folders", 500)
+read("help://** => tree: folders", 750)
 ```
 
 **Find a topic:**
@@ -166,7 +166,7 @@ See `help:///repoql/tools/query/schema.md`
 
 **Orient:**
 ```
-read("file:///** => tree: folders", 500)
+read("file:///** => tree: folders", 750)
 ```
 
 **Find:**

@@ -139,7 +139,7 @@ internal sealed class ExploreTool(
 
         Other read patterns:
         - read("file:///src/Auth.cs", 3000) — whole file
-        - read("file:///src/** => tree: folders", 500) — directory structure
+        - read("file:///src/** => tree: folders", 750) — directory structure
         - read("file:///src/Auth.cs => question: How does this handle expiry?", 2000) — LLM synthesis
 
         Explore when you don't know where. Read when you have URIs.

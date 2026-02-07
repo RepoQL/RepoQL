@@ -69,6 +69,17 @@ public sealed class ModifierDispatcher
 
         var documents = await _contentProvider.FetchGlobAsync(request.Pattern, cancellationToken).ConfigureAwait(false);
 
+        if (documents.Count == 0)
+        {
+            var diagnostic = await NoMatchDiagnostics.DiagnoseAsync(request.Pattern, _contentProvider, status, cancellationToken).ConfigureAwait(false);
+            return new ReadExecutionResult(
+                Success: true,
+                RenderedOutput: diagnostic,
+                Representation: request.Modifier,
+                FilesRead: 0,
+                FilesOmitted: 0);
+        }
+
         ModifierResult result;
         try
         {

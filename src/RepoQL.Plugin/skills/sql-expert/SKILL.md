@@ -75,11 +75,11 @@ SELECT uri, score FROM search('authentication', k := 10);
 SELECT name, file_uri FROM Types WHERE extends = 'BaseService';
 ```
 
-**Graph traversal:**
+**Graph traversal (composition tree):**
 ```sql
-SELECT src.uri FROM edge e
-JOIN node src ON e.source_node_id = src.id
-WHERE e.type = 'CALLS' AND e.destination_node_id = (SELECT id FROM node WHERE uri = @target);
+SELECT child.kind, child.name FROM edge e
+JOIN node child ON e.destination_node_id = child.id
+WHERE e.type = 'HAS_PART' AND e.source_node_id = (SELECT id FROM node WHERE uri = @target);
 ```
 
 ## References

@@ -126,22 +126,23 @@ SELECT * FROM step3 ORDER BY loc DESC
 ## Capsule: GraphComposition
 
 **Invariant**
-Combine graph traversal with metadata joins for dependency analysis.
+Combine graph traversal with metadata joins for composition analysis.
 
 **Example**
 ```sql
-WITH RECURSIVE deps AS (
+WITH RECURSIVE parts AS (
   SELECT destination_node_id as id, 1 as depth FROM edge
-  WHERE source_node_id = @start AND type = 'IMPORTS'
+  WHERE source_node_id = (SELECT id FROM node WHERE uri = 'file:///src/Auth.cs')
+  AND type = 'HAS_PART'
   UNION ALL
-  SELECT e.destination_node_id, d.depth + 1 FROM edge e
-  JOIN deps d ON e.source_node_id = d.id WHERE d.depth < 5
+  SELECT e.destination_node_id, p.depth + 1 FROM edge e
+  JOIN parts p ON e.source_node_id = p.id
+  WHERE e.type = 'HAS_PART' AND p.depth < 5
 )
-SELECT n.uri, f.lines, MIN(d.depth) as distance
-FROM deps d
-JOIN node n ON d.id = n.id
-JOIN Files f ON n.uri = f.uri
-GROUP BY n.uri, f.lines ORDER BY distance
+SELECT n.kind, n.name, MIN(p.depth) as depth
+FROM parts p
+JOIN node n ON p.id = n.id
+GROUP BY n.kind, n.name ORDER BY depth
 ```
 
 **Depth**

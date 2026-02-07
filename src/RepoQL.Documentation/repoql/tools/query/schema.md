@@ -104,15 +104,15 @@ FROM edge e JOIN node child ON child.id = e.destination_node_id
 WHERE e.source_node_id = @parent_id AND e.is_composition = true
 ORDER BY e.ordinal;
 
--- References (calls, imports)
+-- References (cross-file and within-file)
 SELECT e.type, dst.uri FROM edge e
 JOIN node dst ON dst.id = e.destination_node_id
-WHERE e.is_composition = false AND e.type = 'CALLS';
+WHERE e.is_composition = false AND e.type = 'REFERS_TO';
 ```
-//BOUNDARY: is_composition=true → tree (HAS_PART). is_composition=false → graph (REFERS_TO, CALLS, IMPORTS).
+//BOUNDARY: is_composition=true → tree (HAS_PART). is_composition=false → graph (REFERS_TO, USES_SYMBOL, EXTENDS, etc.).
 
 **Depth**
-- `type`: `HAS_PART`, `REFERS_TO`, `CALLS`, `IMPORTS`, `IMPLEMENTS`, etc.
+- `type`: `HAS_PART` (stable), `REFERS_TO` (stable), plus format-specific types (USES_SYMBOL, EXTENDS, IMPLEMENTS)
 - `ordinal`: Source order for composition children
 - `destination_uri`: Deferred resolution for cross-file refs
 - `semantic_key`: Idempotent upsert key

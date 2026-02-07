@@ -99,7 +99,7 @@ internal sealed class ReadOrchestratorQuestionTests
             CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.Error.Should().Contain("No content found");
+        result.Error.Should().Contain("File not found");
     }
 
     [Test]

@@ -101,17 +101,19 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         ON f.uri LIKE o.pattern;
         ```
 
-        **Recursive CTEs** — graph traversal for dependencies:
+        **Recursive CTEs** — graph traversal through composition tree:
         ```sql
-        WITH RECURSIVE deps AS (
+        WITH RECURSIVE parts AS (
           SELECT destination_node_id as id, 1 as depth FROM edge
-          WHERE source_node_id = @start AND type = 'IMPORTS'
+          WHERE source_node_id = (SELECT id FROM node WHERE uri = 'file:///src/Auth.cs')
+          AND type = 'HAS_PART'
           UNION ALL
-          SELECT e.destination_node_id, d.depth + 1 FROM edge e
-          JOIN deps d ON e.source_node_id = d.id WHERE d.depth < 5
+          SELECT e.destination_node_id, p.depth + 1 FROM edge e
+          JOIN parts p ON e.source_node_id = p.id
+          WHERE e.type = 'HAS_PART' AND p.depth < 5
         )
-        SELECT n.uri, f.lines FROM deps d
-        JOIN node n ON d.id = n.id JOIN Files f ON n.uri = f.uri;
+        SELECT n.kind, n.name, p.depth FROM parts p
+        JOIN node n ON p.id = n.id ORDER BY p.depth;
         ```
 
         **Search + enrich** — join search results with metadata:

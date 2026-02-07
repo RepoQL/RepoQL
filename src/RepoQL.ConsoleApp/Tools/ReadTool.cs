@@ -122,7 +122,7 @@ internal sealed class ReadTool(
 
         <QUICK_PATTERNS>
         Orient in new codebase:
-        → read("file:///** => tree: folders", 500)
+        → read("file:///** => tree: folders", 750)
 
         See what's in a directory:
         → read("file:///src/Services/** => tree: headlines", 2000)

@@ -137,9 +137,10 @@ public sealed partial class ReadOrchestrator
 
             if (documents.Count == 0)
             {
+                var diagnostic = await NoMatchDiagnostics.DiagnoseAsync(globPattern, _contentProvider, status, cancellationToken).ConfigureAwait(false);
                 return new ReadExecutionResult(
                     Success: true,
-                    RenderedOutput: $"No files matched: {globPattern}",
+                    RenderedOutput: diagnostic,
                     Representation: "tree",
                     FilesRead: 0,
                     FilesOmitted: 0);
@@ -224,9 +225,10 @@ public sealed partial class ReadOrchestrator
 
         if (documents.Count == 0)
         {
+            var diagnostic = await NoMatchDiagnostics.DiagnoseAsync(globUri, _contentProvider, status, cancellationToken).ConfigureAwait(false);
             return new ReadExecutionResult(
                 Success: true,
-                RenderedOutput: $"No files matched: {globUri}",
+                RenderedOutput: diagnostic,
                 Representation: "glob",
                 FilesRead: 0,
                 FilesOmitted: 0);
@@ -379,9 +381,10 @@ public sealed partial class ReadOrchestrator
 
         if (documents.Count == 0)
         {
+            var diagnostic = await NoMatchDiagnostics.DiagnoseAsync(uri, _contentProvider, status, cancellationToken).ConfigureAwait(false);
             return new ReadExecutionResult(
                 Success: false,
-                Error: $"No content found for: {uri}");
+                Error: diagnostic);
         }
 
         // Calculate total content size

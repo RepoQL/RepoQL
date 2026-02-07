@@ -83,7 +83,7 @@ internal class McpCommands
                                              read("help://** => tree: headlines", 3000)
 
                                            Then orient in the codebase:
-                                             read("file://** => tree: folders", 500)
+                                             read("file://** => tree: folders", 750)
 
                                            Now you can find things without guessing:
                                              explore(intent="Locate", keywords="authentication", tokenBudget=1500)

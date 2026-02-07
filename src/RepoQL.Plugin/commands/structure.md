@@ -15,7 +15,7 @@ $ARGUMENTS
 
 **Full directory tree (folders only):**
 ```
-read("file:///** => tree: folders", 500)
+read("file:///** => tree: folders", 750)
 ```
 
 **Tree with files:**

@@ -81,11 +81,12 @@ Query code relationships using the edge table with recursive CTEs.
 **Example**
 ```sql
 SELECT n.uri FROM edge e JOIN node n ON e.source_node_id = n.id
-WHERE e.type = 'CALLS' AND e.destination_node_id = @fn
+WHERE e.type = 'HAS_PART' AND e.destination_node_id = @parent
 ```
 
 **Depth**
-- Edge types: CALLS, IMPORTS, HAS_PART, CONTAINS
+- Stable types: HAS_PART (composition), REFERS_TO (references)
+- Format-specific: USES_SYMBOL (C#), EXTENDS, IMPLEMENTS (PHP/GraphQL)
 - Join with node table for URIs and metadata
 - Use span table for source locations
 - SeeAlso: RecursiveCTE

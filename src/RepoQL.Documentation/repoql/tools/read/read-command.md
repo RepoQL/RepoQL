@@ -174,7 +174,7 @@ Append ` => modifier` to request a specific view of the content.
 **Example**
 ```
 read("file:///src/** => tree", 2000)           -- folder structure with files
-read("file:///src/** => tree: folders", 500)   -- folders only with file counts
+read("file:///src/** => tree: folders", 750)   -- folders only with file counts
 read("file:///src/** => tree: headlines", 3000) -- folders + files + summaries
 read("file:///src/Auth.cs => history", 1500)   -- what changed
 read("file:///src/Auth.cs => blame", 2000)     -- who changed each line
