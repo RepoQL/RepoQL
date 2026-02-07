@@ -35,11 +35,11 @@ export function register(api: any): void {
     // Resolve configuration with defaults
     const config = resolveConfig(rawConfig);
 
-    // Determine workspace directory
-    const getWorkdir = () => {
-      // TEMPORARY: Hardcode GoNutz workspace for testing
-      // TODO: Get workspace from execution context or per-agent config
-      return "C:\\Source\\GoNutz";
+    // Determine workspace directory from Clawdbot API
+    const getWorkdir = (): string => {
+      // Use resolvePath('.') to get the workspace root
+      // This matches how other Clawdbot plugins resolve workspace-relative paths
+      return api.resolvePath('.');
     };
 
     // Create instance manager
