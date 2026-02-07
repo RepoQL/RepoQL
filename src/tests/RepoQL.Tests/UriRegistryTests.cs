@@ -131,6 +131,42 @@ internal class UriRegistryTests
         matches.Single().AbsoluteUri.Should().Contain("MyClassHelper");
     }
 
+    [Test]
+    public void MatchPattern_AnchorFragment_MatchesHeadingUri()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///docs/north-star/formats.md");
+        var headingUri = RepoUri.Parse("file:///docs/north-star/formats.md#legibility");
+
+        registry.SetIndexed(fileUri, lineCount: 120, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { headingUri, new SymbolEntry("md_heading", 42, 68) }
+        }.AsReadOnly());
+
+        var matches = registry.MatchPattern("file:///docs/north-star/formats.md#legibility").ToList();
+
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Be("file:///docs/north-star/formats.md#legibility");
+    }
+
+    [Test]
+    public void MatchPattern_AnchorFragment_WildcardMatchesHeadingUri()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///docs/north-star/formats.md");
+        var headingUri = RepoUri.Parse("file:///docs/north-star/formats.md#legibility");
+
+        registry.SetIndexed(fileUri, lineCount: 120, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { headingUri, new SymbolEntry("md_heading", 42, 68) }
+        }.AsReadOnly());
+
+        var matches = registry.MatchPattern("file:///docs/north-star/formats.md#legi*").ToList();
+
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Be("file:///docs/north-star/formats.md#legibility");
+    }
+
     // === Line Range Globbing Tests ===
 
     [Test]

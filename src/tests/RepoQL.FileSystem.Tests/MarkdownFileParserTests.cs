@@ -147,6 +147,8 @@ public class MarkdownFileParserTests
         heading.Props["text"]!.ToString().Should().Be("Getting Started");
         heading.Props["slug"]!.ToString().Should().Be("getting-started");
         heading.Props["level"]!.ToString().Should().Be("1");
+        heading.Uri.Should().NotBeNull();
+        heading.Uri!.AbsoluteUri.Should().Be("embed:///Resources/Sample.md#getting-started");
 
         // Code block props
         var code = records.Nodes.First(n => n.Kind == "md_code_block");

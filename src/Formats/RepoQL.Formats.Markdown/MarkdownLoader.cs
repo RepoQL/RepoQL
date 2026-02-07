@@ -395,16 +395,26 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
         nodes.Add(docNode);
 
         var ordinal = 0;
+        var assignedHeadingUris = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var heading in state.Surface.Headings)
         {
             var span = ToSpan(document, heading.SectionSpan, docNode.Id, heading.SpanId);
             spans.Add(span);
 
+            RepoUri? headingUri = null;
+            if (!string.IsNullOrWhiteSpace(heading.Slug))
+            {
+                var candidate = RepoUri.FromAnchor(new Uri(document.Uri.Container.AbsoluteUri), heading.Slug);
+                if (assignedHeadingUris.Add(candidate.AbsoluteUri))
+                    headingUri = candidate;
+            }
+
             var node = new Node
             {
                 Id = heading.NodeId,
                 Kind = "md_heading",
+                Uri = headingUri,
                 SpanId = heading.SpanId,
                 Props = new JsonObject
                 {

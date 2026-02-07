@@ -120,6 +120,7 @@ public static class UriRegistryExtensions
         bool ignoreCase)
     {
         var symbolName = ExtractSymbolName(symbolUri);
+        var anchorName = ExtractAnchorName(symbolUri);
 
         foreach (var parsed in negatives)
         {
@@ -137,6 +138,15 @@ public static class UriRegistryExtensions
             {
                 if (MatchesWithWildcard(symbolName, negativePattern, ignoreCase))
                     return true; // Symbol is excluded
+            }
+
+            if (fragmentParams.TryGetValue("anchor", out var anchorPattern))
+            {
+                if (!string.IsNullOrEmpty(anchorName) &&
+                    MatchesWithWildcard(anchorName, anchorPattern, ignoreCase))
+                {
+                    return true; // Anchor is excluded
+                }
             }
             // Note: line= fragments can't exclude spanless symbols (we don't know their location)
         }
@@ -240,6 +250,31 @@ public static class UriRegistryExtensions
             return new ExpansionResult(ranges, spanlessSymbols);
         }
 
+        // Handle plain anchor fragments (#slug)
+        if (fragmentParams.TryGetValue("anchor", out var anchorPattern))
+        {
+            var ranges = new List<LineRange>();
+            var spanlessSymbols = new List<RepoUri>();
+
+            foreach (var (symbolUri, symbolEntry) in entry.Symbols)
+            {
+                var anchorName = ExtractAnchorName(symbolUri);
+                if (string.IsNullOrEmpty(anchorName) || !MatchesWithWildcard(anchorName, anchorPattern, ignoreCase))
+                    continue;
+
+                if (symbolEntry.HasSpan)
+                {
+                    ranges.Add(new LineRange(symbolEntry.StartLine, symbolEntry.EndLine));
+                }
+                else
+                {
+                    spanlessSymbols.Add(symbolUri);
+                }
+            }
+
+            return new ExpansionResult(ranges, spanlessSymbols);
+        }
+
         // Unknown fragment type - no results
         return ExpansionResult.Empty;
     }
@@ -268,6 +303,20 @@ public static class UriRegistryExtensions
         return valueEnd < 0
             ? Uri.UnescapeDataString(fragment[valueStart..])
             : Uri.UnescapeDataString(fragment[valueStart..valueEnd]);
+    }
+
+    /// <summary>
+    /// Extracts the anchor slug from a URI fragment like #heading-slug.
+    /// Returns empty when the URI does not use an anchor fragment.
+    /// </summary>
+    private static string ExtractAnchorName(RepoUri symbolUri)
+    {
+        var fragment = symbolUri.Fragment;
+        if (string.IsNullOrEmpty(fragment))
+            return string.Empty;
+
+        var parsed = ParseFragmentParams(fragment);
+        return parsed.TryGetValue("anchor", out var anchor) ? anchor : string.Empty;
     }
 
     /// <summary>
@@ -512,6 +561,9 @@ public static class UriRegistryExtensions
     private static Dictionary<string, string> ParseFragmentParams(string fragment)
     {
         Dictionary<string, string> result = new(StringComparer.OrdinalIgnoreCase);
+
+        if (fragment.StartsWith('#'))
+            fragment = fragment[1..];
 
         // Handle plain anchor (no =)
         if (!fragment.Contains('=', StringComparison.Ordinal))
