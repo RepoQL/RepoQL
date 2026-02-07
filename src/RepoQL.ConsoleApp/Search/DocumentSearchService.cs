@@ -80,8 +80,12 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             var escapedScope = EscapeSql(scope!);
 
             // Explore mode - scope only, no semantic search
-            // Uses matches_glob for semicolon-delimited patterns and negative patterns (!prefix)
+            // Use glob_files for consistent scope semantics (including symbol/line fragment scopes)
             sql = $"""
+                WITH scope_docs AS (
+                    SELECT DISTINCT split_part(uri, '#', 1) AS uri
+                    FROM glob_files('{escapedScope}')
+                )
                 SELECT
                     ri.uri,
                     ri.headline,
@@ -92,10 +96,23 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                     0.5 as score,
                     ri.doc_id
                 FROM repo_index ri
+                JOIN scope_docs sd ON sd.uri = ri.uri
                 WHERE ri.scope = 'document'
-                  AND (matches_glob(ri.uri, '{escapedScope}', TRUE, 'file:///') IS TRUE
-                       OR matches_glob(ri.uri, '{escapedScope}', TRUE, 'help:///') IS TRUE)
-                ORDER BY ri.mtime DESC, ri.uri
+                ORDER BY
+                    CASE
+                        WHEN lower(ri.uri) LIKE '%/node_modules/%'
+                             OR lower(ri.uri) LIKE '%/wwwroot/lib/%'
+                             OR lower(ri.uri) LIKE '%.map'
+                             OR lower(ri.uri) LIKE '%.min.js'
+                             OR lower(ri.uri) LIKE '%.min.css' THEN 4
+                        WHEN lower(COALESCE(ri.lang, '')) LIKE 'code.%' THEN 0
+                        WHEN lower(COALESCE(ri.lang, '')) LIKE 'query.%' THEN 1
+                        WHEN lower(COALESCE(ri.lang, '')) LIKE 'markdown.%'
+                             OR lower(COALESCE(ri.mime, '')) = 'text/markdown' THEN 3
+                        ELSE 2
+                    END,
+                    ri.mtime DESC,
+                    ri.uri
                 LIMIT {limit}
                 """;
         }

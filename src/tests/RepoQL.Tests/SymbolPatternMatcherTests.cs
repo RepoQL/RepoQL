@@ -87,6 +87,13 @@ internal class SymbolPatternMatcherTests
     }
 
     [Test]
+    public void Matches_ExactMatch_CaseSensitive_WhenIgnoreCaseFalse()
+    {
+        SymbolPatternMatcher.Matches("MyClass", "myclass", ignoreCase: false).Should().BeFalse();
+        SymbolPatternMatcher.Matches("MyClass", "MyClass", ignoreCase: false).Should().BeTrue();
+    }
+
+    [Test]
     public void Matches_ExactNoMatch_ReturnsFalse()
     {
         SymbolPatternMatcher.Matches("MyClass", "OtherClass").Should().BeFalse();
@@ -139,9 +146,22 @@ internal class SymbolPatternMatcherTests
     }
 
     [Test]
+    public void Matches_DirectChild_CaseSensitive_WhenIgnoreCaseFalse()
+    {
+        SymbolPatternMatcher.Matches("MYCLASS.METHOD", "myclass.*", ignoreCase: false).Should().BeFalse();
+        SymbolPatternMatcher.Matches("MyClass.Method", "MyClass.*", ignoreCase: false).Should().BeTrue();
+    }
+
+    [Test]
     public void Matches_DirectChild_NestedParent_ReturnsTrue()
     {
         SymbolPatternMatcher.Matches("Namespace.MyClass.Method", "Namespace.MyClass.*").Should().BeTrue();
+    }
+
+    [Test]
+    public void Matches_DirectChild_FindsParentAtSegmentBoundary()
+    {
+        SymbolPatternMatcher.Matches("Namespace.MyClass.Method", "MyClass.*").Should().BeTrue();
     }
 
     [Test]
@@ -187,6 +207,12 @@ internal class SymbolPatternMatcherTests
     public void Matches_Descendant_NestedParent_ReturnsTrue()
     {
         SymbolPatternMatcher.Matches("Namespace.MyClass.Inner.Method", "Namespace.MyClass.**").Should().BeTrue();
+    }
+
+    [Test]
+    public void Matches_Descendant_FindsAncestorAtSegmentBoundary()
+    {
+        SymbolPatternMatcher.Matches("Company.Product.MyClass.Inner.Method", "MyClass.**").Should().BeTrue();
     }
 
     [Test]

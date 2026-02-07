@@ -255,6 +255,35 @@ internal class MatchesGlobSqlTests
         rows[0]["uri"]?.ToString().Should().Be("file:///repo/src/App.cs");
     }
 
+    [Test]
+    public void GlobFiles_WithSymbolHierarchicalPattern_ReturnsMatchingSymbolUris()
+    {
+        var (store, registry) = CreateStoreWithRegistry();
+        using var _ = store;
+
+        SeedDocument(store, registry, "file:///repo/src/App.cs", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        SeedDocument(store, registry, "file:///repo/src/Other.cs", Guid.Parse("22222222-2222-2222-2222-222222222222"));
+
+        var appUri = RepoUri.Parse("file:///repo/src/App.cs");
+        var otherUri = RepoUri.Parse("file:///repo/src/Other.cs");
+        var appSymbol = RepoUri.Parse("file:///repo/src/App.cs#symbol=Namespace.MyClass.Method");
+        var otherSymbol = RepoUri.Parse("file:///repo/src/Other.cs#symbol=Namespace.Other.Method");
+
+        registry.SetIndexed(appUri, lineCount: 100, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { appSymbol, SymbolEntry.WithKindOnly("method") }
+        }.AsReadOnly());
+
+        registry.SetIndexed(otherUri, lineCount: 100, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { otherSymbol, SymbolEntry.WithKindOnly("method") }
+        }.AsReadOnly());
+
+        var rows = store.Query("SELECT * FROM glob_files('src/**/*.cs#symbol=MyClass.*')").ToList();
+        rows.Should().HaveCount(1);
+        rows[0]["uri"]?.ToString().Should().Be("file:///repo/src/App.cs#symbol=Namespace.MyClass.Method");
+    }
+
     // === Absolute Path Normalization ===
 
     private static DuckDbDataStore CreateStoreWithRepoRoot(string repoRoot)

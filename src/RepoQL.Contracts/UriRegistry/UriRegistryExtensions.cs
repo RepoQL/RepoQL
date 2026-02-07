@@ -136,7 +136,7 @@ public static class UriRegistryExtensions
             var fragmentParams = ParseFragmentParams(parsed.Fragment);
             if (fragmentParams.TryGetValue("symbol", out var negativePattern))
             {
-                if (MatchesWithWildcard(symbolName, negativePattern, ignoreCase))
+                if (MatchesSymbolPattern(symbolName, negativePattern, ignoreCase))
                     return true; // Symbol is excluded
             }
 
@@ -232,7 +232,7 @@ public static class UriRegistryExtensions
             {
                 // Match symbol name against pattern
                 var symbolName = ExtractSymbolName(symbolUri);
-                if (MatchesWithWildcard(symbolName, symbolPattern, ignoreCase))
+                if (MatchesSymbolPattern(symbolName, symbolPattern, ignoreCase))
                 {
                     if (symbolEntry.HasSpan)
                     {
@@ -551,7 +551,11 @@ public static class UriRegistryExtensions
             if (!uriParams.TryGetValue(key, out var uriValue))
                 return false;
 
-            if (!MatchesWithWildcard(uriValue, patternValue, ignoreCase))
+            var matched = string.Equals(key, "symbol", StringComparison.OrdinalIgnoreCase)
+                ? MatchesSymbolPattern(uriValue, patternValue, ignoreCase)
+                : MatchesWithWildcard(uriValue, patternValue, ignoreCase);
+
+            if (!matched)
                 return false;
         }
 
@@ -584,6 +588,19 @@ public static class UriRegistryExtensions
         }
 
         return result;
+    }
+
+    private static bool MatchesSymbolPattern(string value, string pattern, bool ignoreCase)
+    {
+        var isHierarchicalPattern =
+            pattern.EndsWith(".*", StringComparison.Ordinal) ||
+            pattern.EndsWith(".**", StringComparison.Ordinal) ||
+            (!pattern.Contains('*', StringComparison.Ordinal) &&
+             !pattern.Contains('?', StringComparison.Ordinal));
+
+        return isHierarchicalPattern
+            ? SymbolPatternMatcher.Matches(value, pattern, ignoreCase)
+            : MatchesWithWildcard(value, pattern, ignoreCase);
     }
 
     private static bool MatchesWithWildcard(string value, string pattern, bool ignoreCase)

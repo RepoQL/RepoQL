@@ -40,6 +40,28 @@ JOIN node d ON e.source_node_id = d.id AND d.kind = 'document'
 LEFT JOIN span s ON l.span_id = s.id
 WHERE l.kind = 'md_link';
 
+CREATE OR REPLACE VIEW markdown_codeblocks AS
+SELECT
+  d.uri AS document_uri,
+  CASE
+    WHEN s.start_line IS NOT NULL
+    THEN d.uri || '#line=' || CAST(s.start_line AS VARCHAR)
+    ELSE NULL
+  END AS codeblock_uri,
+  json_extract_string(b.properties, '$.language') AS language,
+  CAST(json_extract(b.properties, '$.fenced') AS BOOLEAN) AS is_fenced,
+  CAST(json_extract(b.properties, '$.lines') AS INTEGER) AS line_count,
+  json_extract_string(b.properties, '$.info') AS info,
+  s.start_line,
+  s.end_line,
+  s.start_column,
+  s.end_column
+FROM node b
+JOIN edge e ON e.destination_node_id = b.id AND e.type = 'HAS_PART' AND e.is_composition = TRUE
+JOIN node d ON e.source_node_id = d.id AND d.kind = 'document'
+LEFT JOIN span s ON b.span_id = s.id
+WHERE b.kind = 'md_code_block';
+
 CREATE OR REPLACE VIEW markdown_capsules AS
 SELECT
   d.uri AS document_uri,

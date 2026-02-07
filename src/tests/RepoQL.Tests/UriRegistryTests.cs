@@ -132,6 +132,42 @@ internal class UriRegistryTests
     }
 
     [Test]
+    public void MatchPattern_SymbolHierarchicalPattern_UsesHierarchyMatcher()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var symbolUri = RepoUri.Parse("file:///src/App.cs#symbol=Namespace.MyClass.Method");
+
+        registry.SetIndexed(fileUri, lineCount: 100, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { symbolUri, SymbolEntry.WithKindOnly("method") }
+        }.AsReadOnly());
+
+        var matches = registry.MatchPattern("src/**/*.cs#symbol=MyClass.*").ToList();
+
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Be("file:///src/App.cs#symbol=Namespace.MyClass.Method");
+    }
+
+    [Test]
+    public void MatchPattern_SymbolFreeFormWildcard_UsesWildcardMatcher()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/App.cs");
+        var symbolUri = RepoUri.Parse("file:///src/App.cs#symbol=Namespace.MyClass.Method");
+
+        registry.SetIndexed(fileUri, lineCount: 100, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { symbolUri, SymbolEntry.WithKindOnly("method") }
+        }.AsReadOnly());
+
+        var matches = registry.MatchPattern("src/**/*.cs#symbol=*My*Method").ToList();
+
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Be("file:///src/App.cs#symbol=Namespace.MyClass.Method");
+    }
+
+    [Test]
     public void MatchPattern_AnchorFragment_MatchesHeadingUri()
     {
         var registry = new UriRegistry();

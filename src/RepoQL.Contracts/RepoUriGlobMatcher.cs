@@ -110,7 +110,7 @@ public static class RepoUriGlobMatcher
 
         return patternParsed.Type.ToLowerInvariant() switch
         {
-            "symbol" => MatchSymbolFragment(matchingPart.Value, patternParsed.Value),
+            "symbol" => MatchSymbolFragment(matchingPart.Value, patternParsed.Value, ignoreCase),
             "line" => MatchLineFragment(matchingPart.Value, patternParsed.Value),
             _ => string.Equals(matchingPart.Value, patternParsed.Value,
                      ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
@@ -164,12 +164,12 @@ public static class RepoUriGlobMatcher
     /// <summary>
     /// Match symbol patterns with wildcards.
     /// </summary>
-    private static bool MatchSymbolFragment(string? uriValue, string? patternValue)
+    private static bool MatchSymbolFragment(string? uriValue, string? patternValue, bool ignoreCase)
     {
         if (string.IsNullOrEmpty(uriValue) || string.IsNullOrEmpty(patternValue))
             return false;
 
-        return SymbolPatternMatcher.Matches(uriValue, patternValue);
+        return SymbolPatternMatcher.Matches(uriValue, patternValue, ignoreCase);
     }
 
     /// <summary>

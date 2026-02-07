@@ -144,6 +144,16 @@ internal class RepoUriGlobMatcherTests
     }
 
     [Test]
+    public void SymbolFragment_CaseSensitivityFollowsIgnoreCaseFlag()
+    {
+        var uri = "file:///repo/src/App.cs#symbol=MYCLASS.METHOD";
+        var pattern = "src/App.cs#symbol=myclass.*";
+
+        RepoUriGlobMatcher.IsMatch(uri, pattern, ignoreCase: true).Should().BeTrue();
+        RepoUriGlobMatcher.IsMatch(uri, pattern, ignoreCase: false).Should().BeFalse();
+    }
+
+    [Test]
     public void SymbolFragment_ContainerGlobWithFragment()
     {
         var uri = "file:///repo/src/services/UserService.cs#symbol=UserService.GetUser";
