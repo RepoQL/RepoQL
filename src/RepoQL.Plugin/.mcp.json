@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "repoql": {
+      "command": "repoql",
+      "args": ["mcp"],
+      "env": {
+        "REPOQL_LOG_LEVEL": "warning"
+      }
+    }
+  }
+}
