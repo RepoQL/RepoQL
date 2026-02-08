@@ -61,6 +61,13 @@ internal sealed class TypeScriptLoaderTests
         typeNodes.Should().HaveCount(2, "interface and class should both be typescript.type");
         typeNodes.Select(n => n.Props["kind"]?.ToString()).Should().Contain("interface");
         typeNodes.Select(n => n.Props["kind"]?.ToString()).Should().Contain("class");
+
+        // Members use typescript.member with enriched properties
+        var memberNodes = records.Nodes.Where(n => n.Kind == "typescript.member").ToList();
+        memberNodes.Should().HaveCount(2, "Service.ping and User.id should both be typescript.member");
+        var pingNode = memberNodes.First(n => n.Props["name"]?.ToString() == "ping");
+        pingNode.Props["kind"]!.ToString().Should().Be("method");
+        pingNode.Props["declaring_type"]!.ToString().Should().Be("Service");
     }
 
     [Test]
@@ -172,7 +179,7 @@ internal sealed class TypeScriptLoaderTests
 
         var records = scope.Loader.Materialize(document);
         var components = records.Nodes.Where(n =>
-            n.Kind == "ts_decl_function" &&
+            n.Kind == "typescript.function" &&
             n.Props.TryGetPropertyValue("is_component", out var flag) &&
             flag?.GetValue<bool>() == true).ToList();
 

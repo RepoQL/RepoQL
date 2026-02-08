@@ -139,7 +139,7 @@ public class FunctionsViewTests
 
         rows.Should().HaveCount(1);
         rows[0].Name.Should().Be("myMethod");
-        rows[0].Lang.Should().Be("ts_member_method");  // Note: split_part on 'ts_member_method' returns 'ts_member_method' (no dot)
+        rows[0].Lang.Should().Be("typescript");
     }
 
     [Test]
@@ -392,14 +392,14 @@ public class FunctionsViewTests
                 new Node
                 {
                     Id = memberNodeId,
-                    Kind = "ts_member_method",
+                    Kind = "typescript.member",
                     Uri = RepoUri.FromSymbol(uri.Container, $"{declaringType}.{name}", 1, 10),
                     SpanId = spanId,
                     Props = new JsonObject
                     {
                         ["name"] = name,
                         ["kind"] = "method",
-                        ["member_kind"] = "method"
+                        ["declaring_type"] = declaringType
                     },
                     Headline = $"method {name}"
                 }
@@ -446,7 +446,7 @@ public class FunctionsViewTests
                 new Node
                 {
                     Id = funcNodeId,
-                    Kind = "ts_decl_function",
+                    Kind = "typescript.function",
                     Uri = RepoUri.FromSymbol(uri.Container, name, 1, 10),
                     SpanId = spanId,
                     Props = new JsonObject

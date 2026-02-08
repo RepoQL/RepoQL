@@ -40,7 +40,7 @@ SELECT
 FROM node AS decl
 JOIN edge AS e ON e.destination_node_id = decl.id AND e.type = 'HAS_PART' AND e.is_composition = TRUE
 JOIN node AS doc ON doc.id = e.source_node_id AND doc.kind = 'document'
-WHERE decl.kind IN ('typescript.type', 'ts_decl_function', 'ts_decl_variable', 'ts_decl_namespace');
+WHERE decl.kind IN ('typescript.type', 'typescript.function', 'ts_decl_variable', 'ts_decl_namespace');
 
 CREATE OR REPLACE VIEW typescript_components AS
 SELECT
@@ -53,7 +53,7 @@ SELECT
 FROM node AS comp
 JOIN edge AS e ON e.destination_node_id = comp.id AND e.type = 'HAS_PART' AND e.is_composition = TRUE
 JOIN node AS doc ON doc.id = e.source_node_id AND doc.kind = 'document'
-WHERE comp.kind IN ('typescript.type', 'ts_decl_function', 'ts_decl_variable', 'ts_decl_namespace')
+WHERE comp.kind IN ('typescript.type', 'typescript.function', 'ts_decl_variable', 'ts_decl_namespace')
   AND COALESCE(json_extract_string(comp.properties, '$.is_component'), 'false') = 'true';
 
 CREATE OR REPLACE VIEW typescript_members AS
@@ -63,10 +63,13 @@ SELECT
     json_extract_string(parent.properties, '$.name') AS type_name,
     member.uri AS member_uri,
     json_extract_string(member.properties, '$.name') AS member_name,
-    json_extract_string(member.properties, '$.member_kind') AS member_kind
+    json_extract_string(member.properties, '$.kind') AS member_kind,
+    json_extract_string(member.properties, '$.return_type') AS return_type,
+    json_extract_string(member.properties, '$.type') AS type,
+    json_extract_string(member.properties, '$.parameters') AS parameters
 FROM node AS member
 JOIN edge AS me ON me.destination_node_id = member.id AND me.type = 'HAS_PART' AND me.is_composition = TRUE
 JOIN node AS parent ON parent.id = me.source_node_id AND parent.kind = 'typescript.type'
 JOIN edge AS de ON de.destination_node_id = parent.id AND de.type = 'HAS_PART' AND de.is_composition = TRUE
 JOIN node AS doc ON doc.id = de.source_node_id AND doc.kind = 'document'
-WHERE member.kind LIKE 'ts_member_%';
+WHERE member.kind = 'typescript.member';

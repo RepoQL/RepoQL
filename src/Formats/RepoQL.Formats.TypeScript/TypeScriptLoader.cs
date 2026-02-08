@@ -167,9 +167,10 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             var declHeadline = BuildDeclHeadline(decl);
             var declStructure = BuildDeclStructure(decl);
 
-            // Use typescript.type for class/interface/type/enum, ts_decl_{kind} for others
+            // Use typescript.type for class/interface/type/enum, typescript.function for functions
             var isType = decl.DeclKind is "class" or "interface" or "type" or "enum";
-            var nodeKind = isType ? "typescript.type" : $"ts_decl_{decl.DeclKind}";
+            var isFunction = decl.DeclKind is "function";
+            var nodeKind = isType ? "typescript.type" : isFunction ? "typescript.function" : $"ts_decl_{decl.DeclKind}";
 
             var props = new JsonObject
             {
@@ -191,10 +192,19 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             }
             else
             {
-                // Legacy properties for non-type declarations
                 props["decl_kind"] = decl.DeclKind;
                 props["is_exported"] = decl.IsExported;
                 props["export_kind"] = decl.ExportKind;
+
+                if (isFunction)
+                {
+                    props["accessibility"] = decl.IsExported ? "export" : "internal";
+                    props["signature"] = declHeadline;
+                    if (!string.IsNullOrEmpty(decl.ReturnType))
+                        props["return_type"] = decl.ReturnType;
+                    if (decl.Parameters.Count > 0)
+                        props["parameters"] = FormatParameters(decl.Parameters);
+                }
             }
 
             // Optional properties
@@ -255,17 +265,26 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
                         ? member.Name
                         : $"{declName}.{member.Name}";
                     var memberNodeId = Guid.NewGuid();
+                    var memberProps = new JsonObject
+                    {
+                        ["name"] = member.Name,
+                        ["kind"] = member.MemberKind,
+                        ["declaring_type"] = declName
+                    };
+                    if (!string.IsNullOrEmpty(member.ReturnType))
+                        memberProps["return_type"] = member.ReturnType;
+                    if (!string.IsNullOrEmpty(member.Type))
+                        memberProps["type"] = member.Type;
+                    if (member.Parameters.Count > 0)
+                        memberProps["parameters"] = FormatParameters(member.Parameters);
+
                     nodes.Add(new Node
                     {
                         Id = memberNodeId,
-                        Kind = $"ts_member_{member.MemberKind}",
+                        Kind = "typescript.member",
                         SpanId = memberSpanId,
                         Uri = RepoUri.FromSymbol(document.Uri.Container, memberSymbol, memberSpan.StartLine, memberSpan.EndLine),
-                        Props = new JsonObject
-                        {
-                            ["name"] = member.Name,
-                            ["member_kind"] = member.MemberKind
-                        },
+                        Props = memberProps,
                         Headline = BuildMemberSignature(member),
                         CreatedAt = now,
                         UpdatedAt = now
