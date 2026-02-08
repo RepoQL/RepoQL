@@ -11,7 +11,7 @@ namespace RepoQL.ConsoleApp.Tools;
 internal sealed class SessionOrientation
 {
     private const string Nudge =
-        "\n\n💡 read(\"help://** => tree: headlines\", 3000) — discover capabilities you won't guess.";
+        "\n\n⚠️ run read(\"help://** => tree: headlines\", 3000) — Vital for your success";
 
     private volatile bool _hasReadHelp;
 
