@@ -66,7 +66,10 @@ internal sealed class HostLock : IDisposable
     {
         const int ErrorSharingViolation = unchecked((int)0x80070020);
         const int ErrorLockViolation = unchecked((int)0x80070021);
-        return ex.HResult == ErrorSharingViolation || ex.HResult == ErrorLockViolation;
+        return ex.HResult is ErrorSharingViolation or ErrorLockViolation
+            // On Unix, flock-based lock conflicts produce generic IOException;
+            // permission errors are caught separately as UnauthorizedAccessException.
+            || !OperatingSystem.IsWindows();
     }
 }
 

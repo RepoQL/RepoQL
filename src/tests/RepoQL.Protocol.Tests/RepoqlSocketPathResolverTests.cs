@@ -22,7 +22,7 @@ public class RepoqlSocketPathResolverTests
         using var temp = new TempRepo();
         var repoqlDir = RepoqlPaths.GetRepoqlDirectoryPath(temp.Path);
         Directory.CreateDirectory(repoqlDir);
-        var mappedPath = "C:\\temp\\repoql\\mapped.sock";
+        var mappedPath = Path.Combine(Path.GetTempPath(), "repoql-test", "mapped.sock");
         File.WriteAllText(Path.Combine(repoqlDir, RepoqlPaths.SocketMapFileName), mappedPath);
 
         var resolved = RepoqlSocketPathResolver.ResolvePhysical(temp.Path);
