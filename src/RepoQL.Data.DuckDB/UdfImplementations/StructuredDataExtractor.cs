@@ -30,10 +30,13 @@ public static partial class StructuredDataExtractor
     /// <summary>
     /// Extracts structured data from text and converts to JSON.
     /// Attempts detection in priority order: JSON, JSONL, TSV, CSV, YAML, Embedded, Structured Text.
+    /// When unwrap is true (default), JSON objects containing arrays of objects are unwrapped
+    /// to return the array directly — e.g. {"data": {"results": [{...}]}} returns [{...}].
     /// </summary>
     /// <param name="text">The text to parse</param>
+    /// <param name="unwrap">When true, unwraps envelope objects to find the best array of objects</param>
     /// <returns>JSON string (array or object), or wrapped text if no format detected</returns>
-    public static string Extract(string? text)
+    public static string Extract(string? text, bool unwrap = true)
     {
         if (string.IsNullOrEmpty(text))
             return "null";
@@ -44,7 +47,11 @@ public static partial class StructuredDataExtractor
         if (trimmed.StartsWith('[') || trimmed.StartsWith('{'))
         {
             if (IsValidJson(trimmed))
+            {
+                if (unwrap && trimmed.StartsWith('{'))
+                    return UnwrapJsonEnvelope(trimmed);
                 return trimmed;
+            }
         }
 
         // 2. JSONL - multiple lines, each a valid JSON object
@@ -486,6 +493,84 @@ public static partial class StructuredDataExtractor
         }
         result.Add(current.ToString());
         return result;
+    }
+
+    #endregion
+
+    #region JSON Unwrapping
+
+    /// <summary>
+    /// Unwraps a JSON envelope object to find the best array of objects for tabular consumption.
+    /// Uses "largest array" heuristic: finds all arrays of objects by recursing through object
+    /// properties (never into array elements), then picks the largest.
+    /// </summary>
+    /// <param name="json">Valid JSON string</param>
+    /// <returns>The best array JSON, or the original JSON if no suitable array found</returns>
+    public static string UnwrapJsonEnvelope(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // Already an array — no unwrapping needed
+            if (root.ValueKind == JsonValueKind.Array)
+                return json;
+
+            // Not an object — return as-is
+            if (root.ValueKind != JsonValueKind.Object)
+                return json;
+
+            // Search for the best array of objects
+            var candidates = new List<ArrayCandidate>();
+            FindArrayCandidates(root, 0, candidates);
+
+            if (candidates.Count == 0)
+                return json;
+
+            // Pick largest; break ties with deepest
+            var best = candidates[0];
+            for (int i = 1; i < candidates.Count; i++)
+            {
+                var c = candidates[i];
+                if (c.Size > best.Size || (c.Size == best.Size && c.Depth > best.Depth))
+                    best = c;
+            }
+
+            return best.Array.GetRawText();
+        }
+        catch (JsonException)
+        {
+            return json;
+        }
+    }
+
+    private readonly record struct ArrayCandidate(JsonElement Array, int Size, int Depth);
+
+    /// <summary>
+    /// Recursively collects arrays of objects from JSON object properties.
+    /// Only recurses through object fields — never into array elements.
+    /// This prevents nested data (e.g. tags[] inside each user) from winning over the
+    /// actual results array.
+    /// </summary>
+    private static void FindArrayCandidates(JsonElement element, int depth, List<ArrayCandidate> candidates)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            var value = property.Value;
+
+            if (value.ValueKind == JsonValueKind.Array && value.GetArrayLength() > 0)
+            {
+                // Check if first element is an object (array of objects = table candidate)
+                if (value[0].ValueKind == JsonValueKind.Object)
+                    candidates.Add(new ArrayCandidate(value, value.GetArrayLength(), depth));
+                // Do NOT recurse into array elements
+            }
+            else if (value.ValueKind == JsonValueKind.Object)
+            {
+                FindArrayCandidates(value, depth + 1, candidates);
+            }
+        }
     }
 
     #endregion

@@ -508,6 +508,167 @@ public class StructuredDataExtractorTests
 
     #endregion
 
+    #region Extract - JSON Unwrapping
+
+    [Test]
+    public async Task Extract_WithSimpleEnvelope_UnwrapsToArray()
+    {
+        var input = """{"data": [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]}""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().StartWith("[");
+        result.Should().Contain("\"id\"");
+        result.Should().Contain("\"name\"");
+        result.Should().NotContain("\"data\"");
+    }
+
+    [Test]
+    public async Task Extract_WithNerdGraphEnvelope_UnwrapsToDeepArray()
+    {
+        var input = """
+            {
+              "data": {
+                "actor": {
+                  "entitySearch": {
+                    "results": {
+                      "nextCursor": "abc123",
+                      "entities": [
+                        {"name": "web-app", "guid": "abc", "accountId": 123},
+                        {"name": "api-svc", "guid": "def", "accountId": 456}
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+            """;
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().StartWith("[");
+        result.Should().Contain("\"web-app\"");
+        result.Should().Contain("\"api-svc\"");
+        result.Should().NotContain("\"data\"");
+        result.Should().NotContain("\"actor\"");
+        result.Should().NotContain("\"nextCursor\"");
+    }
+
+    [Test]
+    public async Task Extract_WithMultipleArrays_PicksLargest()
+    {
+        var input = """
+            {
+              "results": [{"id": 1}, {"id": 2}, {"id": 3}],
+              "errors": [{"code": 500}]
+            }
+            """;
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().StartWith("[");
+        result.Should().Contain("\"id\"");
+        result.Should().NotContain("\"code\"");
+    }
+
+    [Test]
+    public async Task Extract_WithSameSizeArrays_PicksDeeper()
+    {
+        var input = """{"shallow": [{"x": 1}], "deep": {"nested": [{"y": 1}]}}""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        // Both size 1, deeper wins
+        result.Should().Contain("\"y\"");
+        result.Should().NotContain("\"x\"");
+    }
+
+    [Test]
+    public async Task Extract_WithArrayOfPrimitives_NoUnwrapping()
+    {
+        var input = """{"tags": ["red", "blue", "green"]}""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        // Array of strings, not objects — no unwrapping
+        result.Should().Contain("\"tags\"");
+    }
+
+    [Test]
+    public async Task Extract_DoesNotRecurseIntoArrayElements()
+    {
+        var input = """
+            {
+              "users": [
+                {"id": 1, "tags": [{"name": "admin"}, {"name": "editor"}, {"name": "viewer"}]},
+                {"id": 2, "tags": [{"name": "user"}]}
+              ]
+            }
+            """;
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        // Should pick "users" (2 items), NOT "tags" inside array elements
+        // Even though tags[0] has 3 items, we don't recurse into array elements
+        result.Should().Contain("\"id\"");
+        result.Should().Contain("\"tags\"");
+    }
+
+    [Test]
+    public async Task Extract_WithUnwrapFalse_PreservesEnvelope()
+    {
+        var input = """{"data": [{"id": 1}, {"id": 2}]}""";
+
+        var result = StructuredDataExtractor.Extract(input, unwrap: false);
+
+        result.Should().Be(input);
+    }
+
+    [Test]
+    public async Task Extract_AlreadyArray_NoChange()
+    {
+        var input = """[{"id": 1}, {"id": 2}]""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().Be(input);
+    }
+
+    [Test]
+    public async Task Extract_PlainObjectNoArrays_NoChange()
+    {
+        var input = """{"status": "ok", "count": 42}""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        // No array of objects found — returns as single-row table
+        result.Should().Contain("\"status\"");
+        result.Should().Contain("\"count\"");
+    }
+
+    [Test]
+    public async Task Extract_EmptyObject_NoChange()
+    {
+        var input = "{}";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().Be(input);
+    }
+
+    [Test]
+    public async Task Extract_EmptyArrayField_NoUnwrapping()
+    {
+        var input = """{"results": []}""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        // Empty array has no objects — no unwrapping
+        result.Should().Contain("\"results\"");
+    }
+
+    #endregion
+
     #region TryParseStructuredText
 
     [Test]

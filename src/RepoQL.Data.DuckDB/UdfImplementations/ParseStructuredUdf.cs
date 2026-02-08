@@ -34,9 +34,10 @@ public class ParseStructuredUdf
     ///   SELECT parse_structured('id,name\n1,Alice\n2,Bob')
     ///   SELECT * FROM (SELECT unnest(from_json(parse_structured(response), '["json"]')) AS row)
     /// </remarks>
-    [ScalarUdf("parse_structured", Description = "Parse text as JSON/JSONL/CSV/TSV/YAML, returns JSON")]
-    public string Parse(string? text)
+    [ScalarUdf("parse_structured", Description = "Parse text as JSON/JSONL/CSV/TSV/YAML, returns JSON. Unwraps envelope objects by default.")]
+    public string Parse(string? text, [UdfDefault("'true'")] string? unwrap)
     {
-        return StructuredDataExtractor.Extract(text);
+        var shouldUnwrap = unwrap?.Trim().Equals("true", StringComparison.OrdinalIgnoreCase) ?? true;
+        return StructuredDataExtractor.Extract(text, shouldUnwrap);
     }
 }
