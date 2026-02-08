@@ -107,31 +107,149 @@ function containsJsx(node) {
   return found;
 }
 
+function getTextOrNull(node, sf) {
+  if (!node || !node.getText) return null;
+  return node.getText(sf);
+}
+
+function collectParameters(parameters, sf) {
+  if (!parameters || parameters.length === 0) return [];
+
+  const result = [];
+  for (const param of parameters) {
+    const name = param.name && param.name.getText ? param.name.getText(sf) : "";
+    result.push({
+      name: name || "",
+      type: getTextOrNull(param.type, sf),
+      isOptional: !!param.questionToken,
+      isRest: !!param.dotDotDotToken,
+    });
+  }
+
+  return result;
+}
+
+function collectTypeParameters(node, sf) {
+  if (!node.typeParameters || node.typeParameters.length === 0) return [];
+  return node.typeParameters.map((tp) => tp.getText(sf));
+}
+
+function collectHeritage(node, sf) {
+  let extendsText = null;
+  const implementsTypes = [];
+
+  for (const clause of node.heritageClauses || []) {
+    if (clause.token === ts.SyntaxKind.ExtendsKeyword) {
+      const clauseText = (clause.types || []).map((t) => t.getText(sf)).filter(Boolean).join(", ");
+      if (clauseText) extendsText = clauseText;
+      continue;
+    }
+
+    if (clause.token === ts.SyntaxKind.ImplementsKeyword) {
+      for (const t of clause.types || []) {
+        const text = t.getText(sf);
+        if (text) implementsTypes.push(text);
+      }
+    }
+  }
+
+  return { extendsText, implementsTypes };
+}
+
+function isHookName(name) {
+  return !!name && /^use[A-Z][A-Za-z0-9]*$/.test(name);
+}
+
+function getCallExpressionName(expr, sf) {
+  if (!expr) return null;
+  if (ts.isIdentifier(expr)) return expr.text;
+  if (ts.isPropertyAccessExpression(expr)) return expr.name ? expr.name.getText(sf) : null;
+  return null;
+}
+
+function collectHooks(node, sf) {
+  if (!node) return [];
+
+  const hooks = new Set();
+  const visit = (n) => {
+    if (ts.isCallExpression(n)) {
+      const callName = getCallExpressionName(n.expression, sf);
+      if (isHookName(callName)) hooks.add(callName);
+    }
+    ts.forEachChild(n, visit);
+  };
+
+  ts.forEachChild(node, visit);
+  return Array.from(hooks);
+}
+
+function collectFunctionLikeHooks(node, sf) {
+  if (!node || !node.body) return [];
+  return collectHooks(node.body, sf);
+}
+
+function collectClassHooks(node, sf) {
+  const hooks = new Set();
+  for (const member of node.members || []) {
+    for (const hook of collectFunctionLikeHooks(member, sf)) hooks.add(hook);
+    if (
+      member.initializer &&
+      (ts.isArrowFunction(member.initializer) || ts.isFunctionExpression(member.initializer))
+    ) {
+      for (const hook of collectFunctionLikeHooks(member.initializer, sf)) hooks.add(hook);
+    }
+  }
+  return Array.from(hooks);
+}
+
+function collectVariableHooks(decl, sf) {
+  if (!decl || !decl.initializer) return [];
+  if (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer)) {
+    return collectFunctionLikeHooks(decl.initializer, sf);
+  }
+  return [];
+}
+
 function collectMembers(node, sf) {
   const members = [];
   if (!node.members) return members;
   for (const m of node.members) {
-    if (!m.name || !m.name.getText) continue;
-    const name = m.name.getText(sf);
+    const name =
+      m.name && m.name.getText
+        ? m.name.getText(sf)
+        : m.kind === ts.SyntaxKind.Constructor
+        ? "constructor"
+        : null;
     if (!name) continue;
+
     let memberKind = "member";
+    let parameters = [];
+    let returnType = null;
+    let type = null;
+
     switch (m.kind) {
       case ts.SyntaxKind.MethodDeclaration:
       case ts.SyntaxKind.MethodSignature:
         memberKind = "method";
+        parameters = collectParameters(m.parameters, sf);
+        returnType = getTextOrNull(m.type, sf);
         break;
       case ts.SyntaxKind.Constructor:
         memberKind = "constructor";
+        parameters = collectParameters(m.parameters, sf);
         break;
       case ts.SyntaxKind.GetAccessor:
         memberKind = "getter";
+        returnType = getTextOrNull(m.type, sf);
         break;
       case ts.SyntaxKind.SetAccessor:
         memberKind = "setter";
+        parameters = collectParameters(m.parameters, sf);
         break;
       case ts.SyntaxKind.PropertyDeclaration:
       case ts.SyntaxKind.PropertySignature:
         memberKind = "field";
+        type = getTextOrNull(m.type, sf);
         break;
       case ts.SyntaxKind.EnumMember:
         memberKind = "enumMember";
@@ -140,7 +258,10 @@ function collectMembers(node, sf) {
     members.push({
       name,
       memberKind,
-      span: spanOf(m.name, sf),
+      parameters,
+      returnType,
+      type,
+      span: m.name ? spanOf(m.name, sf) : spanOf(m, sf),
     });
   }
   return members;
@@ -240,6 +361,7 @@ function parseOnce(req) {
 }
 
 function collectDeclaration(node, sf, scriptKind, addDecl) {
+  const isJsxLike = scriptKind === ts.ScriptKind.TSX || scriptKind === ts.ScriptKind.JSX;
   const isExported =
     Array.isArray(node.modifiers) &&
     node.modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
@@ -250,12 +372,20 @@ function collectDeclaration(node, sf, scriptKind, addDecl) {
   switch (node.kind) {
     case ts.SyntaxKind.FunctionDeclaration: {
       const name = node.name ? node.name.text : null;
+      const isComponent = isPascalCase(name) && isJsxLike;
+      const hooks = isJsxLike || isComponent ? collectHooks(node.body, sf) : [];
       addDecl({
         name,
         declKind: "function",
         isExported,
         exportKind: isExported ? (isDefault ? "default" : "named") : undefined,
-        isComponent: isPascalCase(name) && (scriptKind === ts.ScriptKind.TSX || scriptKind === ts.ScriptKind.JSX),
+        isComponent,
+        parameters: collectParameters(node.parameters, sf),
+        returnType: getTextOrNull(node.type, sf),
+        extends: null,
+        implements: [],
+        typeParameters: collectTypeParameters(node, sf),
+        hooks,
         members: [],
         span: node.name ? spanOf(node.name, sf) : spanOf(node, sf),
       });
@@ -263,16 +393,21 @@ function collectDeclaration(node, sf, scriptKind, addDecl) {
     }
     case ts.SyntaxKind.ClassDeclaration: {
       const name = node.name ? node.name.text : null;
+      const heritage = collectHeritage(node, sf);
+      const isComponent = isPascalCase(name) && (isJsxLike || containsJsx(node));
+      const hooks = isJsxLike || isComponent ? collectClassHooks(node, sf) : [];
       addDecl({
         name,
         declKind: "class",
         isExported,
         exportKind: isExported ? (isDefault ? "default" : "named") : undefined,
-        isComponent:
-          isPascalCase(name) &&
-          (scriptKind === ts.ScriptKind.TSX ||
-            scriptKind === ts.ScriptKind.JSX ||
-            containsJsx(node)),
+        isComponent,
+        parameters: [],
+        returnType: null,
+        extends: heritage.extendsText,
+        implements: heritage.implementsTypes,
+        typeParameters: collectTypeParameters(node, sf),
+        hooks,
         members: collectMembers(node, sf),
         span: node.name ? spanOf(node.name, sf) : spanOf(node, sf),
       });
@@ -280,12 +415,19 @@ function collectDeclaration(node, sf, scriptKind, addDecl) {
     }
     case ts.SyntaxKind.InterfaceDeclaration: {
       const name = node.name ? node.name.text : null;
+      const heritage = collectHeritage(node, sf);
       addDecl({
         name,
         declKind: "interface",
         isExported,
         exportKind: isExported ? (isDefault ? "default" : "named") : undefined,
         isComponent: false,
+        parameters: [],
+        returnType: null,
+        extends: heritage.extendsText,
+        implements: heritage.implementsTypes,
+        typeParameters: collectTypeParameters(node, sf),
+        hooks: [],
         members: collectMembers(node, sf),
         span: node.name ? spanOf(node.name, sf) : spanOf(node, sf),
       });
@@ -299,6 +441,12 @@ function collectDeclaration(node, sf, scriptKind, addDecl) {
         isExported,
         exportKind: isExported ? (isDefault ? "default" : "named") : undefined,
         isComponent: false,
+        parameters: [],
+        returnType: null,
+        extends: null,
+        implements: [],
+        typeParameters: collectTypeParameters(node, sf),
+        hooks: [],
         members: [],
         span: node.name ? spanOf(node.name, sf) : spanOf(node, sf),
       });
@@ -312,6 +460,12 @@ function collectDeclaration(node, sf, scriptKind, addDecl) {
         isExported,
         exportKind: isExported ? (isDefault ? "default" : "named") : undefined,
         isComponent: false,
+        parameters: [],
+        returnType: null,
+        extends: null,
+        implements: [],
+        typeParameters: [],
+        hooks: [],
         members: collectMembers(node, sf),
         span: node.name ? spanOf(node.name, sf) : spanOf(node, sf),
       });
@@ -325,6 +479,12 @@ function collectDeclaration(node, sf, scriptKind, addDecl) {
         isExported,
         exportKind: isExported ? (isDefault ? "default" : "named") : undefined,
         isComponent: false,
+        parameters: [],
+        returnType: null,
+        extends: null,
+        implements: [],
+        typeParameters: [],
+        hooks: [],
         members: [],
         span: node.name ? spanOf(node.name, sf) : spanOf(node, sf),
       });
@@ -343,11 +503,15 @@ function collectDeclaration(node, sf, scriptKind, addDecl) {
             declKind: "variable",
             isExported: isExport,
             exportKind,
-            isComponent:
-              isPascalCase(nameNode.text) &&
-              (scriptKind === ts.ScriptKind.TSX ||
-                scriptKind === ts.ScriptKind.JSX) &&
-              containsJsx(decl),
+            isComponent: isPascalCase(nameNode.text) && isJsxLike && containsJsx(decl),
+            parameters: [],
+            returnType: getTextOrNull(decl.type, sf),
+            extends: null,
+            implements: [],
+            typeParameters: [],
+            hooks: isJsxLike || (isPascalCase(nameNode.text) && containsJsx(decl))
+              ? collectVariableHooks(decl, sf)
+              : [],
             members: [],
             span: spanOf(nameNode, sf),
           });

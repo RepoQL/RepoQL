@@ -70,6 +70,24 @@ public sealed class TypeScriptDeclaration
     [JsonPropertyName("isComponent")]
     public bool IsComponent { get; set; }
 
+    [JsonPropertyName("parameters")]
+    public List<TypeScriptParameter> Parameters { get; set; } = [];
+
+    [JsonPropertyName("returnType")]
+    public string? ReturnType { get; set; }
+
+    [JsonPropertyName("extends")]
+    public string? Extends { get; set; }
+
+    [JsonPropertyName("implements")]
+    public List<string> Implements { get; set; } = [];
+
+    [JsonPropertyName("typeParameters")]
+    public List<string> TypeParameters { get; set; } = [];
+
+    [JsonPropertyName("hooks")]
+    public List<string> Hooks { get; set; } = [];
+
     [JsonPropertyName("members")]
     public List<TypeScriptMember> Members { get; set; } = [];
 
@@ -85,8 +103,32 @@ public sealed class TypeScriptMember
     [JsonPropertyName("memberKind")]
     public string MemberKind { get; set; } = string.Empty;
 
+    [JsonPropertyName("parameters")]
+    public List<TypeScriptParameter> Parameters { get; set; } = [];
+
+    [JsonPropertyName("returnType")]
+    public string? ReturnType { get; set; }
+
+    [JsonPropertyName("type")]
+    public string? Type { get; set; }
+
     [JsonPropertyName("span")]
     public TypeScriptSpan Span { get; set; } = new();
+}
+
+public sealed class TypeScriptParameter
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("type")]
+    public string? Type { get; set; }
+
+    [JsonPropertyName("isOptional")]
+    public bool IsOptional { get; set; }
+
+    [JsonPropertyName("isRest")]
+    public bool IsRest { get; set; }
 }
 
 public sealed class TypeScriptSpan

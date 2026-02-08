@@ -298,6 +298,7 @@ public sealed partial class TypeScriptNodeClient : IAsyncDisposable, IDisposable
     [JsonSerializable(typeof(NodeRequest))]
     [JsonSerializable(typeof(NodeResponse))]
     [JsonSerializable(typeof(TypeScriptParseResult))]
+    [JsonSerializable(typeof(TypeScriptParameter))]
     [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
     private partial class TypeScriptJsonContext : JsonSerializerContext;
 }
