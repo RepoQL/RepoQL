@@ -13,6 +13,8 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
 
     private readonly ILogger<TypeScriptLoader> _logger;
     private readonly TypeScriptNodeClient _nodeClient;
+    private static readonly Lazy<string> TypeScriptViewsSql = new(
+        () => ReadEmbeddedResource("RepoQL.Formats.TypeScript.Schema.typescript_views.sql"));
 
     public TypeScriptLoader(TypeScriptNodeClient nodeClient, ILogger<TypeScriptLoader>? logger = null)
     {
@@ -165,8 +167,8 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             var declHeadline = BuildDeclHeadline(decl);
             var declStructure = BuildDeclStructure(decl);
 
-            // Use typescript.type for class/interface, ts_decl_{kind} for others
-            var isType = decl.DeclKind is "class" or "interface";
+            // Use typescript.type for class/interface/type/enum, ts_decl_{kind} for others
+            var isType = decl.DeclKind is "class" or "interface" or "type" or "enum";
             var nodeKind = isType ? "typescript.type" : $"ts_decl_{decl.DeclKind}";
 
             var props = new JsonObject
@@ -182,6 +184,10 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
                 props["namespace"] = string.Empty;  // TS uses modules, not namespaces
                 props["accessibility"] = decl.IsExported ? "export" : "internal";
                 props["signature"] = declHeadline;
+                if (!string.IsNullOrEmpty(decl.Extends))
+                    props["extends"] = decl.Extends;
+                if (decl.Implements.Count > 0)
+                    props["implements"] = ToJsonArray(decl.Implements);
             }
             else
             {
@@ -194,6 +200,8 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             // Optional properties
             if (decl.IsComponent)
                 props["is_component"] = true;
+            if (decl.IsComponent && decl.Hooks.Count > 0)
+                props["hooks"] = ToJsonArray(decl.Hooks);
 
             nodes.Add(new Node
             {
@@ -211,6 +219,28 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             });
 
             edges.Add(CreateHasPart(docNode.Id, declNodeId, docNode.Id, ordinal++, now));
+            if (isType)
+            {
+                if (!string.IsNullOrWhiteSpace(decl.Extends))
+                {
+                    edges.Add(CreateReferenceEdge(
+                        declNodeId,
+                        "EXTENDS",
+                        decl.Extends!,
+                        docNode.Id,
+                        now));
+                }
+
+                foreach (var implementedType in decl.Implements.Where(i => !string.IsNullOrWhiteSpace(i)))
+                {
+                    edges.Add(CreateReferenceEdge(
+                        declNodeId,
+                        "IMPLEMENTS",
+                        implementedType,
+                        docNode.Id,
+                        now));
+                }
+            }
 
             if (decl.Members.Count > 0)
             {
@@ -236,7 +266,7 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
                             ["name"] = member.Name,
                             ["member_kind"] = member.MemberKind
                         },
-                        Headline = $"{member.MemberKind} {member.Name}",
+                        Headline = BuildMemberSignature(member),
                         CreatedAt = now,
                         UpdatedAt = now
                     });
@@ -246,18 +276,44 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             }
         }
 
+        var annotations = new List<Annotation>();
+        foreach (var diag in state.Parse.Diagnostics)
+        {
+            annotations.Add(new Annotation
+            {
+                Id = Guid.NewGuid(),
+                Kind = "diagnostic",
+                Severity = "warning",
+                Source = "repoql.formats.typescript",
+                RuleId = "ts.parse_error",
+                Message = diag.Message,
+                ScopeDocumentId = docNode.Id,
+                TargetNodeId = docNode.Id,
+                CreatedAt = now
+            });
+        }
+
         return new Records
         {
             Artifacts = [artifact],
             Nodes = [.. nodes],
             Spans = [.. spans],
-            Edges = [.. edges]
+            Edges = [.. edges],
+            Annotations = [.. annotations]
         };
     }
 
     public IEnumerable<FormatSqlScript> GetSchemaScripts()
     {
-        yield break;
+        yield return new FormatSqlScript("typescript_views", TypeScriptViewsSql.Value);
+    }
+
+    private static string ReadEmbeddedResource(string resourceName)
+    {
+        using var stream = typeof(TypeScriptLoader).Assembly.GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException($"Embedded SQL resource {resourceName} was not found.");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 
     private static SemanticMediaType NormalizeKind(SemanticMediaType mediaType)
@@ -308,30 +364,40 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
             CreatedAt = timestamp
         };
 
+    private static Edge CreateReferenceEdge(Guid srcId, string edgeType, string targetName, Guid scopeDocumentId, DateTimeOffset timestamp)
+        => new()
+        {
+            Id = Guid.NewGuid(),
+            SrcId = srcId,
+            DstId = null,
+            Type = edgeType,
+            IsComposition = false,
+            ScopeDocumentId = scopeDocumentId,
+            Props = new JsonObject
+            {
+                ["target"] = targetName
+            },
+            CreatedAt = timestamp
+        };
+
     private static string BuildDeclHeadline(TypeScriptDeclaration decl)
     {
-        var parts = new List<string>();
-        if (decl.IsExported) parts.Add("export");
-        parts.Add(decl.DeclKind);
-        if (!string.IsNullOrEmpty(decl.Name)) parts.Add(decl.Name);
-        if (decl.IsComponent) parts.Add("(component)");
-        return string.Join(" ", parts);
+        var headline = BuildDeclarationSignature(decl, includeFunctionKeyword: true);
+        if (decl.IsExported)
+            headline = $"export {headline}";
+        if (decl.IsComponent)
+            headline = $"{headline} (component)";
+        return headline;
     }
 
     private static string? BuildDeclStructure(TypeScriptDeclaration decl)
     {
-        // Only build structure for types that have members (classes, interfaces)
-        if (decl.Members.Count == 0)
-            return null;
-
         var sb = new StringBuilder();
-        var typeName = !string.IsNullOrEmpty(decl.Name) ? decl.Name : $"<{decl.DeclKind}>";
-
-        sb.AppendLine($"{decl.DeclKind} {typeName}");
+        sb.AppendLine(BuildDeclarationSignature(decl, includeFunctionKeyword: true));
 
         foreach (var member in decl.Members)
         {
-            sb.AppendLine($"  {member.MemberKind} {member.Name}");
+            sb.AppendLine($"  {BuildMemberSignature(member)}");
         }
 
         return sb.ToString().TrimEnd();
@@ -340,16 +406,18 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
     private static string BuildHeadline(DocumentModel document, TypeScriptDocumentState state, int? tokenCount)
     {
         var fileName = SafeFileName(document.Uri);
+        var mediaTypeKind = string.IsNullOrWhiteSpace(state.MediaType.Kind) ? state.MediaType.ToString() : state.MediaType.Kind;
         var exports = state.Parse.Declarations.Where(d => d.IsExported && !string.IsNullOrWhiteSpace(d.Name))
             .Select(d => d.Name!)
             .Distinct(StringComparer.Ordinal)
             .ToList();
-        var exportText = exports.Count == 0 ? "exports: -" : $"exports: {string.Join(", ", exports.Take(4))}";
+        var exportText = exports.Count == 0 ? "exports: -" : $"exports: {string.Join(", ", exports)}";
         var importText = $"imports: {state.Parse.Imports.Count}";
-        var tokenText = tokenCount.HasValue ? $"{tokenCount.Value} tokens" : null;
-        var diag = state.Parse.Diagnostics.Count > 0 ? $"[⚠️ {state.Parse.Diagnostics.Count}]" : null;
+        var sizeText = $"{document.LineMap.LineCount} ln";
+        if (tokenCount.HasValue)
+            sizeText = $"{sizeText}, {FormatTokenCount(tokenCount.Value)}";
 
-        return string.Join(" | ", new[] { fileName, exportText, importText, tokenText, diag }.Where(s => !string.IsNullOrWhiteSpace(s)));
+        return string.Join(" | ", new[] { fileName, mediaTypeKind, sizeText, exportText, importText }.Where(s => !string.IsNullOrWhiteSpace(s)));
     }
 
     private static string BuildSummary(DocumentModel document, TypeScriptDocumentState state)
@@ -377,12 +445,177 @@ public sealed class TypeScriptLoader : IFormatLoader, IFormatMaterializer, IForm
     private static string BuildStructure(DocumentModel document, TypeScriptDocumentState state)
     {
         var fileName = SafeFileName(document.Uri);
-        var decls = state.Parse.Declarations.Select(d => d.Name ?? $"<{d.DeclKind}>").ToList();
-        var outline = decls.Count == 0
-            ? "no declarations"
-            : string.Join(" → ", decls.Take(6));
+        var mediaTypeKind = string.IsNullOrWhiteSpace(state.MediaType.Kind) ? state.MediaType.ToString() : state.MediaType.Kind;
+        var sb = new StringBuilder();
 
-        return $"{fileName} → {outline}";
+        sb.AppendLine($"{fileName} ({mediaTypeKind})");
+
+        sb.AppendLine("  Imports:");
+        if (state.Parse.Imports.Count == 0)
+        {
+            sb.AppendLine("    (none)");
+        }
+        else
+        {
+            foreach (var import in state.Parse.Imports)
+            {
+                sb.AppendLine($"    '{import.Specifier}' ({import.ImportStyle})");
+            }
+        }
+
+        var exportedDecls = state.Parse.Declarations.Where(d => d.IsExported).ToList();
+        sb.AppendLine("  Exports:");
+        if (exportedDecls.Count == 0)
+        {
+            sb.AppendLine("    (none)");
+        }
+        else
+        {
+            foreach (var decl in exportedDecls)
+            {
+                sb.Append("    +");
+                sb.Append(BuildDeclarationSignature(decl, includeFunctionKeyword: false));
+                if (!string.IsNullOrWhiteSpace(decl.Name))
+                {
+                    sb.Append(" #symbol=");
+                    sb.Append(decl.Name);
+                }
+
+                sb.AppendLine();
+            }
+        }
+
+        var internalDecls = state.Parse.Declarations.Where(d => !d.IsExported).ToList();
+        sb.AppendLine("  Internal:");
+        if (internalDecls.Count == 0)
+        {
+            sb.AppendLine("    (none)");
+        }
+        else
+        {
+            foreach (var decl in internalDecls)
+            {
+                sb.Append("    -");
+                sb.Append(BuildDeclarationSignature(decl, includeFunctionKeyword: false));
+                if (!string.IsNullOrWhiteSpace(decl.Name))
+                {
+                    sb.Append(" #symbol=");
+                    sb.Append(decl.Name);
+                }
+
+                sb.AppendLine();
+            }
+        }
+
+        return sb.ToString().TrimEnd();
+    }
+
+    private static string BuildDeclarationSignature(TypeScriptDeclaration decl, bool includeFunctionKeyword)
+    {
+        var name = string.IsNullOrWhiteSpace(decl.Name) ? $"<{decl.DeclKind}>" : decl.Name!;
+        var typeParameters = FormatTypeParameters(decl.TypeParameters);
+
+        return decl.DeclKind switch
+        {
+            "function" => includeFunctionKeyword
+                ? $"function {name}{typeParameters}{FormatParameters(decl.Parameters)}{FormatReturnType(decl.ReturnType)}"
+                : $"{name}{typeParameters}{FormatParameters(decl.Parameters)}{FormatReturnType(decl.ReturnType)}",
+            "class" => $"class {name}{typeParameters}{FormatHeritage(decl.Extends, decl.Implements)}",
+            "interface" => $"interface {name}{typeParameters}{FormatHeritage(decl.Extends, decl.Implements)}",
+            "type" => $"type {name}{typeParameters}",
+            "enum" => $"enum {name}",
+            "variable" => FormatVariableSignature(name, decl.ReturnType),
+            "namespace" => $"namespace {name}",
+            _ => $"{decl.DeclKind} {name}"
+        };
+    }
+
+    private static string BuildMemberSignature(TypeScriptMember member)
+    {
+        return member.MemberKind switch
+        {
+            "constructor" => $"constructor{FormatParameters(member.Parameters)}",
+            "method" => $"method {member.Name}{FormatParameters(member.Parameters)}{FormatReturnType(member.ReturnType)}",
+            "field" => $"field {member.Name}{FormatTypeAnnotation(member.Type)}",
+            "getter" => $"getter {member.Name}{FormatTypeAnnotation(member.ReturnType)}",
+            "setter" => $"setter {member.Name}{FormatParameters(member.Parameters)}{FormatReturnType(member.ReturnType)}",
+            "enumMember" => $"enumMember {member.Name}",
+            _ => $"{member.MemberKind} {member.Name}"
+        };
+    }
+
+    private static string FormatParameters(IReadOnlyList<TypeScriptParameter> parameters)
+    {
+        if (parameters.Count == 0) return "()";
+        var parts = parameters.Select(p =>
+        {
+            var prefix = p.IsRest ? "..." : "";
+            var suffix = p.IsOptional ? "?" : "";
+            var type = p.Type != null ? $": {p.Type}" : "";
+            return $"{prefix}{p.Name}{suffix}{type}";
+        });
+        return $"({string.Join(", ", parts)})";
+    }
+
+    private static string FormatTypeParameters(IReadOnlyList<string> typeParameters)
+    {
+        if (typeParameters.Count == 0)
+            return string.Empty;
+
+        return $"<{string.Join(", ", typeParameters)}>";
+    }
+
+    private static string FormatHeritage(string? extendsType, IReadOnlyList<string> implementedTypes)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(extendsType))
+            parts.Add($"extends {extendsType}");
+
+        var nonEmptyImplemented = implementedTypes.Where(i => !string.IsNullOrWhiteSpace(i)).ToList();
+        if (nonEmptyImplemented.Count > 0)
+            parts.Add($"implements {string.Join(", ", nonEmptyImplemented)}");
+
+        return parts.Count == 0
+            ? string.Empty
+            : $" {string.Join(" ", parts)}";
+    }
+
+    private static string FormatVariableSignature(string name, string? type)
+    {
+        if (string.IsNullOrWhiteSpace(type))
+            return name;
+
+        return $"const {name}: {type}";
+    }
+
+    private static string FormatReturnType(string? returnType)
+    {
+        if (string.IsNullOrWhiteSpace(returnType))
+            return string.Empty;
+
+        return $": {returnType}";
+    }
+
+    private static string FormatTypeAnnotation(string? type)
+    {
+        if (string.IsNullOrWhiteSpace(type))
+            return string.Empty;
+
+        return $": {type}";
+    }
+
+    private static JsonArray ToJsonArray(IEnumerable<string> values)
+        => new(values
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Select(v => (JsonNode)JsonValue.Create(v)!)
+            .ToArray());
+
+    private static string FormatTokenCount(int tokenCount)
+    {
+        if (tokenCount > 1000)
+            return $"~{tokenCount / 1000d:0.#}k tok";
+
+        return $"~{tokenCount} tok";
     }
 
     private static string SafeFileName(RepoUri uri)

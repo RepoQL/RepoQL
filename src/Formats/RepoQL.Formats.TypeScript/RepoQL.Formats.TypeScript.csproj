@@ -24,6 +24,10 @@
     <None Include="Node\\node_modules\\**\\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Schema/**/*.sql" />
+  </ItemGroup>
+
   <!-- Auto-install TypeScript npm dependency if missing -->
   <Target Name="NpmInstall" BeforeTargets="BeforeBuild" Condition="!Exists('$(NodeHelperDir)/node_modules/typescript')">
     <Message Importance="high" Text="Installing TypeScript npm dependencies..." />
