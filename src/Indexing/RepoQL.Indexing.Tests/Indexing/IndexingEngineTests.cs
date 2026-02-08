@@ -136,7 +136,16 @@ public class IndexingEngineTests
     [DisplayName("Dedup comparer rejects identical URI even when options differ")]
     public async Task Given_SameUriDifferentOptions_When_EnqueuedTwice_Then_SecondIsDeduped()
     {
-        var context = IndexingEngineTestFactory.Create();
+        var pause = new TaskCompletionSource<PipelineResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var classifier = A.Fake<ClassificationPipeline>();
+        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Returns(pause.Task);
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithClassifier(classifier);
+        });
+
         var baseBuilder = IndexingTestItemFactory.Builder().WithUri("file:///repo/doc.md");
 
         var staleItem = baseBuilder.WithOptions(IndexItemOptions.Default).Build();
@@ -152,6 +161,12 @@ public class IndexingEngineTests
         // the merged options so the item is re-processed after the first completes.
         var second = await context.Engine.EnqueueIndexItemAsync(forceItem, CancellationToken.None);
         second.Should().BeFalse();
+
+        pause.TrySetResult(PipelineResult.Success);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var waited = await context.Engine.WaitForAsync(IndexingState.AllIdle, cts.Token);
+        waited.Should().BeTrue("engine should return to AllIdle once the queued item finishes");
     }
 
     [Test]
