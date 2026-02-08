@@ -1,0 +1,5 @@
+{{ media_kind }} ({{ row_count | number_with_delimiter }} rows)
+  Columns:
+{% for column in columns -%}
+    {{ forloop.index }}. {{ column.name }} ({{ column.type }}{% if column.estimated_tokens > 0 %}, {{ column.estimated_tokens | tokens }}{% endif %}){% if column.min_value and column.max_value %} -> {{ column.min_value }} - {{ column.max_value }}{% elsif column.sample_values and column.sample_values.size > 0 %} -> "{% for sample in column.sample_values limit:3 %}{{ sample }}{% unless forloop.last %}", "{% endunless %}{% endfor %}"{% endif %}
+{% endfor -%}
