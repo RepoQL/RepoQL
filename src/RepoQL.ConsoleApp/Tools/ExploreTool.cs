@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
@@ -149,7 +150,7 @@ internal sealed class ExploreTool(
     [McpServerTool(Name = "explore", Title = "Explore Repository", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(ToolInstructions)]
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
-    public async Task<string> ExploreAsync(
+    public async Task<CallToolResult> ExploreAsync(
         [Description("Tokens to invest in the response")] int tokenBudget,
         [Description("What you are trying to do - see INTENT_SELECTION")] Intent intent,
         [Description("URI glob pattern to filter results (e.g., file:///src/**, help://**). Combine with ; exclude with !")] string? uriGlob = null,
@@ -160,7 +161,7 @@ internal sealed class ExploreTool(
         CancellationToken cancellationToken = default)
     {
         if (tokenBudget <= 0)
-            return "Error: tokenBudget must be a positive integer.";
+            return ToolResult.Error("Error: tokenBudget must be a positive integer.");
 
         // Check orientation
         var orientationFooter = _sessionOrientation.CheckOrientation(uriGlob);
@@ -181,7 +182,7 @@ internal sealed class ExploreTool(
             {
                 // First time seeing this request while scope not ready - return status and instructions
                 _lastRequestSignature = requestSignature;
-                return RepoQlClientScopeExtensions.FormatScopeNotReadyMessage(scopeStatus, uriGlob);
+                return ToolResult.Success(RepoQlClientScopeExtensions.FormatScopeNotReadyMessage(scopeStatus, uriGlob));
             }
 
             if (!scopeStatus.IsReady && isRepeatRequest)
@@ -220,25 +221,25 @@ internal sealed class ExploreTool(
 
             if (!response.Success)
             {
-                return $"Error: {response.Error}";
+                return ToolResult.Error($"Error: {response.Error}");
             }
 
-            return response.RenderedOutput + orientationFooter;
+            return ToolResult.Success(response.RenderedOutput + orientationFooter);
         }
         catch (Exception ex)
         {
             if (ex is RepoQlDiagnosticsException diagnosticsException)
             {
-                return $"Error: Search failed. {ExtractErrorMessage(ex)}\n\n{diagnosticsException.Diagnostics}";
+                return ToolResult.Error($"Error: Search failed. {ExtractErrorMessage(ex)}\n\n{diagnosticsException.Diagnostics}");
             }
 
             // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
                 var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancellationToken);
-                return $"Error: Search failed. {ExtractErrorMessage(ex)}\n\n{diagnostics}";
+                return ToolResult.Error($"Error: Search failed. {ExtractErrorMessage(ex)}\n\n{diagnostics}");
             }
-            return $"Error: Search failed. {ExtractErrorMessage(ex)}";
+            return ToolResult.Error($"Error: Search failed. {ExtractErrorMessage(ex)}");
         }
     }
 

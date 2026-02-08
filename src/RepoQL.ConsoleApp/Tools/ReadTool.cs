@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
@@ -163,7 +164,7 @@ internal sealed class ReadTool(
     [McpServerTool(Name = "read", Title = "Read Content", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(ReadInstructions)]
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
-    public async Task<string> ReadAsync(
+    public async Task<CallToolResult> ReadAsync(
         [Description("URI or glob pattern (e.g., file:///path, help:///file.md). Append ' => question: <question>' for LLM synthesis.")]
         string uri,
         [Description("Token budget - determines representation depth (full/structure/headline)")]
@@ -171,10 +172,10 @@ internal sealed class ReadTool(
         CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(uri))
-            return "Error: URI cannot be empty.";
+            return ToolResult.Error("Error: URI cannot be empty.");
 
         if (tokenBudget <= 0)
-            return "Error: tokenBudget must be a positive integer.";
+            return ToolResult.Error("Error: tokenBudget must be a positive integer.");
 
         // Check orientation (reading help:// will mark as oriented)
         var orientationFooter = _sessionOrientation.CheckOrientation(uri);
@@ -199,7 +200,7 @@ internal sealed class ReadTool(
             {
                 // First time seeing this request while scope not ready - return status and instructions
                 _lastRequestSignature = requestSignature;
-                return RepoQlClientScopeExtensions.FormatScopeNotReadyMessage(scopeStatus, scopeUri);
+                return ToolResult.Success(RepoQlClientScopeExtensions.FormatScopeNotReadyMessage(scopeStatus, scopeUri));
             }
 
             if (!scopeStatus.IsReady && isRepeatRequest)
@@ -219,10 +220,10 @@ internal sealed class ReadTool(
 
             if (!response.Success)
             {
-                return $"Error: {response.Error}";
+                return ToolResult.Error($"Error: {response.Error}");
             }
 
-            return response.RenderedOutput + orientationFooter;
+            return ToolResult.Success(response.RenderedOutput + orientationFooter);
         }
         catch (Exception ex)
         {
@@ -230,16 +231,16 @@ internal sealed class ReadTool(
 
             if (ex is RepoQlDiagnosticsException diagnosticsException)
             {
-                return $"Error: {cleanMessage}\n\n{diagnosticsException.Diagnostics}";
+                return ToolResult.Error($"Error: {cleanMessage}\n\n{diagnosticsException.Diagnostics}");
             }
 
             // Infrastructure errors get diagnostics appended
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
                 var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancel).ConfigureAwait(false);
-                return $"Error: {cleanMessage}\n\n{diagnostics}";
+                return ToolResult.Error($"Error: {cleanMessage}\n\n{diagnostics}");
             }
-            return $"Error: {cleanMessage}";
+            return ToolResult.Error($"Error: {cleanMessage}");
         }
     }
 

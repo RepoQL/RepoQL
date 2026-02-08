@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
@@ -143,24 +144,24 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
     [McpServerTool(Name = "query", Title = "Query Repository", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(QueryInstructions)]
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
-    public async Task<string> Query(
+    public async Task<CallToolResult> Query(
         [Description("DuckDB-style SQL to execute. Pass ':diagnostics:' to run diagnostics.")] string sql,
         [Description("Token budget for response. If exceeded and SQL contains a comment (intent), server may LLM-summarize. Client checks result and offers repeat-to-confirm if still too large.")] int tokenBudget = 15_000,
         CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(sql))
-            throw new ArgumentException("SQL query cannot be empty.", nameof(sql));
+            return ToolResult.Error("SQL query cannot be empty.");
 
         // Special command: run diagnostics
         if (sql.Trim().Equals(":diagnostics:", StringComparison.OrdinalIgnoreCase))
         {
             try
             {
-                return await selfTestRunner.RunAsync(DiagnosticCollectionMode.Full, cancel);
+                return ToolResult.Success(await selfTestRunner.RunAsync(DiagnosticCollectionMode.Full, cancel));
             }
             catch (Exception ex)
             {
-                return $"Diagnostics failed: {ex.GetType().Name}: {ex.Message}\n\nStack trace:\n{ex.StackTrace}";
+                return ToolResult.Error($"Diagnostics failed: {ex.GetType().Name}: {ex.Message}\n\nStack trace:\n{ex.StackTrace}");
             }
         }
 
@@ -191,11 +192,11 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
                     // Store this query so next identical call bypasses the check
                     _lastBudgetExceededQuery = requestSignature;
 
-                    return FormatBudgetExceededMessage(
+                    return ToolResult.Success(FormatBudgetExceededMessage(
                         result.Summarized ? result.OriginalRowCount : result.TotalRowCount,
                         estimatedTokens,
                         tokenBudget,
-                        result.Summarized);
+                        result.Summarized));
                 }
             }
 
@@ -213,7 +214,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
                 result.ExecutionTimeMs);
             var tokens = TokenEstimator.EstimateTokens(output);
             var footer = RepresentationFormatter.FormatStatusFooter(status, tokens);
-            return $"{output}\n{footer}" + orientationFooter;
+            return ToolResult.Success($"{output}\n{footer}" + orientationFooter);
         }
         catch (Exception ex)
         {
@@ -222,18 +223,18 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
 
             if (ex is RepoQlDiagnosticsException diagnosticsException)
             {
-                return $"Error: {cleanMessage}\n\n{diagnosticsException.Diagnostics}";
+                return ToolResult.Error($"Error: {cleanMessage}\n\n{diagnosticsException.Diagnostics}");
             }
 
             // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
                 var diagnostics = await selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancel);
-                return $"Error: {cleanMessage}\n\n{diagnostics}";
+                return ToolResult.Error($"Error: {cleanMessage}\n\n{diagnostics}");
             }
 
             // For user input errors (SQL syntax, etc.), just return the message
-            return cleanMessage;
+            return ToolResult.Error(cleanMessage);
         }
     }
 

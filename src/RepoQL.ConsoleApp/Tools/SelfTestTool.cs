@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text;
 using System.Text.Json;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Diagnostics;
 
@@ -30,7 +31,7 @@ internal sealed class SelfTestTool(SelfTestRunner runner, IMcpServer mcpServer)
 
     [McpServerTool(ReadOnly = true, Destructive = false, OpenWorld = false, Name = "selftest")]
     [Description(ToolDescription)]
-    public async Task<string> RunSelfTestAsync(CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> RunSelfTestAsync(CancellationToken cancellationToken = default)
     {
         var sb = new StringBuilder();
 
@@ -85,7 +86,7 @@ internal sealed class SelfTestTool(SelfTestRunner runner, IMcpServer mcpServer)
         var diagnostics = await runner.RunAsync(DiagnosticCollectionMode.Full, cancellationToken);
         sb.Append(diagnostics);
 
-        return sb.ToString();
+        return ToolResult.Success(sb.ToString());
     }
 }
 #endif

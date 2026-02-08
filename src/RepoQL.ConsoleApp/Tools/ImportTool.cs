@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
@@ -29,12 +30,12 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
     [McpServerTool(Name = "import", Title = "Import Repository", ReadOnly = false, Idempotent = false, Destructive = false, OpenWorld = false), Description(ImportInstructions)]
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
-    public async Task<string> ImportAsync(
+    public async Task<CallToolResult> ImportAsync(
         [Description("URI to import (e.g., github://owner/repo@ref). Prefix with '-' to remove an import.")] string uri,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(uri))
-            throw new ArgumentException("uri is required", nameof(uri));
+            return ToolResult.Error("uri is required");
 
         // Check for removal prefix - server handles this
         var isRemoval = uri.TrimStart().StartsWith('-');
@@ -51,13 +52,13 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
             if (isRemoval)
             {
-                return $"""
+                return ToolResult.Success($"""
                     Import removed: {uri.Trim().TrimStart('-')}
 
                     The import and all its indexed data have been deleted.
 
                     To see remaining imports: SELECT * FROM file_system_mount
-                    """;
+                    """);
             }
 
             // Extract repository information for query guidance
@@ -77,7 +78,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                 ? $"\n\nWARNING: {result.FailedCount} file(s) failed to index. Check logs for details."
                 : "";
 
-            return $"""
+            return ToolResult.Success($"""
                 Import completed: {uri.Trim()}
                 {progressSummary}
 
@@ -89,7 +90,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                 - Document list: SELECT uri, headline FROM Files WHERE uri LIKE '{uriPattern}%'
 
                 Note: Re-importing the same repository will perform an incremental update.{failureWarning}
-                """;
+                """);
         }
         catch (Exception ex)
         {
@@ -100,10 +101,10 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
                 var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancellationToken);
-                return $"Import failed: {cleanMessage}\n\n{diagnostics}";
+                return ToolResult.Error($"Import failed: {cleanMessage}\n\n{diagnostics}");
             }
 
-            return $"Import failed: {cleanMessage}";
+            return ToolResult.Error($"Import failed: {cleanMessage}");
         }
     }
 
