@@ -78,7 +78,7 @@ jobs:
       - name: Run tests with coverage
         id: test
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           ARTIFACTS_DIR="${{ env.ARTIFACTS_PATH }}"
           TEST_OUTPUT_DIR="${{ env.TEST_OUTPUT_PATH }}"
@@ -92,6 +92,7 @@ jobs:
             exit 1
           fi
 
+          failed=0
           for project in "${test_projects[@]}"; do
             project_dir="$(dirname "$project")"
             first_source=$(find "$project_dir" -maxdepth 5 -name '*.cs' -type f | head -n1)
@@ -101,7 +102,7 @@ jobs:
             fi
 
             echo "Running tests for: $project"
-            dotnet run \
+            if ! dotnet run \
               --project "$project" \
               --configuration Release \
               --no-build \
@@ -110,7 +111,10 @@ jobs:
               --coverage \
               --coverage-output-format cobertura \
               --report-trx \
-              --results-directory "$ARTIFACTS_DIR/test-results"
+              --results-directory "$ARTIFACTS_DIR/test-results"; then
+              echo "::error::Tests failed for $project"
+              failed=1
+            fi
           done
 
           mapfile -t coverage_files < <(find "$ARTIFACTS_DIR/test-results" -name "*.cobertura.xml" -type f | sort)
@@ -136,8 +140,10 @@ jobs:
               cp "${trx_candidates[-1]}" "$ARTIFACTS_DIR/test-results/tests.trx"
             fi
           fi
+
+          exit $failed
       - name: Generate coverage report
-        if: steps.test.outcome == 'success'
+        if: always() && !cancelled()
         uses: danielpalme/ReportGenerator-GitHub-Action@5
         with:
           reports: '${{ env.ARTIFACTS_PATH }}/coverage/coverage.cobertura.xml'
@@ -145,7 +151,7 @@ jobs:
           reporttypes: 'Html;MarkdownSummaryGithub'
           tag: '${{ github.run_number }}_${{ github.run_id }}'
       - name: Publish coverage summary
-        if: steps.test.outcome == 'success'
+        if: always() && !cancelled()
         run: |
           summary='${{ env.ARTIFACTS_PATH }}/coverage/report/SummaryGithub.md'
           if [[ -f "$summary" ]]; then

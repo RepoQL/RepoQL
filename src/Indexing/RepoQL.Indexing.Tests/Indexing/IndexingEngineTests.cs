@@ -133,8 +133,8 @@ public class IndexingEngineTests
     }
 
     [Test]
-    [DisplayName("Dedup comparer allows identical URI when options differ")]
-    public async Task Given_SameUriDifferentOptions_When_EnqueuedTwice_Then_BothAccepted()
+    [DisplayName("Dedup comparer rejects identical URI even when options differ")]
+    public async Task Given_SameUriDifferentOptions_When_EnqueuedTwice_Then_SecondIsDeduped()
     {
         var context = IndexingEngineTestFactory.Create();
         var baseBuilder = IndexingTestItemFactory.Builder().WithUri("file:///repo/doc.md");
@@ -148,8 +148,10 @@ public class IndexingEngineTests
         var first = await context.Engine.EnqueueIndexItemAsync(staleItem, CancellationToken.None);
         first.Should().BeTrue();
 
+        // Same URI is deduplicated regardless of options; MarkRequeue captures
+        // the merged options so the item is re-processed after the first completes.
         var second = await context.Engine.EnqueueIndexItemAsync(forceItem, CancellationToken.None);
-        second.Should().BeTrue();
+        second.Should().BeFalse();
     }
 
     [Test]
