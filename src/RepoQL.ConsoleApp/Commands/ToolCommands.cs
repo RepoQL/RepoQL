@@ -7,7 +7,7 @@ using Spectre.Console;
 namespace RepoQL.ConsoleApp.Commands;
 
 /// <summary>
-/// CLI verbs for the four core MCP tools: query, explore, read, import.
+/// CLI verbs for the five core MCP tools: query, explore, explain, read, import.
 ///
 /// Purpose: Lets humans use the same capabilities from the terminal that agents
 /// use via MCP — same gRPC calls, same rendered output, no MCP client required.
@@ -43,10 +43,10 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
     /// <summary>
     /// Search and explore the repository with intent-based discovery.
     /// </summary>
-    /// <param name="intent">Inventory, Locate, Inspect, or Explain.</param>
-    /// <param name="keywords">Search terms (e.g., "authentication flow", "How does X work?").</param>
+    /// <param name="intent">Inventory, Locate, or Inspect.</param>
+    /// <param name="keywords">Search terms — code words and synonyms (e.g., "login authentication", "cache").</param>
     /// <param name="budget">Token budget for response size.</param>
-    /// <param name="uri">URI glob to filter scope (e.g., file:///src/**).</param>
+    /// <param name="uri">URI glob to filter scope (e.g., file:///src/**). Omit to search everywhere.</param>
     /// <param name="boost">Regex to elevate matches (e.g., "(?i)interface|abstract").</param>
     /// <param name="penalize">Regex to demote matches (e.g., "(?i)test|mock").</param>
     /// <param name="limit">Max results to show.</param>
@@ -72,6 +72,35 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
 
         var response = await client.ExploreAsync(
             budget, protoIntent, uri, keywords, boost, penalize, limit, cancel)
+            .ConfigureAwait(false);
+
+        if (!response.Success)
+        {
+            console.MarkupLine($"[red]{Markup.Escape(response.Error)}[/]");
+            return;
+        }
+
+        console.WriteLine(response.RenderedOutput);
+    }
+
+    /// <summary>
+    /// Ask a question about the codebase and get a synthesized answer with citations.
+    /// </summary>
+    /// <param name="question">The question to answer (e.g., "How does authentication work?").</param>
+    /// <param name="budget">Token budget for response size.</param>
+    /// <param name="uri">URI glob to scope the search (e.g., file:///src/Auth/**). Omit to search everywhere.</param>
+    /// <param name="cancel">Cancellation token.</param>
+    public async Task Explain(
+        [Argument] string question,
+        int budget = 2000,
+        string? uri = null,
+        CancellationToken cancel = default)
+    {
+        var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
+        await WaitForScopeReadyAsync(client, uri, cancel).ConfigureAwait(false);
+
+        var response = await client.ExploreAsync(
+            budget, ExploreIntent.Explain, uri, question, null, null, null, cancel)
             .ConfigureAwait(false);
 
         if (!response.Success)
@@ -152,9 +181,8 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
             "inventory" or "inv" => ExploreIntent.Inventory,
             "locate" or "loc" => ExploreIntent.Locate,
             "inspect" or "ins" => ExploreIntent.Inspect,
-            "explain" or "exp" => ExploreIntent.Explain,
             _ => throw new ArgumentException(
-                $"Unknown intent '{intent}'. Valid: inventory, locate, inspect, explain (or inv, loc, ins, exp).")
+                $"Unknown intent '{intent}'. Valid: inventory, locate, inspect (or inv, loc, ins). For explain, use the 'explain' command.")
         };
     }
 

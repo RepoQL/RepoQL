@@ -11,7 +11,7 @@ Local, queryable knowledge graph for repositories. Files → DuckDB → SQL. Age
 ```
 Files → IndexItem (flow object) → Pipeline → DuckDB (5 tables)
                                                   ↓
-Agents → explore/query/read tools → SQL + UDFs → Results
+Agents → explore/explain/query/read tools → SQL + UDFs → Results
 ```
 
 **Everything is addressable:**

@@ -59,7 +59,6 @@ internal class McpCommands
                                            - Inventory: You don't know what's there yet. Breadth over depth — survey with or without search criteria. Keywords optional; when provided, they rank by relevance. Returns an index, not content.
                                            - Locate: You know the concept, not the location. Balanced — detail on matches, awareness of the rest. Enough context to decide what to read next.
                                            - Inspect: You know the target. Depth with context — concentrates tokens on relevant content and its surroundings.
-                                           - Explain: You want understanding, not raw text. Massive compression — an LLM reads far more than you'd spend (often 50k → 1k). Returns synthesis, source URIs, and reasoning — verifiable, not a black box.
 
                                            **Why this matters:** Traditional search finds *most* results and you answer confidently — but gaps erode trust. Users run subagents to verify, wasting tokens and time. Explore searches wide first, so you see what exists before answering. No blind spots, no verification tax. You can say "I found everything related to X" — not "I found some things."
 
@@ -74,6 +73,7 @@ internal class McpCommands
 
                                            <TOOLS>
                                            **explore** — Search wide, then focus. Explores broadly, ranks by relevance, allocates budget to surface what matters. You see what exists before committing tokens — no confident answers without knowing what you missed.
+                                           **explain** — Ask a question, get a synthesized answer with citations. An LLM reads wide (50k tokens), returns focused prose. Use when you want understanding, not raw text.
                                            **read** — Fetch known URIs. Append `=> modifier` for views (tree, history, blame, lint, question).
                                            **query** — SQL for aggregation, graph traversal, git history, cross-file analysis. Also: call MCP servers, parse JSON/CSV/Excel/Parquet.
                                            </TOOLS>
@@ -93,16 +93,17 @@ internal class McpCommands
                                            RepoQL documentation is indexed at `help://` — query it like code.
 
                                            Ask a question:
-                                             explore(intent="Explain", uriGlob="help://**", keywords="How do I shot web?", tokenBudget=2500)
+                                             explain(question="How do I add a new file format?", uriGlob="help://**", tokenBudget=2500)
 
                                            Find relevant docs:
-                                             explore(intent="Locate", uriGlob="help://**", keywords="graph traversal", tokenBudget=1500)
+                                             explore(intent="Locate", uriGlob="help://**", keywords="graph edges", tokenBudget=1500)
                                            </HELP>
                                            """;
                 })
                 .WithStdioServerTransport()
                 .WithTools<QueryTool>()
                 .WithTools<ExploreTool>()
+                .WithTools<ExplainTool>()
                 .WithTools<ReadTool>()
                 .WithTools<ImportTool>()
 #if DEBUG

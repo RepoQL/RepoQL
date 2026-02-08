@@ -29,7 +29,6 @@
                     <option value="@ExploreIntent.Inventory">Inventory - What's here?</option>
                     <option value="@ExploreIntent.Locate">Locate - Where is it?</option>
                     <option value="@ExploreIntent.Inspect">Inspect - Show details</option>
-                    <option value="@ExploreIntent.Explain">Explain - LLM synthesis (requires API key)</option>
                 </select>
             </div>
 
@@ -580,7 +579,7 @@
         (RequiresKeywords && string.IsNullOrWhiteSpace(_keywords));
 
     private bool RequiresKeywords =>
-        _intent is ExploreIntent.Locate or ExploreIntent.Inspect or ExploreIntent.Explain;
+        _intent is ExploreIntent.Locate or ExploreIntent.Inspect;
 
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {
@@ -601,11 +600,6 @@
         {
             _validationError = "Keywords are required for this intent.";
             return;
-        }
-
-        if (_intent == ExploreIntent.Explain)
-        {
-            // Note about API key - we'll let it run and show error if key missing
         }
 
         _searchCts?.Cancel();

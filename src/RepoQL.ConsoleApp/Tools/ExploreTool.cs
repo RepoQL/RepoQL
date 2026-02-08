@@ -32,22 +32,19 @@ internal sealed class ExploreTool(
 
         **Inventory**: What exists here?
         Survey mode—see into files through headlines and tags without reading them. Breadth over depth. Keywords optional; when provided, they rank results but you still see the full landscape.
-        → tokenBudget=1000, uriGlob="file:///src/**"
-        → tokenBudget=1000, uriGlob="file:///docs/**", keywords="failure", boost="(?i)error" (ranked survey)
+        → tokenBudget=1000
+        → tokenBudget=1000, keywords="failure" (ranked survey)
 
         **Locate**: You know the concept, not the location.
         Balanced—detail on matches, awareness of the rest. Enough context to decide what to read next.
-        → tokenBudget=1500, keywords="authentication validation"
+        → tokenBudget=1500, keywords="login authentication"
 
         **Inspect**: You know the target.
         Depth with context—concentrates tokens on relevant content and its surroundings. Shows code snippets, line numbers.
-        → tokenBudget=2500, uriGlob="file:///src/Auth/**", keywords="token validation"
+        → tokenBudget=2500, keywords="token refresh JWT"
 
-        **Explain**: You want understanding, not raw text.
-        Massive compression—an LLM reads far more than you'd spend (often 50k → 1k). Returns synthesis, source URIs, and reasoning—verifiable, not a black box.
-        → tokenBudget=2000, keywords="How does JWT refresh work in TokenService?"
-
-        Workflow: Inventory → Locate → Inspect → Explain (accumulate knowledge, don't skip steps)
+        Workflow: Inventory → Locate → Inspect (accumulate knowledge, don't skip steps)
+        For synthesized understanding, use the explain tool instead.
         </INTENT>
 
         <PARAMETERS>
@@ -57,16 +54,17 @@ internal sealed class ExploreTool(
         - The tool maximizes value within your budget, but outcomes vary
         Consider the stakes: if an incomplete answer has serious consequences, bet more. When the cost of being wrong is low, bet small and iterate.
 
-        **keywords**: Semantic + lexical search terms.
-        - Concepts: "authentication flow", "error handling"
-        - Questions work best for Explain: "How does X work?"
+        **keywords**: Search terms — code words and synonyms.
+        - "login authentication" — synonyms widen the net
+        - "cache invalidation TTL" — related terms that co-occur
+        - Avoid generic words: "layer", "flow", "strategy", "handling" match everywhere
         - Optional for Inventory (survey mode)
 
-        **uriGlob**: Filter by path. Use Inventory first to learn structure, then narrow.
-        - file:///src/** — all source
+        **uriGlob**: Optional. Omit to search everywhere (the default and usually the best choice).
+        Only narrow when you already know where to look or need to exclude noise.
         - file:///src/**/*.cs — C# files only
-        - file:///src/**;!**/tests/** — exclude tests
-        - help://** — embedded documentation
+        - file:///src/**;!**/tests/** — source without tests
+        - help://** — documentation only
         - Combine with ; exclude with !
 
         **boost**: Regex to elevate matches (demotes others relatively).
@@ -87,64 +85,37 @@ internal sealed class ExploreTool(
         3. boost ranks UP (elevate matches)
         4. penalize ranks DOWN (demote matches)
 
-        Example: Find authentication implementations, not tests:
-        → intent=Locate, uriGlob="file:///src/**", keywords="authentication", penalize="(?i)test|mock"
+        Example: Find auth implementations, not tests:
+        → intent=Locate, keywords="authenticate authorize", penalize="(?i)test|mock"
 
-        Example: Find interfaces in a specific area:
-        → intent=Locate, uriGlob="file:///src/Services/**", keywords="service", boost="(?i)interface|abstract"
+        Example: Find service contracts:
+        → intent=Locate, keywords="service", boost="(?i)interface|abstract"
         </LAYERED_APPROACH>
 
-        <EXPLAIN_TIPS>
-        Explain queries must be self-contained (no conversation context):
-        ✓ "What is AuthService responsible for?"
-        ✓ "Why does PaymentProcessor use idempotency keys?"
-        ✗ "Explain everything about authentication" (too broad)
-        ✗ "What does this service do?" (no referent)
-
-        Output includes:
-        - Answer: Synthesized explanation
-        - Evidence: Code snippets with file:///path#line=N,M citations
-        - Nuance: Caveats and related considerations
-
-        Always verify citations—read the actual lines to confirm.
-        </EXPLAIN_TIPS>
-
         <QUICK_PATTERNS>
-        Orient in new codebase:
-        → intent=Inventory, uriGlob="file:///src/**", tokenBudget=1000
-
-        Ranked survey (see everything, relevant stuff first):
-        → intent=Inventory, uriGlob="file:///docs/**", boost="(?i)failure|error", tokenBudget=1000
+        Ranked survey:
+        → intent=Inventory, keywords="Controller", tokenBudget=3000
 
         Find where something is:
-        → intent=Locate, keywords="caching layer", tokenBudget=1500
+        → intent=Locate, keywords="cache", tokenBudget=1500
 
-        Understand specific code:
-        → intent=Inspect, uriGlob="file:///src/Cache/**", keywords="invalidation", tokenBudget=2500
-
-        Get explanation with evidence:
-        → intent=Explain, keywords="How does the caching layer handle invalidation?", tokenBudget=2500
+        Examine specific code:
+        → intent=Inspect, keywords="cache invalidation", tokenBudget=2500
 
         Find production code only:
         → intent=Locate, keywords="database connection", penalize="(?i)test|mock", tokenBudget=1500
 
         Find contracts/interfaces:
         → intent=Locate, keywords="service", boost="(?i)interface|abstract", tokenBudget=1500
+
+        Narrow to a specific area (when needed):
+        → intent=Inventory, uriGlob="help://**", tokenBudget=1000
         </QUICK_PATTERNS>
 
-        <WHEN_TO_USE_READ>
-        Explore finds URIs. Read fetches content. The workflow:
-        1. explore(intent=Locate, keywords="validation") → returns URIs with symbols
-        2. read("file:///src/Auth.cs#symbol=ValidateToken;file:///src/Token.cs#symbol=Refresh;file:///src/Session.cs#symbol=Check", 3000)
-           → fetches just those 3 function bodies in one call
-
-        Other read patterns:
-        - read("file:///src/Auth.cs", 3000) — whole file
-        - read("file:///src/** => tree: folders", 3000) — directory structure
-        - read("file:///src/Auth.cs => question: How does this handle expiry?", 2000) — LLM synthesis
-
-        Explore when you don't know where. Read when you have URIs.
-        </WHEN_TO_USE_READ>
+        <TIPS>
+        Results too noisy? Add penalize="(?i)test|mock" or narrow with uriGlob.
+        Too sparse? Increase tokenBudget or broaden keywords with synonyms.
+        </TIPS>
         """;
 
     [McpServerTool(Name = "explore", Title = "Explore Repository", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(ToolInstructions)]
@@ -154,7 +125,7 @@ internal sealed class ExploreTool(
         [Description("Tokens to invest in the response")] int tokenBudget,
         [Description("What you are trying to do - see INTENT_SELECTION")] Intent intent,
         [Description("URI glob pattern to filter results (e.g., file:///src/**, help://**). Combine with ; exclude with !")] string? uriGlob = null,
-        [Description("Search terms for hybrid search - full sentences work best (e.g., \"How does JWT token refresh work?\")")] string? keywords = null,
+        [Description("Search terms — code words and synonyms (e.g., \"login authentication\", \"cache invalidation TTL\")")] string? keywords = null,
         [Description("Regex patterns to boost matches, comma-separated (e.g., \"Validate.*Token,(?i)auth\")")] string? boost = null,
         [Description("Regex patterns to de-rank matches, comma-separated (e.g., \"(?i)test|mock,\\.generated\\.\")")] string? penalize = null,
         [Description("Cap results shown - used with token budget to decide how things are displayed. Leave blank to have explore optimize it.")] int? limit = null,
@@ -201,7 +172,6 @@ internal sealed class ExploreTool(
             Intent.Inventory => ExploreIntent.Inventory,
             Intent.Locate => ExploreIntent.Locate,
             Intent.Inspect => ExploreIntent.Inspect,
-            Intent.Explain => ExploreIntent.Explain,
             _ => ExploreIntent.Inventory
         };
 
