@@ -9,11 +9,11 @@ public static class PHPServiceCollectionExtensions
 {
     public static IServiceCollection AddPHPFormat(this IServiceCollection services)
     {
-        // Explicitly pass null for renderer so PHPLoader creates its own with PHP templates
-        // (prevents DI from injecting the global ITemplateRenderer which has wrong templates)
+        // Keep constructor shape stable; renderer is intentionally unused by PHPLoader.
         services.AddSingleton<PHPLoader>(sp => new PHPLoader(
             renderer: null,
             logger: sp.GetService<ILogger<PHPLoader>>()));
+        services.AddSingleton<IFormatSchemaProvider>(sp => sp.GetRequiredService<PHPLoader>());
 
         services.AddSingleton<FormatDescriptor>(sp =>
         {

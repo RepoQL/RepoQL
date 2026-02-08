@@ -59,11 +59,11 @@ public sealed class PHPLoaderTests
         var docNode = records.Nodes.First(n => n.Kind == "document");
         docNode.Should().NotBeNull();
 
-        var classNodes = records.Nodes.Where(n => n.Kind == "php.class").ToList();
+        var classNodes = records.Nodes.Where(n => n.Kind == "php.type" && n.Props["kind"]?.ToString() == "class").ToList();
         classNodes.Should().HaveCount(1);
         classNodes[0].Props["name"]!.ToString().Should().Be("UserService");
 
-        var methodNodes = records.Nodes.Where(n => n.Kind == "php.method").ToList();
+        var methodNodes = records.Nodes.Where(n => n.Kind == "php.member").ToList();
         methodNodes.Should().HaveCount(2);
         methodNodes.Select(m => m.Props["name"]!.ToString()).Should().BeEquivalentTo(["findById", "create"]);
 
@@ -91,11 +91,11 @@ public sealed class PHPLoaderTests
         var document = await scope.Loader.LoadAsync(art.Artifact);
         var records = scope.Loader.Materialize(document);
 
-        var interfaceNodes = records.Nodes.Where(n => n.Kind == "php.interface").ToList();
+        var interfaceNodes = records.Nodes.Where(n => n.Kind == "php.type" && n.Props["kind"]?.ToString() == "interface").ToList();
         interfaceNodes.Should().HaveCount(1);
         interfaceNodes[0].Props["name"]!.ToString().Should().Be("UserRepositoryInterface");
 
-        var methodNodes = records.Nodes.Where(n => n.Kind == "php.method").ToList();
+        var methodNodes = records.Nodes.Where(n => n.Kind == "php.member").ToList();
         methodNodes.Should().HaveCount(2);
     }
 
@@ -117,11 +117,11 @@ public sealed class PHPLoaderTests
         var document = await scope.Loader.LoadAsync(art.Artifact);
         var records = scope.Loader.Materialize(document);
 
-        var traitNodes = records.Nodes.Where(n => n.Kind == "php.trait").ToList();
+        var traitNodes = records.Nodes.Where(n => n.Kind == "php.type" && n.Props["kind"]?.ToString() == "trait").ToList();
         traitNodes.Should().HaveCount(1);
         traitNodes[0].Props["name"]!.ToString().Should().Be("Loggable");
 
-        var methodNodes = records.Nodes.Where(n => n.Kind == "php.method").ToList();
+        var methodNodes = records.Nodes.Where(n => n.Kind == "php.member").ToList();
         methodNodes.Should().HaveCount(1);
         methodNodes[0].Props["name"]!.ToString().Should().Be("log");
     }
@@ -144,7 +144,7 @@ public sealed class PHPLoaderTests
         var document = await scope.Loader.LoadAsync(art.Artifact);
         var records = scope.Loader.Materialize(document);
 
-        var enumNodes = records.Nodes.Where(n => n.Kind == "php.enum").ToList();
+        var enumNodes = records.Nodes.Where(n => n.Kind == "php.type" && n.Props["kind"]?.ToString() == "enum").ToList();
         enumNodes.Should().HaveCount(1);
         enumNodes[0].Props["name"]!.ToString().Should().Be("Status");
 
@@ -173,7 +173,7 @@ public sealed class PHPLoaderTests
         var document = await scope.Loader.LoadAsync(art.Artifact);
         var records = scope.Loader.Materialize(document);
 
-        var funcNodes = records.Nodes.Where(n => n.Kind == "php.function").ToList();
+        var funcNodes = records.Nodes.Where(n => n.Kind == "php.function" && n.Props["kind"]?.ToString() == "function").ToList();
         funcNodes.Should().HaveCount(2);
         funcNodes.Select(f => f.Props["name"]!.ToString()).Should().BeEquivalentTo(["calculateTotal", "formatCurrency"]);
     }
@@ -283,9 +283,13 @@ public sealed class PHPLoaderTests
 
         var artifact = records.Artifacts[0];
         artifact.Headline.Should().NotBeNullOrEmpty();
-        artifact.Headline.Should().Contain("UserService");
+        artifact.Headline.Should().Contain("ln, ~");
+        artifact.Headline.Should().Contain("tok");
+        artifact.Headline.Should().Contain("ns:App");
+        artifact.Headline.Should().Contain("class UserService");
         artifact.Headline.Should().Contain("find");
         artifact.Headline.Should().Contain("create");
+        artifact.Headline.Should().NotContain("code.php");
     }
 
     [Test]
@@ -309,11 +313,39 @@ public sealed class PHPLoaderTests
 
         var artifact = records.Artifacts[0];
         artifact.Structure.Should().NotBeNullOrEmpty();
-        artifact.Structure.Should().Contain("namespace App\\Services");
-        artifact.Structure.Should().Contain("class UserService");
-        artifact.Structure.Should().Contain("findById");
-        artifact.Structure.Should().Contain("create");
-        artifact.Structure.Should().Contain("validate");
+        artifact.Structure.Should().NotContain("namespace ");
+        artifact.Structure.Should().Contain("+ class UserService");
+        artifact.Structure.Should().Contain("+User findById(int $id)");
+        artifact.Structure.Should().Contain("+create(array $data)");
+        artifact.Structure.Should().Contain("-validate(array $data)");
+        artifact.Structure.Should().Contain("#symbol=findById");
+        artifact.Structure.Should().Contain("#symbol=create");
+        artifact.Structure.Should().Contain("#symbol=validate");
+    }
+
+    [Test]
+    [DisplayName("Includes class and interface constants in X-ray structure")]
+    public async Task Materialize_GeneratesExploreStructure_WithConstants()
+    {
+        var scope = CreateLoader();
+        const string source = """
+        <?php
+        interface Flags {
+            public const ENABLED = true;
+        }
+        class Service implements Flags {
+            private const VERSION = 1;
+        }
+        """;
+
+        using var art = CreateArtifact("Service.php", source);
+        var document = await scope.Loader.LoadAsync(art.Artifact);
+        var records = scope.Loader.Materialize(document);
+
+        var artifact = records.Artifacts[0];
+        artifact.Structure.Should().NotBeNullOrEmpty();
+        artifact.Structure.Should().Contain("+const ENABLED    #symbol=ENABLED");
+        artifact.Structure.Should().Contain("-const VERSION    #symbol=VERSION");
     }
 
     [Test]
@@ -335,7 +367,7 @@ public sealed class PHPLoaderTests
         var document = await scope.Loader.LoadAsync(art.Artifact);
         var records = scope.Loader.Materialize(document);
 
-        var classNodes = records.Nodes.Where(n => n.Kind == "php.class").ToList();
+        var classNodes = records.Nodes.Where(n => n.Kind == "php.type" && n.Props["kind"]?.ToString() == "class").ToList();
         classNodes.Should().HaveCount(2);
 
         var abstractClass = classNodes.First(c => c.Props["name"]!.ToString() == "BaseHandler");

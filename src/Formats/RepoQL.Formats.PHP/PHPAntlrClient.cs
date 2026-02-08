@@ -79,18 +79,89 @@ internal sealed class PHPVisitor : PhpParserBaseVisitor<object?>
 
         foreach (var content in contentList.useDeclarationContent())
         {
-            var nameList = content.namespaceNameList();
-            if (nameList is null) continue;
+            var (name, alias) = ExtractUseNameAndAlias(content);
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
 
-            var name = nameList.GetText();
             _result.UseStatements.Add(new PHPUseInfo
             {
                 Name = name,
-                Alias = null, // TODO: Extract alias if needed
+                Alias = alias,
                 Span = GetSpan(content)
             });
         }
         return base.VisitUseDeclaration(context);
+    }
+
+    private (string Name, string? Alias) ExtractUseNameAndAlias(PhpParser.UseDeclarationContentContext content)
+    {
+        var startToken = content.Start;
+        var stopToken = content.Stop ?? startToken;
+        if (startToken.TokenIndex < 0 || stopToken.TokenIndex < startToken.TokenIndex)
+        {
+            var fallback = content.namespaceNameList()?.GetText() ?? string.Empty;
+            return (fallback.Trim(), null);
+        }
+
+        var tokens = _tokenStream.GetTokens(startToken.TokenIndex, stopToken.TokenIndex);
+        if (tokens is null || tokens.Count == 0)
+        {
+            var fallback = content.namespaceNameList()?.GetText() ?? string.Empty;
+            return (fallback.Trim(), null);
+        }
+
+        var asIndex = -1;
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            if (string.Equals(tokens[i].Text, "as", StringComparison.OrdinalIgnoreCase))
+            {
+                asIndex = i;
+                break;
+            }
+        }
+
+        if (asIndex < 0)
+        {
+            var fullName = string.Concat(tokens.Select(t => t.Text)).Trim();
+            return (fullName, null);
+        }
+
+        var name = string.Concat(tokens.Take(asIndex).Select(t => t.Text)).Trim();
+        string? alias = null;
+
+        for (var i = asIndex + 1; i < tokens.Count; i++)
+        {
+            var candidate = tokens[i].Text?.Trim();
+            if (string.IsNullOrWhiteSpace(candidate))
+                continue;
+            if (!IsAliasIdentifier(candidate))
+                continue;
+
+            alias = candidate;
+            break;
+        }
+
+        return (name, alias);
+    }
+
+    private static bool IsAliasIdentifier(string candidate)
+    {
+        if (candidate.Length == 0)
+            return false;
+
+        static bool IsIdentifierStart(char ch) => ch == '_' || char.IsLetter(ch) || ch > 127;
+        static bool IsIdentifierPart(char ch) => ch == '_' || char.IsLetterOrDigit(ch) || ch > 127;
+
+        if (!IsIdentifierStart(candidate[0]))
+            return false;
+
+        for (var i = 1; i < candidate.Length; i++)
+        {
+            if (!IsIdentifierPart(candidate[i]))
+                return false;
+        }
+
+        return true;
     }
 
     public override object? VisitClassDeclaration(PhpParser.ClassDeclarationContext context)

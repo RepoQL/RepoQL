@@ -8,12 +8,9 @@ internal static class PHPNodeKinds
     public const string Document = "document";
     public const string Namespace = "php.namespace";
     public const string Use = "php.use";
-    public const string Class = "php.class";
-    public const string Interface = "php.interface";
-    public const string Trait = "php.trait";
-    public const string Enum = "php.enum";
+    public const string Type = "php.type";
     public const string Function = "php.function";
-    public const string Method = "php.method";
+    public const string Member = "php.member";
     public const string Property = "php.property";
     public const string Constant = "php.constant";
     public const string EnumCase = "php.enum_case";
@@ -61,15 +58,18 @@ internal static class PHPPropertyKeys
     public const string QualifiedName = "qualified_name";
 
     // Type properties
+    public const string Kind = "kind";
+    public const string Namespace = "namespace";
     public const string Accessibility = "accessibility";
     public const string IsAbstract = "is_abstract";
     public const string IsFinal = "is_final";
     public const string IsReadonly = "is_readonly";
-    public const string BaseClass = "base_class";
+    public const string Extends = "extends";
     public const string Interfaces = "interfaces";
     public const string Traits = "traits";
 
     // Member properties
+    public const string DeclaringType = "declaring_type";
     public const string IsStatic = "is_static";
     public const string ReturnType = "return_type";
     public const string Parameters = "parameters";

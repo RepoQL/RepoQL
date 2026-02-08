@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Templates/**/*.liquid" />
+    <EmbeddedResource Include="Schema\php_views.sql" />
   </ItemGroup>
 
   <ItemGroup>

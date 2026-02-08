@@ -40,5 +40,5 @@ SELECT
     n.id AS node_id,
     n.span_id
 FROM node n
-WHERE n.kind IN ('csharp.member', 'ts_member_method', 'ts_decl_function')
+WHERE n.kind IN ('csharp.member', 'ts_member_method', 'ts_decl_function', 'php.member', 'php.function')
   AND json_extract_string(n.properties, '$.kind') IN ('method', 'constructor', 'function');
