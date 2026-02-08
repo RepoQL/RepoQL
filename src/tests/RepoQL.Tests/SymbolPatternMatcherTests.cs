@@ -312,4 +312,14 @@ internal class SymbolPatternMatcherTests
         // Nested type members - NOT direct children
         SymbolPatternMatcher.Matches("RepoQL.Contracts.RepoUri.Location.Symbol", pattern).Should().BeFalse();
     }
+
+    [Test]
+    public void Matches_Issue68_ShortClassName_DirectChildren()
+    {
+        var pattern = "DuckDbDataStore.*";
+        SymbolPatternMatcher.Matches("RepoQL.Data.DuckDB.DuckDbDataStore.Query", pattern).Should().BeTrue();
+        SymbolPatternMatcher.Matches("RepoQL.Data.DuckDB.DuckDbDataStore.GetConnection", pattern).Should().BeTrue();
+        SymbolPatternMatcher.Matches("RepoQL.Data.DuckDB.DuckDbDataStore", pattern).Should().BeFalse();
+        SymbolPatternMatcher.Matches("RepoQL.Data.DuckDB.OtherClass.Query", pattern).Should().BeFalse();
+    }
 }

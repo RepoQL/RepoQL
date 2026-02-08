@@ -598,9 +598,25 @@ public static class UriRegistryExtensions
             (!pattern.Contains('*', StringComparison.Ordinal) &&
              !pattern.Contains('?', StringComparison.Ordinal));
 
-        return isHierarchicalPattern
-            ? SymbolPatternMatcher.Matches(value, pattern, ignoreCase)
-            : MatchesWithWildcard(value, pattern, ignoreCase);
+        if (isHierarchicalPattern)
+            return SymbolPatternMatcher.Matches(value, pattern, ignoreCase);
+
+        // Non-hierarchical wildcard (e.g., Get*, *Handler, Is?Ready)
+        // Try full FQN first (handles *Handler, *My*Method)
+        if (MatchesWithWildcard(value, pattern, ignoreCase))
+            return true;
+
+        // Try each dot-separated suffix so Get* matches ...Class.GetConnection
+        var dotIndex = value.IndexOf('.', StringComparison.Ordinal);
+        while (dotIndex >= 0 && dotIndex < value.Length - 1)
+        {
+            var suffix = value[(dotIndex + 1)..];
+            if (MatchesWithWildcard(suffix, pattern, ignoreCase))
+                return true;
+            dotIndex = value.IndexOf(".", dotIndex + 1, StringComparison.Ordinal);
+        }
+
+        return false;
     }
 
     private static bool MatchesWithWildcard(string value, string pattern, bool ignoreCase)

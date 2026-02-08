@@ -167,6 +167,104 @@ internal class UriRegistryTests
         matches.Single().AbsoluteUri.Should().Be("file:///src/App.cs#symbol=Namespace.MyClass.Method");
     }
 
+    // === Issue #68: Permissive symbol matching with realistic FQN data ===
+
+    [Test]
+    public void MatchPattern_FQN_ShortClassName_DirectChildren()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern(
+            "file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=DuckDbDataStore.*").ToList();
+        matches.Should().HaveCount(3);
+    }
+
+    [Test]
+    public void MatchPattern_FQN_ShortClassName_AllDescendants()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern(
+            "file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=DuckDbDataStore.**").ToList();
+        matches.Should().HaveCount(3);
+    }
+
+    [Test]
+    public void MatchPattern_FQN_ExactUnqualifiedMultiPart()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern(
+            "file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=DuckDbDataStore.Query").ToList();
+        matches.Should().HaveCount(1);
+    }
+
+    [Test]
+    public void MatchPattern_FQN_ExactUnqualifiedSingleName()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern(
+            "file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=Query").ToList();
+        matches.Should().HaveCount(1);
+    }
+
+    [Test]
+    public void MatchPattern_FQN_BareGetConnection_NoWildcard()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern(
+            "file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=GetConnection").ToList();
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Contain("GetConnection");
+    }
+
+    [Test]
+    public void MatchPattern_FQN_GlobContainerWithShortSymbol()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern("src/**/*.cs#symbol=DuckDbDataStore.*").ToList();
+        matches.Should().HaveCount(3);
+    }
+
+    [Test]
+    public void MatchPattern_FQN_PrefixWildcard_Get()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern(
+            "file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=Get*").ToList();
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Contain("GetConnection");
+    }
+
+    [Test]
+    public void MatchPattern_FQN_PrefixWildcard_Is()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern(
+            "file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=Is*").ToList();
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Contain("IsReady");
+    }
+
+    [Test]
+    public void MatchPattern_FQN_SuffixWildcard_Connection()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern(
+            "file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=*Connection").ToList();
+        matches.Should().HaveCount(1);
+        matches.Single().AbsoluteUri.Should().Contain("GetConnection");
+    }
+
+    [Test]
+    public void MatchPattern_FQN_PrefixWildcard_DoesNotOvermatch()
+    {
+        var registry = CreateRealisticCSharpRegistry();
+        var matches = registry.MatchPattern(
+            "file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=Get*").ToList();
+        matches.Should().HaveCount(1);
+        // Should NOT match Query or IsReady
+        matches.Should().NotContain(m => m.AbsoluteUri.Contains("Query"));
+        matches.Should().NotContain(m => m.AbsoluteUri.Contains("IsReady"));
+    }
+
     [Test]
     public void MatchPattern_AnchorFragment_MatchesHeadingUri()
     {
@@ -1041,5 +1139,21 @@ internal class UriRegistryTests
 
         // Should return file URI, not a line range
         result.AbsoluteUri.Should().Be("file:///src/App.cs");
+    }
+
+    private static UriRegistry CreateRealisticCSharpRegistry()
+    {
+        var registry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs");
+
+        registry.SetIndexed(fileUri, lineCount: 300, new Dictionary<RepoUri, SymbolEntry>
+        {
+            { RepoUri.Parse("file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=RepoQL.Data.DuckDB.DuckDbDataStore"), new SymbolEntry("type", 15, 290) },
+            { RepoUri.Parse("file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=RepoQL.Data.DuckDB.DuckDbDataStore.Query"), new SymbolEntry("method", 45, 80) },
+            { RepoUri.Parse("file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=RepoQL.Data.DuckDB.DuckDbDataStore.GetConnection"), new SymbolEntry("method", 85, 110) },
+            { RepoUri.Parse("file:///src/RepoQL.Data.DuckDB/DuckDbDataStore.cs#symbol=RepoQL.Data.DuckDB.DuckDbDataStore.IsReady"), new SymbolEntry("method", 115, 130) },
+        }.AsReadOnly());
+
+        return registry;
     }
 }
