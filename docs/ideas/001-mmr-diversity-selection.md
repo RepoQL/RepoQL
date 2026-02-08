@@ -1,10 +1,10 @@
-# MMR-Based Diversity Selection for Search and XRay
+# MMR-Based Diversity Selection for Search and Explore
 
-> Reduce redundancy in search results and xray summaries using Maximal Marginal Relevance
+> Reduce redundancy in search results and explore summaries using Maximal Marginal Relevance
 
 ## Problem
 
-Current search and xray return results ranked purely by relevance score. This leads to:
+Current search and explore return results ranked purely by relevance score. This leads to:
 
 1. **Redundant results**: Top-5 hits often cover the same concept from slightly different angles
 2. **Wasted token budget**: Similar files consume budget without adding information
@@ -14,7 +14,7 @@ Example: Query "authentication" returns 5 files all about JWT validation, missin
 
 ## Proposed Solution
 
-Implement MMR (Maximal Marginal Relevance) selection in the search and xray pipelines:
+Implement MMR (Maximal Marginal Relevance) selection in the search and explore pipelines:
 
 ```
 MMR(d) = λ * relevance(d, query) - (1-λ) * max_similarity(d, already_selected)
@@ -60,8 +60,8 @@ CREATE MACRO mmr_select(query_embedding, k, lambda) AS (
 | Component | Current | With MMR |
 |-----------|---------|----------|
 | `search()` | Top-k by score | MMR selection with λ=0.7 |
-| `xray Explore` | Top files by relevance | MMR to ensure breadth |
-| `xray Find` | Ranked list | MMR with higher λ=0.8 (precision matters) |
+| `explore` (Explore intent) | Top files by relevance | MMR to ensure breadth |
+| `explore` (Find intent) | Ranked list | MMR with higher λ=0.8 (precision matters) |
 | Token budget allocation | Greedy by score | Cost-weighted MMR |
 
 ### Lambda Tuning by Intent

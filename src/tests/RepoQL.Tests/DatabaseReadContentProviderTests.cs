@@ -77,6 +77,51 @@ internal sealed class DatabaseReadContentProviderTests
             "## Legibility\nKeep it simple\nDurable by default");
     }
 
+    [Test]
+    public async Task FetchGlobAsync_LineFragmentSingleLine_ReturnsRequestedLine()
+    {
+        using var context = new ReadContentProviderTestContext();
+
+        context.SeedDocument(
+            "file:///src/App.cs",
+            """
+            line one
+            line two
+            line three
+            """);
+
+        var documents = await context.Provider.FetchGlobAsync(
+            "file:///src/App.cs#line=2",
+            CancellationToken.None);
+
+        documents.Should().HaveCount(1);
+        documents[0].Uri.Should().Be("file:///src/App.cs#line=2,2");
+        documents[0].TextContent.Should().Be("line two");
+    }
+
+    [Test]
+    public async Task FetchGlobAsync_LineFragmentRange_ReturnsRequestedRange()
+    {
+        using var context = new ReadContentProviderTestContext();
+
+        context.SeedDocument(
+            "file:///src/App.cs",
+            """
+            line one
+            line two
+            line three
+            line four
+            """);
+
+        var documents = await context.Provider.FetchGlobAsync(
+            "file:///src/App.cs#line=2,3",
+            CancellationToken.None);
+
+        documents.Should().HaveCount(1);
+        documents[0].Uri.Should().Be("file:///src/App.cs#line=2,3");
+        documents[0].TextContent.Should().Be("line two\nline three");
+    }
+
     private sealed class ReadContentProviderTestContext : IDisposable
     {
         private readonly ServiceProvider _serviceProvider;
@@ -100,16 +145,16 @@ internal sealed class DatabaseReadContentProviderTests
         public DuckDbDataStore Store { get; }
         public DatabaseReadContentProvider Provider { get; }
 
-        public void SeedDocument(string uri)
+        public void SeedDocument(string uri, string text = "seed text")
         {
             var documentUri = RepoUri.Parse(uri);
             var artifact = new ArtifactModel
             {
                 Id = Guid.NewGuid(),
                 Digest = Guid.NewGuid().ToString("N"),
-                Size = 16,
+                Size = text.Length,
                 MediaType = SemanticMediaType.Parse("text/plain"),
-                Text = "seed text",
+                Text = text,
                 Headline = "seed"
             };
 
@@ -130,7 +175,8 @@ internal sealed class DatabaseReadContentProviderTests
                 DocumentNode = documentNode
             });
 
-            Registry.SetIndexed(documentUri, lineCount: 1, new Dictionary<RepoUri, SymbolEntry>());
+            var lineCount = text.Count(c => c == '\n') + 1;
+            Registry.SetIndexed(documentUri, lineCount, new Dictionary<RepoUri, SymbolEntry>());
         }
 
         public void SeedMarkdownHeadingWithoutUri(

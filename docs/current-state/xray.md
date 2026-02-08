@@ -1,27 +1,27 @@
-# Xray Tool
+# Explore Tool
 
 > **Scope**: Token-budgeted codebase exploration. Orchestrates search and renders results within a token budget.
 
 ---
 
-## Capsule: XrayCore
+## Capsule: ExploreCore
 
 **Invariant**
-Given query + budget, xray searches → allocates tokens across results → renders at appropriate detail levels. Intent determines behavior.
+Given query + budget, explore searches → allocates tokens across results → renders at appropriate detail levels. Intent determines behavior.
 
 **Example**
 ```sql
 -- Explore: inventory what exists
-SELECT * FROM xray('file:///src/**', 'Explore', 1500);
+SELECT * FROM explore('file:///src/**', 'Explore', 1500);
 
 -- Find: locate specific code
-SELECT * FROM xray('authentication', 'Find', 2000);
+SELECT * FROM explore('authentication', 'Find', 2000);
 
 -- Examine: deep structure
-SELECT * FROM xray('file:///src/Auth.cs', 'Examine', 3000, keywords := 'validate');
+SELECT * FROM explore('file:///src/Auth.cs', 'Examine', 3000, keywords := 'validate');
 
 -- Understand: LLM synthesis
-SELECT * FROM xray('How does JWT validation work?', 'Understand', 2500);
+SELECT * FROM explore('How does JWT validation work?', 'Understand', 2500);
 ```
 
 **Depth**
@@ -36,7 +36,7 @@ SELECT * FROM xray('How does JWT validation work?', 'Understand', 2500);
 
 ```mermaid
 flowchart TD
-    Entry["xray(intent, keywords, scope, budget)"] --> Orchestrator["XrayOrchestrator"]
+    Entry["explore(intent, keywords, scope, budget)"] --> Orchestrator["XrayOrchestrator"]
 
     Orchestrator --> Search["XraySearchEngine"]
     Orchestrator --> Allocator["ValueBasedAllocator"]
@@ -61,7 +61,7 @@ flowchart TD
     class Results,Decisions data
     class Output output
 
-    %% MEANING: Xray orchestration flow
+    %% MEANING: Explore orchestration flow
     %% COLOR: Blue=entry, Green=components, Yellow=data, Gray=output
     %% BRANCH: Understand intent adds LLM synthesis step
 ```
@@ -297,6 +297,6 @@ public record RenderingDecision(
 
 ## See Also
 
-- `docs/current-state/search.md` — Search infrastructure used by xray
+- `docs/current-state/search.md` — Search infrastructure used by explore
 - `docs/current-state/indexing.md` — How files become searchable
-- `src/RepoQL.Documentation/repoql/tools/xray/using-xray.md` — User-facing documentation
+- `src/RepoQL.Documentation/repoql/tools/explore/using-xray.md` — User-facing documentation

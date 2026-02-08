@@ -55,7 +55,7 @@ This document explains how Markdown files are modeled in the RepoQL graph and ho
 - **`repository_uri_*` UDFs**: Extract/manipulate URIs (container, fragment, `repository_uri_join`, `fragment_from_line_range`, etc.).
 - **`node_display_label(kind, properties)`**: Pick a friendly label from node properties (`text`, `name`, `slug`).
 
-Note: `xray_*` macros are documented in Schema.md; they are not Markdown‑specific but work well to summarize documents and items.
+Note: `explore_*` macros are documented in Schema.md; they are not Markdown‑specific but work well to summarize documents and items.
 
 ## Query Recipes (Tables First)
 

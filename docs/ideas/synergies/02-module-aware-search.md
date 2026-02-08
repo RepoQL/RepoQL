@@ -273,10 +273,10 @@ CREATE MACRO search_module_aware(query, k) AS (
 );
 ```
 
-## Integration with XRay
+## Integration with Explore
 
 ```sql
--- Xray with module context
+-- Explore with module context
 SELECT
     m.module_id,
     m.suggested_name as module_name,

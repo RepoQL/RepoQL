@@ -286,9 +286,9 @@ SELECT
     selection_entropy(intelligent_uris) / selection_entropy(naive_top_k_uris) as improvement_ratio;
 ```
 
-## Integration with XRay
+## Integration with Explore
 
-The intelligent selection naturally integrates with xray intents:
+The intelligent selection naturally integrates with explore intents:
 
 | Intent | Configuration |
 |--------|---------------|
@@ -299,7 +299,7 @@ The intelligent selection naturally integrates with xray intents:
 
 ```sql
 -- Intent-aware selection
-CREATE MACRO xray_select(query, intent, budget) AS (
+CREATE MACRO explore_select(query, intent, budget) AS (
     SELECT * FROM intelligent_select(
         query,
         budget,

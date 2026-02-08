@@ -136,7 +136,7 @@ This is the template for other formats (OpenAPI, traces, CI YAML): **nodes + edg
 **Macos (table‑valued):**
 
 * `Files` view → inventory (uri, name, lang, byte\_size, headline, summary, structure).
-* `xray(keywords, intent, tokens) → token-budgeted exploration (UDF-backed).
+* `explore(keywords, intent, tokens) → token-budgeted exploration (UDF-backed).
 * `search(keywords, k) → semantic + lexical search.
 * `annotations_for(uri, kinds, min_severity)` / `annotations_all(kinds, min)` → diagnostics.
 * `entities_by_uri(uri)` → resolve any RepoURI to the entities at that location.&#x20;
@@ -180,7 +180,7 @@ This is the template for other formats (OpenAPI, traces, CI YAML): **nodes + edg
 
 **P1 — emit the core, not custom tables.** Produce `node`, `edge`, `span`, `annotation` rows; route by **SemType**; use RepoURI in targets. Never propose new base tables for one format.&#x20;
 
-**P2 — composition first, references later.** Start by building the document→items tree with spans, then add reference edges (`REFERS_TO`, `MATCHES_OPERATION`, …). This ensures `xray_*` works on day one.&#x20;
+**P2 — composition first, references later.** Start by building the document→items tree with spans, then add reference edges (`REFERS_TO`, `MATCHES_OPERATION`, …). This ensures `explore_*` works on day one.&#x20;
 
 **P3 — annotations for value.** Emit `kind='lint'|'metric'|'outline'|'change'|'trace'|…` as soon as you can. Selection, UX, CI gates, and exports (SARIF/GitHub) all flow from annotations uniformly.&#x20;
 
@@ -190,7 +190,7 @@ This is the template for other formats (OpenAPI, traces, CI YAML): **nodes + edg
 
 ## 11) Consumption rules (how agents/CLIs/CI should use it)
 
-**C1 — prefer structure over bytes.** Use `xray_*`, `entities_by_uri`, `annotations_*`; call `snippet()` when bytes are needed. This preserves token budgets and avoids brittle parsing.&#x20;
+**C1 — prefer structure over bytes.** Use `explore_*`, `entities_by_uri`, `annotations_*`; call `snippet()` when bytes are needed. This preserves token budgets and avoids brittle parsing.&#x20;
 
 **C2 — policy as SQL.** All gates are queries over `annotations` (e.g., “until empty” on `kind='lint' AND severity≥warning`) — no special APIs.&#x20;
 
@@ -273,7 +273,7 @@ WHERE lower(media_type) != media_type;
 * **Adding tables for features.** Resist; prefer producers + views/macros/UDFs + annotations. The **vision** is explicit: the core is stable.&#x20;
 * **Embedding bytes in nodes.** Bytes belong in `artifact`; nodes carry identity and metadata.&#x20;
 * **Path‑as‑identity.** URIs are locators, not keys; use `id` and/or digest.&#x20;
-* **Whole‑file reads for UX.** Use `snippet()` and `xray_*` instead; it’s faster, safer, and more agent‑friendly.&#x20;
+* **Whole‑file reads for UX.** Use `snippet()` and `explore_*` instead; it’s faster, safer, and more agent‑friendly.&#x20;
 
 ---
 

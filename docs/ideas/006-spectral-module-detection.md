@@ -201,10 +201,10 @@ SELECT * FROM search('validation', scope := (
 ));
 ```
 
-### 2. Module Overview in XRay
+### 2. Module Overview in Explore
 
 ```sql
--- Show module structure in xray Explore
+-- Show module structure in explore (Explore intent)
 SELECT
     cluster_id,
     COUNT(*) as file_count,

@@ -76,10 +76,27 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
         // COALESCE picks the right artifact_id for both cases.
         // Use glob_files() table function for proper symbol pattern matching.
         var sql = $"""
-            SELECT n.uri,
-                   CASE WHEN s.start_line IS NOT NULL AND a.text_content IS NOT NULL
+            SELECT g.uri,
+                   CASE
+                        WHEN COALESCE(
+                                 TRY_CAST(repository_uri_line_start(g.uri) AS INTEGER),
+                                 s.start_line
+                             ) IS NOT NULL
+                             AND a.text_content IS NOT NULL
                         THEN array_to_string(
-                            list_slice(string_split(a.text_content, chr(10)), s.start_line, s.end_line),
+                            list_slice(
+                                string_split(a.text_content, chr(10)),
+                                COALESCE(
+                                    TRY_CAST(repository_uri_line_start(g.uri) AS INTEGER),
+                                    s.start_line
+                                ),
+                                COALESCE(
+                                    TRY_CAST(repository_uri_line_end(g.uri) AS INTEGER),
+                                    TRY_CAST(repository_uri_line_start(g.uri) AS INTEGER),
+                                    s.end_line,
+                                    s.start_line
+                                )
+                            ),
                             chr(10)
                         )
                         ELSE a.text_content
@@ -89,12 +106,15 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
                    a.summary,
                    a.structure
             FROM glob_files('{escapedPattern}') g
-            JOIN node n ON n.uri = g.uri
+            LEFT JOIN node n ON n.uri = g.uri
             LEFT JOIN span s ON s.id = n.span_id
-            LEFT JOIN node doc ON doc.id = s.document_id
-            JOIN artifact a ON a.id = COALESCE(n.artifact_id, doc.artifact_id)
-            {(hasFragment ? "" : "WHERE n.kind = 'document'")}
-            ORDER BY n.uri
+            LEFT JOIN node doc_by_span ON doc_by_span.id = s.document_id
+            LEFT JOIN node doc_by_container
+                ON doc_by_container.kind = 'document'
+               AND doc_by_container.container_uri_lowercase = lower(repository_uri_container(g.uri))
+            JOIN artifact a ON a.id = COALESCE(n.artifact_id, doc_by_span.artifact_id, doc_by_container.artifact_id)
+            {(hasFragment ? "" : "WHERE COALESCE(n.kind, doc_by_container.kind) = 'document'")}
+            ORDER BY g.uri
             """;
 
         return Task.FromResult(QueryReadDocuments(sql));

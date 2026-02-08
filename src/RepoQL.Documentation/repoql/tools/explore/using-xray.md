@@ -1,11 +1,11 @@
 ---
-description: "xray(intent, keywords, scope, tokenBudget) → token-budgeted exploration. Intents: Explore, Find, Examine, Understand."
-tags: ["xray", "exploration", "discovery", "search", "understand"]
+description: "explore(intent, keywords, scope, tokenBudget) → token-budgeted exploration. Intents: Explore, Find, Examine, Understand."
+tags: ["explore", "exploration", "discovery", "search", "understand"]
 audience: ["LLMs"]
 categories: ["Reference[100%]", "Tools[100%]"]
 ---
 
-# xray Tool
+# Explore Tool
 
 Token-budgeted codebase exploration. Choose intent based on your knowledge state.
 
@@ -19,16 +19,16 @@ Choose intent based on what you know: Explore (nothing), Find (concept), Examine
 **Example**
 ```
 -- Don't know what exists
-xray intent=Explore scope="file:///src/**" tokenBudget=1500
+explore intent=Explore scope="file:///src/**" tokenBudget=1500
 
 -- Know concept, need location
-xray intent=Find keywords="authentication" tokenBudget=1500
+explore intent=Find keywords="authentication" tokenBudget=1500
 
 -- Know file, need details
-xray intent=Examine scope="file:///src/Auth.cs" tokenBudget=3000
+explore intent=Examine scope="file:///src/Auth.cs" tokenBudget=3000
 
 -- Have question, want synthesis
-xray intent=Understand keywords="How does JWT validation work?" tokenBudget=2500
+explore intent=Understand keywords="How does JWT validation work?" tokenBudget=2500
 ```
 //BOUNDARY: Intent determines output format. Wrong intent = wasted tokens.
 
@@ -50,15 +50,15 @@ xray intent=Understand keywords="How does JWT validation work?" tokenBudget=2500
 **Example**
 ```
 -- Quick inventory
-xray intent=Explore tokenBudget=800
+explore intent=Explore tokenBudget=800
 
 -- Moderate exploration
-xray intent=Find keywords="config" tokenBudget=1500
+explore intent=Find keywords="config" tokenBudget=1500
 
 -- Deep examination
-xray intent=Examine scope="file:///src/Auth.cs" tokenBudget=4000
+explore intent=Examine scope="file:///src/Auth.cs" tokenBudget=4000
 ```
-//BOUNDARY: Budget is spend target, not maximum. xray optimizes value within budget.
+//BOUNDARY: Budget is spend target, not maximum. explore optimizes value within budget.
 
 **Depth**
 | Intent | Recommended Budget | Notes |
@@ -78,19 +78,19 @@ xray intent=Examine scope="file:///src/Auth.cs" tokenBudget=4000
 **Example**
 ```
 -- All source files
-xray intent=Explore scope="file:///src/**" tokenBudget=1500
+explore intent=Explore scope="file:///src/**" tokenBudget=1500
 
 -- Only C# files
-xray intent=Find keywords="service" scope="file:///src/**/*.cs" tokenBudget=1500
+explore intent=Find keywords="service" scope="file:///src/**/*.cs" tokenBudget=1500
 
 -- Specific directory
-xray intent=Examine scope="file:///src/Services/**" tokenBudget=3000
+explore intent=Examine scope="file:///src/Services/**" tokenBudget=3000
 
 -- Embedded documentation
-xray intent=Explore scope="help:///**" tokenBudget=1500
+explore intent=Explore scope="help:///**" tokenBudget=1500
 
 -- Exclude tests
-xray intent=Find keywords="handler" scope="file:///src/**;!**/test*" tokenBudget=1500
+explore intent=Find keywords="handler" scope="file:///src/**;!**/test*" tokenBudget=1500
 ```
 //BOUNDARY: Glob syntax: `**` any depth, `*` single level, `;` combine, `!` exclude.
 
@@ -110,13 +110,13 @@ xray intent=Find keywords="handler" scope="file:///src/**;!**/test*" tokenBudget
 **Example**
 ```
 -- Concept search
-xray intent=Find keywords="authentication token" tokenBudget=1500
+explore intent=Find keywords="authentication token" tokenBudget=1500
 
 -- Question (triggers semantic-heavy search)
-xray intent=Understand keywords="How does the caching layer work?" tokenBudget=2500
+explore intent=Understand keywords="How does the caching layer work?" tokenBudget=2500
 
 -- Symbol name
-xray intent=Find keywords="ValidateToken" tokenBudget=1500
+explore intent=Find keywords="ValidateToken" tokenBudget=1500
 ```
 //BOUNDARY: Empty keywords with Explore = structure-only. Questions with Find = suboptimal.
 
@@ -136,13 +136,13 @@ xray intent=Find keywords="ValidateToken" tokenBudget=1500
 **Example**
 ```
 -- Boost service files
-xray intent=Find keywords="handler" boost="(?i)service" tokenBudget=1500
+explore intent=Find keywords="handler" boost="(?i)service" tokenBudget=1500
 
 -- Penalize tests
-xray intent=Find keywords="parser" penalize="(?i)test|mock|spec" tokenBudget=1500
+explore intent=Find keywords="parser" penalize="(?i)test|mock|spec" tokenBudget=1500
 
 -- Combined
-xray intent=Find keywords="validation" boost="(?i)input|form" penalize="(?i)test" tokenBudget=1500
+explore intent=Find keywords="validation" boost="(?i)input|form" penalize="(?i)test" tokenBudget=1500
 ```
 //BOUNDARY: RE2 regex syntax. `(?i)` for case-insensitive. `|` for alternation.
 
@@ -165,13 +165,13 @@ Explore maps territory. Returns file inventory, language distribution, structure
 **Example**
 ```
 -- What's in this codebase?
-xray intent=Explore scope="file:///src/**" tokenBudget=2000
+explore intent=Explore scope="file:///src/**" tokenBudget=2000
 
 -- What docs exist?
-xray intent=Explore scope="help:///**" tokenBudget=1500
+explore intent=Explore scope="help:///**" tokenBudget=1500
 
 -- What's in this directory?
-xray intent=Explore scope="file:///src/Services/**" tokenBudget=1500
+explore intent=Explore scope="file:///src/Services/**" tokenBudget=1500
 ```
 //BOUNDARY: Breadth over depth. Use when you don't know what to look for.
 
@@ -191,13 +191,13 @@ Find locates specific code. Returns ranked results with relevance scores and sni
 **Example**
 ```
 -- Find authentication code
-xray intent=Find keywords="authentication" tokenBudget=1500
+explore intent=Find keywords="authentication" tokenBudget=1500
 
 -- Find error handling
-xray intent=Find keywords="exception handling try catch" tokenBudget=1500
+explore intent=Find keywords="exception handling try catch" tokenBudget=1500
 
 -- Find specific symbol
-xray intent=Find keywords="ProcessRequest" tokenBudget=1500
+explore intent=Find keywords="ProcessRequest" tokenBudget=1500
 ```
 //BOUNDARY: Requires keywords. Combines semantic and lexical search.
 
@@ -217,13 +217,13 @@ Examine shows structure and code. Returns detailed outline with line numbers.
 **Example**
 ```
 -- Examine a specific file
-xray intent=Examine scope="file:///src/Auth.cs" tokenBudget=4000
+explore intent=Examine scope="file:///src/Auth.cs" tokenBudget=4000
 
 -- Examine a directory
-xray intent=Examine scope="file:///src/Services/**" keywords="validation" tokenBudget=3000
+explore intent=Examine scope="file:///src/Services/**" keywords="validation" tokenBudget=3000
 
 -- Examine search results
-xray intent=Examine keywords="authentication" tokenBudget=3000
+explore intent=Examine keywords="authentication" tokenBudget=3000
 ```
 //BOUNDARY: Depth over breadth. Use when you know what to look at.
 
@@ -243,13 +243,13 @@ Understand synthesizes explanation. Returns LLM-generated answer with citations.
 **Example**
 ```
 -- How question
-xray intent=Understand keywords="How does the authentication flow work?" tokenBudget=2500
+explore intent=Understand keywords="How does the authentication flow work?" tokenBudget=2500
 
 -- Why question
-xray intent=Understand keywords="Why does the caching layer use Redis?" tokenBudget=2000
+explore intent=Understand keywords="Why does the caching layer use Redis?" tokenBudget=2000
 
 -- What question
-xray intent=Understand keywords="What patterns are used for error handling?" tokenBudget=2000
+explore intent=Understand keywords="What patterns are used for error handling?" tokenBudget=2000
 ```
 //BOUNDARY: Requires LLM provider (OPENROUTER_API_KEY). Falls back to Examine if unavailable.
 
@@ -268,13 +268,13 @@ xray intent=Understand keywords="What patterns are used for error handling?" tok
 
 ```
 -- 1. What's here?
-xray intent=Explore scope="file:///src/**" tokenBudget=1500
+explore intent=Explore scope="file:///src/**" tokenBudget=1500
 
 -- 2. Where's authentication?
-xray intent=Find keywords="authentication" tokenBudget=1500
+explore intent=Find keywords="authentication" tokenBudget=1500
 
 -- 3. How is AuthService structured?
-xray intent=Examine scope="file:///src/Auth/AuthService.cs" tokenBudget=3000
+explore intent=Examine scope="file:///src/Auth/AuthService.cs" tokenBudget=3000
 
 -- 4. Read the actual code
 read("file:///src/Auth/AuthService.cs#symbol=ValidateToken", 2000)
@@ -284,7 +284,7 @@ read("file:///src/Auth/AuthService.cs#symbol=ValidateToken", 2000)
 
 ```
 -- 1. Get explanation
-xray intent=Understand keywords="How does JWT token refresh work?" tokenBudget=2500
+explore intent=Understand keywords="How does JWT token refresh work?" tokenBudget=2500
 
 -- 2. Verify citations
 read("file:///src/Auth/TokenService.cs#line=42,80", 1500)

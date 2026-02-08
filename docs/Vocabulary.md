@@ -132,6 +132,6 @@
 ## 6) Authoring guidance (for producers)
 
 - Emit **composition** as `HAS_PART` only; enforce one parent via schema. Reference edges may be cyclic. 
-- Prefer **structure first** (node/edge/span) and add **annotations** (lint/outline/metric/trace/change) early; it powers `xray_*`, `snippet()`, and gates. 
+- Prefer **structure first** (node/edge/span) and add **annotations** (lint/outline/metric/trace/change) early; it powers `explore_*`, `snippet()`, and gates. 
 - Address **everything** with **RepoURIs** (files, JSON Pointers, ranges, anchors, archive entries). Keep fragments canonical. 
 - Use **SemType** to route parsing/linters; normalize strings per spec.

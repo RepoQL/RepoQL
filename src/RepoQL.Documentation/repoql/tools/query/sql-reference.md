@@ -1,6 +1,6 @@
 ---
 description: SQL macro and UDF reference for query tool users - signatures, parameters, and usage examples
-tags: [search, snippet, xray, ask, annotations, macros, UDFs]
+tags: [search, snippet, explore, ask, annotations, macros, UDFs]
 audience: ["LLMs"]
 categories: ["Reference[100%]"]
 ---
@@ -148,14 +148,14 @@ WHERE sn.is_focus;
 
 ---
 
-## X-Ray
+## Explore
 
-### xray()
+### explore()
 
 Token-budgeted codebase exploration. Returns pre-rendered text fitting the token budget.
 
 ```sql
-xray(
+explore(
     keywords,                -- Search terms
     intent := 'Explore',     -- 'Find', 'Explore', 'Understand'
     tokens := 1000,          -- Token budget for output
@@ -169,7 +169,7 @@ xray(
 
 **Example**:
 ```sql
-SELECT xray('authentication', intent := 'Find', tokens := 500);
+SELECT explore('authentication', intent := 'Find', tokens := 500);
 ```
 
 **Depth**

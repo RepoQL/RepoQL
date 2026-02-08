@@ -204,7 +204,7 @@ For code, extract:
 
 1. Should we store multiple SimHash variants (different tokenizations)?
 2. Use MinHash instead for set-based similarity?
-3. Expose clone detection in xray output?
+3. Expose clone detection in explore output?
 
 ## References
 

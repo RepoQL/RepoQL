@@ -9,7 +9,7 @@
 ## 0) Executive summary
 
 * **What it is.** A **local** (no remote server) repo graph in **DuckDB** with a **single writer + watchers** that keeps the index fresh. Exposed via **gRPC over UDS** and a **CLI**, with a **SQL‑first** query model, stable **macros/UDFs**, and **URI‑precise** navigation.
-* **Core model.** Everything in the repo is a **node**; relationships are **edges**; exact locations are **spans**; lint, metrics, and “facts” are **annotations**. A small macro set (e.g., `xray_*`, `snippet`, `annotations_*`) is the default entry point for agents and tools.
+* **Core model.** Everything in the repo is a **node**; relationships are **edges**; exact locations are **spans**; lint, metrics, and “facts” are **annotations**. A small macro set (e.g., `explore_*`, `snippet`, `annotations_*`) is the default entry point for agents and tools.
 * **Why it matters.** Unifies **docs, code, config, traces** under one query plane; enables **policy‑as‑SQL** gates; supports **auto‑fix** for the safe class (e.g., doc link hygiene); provides **deterministic** agent loops (select → fix → verify “until empty”). 
 * **How it evolves.** Keep base tables stable; add capabilities via **views/macros/UDFs** and new **annotation producers**. Ship **interchange formats** so external systems consume findings/patches without coupling.
 
@@ -22,7 +22,7 @@
 * **Schema tables**: `artifact`, `node`, `edge`, `span`, `annotation`. Idempotent upserts via `semantic_key`. **URIs live only on document nodes;** fragments resolved at query time.
 * **Addressing**: **RepoURI** (files, JSON Pointers, line/char ranges, anchors, archive entries including nested). Round‑trip rules and normalization are defined.
 * **Typing**: **Semantic Media Type (SemType)**; MIME + parameters (e.g., `kind`, `version`). Routing is data‑driven.
-* **Query surface**: small, stable views/macros/UDFs (`Files`, `Functions`, `Types`, `Annotations`, `xray()`, `search()`, `snippet`, `annotations_*`, `repository_uri_*`).
+* **Query surface**: small, stable views/macros/UDFs (`Files`, `Functions`, `Types`, `Annotations`, `explore()`, `search()`, `snippet`, `annotations_*`, `repository_uri_*`).
 
 **Flexible (how we extend safely):**
 
@@ -91,7 +91,7 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 * Model **Markdown**: `md_heading`, `md_link`, `md_code_block` nodes; `HAS_PART` and `REFERS_TO` edges; outline annotation; spans everywhere; SemType `text/markdown;kind=markdown.doc`.
 * Lints: `broken-link`, `heading-slug-mismatch`, `missing-code-fence-language`, `no-final-newline`.
 * **Autofix**: repair links, normalize slugs/fences/newlines.
-* Why: gives agents & humans “**see without opening files**” via `xray_*` + precise `snippet()`. 
+* Why: gives agents & humans “**see without opening files**” via `explore_*` + precise `snippet()`. 
 
 ### Tranche 2 — **API Contract Coherence**
 
@@ -135,8 +135,8 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 
 * `repoql query [--format {table,json,ndjson,csv,parquet}] <SQL…>`
   Raw SQL with schema in JSON header; supports streaming.
-* `repoql xray [--intent Find|Explore|Understand] [--tokens N] [--scope <glob>]`
-  Uses `xray()` UDF for token-budgeted exploration. Great as *SessionStart* context for agents.
+* `repoql explore [--intent Find|Explore|Understand] [--tokens N] [--scope <glob>]`
+  Uses `explore()` UDF for token-budgeted exploration. Great as *SessionStart* context for agents.
 * `repoql lint [--min-severity warning] [--format {table,json,sarif,gha}] [--group-by source] [--include-fixes]`
   One SELECT over `annotations_all('lint', …)`; render as **SARIF** or GitHub **workflow commands**.
 * `repoql fix [--rule <id>] [--uris …] [--dry-run|--apply] [--commit "msg"] [--export {sarif,diff,json}]`
@@ -159,14 +159,14 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 ### Tools (server‑side)
 
 * `repoql.query(sql, params?, max_rows?, timeout_ms?)` → rows.
-* `repoql.xray(include_kinds?, max_per_doc?, lod?)` → outlines & items (LLM‑friendly).
+* `repoql.explore(include_kinds?, max_per_doc?, lod?)` → outlines & items (LLM‑friendly).
 * `repoql.annotations.list(kinds?, min_severity?)` → the work queue.
 * `repoql.fix.generate(rule_ids?, uris?, limit?)` → **RepoPatch** JSON.
 * `repoql.verify()` → boolean / rows that violate policy.
 
 **Default cold‑start plan for agents**
 
-1. `SELECT * FROM Files` to map the repo; use `xray()` for token-budgeted exploration.
+1. `SELECT * FROM Files` to map the repo; use `explore()` for token-budgeted exploration.
 2. Pull `annotations_all('lint','warning')` to select work; preview with `snippet(resolved_target_uri, 3)`.
 3. Call `fix.generate` for safe rules, apply via CLI; **verify** until **empty**.
 
@@ -186,7 +186,7 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 
 **A2A (agent‑to‑agent) shim**
 
-* Publish an **Agent Card** with capabilities: `repoql.query`, `repoql.xray`, `repoql.lint.queue`, `repoql.fix.generate`.
+* Publish an **Agent Card** with capabilities: `repoql.query`, `repoql.explore`, `repoql.lint.queue`, `repoql.fix.generate`.
 * Accept artifacts tagged by **SemType**; return rows/patches/diagnostics as **JSON** using RepoURI/RepoPatch conventions.
   This enables orchestration across ecosystems while keeping RepoQL local and sovereign.
 
@@ -231,7 +231,7 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 
 ## 8) Documentation & navigation UX (leverage what you have)
 
-* Markdown modeling already includes headings, links, code blocks, spans, and an **outline annotation**; combine with `xray_*` for structured discoverability. This is your **agent‑ready** context surface.
+* Markdown modeling already includes headings, links, code blocks, spans, and an **outline annotation**; combine with `explore_*` for structured discoverability. This is your **agent‑ready** context surface.
 * Use `entities_by_uri()` and `snippet()` for exact jumps and previews everywhere (CLI, editor, PR bots).
 
 ---
@@ -295,7 +295,7 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 **Phase A (4–6 weeks):**
 
 * Ship **Tranche 1** (Markdown hygiene + outline) and **SARIF/GHA emitters**.
-* CLI: `lint`, `fix` (safe rules), `verify`, `xray`, `snippet`.
+* CLI: `lint`, `fix` (safe rules), `verify`, `explore`, `snippet`.
 * Hook **pre‑write verify** and **post‑write autofix** in Claude Code / editor tasks.
 * KPI: % of broken links auto‑fixed; mean time to green (lint).
 
@@ -336,7 +336,7 @@ Ship in **tranches**—each bundle stands alone but compounds when combined.
 > *You have four calls:*
 >
 > 1. `Files` view → list of docs with lang/size/headline/summary
-> 2. `xray(keywords, intent, tokens)` → token-budgeted exploration
+> 2. `explore(keywords, intent, tokens)` → token-budgeted exploration
 > 3. `annotations_all(kinds,min)` → the work queue (e.g., `'lint','warning'`)
 > 4. `snippet(uri, ctx)` → focused preview for any **RepoURI**
 >    Use URIs as canonical keys; never fuzzy‑match paths. Prefer structure first; fetch bytes only via `snippet`. “Done” means the selection query turns **empty**. 

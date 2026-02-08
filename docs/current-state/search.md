@@ -1,6 +1,6 @@
 # Search Infrastructure
 
-> **Scope**: How RepoQL finds documents and objects. Used by xray, read, and SQL queries.
+> **Scope**: How RepoQL finds documents and objects. Used by explore, read, and SQL queries.
 
 ---
 
@@ -22,7 +22,7 @@ SELECT * FROM _search_candidates('ValidateToken', k := 50) WHERE scope = 'object
 - DocumentSearch: Returns files with headlines, structures, scores
 - ObjectSearch: Returns symbols with line positions, snippets
 - JitObjectSearch: Computes embeddings at query time for higher accuracy
-- All three compose: xray uses Document → Object → JIT pipeline
+- All three compose: explore uses Document → Object → JIT pipeline
 
 ---
 
@@ -332,6 +332,6 @@ Groups objects under parent documents. First 3 objects per file get snippets, re
 
 ## See Also
 
-- `docs/current-state/xray.md` — Xray tool that uses this search infrastructure
+- `docs/current-state/xray.md` — Explore tool that uses this search infrastructure
 - `docs/current-state/indexing.md` — How files become searchable
 - `docs/XRay.md` — Producing x-ray content (headline/summary/structure)

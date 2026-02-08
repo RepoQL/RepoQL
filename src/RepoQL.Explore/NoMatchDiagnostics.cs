@@ -56,18 +56,18 @@ public static class NoMatchDiagnostics
             var target = isGlob ? $"pattern: {uriPattern}" : uriPattern;
             return $"No files matched {target}.\n" +
                    $"{status.IndexPending} files pending indexing — the target may not be indexed yet.\n" +
-                   "Try again shortly, or read(\"file:///** => tree: folders\", 1500) to see what's indexed.";
+                   "Try again shortly, or read(\"file:///** => tree: folders\", 5000) to see what's indexed.";
         }
 
         if (isGlob)
         {
             return $"No files matched pattern: {uriPattern}\n" +
-                   "Try: read(\"file:///** => tree: folders\", 1500) to see available paths, " +
+                   "Try: read(\"file:///** => tree: folders\", 5000) to see available paths, " +
                    "or explore(intent=\"Locate\", keywords=\"...\", tokenBudget=1500) to search.";
         }
 
         return $"File not found: {uriPattern}\n" +
-               "Try: read(\"file:///** => tree: folders\", 1500) to see available files.";
+               "Try: read(\"file:///** => tree: folders\", 5000) to see available files.";
     }
 
     private static string FormatGenericMessage(string uriPattern, IndexerStatus status)
@@ -75,7 +75,7 @@ public static class NoMatchDiagnostics
         var msg = $"No files matched: {uriPattern}";
         if (status.IndexPending > 0)
             msg += $"\n{status.IndexPending} files pending indexing.";
-        msg += "\nTry: read(\"file:///** => tree: folders\", 1500) to see available paths.";
+        msg += "\nTry: read(\"file:///** => tree: folders\", 5000) to see available paths.";
         return msg;
     }
 }

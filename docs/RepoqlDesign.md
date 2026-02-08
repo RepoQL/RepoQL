@@ -66,7 +66,7 @@ Graph Database (DuckDB)
     ↓
 Query Interface (SQL + MCP tools)
     ↓
-Agent Consumption (xray/query/import)
+Agent Consumption (explore/query/import)
 ```
 
 ### Capsule: FlowObject
@@ -371,18 +371,18 @@ JOIN csharp_members m ON m.declaring_type_id = t.type_id
 WHERE t.document_uri = 'file:///UserService.cs'
 ```
 
-#### 2. `xray` - The Primary Discovery Tool
+#### 2. `explore` - The Primary Discovery Tool
 
 **This is the main interface for 75% of repository exploration.**
 
-**Capsule: XrayTool**
+**Capsule: ExploreTool**
 
 **Invariant**
 Scan repository structure efficiently through pre-indexed summaries and linting, with multi-axis filtering and progressive detail levels.
 
 **Why**: Combines glob patterns, semantic search, media type filtering, and progressive disclosure in single ergonomic interface. Avoids requiring SQL knowledge while remaining extremely flexible.
 
-**Core insight**: Most exploration follows pattern "find files → understand structure → read specific parts". Xray handles all three with minimal cognitive load.
+**Core insight**: Most exploration follows pattern "find files → understand structure → read specific parts". Explore handles all three with minimal cognitive load.
 
 ##### Progressive Detail Levels
 
@@ -455,19 +455,19 @@ limit=50    # Override default for detail level
 **Pattern 1: Broad to Narrow Discovery**
 ```
 # Step 1: What exists? (scan 1000s)
-xray(pattern="**/*.cs", detail="headline")
+explore(pattern="**/*.cs", detail="headline")
 
 # Step 2: Understand relevant subset (100s)
-xray(pattern="**/Auth*.cs", detail="summary")
+explore(pattern="**/Auth*.cs", detail="summary")
 
 # Step 3: Read specific implementations (10s)
-xray(pattern="**/AuthService.cs", detail="snippet")
+explore(pattern="**/AuthService.cs", detail="snippet")
 ```
 
 **Pattern 2: Semantic Discovery**
 ```
 # Find relevant files semantically (no need to know structure)
-xray(
+explore(
   pattern="**/*.md",
   question="How do users authenticate?",
   detail="snippet",
@@ -483,7 +483,7 @@ query: SELECT uri, symbol FROM search('ProcessRequest', k := 10) WHERE scope = '
 # Returns: file:///Handler.cs#symbol=ProcessRequest&line=42,67
 
 # Then: Get just that method
-xray(
+explore(
   pattern="file:///Handler.cs#symbol=ProcessRequest",
   detail="snippet"
 )
@@ -493,19 +493,19 @@ xray(
 **Pattern 4: Lint-Focused Exploration**
 ```
 # Headline shows lint badges - scan for problems
-xray(pattern="**/*.cs", detail="headline")
+explore(pattern="**/*.cs", detail="headline")
 # See: [ ⚠️ 5 | ❌ 2 ] PaymentProcessor.cs
 
 # Get details on problematic files
-xray(pattern="**/PaymentProcessor.cs", detail="summary")
+explore(pattern="**/PaymentProcessor.cs", detail="summary")
 # Inline diagnostics show exact issues
 ```
 
 **Pattern 5: Type-Constrained Discovery**
 ```
 # Explore specific file types
-xray(type="*graphql*", detail="summary")           # All GraphQL schemas
-xray(type="*config*", question="Redis", detail="snippet")  # Config mentioning Redis
+explore(type="*graphql*", detail="summary")           # All GraphQL schemas
+explore(type="*config*", question="Redis", detail="snippet")  # Config mentioning Redis
 ```
 
 ##### Token Efficiency Breakdown
@@ -518,14 +518,14 @@ Task: "Find authentication code"
 3. Analyze to find relevant 5 → wasted 95% of tokens
 ```
 
-**Xray approach**:
+**Explore approach**:
 ```
 Task: "Find authentication code"
-1. xray(keywords="auth", question="token validation", detail="headline", limit=50)
+1. explore(keywords="auth", question="token validation", detail="headline", limit=50)
    → 50 files, 500 tokens (one-liners)
-2. Identify 10 relevant → xray with detail="summary"
+2. Identify 10 relevant → explore with detail="summary"
    → 10 files, 1,000 tokens (outlines)
-3. Deep dive on 3 → xray with detail="snippet"
+3. Deep dive on 3 → explore with detail="snippet"
    → 3 files, 2,000 tokens (full code)
 
 Total: 3,500 tokens (98.6% savings)
@@ -561,7 +561,7 @@ Total: 3,500 tokens (98.6% savings)
 
 ##### When to Use Query Instead
 
-**Xray handles**: 75% of needs
+**Explore handles**: 75% of needs
 - File discovery (glob + semantic)
 - Structure understanding (progressive detail)
 - Code reading (snippet with context)
@@ -575,13 +575,13 @@ Total: 3,500 tokens (98.6% savings)
 - Custom filtering (complex WHERE clauses)
 - Cross-file analysis (references, implementations)
 
-**Rule of thumb**: Start with xray. Move to query when you need SQL's power (joins, aggregations, complex predicates).
+**Rule of thumb**: Start with explore. Move to query when you need SQL's power (joins, aggregations, complex predicates).
 
-##### Xray + Query Composition
+##### Explore + Query Composition
 
 ```
-# Xray: Find relevant files quickly
-xray(question="JWT validation", detail="headline", limit=10)
+# Explore: Find relevant files quickly
+explore(question="JWT validation", detail="headline", limit=10)
 → Identifies: AuthService.cs, TokenValidator.cs, JwtMiddleware.cs
 
 # Query: Deep structural analysis
@@ -597,8 +597,8 @@ WHERE t.document_uri IN (
 )
 GROUP BY t.qualified_name
 
-# Xray: Read implementations
-xray(pattern="**/AuthService.cs#symbol=ValidateToken", detail="snippet")
+# Explore: Read implementations
+explore(pattern="**/AuthService.cs#symbol=ValidateToken", detail="snippet")
 ```
 
 #### 3. `import` - External Repositories
@@ -618,7 +618,7 @@ import(uri="github://owner/repo@main")
 2. Creates new `IVirtualFileSystem` with `github://` scheme
 3. Mounts filesystem into `CompositeFileSystem`
 4. Triggers indexing of all files under `github://owner/repo`
-5. Files immediately queryable: `xray(pattern="github://owner/repo/**/*.cs")`
+5. Files immediately queryable: `explore(pattern="github://owner/repo/**/*.cs")`
 
 **Design Insight**: Import isn't a special operation—it's just mounting a new `IVirtualFileSystem`. The abstraction makes this trivial.
 

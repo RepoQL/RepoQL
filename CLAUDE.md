@@ -21,7 +21,7 @@ Agents → explore/query/read tools → SQL + UDFs → Results
 
 **First action** — see the shape:
 ```
-read("file:///src/** => tree: folders", 1000)
+read("file:///src/** => tree: folders", 3000)
 ```
 
 ---
