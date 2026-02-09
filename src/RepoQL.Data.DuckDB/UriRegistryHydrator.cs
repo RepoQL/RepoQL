@@ -100,7 +100,7 @@ public class UriRegistryHydrator
                     Status: UriStatus.Indexed,
                     IndexedAt: DateTime.UtcNow,
                     Error: null,
-                    EmbeddingStatus: EmbeddingStatus.Pending, // Will be updated by embedding hydration
+                    EmbeddingStatus: EmbeddingStatus.NotApplicable, // Hydrated files completed pipeline; HydrateEmbeddings upgrades to Embedded
                     EmbeddedChunkCount: 0,
                     EmbeddedAt: null,
                     LineCount: 0, // Line count not available during hydration; will be populated during indexing

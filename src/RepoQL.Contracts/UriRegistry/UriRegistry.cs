@@ -173,6 +173,29 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     }
 
     /// <summary>
+    /// Marks a file as up-to-date (skipped by indexer because content unchanged).
+    /// Transitions Discovered/Pending to Indexed/NotApplicable so Operation completion tracking works.
+    /// Does not downgrade files already in a terminal or more advanced embedding state.
+    /// </summary>
+    public void SetSkippedUpToDate(RepoUri uri)
+    {
+        if (!TryGetValue(uri, out var existing))
+            return;
+
+        // Don't downgrade files already in a terminal embedding state
+        if (existing.Status == UriStatus.Indexed && existing.EmbeddingStatus != EmbeddingStatus.Pending)
+            return;
+
+        TryUpdate(uri, existing with
+        {
+            Status = UriStatus.Indexed,
+            EmbeddingStatus = existing.EmbeddingStatus == EmbeddingStatus.Pending
+                ? EmbeddingStatus.NotApplicable
+                : existing.EmbeddingStatus
+        }, existing);
+    }
+
+    /// <summary>
     /// Removes a file and returns its entry if it existed.
     /// </summary>
     public FileEntry? RemoveFile(RepoUri uri)

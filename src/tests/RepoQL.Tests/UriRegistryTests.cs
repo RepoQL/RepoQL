@@ -1141,6 +1141,75 @@ internal class UriRegistryTests
         result.AbsoluteUri.Should().Be("file:///src/App.cs");
     }
 
+    // === SetSkippedUpToDate ===
+
+    [Test]
+    public void SetSkippedUpToDate_DiscoveredPending_TransitionsToIndexedNotApplicable()
+    {
+        var registry = new UriRegistry();
+        var uri = RepoUri.Parse("file:///src/App.cs");
+        registry.TryRegisterDiscovered(uri);
+
+        registry.SetSkippedUpToDate(uri);
+
+        registry[uri].Status.Should().Be(UriStatus.Indexed);
+        registry[uri].EmbeddingStatus.Should().Be(EmbeddingStatus.NotApplicable);
+    }
+
+    [Test]
+    public void SetSkippedUpToDate_IndexedPending_TransitionsToNotApplicable()
+    {
+        var registry = new UriRegistry();
+        var uri = RepoUri.Parse("file:///src/App.cs");
+        registry.SetIndexed(uri, new Dictionary<RepoUri, string>().AsReadOnly());
+        // SetIndexed sets EmbeddingStatus to Pending
+
+        registry.SetSkippedUpToDate(uri);
+
+        registry[uri].Status.Should().Be(UriStatus.Indexed);
+        registry[uri].EmbeddingStatus.Should().Be(EmbeddingStatus.NotApplicable);
+    }
+
+    [Test]
+    public void SetSkippedUpToDate_IndexedEmbedded_DoesNotDowngrade()
+    {
+        var registry = new UriRegistry();
+        var uri = RepoUri.Parse("file:///src/App.cs");
+        registry.SetIndexed(uri, new Dictionary<RepoUri, string>().AsReadOnly());
+        registry.SetEmbedded(uri, 3);
+
+        registry.SetSkippedUpToDate(uri);
+
+        registry[uri].Status.Should().Be(UriStatus.Indexed);
+        registry[uri].EmbeddingStatus.Should().Be(EmbeddingStatus.Embedded);
+        registry[uri].EmbeddedChunkCount.Should().Be(3);
+    }
+
+    [Test]
+    public void SetSkippedUpToDate_IndexedNotApplicable_DoesNotChange()
+    {
+        var registry = new UriRegistry();
+        var uri = RepoUri.Parse("file:///src/App.cs");
+        registry.SetIndexed(uri, new Dictionary<RepoUri, string>().AsReadOnly());
+        registry.SetEmbeddingNotApplicable(uri);
+
+        registry.SetSkippedUpToDate(uri);
+
+        registry[uri].Status.Should().Be(UriStatus.Indexed);
+        registry[uri].EmbeddingStatus.Should().Be(EmbeddingStatus.NotApplicable);
+    }
+
+    [Test]
+    public void SetSkippedUpToDate_UnknownUri_NoOp()
+    {
+        var registry = new UriRegistry();
+        var uri = RepoUri.Parse("file:///src/Unknown.cs");
+
+        registry.SetSkippedUpToDate(uri);
+
+        registry.Should().NotContainKey(uri);
+    }
+
     private static UriRegistry CreateRealisticCSharpRegistry()
     {
         var registry = new UriRegistry();

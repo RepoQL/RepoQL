@@ -618,6 +618,12 @@ public partial class IndexingEngine : IAsyncDisposable
                     { "reason", "up_to_date" },
                     { "mime_type", mime }
                 });
+
+                // Ensure UriRegistry reflects the file's already-indexed state.
+                // Without this, files registered as Discovered by import operations
+                // stay Pending and the Operation never completes.
+                UriRegistry?.SetSkippedUpToDate(item.Uri);
+
                 return;
             }
 

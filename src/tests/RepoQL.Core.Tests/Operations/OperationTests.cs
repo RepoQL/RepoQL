@@ -340,6 +340,30 @@ internal sealed class OperationTests
         manager.ActiveOperations.Should().NotContain(completedOp);
     }
 
+    [Test]
+    public async Task Operation_AlreadyIndexedNotApplicable_CompletesImmediately()
+    {
+        // Simulates reimport where files are already indexed with terminal embedding status
+        var registry = new UriRegistry();
+        var uri1 = RepoUri.Parse("file:///src/App.cs");
+        var uri2 = RepoUri.Parse("file:///src/Utils.cs");
+
+        // Pre-populate as if hydrated from DB with NotApplicable status
+        registry.SetIndexed(uri1, new Dictionary<RepoUri, string>().AsReadOnly());
+        registry.SetEmbeddingNotApplicable(uri1);
+        registry.SetIndexed(uri2, new Dictionary<RepoUri, string>().AsReadOnly());
+        registry.SetEmbeddingNotApplicable(uri2);
+
+        var manager = new OperationManager(registry);
+        var operation = manager.CreateOperation("reimport: no changes", new[] { uri1, uri2 });
+
+        var progress = await AwaitCompletionAsync(operation, DefaultTimeout);
+
+        operation.State.Should().Be(OperationState.Completed);
+        progress.TotalFiles.Should().Be(2);
+        progress.EmbeddedCount.Should().Be(2); // NotApplicable counts as embedded
+    }
+
     private static async Task<OperationProgress> AwaitCompletionAsync(IOperation operation, TimeSpan timeout)
     {
         var completed = await Task.WhenAny(operation.Completion, Task.Delay(timeout));
