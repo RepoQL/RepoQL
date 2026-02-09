@@ -1,0 +1,6 @@
+Document: {{ display_title }}
+Stats: {% if page_count %}{{ page_count }} pages, {% endif %}{% if word_count %}{{ word_count | number_with_delimiter }} words, {% endif %}{{ paragraph_count | number_with_delimiter }} paragraphs
+Headings: {{ heading_count }}
+{% if top_level_headings and top_level_headings.size > 0 -%}
+Top Sections: {% for heading in top_level_headings %}{{ heading }}{% unless forloop.last %}, {% endunless %}{% endfor %}
+{% endif -%}

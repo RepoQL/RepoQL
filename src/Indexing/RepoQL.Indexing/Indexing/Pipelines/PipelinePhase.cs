@@ -90,14 +90,19 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
 
         async Task<(TResult? Result, PipelineResult PipelineStatus)> RunAsync()
         {
+            var delegated = false;
             var processorSw = Stopwatch.StartNew();
             var output = await processor.ProcessAsync(
                 item,
-                nextItem => InvokeProcessorAsync(index + 1, nextItem, cancellationToken),
+                nextItem =>
+                {
+                    delegated = true;
+                    return InvokeProcessorAsync(index + 1, nextItem, cancellationToken);
+                },
                 cancellationToken).ConfigureAwait(false);
             processorSw.Stop();
 
-            if (processorSw.ElapsedMilliseconds > 50 || Logger.IsEnabled(LogLevel.Trace))
+            if (!delegated && (processorSw.ElapsedMilliseconds > 50 || Logger.IsEnabled(LogLevel.Trace)))
             {
                 Logger.LogDebug(
                     "[{Phase}] {Processor} for {Uri}: {ElapsedMs:F1}ms (Status={Status})",

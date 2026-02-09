@@ -26,7 +26,7 @@ public static class XlsxServiceCollectionExtensions
         {
             var loader = sp.GetRequiredService<XlsxLoader>();
             return new FormatDescriptor(
-                SemanticMediaType.Create("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                SemanticMediaType.Create("application", "xlsx")
                     .WithKind("xlsx.workbook"),
                 loader,
                 analyzer: null,

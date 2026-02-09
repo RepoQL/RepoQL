@@ -42,9 +42,9 @@ The classifier refines the provisional media type (already set from `.docx` exte
 
 | Extension | Media Type | Kind |
 |-----------|-----------|------|
-| `.docx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | `docx.document` |
-| `.docm` | `application/vnd.ms-word.document.macroEnabled.12` | `docx.document` |
-| `.dotx` | `application/vnd.openxmlformats-officedocument.wordprocessingml.template` | `docx.template` |
+| `.docx` | `application/docx` | `docx.document` |
+| `.docm` | `application/docm` | `docx.document` |
+| `.dotx` | `application/dotx` | `docx.template` |
 
 Kind refinement is deferred — the classifier does not attempt to distinguish specs from proposals from reports. That's a structure-level concern better handled by agents querying heading patterns and properties. The classifier's job: confirm it's a Word document and flag templates.
 

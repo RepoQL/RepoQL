@@ -31,7 +31,7 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
     private readonly ILogger<XlsxLoader> _logger;
 
     private static readonly SemanticMediaType XlsxMediaType = SemanticMediaType
-        .Create("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        .Create("application", "xlsx")
         .WithKind("xlsx.workbook");
 
     private readonly LiquidTemplateRenderer _renderer = new(
@@ -67,7 +67,7 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
         }
 
         if (artifact.MediaType is not null &&
-            string.Equals(artifact.MediaType.Subtype, "vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            string.Equals(artifact.MediaType.Subtype, "xlsx",
                 StringComparison.OrdinalIgnoreCase))
         {
             artifact.MediaType = artifact.MediaType.WithKind("xlsx.workbook");

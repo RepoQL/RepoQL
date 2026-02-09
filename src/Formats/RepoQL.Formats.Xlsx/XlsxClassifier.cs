@@ -15,7 +15,7 @@ namespace RepoQL.Formats.Xlsx;
 public sealed class XlsxClassifier : IAsyncPipeline<IDiscoveredArtifact, SemanticMediaType?>
 {
     private static readonly SemanticMediaType XlsxMediaType =
-        SemanticMediaType.Create("application", "vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        SemanticMediaType.Create("application", "xlsx")
             .WithKind("xlsx.workbook");
 
     public Task<(SemanticMediaType? Result, PipelineResult PipelineStatus)> ProcessAsync(

@@ -1,0 +1,8 @@
+Document
+{% if structure_lines and structure_lines.size > 0 -%}
+{% for line in structure_lines -%}
+{{ line }}
+{% endfor -%}
+{% else -%}
+  (no headings)
+{% endif -%}

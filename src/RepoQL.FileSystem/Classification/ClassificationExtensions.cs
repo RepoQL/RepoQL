@@ -168,9 +168,9 @@ public static class ClassificationExtensions
         Add("application/msword", ".doc");
         Add("application/vnd.ms-excel", ".xls");
         Add("application/vnd.ms-powerpoint", ".ppt");
-        Add("application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx");
-        Add("application/vnd.openxmlformats-officedocument.presentationml.presentation", ".pptx");
-        Add("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xlsx");
+        Add("application/docx", ".docx");
+        Add("application/pptx", ".pptx");
+        Add("application/xlsx", ".xlsx");
         Add("application/vnd.oasis.opendocument.presentation", ".odp");
         Add("application/vnd.oasis.opendocument.text", ".odt");
         Add("application/vnd.oasis.opendocument.spreadsheet", ".ods");
