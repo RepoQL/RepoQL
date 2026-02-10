@@ -63,6 +63,15 @@ internal class HostCommands(IAnsiConsole console)
             return;
         }
 
+        // Write PID immediately so zombie detection can identify the lock holder.
+        // Previously this was deferred to ApplicationStarted, leaving a window where the lock
+        // holder was unidentifiable if startup failed partway through.
+        var pidFile = new HostPidFile(repo);
+        if (!pidFile.TryWrite(Environment.ProcessId, out var pidError))
+        {
+            serilogLogger.Warning(pidError, "Failed to write host PID file at {Path}.", pidFile.FilePath);
+        }
+
         try
         {
             await WaitForRepositoryAvailabilityAsync(repo, TimeSpan.FromSeconds(45), CancellationToken.None).ConfigureAwait(false);
@@ -152,6 +161,7 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton<IModifierHandler, HistoryHandler>();
             builder.Services.AddSingleton<IModifierHandler, BlameHandler>();
             builder.Services.AddSingleton<IModifierHandler, ChangesHandler>();
+            builder.Services.AddSingleton<IModifierHandler, TextSearchHandler>();
             builder.Services.AddSingleton<IModifierHandler, FindHandler>();
             builder.Services.AddSingleton(sp => new ReadOrchestrator(
                 sp.GetRequiredService<IReadContentProvider>(),
@@ -169,14 +179,6 @@ internal class HostCommands(IAnsiConsole console)
 
             var app = builder.Build();
             HostLogging.RegisterShutdown(app.Lifetime, app.Logger);
-            var pidFile = new HostPidFile(repo);
-            app.Lifetime.ApplicationStarted.Register(() =>
-            {
-                if (!pidFile.TryWrite(Environment.ProcessId, out var error))
-                {
-                    app.Logger.LogWarning(error, "Failed to write host PID file at {Path}.", pidFile.FilePath);
-                }
-            });
             app.Lifetime.ApplicationStopping.Register(() =>
             {
                 if (!pidFile.TryDelete(out var error))
@@ -499,6 +501,79 @@ internal class HostCommands(IAnsiConsole console)
         return ex.HResult == ErrorSharingViolation || ex.HResult == ErrorLockViolation;
     }
 
+    /// <summary>
+    /// Check if a socket is connectable (host is serving).
+    /// </summary>
+    private static async Task<bool> IsSocketHealthyAsync(string socketPath, CancellationToken ct)
+    {
+        if (!File.Exists(socketPath))
+            return false;
+
+        return await ProbeSocketAsync(socketPath, ct).ConfigureAwait(false) == SocketProbeResult.Active;
+    }
+
+    /// <summary>
+    /// Wait for the lock holder to become healthy. If it doesn't within the grace period,
+    /// read host.pid, verify the process is a zombie, and kill it.
+    /// Returns true if the zombie was evicted (caller should retry lock acquisition).
+    /// Returns false if the host became healthy or eviction failed.
+    /// </summary>
+    private static async Task<bool> TryWaitThenEvictZombieAsync(
+        string repo,
+        string socketPath,
+        TimeSpan grace,
+        Serilog.ILogger logger,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed < grace)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (await IsSocketHealthyAsync(socketPath, ct).ConfigureAwait(false))
+            {
+                logger.Information("Lock holder became healthy during grace period.");
+                return false;
+            }
+
+            await Task.Delay(500, ct).ConfigureAwait(false);
+        }
+
+        // Grace period expired, no healthy socket. Try to identify and kill the zombie.
+        var pidFile = new HostPidFile(repo);
+        if (!pidFile.TryRead(out var zombiePid) || zombiePid <= 0)
+        {
+            logger.Warning("Zombie detected (lock held, no socket after {Grace}s) but host.pid is missing or empty. Cannot evict.",
+                grace.TotalSeconds);
+            return false;
+        }
+
+        if (!RepoQlProcessInspector.TryGetRepoQlProcess(zombiePid, out var process))
+        {
+            // PID in host.pid is dead or not repoql — the lock should release soon
+            logger.Information("host.pid points to PID {Pid} which is not a live RepoQL process; cleaning up.", zombiePid);
+            pidFile.TryDelete(out _);
+            // Wait briefly for the OS to release the lock file
+            await Task.Delay(1000, ct).ConfigureAwait(false);
+            return true;
+        }
+
+        logger.Warning(
+            "Evicting zombie host (pid={Pid}): lock held for >{Grace}s with no healthy socket.",
+            zombiePid, grace.TotalSeconds);
+        var killed = await ProcessTermination.TryTerminateAsync(process, ct).ConfigureAwait(false);
+        if (killed)
+        {
+            pidFile.TryDelete(out _);
+            UnixSocketTransport.TryCleanupStaleSocket(socketPath, out _);
+            // Wait for the OS to release the lock file
+            await Task.Delay(1000, ct).ConfigureAwait(false);
+            return true;
+        }
+
+        logger.Warning("Failed to terminate zombie host (pid={Pid}).", zombiePid);
+        return false;
+    }
+
     private static async Task<HostLock?> WaitForHostLockAsync(
         string repo,
         TimeSpan timeout,
@@ -527,8 +602,36 @@ internal class HostCommands(IAnsiConsole console)
 
             if (implicitStart)
             {
-                logger.Information("Host lock held by another process (path={Path}); exiting implicit host start.", lockPath);
-                return null;
+                // Lock held — but is the holder actually serving? If the socket is healthy,
+                // there's a working host and we should back off. If not, the holder may be
+                // a zombie (alive, holding lock, no socket). Give it a grace period then evict.
+                var resolvedRoot = Path.GetFullPath(repo);
+                var overridePath = Environment.GetEnvironmentVariable("REPOQL_SOCKET");
+                var socketPath = RepoqlSocketPathResolver.ResolvePhysical(resolvedRoot, overridePath, enableWslMapping: true);
+
+                if (await IsSocketHealthyAsync(socketPath, cancellationToken).ConfigureAwait(false))
+                {
+                    logger.Information("Host lock held and socket healthy; exiting implicit host start.");
+                    return null;
+                }
+
+                // Socket not healthy — wait grace period for the lock holder to finish starting
+                logger.Information(
+                    "Host lock held but no healthy socket; waiting up to 10s for lock holder to start (path={Path}).",
+                    lockPath);
+                var evicted = await TryWaitThenEvictZombieAsync(
+                    repo, socketPath, TimeSpan.FromSeconds(10), logger, cancellationToken).ConfigureAwait(false);
+
+                if (!evicted)
+                {
+                    // Couldn't evict — either the host came up healthy (good) or we failed to kill it
+                    logger.Information("Host lock held by another process (path={Path}); exiting implicit host start.", lockPath);
+                    return null;
+                }
+
+                // Zombie evicted — loop around and try to acquire the lock
+                logger.Information("Zombie host evicted; retrying lock acquisition.");
+                continue;
             }
 
             if (!loggedWait)
