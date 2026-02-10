@@ -230,7 +230,7 @@ State transfer via `RubyDocumentState` in `DocumentModel.Metadata`, following th
 
 **Shared view participation:** The node kinds are chosen to match the shared cross-format views:
 - `rb.type` matches `WHERE kind LIKE '%.type'` → appears in the shared `Types` view automatically
-- `rb.member` and `rb.function` must be added to the shared `Functions` view's hardcoded kind list (`functions.sql`), and `'singleton_method'` added to the `$.kind` prop filter
+- `rb.member` and `rb.function` must be added to the shared `Functions` view's hardcoded kind list (`functions.sql`). Ruby's `kind: "method"` and `kind: "function"` values already match the existing `$.kind` filter; `singleton_method` is intentionally excluded (Ruby-specific, queryable via `ruby_methods` only)
 - Standard property names (`name`, `qualified_name`, `kind`, `accessibility`, `extends`, `declaring_type`, `is_static`, `parameters`, `return_type`) match what the shared views project
 - Class methods (`def self.foo`, `class << self`) use `kind: "method"` with `is_static: true` — same convention as `php.member`
 - Singleton methods on specific objects use `kind: "singleton_method"` — Ruby-specific, appears in `ruby_methods` but not the shared `Functions` view
@@ -308,7 +308,7 @@ Embedded resource `Schema/ruby_views.sql`, registered via `IFormatSchemaProvider
 -- Also participates in the shared Types view via rb.type kind.
 CREATE OR REPLACE VIEW ruby_types AS
 SELECT
-    qualified_name,
+    n.properties->>'qualified_name' AS qualified_name,
     n.properties->>'kind' AS type_kind,
     MAX(n.properties->>'extends') AS extends,
     COUNT(*) AS definition_count,
@@ -586,6 +586,7 @@ src/Formats/RepoQL.Formats.Ruby/
         RubySingletonMethodInfo.cs         # Singleton method data (with receiver)
         RubyMixinInfo.cs                   # Include/extend/prepend data (with ordinal)
         RubyRequireInfo.cs                 # Require/require_relative data
+        RubyAliasInfo.cs                   # Alias/alias_method data
         RubyMetaprogrammingHint.cs         # Detected but unextractable patterns
     TreeSitter/
         RubyTreeSitterClient.cs            # Tree-sitter wrapper (contains all native interop)

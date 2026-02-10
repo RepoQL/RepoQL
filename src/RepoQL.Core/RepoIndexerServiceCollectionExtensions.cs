@@ -35,6 +35,7 @@ using RepoQL.Formats.Xlsx;
 using RepoQL.Formats.Docx;
 using RepoQL.Formats.Pdf;
 using RepoQL.Formats.Csv;
+using RepoQL.Formats.Ruby;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Git;
@@ -369,6 +370,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddMarkdownFormat();
         services.AddTypeScriptFormat();
         services.AddPHPFormat();
+        services.AddRubyFormat();
         services.AddTerraformFormat();
         services.AddCSSFormat();
         services.AddXlsxFormat();
