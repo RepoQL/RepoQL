@@ -1,0 +1,12 @@
+{{ display_title }} ({{ page_count }} pg, {{ token_count | tokens }})
+{% if author %}  Author: {{ author }}{% endif %}{% if producer %}{% if author %} | {% endif %}Producer: {{ producer }}{% endif %}{% if version %}{% if author or producer %} | {% endif %}PDF {{ version }}{% endif %}
+{% if has_bookmarks and bookmark_lines.size > 0 -%}
+  Outline:
+{% for line in bookmark_lines -%}
+{{ line }}
+{% endfor -%}
+{% else -%}
+  No outline detected
+  Pages: {{ text_page_count }} text{% if image_only_page_count > 0 %}, {{ image_only_page_count }} image-only{% endif %}
+{% endif -%}
+  {{ annotation_count }} {{ "annotation" | pluralize: annotation_count }}{% if link_count > 0 %} ({{ link_count }} {{ "link" | pluralize: link_count }}){% endif %} | {{ form_field_count }} {{ "form field" | pluralize: form_field_count }}

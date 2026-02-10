@@ -33,6 +33,7 @@ using RepoQL.Formats.Sql;
 using RepoQL.Formats.CSS;
 using RepoQL.Formats.Xlsx;
 using RepoQL.Formats.Docx;
+using RepoQL.Formats.Pdf;
 using RepoQL.Formats.Csv;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
@@ -372,6 +373,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddCSSFormat();
         services.AddXlsxFormat();
         services.AddDocxFormat();
+        services.AddPdfFormat();
         services.AddCsvFormat();
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();

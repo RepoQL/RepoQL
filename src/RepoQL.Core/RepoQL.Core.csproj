@@ -26,6 +26,7 @@
     <ProjectReference Include="..\Formats\RepoQL.Formats.CSS\RepoQL.Formats.CSS.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Xlsx\RepoQL.Formats.Xlsx.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Docx\RepoQL.Formats.Docx.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.Pdf\RepoQL.Formats.Pdf.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Csv\RepoQL.Formats.Csv.csproj" />
     <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
     <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />

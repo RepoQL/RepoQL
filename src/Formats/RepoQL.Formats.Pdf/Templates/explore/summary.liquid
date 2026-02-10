@@ -1,0 +1,7 @@
+{{ display_title }} | {{ kind }}
+{{ page_count }} pages ({{ text_page_count }} text{% if image_only_page_count > 0 %}, {{ image_only_page_count }} image-only{% endif %}){% if author %}
+Author: {{ author }}{% endif %}{% if producer %}
+Producer: {{ producer }}{% endif %}{% if version %}
+PDF version: {{ version }}{% endif %}
+Annotations: {{ annotation_count }}{% if link_count > 0 %} ({{ link_count }} links){% endif %}{% if form_field_count > 0 %}
+Form fields: {{ form_field_count }}{% if has_values %} (filled){% else %} (blank){% endif %}{% endif %}
