@@ -80,6 +80,12 @@ internal sealed class ReadTool(
         → `=> find: keywords` — ranks content by relevance, shows snippets
         → Has quality threshold—won't show junk matches
 
+        **grep**: Case-insensitive literal text search within matched files.
+        → `=> grep: validateToken` — every line containing the string, with context
+
+        **regex**: Regular expression search within matched files.
+        → `=> regex: validate\w+\(` — pattern match with full regex syntax
+
         **question**: LLM synthesis with citations.
         → `=> question: How does X work?` — reads content, synthesizes answer
         → Returns Answer, Evidence (with file:///path#line=N,M citations), Nuance
@@ -154,6 +160,12 @@ internal sealed class ReadTool(
 
         What's pending in working copy:
         → read("file:///src/Auth/** => changes", 2000)
+
+        Find exact text in files:
+        → read("file:///src/**/*.cs => grep: connectionString", 2000)
+
+        Find patterns in files:
+        → read("file:///src/**/*.cs => regex: class\s+\w+Handler", 2000)
 
         Ask a question about code:
         → read("file:///src/Auth/**/*.cs => question: How is token refresh implemented?", 2500)
