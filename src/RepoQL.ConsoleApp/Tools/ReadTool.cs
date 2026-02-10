@@ -68,6 +68,9 @@ internal sealed class ReadTool(
 
         **blame**: Line-by-line git attribution showing who changed each line and when.
 
+        **changes**: Working copy changes grouped by changelist (staged, unstaged, untracked).
+        → Shows diffs for modified files, binary markers, and line counts
+
         **lint**: Diagnostics from the file.
         → `=> lint` — all diagnostics
         → `=> lint: errors` — errors only
@@ -148,6 +151,9 @@ internal sealed class ReadTool(
 
         What changed recently:
         → read("file:///src/Auth.cs => history", 1500)
+
+        What's pending in working copy:
+        → read("file:///src/Auth/** => changes", 2000)
 
         Ask a question about code:
         → read("file:///src/Auth/**/*.cs => question: How is token refresh implemented?", 2500)
