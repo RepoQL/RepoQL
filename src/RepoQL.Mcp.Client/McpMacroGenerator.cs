@@ -56,7 +56,8 @@ public static partial class McpMacroGenerator
                 SELECT * FROM read_json_auto(
                     _write_temp_json(
                         parse_structured(
-                            _mcp_call_internal('{{EscapeSql(tool.ServerName)}}', '{{EscapeSql(tool.ToolName)}}', {{paramsJsonExpr}})
+                            _mcp_call_internal('{{EscapeSql(tool.ServerName)}}', '{{EscapeSql(tool.ToolName)}}', {{paramsJsonExpr}}),
+                            'true'
                         )
                     ),
                     maximum_object_size := 67108864
