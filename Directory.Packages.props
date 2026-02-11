@@ -40,6 +40,7 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.0.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.FileProviders.Abstractions" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.FileProviders.Physical" Version="10.0.0" />

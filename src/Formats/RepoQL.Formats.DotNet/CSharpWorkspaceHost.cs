@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Text;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -37,9 +39,14 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
     private static string? _sdkUnavailableReason;
     private static readonly SemaphoreSlim ConcurrencyLimit = new(Math.Max(1, Math.Min(Environment.ProcessorCount / 2, 4)), Math.Max(1, Math.Min(Environment.ProcessorCount / 2, 4)));
 
-    private readonly ConcurrentDictionary<string, ProjectSession> _sessions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _sessionKeys = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IMemoryCache _sessionCache;
     private readonly Func<MSBuildWorkspace>? _workspaceFactory;
     private readonly ILogger<CSharpWorkspaceHost> _logger;
+    private readonly TimeSpan _sessionSlidingExpiration;
+    private readonly TimeSpan _sessionAbsoluteExpiration;
+    private readonly int _sessionEntrySize;
+    private readonly bool _ownsSessionCache;
     private volatile bool _disposing;
 
     /// <summary>
@@ -52,7 +59,15 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
     /// Initializes a new instance of the <see cref="CSharpWorkspaceHost"/> class with default settings.
     /// </summary>
     public CSharpWorkspaceHost()
-        : this(null, null)
+        : this(null, null, null, null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="CSharpWorkspaceHost"/> class using a shared cache.
+    /// </summary>
+    public CSharpWorkspaceHost(IMemoryCache sessionCache, IConfiguration? configuration = null, ILogger<CSharpWorkspaceHost>? logger = null)
+        : this(null, logger, sessionCache, configuration)
     {
     }
 
@@ -61,18 +76,47 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
     /// </summary>
     /// <param name="workspaceFactory">Optional factory for creating MSBuild workspaces.</param>
     /// <param name="logger">Optional logger for diagnostic information.</param>
-    internal CSharpWorkspaceHost(Func<MSBuildWorkspace>? workspaceFactory, ILogger<CSharpWorkspaceHost>? logger = null)
+    internal CSharpWorkspaceHost(
+        Func<MSBuildWorkspace>? workspaceFactory,
+        ILogger<CSharpWorkspaceHost>? logger = null,
+        IMemoryCache? sessionCache = null,
+        IConfiguration? configuration = null)
     {
         _logger = logger ?? NullLogger<CSharpWorkspaceHost>.Instance;
         EnsureLocator(_logger);
         _workspaceFactory = _sdkAvailable ? (workspaceFactory ?? (() => CreateWorkspace(_logger))) : null;
+        _sessionCache = sessionCache ?? new MemoryCache(new MemoryCacheOptions { SizeLimit = 8 });
+        _ownsSessionCache = sessionCache is null;
+        _sessionSlidingExpiration = TimeSpan.FromSeconds(ResolveIntSetting(
+            configuration,
+            "RepoQL:CSharp:WorkspaceSessionSlidingSeconds",
+            "REPOQL_CSHARP_WORKSPACE_SESSION_SLIDING_SECONDS",
+            60,
+            minimum: 1,
+            maximum: 3600));
+        _sessionAbsoluteExpiration = TimeSpan.FromSeconds(ResolveIntSetting(
+            configuration,
+            "RepoQL:CSharp:WorkspaceSessionAbsoluteSeconds",
+            "REPOQL_CSHARP_WORKSPACE_SESSION_ABSOLUTE_SECONDS",
+            600,
+            minimum: 10,
+            maximum: 14400));
+        if (_sessionAbsoluteExpiration < _sessionSlidingExpiration)
+            _sessionAbsoluteExpiration = _sessionSlidingExpiration + _sessionSlidingExpiration;
+        _sessionEntrySize = ResolveIntSetting(
+            configuration,
+            "RepoQL:CSharp:WorkspaceSessionEntrySize",
+            "REPOQL_CSHARP_WORKSPACE_SESSION_ENTRY_SIZE",
+            1,
+            minimum: 1,
+            maximum: 1024);
     }
 
-    internal int ActiveSessionCount => _sessions.Count;
+    internal int ActiveSessionCount => _sessionKeys.Count;
 
     internal int GetProjectLoadCount(string projectPath)
     {
-        if (_sessions.TryGetValue(Path.GetFullPath(projectPath), out var session))
+        if (_sessionCache.TryGetValue<ProjectSession>(Path.GetFullPath(projectPath), out var session))
             return session.LoadCount;
         return 0;
     }
@@ -99,7 +143,7 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             return null;
 
         var normalizedProjectPath = Path.GetFullPath(projectPath);
-        var session = _sessions.GetOrAdd(normalizedProjectPath, path => new ProjectSession(path, _workspaceFactory));
+        var session = GetOrCreateSession(normalizedProjectPath);
 
         await ConcurrencyLimit.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -114,8 +158,8 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
                 filePath,
                 normalizedProjectPath);
 
-            if (_sessions.TryRemove(normalizedProjectPath, out var removed))
-                removed.Dispose();
+            _sessionCache.Remove(normalizedProjectPath);
+            _sessionKeys.TryRemove(normalizedProjectPath, out _);
             return null;
         }
         finally
@@ -141,13 +185,59 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         // Set disposing flag to prevent new sessions from being added
         _disposing = true;
 
-        foreach (var session in _sessions.Values)
-            session.Dispose();
-        _sessions.Clear();
+        foreach (var key in _sessionKeys.Keys)
+            _sessionCache.Remove(key);
+        _sessionKeys.Clear();
+        if (_ownsSessionCache)
+            _sessionCache.Dispose();
 
         // NOTE: We do NOT dispose ConcurrencyLimit because it's a static shared resource.
         // Disposing it would break other workspace host instances that are still running.
         // Static semaphores should live for the application lifetime.
+    }
+
+    private ProjectSession GetOrCreateSession(string normalizedProjectPath)
+    {
+        if (_sessionCache.TryGetValue<ProjectSession>(normalizedProjectPath, out var existing) && existing is not null)
+            return existing;
+
+        var session = _sessionCache.GetOrCreate(normalizedProjectPath, entry =>
+        {
+            entry.SetSlidingExpiration(_sessionSlidingExpiration);
+            entry.AbsoluteExpirationRelativeToNow = _sessionAbsoluteExpiration;
+            entry.SetSize(_sessionEntrySize);
+            entry.RegisterPostEvictionCallback((key, value, reason, _) =>
+            {
+                if (value is ProjectSession evictedSession)
+                    evictedSession.Dispose();
+                if (key is string projectKey)
+                    _sessionKeys.TryRemove(projectKey, out byte _);
+            });
+
+            _sessionKeys.TryAdd(normalizedProjectPath, 0);
+            return new ProjectSession(normalizedProjectPath, _workspaceFactory!);
+        });
+
+        return session!;
+    }
+
+    private static int ResolveIntSetting(
+        IConfiguration? configuration,
+        string configurationKey,
+        string envKey,
+        int defaultValue,
+        int minimum,
+        int maximum)
+    {
+        var raw = configuration?[configurationKey];
+        if (int.TryParse(raw, out var configured))
+            return Math.Clamp(configured, minimum, maximum);
+
+        var env = Environment.GetEnvironmentVariable(envKey);
+        if (int.TryParse(env, out var fromEnv))
+            return Math.Clamp(fromEnv, minimum, maximum);
+
+        return defaultValue;
     }
 
     private static void EnsureLocator(ILogger logger)
@@ -870,4 +960,3 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         public override SourceText GetText(CancellationToken cancellationToken = default) => _text;
     }
 }
-

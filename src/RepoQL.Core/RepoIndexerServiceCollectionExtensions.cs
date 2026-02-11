@@ -114,6 +114,13 @@ public static class RepoIndexerServiceCollectionExtensions
 
         services.AddOptions<IndexingEngineOptions>();
         services.AddOptions<RepoqlHostOptions>();
+        services.AddMemoryCache(options =>
+        {
+            // Shared process cache for expensive reusable resources (Roslyn sessions, etc.).
+            // Entries must set Size to participate in this cap.
+            options.SizeLimit = ResolveSharedCacheSizeLimit();
+            options.CompactionPercentage = 0.2;
+        });
 
         // Embedding mode: controls resource usage for constrained hardware
         // REPOQL_EMBED_MODE: none|structure|full (default: full)
@@ -711,6 +718,15 @@ public static class RepoIndexerServiceCollectionExtensions
         if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_MAX_TOKENS"), out var parsed) && parsed > 0)
             maxTokens = parsed;
         return maxTokens;
+    }
+
+    private static long ResolveSharedCacheSizeLimit()
+    {
+        const long defaultLimit = 128;
+        var raw = Environment.GetEnvironmentVariable("REPOQL_SHARED_CACHE_SIZE_LIMIT");
+        if (long.TryParse(raw, out var configured) && configured > 0)
+            return configured;
+        return defaultLimit;
     }
 
     private static string? GetEmbeddingModelPath()
