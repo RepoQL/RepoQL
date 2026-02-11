@@ -25,6 +25,8 @@ public class McpMacroGeneratorTests
         result.Should().Contain("json_object('params_json', '{}')");
         // Uses parse_structured UDF to convert response to JSON (nested directly, no intermediate variable)
         result.Should().Contain("parse_structured(");
+        // Must pass explicit 'true' unwrap arg (DuckDB can't resolve macro defaults inside CREATE MACRO)
+        result.Should().Contain("'true'");
         result.Should().Contain("_write_temp_json(");
     }
 
