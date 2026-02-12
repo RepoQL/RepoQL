@@ -34,29 +34,35 @@ public static class RepoLocator
     /// </summary>
     public static bool TryFindRepoRoot(string? startPath, out string? repoRoot, out string? searchedFrom, bool allowFallback = false)
     {
+        var currentDirectory = Path.GetFullPath(Directory.GetCurrentDirectory());
         var start = Path.GetFullPath(string.IsNullOrWhiteSpace(startPath)
-            ? Directory.GetCurrentDirectory()
+            ? currentDirectory
             : startPath);
 
-        var dir = new DirectoryInfo(start);
-        searchedFrom = dir.FullName;
-        var last = dir;
+        var implicitCurrentStart =
+            string.IsNullOrWhiteSpace(startPath) ||
+            PathsEqual(start, currentDirectory);
 
-        while (dir != null)
+        if (implicitCurrentStart &&
+            !HasRepoMarker(start) &&
+            TryGetPwdCandidate(currentDirectory, out var pwdCandidate) &&
+            TryFindMarkerRoot(pwdCandidate, out var pwdMarkerRoot, out _, out _))
         {
-            if (Directory.Exists(Path.Combine(dir.FullName, ".git")) ||
-                File.Exists(Path.Combine(dir.FullName, ".git")) ||
-                Directory.Exists(Path.Combine(dir.FullName, ".repoql")))
-            {
-                repoRoot = dir.FullName;
-                return true;
-            }
-
-            last = dir;
-            dir = dir.Parent;
+            repoRoot = pwdMarkerRoot;
+            searchedFrom = start;
+            return true;
         }
 
-        repoRoot = allowFallback ? last.FullName : null;
+        if (TryFindMarkerRoot(start, out var markerRoot, out var startSearchedFrom, out var startFallbackRoot))
+        {
+            repoRoot = markerRoot;
+            searchedFrom = startSearchedFrom;
+            return true;
+        }
+
+        searchedFrom = startSearchedFrom;
+
+        repoRoot = allowFallback ? startFallbackRoot : null;
         return false;
     }
 
@@ -121,4 +127,82 @@ public static class RepoLocator
 
         return candidate;
     }
+
+    private static bool TryFindMarkerRoot(
+        string startPath,
+        out string? repoRoot,
+        out string searchedFrom,
+        out string fallbackRoot)
+    {
+        var dir = new DirectoryInfo(startPath);
+        searchedFrom = dir.FullName;
+        var last = dir;
+
+        while (dir != null)
+        {
+            if (Directory.Exists(Path.Combine(dir.FullName, ".git")) ||
+                File.Exists(Path.Combine(dir.FullName, ".git")) ||
+                Directory.Exists(Path.Combine(dir.FullName, ".repoql")))
+            {
+                repoRoot = dir.FullName;
+                fallbackRoot = dir.FullName;
+                return true;
+            }
+
+            last = dir;
+            dir = dir.Parent;
+        }
+
+        repoRoot = null;
+        fallbackRoot = last.FullName;
+        return false;
+    }
+
+    private static bool HasRepoMarker(string directoryPath)
+        => Directory.Exists(Path.Combine(directoryPath, ".git")) ||
+           File.Exists(Path.Combine(directoryPath, ".git")) ||
+           Directory.Exists(Path.Combine(directoryPath, ".repoql"));
+
+    private static bool TryGetPwdCandidate(string currentDirectory, out string pwdCandidate)
+    {
+        pwdCandidate = string.Empty;
+        var pwd = Environment.GetEnvironmentVariable("PWD");
+        if (string.IsNullOrWhiteSpace(pwd))
+        {
+            return false;
+        }
+
+        // Some launchers pass template placeholders when interpolation fails.
+        var pwdSpan = pwd.AsSpan();
+        if (pwdSpan.Contains('{') || pwdSpan.Contains('}'))
+        {
+            return false;
+        }
+
+        string fullPwd;
+        try
+        {
+            fullPwd = Path.GetFullPath(pwd);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (PathsEqual(fullPwd, currentDirectory))
+        {
+            return false;
+        }
+
+        pwdCandidate = fullPwd;
+        return true;
+    }
+
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(
+            Path.TrimEndingDirectorySeparator(left),
+            Path.TrimEndingDirectorySeparator(right),
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal);
 }
