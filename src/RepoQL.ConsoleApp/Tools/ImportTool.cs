@@ -67,6 +67,10 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
             // Generate tree visualization of imported content
             var treeOutput = await GenerateTreeAsync(uriPattern, cancellationToken).ConfigureAwait(false);
 
+            // Look for repo context file (claude.md > agents.md > readme.md)
+            var (contextUri, repoContext) = await TryGetRepoContextAsync(uriPattern, cancellationToken).ConfigureAwait(false);
+            var repoContextSection = repoContext != null ? $"\n\n---\n\nSource: {contextUri}\n\n{repoContext}" : "";
+
             // Build progress summary
             var progressSummary = result.HasOperationProgress
                 ? $"Progress: {result.EmbeddedCount}/{result.TotalFiles} files ready"
@@ -89,7 +93,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                 - Explore scan: Use uriGlob="{uriPattern}/**" with the explore tool
                 - Document list: SELECT uri, headline FROM Files WHERE uri LIKE '{uriPattern}%'
 
-                Note: Re-importing the same repository will perform an incremental update.{failureWarning}
+                Note: Re-importing the same repository will perform an incremental update.{failureWarning}{repoContextSection}
                 """);
         }
         catch (Exception ex)
@@ -202,6 +206,60 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         {
             // If tree generation fails, return a simple message
             return $"(Tree generation pending - files are being indexed)";
+        }
+    }
+
+    /// <summary>
+    /// Find and return the content of the first repo context file (claude.md > agents.md > readme.md).
+    /// </summary>
+    private async Task<(string? Uri, string? Content)> TryGetRepoContextAsync(string uriPattern, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var escaped = uriPattern.Replace("'", "''");
+
+            // Find which context file exists (by precedence)
+            var findSql = $"""
+                SELECT doc.uri
+                FROM node doc
+                JOIN artifact art ON art.id = doc.artifact_id
+                WHERE doc.kind = 'document'
+                  AND art.text_content IS NOT NULL
+                  AND lower(doc.uri) IN (
+                    lower('{escaped}/claude.md'),
+                    lower('{escaped}/agents.md'),
+                    lower('{escaped}/readme.md')
+                  )
+                ORDER BY CASE
+                    WHEN lower(doc.uri) = lower('{escaped}/claude.md') THEN 1
+                    WHEN lower(doc.uri) = lower('{escaped}/agents.md') THEN 2
+                    WHEN lower(doc.uri) = lower('{escaped}/readme.md') THEN 3
+                END
+                LIMIT 1
+                """;
+            var findResult = await _queryExecutor.ExecuteAsync(findSql, 1, ResultFormat.Toon, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var uri = string.Join("", findResult.Lines).Trim();
+            if (string.IsNullOrWhiteSpace(uri) || uri == "null")
+                return (null, null);
+
+            // Read its content with a token budget
+            var readSql = $"""
+                SELECT art.text_content
+                FROM node doc
+                JOIN artifact art ON art.id = doc.artifact_id
+                WHERE doc.uri = '{uri.Replace("'", "''")}'
+                LIMIT 1
+                """;
+            var readResult = await _queryExecutor.ExecuteAsync(readSql, 1, ResultFormat.Toon, tokenBudget: 4000, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var content = string.Join(Environment.NewLine, readResult.Lines);
+            if (string.IsNullOrWhiteSpace(content) || content == "null")
+                return (null, null);
+
+            return (uri, content);
+        }
+        catch
+        {
+            return (null, null);
         }
     }
 
