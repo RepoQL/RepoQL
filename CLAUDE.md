@@ -38,6 +38,7 @@ read("file:///src/** => tree: folders", 3000)
 | AwesomeAssertions | Compile errors | Not FluentAssertions (license). Same API: `using AwesomeAssertions;` |
 | Tests mandatory | Bugs in indexing are expensive | Especially for pipeline, format loaders, UDFs |
 | Errors never cascade | One bad file breaks trust | A single parse failure must never stop indexing |
+| CLI ↔ MCP parity | Silent capability gaps | CLI commands must support the same features as MCP tools. If MCP gets it, CLI gets it |
 | Perfection > compatibility | We're pre-1.0 | Get it right rather than accumulate debt |
 
 ---

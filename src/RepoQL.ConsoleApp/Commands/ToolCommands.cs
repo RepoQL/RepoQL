@@ -1,4 +1,5 @@
 using ConsoleAppFramework;
+using RepoQL.Commands;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
@@ -17,12 +18,12 @@ namespace RepoQL.ConsoleApp.Commands;
 /// replaced with CLI-appropriate behavior (spinners, print-everything).
 /// </summary>
 [RegisterCommands]
-internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, RepoQlClientProvider clientProvider)
+internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, RepoQlClientProvider clientProvider, CommandRegistry commandRegistry)
 {
     /// <summary>
-    /// Execute a DuckDB SQL query against the indexed repository.
+    /// Execute a DuckDB SQL query or ::command against the indexed repository.
     /// </summary>
-    /// <param name="sql">SQL to execute.</param>
+    /// <param name="sql">SQL or ::command to execute (e.g., ::diagnostics, ::diagnostics[fast]).</param>
     /// <param name="budget">Token budget for response size.</param>
     /// <param name="cancel">Cancellation token.</param>
     public async Task Query(
@@ -30,6 +31,19 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         int budget = 15_000,
         CancellationToken cancel = default)
     {
+        // Command dispatch: ::name[params] syntax
+        var parsed = CommandParser.TryParse(sql);
+        if (parsed != null)
+        {
+            commandRegistry.DiscoverCommands();
+            var cmdResult = await commandRegistry.ExecuteAsync(parsed, cancel);
+            if (cmdResult.IsError)
+                console.MarkupLine($"[red]{Markup.Escape(cmdResult.Text)}[/]");
+            else
+                console.WriteLine(cmdResult.Text);
+            return;
+        }
+
         var result = await queryExecutor.ExecuteAsync(sql, int.MaxValue, ResultFormat.Toon, budget, cancel)
             .ConfigureAwait(false);
 
