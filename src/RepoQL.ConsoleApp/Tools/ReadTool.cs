@@ -50,6 +50,7 @@ internal sealed class ReadTool(
 
         <MODIFIERS>
         Append ` => modifier` to get a specific view instead of content.
+        The URI pattern always controls scope — narrow it to get depth, widen it to get breadth.
 
         **tree**: Directory structure with progressive detail.
         → `=> tree: folders` — just directories with file counts (cheapest)
@@ -59,36 +60,54 @@ internal sealed class ReadTool(
         **headline**: One-line summary per file, flat list (no tree structure).
 
         **structure**: Signatures without bodies—see the shape without reading code.
+        → `file:///src/Auth/**/*.cs => structure` — shape of an entire subsystem in one call
+        → Combines with symbol wildcards: `file:///src/**/*Service.cs#symbol=*Service.* => structure`
 
         **content**: Full file with line numbers (explicit default).
 
-        **history**: Git commits affecting the file.
+        **history**: Git commits affecting matched files.
         → `=> history` — all commits, newest first
-        → `=> history: keyword` — ranks commits by relevance to keyword (doesn't filter)
+        → `=> history: auth refactor` — ranks commits by relevance to keywords (doesn't filter)
+        → Globs show cross-file history: `file:///src/Auth/** => history: token validation`
 
-        **blame**: Line-by-line git attribution showing who changed each line and when.
+        **blame**: Line-by-line git attribution. Fragments target precisely.
+        → `file:///src/Auth.cs => blame` — full file attribution
+        → `file:///src/Auth.cs#symbol=ValidateToken => blame` — just that function's history
+        → `file:///src/Auth.cs#line=42,60 => blame` — specific line range
 
         **changes**: Working copy changes grouped by changelist (staged, unstaged, untracked).
         → Shows diffs for modified files, binary markers, and line counts
 
-        **lint**: Diagnostics from the file.
+        **lint**: Diagnostics from matched files.
         → `=> lint` — all diagnostics
         → `=> lint: errors` — errors only
         → `=> lint: warnings` — warnings only
+        → Globs aggregate: `file:///src/** => lint: errors` — all errors across the project
 
         **find**: Semantic search within matched files.
         → `=> find: keywords` — ranks content by relevance, shows snippets
         → Has quality threshold—won't show junk matches
+        → The URI pattern controls where you search: `file:///src/tests/** => find: token validation`
+
+        **similar**: Find what's semantically related to a seed — the URI pattern controls where you look.
+        → `file:///src/**/*.cs => similar: file:///src/Auth.cs` — sibling implementations
+        → `file:///src/tests/** => similar: file:///src/Auth.cs` — tests for this code
+        → `file:///docs/** => similar: file:///src/Auth.cs#symbol=ValidateToken` — docs relevant to this method
+        → `file:///**/*.sql => similar: file:///src/Auth.cs#line=50,80` — SQL related to these lines
+        → The seed is *what*, the URI pattern is *where* — same seed, different scope, different answers
 
         **grep**: Case-insensitive literal text search within matched files.
         → `=> grep: validateToken` — every line containing the string, with context
+        → Scope narrows the haystack: `file:///src/Auth/** => grep: connectionString`
 
         **regex**: Regular expression search within matched files.
         → `=> regex: validate\w+\(` — pattern match with full regex syntax
+        → Scope narrows the haystack: `file:///src/**/*.cs => regex: class\s+\w+Handler`
 
         **question**: LLM synthesis with citations.
-        → `=> question: How does X work?` — reads content, synthesizes answer
+        → `=> question: How does X work?` — reads matched content, synthesizes answer
         → Returns Answer, Evidence (with file:///path#line=N,M citations), Nuance
+        → Focused scopes get direct LLM answers. Wide scopes automatically defer to search+synthesis.
         → Always verify citations before trusting
         </MODIFIERS>
 
@@ -152,23 +171,34 @@ internal sealed class ReadTool(
         Combine specific symbols from explore:
         → read("file:///a.cs#symbol=Foo;file:///b.cs#symbol=Bar", 2000)
 
-        Who changed this file:
-        → read("file:///src/Auth.cs => blame", 2000)
+        Shape of a subsystem:
+        → read("file:///src/Auth/**/*.cs => structure", 3000)
 
-        What changed recently:
-        → read("file:///src/Auth.cs => history", 1500)
+        Who wrote this function:
+        → read("file:///src/Auth.cs#symbol=ValidateToken => blame", 1500)
+
+        Commits relevant to a topic:
+        → read("file:///src/Auth/** => history: token refresh", 2000)
 
         What's pending in working copy:
         → read("file:///src/Auth/** => changes", 2000)
 
+        Find similar code, tests, or docs (change the scope, not the seed):
+        → read("file:///src/**/*.cs => similar: file:///src/Auth/TokenService.cs", 2000)
+        → read("file:///src/tests/** => similar: file:///src/Auth/TokenService.cs", 2000)
+        → read("file:///docs/** => similar: file:///src/Auth/TokenService.cs#symbol=ValidateToken", 2000)
+
+        Semantic search within a scope:
+        → read("file:///src/tests/** => find: token validation", 2000)
+
         Find exact text in files:
-        → read("file:///src/**/*.cs => grep: connectionString", 2000)
+        → read("file:///src/Auth/** => grep: connectionString", 2000)
 
         Find patterns in files:
         → read("file:///src/**/*.cs => regex: class\s+\w+Handler", 2000)
 
-        Ask a question about code:
-        → read("file:///src/Auth/**/*.cs => question: How is token refresh implemented?", 2500)
+        Ask a focused question about specific code:
+        → read("file:///src/Auth/TokenService.cs => question: How is token refresh implemented?", 2500)
         </QUICK_PATTERNS>
 
         <VS_EXPLORE>

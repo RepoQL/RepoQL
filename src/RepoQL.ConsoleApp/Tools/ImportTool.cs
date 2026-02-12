@@ -202,9 +202,9 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
             var fileCount = result.TotalRowCount > 0 ? result.TotalRowCount : CountFiles(tree);
             return $"Imported {fileCount} files:\n{tree}";
         }
-        catch
+        catch (Exception ex)
         {
-            // If tree generation fails, return a simple message
+            await Console.Error.WriteLineAsync($"[ImportTool] GenerateTreeAsync failed: {ex.GetType().Name}: {ex.Message}");
             return $"(Tree generation pending - files are being indexed)";
         }
     }
@@ -257,8 +257,9 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
             return (uri, content);
         }
-        catch
+        catch (Exception ex)
         {
+            await Console.Error.WriteLineAsync($"[ImportTool] TryGetRepoContextAsync failed: {ex.GetType().Name}: {ex.Message}");
             return (null, null);
         }
     }

@@ -163,6 +163,7 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton<IModifierHandler, ChangesHandler>();
             builder.Services.AddSingleton<IModifierHandler, TextSearchHandler>();
             builder.Services.AddSingleton<IModifierHandler, FindHandler>();
+            builder.Services.AddSingleton<IModifierHandler, SimilarHandler>();
             builder.Services.AddSingleton(sp => new ReadOrchestrator(
                 sp.GetRequiredService<IReadContentProvider>(),
                 sp.GetRequiredService<ExploreOrchestrator>(),

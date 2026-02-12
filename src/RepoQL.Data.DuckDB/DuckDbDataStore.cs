@@ -1132,7 +1132,8 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/git_blame.sql",
                 "Macros/git_diff.sql",
                 "Macros/git_patches.sql",
-                "Macros/changes_related_to.sql"
+                "Macros/changes_related_to.sql",
+                "Macros/similar.sql"
             };
 
             foreach (var script in schemaScripts)
@@ -1220,6 +1221,11 @@ public sealed class DuckDbDataStore : IDisposable
         var version = SchemaVersion.ToString(CultureInfo.InvariantCulture);
         UpsertMetadataValue(MetadataKeySchemaVersion, version);
     }
+
+    /// <summary>
+    /// Read a metadata value by key. Returns null if the key or table doesn't exist.
+    /// </summary>
+    public string? ReadMetadataValue(string key) => TryReadMetadataValue(key);
 
     private string? TryReadMetadataValue(string key)
     {

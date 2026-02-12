@@ -856,6 +856,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 _logger.LogWarning("[Import] No operation created - UriRegistry may not be configured");
             }
 
+            // Flush WAL so follow-up queries see the imported data immediately
+            _db.TryCheckpoint();
+
             // Schedule background batch embedding refresh (for full/content embeddings beyond structure)
             if (_embeddingProvider is not null && _embeddingProvider.Enabled)
             {
