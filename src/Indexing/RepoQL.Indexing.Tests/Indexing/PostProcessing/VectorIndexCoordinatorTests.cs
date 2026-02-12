@@ -115,6 +115,39 @@ internal class VectorIndexCoordinatorTests
         provider.EmbedCount.Should().Be(1, "already embedded files should be skipped during idle catch-up");
     }
 
+    [Test]
+    [DisplayName("VSS refresh runs once on startup then skips when unchanged")]
+    public async Task Given_NoEmbeddingChanges_When_RefreshingVssTwice_Then_SecondCallSkips()
+    {
+        var vss = new FakeVssIndexManager();
+        var coordinator = new VectorIndexCoordinator(
+            new FakeRefresher(),
+            logger: NullLogger<VectorIndexCoordinator>.Instance,
+            vssIndexManagerFactory: () => vss);
+
+        await coordinator.RefreshVssIndexAsync(CancellationToken.None);
+        await coordinator.RefreshVssIndexAsync(CancellationToken.None);
+
+        vss.RefreshInvocations.Should().Be(1);
+    }
+
+    [Test]
+    [DisplayName("VSS refresh reruns after deletes request a rebuild")]
+    public async Task Given_DeletesApplied_When_RefreshingVss_Then_RebuildRunsAgain()
+    {
+        var vss = new FakeVssIndexManager();
+        var coordinator = new VectorIndexCoordinator(
+            new FakeRefresher(),
+            logger: NullLogger<VectorIndexCoordinator>.Instance,
+            vssIndexManagerFactory: () => vss);
+
+        await coordinator.RefreshVssIndexAsync(CancellationToken.None); // startup build
+        await coordinator.ApplyDeletesAsync([RepoUri.Parse("file:///repo/deleted.md")], CancellationToken.None);
+        await coordinator.RefreshVssIndexAsync(CancellationToken.None);
+
+        vss.RefreshInvocations.Should().Be(2);
+    }
+
     private static IndexItem BuildItem(string uri, bool includeDocNode, bool includeArtifact)
     {
         var item = IndexingTestItemBuilder.ForMarkdown("sample.md").WithUri(uri).WithContent("text").Build();
@@ -159,5 +192,16 @@ internal class VectorIndexCoordinatorTests
         };
 
         return item;
+    }
+
+    private sealed class FakeVssIndexManager : IVssIndexManager
+    {
+        public int RefreshInvocations { get; private set; }
+
+        public Task RefreshIndexesAsync(CancellationToken cancellationToken = default)
+        {
+            RefreshInvocations++;
+            return Task.CompletedTask;
+        }
     }
 }

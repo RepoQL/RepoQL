@@ -5,6 +5,14 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace RepoQL.Data.DuckDB;
 
 /// <summary>
+/// Abstraction for refreshing in-memory VSS indexes.
+/// </summary>
+public interface IVssIndexManager
+{
+    Task RefreshIndexesAsync(CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Manages ephemeral HNSW (Hierarchical Navigable Small Worlds) indexes for vector similarity search.
 ///
 /// Purpose: Builds in-memory HNSW indexes from the persistent document_embedding table to
@@ -15,7 +23,7 @@ namespace RepoQL.Data.DuckDB;
 /// embeddings to the appropriate ARRAY size and builds HNSW indexes on them. The indexes
 /// are ephemeral (in-memory only) to avoid VSS persistence bugs.
 /// </summary>
-public sealed class VssIndexManager
+public sealed class VssIndexManager : IVssIndexManager
 {
     private static readonly ActivitySource ActivitySource = new("RepoQL.VssIndex");
 

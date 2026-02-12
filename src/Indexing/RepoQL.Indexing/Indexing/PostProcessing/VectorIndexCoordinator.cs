@@ -31,10 +31,13 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private readonly EmbeddingMode _embeddingMode;
     private readonly ILogger<VectorIndexCoordinator> _logger;
     private readonly UriRegistry? _uriRegistry;
+    private readonly Func<IVssIndexManager>? _vssIndexManagerFactory;
     private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
     private long _lastRefreshedEpoch = long.MinValue;
     private volatile bool _needsRefresh;
-    private VssIndexManager? _vssIndexManager;
+    private IVssIndexManager? _vssIndexManager;
+    private int _vssInitialBuildCompleted;
+    private int _vssRefreshRequested;
 
     private static int GetRefreshConcurrency()
     {
@@ -59,7 +62,8 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         IEmbeddingProvider? embeddingProvider = null,
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
         ILogger<VectorIndexCoordinator>? logger = null,
-        UriRegistry? uriRegistry = null)
+        UriRegistry? uriRegistry = null,
+        Func<IVssIndexManager>? vssIndexManagerFactory = null)
     {
         _refresher = refresher ?? throw new ArgumentNullException(nameof(refresher));
         _db = db;
@@ -67,6 +71,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         _embeddingMode = embeddingMode;
         _logger = logger ?? NullLogger<VectorIndexCoordinator>.Instance;
         _uriRegistry = uriRegistry;
+        _vssIndexManagerFactory = vssIndexManagerFactory;
     }
 
     public Task ApplyDeletesAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken)
@@ -75,6 +80,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             return Task.CompletedTask;
 
         _needsRefresh = true;
+        RequestVssRefresh();
         return Task.CompletedTask;
     }
 
@@ -99,6 +105,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             await RefreshEmbeddingsAsync(targetDocumentIds, forceFullRefresh, cancellationToken).ConfigureAwait(false);
             Interlocked.Exchange(ref _lastRefreshedEpoch, epoch);
             _needsRefresh = false;
+            RequestVssRefresh();
         }
         finally
         {
@@ -490,6 +497,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         if (documentEmbeddings.Count > 0)
         {
             _db!.WriteEmbeddings(documentEmbeddings);
+            RequestVssRefresh();
 
             // Update UriRegistry for successfully embedded files
             if (_uriRegistry is not null)
@@ -533,21 +541,33 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
     public async Task RefreshVssIndexAsync(CancellationToken cancellationToken)
     {
-        if (_db is null)
+        if (_db is null && _vssIndexManagerFactory is null)
         {
             _logger.LogDebug("VSS index refresh skipped: no database");
             return;
         }
 
+        var initialBuildCompleted = Volatile.Read(ref _vssInitialBuildCompleted) == 1;
+        var refreshRequested = Interlocked.Exchange(ref _vssRefreshRequested, 0) == 1;
+
+        // VSS indexes are in-memory only, so always build once after startup.
+        if (initialBuildCompleted && !refreshRequested)
+        {
+            _logger.LogDebug("VSS index refresh skipped: no embedding changes since last refresh");
+            return;
+        }
+
         // Lazily create the VSS index manager
-        _vssIndexManager ??= new VssIndexManager(_db);
+        _vssIndexManager ??= _vssIndexManagerFactory?.Invoke() ?? new VssIndexManager(_db!);
 
         try
         {
             await _vssIndexManager.RefreshIndexesAsync(cancellationToken).ConfigureAwait(false);
+            Volatile.Write(ref _vssInitialBuildCompleted, 1);
         }
         catch (Exception ex)
         {
+            RequestVssRefresh();
             _logger.LogWarning(ex, "VSS index refresh failed");
         }
     }
@@ -571,6 +591,11 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     /// Gets the current embedding mode.
     /// </summary>
     public EmbeddingMode GetEmbeddingMode() => _embeddingMode;
+
+    private void RequestVssRefresh()
+    {
+        Interlocked.Exchange(ref _vssRefreshRequested, 1);
+    }
 
     /// <summary>
     /// Marks all items as NotApplicable for embedding when embeddings are disabled.
