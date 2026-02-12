@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\RepoQL.ConsoleApp\RepoQL.ConsoleApp.csproj" />
+    <ProjectReference Include="..\..\RepoQL.Commands\RepoQL.Commands.csproj" />
   </ItemGroup>
 
 </Project>

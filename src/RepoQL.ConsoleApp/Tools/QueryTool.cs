@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using RepoQL.Commands;
 using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
@@ -11,7 +12,7 @@ using RepoQL.Explore;
 namespace RepoQL.ConsoleApp.Tools;
 
 [McpServerToolType]
-internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRunner, SessionOrientation sessionOrientation)
+internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRunner, SessionOrientation sessionOrientation, CommandRegistry commandRegistry)
 {
     /// <summary>
     /// Track the last query that exceeded token budget for "repeat to confirm" pattern.
@@ -145,24 +146,27 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<CallToolResult> Query(
-        [Description("DuckDB-style SQL to execute. Pass ':diagnostics:' to run diagnostics.")] string sql,
+        [Description("DuckDB-style SQL to execute. Use ::command syntax for imperative commands (e.g., ::diagnostics). Pass ':diagnostics:' for legacy diagnostics.")] string sql,
         [Description("Token budget for response. If exceeded and SQL contains a comment (intent), server may LLM-summarize. Client checks result and offers repeat-to-confirm if still too large.")] int tokenBudget = 15_000,
         CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(sql))
             return ToolResult.Error("SQL query cannot be empty.");
 
-        // Special command: run diagnostics
+        // Command dispatch: ::name[params] syntax
+        var parsed = CommandParser.TryParse(sql);
+        if (parsed != null)
+        {
+            var cmdResult = await commandRegistry.ExecuteAsync(parsed, cancel);
+            return cmdResult.IsError ? ToolResult.Error(cmdResult.Text) : ToolResult.Success(cmdResult.Text);
+        }
+
+        // Legacy diagnostics: route through command framework
         if (sql.Trim().Equals(":diagnostics:", StringComparison.OrdinalIgnoreCase))
         {
-            try
-            {
-                return ToolResult.Success(await selfTestRunner.RunAsync(DiagnosticCollectionMode.Full, cancel));
-            }
-            catch (Exception ex)
-            {
-                return ToolResult.Error($"Diagnostics failed: {ex.GetType().Name}: {ex.Message}\n\nStack trace:\n{ex.StackTrace}");
-            }
+            var legacyParsed = new ParsedCommand("diagnostics", []);
+            var cmdResult = await commandRegistry.ExecuteAsync(legacyParsed, cancel);
+            return cmdResult.IsError ? ToolResult.Error(cmdResult.Text) : ToolResult.Success(cmdResult.Text);
         }
 
         // Check orientation

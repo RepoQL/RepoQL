@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  IL Linker configuration for preserving command framework attributes during trimming.
+  These attributes are discovered via reflection at runtime.
+-->
+<linker>
+  <assembly fullname="RepoQL.Commands">
+    <type fullname="RepoQL.Commands.CommandClassAttribute" preserve="all" />
+    <type fullname="RepoQL.Commands.CommandAttribute" preserve="all" />
+    <type fullname="RepoQL.Commands.CommandParamAttribute" preserve="all" />
+  </assembly>
+</linker>

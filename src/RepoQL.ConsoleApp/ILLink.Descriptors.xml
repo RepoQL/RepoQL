@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  IL Linker configuration for preserving command implementation classes during trimming.
+  Command classes are discovered via reflection by CommandRegistry.
+-->
+<linker>
+  <assembly fullname="RepoQL.ConsoleApp">
+    <type fullname="RepoQL.ConsoleApp.CommandImplementations.*" preserve="all" />
+  </assembly>
+</linker>

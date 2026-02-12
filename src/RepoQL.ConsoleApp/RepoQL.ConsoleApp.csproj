@@ -60,79 +60,68 @@
 
     <!-- Ensure duckdb native library is always copied alongside trimmed single-file publishes -->
     <ItemGroup Condition="'$(RuntimeIdentifier)' != ''">
-        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-x64\native\duckdb.dll"
-                 Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-x64\native\duckdb.dll')">
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-x64\native\duckdb.dll" Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-x64\native\duckdb.dll')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>duckdb.dll</Link>
         </Content>
-        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-arm64\native\duckdb.dll"
-                 Condition="'$(RuntimeIdentifier)' == 'win-arm64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-arm64\native\duckdb.dll')">
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-arm64\native\duckdb.dll" Condition="'$(RuntimeIdentifier)' == 'win-arm64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-arm64\native\duckdb.dll')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>duckdb.dll</Link>
         </Content>
-        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\osx\native\libduckdb.dylib"
-                 Condition="('$(RuntimeIdentifier)' == 'osx-arm64' or '$(RuntimeIdentifier)' == 'osx-x64') and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\osx\native\libduckdb.dylib')">
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\osx\native\libduckdb.dylib" Condition="('$(RuntimeIdentifier)' == 'osx-arm64' or '$(RuntimeIdentifier)' == 'osx-x64') and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\osx\native\libduckdb.dylib')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>libduckdb.dylib</Link>
         </Content>
-        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-x64\native\libduckdb.so"
-                 Condition="'$(RuntimeIdentifier)' == 'linux-x64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-x64\native\libduckdb.so')">
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-x64\native\libduckdb.so" Condition="'$(RuntimeIdentifier)' == 'linux-x64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-x64\native\libduckdb.so')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>libduckdb.so</Link>
         </Content>
-        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-arm64\native\libduckdb.so"
-                 Condition="'$(RuntimeIdentifier)' == 'linux-arm64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-arm64\native\libduckdb.so')">
+        <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-arm64\native\libduckdb.so" Condition="'$(RuntimeIdentifier)' == 'linux-arm64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\linux-arm64\native\libduckdb.so')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>libduckdb.so</Link>
         </Content>
         <!-- LibGit2Sharp native binaries -->
-        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-x64\native\git2-a418d9d.dll"
-                 Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-x64\native\git2-a418d9d.dll')">
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-x64\native\git2-a418d9d.dll" Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-x64\native\git2-a418d9d.dll')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>git2-a418d9d.dll</Link>
         </Content>
-        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-arm64\native\git2-a418d9d.dll"
-                 Condition="'$(RuntimeIdentifier)' == 'win-arm64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-arm64\native\git2-a418d9d.dll')">
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-arm64\native\git2-a418d9d.dll" Condition="'$(RuntimeIdentifier)' == 'win-arm64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\win-arm64\native\git2-a418d9d.dll')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>git2-a418d9d.dll</Link>
         </Content>
-        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-arm64\native\libgit2-a418d9d.dylib"
-                 Condition="'$(RuntimeIdentifier)' == 'osx-arm64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-arm64\native\libgit2-a418d9d.dylib')">
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-arm64\native\libgit2-a418d9d.dylib" Condition="'$(RuntimeIdentifier)' == 'osx-arm64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-arm64\native\libgit2-a418d9d.dylib')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>libgit2-a418d9d.dylib</Link>
         </Content>
-        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-x64\native\libgit2-a418d9d.dylib"
-                 Condition="'$(RuntimeIdentifier)' == 'osx-x64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-x64\native\libgit2-a418d9d.dylib')">
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-x64\native\libgit2-a418d9d.dylib" Condition="'$(RuntimeIdentifier)' == 'osx-x64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\osx-x64\native\libgit2-a418d9d.dylib')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>libgit2-a418d9d.dylib</Link>
         </Content>
-        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-x64\native\libgit2-a418d9d.so"
-                 Condition="'$(RuntimeIdentifier)' == 'linux-x64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-x64\native\libgit2-a418d9d.so')">
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-x64\native\libgit2-a418d9d.so" Condition="'$(RuntimeIdentifier)' == 'linux-x64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-x64\native\libgit2-a418d9d.so')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
             <Link>libgit2-a418d9d.so</Link>
         </Content>
-        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-arm64\native\libgit2-a418d9d.so"
-                 Condition="'$(RuntimeIdentifier)' == 'linux-arm64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-arm64\native\libgit2-a418d9d.so')">
+        <Content Include="$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-arm64\native\libgit2-a418d9d.so" Condition="'$(RuntimeIdentifier)' == 'linux-arm64' and Exists('$(PkgLibGit2Sharp_NativeBinaries)\runtimes\linux-arm64\native\libgit2-a418d9d.so')">
             <Pack>false</Pack>
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
@@ -149,6 +138,7 @@
     <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
     <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
     <ProjectReference Include="..\RepoQL.Explore\RepoQL.Explore.csproj" />
+    <ProjectReference Include="..\RepoQL.Commands\RepoQL.Commands.csproj" />
   </ItemGroup>
 
     
@@ -221,6 +211,9 @@
 
     <ItemGroup>
         <EmbeddedResource Include="Templates/**/*.liquid" />
+        <EmbeddedResource Include="ILLink.Descriptors.xml">
+            <LogicalName>ILLink.Descriptors.xml</LogicalName>
+        </EmbeddedResource>
     </ItemGroup>
 
     <ItemGroup>

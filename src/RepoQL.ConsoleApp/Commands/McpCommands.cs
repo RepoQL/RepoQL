@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using RepoQL.Commands;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Tools;
@@ -124,6 +125,8 @@ internal class McpCommands
 
         builder.Services.AddHostedService<McpLoggingHostedService>();
 
-        await builder.Build().RunAsync(cancel);
+        var host = builder.Build();
+        host.Services.GetRequiredService<CommandRegistry>().DiscoverCommands();
+        await host.RunAsync(cancel);
     }
 }

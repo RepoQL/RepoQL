@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using RepoQL.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.ConsoleApp.Resources;
@@ -34,6 +35,9 @@ internal static class ServiceCollectionExtensions
 
         // Session orientation nudge
         services.AddSingleton<SessionOrientation>();
+
+        // Command framework
+        services.AddSingleton<CommandRegistry>();
 
         services.AddLiquidTemplatingFromEmbedded(
             assembly: typeof(ServiceCollectionExtensions).Assembly,
