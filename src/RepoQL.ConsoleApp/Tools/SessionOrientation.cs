@@ -10,14 +10,12 @@ namespace RepoQL.ConsoleApp.Tools;
 /// </summary>
 internal sealed class SessionOrientation
 {
-    private const string Nudge =
-        "\n\n⚠️ run read(\"help://** => tree: headlines\", 3000) — Vital for your success";
-
     private volatile bool _hasReadHelp;
 
     /// <summary>
     /// Mark oriented if this is a help read. Returns a footer to append
     /// to the tool response if not yet oriented, null otherwise.
+    /// Currently disabled — agents universally ignore the nudge, wasting tokens.
     /// </summary>
     public string? CheckOrientation(string? uri)
     {
@@ -27,10 +25,9 @@ internal sealed class SessionOrientation
         if (IsHelpRead(uri))
         {
             _hasReadHelp = true;
-            return null;
         }
 
-        return Nudge;
+        return null;
     }
 
     private static bool IsHelpRead(string? uri)
