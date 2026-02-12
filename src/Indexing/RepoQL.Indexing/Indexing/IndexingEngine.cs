@@ -149,8 +149,11 @@ public partial class IndexingEngine : IAsyncDisposable
     private readonly StageContext _indexRebuildStage;
     private readonly EpochTracker _epochTracker = new();
     private readonly object _analysisLock = new();
+    private readonly object _structureEmbeddingLock = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingAnalysis = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingStructureEmbeddings = new();  // Separate from analysis - includes read-only items
+    private readonly Dictionary<long, int> _pendingEagerStructureEmbeddings = new();
+    private readonly Dictionary<long, TaskCompletionSource<bool>> _structureEmbeddingEpochCompletion = new();
     private readonly ConcurrentDictionary<string, IndexItemOptions> _requeueRequested = new(StringComparer.OrdinalIgnoreCase);
     private readonly Channel<long> _analysisEpochChannel = Channel.CreateUnbounded<long>(new UnboundedChannelOptions
     {
@@ -159,6 +162,7 @@ public partial class IndexingEngine : IAsyncDisposable
         SingleWriter = false
     });
     private readonly Task _idleProcessingTask;
+    private readonly WorkQueue<IndexItem>? _structureEmbeddingQueue;
     private readonly ConcurrentDictionary<long, Activity> _epochActivities = new();
     private readonly Dictionary<IndexingState, StageCounter> _stageCounters = new();
     private bool _disposed;
@@ -178,6 +182,7 @@ public partial class IndexingEngine : IAsyncDisposable
     private UriRegistry? UriRegistry { get; }
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly EmbeddingMode _embeddingMode;
+    private bool StructureEmbeddingsEnabled => _embeddingMode.IncludesStructure() && _embeddingProvider is { Enabled: true };
 
     // Diagnostic accessors (used by IndexingEngineDiagnosticsProvider)
     internal int ActiveIdleProcessingCount => Volatile.Read(ref _activeIdleProcessingCount);
@@ -393,6 +398,18 @@ public partial class IndexingEngine : IAsyncDisposable
             meter: null,
             comparer: new IndexItemComparer(),
             logger: Logger);
+        if (StructureEmbeddingsEnabled)
+        {
+            _structureEmbeddingQueue = new WorkQueue<IndexItem>(
+                "StructureEmbeddingQueue",
+                Options.AnalysisQueueSize,
+                Math.Max(1, Options.AnalysisWorkers),
+                ProcessEagerStructureEmbeddingAsync,
+                Shutdown.Token,
+                itemTimeout: Options.AnalysisItemTimeout,
+                meter: null,
+                logger: Logger);
+        }
 
         _classificationStage = new StageContext(
             IndexingState.ClassificationBusy,
@@ -528,6 +545,15 @@ public partial class IndexingEngine : IAsyncDisposable
         }
         catch (OperationCanceledException) { }
 
+        if (_structureEmbeddingQueue is not null)
+        {
+            try
+            {
+                await _structureEmbeddingQueue.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { }
+        }
+
         if (_idleProcessingTask is not null)
         {
             try
@@ -650,19 +676,6 @@ public partial class IndexingEngine : IAsyncDisposable
                     return;
                 }
 
-                currentStage = "structure_embedding";
-                var embedTimer = Stopwatch.StartNew();
-                await TryGenerateStructureEmbeddingAsync(item, cancellationToken).ConfigureAwait(false);
-                embedTimer.Stop();
-                RecordStageDuration("structure_embedding", embedTimer.Elapsed.TotalMilliseconds, PipelineResult.Success, item);
-
-                if (item.IsTimedOut)
-                {
-                    status = "timed_out_late";
-                    AddEpochTag(item.Epoch, "index.late_abort", "after_structure_embedding");
-                    return;
-                }
-
                 currentStage = "commit";
                 var commitTimer = Stopwatch.StartNew();
                 await Committer.CommitAsync(item, cancellationToken).ConfigureAwait(false);
@@ -693,6 +706,7 @@ public partial class IndexingEngine : IAsyncDisposable
                     UriRegistry.SetIndexed(item.Uri, lineCount, symbols);
                 }
 
+                ScheduleEagerStructureEmbedding(item);
                 ScheduleAnalysis(item);
                 // NOTE: Once WriteOperation dispatch is in place, hook DocumentCatalog.ApplyUpsert/Delete
                 //       through the writer's OnCommitted callback to keep the cache authoritative.
@@ -809,43 +823,45 @@ public partial class IndexingEngine : IAsyncDisposable
         }
     }
 
-    private async Task TryGenerateStructureEmbeddingAsync(IndexItem item, CancellationToken cancellationToken)
+    private void ScheduleEagerStructureEmbedding(IndexItem item)
     {
-        item.StructureEmbedding = null;
-
-        if (!_embeddingMode.IncludesStructure())
+        if (_structureEmbeddingQueue is null)
             return;
 
-        if (_embeddingProvider is null || !_embeddingProvider.Enabled)
-            return;
+        TrackEagerStructureEmbedding(item.Epoch);
+        _ = EnqueueEagerStructureEmbeddingAsync(item);
+    }
 
-        if (!VectorIndexCoordinator.TryBuildStructureEmbedding(item, out var documentNodeId, out var uri, out var payload))
+    private async Task EnqueueEagerStructureEmbeddingAsync(IndexItem item)
+    {
+        if (_structureEmbeddingQueue is null)
             return;
 
         try
         {
-            var embedSw = Stopwatch.StartNew();
-            var vector = await _embeddingProvider.EmbedPassageAsync(payload, cancellationToken).ConfigureAwait(false);
-            embedSw.Stop();
-            if (vector is null || vector.Length == 0)
-                return;
-
-            if (embedSw.ElapsedMilliseconds > 50)
+            var enqueued = await _structureEmbeddingQueue.EnqueueAsync(item, Shutdown.Token).ConfigureAwait(false);
+            if (!enqueued)
             {
-                Logger.LogDebug("Structure embedding for {Uri}: {ElapsedMs:F1}ms",
-                    item.Uri, embedSw.Elapsed.TotalMilliseconds);
+                CompleteEagerStructureEmbedding(item.Epoch);
             }
+        }
+        catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
+        {
+            CompleteEagerStructureEmbedding(item.Epoch);
+        }
+        catch (Exception ex)
+        {
+            CompleteEagerStructureEmbedding(item.Epoch);
+            UriRegistry?.SetEmbeddingFailed(item.Uri, $"structure embedding enqueue failed: {ex.Message}");
+            Logger.LogWarning(ex, "Failed to enqueue eager structure embedding for {Uri}", item.Uri);
+        }
+    }
 
-            item.StructureEmbedding = new DocumentEmbedding(
-                documentNodeId,
-                documentNodeId,
-                ChunkIndex: 0,
-                DocumentEmbedding.TypeStructure,
-                uri,
-                DocumentEmbedding.ScopeDocument,
-                vector,
-                _embeddingProvider.Model,
-                _embeddingProvider.Dimension);
+    private async Task ProcessEagerStructureEmbeddingAsync(IndexItem item, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await VectorCoordinator.GenerateStructureEmbeddingsAsync([item], cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -853,8 +869,89 @@ public partial class IndexingEngine : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            Logger.LogWarning(ex, "Structure embedding generation failed in hot path for {Uri}. Commit will continue without it.", item.Uri);
+            UriRegistry?.SetEmbeddingFailed(item.Uri, $"structure embedding failed: {ex.Message}");
+            Logger.LogWarning(ex, "Eager structure embedding failed for {Uri}", item.Uri);
         }
+        finally
+        {
+            CompleteEagerStructureEmbedding(item.Epoch);
+        }
+    }
+
+    private void TrackEagerStructureEmbedding(long epoch)
+    {
+        if (epoch < 0)
+            return;
+
+        lock (_structureEmbeddingLock)
+        {
+            _pendingEagerStructureEmbeddings.TryGetValue(epoch, out var pending);
+            _pendingEagerStructureEmbeddings[epoch] = pending + 1;
+            if (!_structureEmbeddingEpochCompletion.ContainsKey(epoch))
+            {
+                _structureEmbeddingEpochCompletion[epoch] =
+                    new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+    }
+
+    private void CompleteEagerStructureEmbedding(long epoch)
+    {
+        if (epoch < 0)
+            return;
+
+        TaskCompletionSource<bool>? completion = null;
+
+        lock (_structureEmbeddingLock)
+        {
+            if (!_pendingEagerStructureEmbeddings.TryGetValue(epoch, out var pending))
+                return;
+
+            if (pending <= 1)
+            {
+                _pendingEagerStructureEmbeddings.Remove(epoch);
+                if (_structureEmbeddingEpochCompletion.Remove(epoch, out var waiter))
+                {
+                    completion = waiter;
+                }
+            }
+            else
+            {
+                _pendingEagerStructureEmbeddings[epoch] = pending - 1;
+            }
+        }
+
+        completion?.TrySetResult(true);
+    }
+
+    private async Task WaitForEagerStructureEmbeddingsAsync(IReadOnlyList<long> epochs, CancellationToken cancellationToken)
+    {
+        if (_structureEmbeddingQueue is null || epochs.Count == 0)
+            return;
+
+        List<Task>? waitTasks = null;
+        lock (_structureEmbeddingLock)
+        {
+            foreach (var epoch in epochs.Distinct())
+            {
+                if (!_pendingEagerStructureEmbeddings.TryGetValue(epoch, out var pending) || pending <= 0)
+                    continue;
+
+                if (!_structureEmbeddingEpochCompletion.TryGetValue(epoch, out var waiter))
+                {
+                    waiter = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _structureEmbeddingEpochCompletion[epoch] = waiter;
+                }
+
+                waitTasks ??= [];
+                waitTasks.Add(waiter.Task);
+            }
+        }
+
+        if (waitTasks is null || waitTasks.Count == 0)
+            return;
+
+        await Task.WhenAll(waitTasks).WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private void RecordMilestone(string name, string? detail = null)
@@ -1144,24 +1241,22 @@ public partial class IndexingEngine : IAsyncDisposable
                 RecordMilestone("prune", $"{prunedCount} removed, {pruneTimer.Elapsed.TotalMilliseconds:F1}ms");
             }
 
-            // FM-009 fix: Wrap embedding phases in try-catch to prevent item loss.
-            // If embedding fails, we still want to enqueue items for multi-file analysis.
-            // The items are already committed to the database - embeddings can be regenerated later.
-
-            // Structure embedding phase (fast, enables immediate semantic search)
+            // Structure embedding barrier:
+            // eager embedding starts immediately after commit; idle waits for those tasks
+            // to complete for the consolidated epochs before proceeding.
             try
             {
                 using (ActivitySource.StartActivity("structure_embedding_phase", ActivityKind.Internal))
                 {
                     var structureTimer = Stopwatch.StartNew();
-                    await VectorCoordinator.GenerateStructureEmbeddingsAsync(structureEmbedItems, Shutdown.Token).ConfigureAwait(false);
+                    await WaitForEagerStructureEmbeddingsAsync(epochs, Shutdown.Token).ConfigureAwait(false);
                     structureTimer.Stop();
                     Metrics?.IdlePhaseDuration.Record(structureTimer.Elapsed.TotalMilliseconds, new TagList
                     {
                         { "phase", "structure_embedding" }
                     });
 
-                    RecordMilestone("structure_embeddings", $"{structureEmbedItems.Length} items, {structureTimer.Elapsed.TotalMilliseconds:F1}ms");
+                    RecordMilestone("structure_embeddings", $"{structureEmbedItems.Length} items confirmed, {structureTimer.Elapsed.TotalMilliseconds:F1}ms");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

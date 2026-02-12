@@ -363,70 +363,100 @@ public class IndexingEngineTests
     }
 
     [Test]
-    [DisplayName("Generates structure embedding before commit when enabled")]
-    public async Task Given_HotPathStructureEmbeddingEnabled_When_IndexItemAsync_Then_CommitSeesStructureEmbedding()
+    [Timeout(15_000)]
+    [DisplayName("Queues structure embedding asynchronously after commit when enabled")]
+    public async Task Given_HotPathStructureEmbeddingEnabled_When_IndexItemAsync_Then_CommitDoesNotWaitForEagerEmbedding(CancellationToken token)
     {
         var committer = A.Fake<IIndexingCommitter>();
-        IndexItem? committedItem = null;
+        var commitObserved = NewTaskCompletionSource<bool>();
         A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Invokes(call => committedItem = call.GetArgument<IndexItem>(0))
+            .Invokes(() => commitObserved.TrySetResult(true))
             .Returns(Task.CompletedTask);
+
+        var embedEntered = NewTaskCompletionSource<bool>();
+        var releaseEmbedding = NewTaskCompletionSource<bool>();
+        var vectorCoordinator = A.Fake<IVectorIndexCoordinator>();
+        A.CallTo(() => vectorCoordinator.GenerateStructureEmbeddingsAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
+            .ReturnsLazily(async _ =>
+            {
+                embedEntered.TrySetResult(true);
+                await releaseEmbedding.Task.ConfigureAwait(false);
+            });
 
         var embeddingProvider = new DeterministicEmbeddingProvider();
         var context = IndexingEngineTestFactory.Create(builder =>
         {
             builder.WithCommitter(committer);
+            builder.WithVectorCoordinator(vectorCoordinator);
             builder.WithEmbeddingProvider(embeddingProvider);
             builder.WithEmbeddingMode(EmbeddingMode.StructureOnly);
         });
 
         var item = IndexingTestItemFactory.CreateIndexItem();
+        await using var engine = context.Engine;
 
-        A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .ReturnsLazily(call =>
+        var indexTask = engine.IndexItemAsync(item, token);
+
+        await commitObserved.Task.WaitAsync(token);
+        await indexTask.WaitAsync(token);
+        await embedEntered.Task.WaitAsync(token);
+
+        releaseEmbedding.TrySetResult(true);
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("Idle analysis waits for eager structure embedding completion")]
+    public async Task Given_EagerStructureEmbeddingInFlight_When_IdleProcessingRuns_Then_AnalysisWaitsForBarrier(CancellationToken token)
+    {
+        var embedEntered = NewTaskCompletionSource<bool>();
+        var releaseEmbedding = NewTaskCompletionSource<bool>();
+        var analysisSignal = NewTaskCompletionSource<bool>();
+
+        var vectorCoordinator = A.Fake<IVectorIndexCoordinator>();
+        A.CallTo(() => vectorCoordinator.GenerateStructureEmbeddingsAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
+            .ReturnsLazily(async _ =>
             {
-                var parsedItem = call.GetArgument<IndexItem>(0)!;
-                var artifactId = Guid.NewGuid();
-                parsedItem.Records = new Records
-                {
-                    Artifacts =
-                    [
-                        new Contracts.Models.Artifact
-                        {
-                            Id = artifactId,
-                            Digest = "digest",
-                            Size = 4,
-                            MediaType = SemanticMediaType.Parse("text/markdown"),
-                            Headline = "Title",
-                            Structure = "- Section"
-                        }
-                    ],
-                    Nodes =
-                    [
-                        new Node
-                        {
-                            Id = Guid.NewGuid(),
-                            Kind = "document",
-                            Uri = parsedItem.Uri,
-                            ArtifactId = artifactId
-                        }
-                    ],
-                    Spans = [],
-                    Edges = [],
-                    Annotations = [],
-                    AnnotationSources = []
-                };
+                embedEntered.TrySetResult(true);
+                await releaseEmbedding.Task.ConfigureAwait(false);
+            });
+        A.CallTo(() => vectorCoordinator.ApplyAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Returns(Task.CompletedTask);
+        A.CallTo(() => vectorCoordinator.RefreshVssIndexAsync(A<CancellationToken>._))
+            .Returns(Task.CompletedTask);
 
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1
+            });
+            builder.WithVectorCoordinator(vectorCoordinator);
+            builder.WithEmbeddingProvider(new DeterministicEmbeddingProvider());
+            builder.WithEmbeddingMode(EmbeddingMode.StructureOnly);
+        });
+
+        A.CallTo(() => context.MultiFileAnalyzer.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._))
+            .ReturnsLazily(_ =>
+            {
+                analysisSignal.TrySetResult(true);
                 return Task.FromResult(PipelineResult.Success);
             });
+        A.CallTo(() => context.IndexRebuilder.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._))
+            .Returns(Task.FromResult(PipelineResult.Success));
 
-        await context.Engine.IndexItemAsync(item, CancellationToken.None);
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/eager-barrier.md"), IndexItemOptions.Default, token);
 
-        committedItem.Should().NotBeNull();
-        committedItem!.StructureEmbedding.Should().NotBeNull();
-        committedItem.StructureEmbedding!.EmbeddingType.Should().Be(DocumentEmbedding.TypeStructure);
-        committedItem.StructureEmbedding.Scope.Should().Be(DocumentEmbedding.ScopeDocument);
-        embeddingProvider.PassageCalls.Should().Be(1);
+        await embedEntered.Task.WaitAsync(token);
+        await Task.Delay(100, token);
+        analysisSignal.Task.IsCompleted.Should().BeFalse("idle processing should wait for eager structure embedding completion before analysis dispatch");
+
+        releaseEmbedding.TrySetResult(true);
+        await analysisSignal.Task.WaitAsync(token);
     }
 
     [Test]

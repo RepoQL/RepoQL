@@ -10,7 +10,7 @@ public interface IVectorIndexCoordinator
 
     /// <summary>
     /// Generates structure embeddings (uri + headline + structure) for a batch of items.
-    /// Called during hot path idle to enable immediate semantic search.
+    /// Called by eager post-commit embedding workers; idle processing waits on completion before analysis dispatch.
     /// </summary>
     Task GenerateStructureEmbeddingsAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken);
 
