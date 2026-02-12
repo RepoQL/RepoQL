@@ -39,6 +39,7 @@ read("file:///src/** => tree: folders", 3000)
 | Tests mandatory | Bugs in indexing are expensive | Especially for pipeline, format loaders, UDFs |
 | Errors never cascade | One bad file breaks trust | A single parse failure must never stop indexing |
 | CLI ↔ MCP parity | Silent capability gaps | CLI commands must support the same features as MCP tools. If MCP gets it, CLI gets it |
+| Docs with features | Agents can't discover it | New functionality must include `help://` docs. If agents can't find it via `explore(uriGlob="help://**")`, it doesn't exist |
 | Perfection > compatibility | We're pre-1.0 | Get it right rather than accumulate debt |
 
 ---
@@ -77,6 +78,7 @@ read("help://** => tree: headlines", 3000)
 | Format vision | `help:///` | `docs/north-star/formats.md` |
 | Indexing pipeline | `help:///` | `docs/flows/current/indexing/` |
 | Failure modes | `help:///` | `docs/flows/current/*/failure-modes/` |
+| Commands | `help:///` | `docs/north-star/commands.md` |
 
 When you write docs for RepoQL, they become part of `help://` and are immediately queryable by all agents.
 
@@ -127,7 +129,8 @@ snippet('file:///path#line=42', 3)               -- Code preview
 
 | Project | Purpose |
 |---------|---------|
-| `RepoQL.ConsoleApp` | CLI + MCP host, tool handlers |
+| `RepoQL.ConsoleApp` | CLI + MCP host, tool handlers, command implementations |
+| `RepoQL.Commands` | Command framework (`::command` syntax — attributes, parser, registry) |
 | `RepoQL.Data.DuckDB` | Graph store, UDFs (single writer enforced here) |
 | `Indexing/RepoQL.Indexing` | Pipeline, file systems, processors |
 | `Formats/*` | File parsers (C#, Markdown, GraphQL, etc.) |
@@ -144,6 +147,7 @@ snippet('file:///path#line=42', 3)               -- Code preview
 | Understand structure | X-ray summaries on artifacts — don't read files |
 | Add file format | `src/Indexing/RepoQL.Indexing/PROCESSOR_GUIDE.md` |
 | Add SQL function | `[UdfClass]` + `[UdfMethod]` in `UdfImplementations/`, auto-discovered |
+| Add command | `[CommandClass]` + `[Command("name")]` in `CommandImplementations/`, auto-discovered. North star: `docs/north-star/commands.md` |
 | Add lint rule | Emit `annotation` with `kind='lint'`, `severity`, `rule_id`, `message` |
 | Propose architecture | Read `docs/RepoqlDesign.md` first. Extend via SQL surface |
 | Find docs | `explore(uriGlob="help://**", keywords="topic")` |
