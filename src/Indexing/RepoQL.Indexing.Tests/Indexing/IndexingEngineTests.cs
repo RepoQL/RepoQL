@@ -240,6 +240,55 @@ public class IndexingEngineTests
     }
 
     [Test]
+    [Timeout(15_000)]
+    [DisplayName("FM-001: Timeout clears pending catalog digest for non-cooperative hot-path item")]
+    public async Task Given_NonCooperativeHotPathTimeout_When_ItemTimesOut_Then_CatalogPendingDigestIsCleared(CancellationToken token)
+    {
+        var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
+        await catalog.EnsureInitializedAsync(token);
+
+        var classifierEntered = NewTaskCompletionSource<bool>();
+        var neverCompletes = NewTaskCompletionSource<bool>();
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithCatalog(catalog);
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1,
+                HotPathItemTimeout = TimeSpan.FromMilliseconds(300)
+            });
+        });
+
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async _ =>
+            {
+                classifierEntered.TrySetResult(true);
+                await neverCompletes.Task.ConfigureAwait(false);
+                return PipelineResult.Success;
+            });
+
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/timeout-catalog.md"), IndexItemOptions.Default, token);
+
+        await classifierEntered.Task.WaitAsync(token);
+        catalog.PendingDigestCount.Should().Be(1, "pending digest should be registered before timeout cleanup runs");
+
+        using var timeoutWait = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeoutWait.CancelAfter(TimeSpan.FromSeconds(5));
+        while (engine.HotPathTimeoutCount == 0)
+        {
+            await Task.Delay(25, timeoutWait.Token);
+        }
+
+        engine.HotPathTimeoutCount.Should().Be(1, "item should be marked timed out");
+        catalog.PendingDigestCount.Should().Be(0, "timeout handling should clear pending digest state");
+    }
+
+    [Test]
     [DisplayName("Successfully processes item through all pipeline stages")]
     public async Task Given_AllPipelinesSucceed_When_ApplyIndexerPipeline_Then_ReturnsSuccess()
     {

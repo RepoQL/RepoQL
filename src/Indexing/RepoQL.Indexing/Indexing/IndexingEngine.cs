@@ -1381,6 +1381,10 @@ public partial class IndexingEngine : IAsyncDisposable
         // Store last error for diagnostics
         Volatile.Write(ref _lastError, $"{item.Uri}: Timed out after {elapsed.TotalSeconds:F1}s");
 
+        // Ensure pending digest state is cleared even when the processing task never returns.
+        // Without this, DocumentCatalog may keep a stale pending entry and skip future reindex attempts.
+        DocumentCatalog.CompleteProcessing(item.Uri);
+
         // Add epoch tag for tracing
         AddEpochTag(item.Epoch, "index.result", "timeout");
         AddEpochTag(item.Epoch, "index.timeout_duration_ms", elapsed.TotalMilliseconds);
