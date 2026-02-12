@@ -1272,9 +1272,7 @@ public partial class IndexingEngine : IAsyncDisposable
                     var vectorTimer = Stopwatch.StartNew();
                     if (pendingItems.Length > 0)
                     {
-                        // Use an item from the highest epoch for vector refresh
-                        var latest = pendingItems.MaxBy(i => i.Epoch) ?? pendingItems[0];
-                        await VectorCoordinator.ApplyAsync(latest, Shutdown.Token).ConfigureAwait(false);
+                        await VectorCoordinator.ApplyAsync(pendingItems, Shutdown.Token).ConfigureAwait(false);
                     }
                     vectorTimer.Stop();
                     Metrics?.IdlePhaseDuration.Record(vectorTimer.Elapsed.TotalMilliseconds, new TagList

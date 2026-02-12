@@ -142,9 +142,9 @@ public static class IndexingAssertionExtensions
 
         Verify(
             expectation,
-            () => A.CallTo(() => coordinator.ApplyAsync(A<IndexItem>._, A<CancellationToken>._)).MustNotHaveHappened(),
-            () => A.CallTo(() => coordinator.ApplyAsync(A<IndexItem>._, A<CancellationToken>._)).MustHaveHappenedOnceExactly(),
-            () => A.CallTo(() => coordinator.ApplyAsync(A<IndexItem>._, A<CancellationToken>._)).MustHaveHappened());
+            () => A.CallTo(() => coordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._)).MustNotHaveHappened(),
+            () => A.CallTo(() => coordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._)).MustHaveHappenedOnceExactly(),
+            () => A.CallTo(() => coordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._)).MustHaveHappened());
     }
 
     private static void Verify(

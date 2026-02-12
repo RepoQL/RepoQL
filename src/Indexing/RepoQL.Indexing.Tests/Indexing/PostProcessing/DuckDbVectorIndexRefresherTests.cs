@@ -60,6 +60,29 @@ internal class DuckDbVectorIndexRefresherTests
     }
 
     [Test]
+    [DisplayName("Targeted refresh only embeds requested documents")]
+    public async Task Given_MultipleDocuments_When_TargetedRefreshAsync_Then_EmbedsOnlyTargetedDocument()
+    {
+        var provider = new RecordingEmbeddingProvider();
+        using var database = new DuckDbDataStore(path: null, embeddingProvider: provider, logger: NullLogger<DuckDbDataStore>.Instance);
+
+        var first = SeedDocument(database, "file:///repo/first.md", "first doc text");
+        var second = SeedDocument(database, "file:///repo/second.md", "second doc text");
+
+        var refresher = new DuckDbVectorIndexRefresher(database, provider, logger: NullLogger<DuckDbVectorIndexRefresher>.Instance);
+
+        await refresher.RefreshAsync([first.Id], CancellationToken.None);
+
+        provider.EmbedCount.Should().Be(1);
+        var embeddedDocIds = database.Read(
+            "SELECT DISTINCT doc_id FROM document_embedding ORDER BY doc_id",
+            r => r.GetGuid(0));
+        embeddedDocIds.Should().ContainSingle();
+        embeddedDocIds[0].Should().Be(first.Id);
+        embeddedDocIds.Should().NotContain(second.Id);
+    }
+
+    [Test]
     [DisplayName("Refresh chunks medium documents and stores byte offsets")]
     public async Task Given_MediumDocument_When_RefreshAsync_Then_WritesChunkEmbeddingsWithByteOffsets()
     {
@@ -210,5 +233,40 @@ internal class DuckDbVectorIndexRefresherTests
         rows[0].Chunk.Should().Be(0);
         rows[0].Start.Should().BeNull();
         rows[0].End.Should().BeNull();
+    }
+
+    private static Node SeedDocument(DuckDbDataStore database, string uri, string text)
+    {
+        var artifact = new ArtifactModel
+        {
+            Id = Guid.NewGuid(),
+            Digest = Guid.NewGuid().ToString("N"),
+            Size = text.Length,
+            MediaType = SemanticMediaType.Parse("text/plain"),
+            Text = text
+        };
+
+        var documentNode = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "document",
+            Uri = RepoUri.Parse(uri),
+            ArtifactId = artifact.Id,
+            Props = new System.Text.Json.Nodes.JsonObject(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        var parsedArtifact = new ParsedArtifact
+        {
+            Artifact = artifact,
+            DocumentNode = documentNode,
+            Children = Array.Empty<Node>(),
+            Spans = Array.Empty<Span>(),
+            Edges = Array.Empty<Edge>()
+        };
+
+        database.IndexArtifact(documentNode.Uri, parsedArtifact);
+        return documentNode;
     }
 }

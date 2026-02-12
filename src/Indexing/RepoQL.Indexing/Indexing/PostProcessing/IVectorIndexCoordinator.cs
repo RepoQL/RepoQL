@@ -6,7 +6,7 @@ namespace RepoQL.Indexing.Indexing.PostProcessing;
 public interface IVectorIndexCoordinator
 {
     Task ApplyDeletesAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken);
-    Task ApplyAsync(IndexItem item, CancellationToken cancellationToken);
+    Task ApplyAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken);
 
     /// <summary>
     /// Generates structure embeddings (uri + headline + structure) for a batch of items.
@@ -34,7 +34,7 @@ public sealed class NullVectorIndexCoordinator : IVectorIndexCoordinator
         return Task.CompletedTask;
     }
 
-    public Task ApplyAsync(IndexItem item, CancellationToken cancellationToken)
+    public Task ApplyAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken)
     {
         return Task.CompletedTask;
     }

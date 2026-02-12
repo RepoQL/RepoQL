@@ -19,19 +19,39 @@ internal class VectorIndexCoordinatorTests
     {
         var refresher = new FakeRefresher();
         var coordinator = new VectorIndexCoordinator(refresher, logger: NullLogger<VectorIndexCoordinator>.Instance);
-        var item = new IndexingTestItemBuilder()
-            .WithUri("file:///repo/vector.md")
-            .WithContent("text")
-            .Build();
+        var item = BuildItem("file:///repo/vector.md", includeDocNode: true, includeArtifact: true);
         item.SetEpoch(0);
 
-        await coordinator.ApplyAsync(item, CancellationToken.None);
-        await coordinator.ApplyAsync(item, CancellationToken.None);
-        refresher.Invocations.Should().Be(1);
+        await coordinator.ApplyAsync([item], CancellationToken.None);
+        await coordinator.ApplyAsync([item], CancellationToken.None);
+        refresher.TargetedInvocations.Should().Be(1);
+        refresher.LastDocumentIds.Should().ContainSingle();
 
         await coordinator.ApplyDeletesAsync(new[] { RepoUri.Parse("file:///repo/vector.md") }, CancellationToken.None);
-        await coordinator.ApplyAsync(item, CancellationToken.None);
-        refresher.Invocations.Should().Be(2);
+        await coordinator.ApplyAsync([item], CancellationToken.None);
+        refresher.Invocations.Should().Be(1);
+        refresher.TargetedInvocations.Should().Be(1);
+    }
+
+    [Test]
+    [DisplayName("Vector refresh targets all dirty documents in the idle batch")]
+    public async Task Given_BatchOfItems_When_ApplyAsync_Then_TargetsAllDocumentIds()
+    {
+        var refresher = new FakeRefresher();
+        var coordinator = new VectorIndexCoordinator(refresher, logger: NullLogger<VectorIndexCoordinator>.Instance);
+        var first = BuildItem("file:///repo/first.md", includeDocNode: true, includeArtifact: true);
+        var second = BuildItem("file:///repo/second.md", includeDocNode: true, includeArtifact: true);
+        first.SetEpoch(3);
+        second.SetEpoch(3);
+
+        await coordinator.ApplyAsync([first, second], CancellationToken.None);
+
+        var firstId = first.Records!.Nodes[0].Id;
+        var secondId = second.Records!.Nodes[0].Id;
+        refresher.TargetedInvocations.Should().Be(1);
+        refresher.LastDocumentIds.Should().HaveCount(2);
+        refresher.LastDocumentIds.Should().Contain(firstId);
+        refresher.LastDocumentIds.Should().Contain(secondId);
     }
 
     [Test]

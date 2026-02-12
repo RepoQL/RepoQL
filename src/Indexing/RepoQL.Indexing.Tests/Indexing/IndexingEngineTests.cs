@@ -420,7 +420,7 @@ public class IndexingEngineTests
                 embedEntered.TrySetResult(true);
                 await releaseEmbedding.Task.ConfigureAwait(false);
             });
-        A.CallTo(() => vectorCoordinator.ApplyAsync(A<IndexItem>._, A<CancellationToken>._))
+        A.CallTo(() => vectorCoordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .Returns(Task.CompletedTask);
         A.CallTo(() => vectorCoordinator.RefreshVssIndexAsync(A<CancellationToken>._))
             .Returns(Task.CompletedTask);
@@ -877,7 +877,7 @@ public class IndexingEngineTests
                 deleteApplied.TrySetResult(true);
                 return Task.CompletedTask;
             });
-        A.CallTo(() => vector.ApplyAsync(A<IndexItem>._, A<CancellationToken>._))
+        A.CallTo(() => vector.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .ReturnsLazily(async _ =>
             {
                 await deleteApplied.Task.WaitAsync(token);
@@ -909,10 +909,11 @@ public class IndexingEngineTests
         var observedEpochs = new List<long>();
 
         var vector = A.Fake<IVectorIndexCoordinator>();
-        A.CallTo(() => vector.ApplyAsync(A<IndexItem>._, A<CancellationToken>._))
+        A.CallTo(() => vector.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .ReturnsLazily(call =>
             {
-                var epoch = call.GetArgument<IndexItem>(0)!.Epoch;
+                var items = call.GetArgument<IReadOnlyList<IndexItem>>(0)!;
+                var epoch = items.Max(i => i.Epoch);
                 lock (observedEpochs)
                 {
                     observedEpochs.Add(epoch);

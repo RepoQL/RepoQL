@@ -58,23 +58,65 @@ public sealed class EmbeddingRefresher
     /// </summary>
     public async Task RefreshAsync(IEmbeddingProvider embeddingProvider, CancellationToken cancellationToken = default)
     {
+        await RefreshInternalAsync(embeddingProvider, targetDocumentIds: null, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Refreshes embeddings for a targeted set of document node ids.
+    /// </summary>
+    public async Task RefreshAsync(
+        IEmbeddingProvider embeddingProvider,
+        IReadOnlyList<Guid> documentIds,
+        CancellationToken cancellationToken = default)
+    {
+        if (documentIds is null)
+            throw new ArgumentNullException(nameof(documentIds));
+
+        if (documentIds.Count == 0)
+            return;
+
+        await RefreshInternalAsync(embeddingProvider, DistinctDocumentIds(documentIds), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task RefreshInternalAsync(
+        IEmbeddingProvider embeddingProvider,
+        IReadOnlyList<Guid>? targetDocumentIds,
+        CancellationToken cancellationToken)
+    {
         if (embeddingProvider is null || !embeddingProvider.Enabled)
             return;
 
         PruneEmbeddingsForCurrentModel(embeddingProvider);
 
-        var totalDocuments = CountTotalDocuments();
-        var refreshPlan = LoadDocumentRefreshPlan();
+        var refreshPlan = LoadDocumentRefreshPlan(targetDocumentIds);
+        var totalDocuments = CountTotalDocuments(targetDocumentIds);
         var docsSkippedAsUpToDate = totalDocuments - refreshPlan.Count;
+        var isTargeted = targetDocumentIds is { Count: > 0 };
 
         if (refreshPlan.Count == 0)
         {
-            _logger.LogInformation("Semantic indexing complete: all {Total} documents up-to-date", totalDocuments);
+            if (isTargeted)
+            {
+                _logger.LogInformation("Semantic indexing complete: all {Total} targeted documents up-to-date", totalDocuments);
+            }
+            else
+            {
+                _logger.LogInformation("Semantic indexing complete: all {Total} documents up-to-date", totalDocuments);
+            }
+
             return;
         }
 
-        _logger.LogInformation("Semantic indexing: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
-            refreshPlan.Count, totalDocuments, docsSkippedAsUpToDate);
+        if (isTargeted)
+        {
+            _logger.LogInformation("Semantic indexing (targeted): {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
+                refreshPlan.Count, totalDocuments, docsSkippedAsUpToDate);
+        }
+        else
+        {
+            _logger.LogInformation("Semantic indexing: {NeedRefresh} of {Total} documents need refresh ({Skipped} up-to-date)",
+                refreshPlan.Count, totalDocuments, docsSkippedAsUpToDate);
+        }
 
         var totalExpectedItems = refreshPlan.Sum(p => p.WorkItemCount);
         if (totalExpectedItems <= 0)
@@ -513,16 +555,35 @@ public sealed class EmbeddingRefresher
 
     #region Data Loading
 
-    private int CountTotalDocuments()
+    private int CountTotalDocuments(IReadOnlyList<Guid>? targetDocumentIds)
     {
+        if (targetDocumentIds is { Count: > 0 })
+        {
+            var idList = ToUuidListSql(targetDocumentIds);
+            var query = $"""
+                SELECT COUNT(*)
+                FROM node
+                WHERE kind = 'document'
+                  AND id IN ({idList});
+                """;
+            var targetedResult = _store.ReadScalar<long?>(query);
+            return (int)(targetedResult ?? 0L);
+        }
+
         var result = _store.ReadScalar<long?>("SELECT COUNT(*) FROM node WHERE kind = 'document'");
         return (int)(result ?? 0L);
     }
 
-    private IReadOnlyList<DocumentRefreshPlanRow> LoadDocumentRefreshPlan()
+    private IReadOnlyList<DocumentRefreshPlanRow> LoadDocumentRefreshPlan(IReadOnlyList<Guid>? targetDocumentIds)
     {
+        if (targetDocumentIds is { Count: 0 })
+            return [];
+
         var stride = ChunkSizeChars - ChunkOverlapChars;
         if (stride <= 0) stride = ChunkSizeChars;
+        var idFilter = targetDocumentIds is { Count: > 0 }
+            ? $"\n                  AND n.id IN ({ToUuidListSql(targetDocumentIds)})"
+            : string.Empty;
 
         // In Hybrid mode, we need to know if meaningful x-ray data exists (headline OR structure with actual content)
         // This ensures we only use structure-only embedding when there's actual content to embed
@@ -545,6 +606,7 @@ public sealed class EmbeddingRefresher
                 WHERE n.kind = 'document'
                   AND a.text_content IS NOT NULL
                   AND (de.doc_id IS NULL OR de.updated_at < n.updated_at)
+                  {idFilter}
                   AND (a.media_type LIKE 'text/%'
                        OR a.media_type LIKE 'application/json%'
                        OR a.media_type LIKE 'application/xml%'
@@ -678,6 +740,22 @@ public sealed class EmbeddingRefresher
             sb.Append('\'').Append(ids[i].ToString("D")).Append("'::UUID");
         }
         return sb.ToString();
+    }
+
+    private static IReadOnlyList<Guid> DistinctDocumentIds(IReadOnlyList<Guid> documentIds)
+    {
+        var seen = new HashSet<Guid>();
+        var distinct = new List<Guid>(documentIds.Count);
+        for (var i = 0; i < documentIds.Count; i++)
+        {
+            var id = documentIds[i];
+            if (id == Guid.Empty || !seen.Add(id))
+                continue;
+
+            distinct.Add(id);
+        }
+
+        return distinct;
     }
 
     private static string BuildStructureOnlyEmbeddingText(string? headline, string? structure)

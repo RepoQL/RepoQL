@@ -78,9 +78,12 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         return Task.CompletedTask;
     }
 
-    public async Task ApplyAsync(IndexItem item, CancellationToken cancellationToken)
+    public async Task ApplyAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken)
     {
-        var epoch = item.Epoch;
+        if (items.Count == 0)
+            return;
+
+        var epoch = GetLatestEpoch(items);
         if (!_needsRefresh && Interlocked.Read(ref _lastRefreshedEpoch) == epoch)
             return;
 
@@ -90,7 +93,10 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             if (!_needsRefresh && Interlocked.Read(ref _lastRefreshedEpoch) == epoch)
                 return;
 
-            await RefreshEmbeddingsAsync(cancellationToken).ConfigureAwait(false);
+            var forceFullRefresh = _needsRefresh;
+            var targetDocumentIds = forceFullRefresh ? [] : CollectDirtyDocumentIds(items);
+
+            await RefreshEmbeddingsAsync(targetDocumentIds, forceFullRefresh, cancellationToken).ConfigureAwait(false);
             Interlocked.Exchange(ref _lastRefreshedEpoch, epoch);
             _needsRefresh = false;
         }
@@ -100,16 +106,31 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         }
     }
 
-    private async Task RefreshEmbeddingsAsync(CancellationToken cancellationToken)
+    private async Task RefreshEmbeddingsAsync(
+        IReadOnlyList<Guid> targetDocumentIds,
+        bool forceFullRefresh,
+        CancellationToken cancellationToken)
     {
-        _logger.LogDebug("Vector index refresh triggered");
+        var runFullRefresh = forceFullRefresh || targetDocumentIds.Count == 0;
+        _logger.LogDebug("Vector index refresh triggered (mode={Mode}, docs={DocCount})",
+            runFullRefresh ? "full" : "targeted",
+            targetDocumentIds.Count);
+
         try
         {
-            await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
+            if (runFullRefresh)
+            {
+                await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await _refresher.RefreshAsync(targetDocumentIds, cancellationToken).ConfigureAwait(false);
+            }
+
             _logger.LogDebug("Vector index refresh completed");
 
             // Sync UriRegistry with actual embedding counts from the database
-            SyncRegistryEmbeddingStatus();
+            SyncRegistryEmbeddingStatus(runFullRefresh ? null : targetDocumentIds);
         }
         catch (Exception ex)
         {
@@ -122,28 +143,50 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     /// Syncs the UriRegistry embedding status from the database after full-text embedding refresh.
     /// This ensures the registry reflects actual embedding counts including chunked documents.
     /// </summary>
-    private void SyncRegistryEmbeddingStatus()
+    private void SyncRegistryEmbeddingStatus(IReadOnlyList<Guid>? documentIds)
     {
         if (_uriRegistry is null || _db is null)
             return;
 
         try
         {
-            // Query embedding counts per container (file)
-            const string query = """
-                SELECT
-                    repository_uri_container(uri) as container_uri,
-                    COUNT(*) as chunk_count
-                FROM document_embedding
-                GROUP BY repository_uri_container(uri)
-                """;
-
-            var results = _db.Read(query, record =>
+            IReadOnlyList<(string? ContainerUri, int ChunkCount)> results;
+            if (documentIds is { Count: > 0 })
             {
-                var containerUri = record["container_uri"]?.ToString();
-                var chunkCount = Convert.ToInt32(record["chunk_count"]);
-                return (containerUri, chunkCount);
-            });
+                var idList = ToUuidListSql(documentIds);
+                var targetedQuery = $"""
+                    SELECT
+                        repository_uri_container(uri) as container_uri,
+                        COUNT(*) as chunk_count
+                    FROM document_embedding
+                    WHERE doc_id IN ({idList})
+                    GROUP BY repository_uri_container(uri)
+                    """;
+
+                results = _db.Read(targetedQuery, record =>
+                {
+                    var containerUri = record["container_uri"]?.ToString();
+                    var chunkCount = Convert.ToInt32(record["chunk_count"]);
+                    return (containerUri, chunkCount);
+                });
+            }
+            else
+            {
+                const string fullQuery = """
+                    SELECT
+                        repository_uri_container(uri) as container_uri,
+                        COUNT(*) as chunk_count
+                    FROM document_embedding
+                    GROUP BY repository_uri_container(uri)
+                    """;
+
+                results = _db.Read(fullQuery, record =>
+                {
+                    var containerUri = record["container_uri"]?.ToString();
+                    var chunkCount = Convert.ToInt32(record["chunk_count"]);
+                    return (containerUri, chunkCount);
+                });
+            }
 
             foreach (var (containerUriStr, chunkCount) in results)
             {
@@ -165,6 +208,39 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         {
             _logger.LogWarning(ex, "Failed to sync UriRegistry embedding status from database");
         }
+    }
+
+    private static IReadOnlyList<Guid> CollectDirtyDocumentIds(IReadOnlyList<IndexItem> items)
+    {
+        var documentIds = new HashSet<Guid>();
+
+        for (var i = 0; i < items.Count; i++)
+        {
+            var docNode = FindDocumentNode(items[i].Records?.Nodes);
+            if (docNode is null || docNode.Id == Guid.Empty)
+                continue;
+
+            documentIds.Add(docNode.Id);
+        }
+
+        return [.. documentIds];
+    }
+
+    private static long GetLatestEpoch(IReadOnlyList<IndexItem> items)
+    {
+        var epoch = items[0].Epoch;
+        for (var i = 1; i < items.Count; i++)
+        {
+            if (items[i].Epoch > epoch)
+                epoch = items[i].Epoch;
+        }
+
+        return epoch;
+    }
+
+    private static string ToUuidListSql(IReadOnlyList<Guid> ids)
+    {
+        return string.Join(",", ids.Select(id => $"'{id:D}'::UUID"));
     }
 
     public async Task GenerateStructureEmbeddingsAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken)
