@@ -9,7 +9,7 @@ namespace RepoQL.Data.DuckDB;
 /// </summary>
 public interface IVssIndexManager
 {
-    Task RefreshIndexesAsync(CancellationToken cancellationToken = default);
+    Task RefreshIndexesAsync(bool forceRefresh = false, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -69,7 +69,7 @@ public sealed class VssIndexManager : IVssIndexManager
     /// Refresh HNSW indexes for all dimensions that have embeddings.
     /// Only rebuilds if embeddings have changed since the last refresh.
     /// </summary>
-    public async Task RefreshIndexesAsync(CancellationToken cancellationToken = default)
+    public async Task RefreshIndexesAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("vss.refresh_indexes", ActivityKind.Internal);
 
@@ -84,7 +84,7 @@ public sealed class VssIndexManager : IVssIndexManager
         var currentCount = GetEmbeddingCount();
         var timeSinceLastRefresh = DateTime.UtcNow - _lastRefreshTime;
 
-        if (timeSinceLastRefresh < MinRefreshInterval && currentCount == _lastEmbeddingCount)
+        if (!forceRefresh && timeSinceLastRefresh < MinRefreshInterval && currentCount == _lastEmbeddingCount)
         {
             activity?.SetTag("vss.skipped", "no_changes");
             return;

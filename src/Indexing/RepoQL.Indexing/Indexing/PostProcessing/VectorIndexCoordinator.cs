@@ -24,6 +24,7 @@ namespace RepoQL.Indexing.Indexing.PostProcessing;
 public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposable
 {
     private const int StructureEmbeddingBatchSize = 100;
+    private static readonly TimeSpan VssRefreshDebounce = TimeSpan.FromMilliseconds(250);
     private static readonly int RefreshConcurrency = GetRefreshConcurrency();
     private readonly IVectorIndexRefresher _refresher;
     private readonly DuckDbDataStore? _db;
@@ -33,9 +34,13 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private readonly UriRegistry? _uriRegistry;
     private readonly Func<IVssIndexManager>? _vssIndexManagerFactory;
     private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
+    private readonly SemaphoreSlim _vssRefreshSignal = new(0);
+    private readonly CancellationTokenSource _vssRefreshShutdown = new();
     private long _lastRefreshedEpoch = long.MinValue;
     private volatile bool _needsRefresh;
     private IVssIndexManager? _vssIndexManager;
+    private Task? _vssRefreshWorker;
+    private int _vssWorkerStarted;
     private int _vssInitialBuildCompleted;
     private int _vssRefreshRequested;
 
@@ -72,6 +77,9 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         _logger = logger ?? NullLogger<VectorIndexCoordinator>.Instance;
         _uriRegistry = uriRegistry;
         _vssIndexManagerFactory = vssIndexManagerFactory;
+
+        // VSS indexes are in-memory only; always schedule an initial rebuild after startup.
+        RequestVssRefresh();
     }
 
     public Task ApplyDeletesAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken)
@@ -539,41 +547,41 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         return string.Concat(relativeUri, "\n\n", headline, "\n\n", structure);
     }
 
-    public async Task RefreshVssIndexAsync(CancellationToken cancellationToken)
+    public Task RefreshVssIndexAsync(CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled(cancellationToken);
+
         if (_db is null && _vssIndexManagerFactory is null)
         {
             _logger.LogDebug("VSS index refresh skipped: no database");
-            return;
+            return Task.CompletedTask;
         }
-
-        var initialBuildCompleted = Volatile.Read(ref _vssInitialBuildCompleted) == 1;
-        var refreshRequested = Interlocked.Exchange(ref _vssRefreshRequested, 0) == 1;
 
         // VSS indexes are in-memory only, so always build once after startup.
-        if (initialBuildCompleted && !refreshRequested)
-        {
-            _logger.LogDebug("VSS index refresh skipped: no embedding changes since last refresh");
-            return;
-        }
-
-        // Lazily create the VSS index manager
-        _vssIndexManager ??= _vssIndexManagerFactory?.Invoke() ?? new VssIndexManager(_db!);
-
-        try
-        {
-            await _vssIndexManager.RefreshIndexesAsync(cancellationToken).ConfigureAwait(false);
-            Volatile.Write(ref _vssInitialBuildCompleted, 1);
-        }
-        catch (Exception ex)
-        {
+        if (Volatile.Read(ref _vssInitialBuildCompleted) == 0)
             RequestVssRefresh();
-            _logger.LogWarning(ex, "VSS index refresh failed");
-        }
+
+        return Task.CompletedTask;
     }
 
     public void Dispose()
     {
+        _vssRefreshShutdown.Cancel();
+        try
+        {
+            _vssRefreshWorker?.GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "VSS refresh worker stopped with an error during disposal");
+        }
+
+        _vssRefreshSignal.Dispose();
+        _vssRefreshShutdown.Dispose();
         _refreshGate.Dispose();
     }
 
@@ -594,7 +602,56 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
     private void RequestVssRefresh()
     {
-        Interlocked.Exchange(ref _vssRefreshRequested, 1);
+        if (_db is null && _vssIndexManagerFactory is null)
+            return;
+
+        EnsureVssRefreshWorkerStarted();
+        if (Interlocked.Exchange(ref _vssRefreshRequested, 1) == 0)
+        {
+            _vssRefreshSignal.Release();
+        }
+    }
+
+    private void EnsureVssRefreshWorkerStarted()
+    {
+        if (Interlocked.CompareExchange(ref _vssWorkerStarted, 1, 0) != 0)
+            return;
+
+        _vssRefreshWorker = Task.Run(ProcessVssRefreshLoopAsync);
+    }
+
+    private async Task ProcessVssRefreshLoopAsync()
+    {
+        try
+        {
+            while (true)
+            {
+                await _vssRefreshSignal.WaitAsync(_vssRefreshShutdown.Token).ConfigureAwait(false);
+                await Task.Delay(VssRefreshDebounce, _vssRefreshShutdown.Token).ConfigureAwait(false);
+
+                if (Interlocked.Exchange(ref _vssRefreshRequested, 0) == 0)
+                    continue;
+
+                try
+                {
+                    _vssIndexManager ??= _vssIndexManagerFactory?.Invoke() ?? new VssIndexManager(_db!);
+                    await _vssIndexManager.RefreshIndexesAsync(forceRefresh: true, cancellationToken: _vssRefreshShutdown.Token).ConfigureAwait(false);
+                    Volatile.Write(ref _vssInitialBuildCompleted, 1);
+                }
+                catch (OperationCanceledException) when (_vssRefreshShutdown.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "VSS index refresh failed");
+                    RequestVssRefresh();
+                }
+            }
+        }
+        catch (OperationCanceledException) when (_vssRefreshShutdown.IsCancellationRequested)
+        {
+        }
     }
 
     /// <summary>

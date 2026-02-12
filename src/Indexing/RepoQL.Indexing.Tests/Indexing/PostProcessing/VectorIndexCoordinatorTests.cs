@@ -1,4 +1,5 @@
-﻿using AwesomeAssertions;
+using AwesomeAssertions;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;
@@ -128,6 +129,7 @@ internal class VectorIndexCoordinatorTests
         await coordinator.RefreshVssIndexAsync(CancellationToken.None);
         await coordinator.RefreshVssIndexAsync(CancellationToken.None);
 
+        await WaitForAsync(() => vss.RefreshInvocations >= 1);
         vss.RefreshInvocations.Should().Be(1);
     }
 
@@ -142,9 +144,11 @@ internal class VectorIndexCoordinatorTests
             vssIndexManagerFactory: () => vss);
 
         await coordinator.RefreshVssIndexAsync(CancellationToken.None); // startup build
+        await WaitForAsync(() => vss.RefreshInvocations >= 1);
         await coordinator.ApplyDeletesAsync([RepoUri.Parse("file:///repo/deleted.md")], CancellationToken.None);
         await coordinator.RefreshVssIndexAsync(CancellationToken.None);
 
+        await WaitForAsync(() => vss.RefreshInvocations >= 2);
         vss.RefreshInvocations.Should().Be(2);
     }
 
@@ -198,10 +202,24 @@ internal class VectorIndexCoordinatorTests
     {
         public int RefreshInvocations { get; private set; }
 
-        public Task RefreshIndexesAsync(CancellationToken cancellationToken = default)
+        public Task RefreshIndexesAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
         {
             RefreshInvocations++;
             return Task.CompletedTask;
+        }
+    }
+
+    private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 3000)
+    {
+        var start = Stopwatch.GetTimestamp();
+        while (!condition())
+        {
+            if (Stopwatch.GetElapsedTime(start) > TimeSpan.FromMilliseconds(timeoutMs))
+            {
+                throw new TimeoutException("Condition was not met before timeout.");
+            }
+
+            await Task.Delay(20).ConfigureAwait(false);
         }
     }
 }
