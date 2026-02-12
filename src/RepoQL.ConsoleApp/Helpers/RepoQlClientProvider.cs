@@ -65,7 +65,7 @@ internal sealed class RepoQlClientProvider : IAsyncDisposable
             throw new InvalidOperationException(
                 $"No repository markers (.git or .repoql) were found starting at '{ex.SearchedFrom}'. " +
                 $"Current working directory: '{instructionPath}'. " +
-                $"Use the import tool with uri \"primary://{instructionPath}\" to set the repository root, then retry.",
+                $"Use ::repo[{instructionPath}] to set the repository root, then retry.",
                 ex);
         }
         catch

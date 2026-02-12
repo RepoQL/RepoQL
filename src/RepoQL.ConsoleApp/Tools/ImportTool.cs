@@ -40,11 +40,6 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         // Check for removal prefix - server handles this
         var isRemoval = uri.TrimStart().StartsWith('-');
 
-        if (!isRemoval && TrySetWorkingDirectoryFromPrimaryUri(uri))
-        {
-            // Repo root provided explicitly; proceed to connect and import.
-        }
-
         try
         {
             var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
@@ -83,6 +78,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                 : "";
 
             return ToolResult.Success($"""
+                [DEBUG] contextUri={contextUri ?? "NULL"} repoContext={(repoContext is null ? "NULL" : $"len={repoContext.Length}")}
                 Import completed: {uri.Trim()}
                 {progressSummary}
 
@@ -147,31 +143,6 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
         // Default: return as-is
         return uri;
-    }
-
-    private bool TrySetWorkingDirectoryFromPrimaryUri(string uri)
-    {
-        const string Prefix = "primary://";
-        if (!uri.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        var pathPart = uri.Substring(Prefix.Length).Trim();
-        pathPart = pathPart.TrimStart('/'); // tolerate primary:///C:/repo
-        if (string.IsNullOrWhiteSpace(pathPart))
-        {
-            throw new ArgumentException("primary:// URI must include a filesystem path", nameof(uri));
-        }
-
-        var fullPath = Path.GetFullPath(pathPart);
-        if (!Directory.Exists(fullPath))
-        {
-            throw new DirectoryNotFoundException($"The path '{fullPath}' does not exist. Provide a valid repository root path.");
-        }
-
-        _clientProvider.SetWorkingDirectory(fullPath);
-        return true;
     }
 
     /// <summary>
@@ -240,7 +211,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
             var findResult = await _queryExecutor.ExecuteAsync(findSql, 1, ResultFormat.Toon, cancellationToken: cancellationToken).ConfigureAwait(false);
             var uri = string.Join("", findResult.Lines).Trim();
             if (string.IsNullOrWhiteSpace(uri) || uri == "null")
-                return (null, null);
+                return ("DEBUG_FIND_EMPTY", $"Lines={findResult.Lines.Length}, Raw=[{string.Join("|", findResult.Lines)}], Total={findResult.TotalRowCount}, Pattern={uriPattern}");
 
             // Read its content with a token budget
             var readSql = $"""
@@ -259,8 +230,8 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         }
         catch (Exception ex)
         {
-            await Console.Error.WriteLineAsync($"[ImportTool] TryGetRepoContextAsync failed: {ex.GetType().Name}: {ex.Message}");
-            return (null, null);
+            // TODO: remove debug output after fixing
+            return ("DEBUG_ERROR", $"{ex.GetType().Name}: {ex.Message}");
         }
     }
 
