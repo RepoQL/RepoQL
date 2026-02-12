@@ -134,6 +134,62 @@ public class IndexingCommitterTests
     }
 
     [Test]
+    [DisplayName("Continues commit and updates catalog when structure embedding write fails in queued commit path")]
+    public async Task Given_InvalidStructureEmbedding_When_CommitAsync_Then_DocumentAndCatalogStillCommit()
+    {
+        // Arrange
+        var item = await CreatePopulatedItemAsync("file:///repo/embedding-write-fail-queued.md");
+        item.StructureEmbedding = CreateInvalidStructureEmbedding(item);
+
+        using var db = new DuckDbDataStore(); // in-memory
+        var catalog = A.Fake<IDocumentCatalog>();
+        using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
+
+        // Act
+        var act = async () => await committer.CommitAsync(item, CancellationToken.None);
+
+        // Assert
+        await act.Should().NotThrowAsync();
+
+        var doc = db.GetDocumentByUri(item.Uri);
+        doc.Should().NotBeNull("artifact commit should succeed even if structure embedding write fails");
+        A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._)).MustHaveHappenedOnceExactly();
+    }
+
+    [Test]
+    [DisplayName("Marks embedding failed and continues catalog updates when structure embedding write fails in explicit batch path")]
+    public async Task Given_InvalidStructureEmbedding_When_CommitBatchAsync_Then_MarksEmbeddingFailedAndCommitsCatalog()
+    {
+        // Arrange
+        var item = await CreatePopulatedItemAsync("file:///repo/embedding-write-fail-batch.md");
+        item.StructureEmbedding = CreateInvalidStructureEmbedding(item);
+
+        using var db = new DuckDbDataStore(); // in-memory
+        var catalog = A.Fake<IDocumentCatalog>();
+        var registry = new UriRegistry();
+        registry.TryRegisterDiscovered(item.Uri);
+        using var committer = new IndexingCommitter(
+            db,
+            catalog,
+            NullLogger<IndexingCommitter>.Instance,
+            registry,
+            new EnabledEmbeddingProvider(),
+            EmbeddingMode.Full);
+
+        // Act
+        var act = async () => await committer.CommitBatchAsync([item], CancellationToken.None);
+
+        // Assert
+        await act.Should().NotThrowAsync();
+
+        var doc = db.GetDocumentByUri(item.Uri);
+        doc.Should().NotBeNull("artifact commit should succeed even if structure embedding write fails");
+        A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._)).MustHaveHappenedOnceExactly();
+        registry[item.Uri].EmbeddingStatus.Should().Be(EmbeddingStatus.Failed);
+        registry[item.Uri].Error.Should().Contain("structure embedding write failed");
+    }
+
+    [Test]
     [DisplayName("Marks URI embedding as not applicable when structure embeddings are disabled")]
     public async Task Given_EmbeddingModeNone_When_CommitAsync_Then_MarksEmbeddingNotApplicable()
     {
@@ -209,6 +265,21 @@ public class IndexingCommitterTests
         });
 
         return item;
+    }
+
+    private static DocumentEmbedding CreateInvalidStructureEmbedding(IndexItem item)
+    {
+        var documentNode = item.Records!.Nodes.First(n => string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase));
+        return new DocumentEmbedding(
+            documentNode.Id,
+            documentNode.Id,
+            ChunkIndex: 0,
+            DocumentEmbedding.TypeStructure,
+            item.Uri.ToString(),
+            DocumentEmbedding.ScopeDocument,
+            null!,
+            "test-model",
+            4);
     }
 
     private sealed class EnabledEmbeddingProvider : IEmbeddingProvider

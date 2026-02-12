@@ -203,14 +203,29 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
                 var dbMs = dbSw.Elapsed.TotalMilliseconds;
 
                 var embedMs = 0.0;
+                var embeddingWriteFailed = false;
                 if (structureEmbeddings.Count > 0)
                 {
                     dbSw.Restart();
-                    _db.WriteEmbeddings(structureEmbeddings);
+                    try
+                    {
+                        _db.WriteEmbeddings(structureEmbeddings);
+                    }
+                    catch (Exception ex)
+                    {
+                        embeddingWriteFailed = true;
+                        MarkEmbeddingWriteFailed(batch.Select(p => p.Item), ex);
+                        _logger.LogWarning(ex,
+                            "Structure embedding write failed for {EmbeddingCount} items in commit batch. Artifact commit and catalog update will continue.",
+                            structureEmbeddings.Count);
+                    }
                     embedMs = dbSw.Elapsed.TotalMilliseconds;
                 }
 
-                UpdateUriRegistryEmbeddingStatus(batch.Select(p => p.Item), structureEmbeddings);
+                if (!embeddingWriteFailed)
+                {
+                    UpdateUriRegistryEmbeddingStatus(batch.Select(p => p.Item), structureEmbeddings);
+                }
 
                 dbSw.Restart();
                 // Update catalog and complete all items
@@ -299,12 +314,27 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
 
             _db.IndexArtifactBatch(dbItems);
 
+            var embeddingWriteFailed = false;
             if (structureEmbeddings.Count > 0)
             {
-                _db.WriteEmbeddings(structureEmbeddings);
+                try
+                {
+                    _db.WriteEmbeddings(structureEmbeddings);
+                }
+                catch (Exception ex)
+                {
+                    embeddingWriteFailed = true;
+                    MarkEmbeddingWriteFailed(batchItems.Select(b => b.Item), ex);
+                    _logger.LogWarning(ex,
+                        "Structure embedding write failed for {EmbeddingCount} items in explicit batch commit. Artifact commit and catalog update will continue.",
+                        structureEmbeddings.Count);
+                }
             }
 
-            UpdateUriRegistryEmbeddingStatus(batchItems.Select(b => b.Item), structureEmbeddings);
+            if (!embeddingWriteFailed)
+            {
+                UpdateUriRegistryEmbeddingStatus(batchItems.Select(b => b.Item), structureEmbeddings);
+            }
 
             // Update catalog for all items
             foreach (var (_, _, item) in batchItems)
@@ -321,6 +351,21 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
         }
 
         return Task.CompletedTask;
+    }
+
+    private void MarkEmbeddingWriteFailed(IEnumerable<IndexItem> items, Exception exception)
+    {
+        if (_uriRegistry is null)
+            return;
+
+        var error = $"structure embedding write failed: {exception.Message}";
+        foreach (var item in items)
+        {
+            if (item.StructureEmbedding is not null)
+            {
+                _uriRegistry.SetEmbeddingFailed(item.Uri, error);
+            }
+        }
     }
 
     private void UpdateUriRegistryEmbeddingStatus(IEnumerable<IndexItem> items, IReadOnlyList<DocumentEmbedding> writtenEmbeddings)
