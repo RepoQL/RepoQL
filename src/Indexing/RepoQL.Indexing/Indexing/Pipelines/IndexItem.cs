@@ -52,6 +52,10 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
 {
     private readonly IDictionary<string, object> _dictionaryImplementation =  new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
     private int _epochCompletionState;
+    private int _timedOutState;
+    private int _activeHotPathStageCleanupState = 1;
+    private int _activeHotPathBusyFlag;
+    private int _activeHotPathIdleFlag;
 
     /// <summary>
     ///     The status of the item. Anything besides null is considered a final, terminal state
@@ -93,6 +97,37 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     internal long Epoch { get; private set; } = -1;
 
     internal bool TryMarkEpochComplete() => Interlocked.Exchange(ref _epochCompletionState, 1) == 0;
+
+    internal bool IsTimedOut => Volatile.Read(ref _timedOutState) == 1;
+
+    internal bool TryMarkTimedOut() => Interlocked.Exchange(ref _timedOutState, 1) == 0;
+
+    internal void TrackHotPathStage(IndexingState busyFlag, IndexingState idleFlag)
+    {
+        Volatile.Write(ref _activeHotPathBusyFlag, (int)busyFlag);
+        Volatile.Write(ref _activeHotPathIdleFlag, (int)idleFlag);
+        Volatile.Write(ref _activeHotPathStageCleanupState, 0);
+    }
+
+    internal bool TryClaimHotPathStageCleanup(out IndexingState busyFlag, out IndexingState idleFlag)
+    {
+        if (Interlocked.Exchange(ref _activeHotPathStageCleanupState, 1) != 0)
+        {
+            busyFlag = default;
+            idleFlag = default;
+            return false;
+        }
+
+        busyFlag = (IndexingState)Volatile.Read(ref _activeHotPathBusyFlag);
+        idleFlag = (IndexingState)Volatile.Read(ref _activeHotPathIdleFlag);
+        return busyFlag != default || idleFlag != default;
+    }
+
+    internal void ClearHotPathStageTracking()
+    {
+        Volatile.Write(ref _activeHotPathBusyFlag, 0);
+        Volatile.Write(ref _activeHotPathIdleFlag, 0);
+    }
 
     /// <summary>
     ///     Materialized graph records (artifacts, nodes, spans, edges)

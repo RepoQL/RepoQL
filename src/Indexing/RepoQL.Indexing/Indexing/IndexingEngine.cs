@@ -643,17 +643,38 @@ public partial class IndexingEngine : IAsyncDisposable
                 if (result != PipelineResult.Success)
                     return;
 
+                if (item.IsTimedOut)
+                {
+                    status = "timed_out_late";
+                    AddEpochTag(item.Epoch, "index.late_abort", "after_pipeline");
+                    return;
+                }
+
                 currentStage = "structure_embedding";
                 var embedTimer = Stopwatch.StartNew();
                 await TryGenerateStructureEmbeddingAsync(item, cancellationToken).ConfigureAwait(false);
                 embedTimer.Stop();
                 RecordStageDuration("structure_embedding", embedTimer.Elapsed.TotalMilliseconds, PipelineResult.Success, item);
 
+                if (item.IsTimedOut)
+                {
+                    status = "timed_out_late";
+                    AddEpochTag(item.Epoch, "index.late_abort", "after_structure_embedding");
+                    return;
+                }
+
                 currentStage = "commit";
                 var commitTimer = Stopwatch.StartNew();
                 await Committer.CommitAsync(item, cancellationToken).ConfigureAwait(false);
                 commitTimer.Stop();
                 RecordStageDuration("commit", commitTimer.Elapsed.TotalMilliseconds, PipelineResult.Success, item);
+
+                if (item.IsTimedOut)
+                {
+                    status = "timed_out_late";
+                    AddEpochTag(item.Epoch, "index.late_abort", "after_commit");
+                    return;
+                }
 
                 // Record successful indexing
                 Metrics?.FilesIndexed.Add(1, new TagList
@@ -1289,7 +1310,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
         // Classification stage
         var classifyTimer = Stopwatch.StartNew();
-        var pipelineResult = await _classificationStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
+        var pipelineResult = await RunHotPathStageAsync(item, _classificationStage, cancellationToken).ConfigureAwait(false);
         classifyTimer.Stop();
         mime = item.MediaType?.ToString() ?? mime; // Update mime after classification
         RecordStageDuration("classification", classifyTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
@@ -1306,7 +1327,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
         // Parsing stage
         var parseTimer = Stopwatch.StartNew();
-        pipelineResult = await _parsingStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
+        pipelineResult = await RunHotPathStageAsync(item, _parsingStage, cancellationToken).ConfigureAwait(false);
         parseTimer.Stop();
         RecordStageDuration("parsing", parseTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
         Metrics?.FilesParsed.Add(1, new TagList
@@ -1325,7 +1346,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
         // Single-file analysis stage
         var analysisTimer = Stopwatch.StartNew();
-        pipelineResult = await _singleFileStage.RunAsync(item, cancellationToken, UpdateStateFlags).ConfigureAwait(false);
+        pipelineResult = await RunHotPathStageAsync(item, _singleFileStage, cancellationToken).ConfigureAwait(false);
         analysisTimer.Stop();
         RecordStageDuration("single_file_analysis", analysisTimer.Elapsed.TotalMilliseconds, pipelineResult, item);
         Metrics?.FilesEnriched.Add(1, new TagList
@@ -1335,6 +1356,26 @@ public partial class IndexingEngine : IAsyncDisposable
         });
 
         return pipelineResult;
+    }
+
+    private async Task<PipelineResult> RunHotPathStageAsync(IndexItem item, StageContext stage, CancellationToken cancellationToken)
+    {
+        UpdateStateFlags(stage.BusyFlag, stage.IdleFlag, true);
+        item.TrackHotPathStage(stage.BusyFlag, stage.IdleFlag);
+
+        try
+        {
+            return await stage.Processor(item, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (item.TryClaimHotPathStageCleanup(out var busyFlag, out var idleFlag))
+            {
+                UpdateStateFlags(busyFlag, idleFlag, false);
+            }
+
+            item.ClearHotPathStageTracking();
+        }
     }
 
     internal async Task AnalyzeItemAsync(IndexItem item, CancellationToken cancellationToken)
@@ -1380,6 +1421,14 @@ public partial class IndexingEngine : IAsyncDisposable
 
         // Store last error for diagnostics
         Volatile.Write(ref _lastError, $"{item.Uri}: Timed out after {elapsed.TotalSeconds:F1}s");
+
+        item.TryMarkTimedOut();
+
+        if (item.TryClaimHotPathStageCleanup(out var busyFlag, out var idleFlag))
+        {
+            UpdateStateFlags(busyFlag, idleFlag, false);
+            item.ClearHotPathStageTracking();
+        }
 
         // Ensure pending digest state is cleared even when the processing task never returns.
         // Without this, DocumentCatalog may keep a stale pending entry and skip future reindex attempts.

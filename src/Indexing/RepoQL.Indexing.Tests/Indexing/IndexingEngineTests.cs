@@ -289,6 +289,64 @@ public class IndexingEngineTests
     }
 
     [Test]
+    [Timeout(15_000)]
+    [DisplayName("FM-001: Timed-out hot-path item cannot commit after late stage completion")]
+    public async Task Given_TimedOutItem_When_NonCooperativeStageLaterReturns_Then_CommitAndAnalysisAreSkipped(CancellationToken token)
+    {
+        var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
+        await catalog.EnsureInitializedAsync(token);
+
+        var classifierEntered = NewTaskCompletionSource<bool>();
+        var releaseClassifier = NewTaskCompletionSource<bool>();
+        var committer = A.Fake<IIndexingCommitter>();
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithCatalog(catalog);
+            builder.WithCommitter(committer);
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1,
+                HotPathItemTimeout = TimeSpan.FromMilliseconds(300)
+            });
+        });
+
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async _ =>
+            {
+                classifierEntered.TrySetResult(true);
+                await releaseClassifier.Task.ConfigureAwait(false);
+                return PipelineResult.Success;
+            });
+
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/timeout-late-resume.md"), IndexItemOptions.Default, token);
+
+        await classifierEntered.Task.WaitAsync(token);
+
+        using var timeoutWait = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeoutWait.CancelAfter(TimeSpan.FromSeconds(5));
+        while (engine.HotPathTimeoutCount == 0)
+        {
+            await Task.Delay(25, timeoutWait.Token);
+        }
+
+        using var idleWait = CancellationTokenSource.CreateLinkedTokenSource(token);
+        idleWait.CancelAfter(TimeSpan.FromSeconds(2));
+        var reachedIdle = await engine.WaitForAsync(IndexingState.AllIdle, idleWait.Token);
+        reachedIdle.Should().BeTrue("timeout cleanup should release hot-path stage state");
+
+        releaseClassifier.TrySetResult(true);
+        await Task.Delay(250, token);
+
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._)).MustNotHaveHappened();
+        A.CallTo(() => context.MultiFileAnalyzer.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._)).MustNotHaveHappened();
+    }
+
+    [Test]
     [DisplayName("Successfully processes item through all pipeline stages")]
     public async Task Given_AllPipelinesSucceed_When_ApplyIndexerPipeline_Then_ReturnsSuccess()
     {
