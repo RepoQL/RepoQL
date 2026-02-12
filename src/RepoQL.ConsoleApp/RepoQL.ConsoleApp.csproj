@@ -211,9 +211,7 @@
 
     <ItemGroup>
         <EmbeddedResource Include="Templates/**/*.liquid" />
-        <EmbeddedResource Include="ILLink.Descriptors.xml">
-            <LogicalName>ILLink.Descriptors.xml</LogicalName>
-        </EmbeddedResource>
+        <TrimmerRootDescriptor Include="ILLink.Descriptors.xml" />
     </ItemGroup>
 
     <ItemGroup>

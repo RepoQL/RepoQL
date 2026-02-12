@@ -4,7 +4,7 @@
   Command classes are discovered via reflection by CommandRegistry.
 -->
 <linker>
-  <assembly fullname="RepoQL.ConsoleApp">
+  <assembly fullname="repoql">
     <type fullname="RepoQL.ConsoleApp.CommandImplementations.*" preserve="all" />
   </assembly>
 </linker>
