@@ -8,26 +8,41 @@
 --   SELECT source_uri, file_count, languages FROM Filesystems WHERE scheme = 'github';
 
 CREATE OR REPLACE VIEW filesystems AS
-WITH stats AS (
+WITH doc_source AS (
+    -- Derive a source key from each document node's URI that identifies its mount.
+    -- For schemes with authority (github, local): scheme://authority/first-path-segment
+    -- For schemes without (file, help): scheme://
     SELECT
-        split_part(n.uri, '://', 1) || '://' AS source,
+        n.id,
+        n.artifact_id,
+        CASE
+            WHEN n.uri LIKE 'github://%' OR n.uri LIKE 'local://%'
+            THEN split_part(n.uri, '://', 1) || '://' ||
+                 split_part(split_part(n.uri, '://', 2), '/', 1) || '/' ||
+                 split_part(split_part(n.uri, '://', 2), '/', 2)
+            ELSE split_part(n.uri, '://', 1) || '://'
+        END AS source
+    FROM node n
+    WHERE n.kind = 'document'
+),
+stats AS (
+    SELECT
+        d.source,
         COUNT(*) AS file_count,
         SUM(a.byte_size) AS total_bytes,
         SUM(a.token_count) AS total_tokens,
         string_agg(DISTINCT media_type_kind(a.media_type), ', ' ORDER BY media_type_kind(a.media_type)) AS languages
-    FROM node n
-    JOIN artifact a ON n.artifact_id = a.id
-    WHERE n.kind = 'document'
+    FROM doc_source d
+    JOIN artifact a ON d.artifact_id = a.id
     GROUP BY 1
 ),
 embed_stats AS (
     SELECT
-        split_part(n.uri, '://', 1) || '://' AS source,
+        d.source,
         COUNT(*) AS indexed_count,
         COUNT(e.node_id) AS embedded_count
-    FROM node n
-    LEFT JOIN document_embedding e ON n.id = e.node_id
-    WHERE n.kind = 'document'
+    FROM doc_source d
+    LEFT JOIN document_embedding e ON d.id = e.node_id
     GROUP BY 1
 )
 SELECT
@@ -49,8 +64,5 @@ SELECT
     COALESCE(m.enable_analysis, FALSE) AS analysis
 FROM stats s
 LEFT JOIN embed_stats es ON s.source = es.source
-LEFT JOIN file_system_mount m
-    ON s.source = m.source_uri
-    OR s.source = m.scheme || '://' || COALESCE(m.authority, '')
-    OR s.source = m.scheme || '://'
+LEFT JOIN file_system_mount m ON rtrim(m.source_uri, '/') = rtrim(s.source, '/')
 ORDER BY s.file_count DESC;
