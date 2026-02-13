@@ -160,12 +160,7 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
         try
         {
             var escapedKeywords = EscapeSqlLiteral(keywords);
-
-            // Build scope filter from document URIs
-            var scopePatterns = documentUris
-                .Select(uri => $"'{EscapeSqlLiteral(uri)}%'")
-                .ToList();
-            var scopeFilter = string.Join(" OR n.uri LIKE ", scopePatterns);
+            var escapedUriGlob = EscapeSqlLiteral(BuildDocumentUriGlob(documentUris));
 
             // Stage 1: Get initial semantic search results with chunk byte ranges
             // Stage 2: Refine with zoom_and_enhance (binary chop with JIT embeddings)
@@ -176,9 +171,12 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
                         s.best_chunk_start,
                         s.best_chunk_end,
                         s.sem_score
-                    FROM _search_semantic('{escapedKeywords}', max_cand := {MaxResults * 2}) s
+                    FROM _search_semantic(
+                        '{escapedKeywords}',
+                        uri_glob := '{escapedUriGlob}',
+                        max_cand := {MaxResults * 2}
+                    ) s
                     JOIN node n ON n.id = s.node_id
-                    WHERE n.uri LIKE {scopeFilter}
                 ),
                 refined AS (
                     SELECT * FROM zoom_and_enhance(
@@ -265,12 +263,7 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
         try
         {
             var escapedKeywords = EscapeSqlLiteral(keywords);
-
-            // Build URI filter - strip fragments from result URIs for matching
-            var uriConditions = documentUris
-                .Select(uri => $"REPLACE(uri, '#' || SPLIT_PART(uri, '#', 2), '') = '{EscapeSqlLiteral(uri)}'")
-                .ToList();
-            var uriFilter = string.Join(" OR ", uriConditions);
+            var escapedUriGlob = EscapeSqlLiteral(BuildDocumentUriGlob(documentUris));
 
             // Use _search_candidates and filter with WHERE clause
             var sql = $"""
@@ -286,9 +279,10 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
                     bm25_score
                 FROM _search_candidates(
                     '{escapedKeywords}',
-                    k := {MaxResults * 4}
+                    k := {MaxResults * 4},
+                    uri_glob := '{escapedUriGlob}'
                 )
-                WHERE scope = 'document' AND ({uriFilter})
+                WHERE scope = 'document'
                 ORDER BY score DESC
                 LIMIT {MaxResults * 2}
                 """;
@@ -476,6 +470,9 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
 
     private static string EscapeSqlLiteral(string value)
         => value.Replace("'", "''", StringComparison.Ordinal);
+
+    private static string BuildDocumentUriGlob(IReadOnlyList<string> documentUris)
+        => string.Join(";", documentUris);
 
     private sealed record FindResult(
         string Uri,

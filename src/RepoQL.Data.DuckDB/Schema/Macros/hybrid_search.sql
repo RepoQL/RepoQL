@@ -75,7 +75,11 @@ search_rows AS (
         split_part(uri, '#', 1) AS doc_uri,
         doc_semn,
         bm25_score
-    FROM _search_candidates((SELECT kw FROM cfg), k := k)
+    FROM _search_candidates(
+        (SELECT kw FROM cfg),
+        k := k,
+        uri_like := (SELECT scope_like FROM cfg)
+    )
 ),
 search_docs AS (
     SELECT

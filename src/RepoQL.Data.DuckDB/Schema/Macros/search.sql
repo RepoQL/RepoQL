@@ -13,7 +13,8 @@ CREATE OR REPLACE MACRO _search_candidates(
     max_cand := 5000,
     bm25_weight := 0.15,
     fuzzy_weight := 0.15,
-    semantic_weight := 0.70
+    semantic_weight := 0.70,
+    uri_like := NULL
 ) AS TABLE (
 WITH
 -- ============================================================================
@@ -29,6 +30,7 @@ base_params AS (
         COALESCE(fuzzy_weight, 0.15) AS fuzzy_w,
         COALESCE(semantic_weight, 0.70) AS base_sem_w,
         NULLIF(TRIM(uri_glob), '') AS uri_glob_filter,
+        NULLIF(TRIM(uri_like), '') AS uri_like_filter,
         NULLIF(TRIM(mime_glob), '') AS mime_glob_filter
 ),
 
@@ -61,20 +63,22 @@ config AS (
 -- Lexical scoring (BM25 + fuzzy)
 lex AS (
     SELECT * FROM _search_lexical(
-        (SELECT raw_query FROM base_params),
-        (SELECT uri_glob_filter FROM base_params),
-        (SELECT mime_glob_filter FROM base_params),
-        (SELECT max_candidates FROM base_params)
+        q := (SELECT raw_query FROM base_params),
+        uri_glob := (SELECT uri_glob_filter FROM base_params),
+        mime_glob := (SELECT mime_glob_filter FROM base_params),
+        max_cand := (SELECT max_candidates FROM base_params),
+        uri_like := (SELECT uri_like_filter FROM base_params)
     )
 ),
 
 -- Semantic scoring (HNSW when available, linear fallback)
 sem AS (
     SELECT * FROM _search_semantic(
-        (SELECT raw_query FROM base_params),
-        (SELECT uri_glob_filter FROM base_params),
-        (SELECT mime_glob_filter FROM base_params),
-        (SELECT max_candidates FROM base_params)
+        q := (SELECT raw_query FROM base_params),
+        uri_glob := (SELECT uri_glob_filter FROM base_params),
+        mime_glob := (SELECT mime_glob_filter FROM base_params),
+        max_cand := (SELECT max_candidates FROM base_params),
+        uri_like := (SELECT uri_like_filter FROM base_params)
     )
 ),
 
@@ -107,6 +111,10 @@ filtered AS (
             bp.uri_glob_filter IS NULL
             OR repoql_glob_match(fs.uri, bp.uri_glob_filter, 'true','file:///') IS TRUE
             OR repoql_glob_match(fs.uri_local, bp.uri_glob_filter, 'true',NULL) IS TRUE
+        )
+      AND (
+            bp.uri_like_filter IS NULL
+            OR fs.uri LIKE bp.uri_like_filter
         )
       AND (
             bp.mime_glob_filter IS NULL

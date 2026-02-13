@@ -6,7 +6,8 @@ CREATE OR REPLACE MACRO _search_semantic(
     q,
     uri_glob := NULL,
     mime_glob := NULL,
-    max_cand := 5000
+    max_cand := 5000,
+    uri_like := NULL
 ) AS TABLE (
 WITH
 -- Normalize parameters
@@ -15,6 +16,7 @@ params AS (
         COALESCE(TRIM(q), '') AS raw_query,
         CASE WHEN COALESCE(TRIM(q), '') = '' THEN TRUE ELSE FALSE END AS keywords_empty,
         NULLIF(TRIM(uri_glob), '') AS uri_filter,
+        NULLIF(TRIM(uri_like), '') AS uri_like_filter,
         NULLIF(TRIM(mime_glob), '') AS mime_filter,
         CAST(COALESCE(max_cand, 5000) AS BIGINT) AS limit_cand
 ),
@@ -37,6 +39,10 @@ filtered AS (
             p.uri_filter IS NULL
             OR repoql_glob_match(fs.uri, p.uri_filter, 'true','file:///') IS TRUE
             OR repoql_glob_match(fs.uri_local, p.uri_filter, 'true',NULL) IS TRUE
+        )
+      AND (
+            p.uri_like_filter IS NULL
+            OR fs.uri LIKE p.uri_like_filter
         )
       AND (
             p.mime_filter IS NULL
@@ -71,6 +77,7 @@ hnsw_structure AS (
         1.0 - array_cosine_distance(v.vec, qv.vec::FLOAT[384]) AS struct_sem,
         'hnsw' AS source
     FROM query_vec qv, _vss_index_384 v
+    JOIN filtered ri ON ri.node_id = v.node_id
     WHERE qv.vec IS NOT NULL
       AND v.embedding_type = 'structure'
       AND (SELECT query_dim FROM vss_ready) = 384

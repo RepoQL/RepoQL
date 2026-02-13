@@ -289,6 +289,23 @@ public class SearchMacroTests : IDisposable
         results.Should().NotContain(r => r.uri.Contains("tests/"),
             "scope should exclude test directory");
     }
+
+    [Test]
+    public void SearchCandidates_WithUriLike_FiltersResults()
+    {
+        var results = _store.Read(
+            @"SELECT uri
+              FROM _search_candidates('parser', k := 50, uri_like := 'file:///src/%')
+              ORDER BY score DESC",
+            r => r.GetString(0));
+
+        results.Should().NotBeEmpty();
+        foreach (var uri in results)
+        {
+            uri.Should().StartWith("file:///src/",
+                "uri_like should constrain candidate generation to scope");
+        }
+    }
 }
 
 public class SearchMacroEmbeddingDimensionTests : IDisposable

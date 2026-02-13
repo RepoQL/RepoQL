@@ -36,6 +36,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             if (hasScope)
             {
                 var escapedScope = EscapeSql(scope!);
+                var escapedScopeLike = EscapeSql(ConvertScopeToSearchLike(scope!));
                 sql = $"""
                     WITH scope_docs AS (
                         SELECT uri FROM glob_files('{escapedScope}')
@@ -49,7 +50,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                         ri.mime as semantic_type,
                         hs.score,
                         ri.doc_id
-                    FROM search('{escapedQuestion}', k := {limit * 3}) hs
+                    FROM search('{escapedQuestion}', scope := '{escapedScopeLike}', k := {limit * 3}) hs
                     JOIN scope_docs sd ON sd.uri = hs.uri
                     LEFT JOIN repo_index ri ON ri.uri = hs.uri AND ri.scope = 'document'
                     ORDER BY hs.score DESC
@@ -235,6 +236,26 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             // If chunk query fails, return empty - proximity boosting will be skipped
             return new Dictionary<string, IReadOnlyList<ChunkScore>>();
         }
+    }
+
+    private static string ConvertScopeToSearchLike(string scope)
+    {
+        if (string.IsNullOrWhiteSpace(scope))
+            return "%";
+
+        // search(scope := ...) only supports a single SQL LIKE expression.
+        // Fall back to wildcard when the glob syntax cannot be represented safely.
+        if (scope.Contains(';', StringComparison.Ordinal) ||
+            scope.Contains('!', StringComparison.Ordinal) ||
+            scope.Contains('#', StringComparison.Ordinal))
+        {
+            return "%";
+        }
+
+        return scope
+            .Replace("**", "%", StringComparison.Ordinal)
+            .Replace("*", "%", StringComparison.Ordinal)
+            .Replace("?", "_", StringComparison.Ordinal);
     }
 
     private static string EscapeSql(string value) => value.Replace("'", "''");

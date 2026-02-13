@@ -80,7 +80,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
             return [];
 
         var escapedQuestion = EscapeSql(question);
-        var uriPatterns = string.Join(" OR ", documentUris.Select(u => $"s.uri LIKE '{EscapeSql(u)}#%'"));
+        var escapedUriGlob = EscapeSql(BuildObjectUriGlob(documentUris));
         var totalLimit = documentUris.Count * objectsPerDocument * 2;
 
         var sql = $"""
@@ -98,9 +98,12 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     s.mime as semantic_type,
                     s.score,
                     split_part(s.uri, '#', 1) as document_uri
-                FROM _search_candidates('{escapedQuestion}', k := {Math.Max(50, totalLimit)}) s
+                FROM _search_candidates(
+                    '{escapedQuestion}',
+                    k := {Math.Max(50, totalLimit)},
+                    uri_glob := '{escapedUriGlob}'
+                ) s
                 WHERE s.scope = 'object'
-                  AND ({uriPatterns})
             ),
             ranked AS (
                 SELECT *,
@@ -230,6 +233,9 @@ internal sealed class ObjectSearchService : IObjectSearchService
 
         return results;
     }
+
+    private static string BuildObjectUriGlob(IEnumerable<string> documentUris)
+        => string.Join(";", documentUris.Select(uri => $"{uri}#*"));
 
     private static string EscapeSql(string value) => value.Replace("'", "''");
 }

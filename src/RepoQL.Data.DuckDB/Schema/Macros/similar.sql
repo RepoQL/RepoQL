@@ -140,7 +140,7 @@ seed_chunks AS (
 ),
 
 scope_filter AS (
-    SELECT gf.uri
+    SELECT DISTINCT gf.uri
     FROM params p
     CROSS JOIN glob_files(p.scope_glob) gf
     WHERE p.scope_glob IS NOT NULL
@@ -154,8 +154,11 @@ chunk_pairs AS (
     FROM document_embedding de
     CROSS JOIN seed_chunks sc
     CROSS JOIN seed_parts sp
+    CROSS JOIN params p
+    LEFT JOIN scope_filter sf ON sf.uri = de.uri
     WHERE de.uri <> sp.base
       AND de.embedding_type = 'full'
+      AND (p.scope_glob IS NULL OR sf.uri IS NOT NULL)
 ),
 
 best_per_doc AS (

@@ -30,6 +30,22 @@ params AS (
         NULLIF(TRIM(COALESCE(kind_filter, '')), '') AS kind_pat
 ),
 
+pushdown_params AS (
+    SELECT
+        p.*,
+        CASE
+            -- Preserve existing uri-list semantics (glob_files gives uri_list precedence).
+            WHEN p.uri_list IS NOT NULL THEN NULL
+            -- Keep complex glob behavior in the existing glob_files + list filter path.
+            WHEN p.scope_glob IS NULL THEN NULL
+            WHEN position(';' IN p.scope_glob) > 0 THEN NULL
+            WHEN position('#' IN p.scope_glob) > 0 THEN NULL
+            WHEN left(p.scope_glob, 1) = '!' THEN NULL
+            ELSE p.scope_glob
+        END AS scope_pushdown_glob
+    FROM params p
+),
+
 -- Get URIs from glob pattern or uri list
 scope_uris AS (
     SELECT list(uri) AS uris
@@ -57,7 +73,8 @@ candidates AS (
     FROM _search_candidates(
         q,
         mode := 'symbol',
-        k := k * 2  -- Fetch extra since we filter to objects
+        k := k * 2,  -- Fetch extra since we filter to objects
+        uri_glob := (SELECT scope_pushdown_glob FROM pushdown_params)
     ) sc
     WHERE sc.scope = 'object'
 ),

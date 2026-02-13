@@ -5,7 +5,8 @@ CREATE OR REPLACE MACRO _search_lexical(
     q,
     uri_glob := NULL,
     mime_glob := NULL,
-    max_cand := 5000
+    max_cand := 5000,
+    uri_like := NULL
 ) AS TABLE (
 WITH
 -- Normalize parameters
@@ -15,6 +16,7 @@ params AS (
         LOWER(COALESCE(TRIM(q), '')) AS keywords_lc,
         CASE WHEN COALESCE(TRIM(q), '') = '' THEN TRUE ELSE FALSE END AS keywords_empty,
         NULLIF(TRIM(uri_glob), '') AS uri_filter,
+        NULLIF(TRIM(uri_like), '') AS uri_like_filter,
         NULLIF(TRIM(mime_glob), '') AS mime_filter,
         CAST(COALESCE(max_cand, 5000) AS BIGINT) AS limit_cand
 ),
@@ -37,6 +39,10 @@ filtered AS (
             p.uri_filter IS NULL
             OR repoql_glob_match(fs.uri, p.uri_filter, 'true','file:///') IS TRUE
             OR repoql_glob_match(fs.uri_local, p.uri_filter, 'true',NULL) IS TRUE
+        )
+      AND (
+            p.uri_like_filter IS NULL
+            OR fs.uri LIKE p.uri_like_filter
         )
       AND (
             p.mime_filter IS NULL

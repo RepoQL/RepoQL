@@ -259,6 +259,7 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
         string sql;
         if (hasScope)
         {
+            var scopeLike = ConvertGlobToLike(scope!);
             sql = $"""
                 WITH scope_docs AS (
                     SELECT uri FROM glob_files({EscapeSqlString(scope!)})
@@ -276,6 +277,7 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
                     s.score
                 FROM search(
                     {EscapeSqlString(signals.RawQuery)},
+                    scope := {EscapeSqlString(scopeLike)},
                     boost_pattern := {(!string.IsNullOrWhiteSpace(boostPattern) ? EscapeSqlString(boostPattern) : "NULL")},
                     negative_pattern := {(!string.IsNullOrWhiteSpace(penalizePattern) ? EscapeSqlString(penalizePattern) : "NULL")},
                     k := {config.MaxDocumentsToExpand * 3}
@@ -1134,11 +1136,23 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
     /// </summary>
     private static string ConvertGlobToLike(string glob)
     {
+        if (string.IsNullOrWhiteSpace(glob))
+            return "%";
+
+        // search(scope := ...) only supports a single SQL LIKE expression.
+        // Fall back to wildcard when the glob syntax cannot be represented safely.
+        if (glob.Contains(';', StringComparison.Ordinal) ||
+            glob.Contains('!', StringComparison.Ordinal) ||
+            glob.Contains('#', StringComparison.Ordinal))
+        {
+            return "%";
+        }
+
         // Simple conversion: ** -> %, * -> %, ? -> _
         return glob
-            .Replace("**", "%")
-            .Replace("*", "%")
-            .Replace("?", "_");
+            .Replace("**", "%", StringComparison.Ordinal)
+            .Replace("*", "%", StringComparison.Ordinal)
+            .Replace("?", "_", StringComparison.Ordinal);
     }
 
     private static string EscapeSql(string value) => value.Replace("'", "''");
