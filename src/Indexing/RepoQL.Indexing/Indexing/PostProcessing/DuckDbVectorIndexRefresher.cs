@@ -30,22 +30,23 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
         _refresher = new EmbeddingRefresher(dataStore, embeddingMode, logger as ILogger<EmbeddingRefresher>);
     }
 
-    public async Task RefreshAsync(CancellationToken cancellationToken)
+    public async Task<bool> RefreshAsync(CancellationToken cancellationToken)
     {
         if (!CanRunRefresh())
-            return;
+            return false;
 
         _logger.LogInformation("Embedding refresh starting (mode=full, model={Model}, dim={Dim})...", _embeddingProvider.Model, _embeddingProvider.Dimension);
         var sw = Stopwatch.StartNew();
 
-        await _refresher.RefreshAsync(_embeddingProvider, cancellationToken).ConfigureAwait(false);
-        _refresher.RemoveDangling();
+        var refreshed = await _refresher.RefreshAsync(_embeddingProvider, cancellationToken).ConfigureAwait(false);
+        var danglingRemoved = _refresher.RemoveDangling();
 
         sw.Stop();
         _logger.LogInformation("Embedding refresh completed in {ElapsedMs}ms.", sw.ElapsedMilliseconds);
+        return refreshed || danglingRemoved > 0;
     }
 
-    public async Task RefreshAsync(IReadOnlyList<Guid> documentIds, CancellationToken cancellationToken)
+    public async Task<bool> RefreshAsync(IReadOnlyList<Guid> documentIds, CancellationToken cancellationToken)
     {
         if (documentIds is null)
             throw new ArgumentNullException(nameof(documentIds));
@@ -53,21 +54,22 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
         if (documentIds.Count == 0)
         {
             _logger.LogDebug("Targeted embedding refresh skipped - no document ids");
-            return;
+            return false;
         }
 
         if (!CanRunRefresh())
-            return;
+            return false;
 
         _logger.LogInformation("Embedding refresh starting (mode=targeted, docs={DocCount}, model={Model}, dim={Dim})...",
             documentIds.Count, _embeddingProvider.Model, _embeddingProvider.Dimension);
         var sw = Stopwatch.StartNew();
 
-        await _refresher.RefreshAsync(_embeddingProvider, documentIds, cancellationToken).ConfigureAwait(false);
-        _refresher.RemoveDangling();
+        var refreshed = await _refresher.RefreshAsync(_embeddingProvider, documentIds, cancellationToken).ConfigureAwait(false);
+        var danglingRemoved = _refresher.RemoveDangling();
 
         sw.Stop();
         _logger.LogInformation("Targeted embedding refresh completed in {ElapsedMs}ms.", sw.ElapsedMilliseconds);
+        return refreshed || danglingRemoved > 0;
     }
 
     private bool CanRunRefresh()

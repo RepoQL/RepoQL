@@ -152,6 +152,33 @@ internal class VectorIndexCoordinatorTests
         vss.RefreshInvocations.Should().Be(2);
     }
 
+    [Test]
+    [DisplayName("Targeted registry sync batches doc ids with bounded query size")]
+    public void Given_LargeTargetedDocSet_When_Batching_Then_BatchesAreBoundedAndDeduplicated()
+    {
+        var uniqueIds = Enumerable.Range(0, VectorIndexCoordinator.RegistrySyncBatchSize * 2 + 5)
+            .Select(_ => Guid.NewGuid())
+            .ToArray();
+        var inputIds = new List<Guid>(uniqueIds)
+        {
+            uniqueIds[0],
+            uniqueIds[3],
+            uniqueIds[^1]
+        };
+
+        var batches = VectorIndexCoordinator.BatchDocumentIds(inputIds);
+        var flattened = batches.SelectMany(batch => batch).ToArray();
+
+        batches.Should().HaveCount(3);
+        batches.All(batch => batch.Length <= VectorIndexCoordinator.RegistrySyncBatchSize).Should().BeTrue();
+        flattened.Should().HaveCount(uniqueIds.Length);
+        flattened.Distinct().Should().HaveCount(uniqueIds.Length);
+        foreach (var id in uniqueIds)
+        {
+            flattened.Should().Contain(id);
+        }
+    }
+
     private static IndexItem BuildItem(string uri, bool includeDocNode, bool includeArtifact)
     {
         var item = IndexingTestItemBuilder.ForMarkdown("sample.md").WithUri(uri).WithContent("text").Build();

@@ -24,6 +24,7 @@ namespace RepoQL.Indexing.Indexing.PostProcessing;
 public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposable
 {
     private const int StructureEmbeddingBatchSize = 100;
+    internal const int RegistrySyncBatchSize = 256;
     private static readonly TimeSpan VssRefreshDebounce = TimeSpan.FromMilliseconds(250);
     private static readonly int RefreshConcurrency = GetRefreshConcurrency();
     private readonly IVectorIndexRefresher _refresher;
@@ -110,10 +111,13 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             var forceFullRefresh = _needsRefresh;
             var targetDocumentIds = forceFullRefresh ? [] : CollectDirtyDocumentIds(items);
 
-            await RefreshEmbeddingsAsync(targetDocumentIds, forceFullRefresh, cancellationToken).ConfigureAwait(false);
+            var embeddingsChanged = await RefreshEmbeddingsAsync(targetDocumentIds, forceFullRefresh, cancellationToken).ConfigureAwait(false);
             Interlocked.Exchange(ref _lastRefreshedEpoch, epoch);
             _needsRefresh = false;
-            RequestVssRefresh();
+            if (embeddingsChanged)
+            {
+                RequestVssRefresh();
+            }
         }
         finally
         {
@@ -121,7 +125,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         }
     }
 
-    private async Task RefreshEmbeddingsAsync(
+    private async Task<bool> RefreshEmbeddingsAsync(
         IReadOnlyList<Guid> targetDocumentIds,
         bool forceFullRefresh,
         CancellationToken cancellationToken)
@@ -131,21 +135,27 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             runFullRefresh ? "full" : "targeted",
             targetDocumentIds.Count);
 
+        var embeddingsChanged = false;
         try
         {
             if (runFullRefresh)
             {
-                await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
+                embeddingsChanged = await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
             }
             else
             {
-                await _refresher.RefreshAsync(targetDocumentIds, cancellationToken).ConfigureAwait(false);
+                embeddingsChanged = await _refresher.RefreshAsync(targetDocumentIds, cancellationToken).ConfigureAwait(false);
             }
 
             _logger.LogDebug("Vector index refresh completed");
 
             // Sync UriRegistry with actual embedding counts from the database
-            SyncRegistryEmbeddingStatus(runFullRefresh ? null : targetDocumentIds);
+            if (embeddingsChanged)
+            {
+                SyncRegistryEmbeddingStatus(runFullRefresh ? null : targetDocumentIds);
+            }
+
+            return embeddingsChanged;
         }
         catch (Exception ex)
         {
@@ -165,25 +175,31 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
         try
         {
-            IReadOnlyList<(string? ContainerUri, int ChunkCount)> results;
+            var chunkCountsByContainer = new Dictionary<string, int>(StringComparer.Ordinal);
+
             if (documentIds is { Count: > 0 })
             {
-                var idList = ToUuidListSql(documentIds);
-                var targetedQuery = $"""
-                    SELECT
-                        repository_uri_container(uri) as container_uri,
-                        COUNT(*) as chunk_count
-                    FROM document_embedding
-                    WHERE doc_id IN ({idList})
-                    GROUP BY repository_uri_container(uri)
-                    """;
-
-                results = _db.Read(targetedQuery, record =>
+                foreach (var idBatch in BatchDocumentIds(documentIds))
                 {
-                    var containerUri = record["container_uri"]?.ToString();
-                    var chunkCount = Convert.ToInt32(record["chunk_count"]);
-                    return (containerUri, chunkCount);
-                });
+                    var idList = ToUuidListSql(idBatch);
+                    var targetedQuery = $"""
+                        SELECT
+                            repository_uri_container(uri) as container_uri,
+                            COUNT(*) as chunk_count
+                        FROM document_embedding
+                        WHERE doc_id IN ({idList})
+                        GROUP BY repository_uri_container(uri)
+                        """;
+
+                    var batchResults = _db.Read(targetedQuery, record =>
+                    {
+                        var containerUri = record["container_uri"]?.ToString();
+                        var chunkCount = Convert.ToInt32(record["chunk_count"]);
+                        return (containerUri, chunkCount);
+                    });
+
+                    MergeChunkCounts(chunkCountsByContainer, batchResults);
+                }
             }
             else
             {
@@ -195,15 +211,17 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
                     GROUP BY repository_uri_container(uri)
                     """;
 
-                results = _db.Read(fullQuery, record =>
+                var results = _db.Read(fullQuery, record =>
                 {
                     var containerUri = record["container_uri"]?.ToString();
                     var chunkCount = Convert.ToInt32(record["chunk_count"]);
                     return (containerUri, chunkCount);
                 });
+
+                MergeChunkCounts(chunkCountsByContainer, results);
             }
 
-            foreach (var (containerUriStr, chunkCount) in results)
+            foreach (var (containerUriStr, chunkCount) in chunkCountsByContainer)
             {
                 if (string.IsNullOrEmpty(containerUriStr))
                     continue;
@@ -223,6 +241,49 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         {
             _logger.LogWarning(ex, "Failed to sync UriRegistry embedding status from database");
         }
+    }
+
+    private static void MergeChunkCounts(
+        IDictionary<string, int> destination,
+        IReadOnlyList<(string? ContainerUri, int ChunkCount)> source)
+    {
+        foreach (var (containerUri, chunkCount) in source)
+        {
+            if (string.IsNullOrWhiteSpace(containerUri))
+                continue;
+
+            destination.TryGetValue(containerUri, out var existingCount);
+            destination[containerUri] = existingCount + chunkCount;
+        }
+    }
+
+    internal static IReadOnlyList<Guid[]> BatchDocumentIds(IReadOnlyList<Guid> documentIds)
+    {
+        if (documentIds.Count == 0)
+            return [];
+
+        var batches = new List<Guid[]>();
+        var seen = new HashSet<Guid>();
+        var currentBatch = new List<Guid>(Math.Min(RegistrySyncBatchSize, documentIds.Count));
+
+        for (var i = 0; i < documentIds.Count; i++)
+        {
+            var id = documentIds[i];
+            if (!seen.Add(id))
+                continue;
+
+            currentBatch.Add(id);
+            if (currentBatch.Count < RegistrySyncBatchSize)
+                continue;
+
+            batches.Add([.. currentBatch]);
+            currentBatch.Clear();
+        }
+
+        if (currentBatch.Count > 0)
+            batches.Add([.. currentBatch]);
+
+        return batches;
     }
 
     private static IReadOnlyList<Guid> CollectDirtyDocumentIds(IReadOnlyList<IndexItem> items)

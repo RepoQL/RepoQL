@@ -1163,6 +1163,9 @@ public partial class IndexingEngine : IAsyncDisposable
         var startedProcessing = false;
         var consolidatedStructureItems = new List<IndexItem>();
         var consolidatedAnalysisItems = new List<IndexItem>();
+        IndexItem[] structureEmbedItems = [];
+        IndexItem[] pendingItems = [];
+        var analysisItemsEnqueued = 0;
 
         try
         {
@@ -1201,8 +1204,8 @@ public partial class IndexingEngine : IAsyncDisposable
                 return;
             }
 
-            var structureEmbedItems = consolidatedStructureItems.ToArray();
-            var pendingItems = consolidatedAnalysisItems.ToArray();
+            structureEmbedItems = consolidatedStructureItems.ToArray();
+            pendingItems = consolidatedAnalysisItems.ToArray();
             var maxEpoch = epochs.Max();
 
             // Create span for the entire idle phase processing
@@ -1316,6 +1319,7 @@ public partial class IndexingEngine : IAsyncDisposable
                 foreach (var item in pendingItems)
                 {
                     await AnalysisQueue.EnqueueAsync(item, Shutdown.Token).ConfigureAwait(false);
+                    analysisItemsEnqueued++;
                 }
                 analysisEnqueueTimer.Stop();
                 Metrics?.IdlePhaseDuration.Record(analysisEnqueueTimer.Elapsed.TotalMilliseconds, new TagList
@@ -1325,11 +1329,30 @@ public partial class IndexingEngine : IAsyncDisposable
 
             }
         }
+        catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             failure = ex;
             Volatile.Write(ref _lastError, $"Epochs {epochs.Min()}-{epochs.Max()}: {ex.Message}");
             Logger.LogError(ex, "Failed to dispatch analysis work for epochs {MinEpoch}-{MaxEpoch}", epochs.Min(), epochs.Max());
+
+            if (startedProcessing)
+            {
+                var (requeuedStructureCount, requeuedAnalysisCount, requeuedEpochCount) =
+                    RequeueIdleBacklogAfterFailure(structureEmbedItems, pendingItems, analysisItemsEnqueued);
+
+                if (requeuedEpochCount > 0)
+                {
+                    Logger.LogWarning(
+                        "Requeued idle backlog after failure: {StructureCount} structure items, {AnalysisCount} analysis items across {EpochCount} epochs.",
+                        requeuedStructureCount,
+                        requeuedAnalysisCount,
+                        requeuedEpochCount);
+                }
+            }
         }
         finally
         {
@@ -1363,6 +1386,54 @@ public partial class IndexingEngine : IAsyncDisposable
                 _epochTracker.ClearEpochPeak(epoch);
             }
         }
+    }
+
+    private (int StructureCount, int AnalysisCount, int EpochCount) RequeueIdleBacklogAfterFailure(
+        IReadOnlyList<IndexItem> structureItems,
+        IReadOnlyList<IndexItem> analysisItems,
+        int analysisItemsAlreadyEnqueued)
+    {
+        var analysisStartIndex = Math.Clamp(analysisItemsAlreadyEnqueued, 0, analysisItems.Count);
+        var requeuedEpochs = new HashSet<long>();
+        var requeuedStructureCount = 0;
+        var requeuedAnalysisCount = 0;
+
+        lock (_analysisLock)
+        {
+            foreach (var item in structureItems)
+            {
+                if (!_pendingStructureEmbeddings.TryGetValue(item.Epoch, out var embedQueue))
+                {
+                    embedQueue = new Queue<IndexItem>();
+                    _pendingStructureEmbeddings[item.Epoch] = embedQueue;
+                }
+
+                embedQueue.Enqueue(item);
+                requeuedEpochs.Add(item.Epoch);
+                requeuedStructureCount++;
+            }
+
+            for (var i = analysisStartIndex; i < analysisItems.Count; i++)
+            {
+                var item = analysisItems[i];
+                if (!_pendingAnalysis.TryGetValue(item.Epoch, out var analysisQueue))
+                {
+                    analysisQueue = new Queue<IndexItem>();
+                    _pendingAnalysis[item.Epoch] = analysisQueue;
+                }
+
+                analysisQueue.Enqueue(item);
+                requeuedEpochs.Add(item.Epoch);
+                requeuedAnalysisCount++;
+            }
+        }
+
+        foreach (var epoch in requeuedEpochs)
+        {
+            EnqueueIdleEpoch(epoch);
+        }
+
+        return (requeuedStructureCount, requeuedAnalysisCount, requeuedEpochs.Count);
     }
 
     private Task DeleteStaleDocumentsAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken)

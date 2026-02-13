@@ -859,6 +859,40 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [DisplayName("Idle processing requeues epoch when prune fails transiently")]
+    public async Task Given_PruneFailsOnce_When_IdleProcessingRuns_Then_EpochIsRetriedAndAnalysisRuns(CancellationToken token)
+    {
+        var pruneAttempts = 0;
+        var pruner = A.Fake<IArtifactPruner>();
+        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<IndexItem>>._, A<CancellationToken>._))
+            .ReturnsLazily(_ =>
+            {
+                var attempt = Interlocked.Increment(ref pruneAttempts);
+                if (attempt == 1)
+                {
+                    throw new InvalidOperationException("transient prune failure");
+                }
+
+                return Task.FromResult(PruningResult.None);
+            });
+
+        var analysisSignal = NewTaskCompletionSource<bool>();
+        await using var engine = CreateEngineForAnalysisTests(
+            parsingGate: null,
+            multiFileSignal: analysisSignal,
+            pruner: pruner,
+            vectorCoordinator: NullVectorIndexCoordinator.Instance);
+
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/prune-retry.md"), IndexItemOptions.Default, token);
+
+        await WaitForAnalysisToCompleteAsync(engine, analysisSignal, token);
+
+        pruneAttempts.Should().BeGreaterThanOrEqualTo(2, "idle processing should retry the epoch after a transient prune failure");
+        engine.GetPendingIdleProcessingCount().Should().Be(0, "failed epoch backlog should be replayed and drained");
+    }
+
+    [Test]
+    [Timeout(15_000)]
     [DisplayName("Vector index updates run before enqueuing analysis work")]
     public async Task Given_VectorCoordinator_When_PostProcessing_Then_VectorRunsBeforeAnalysis(CancellationToken token)
     {

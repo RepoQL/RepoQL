@@ -8,17 +8,17 @@ internal sealed class FakeRefresher : IVectorIndexRefresher
     public int TargetedInvocations { get; private set; }
     public IReadOnlyList<Guid> LastDocumentIds { get; private set; } = [];
 
-    public Task RefreshAsync(CancellationToken cancellationToken)
+    public Task<bool> RefreshAsync(CancellationToken cancellationToken)
     {
         Invocations++;
         LastDocumentIds = [];
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 
-    public Task RefreshAsync(IReadOnlyList<Guid> documentIds, CancellationToken cancellationToken)
+    public Task<bool> RefreshAsync(IReadOnlyList<Guid> documentIds, CancellationToken cancellationToken)
     {
         TargetedInvocations++;
         LastDocumentIds = [.. documentIds];
-        return Task.CompletedTask;
+        return Task.FromResult(true);
     }
 }
