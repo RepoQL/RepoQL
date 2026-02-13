@@ -57,6 +57,7 @@ cfg AS (
 -- Outline-only corpus (cheap to scan); body is joined only for final candidates
 docs_outline AS (
     SELECT
+        n.id AS doc_id,
         n.uri AS doc_uri,
         n.artifact_id AS artifact_id,
         a.headline,
@@ -72,28 +73,31 @@ docs_outline AS (
 -- Search results aggregated to doc level (fixes "bm25 under-count in tier1" issue)
 search_rows AS (
     SELECT
-        split_part(uri, '#', 1) AS doc_uri,
-        doc_semn,
-        bm25_score
+        sc.doc_id,
+        sc.doc_semn,
+        sc.bm25_score
     FROM _search_candidates(
         (SELECT kw FROM cfg),
         k := k,
         uri_like := (SELECT scope_like FROM cfg)
-    )
+    ) sc
+    WHERE sc.doc_id IS NOT NULL
 ),
 search_docs AS (
     SELECT
-        sr.doc_uri,
+        sr.doc_id,
+        d.doc_uri,
         MAX(sr.doc_semn)    AS sem_score,
         MAX(sr.bm25_score)  AS bm25_score
     FROM search_rows sr
-    JOIN docs_outline d ON d.doc_uri = sr.doc_uri
-    GROUP BY 1
+    JOIN docs_outline d ON d.doc_id = sr.doc_id
+    GROUP BY 1, 2
 ),
 
 -- Tiers: semantic, bm25, and a "search tail" tier so docs returned by search() aren't dropped
 tiered AS (
     SELECT
+        doc_id,
         doc_uri,
         sem_score,
         bm25_score,
@@ -108,6 +112,7 @@ tiered AS (
 -- Cheap rescue: regex on headline+structure only (no full-body scan)
 outline_rescue AS (
     SELECT
+        d.doc_id,
         d.doc_uri,
         CAST(NULL AS DOUBLE) AS sem_score,
         CAST(NULL AS DOUBLE) AS bm25_score,
@@ -116,12 +121,13 @@ outline_rescue AS (
     CROSS JOIN cfg c
     WHERE length(c.boost_re) > 0
       AND regexp_matches(d.outline_text, '(?i)' || c.boost_re)
-      AND NOT EXISTS (SELECT 1 FROM search_docs sd WHERE sd.doc_uri = d.doc_uri)
+      AND NOT EXISTS (SELECT 1 FROM search_docs sd WHERE sd.doc_id = d.doc_id)
 ),
 
 -- Optional expensive rescue: scan bodies for docs missed by search() + outline rescue
 body_rescue AS (
     SELECT
+        d.doc_id,
         d.doc_uri,
         CAST(NULL AS DOUBLE) AS sem_score,
         CAST(NULL AS DOUBLE) AS bm25_score,
@@ -132,16 +138,16 @@ body_rescue AS (
     WHERE enable_body_rescue
       AND length(c.boost_re) > 0
       AND regexp_matches(coalesce(a.text_content,''), '(?i)' || c.boost_re)
-      AND NOT EXISTS (SELECT 1 FROM search_docs sd WHERE sd.doc_uri = d.doc_uri)
-      AND NOT EXISTS (SELECT 1 FROM outline_rescue orc WHERE orc.doc_uri = d.doc_uri)
+      AND NOT EXISTS (SELECT 1 FROM search_docs sd WHERE sd.doc_id = d.doc_id)
+      AND NOT EXISTS (SELECT 1 FROM outline_rescue orc WHERE orc.doc_id = d.doc_id)
 ),
 
 combined AS (
-    SELECT doc_uri, sem_score, bm25_score, src FROM tiered
+    SELECT doc_id, doc_uri, sem_score, bm25_score, src FROM tiered
     UNION ALL
-    SELECT doc_uri, sem_score, bm25_score, src FROM outline_rescue
+    SELECT doc_id, doc_uri, sem_score, bm25_score, src FROM outline_rescue
     UNION ALL
-    SELECT doc_uri, sem_score, bm25_score, src FROM body_rescue
+    SELECT doc_id, doc_uri, sem_score, bm25_score, src FROM body_rescue
 ),
 
 -- Compute features once (avoid recomputing regex work in the score expression)
@@ -165,7 +171,7 @@ features AS (
             THEN true ELSE false
         END AS deranked
     FROM combined c
-    JOIN docs_outline d ON d.doc_uri = c.doc_uri
+    JOIN docs_outline d ON d.doc_id = c.doc_id
     JOIN artifact a ON a.id = d.artifact_id
     CROSS JOIN cfg
 )
@@ -245,13 +251,27 @@ cfg AS (
     FROM params
 ),
 
+input_doc_uris AS (
+    SELECT DISTINCT split_part(i.uri, '#', 1) AS document_uri
+    FROM UNNEST(CAST(doc_uris AS VARCHAR[])) AS i(uri)
+),
+
+target_docs AS (
+    SELECT DISTINCT
+        d.id AS doc_id,
+        d.uri AS document_uri
+    FROM input_doc_uris i
+    JOIN node d ON d.kind = 'document'
+        AND d.uri = i.document_uri
+),
+
 -- Get objects from documents and apply per-doc limit via QUALIFY
 candidates AS (
     SELECT
         ri.doc_id,
         ri.node_id,
         ri.uri,
-        split_part(ri.uri, '#', 1) AS document_uri,
+        td.document_uri,
         ri.kind,
         ri.symbol,
         ri.headline,
@@ -277,9 +297,9 @@ candidates AS (
             ELSE 0
         END AS regex_mentions
     FROM repo_index ri
+    JOIN target_docs td ON td.doc_id = ri.doc_id
     CROSS JOIN cfg
     WHERE ri.scope = 'object'
-      AND split_part(ri.uri, '#', 1) = ANY(doc_uris)
     QUALIFY ROW_NUMBER() OVER (PARTITION BY ri.doc_id ORDER BY ri.line_start NULLS LAST, ri.node_id) <= max_per_doc
 )
 

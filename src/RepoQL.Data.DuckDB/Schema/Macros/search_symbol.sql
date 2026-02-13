@@ -46,20 +46,32 @@ pushdown_params AS (
     FROM params p
 ),
 
--- Get URIs from glob pattern or uri list
-scope_uris AS (
-    SELECT list(uri) AS uris
+-- Resolve scope/URI inputs to document IDs once for typed filtering.
+-- Preserve existing precedence: explicit uri_list overrides scope_glob.
+scope_inputs AS (
+    SELECT uri
+    FROM UNNEST(CAST((SELECT uri_list FROM params) AS VARCHAR[])) AS u(uri)
+    WHERE (SELECT uri_list FROM params) IS NOT NULL
+    UNION ALL
+    SELECT uri
     FROM glob_files(
-        pattern_spec := (SELECT scope_glob FROM params),
-        uris := (SELECT uri_list FROM params)
+        pattern_spec := (SELECT scope_glob FROM params)
     )
-    WHERE (SELECT scope_glob FROM params) IS NOT NULL
-       OR (SELECT uri_list FROM params) IS NOT NULL
+    WHERE (SELECT uri_list FROM params) IS NULL
+      AND (SELECT scope_glob FROM params) IS NOT NULL
+),
+
+scope_doc_ids AS (
+    SELECT list(DISTINCT d.id) AS doc_ids
+    FROM scope_inputs si
+    JOIN node d ON d.kind = 'document'
+        AND d.uri = split_part(si.uri, '#', 1)
 ),
 
 -- Get candidates from internal search with symbol mode optimization
 candidates AS (
     SELECT
+        sc.doc_id,
         sc.uri,
         sc.scope AS result_scope,
         sc.symbol,
@@ -68,8 +80,7 @@ candidates AS (
         sc.line_start,
         sc.line_end,
         sc.score,
-        sc.confidence,
-        split_part(sc.uri, '#', 1) AS document_uri
+        sc.confidence
     FROM _search_candidates(
         q,
         mode := 'symbol',
@@ -84,9 +95,9 @@ filtered AS (
     SELECT c.*
     FROM candidates c
     CROSS JOIN params p
-    LEFT JOIN scope_uris su ON TRUE
-    WHERE p.scope_glob IS NULL
-       OR list_contains(CAST(su.uris AS VARCHAR[]), c.document_uri)
+    LEFT JOIN scope_doc_ids sd ON TRUE
+    WHERE (p.scope_glob IS NULL AND p.uri_list IS NULL)
+       OR list_contains(CAST(sd.doc_ids AS UUID[]), c.doc_id)
 ),
 
 -- Apply kind filter if provided

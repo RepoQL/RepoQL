@@ -24,6 +24,15 @@ internal sealed class ObjectSearchService : IObjectSearchService
         if (documentUris.Count == 0)
             return Task.FromResult<IReadOnlyList<ObjectMatch>>([]);
 
+        var normalizedDocumentUris = documentUris
+            .Select(NormalizeDocumentUri)
+            .Where(static uri => !string.IsNullOrWhiteSpace(uri))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (normalizedDocumentUris.Count == 0)
+            return Task.FromResult<IReadOnlyList<ObjectMatch>>([]);
+
         var hasQuestion = !string.IsNullOrWhiteSpace(question);
         var results = new List<ObjectMatch>();
         var objectCountByDoc = new Dictionary<string, int>();
@@ -31,7 +40,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
         // For strong matches with a question, do embedding search
         if (hasQuestion)
         {
-            var allObjects = SearchObjectsInDocuments(documentUris, question!, objectsPerDocument);
+            var allObjects = SearchObjectsInDocuments(normalizedDocumentUris, question!, objectsPerDocument);
 
             foreach (var obj in allObjects)
             {
@@ -42,7 +51,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
         }
 
         // For documents where we need more objects (embedding found none or fewer than requested)
-        var docsNeedingMore = documentUris
+        var docsNeedingMore = normalizedDocumentUris
             .Where(u => !objectCountByDoc.TryGetValue(u, out var count) || count < objectsPerDocument)
             .ToList();
 
@@ -161,16 +170,27 @@ internal sealed class ObjectSearchService : IObjectSearchService
         if (documentUris.Count == 0)
             return [];
 
-        var uriList = string.Join(",", documentUris.Select(u => $"'{EscapeSql(u)}'"));
+        var uriValues = string.Join(",\n                    ", documentUris.Select(u => $"('{EscapeSql(u)}')"));
 
         var sql = $"""
-            WITH objects AS (
+            WITH input_docs(uri) AS (
+                SELECT uri
+                FROM (VALUES
+                    {uriValues}
+                ) AS input(uri)
+            ),
+            target_docs AS (
+                SELECT DISTINCT
+                    d.id AS doc_id,
+                    d.uri AS document_uri
+                FROM input_docs i
+                JOIN node d ON d.kind = 'document'
+                    AND d.uri = split_part(i.uri, '#', 1)
+            ),
+            objects AS (
                 SELECT
                     ri.uri,
-                    CASE
-                        WHEN position('#' IN ri.uri) > 0 THEN substring(ri.uri, 1, position('#' IN ri.uri) - 1)
-                        ELSE ri.uri
-                    END as document_uri,
+                    td.document_uri,
                     ri.kind,
                     ri.symbol,
                     ri.headline,
@@ -182,18 +202,12 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     ri.mime as semantic_type,
                     0.5 as score,
                     ROW_NUMBER() OVER (
-                        PARTITION BY CASE
-                            WHEN position('#' IN ri.uri) > 0 THEN substring(ri.uri, 1, position('#' IN ri.uri) - 1)
-                            ELSE ri.uri
-                        END
+                        PARTITION BY td.document_uri
                         ORDER BY ri.line_start
                     ) as rn
                 FROM repo_index ri
+                JOIN target_docs td ON td.doc_id = ri.doc_id
                 WHERE ri.scope = 'object'
-                  AND (CASE
-                      WHEN position('#' IN ri.uri) > 0 THEN substring(ri.uri, 1, position('#' IN ri.uri) - 1)
-                      ELSE ri.uri
-                  END) IN ({uriList})
             )
             SELECT
                 uri, document_uri, kind, symbol, headline, structure, snippet,
@@ -236,6 +250,15 @@ internal sealed class ObjectSearchService : IObjectSearchService
 
     private static string BuildObjectUriGlob(IEnumerable<string> documentUris)
         => string.Join(";", documentUris.Select(uri => $"{uri}#*"));
+
+    private static string NormalizeDocumentUri(string uri)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+            return string.Empty;
+
+        var hashIndex = uri.IndexOf('#', StringComparison.Ordinal);
+        return hashIndex >= 0 ? uri[..hashIndex] : uri;
+    }
 
     private static string EscapeSql(string value) => value.Replace("'", "''");
 }

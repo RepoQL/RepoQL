@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -7,6 +8,7 @@ using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
+using RepoQL.Explore.Search;
 using ArtifactModel = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Tests;
@@ -30,6 +32,26 @@ internal sealed class DocumentSearchServiceTests
         result.Documents.Should().HaveCount(2);
         result.Documents.Should().OnlyContain(d =>
             d.Uri.StartsWith("file:///src/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Test]
+    public async Task SearchAsync_WithLineFragmentScope_ReturnsContainingDocument()
+    {
+        using var context = new DocumentSearchTestContext();
+        var now = DateTimeOffset.UtcNow;
+
+        context.SeedDocument("file:///src/RepoQL.ConsoleApp/Program.cs", "text/plain;kind=code.csharp", now.AddMinutes(-2), "Program");
+        context.SeedDocument("file:///src/RepoQL.ConsoleApp/Other.cs", "text/plain;kind=code.csharp", now.AddMinutes(-1), "Other");
+
+        var service = new DocumentSearchService(context.Store);
+        var result = await service.SearchAsync(
+            "file:///src/RepoQL.ConsoleApp/Program.cs#line=1,1",
+            question: null,
+            limit: 20,
+            CancellationToken.None);
+
+        result.Documents.Should().ContainSingle();
+        result.Documents[0].Uri.Should().Be("file:///src/RepoQL.ConsoleApp/Program.cs");
     }
 
     [Test]
@@ -80,6 +102,62 @@ internal sealed class DocumentSearchServiceTests
         result.Documents.Should().NotBeEmpty();
         result.Documents.Should().OnlyContain(d =>
             d.Uri.StartsWith("file:///src/", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Test]
+    public void GetChunkScores_WithMixedValidAndInvalidDocIds_ReturnsChunksForValidIdsOnly()
+    {
+        using var context = new DocumentSearchTestContext();
+        var service = new DocumentSearchService(context.Store);
+
+        var validDocId = Guid.NewGuid();
+        var validNodeId = Guid.NewGuid();
+        const string uri = "file:///src/RepoQL.ConsoleApp/Search/DocumentSearchService.cs";
+
+        context.SeedDocumentEmbedding(
+            docId: validDocId,
+            nodeId: validNodeId,
+            uri: uri,
+            scope: "document",
+            startByte: 12,
+            endByte: 34);
+        context.SeedSpan(
+            documentId: validDocId,
+            startByte: 12,
+            endByte: 34,
+            startLine: 7,
+            endLine: 9);
+
+        var chunkScores = InvokeGetChunkScores(service, [validDocId.ToString("D"), "not-a-guid"]);
+
+        chunkScores.Should().ContainKey(uri);
+        chunkScores[uri].Should().ContainSingle();
+        chunkScores[uri][0].StartLine.Should().Be(7);
+        chunkScores[uri][0].EndLine.Should().Be(9);
+    }
+
+    [Test]
+    public void GetChunkScores_WithOnlyInvalidDocIds_ReturnsEmpty()
+    {
+        using var context = new DocumentSearchTestContext();
+        var service = new DocumentSearchService(context.Store);
+
+        var chunkScores = InvokeGetChunkScores(service, ["not-a-guid", "still-not-a-guid"]);
+
+        chunkScores.Should().BeEmpty();
+    }
+
+    private static Dictionary<string, IReadOnlyList<ChunkScore>> InvokeGetChunkScores(
+        DocumentSearchService service,
+        IReadOnlyList<string> docIds)
+    {
+        var method = typeof(DocumentSearchService)
+            .GetMethod("GetChunkScores", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("Unable to locate DocumentSearchService.GetChunkScores");
+
+        var result = method.Invoke(service, [docIds]);
+        return result as Dictionary<string, IReadOnlyList<ChunkScore>>
+            ?? throw new InvalidOperationException("GetChunkScores returned an unexpected result");
     }
 
     private sealed class DocumentSearchTestContext : IDisposable
@@ -140,6 +218,24 @@ internal sealed class DocumentSearchServiceTests
             Registry.SetIndexed(documentUri, lineCount: 1, new Dictionary<RepoUri, SymbolEntry>());
         }
 
+        public void SeedDocumentEmbedding(Guid docId, Guid nodeId, string uri, string scope, long startByte, long endByte)
+        {
+            Store.ExecuteRaw($"""
+                INSERT INTO document_embedding
+                    (doc_id, node_id, chunk_index, embedding_type, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
+                VALUES
+                    ('{docId:D}'::UUID, '{nodeId:D}'::UUID, 0, 'structure', '{EscapeSql(uri)}', '{EscapeSql(scope)}', 'test-model', 3, [0.1,0.2,0.3]::FLOAT[], {startByte}, {endByte}, NOW())
+                """);
+        }
+
+        public void SeedSpan(Guid documentId, long startByte, long endByte, int startLine, int endLine)
+        {
+            Store.ExecuteRaw($"""
+                INSERT INTO span (id, document_id, start_byte, end_byte, start_line, start_column, end_line, end_column)
+                VALUES ('{Guid.NewGuid():D}'::UUID, '{documentId:D}'::UUID, {startByte}, {endByte}, {startLine}, 1, {endLine}, 1)
+                """);
+        }
+
         public void Dispose()
         {
             Store.Dispose();
@@ -185,5 +281,7 @@ internal sealed class DocumentSearchServiceTests
             public Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
                 => Task.FromResult(string.Empty);
         }
+
+        private static string EscapeSql(string value) => value.Replace("'", "''");
     }
 }

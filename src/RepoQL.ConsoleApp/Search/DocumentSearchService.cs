@@ -38,8 +38,11 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                 var escapedScope = EscapeSql(scope!);
                 var escapedScopeLike = EscapeSql(ConvertScopeToSearchLike(scope!));
                 sql = $"""
-                    WITH scope_docs AS (
-                        SELECT uri FROM glob_files('{escapedScope}')
+                    WITH scope_doc_ids AS (
+                        SELECT DISTINCT d.id AS doc_id
+                        FROM glob_files('{escapedScope}') sd
+                        JOIN node d ON d.kind = 'document'
+                            AND d.uri = split_part(sd.uri, '#', 1)
                     )
                     SELECT
                         hs.uri,
@@ -51,8 +54,8 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                         hs.score,
                         ri.doc_id
                     FROM search('{escapedQuestion}', scope := '{escapedScopeLike}', k := {limit * 3}) hs
-                    JOIN scope_docs sd ON sd.uri = hs.uri
                     LEFT JOIN repo_index ri ON ri.uri = hs.uri AND ri.scope = 'document'
+                    JOIN scope_doc_ids sd ON sd.doc_id = ri.doc_id
                     ORDER BY hs.score DESC
                     LIMIT {limit}
                     """;
@@ -83,9 +86,11 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             // Explore mode - scope only, no semantic search
             // Use glob_files for consistent scope semantics (including symbol/line fragment scopes)
             sql = $"""
-                WITH scope_docs AS (
-                    SELECT DISTINCT split_part(uri, '#', 1) AS uri
-                    FROM glob_files('{escapedScope}')
+                WITH scope_doc_ids AS (
+                    SELECT DISTINCT d.id AS doc_id
+                    FROM glob_files('{escapedScope}') sd
+                    JOIN node d ON d.kind = 'document'
+                        AND d.uri = split_part(sd.uri, '#', 1)
                 )
                 SELECT
                     ri.uri,
@@ -97,7 +102,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                     0.5 as score,
                     ri.doc_id
                 FROM repo_index ri
-                JOIN scope_docs sd ON sd.uri = ri.uri
+                JOIN scope_doc_ids sd ON sd.doc_id = ri.doc_id
                 WHERE ri.scope = 'document'
                 ORDER BY
                     CASE
@@ -188,9 +193,19 @@ internal sealed class DocumentSearchService : IDocumentSearchService
         if (docIds.Count == 0)
             return new Dictionary<string, IReadOnlyList<ChunkScore>>();
 
-        var docIdList = string.Join(",", docIds.Select(id => $"'{EscapeSql(id)}'"));
+        var validDocIds = ParseValidGuids(docIds);
+        if (validDocIds.Count == 0)
+            return new Dictionary<string, IReadOnlyList<ChunkScore>>();
+
+        var docIdValues = string.Join(",\n                    ", validDocIds.Select(id => $"('{id:D}'::UUID)"));
 
         var sql = $"""
+            WITH filter_doc_ids(doc_id) AS (
+                SELECT doc_id
+                FROM (VALUES
+                    {docIdValues}
+                ) AS ids(doc_id)
+            )
             SELECT
                 de.uri,
                 de.chunk_index,
@@ -198,11 +213,11 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                 s.end_line,
                 1.0 as chunk_score
             FROM document_embedding de
+            JOIN filter_doc_ids f ON f.doc_id = de.doc_id
             LEFT JOIN span s ON s.document_id = de.doc_id
                 AND s.start_byte = de.start_byte
                 AND s.end_byte = de.end_byte
-            WHERE de.doc_id::text IN ({docIdList})
-              AND de.scope = 'document'
+            WHERE de.scope = 'document'
             ORDER BY de.uri, de.chunk_index
             """;
 
@@ -236,6 +251,26 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             // If chunk query fails, return empty - proximity boosting will be skipped
             return new Dictionary<string, IReadOnlyList<ChunkScore>>();
         }
+    }
+
+    private static List<Guid> ParseValidGuids(IReadOnlyList<string> ids)
+    {
+        var parsed = new List<Guid>(ids.Count);
+        var seen = new HashSet<Guid>();
+
+        foreach (var id in ids)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                continue;
+
+            if (!Guid.TryParse(id, out var guid))
+                continue;
+
+            if (seen.Add(guid))
+                parsed.Add(guid);
+        }
+
+        return parsed;
     }
 
     private static string ConvertScopeToSearchLike(string scope)

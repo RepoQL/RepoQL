@@ -959,38 +959,37 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
         if (nodeIds.Count == 0)
             return new Dictionary<string, float[]>();
 
+        var validNodeIds = ParseValidGuids(nodeIds);
+        if (validNodeIds.Count == 0)
+            return new Dictionary<string, float[]>();
+
         try
         {
-            // Build IN clause with proper escaping
-            var nodeIdList = string.Join(",", nodeIds.Select(id => $"'{EscapeSql(id)}'"));
+            var nodeIdValues = string.Join(",\n                    ", validNodeIds.Select(id => $"('{id:D}'::UUID)"));
 
             var sql = $"""
-                SELECT node_id::TEXT, embedding
-                FROM document_embedding
-                WHERE scope = 'object'
-                  AND node_id::TEXT IN ({nodeIdList})
-                  AND model = {EscapeSqlString(model)}
-                  AND dim = {dim}
+                WITH filter_node_ids(node_id) AS (
+                    SELECT node_id
+                    FROM (VALUES
+                        {nodeIdValues}
+                    ) AS ids(node_id)
+                )
+                SELECT de.node_id, de.embedding
+                FROM document_embedding de
+                JOIN filter_node_ids f ON f.node_id = de.node_id
+                WHERE de.scope = 'object'
+                  AND de.model = {EscapeSqlString(model)}
+                  AND de.dim = {dim}
                 """;
 
             var result = new Dictionary<string, float[]>();
-            var rows = _store.Read(sql, r =>
+            var rows = _store.Read<(string? NodeId, float[]? Embedding)>(sql, r =>
             {
-                var nodeId = r.IsDBNull(0) ? null : r.GetString(0);
-                if (string.IsNullOrWhiteSpace(nodeId)) return (null, null);
+                var nodeId = r.IsDBNull(0) ? null : r.GetGuid(0).ToString("D");
+                if (string.IsNullOrWhiteSpace(nodeId)) return ((string?)null, (float[]?)null);
 
-                // Read embedding as array
-                var embeddingObj = r.GetValue(1);
-                if (embeddingObj is IList<object> list)
-                {
-                    var embedding = new float[list.Count];
-                    for (var i = 0; i < list.Count; i++)
-                    {
-                        embedding[i] = Convert.ToSingle(list[i]);
-                    }
-                    return (nodeId, embedding);
-                }
-                return (nodeId, null);
+                var embedding = ParseEmbeddingVector(r.GetValue(1));
+                return (nodeId, embedding);
             });
 
             foreach (var (nodeId, embedding) in rows)
@@ -1006,6 +1005,60 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
             _logger.LogWarning(ex, "Failed to load persisted object embeddings");
             return new Dictionary<string, float[]>();
         }
+    }
+
+    private static List<Guid> ParseValidGuids(IReadOnlyList<string> ids)
+    {
+        var parsed = new List<Guid>(ids.Count);
+        var seen = new HashSet<Guid>();
+
+        foreach (var id in ids)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                continue;
+
+            if (!Guid.TryParse(id, out var guid))
+                continue;
+
+            if (seen.Add(guid))
+                parsed.Add(guid);
+        }
+
+        return parsed;
+    }
+
+    private static float[]? ParseEmbeddingVector(object? value)
+    {
+        if (value is null or DBNull)
+            return null;
+
+        if (value is float[] floatArray)
+            return floatArray;
+
+        if (value is double[] doubleArray)
+            return doubleArray.Select(static v => (float)v).ToArray();
+
+        if (value is IList<object> list)
+        {
+            var embedding = new float[list.Count];
+            for (var i = 0; i < list.Count; i++)
+            {
+                embedding[i] = Convert.ToSingle(list[i], CultureInfo.InvariantCulture);
+            }
+            return embedding;
+        }
+
+        if (value is System.Collections.IList nonGenericList)
+        {
+            var embedding = new float[nonGenericList.Count];
+            for (var i = 0; i < nonGenericList.Count; i++)
+            {
+                embedding[i] = Convert.ToSingle(nonGenericList[i], CultureInfo.InvariantCulture);
+            }
+            return embedding;
+        }
+
+        return null;
     }
 
     /// <summary>
