@@ -73,6 +73,38 @@ public class UriFragmentDocIdFilteringTests
         rows.Should().OnlyContain(uri => uri.StartsWith("file:///src/Alpha.cs#", StringComparison.Ordinal));
     }
 
+    [Test]
+    public void EntitiesByUri_WithEdgeFragment_ResolvesEdgeByTypedId()
+    {
+        using var store = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        const string docUri = "file:///src/Alpha.cs";
+        SeedDocumentWithObjects(
+            store,
+            docUri,
+            ("Namespace.AlphaService.Run", 5, 12));
+
+        var edgeId = store.ReadScalar<string>(
+            $"SELECT CAST(id AS VARCHAR) FROM edge WHERE scope_document_id = (SELECT id FROM node WHERE uri = '{docUri}') LIMIT 1");
+
+        edgeId.Should().NotBeNullOrWhiteSpace();
+
+        var rows = store.Read(
+            $"""
+            SELECT entity, uri, fragment
+            FROM entities_by_uri('{docUri}#edge={edgeId}')
+            """,
+            r => (
+                Entity: r.GetString(0),
+                Uri: r.GetString(1),
+                Fragment: r.GetString(2)));
+
+        rows.Should().ContainSingle();
+        rows[0].Entity.Should().Be("Edge");
+        rows[0].Fragment.Should().Be($"edge={edgeId}");
+        rows[0].Uri.Should().Be($"{docUri}#edge={edgeId}");
+    }
+
     private static void SeedDocumentWithObjects(
         DuckDbDataStore store,
         string documentUri,

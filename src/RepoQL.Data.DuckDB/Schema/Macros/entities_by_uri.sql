@@ -4,6 +4,12 @@ WITH base AS (
         repository_uri_container(u)         AS base,
         repository_uri_fragment(u)          AS frag,
         repository_uri_fragment_kind(u)     AS kind,
+        TRY_CAST(
+            CASE
+                WHEN repository_uri_fragment(u) LIKE 'edge=%'
+                THEN substr(repository_uri_fragment(u), 6)
+            END AS UUID
+        ) AS edge_id,
         TRY_CAST(repository_uri_line_start(u) AS INTEGER)        AS l1,
         TRY_CAST(repository_uri_line_end(u) AS INTEGER)          AS l2
 ),
@@ -28,7 +34,7 @@ SELECT
 FROM base b
          JOIN node n ON lower(n.uri) = lower(b.base)
          JOIN edge e ON e.scope_document_id = n.id
-WHERE b.frag LIKE 'edge=%' AND substr(b.frag, 6) = CAST(e.id AS VARCHAR)
+WHERE b.edge_id IS NOT NULL AND e.id = b.edge_id
 
 UNION ALL
 SELECT

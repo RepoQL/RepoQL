@@ -4,6 +4,12 @@ WITH base AS (
         repository_uri_container(u)     AS base,
         repository_uri_fragment(u)      AS frag,
         repository_uri_fragment_kind(u) AS kind,
+        TRY_CAST(
+            CASE
+                WHEN repository_uri_fragment(u) LIKE 'edge=%'
+                THEN substr(repository_uri_fragment(u), 6)
+            END AS UUID
+        ) AS edge_id,
         TRY_CAST(repository_uri_line_start(u) AS INTEGER)    AS l1,
         TRY_CAST(repository_uri_line_end(u) AS INTEGER)      AS l2,
         repository_uri_symbol(u)        AS symbol
@@ -19,7 +25,7 @@ WITH base AS (
                 ss.start_line   AS el1, ss.end_line   AS el2,
                 ss.start_column AS ec1, ss.end_column AS ec2
          FROM base b
-                  JOIN edge e ON b.frag LIKE 'edge=%' AND substr(b.frag, 6) = CAST(e.id AS VARCHAR)
+                  JOIN edge e ON b.edge_id IS NOT NULL AND e.id = b.edge_id
                   LEFT JOIN span ss ON ss.id = e.source_span_id
      ),
      symbol_focus AS (
