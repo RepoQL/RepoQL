@@ -48,7 +48,7 @@ public static class CommandParser
         // Validate name: alphanumeric, dots, hyphens, underscores
         foreach (var c in name)
         {
-            if (!char.IsLetterOrDigit(c) && c != '.' && c != '-' && c != '_')
+            if (!char.IsLetterOrDigit(c) && c != '.' && c != '-' && c != '_' && c != '?')
                 return new ParsedCommand(name, [], ParseError: $"Invalid character '{c}' in command name.");
         }
 

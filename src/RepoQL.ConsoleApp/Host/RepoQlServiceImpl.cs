@@ -757,7 +757,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         context.CancellationToken.ThrowIfCancellationRequested();
 
         await foreach (var progress in coordinator.ReindexAsync(
-                         new ReindexRequestOptions(request.Clear),
+                         new ReindexRequestOptions(request.Clear, string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope),
                          context.CancellationToken).ConfigureAwait(false))
         {
             await responseStream.WriteAsync(ToProtoProgress(progress)).ConfigureAwait(false);

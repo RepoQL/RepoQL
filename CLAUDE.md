@@ -96,9 +96,16 @@ dotnet run -- --treenode-filter "/*/*/*/MyTestName*"
 dotnet run -- --output Detailed            # Verbose output
 ```
 
-**Live testing:**
-- **Fast path (server changes):** Aspire MCP → restart host (hot reload)
-- **Full deploy:** `deploy.ps1` → kills instances, publishes, copies. User reconnects via `/mcp`
+**Dev loop — two processes, two strategies:**
+
+RepoQL runs as two processes: the **MCP client** (stdio, talks to Claude Code) and the **gRPC host** (per-repo, does indexing/queries). They have different dev loops because stdio ties transport to process lifetime.
+
+| What changed | Strategy | Downtime |
+|--------------|----------|----------|
+| Host-side (indexing, gRPC service, explore/read, UDFs, DuckDB) | `dotnet watch` auto-rebuilds and restarts the host. Debug builds launch via `dotnet watch` automatically. | Seconds — client reconnects |
+| MCP-side (tool handlers, commands, MCP protocol) | `deploy.ps1` → `/mcp` reconnect | Manual reconnect |
+
+`dotnet watch` cannot work for the MCP stdio process — it contaminates stdout with its own diagnostics and breaks the JSON-RPC stream on restart. Host-side is where most development happens.
 
 ---
 

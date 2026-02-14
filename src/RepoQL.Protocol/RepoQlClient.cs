@@ -322,8 +322,22 @@ public class RepoQlConnectionClient : IRepoQlClient
         }
 
         var args = new List<string> { "serve", "--implicit-start" };
-        var currentExe = Environment.ProcessPath;
         string launchTarget;
+
+#if DEBUG
+        var csproj = FindConsoleAppProject();
+        if (csproj is not null)
+        {
+            launchTarget = "dotnet";
+            args = ["watch", "run", "--project", csproj, "--", "serve", "--implicit-start"];
+            logger.LogInformation("RepoQlClient: launching host via dotnet watch (project={Project}) for repo '{RepoPath}'.",
+                csproj, repoPath);
+            StartProcess(launchTarget, repoPath, args, implicitEnv);
+            return;
+        }
+#endif
+
+        var currentExe = Environment.ProcessPath;
         if (!string.IsNullOrWhiteSpace(currentExe) && File.Exists(currentExe))
         {
             launchTarget = currentExe!;
@@ -340,6 +354,34 @@ public class RepoQlConnectionClient : IRepoQlClient
             string.Join(' ', args));
         StartProcess(launchTarget, repoPath, args, implicitEnv);
     }
+
+#if DEBUG
+    /// <summary>
+    /// Walks up from the assembly location to find the repo root (by .sln or .git),
+    /// then globs for RepoQL.ConsoleApp.csproj.
+    /// </summary>
+    private static string? FindConsoleAppProject()
+    {
+        try
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null)
+            {
+                if (dir.GetFiles("RepoQL.sln").Length > 0 || dir.GetDirectories(".git").Length > 0)
+                {
+                    var matches = dir.GetFiles("RepoQL.ConsoleApp.csproj", SearchOption.AllDirectories);
+                    return matches.Length >= 1 ? matches[0].FullName : null;
+                }
+                dir = dir.Parent;
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+#endif
 
     private static IEnumerable<string> BuildExecutableCandidates(string basePath)
     {
@@ -752,12 +794,15 @@ public class RepoQlConnectionClient : IRepoQlClient
     }
 
 
-    public virtual async IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, TimeSpan? timeout = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    public virtual async IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, string? scope = null, TimeSpan? timeout = null, [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(forceReconnect: false, cancellationToken).ConfigureAwait(false);
         var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
         var deadline = ComputeDeadline(timeout);
-        using var call = client.ReindexAll(new ReindexRequest { Clear = clear }, deadline: deadline, cancellationToken: cancellationToken);
+        var request = new ReindexRequest { Clear = clear };
+        if (!string.IsNullOrWhiteSpace(scope))
+            request.Scope = scope;
+        using var call = client.ReindexAll(request, deadline: deadline, cancellationToken: cancellationToken);
 
         while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
@@ -881,6 +926,16 @@ public class RepoQlConnectionClient : IRepoQlClient
 
             var response = await client.ReadAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
             return response;
+        }, cancellationToken);
+
+    public Task<int> ShutdownHostAsync(CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            var response = await client.ShutdownHostAsync(
+                new ShutdownHostRequest(),
+                deadline: DateTime.UtcNow.AddSeconds(5),
+                cancellationToken: ct);
+            return response.ProcessId;
         }, cancellationToken);
 
     public virtual async IAsyncEnumerable<StatusEvent> WatchStatusAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)

@@ -397,6 +397,10 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 if (!_engine.Filter.IncludeFile(resource.Uri))
                     continue;
 
+                if (options.Scope is not null &&
+                    RepoUriGlobMatcher.IsMatch(resource.Uri.ToString(), options.Scope, ignoreCase: true) != true)
+                    continue;
+
                 if (!_fileSystem.TryResolve(resource.Uri, out var store))
                 {
                     _logger.LogWarning("No mount resolved URI {Uri} during reindex enumeration.", resource.Uri);

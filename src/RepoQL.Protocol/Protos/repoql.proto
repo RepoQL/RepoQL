@@ -225,6 +225,9 @@ message ReindexRequest {
   // When true, the server MAY attempt to clear existing graph rows prior to re-indexing.
   // Implementations are allowed to ignore this flag and rely on upsert semantics.
   bool clear = 1;
+  // Optional URI glob pattern to scope the reindex (e.g., "file:///src/**/*.cs").
+  // When empty, all files are reindexed.
+  string scope = 2;
 }
 
 message ReindexProgress {

@@ -183,6 +183,7 @@ public sealed class RepoQlClient : RepoQlConnectionClient
 
     public override async IAsyncEnumerable<ReindexProgress> ReindexAllAsync(
         bool clear = false,
+        string? scope = null,
         TimeSpan? timeout = null,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -203,7 +204,10 @@ public sealed class RepoQlClient : RepoQlConnectionClient
 
             var client = Client ?? throw new InvalidOperationException("RepoQL client is not connected.");
             var deadline = ComputeDeadline(timeout);
-            using var call = client.ReindexAll(new ReindexRequest { Clear = clear }, deadline: deadline, cancellationToken: cancellationToken);
+            var request = new ReindexRequest { Clear = clear };
+            if (!string.IsNullOrWhiteSpace(scope))
+                request.Scope = scope;
+            using var call = client.ReindexAll(request, deadline: deadline, cancellationToken: cancellationToken);
             var emitted = false;
             Exception failure = new InvalidOperationException("RepoQL stream failed unexpectedly.");
 

@@ -108,7 +108,7 @@ public interface IRepoQlClient : IAsyncDisposable
         string? mediaTypeHint = null,
         CancellationToken cancellationToken = default);
 
-    public IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, TimeSpan? timeout = null,
+    public IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, string? scope = null, TimeSpan? timeout = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -148,4 +148,11 @@ public interface IRepoQlClient : IAsyncDisposable
     /// </summary>
     /// <param name="cancellationToken">Cancellation token to stop the stream.</param>
     IAsyncEnumerable<StatusEvent> WatchStatusAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Request the host process to shut down gracefully.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The process ID of the host that was shut down.</returns>
+    Task<int> ShutdownHostAsync(CancellationToken cancellationToken = default);
 }

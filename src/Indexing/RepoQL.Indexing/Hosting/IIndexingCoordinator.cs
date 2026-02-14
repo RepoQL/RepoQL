@@ -20,7 +20,7 @@ public sealed record ReindexProgressSnapshot(
     long ProcessedItems,
     TimeSpan PhaseElapsed);
 
-public sealed record ReindexRequestOptions(bool Clear);
+public sealed record ReindexRequestOptions(bool Clear, string? Scope = null);
 
 /// <summary>
 /// Reindex operation handle that streams progress and exposes the created operation.
