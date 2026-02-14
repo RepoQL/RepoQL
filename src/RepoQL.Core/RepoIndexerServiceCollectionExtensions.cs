@@ -35,6 +35,7 @@ using RepoQL.Formats.Xlsx;
 using RepoQL.Formats.Docx;
 using RepoQL.Formats.Pdf;
 using RepoQL.Formats.Csv;
+using RepoQL.Formats.Json;
 using RepoQL.Formats.Ruby;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
@@ -384,6 +385,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddDocxFormat();
         services.AddPdfFormat();
         services.AddCsvFormat();
+        services.AddJsonFormat();
         services.AddSingleton<MermaidLoader>();
         services.AddSingleton<MermaidAnalyzer>();
         services.AddSingleton<CsProjAnalyzer>();
@@ -808,3 +810,4 @@ public static class RepoIndexerServiceCollectionExtensions
         }
     }
 }
+

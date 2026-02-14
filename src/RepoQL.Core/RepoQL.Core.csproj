@@ -30,6 +30,7 @@
     <ProjectReference Include="..\Formats\RepoQL.Formats.Docx\RepoQL.Formats.Docx.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Pdf\RepoQL.Formats.Pdf.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Csv\RepoQL.Formats.Csv.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.Json\RepoQL.Formats.Json.csproj" />
     <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
     <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
     <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
@@ -46,3 +47,4 @@
     </ItemGroup>
 
 </Project>
+

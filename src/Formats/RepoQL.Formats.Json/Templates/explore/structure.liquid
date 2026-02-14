@@ -1,0 +1,3 @@
+{% for key in keys -%}
+{{ key.indent }}{{ key.name }}{% if key.type_label %} ({{ key.type_label }}{% if key.estimated_tokens > 0 %}, {{ key.estimated_tokens | tokens }}{% endif %}){% endif %}{% if key.scalar_value %}: {{ key.scalar_value }}{% endif %}    #{{ key.path }}
+{% endfor -%}
