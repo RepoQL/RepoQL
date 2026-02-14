@@ -996,7 +996,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     }
 
     private static ReindexProgress ToProtoProgress(ReindexProgressSnapshot snapshot)
-        => new()
+    {
+        var proto = new ReindexProgress
         {
             Phase = snapshot.Phase switch
             {
@@ -1013,8 +1014,15 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             },
             TotalItems = (ulong)Math.Max(0, snapshot.TotalItems),
             ProcessedItems = (ulong)Math.Max(0, snapshot.ProcessedItems),
-            PhaseElapsedMs = (ulong)Math.Max(0, snapshot.PhaseElapsed.TotalMilliseconds)
+            PhaseElapsedMs = (ulong)Math.Max(0, snapshot.PhaseElapsed.TotalMilliseconds),
+            FailedCount = (uint)snapshot.FailedCount
         };
+        if (snapshot.FailureDetails is { Count: > 0 })
+            proto.FailureDetails.AddRange(snapshot.FailureDetails);
+        if (snapshot.Milestones is { Count: > 0 })
+            proto.Milestones.AddRange(snapshot.Milestones);
+        return proto;
+    }
 
     private static ProtoPipelineStatus ToProtoStatus(PipelineStatusSnapshot snapshot)
     {

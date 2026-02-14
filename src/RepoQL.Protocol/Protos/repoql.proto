@@ -238,6 +238,12 @@ message ReindexProgress {
   uint64 processed_items = 3;
   // Milliseconds elapsed within the current phase.
   uint64 phase_elapsed_ms = 4;
+  // Populated on COMPLETED phase: number of files that failed indexing or embedding.
+  uint32 failed_count = 5;
+  // Populated on COMPLETED phase: first N failure messages (uri: detail).
+  repeated string failure_details = 6;
+  // Populated on COMPLETED phase: operation milestone entries.
+  repeated string milestones = 7;
 }
 
 enum ReindexPhase {

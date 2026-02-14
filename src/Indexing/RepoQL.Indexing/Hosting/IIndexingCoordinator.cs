@@ -18,7 +18,10 @@ public sealed record ReindexProgressSnapshot(
     CoordinatorReindexPhase Phase,
     long TotalItems,
     long ProcessedItems,
-    TimeSpan PhaseElapsed);
+    TimeSpan PhaseElapsed,
+    int FailedCount = 0,
+    IReadOnlyList<string>? FailureDetails = null,
+    IReadOnlyList<string>? Milestones = null);
 
 public sealed record ReindexRequestOptions(bool Clear, string? Scope = null);
 

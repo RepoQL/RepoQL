@@ -552,11 +552,34 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         var completed = false;
         try
         {
+            // Collect operation summary for the completed snapshot
+            var failedCount = 0;
+            IReadOnlyList<string>? failureDetails = null;
+            IReadOnlyList<string>? milestones = null;
+            if (operationInstance is not null)
+            {
+                var progress = operationInstance.Progress;
+                failedCount = progress.FailedCount;
+                var log = operationInstance.Log;
+                failureDetails = log
+                    .Where(e => e.Type is OperationEntry.TypeFileFailed or OperationEntry.TypeEmbeddingFailed)
+                    .Take(20)
+                    .Select(e => e.Uri is not null ? $"{e.Uri}: {e.Message}" : e.Message ?? e.Type)
+                    .ToList();
+                milestones = log
+                    .Where(e => e.Type == OperationEntry.TypeMilestone)
+                    .Select(e => e.Message ?? e.Type)
+                    .ToList();
+            }
+
             var completedSnapshot = new ReindexProgressSnapshot(
                 CoordinatorReindexPhase.Completed,
                 total,
                 total,
-                completedTimer.Elapsed);
+                completedTimer.Elapsed,
+                failedCount,
+                failureDetails,
+                milestones);
             LogPhaseProgress(completedSnapshot);
             yield return completedSnapshot;
             _logger.LogInformation("Reindex completed [Items: {Items:N0}]", total);
