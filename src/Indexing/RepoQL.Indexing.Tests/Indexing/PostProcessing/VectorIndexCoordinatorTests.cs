@@ -153,6 +153,54 @@ internal class VectorIndexCoordinatorTests
     }
 
     [Test]
+    [DisplayName("VSS readiness metadata stays false during rebuild and flips true after success")]
+    public async Task Given_VssRefreshInFlight_When_CheckingMetadata_Then_ReadyFlagTracksRefreshLifecycle()
+    {
+        using var database = new DuckDbDataStore(path: null, logger: NullLogger<DuckDbDataStore>.Instance);
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var coordinator = new VectorIndexCoordinator(
+            new FakeRefresher(),
+            db: database,
+            logger: NullLogger<VectorIndexCoordinator>.Instance,
+            vssIndexManagerFactory: () => new FakeVssIndexManager(async cancellationToken =>
+            {
+                started.TrySetResult(true);
+                await release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }));
+
+        await WaitForAsync(() => started.Task.IsCompleted);
+        database.ReadMetadataValue(DuckDbDataStore.MetadataKeyVssStructureReady).Should().Be("false");
+
+        release.TrySetResult(true);
+        await WaitForAsync(() => string.Equals(
+            database.ReadMetadataValue(DuckDbDataStore.MetadataKeyVssStructureReady),
+            "true",
+            StringComparison.Ordinal),
+            timeoutMs: 3000);
+    }
+
+    [Test]
+    [DisplayName("VSS readiness metadata remains false after refresh failure")]
+    public async Task Given_VssRefreshFails_When_CheckingMetadata_Then_ReadyFlagRemainsFalse()
+    {
+        using var database = new DuckDbDataStore(path: null, logger: NullLogger<DuckDbDataStore>.Instance);
+        var attempted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var coordinator = new VectorIndexCoordinator(
+            new FakeRefresher(),
+            db: database,
+            logger: NullLogger<VectorIndexCoordinator>.Instance,
+            vssIndexManagerFactory: () => new FakeVssIndexManager(_ =>
+            {
+                attempted.TrySetResult(true);
+                throw new InvalidOperationException("simulated vss failure");
+            }));
+
+        await WaitForAsync(() => attempted.Task.IsCompleted);
+        database.ReadMetadataValue(DuckDbDataStore.MetadataKeyVssStructureReady).Should().Be("false");
+    }
+
+    [Test]
     [DisplayName("Targeted registry sync batches doc ids with bounded query size")]
     public void Given_LargeTargetedDocSet_When_Batching_Then_BatchesAreBoundedAndDeduplicated()
     {
@@ -227,12 +275,22 @@ internal class VectorIndexCoordinatorTests
 
     private sealed class FakeVssIndexManager : IVssIndexManager
     {
+        private readonly Func<CancellationToken, Task>? _onRefresh;
+
+        public FakeVssIndexManager(Func<CancellationToken, Task>? onRefresh = null)
+        {
+            _onRefresh = onRefresh;
+        }
+
         public int RefreshInvocations { get; private set; }
 
-        public Task RefreshIndexesAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
+        public async Task RefreshIndexesAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
         {
             RefreshInvocations++;
-            return Task.CompletedTask;
+            if (_onRefresh is not null)
+            {
+                await _onRefresh(cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 

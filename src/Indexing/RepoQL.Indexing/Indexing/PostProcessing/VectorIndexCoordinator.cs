@@ -26,6 +26,8 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private const int StructureEmbeddingBatchSize = 100;
     internal const int RegistrySyncBatchSize = 256;
     private static readonly TimeSpan VssRefreshDebounce = TimeSpan.FromMilliseconds(250);
+    private const string MetadataValueTrue = "true";
+    private const string MetadataValueFalse = "false";
     private static readonly int RefreshConcurrency = GetRefreshConcurrency();
     private readonly IVectorIndexRefresher _refresher;
     private readonly DuckDbDataStore? _db;
@@ -44,6 +46,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private int _vssWorkerStarted;
     private int _vssInitialBuildCompleted;
     private int _vssRefreshRequested;
+    private int _vssStructureReadyState = -1;
 
     private static int GetRefreshConcurrency()
     {
@@ -78,6 +81,9 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         _logger = logger ?? NullLogger<VectorIndexCoordinator>.Instance;
         _uriRegistry = uriRegistry;
         _vssIndexManagerFactory = vssIndexManagerFactory;
+
+        // VSS is ephemeral; force semantic fallback until this process completes an in-memory rebuild.
+        SetVssStructureReadyMetadata(isReady: false);
 
         // VSS indexes are in-memory only; always schedule an initial rebuild after startup.
         RequestVssRefresh();
@@ -695,9 +701,11 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
                 try
                 {
+                    SetVssStructureReadyMetadata(isReady: false);
                     _vssIndexManager ??= _vssIndexManagerFactory?.Invoke() ?? new VssIndexManager(_db!);
                     await _vssIndexManager.RefreshIndexesAsync(forceRefresh: true, cancellationToken: _vssRefreshShutdown.Token).ConfigureAwait(false);
                     Volatile.Write(ref _vssInitialBuildCompleted, 1);
+                    SetVssStructureReadyMetadata(isReady: true);
                 }
                 catch (OperationCanceledException) when (_vssRefreshShutdown.IsCancellationRequested)
                 {
@@ -712,6 +720,28 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         }
         catch (OperationCanceledException) when (_vssRefreshShutdown.IsCancellationRequested)
         {
+        }
+    }
+
+    private void SetVssStructureReadyMetadata(bool isReady)
+    {
+        var next = isReady ? 1 : 0;
+        var previous = Interlocked.Exchange(ref _vssStructureReadyState, next);
+        if (previous == next)
+            return;
+
+        if (_db is null)
+            return;
+
+        try
+        {
+            _db.WriteMetadataValue(
+                DuckDbDataStore.MetadataKeyVssStructureReady,
+                isReady ? MetadataValueTrue : MetadataValueFalse);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to update VSS readiness metadata");
         }
     }
 

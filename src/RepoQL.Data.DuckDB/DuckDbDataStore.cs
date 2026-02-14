@@ -1214,6 +1214,7 @@ public sealed class DuckDbDataStore : IDisposable
 
     private const string MetadataKeySchemaVersion = "schema_version";
     private const string MetadataKeyAssemblyVersion = "assembly_version";
+    public const string MetadataKeyVssStructureReady = "vss_structure_ready";
     private const string EmbeddedDocsScheme = "help://";
 
     private void EnsureSchemaVersion()
@@ -1226,6 +1227,22 @@ public sealed class DuckDbDataStore : IDisposable
     /// Read a metadata value by key. Returns null if the key or table doesn't exist.
     /// </summary>
     public string? ReadMetadataValue(string key) => TryReadMetadataValue(key);
+
+    /// <summary>
+    /// Writes a metadata key/value pair transactionally.
+    /// </summary>
+    public void WriteMetadataValue(string key, string value)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Metadata key is required.", nameof(key));
+
+        ArgumentNullException.ThrowIfNull(value);
+
+        WriteTransaction((connection, transaction) =>
+        {
+            UpsertMetadataValue(connection, transaction, key, value);
+        });
+    }
 
     private string? TryReadMetadataValue(string key)
     {
@@ -1250,8 +1267,18 @@ public sealed class DuckDbDataStore : IDisposable
     }
 
     private void UpsertMetadataValue(string key, string value)
+        => UpsertMetadataValue(_connection, transaction: null, key, value);
+
+    private static void UpsertMetadataValue(
+        DuckDBConnection connection,
+        DuckDBTransaction? transaction,
+        string key,
+        string value)
     {
-        using var cmd = _connection.CreateCommand();
+        using var cmd = connection.CreateCommand();
+        if (transaction is not null)
+            cmd.Transaction = transaction;
+
         cmd.CommandText = @"
             INSERT INTO metadata (key, value, updated_at) VALUES ($1, $2, now())
             ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()";

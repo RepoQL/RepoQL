@@ -460,6 +460,76 @@ public class IndexingEngineTests
     }
 
     [Test]
+    [Timeout(15_000)]
+    [DisplayName("Idle safety net retries structure embedding after eager failure")]
+    public async Task Given_EagerStructureEmbeddingFails_When_IdleProcessingRuns_Then_UnembeddedItemsAreRetried(CancellationToken token)
+    {
+        var registry = new UriRegistry();
+        var retryCompleted = NewTaskCompletionSource<bool>();
+        var analysisSignal = NewTaskCompletionSource<bool>();
+        var structureAttempts = 0;
+        var targetUri = CreateUri("file:///repo/eager-retry.md");
+
+        var vectorCoordinator = A.Fake<IVectorIndexCoordinator>();
+        A.CallTo(() => vectorCoordinator.GenerateStructureEmbeddingsAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                var items = call.GetArgument<IReadOnlyList<IndexItem>>(0);
+                var attempt = Interlocked.Increment(ref structureAttempts);
+                if (attempt == 1)
+                {
+                    throw new InvalidOperationException("Simulated eager structure embedding failure");
+                }
+
+                foreach (var embedded in items)
+                {
+                    registry.SetEmbedded(embedded.Uri, 1);
+                }
+
+                retryCompleted.TrySetResult(true);
+                return Task.CompletedTask;
+            });
+        A.CallTo(() => vectorCoordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
+            .Returns(Task.CompletedTask);
+        A.CallTo(() => vectorCoordinator.RefreshVssIndexAsync(A<CancellationToken>._))
+            .Returns(Task.CompletedTask);
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1
+            });
+            builder.WithVectorCoordinator(vectorCoordinator);
+            builder.WithEmbeddingProvider(new DeterministicEmbeddingProvider());
+            builder.WithEmbeddingMode(EmbeddingMode.StructureOnly);
+            builder.WithUriRegistry(registry);
+        });
+
+        A.CallTo(() => context.MultiFileAnalyzer.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._))
+            .ReturnsLazily(_ =>
+            {
+                analysisSignal.TrySetResult(true);
+                return Task.FromResult(PipelineResult.Success);
+            });
+        A.CallTo(() => context.IndexRebuilder.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._))
+            .Returns(Task.FromResult(PipelineResult.Success));
+
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(CreateRawArtifact(targetUri.AbsoluteUri), IndexItemOptions.Default, token);
+
+        await retryCompleted.Task.WaitAsync(token);
+        await analysisSignal.Task.WaitAsync(token);
+
+        structureAttempts.Should().Be(2, "idle safety net should retry structure embedding once eager attempt fails");
+        registry.TryGetValue(targetUri, out var entry).Should().BeTrue();
+        entry.EmbeddingStatus.Should().Be(EmbeddingStatus.Embedded);
+    }
+
+    [Test]
     [DisplayName("Short-circuits when classifier filters item")]
     public async Task Given_ClassifierFilters_When_ApplyIndexerPipeline_Then_ReturnsFilteredWithoutCallingSubsequentStages()
     {

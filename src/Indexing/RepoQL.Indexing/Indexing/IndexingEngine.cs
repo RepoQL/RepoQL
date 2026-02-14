@@ -954,6 +954,33 @@ public partial class IndexingEngine : IAsyncDisposable
         await Task.WhenAll(waitTasks).WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    private IReadOnlyList<IndexItem> GetStructureEmbeddingCatchupItems(IReadOnlyList<IndexItem> items)
+    {
+        if (!StructureEmbeddingsEnabled || items.Count == 0 || UriRegistry is null)
+            return [];
+
+        var pending = new List<IndexItem>(items.Count);
+        var seenUris = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in items)
+        {
+            if (!seenUris.Add(item.Uri.AbsoluteUri))
+                continue;
+
+            if (!UriRegistry.TryGetValue(item.Uri, out var entry))
+            {
+                pending.Add(item);
+                continue;
+            }
+
+            if (entry.EmbeddingStatus is EmbeddingStatus.Embedded or EmbeddingStatus.NotApplicable)
+                continue;
+
+            pending.Add(item);
+        }
+
+        return pending;
+    }
+
     private void RecordMilestone(string name, string? detail = null)
     {
         try
@@ -1253,13 +1280,21 @@ public partial class IndexingEngine : IAsyncDisposable
                 {
                     var structureTimer = Stopwatch.StartNew();
                     await WaitForEagerStructureEmbeddingsAsync(epochs, Shutdown.Token).ConfigureAwait(false);
+                    var catchupItems = GetStructureEmbeddingCatchupItems(structureEmbedItems);
+                    if (catchupItems.Count > 0)
+                    {
+                        // Safety net: rerun structure embedding in idle for items still not embedded
+                        // after eager execution (for example, transient provider/queue failures).
+                        await VectorCoordinator.GenerateStructureEmbeddingsAsync(catchupItems, Shutdown.Token).ConfigureAwait(false);
+                    }
                     structureTimer.Stop();
                     Metrics?.IdlePhaseDuration.Record(structureTimer.Elapsed.TotalMilliseconds, new TagList
                     {
                         { "phase", "structure_embedding" }
                     });
 
-                    RecordMilestone("structure_embeddings", $"{structureEmbedItems.Length} items confirmed, {structureTimer.Elapsed.TotalMilliseconds:F1}ms");
+                    RecordMilestone("structure_embeddings",
+                        $"{structureEmbedItems.Length} items confirmed, {catchupItems.Count} retried, {structureTimer.Elapsed.TotalMilliseconds:F1}ms");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

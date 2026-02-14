@@ -19,15 +19,25 @@ CREATE OR REPLACE MACRO _search_semantic_explain(q) AS TABLE (
         SELECT
             (SELECT COUNT(*) FROM _vss_index_384) AS cnt_384,
             (SELECT COUNT(*) FROM _vss_index_768) AS cnt_768,
-            (SELECT COUNT(*) FROM _vss_index_1024) AS cnt_1024
+            (SELECT COUNT(*) FROM _vss_index_1024) AS cnt_1024,
+            COALESCE(
+                (
+                    SELECT LOWER(TRIM(value)) = 'true'
+                    FROM metadata
+                    WHERE key = 'vss_structure_ready'
+                    LIMIT 1
+                ),
+                FALSE
+            ) AS structure_ready
     )
     SELECT
         di.query_dim,
         vc.cnt_384 AS vss_384_count,
         vc.cnt_768 AS vss_768_count,
         vc.cnt_1024 AS vss_1024_count,
+        vc.structure_ready AS vss_structure_ready,
         CASE
-            WHEN di.query_dim = 384 AND vc.cnt_384 > 0 THEN 'HNSW_384'
+            WHEN di.query_dim = 384 AND vc.cnt_384 > 0 AND vc.structure_ready = TRUE THEN 'HNSW_384'
             WHEN di.query_dim = 768 AND vc.cnt_768 > 0 THEN 'HNSW_768'
             WHEN di.query_dim = 1024 AND vc.cnt_1024 > 0 THEN 'HNSW_1024'
             ELSE 'LINEAR_SCAN'

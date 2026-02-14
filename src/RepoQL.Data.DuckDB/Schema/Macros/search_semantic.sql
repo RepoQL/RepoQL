@@ -59,13 +59,27 @@ query_vec AS (
 ),
 
 -- Check VSS index availability
+vss_rebuild_state AS (
+    SELECT
+        COALESCE(
+            (
+                SELECT LOWER(TRIM(value)) = 'true'
+                FROM metadata
+                WHERE key = 'vss_structure_ready'
+                LIMIT 1
+            ),
+            FALSE
+        ) AS structure_ready
+),
+
 vss_ready AS (
     SELECT
         (SELECT COUNT(*) FROM _vss_index_384 LIMIT 1) > 0 AS has_384,
         (SELECT COUNT(*) FROM _vss_index_768 LIMIT 1) > 0 AS has_768,
         (SELECT COUNT(*) FROM _vss_index_1024 LIMIT 1) > 0 AS has_1024,
-        (SELECT array_length(vec::FLOAT[]) FROM query_vec WHERE vec IS NOT NULL) AS query_dim
-),
+        (SELECT array_length(vec::FLOAT[]) FROM query_vec WHERE vec IS NOT NULL) AS query_dim,
+        (SELECT structure_ready FROM vss_rebuild_state) AS structure_ready
+), 
 
 -- ============================================================================
 -- HNSW FAST PATH: Use VSS index for 384-dim embeddings
@@ -82,6 +96,7 @@ hnsw_structure AS (
       AND v.embedding_type = 'structure'
       AND (SELECT query_dim FROM vss_ready) = 384
       AND (SELECT has_384 FROM vss_ready) = TRUE
+      AND (SELECT structure_ready FROM vss_ready) = TRUE
     ORDER BY array_cosine_distance(v.vec, qv.vec::FLOAT[384])
     LIMIT 500
 ),
@@ -106,6 +121,7 @@ linear_structure AS (
       AND NOT (
           (SELECT query_dim FROM vss_ready) = 384
           AND (SELECT has_384 FROM vss_ready) = TRUE
+          AND (SELECT structure_ready FROM vss_ready) = TRUE
       )
 ),
 
