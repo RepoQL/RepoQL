@@ -371,7 +371,7 @@ public class IndexingEngineTests
         var commitObserved = NewTaskCompletionSource<bool>();
         A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
             .Invokes(() => commitObserved.TrySetResult(true))
-            .Returns(Task.CompletedTask);
+            .Returns(Task.FromResult(RepoQL.Indexing.Indexing.Commit.CommitOutcome.Committed));
 
         var embedEntered = NewTaskCompletionSource<bool>();
         var releaseEmbedding = NewTaskCompletionSource<bool>();
@@ -1277,7 +1277,7 @@ public class IndexingEngineTests
 
         var committer = A.Fake<IIndexingCommitter>();
         A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
-            .Returns(Task.CompletedTask);
+            .Returns(Task.FromResult(RepoQL.Indexing.Indexing.Commit.CommitOutcome.Committed));
 
         var context = IndexingEngineTestFactory.Create(builder =>
         {
@@ -1608,3 +1608,4 @@ public class IndexingEngineTests
         result.Should().Be(3);
     }
 }
+

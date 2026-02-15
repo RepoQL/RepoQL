@@ -23,7 +23,10 @@ public sealed record ReindexProgressSnapshot(
     IReadOnlyList<string>? FailureDetails = null,
     IReadOnlyList<string>? Milestones = null);
 
-public sealed record ReindexRequestOptions(bool Clear, string? Scope = null);
+public sealed record ReindexRequestOptions(
+    // Reserved for future full-rebuild support. Currently unused.
+    bool Clear,
+    string? Scope = null);
 
 /// <summary>
 /// Reindex operation handle that streams progress and exposes the created operation.
@@ -79,3 +82,4 @@ public interface IIndexingCoordinator
     /// </summary>
     Task TriggerIncrementalGitIndexingAsync(CancellationToken cancellationToken = default);
 }
+

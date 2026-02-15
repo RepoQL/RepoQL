@@ -99,35 +99,39 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
         FlushPendingItems();
     }
 
-    public async Task CommitAsync(IndexItem item, CancellationToken cancellationToken)
+    public async Task<CommitOutcome> CommitAsync(IndexItem item, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(item);
 
         if (item.Records is null)
         {
+            _uriRegistry?.SetFailed(item.Uri, "commit: no records were produced");
             _logger.LogWarning("Skipping commit for {Uri} because no records were produced.", item.Uri);
-            return;
+            return CommitOutcome.Skipped;
         }
 
         if (string.IsNullOrEmpty(item.DigestHex))
         {
+            _uriRegistry?.SetFailed(item.Uri, "commit: digest is unavailable");
             _logger.LogWarning("Skipping commit for {Uri} because digest is unavailable.", item.Uri);
-            return;
+            return CommitOutcome.Skipped;
         }
 
         var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
         if (mediaType is null)
         {
+            _uriRegistry?.SetFailed(item.Uri, "commit: media type could not be resolved");
             _logger.LogWarning("Skipping commit for {Uri} because media type could not be resolved.", item.Uri);
-            return;
+            return CommitOutcome.Skipped;
         }
 
         var documentNode = item.Records.Nodes.FirstOrDefault(n =>
             string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase));
         if (documentNode is null)
         {
+            _uriRegistry?.SetFailed(item.Uri, "commit: records do not contain a document node");
             _logger.LogWarning("Skipping commit for {Uri} because records do not contain a document node.", item.Uri);
-            return;
+            return CommitOutcome.Skipped;
         }
 
         var commitRecords = CreateCommitRecords(item);
@@ -163,6 +167,7 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
 
         // Wait for commit to complete
         await pending.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return CommitOutcome.Committed;
     }
 
     /// <summary>
@@ -271,17 +276,32 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
 
         foreach (var item in items)
         {
-            if (item.Records is null || string.IsNullOrEmpty(item.DigestHex))
+            if (item.Records is null)
+            {
+                _uriRegistry?.SetFailed(item.Uri, "commit: no records were produced");
                 continue;
+            }
+
+            if (string.IsNullOrEmpty(item.DigestHex))
+            {
+                _uriRegistry?.SetFailed(item.Uri, "commit: digest is unavailable");
+                continue;
+            }
 
             var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
             if (mediaType is null)
+            {
+                _uriRegistry?.SetFailed(item.Uri, "commit: media type could not be resolved");
                 continue;
+            }
 
             var documentNode = item.Records.Nodes.FirstOrDefault(n =>
                 string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase));
             if (documentNode is null)
+            {
+                _uriRegistry?.SetFailed(item.Uri, "commit: records do not contain a document node");
                 continue;
+            }
 
             var commitRecords = CreateCommitRecords(item);
             var parsedArtifact = new ParsedArtifact
@@ -432,3 +452,4 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
         };
     }
 }
+

@@ -666,6 +666,8 @@ public partial class IndexingEngine : IAsyncDisposable
                 mime = item.MediaType?.ToString() ?? mime;
                 status = result.ToString();
                 RecordResult(item.Epoch, result);
+                if (result == PipelineResult.Error)
+                    UriRegistry?.SetFailed(item.Uri, $"pipeline: {currentStage} returned {result}");
                 if (result != PipelineResult.Success)
                     return;
 
@@ -678,8 +680,16 @@ public partial class IndexingEngine : IAsyncDisposable
 
                 currentStage = "commit";
                 var commitTimer = Stopwatch.StartNew();
-                await Committer.CommitAsync(item, cancellationToken).ConfigureAwait(false);
+                var commitResult = await Committer.CommitAsync(item, cancellationToken).ConfigureAwait(false);
                 commitTimer.Stop();
+
+                if (commitResult == CommitOutcome.Skipped)
+                {
+                    RecordStageDuration("commit", commitTimer.Elapsed.TotalMilliseconds, PipelineResult.Error, item);
+                    status = "commit_skipped";
+                    return;
+                }
+
                 RecordStageDuration("commit", commitTimer.Elapsed.TotalMilliseconds, PipelineResult.Success, item);
 
                 if (item.IsTimedOut)
@@ -1988,3 +1998,4 @@ public partial class IndexingEngine : IAsyncDisposable
     static partial void LogSlowOperation(ILogger<IndexingEngine> logger, string operation, RepoUri uri, double elapsedSeconds, double thresholdSeconds);
     #endregion
 }
+

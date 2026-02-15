@@ -46,15 +46,15 @@ public sealed class JsonLoaderTests
     [Arguments("appsettings.Development.json")]
     [Arguments("launchSettings.json")]
     [Arguments("APPSETTINGS.Production.JSON")]
-    [DisplayName("CanLoadAsync rejects appsettings and launch settings files")]
-    public async Task CanLoadAsync_RejectsExcludedConfigurationFiles(string fileName)
+    [DisplayName("CanLoadAsync accepts config JSON files (precedence determines which loader wins)")]
+    public async Task CanLoadAsync_AcceptsConfigJsonFiles(string fileName)
     {
         var loader = new JsonLoader(new JsonStructureParser());
         var artifact = CreateFakeArtifact(fileName);
 
         var canLoad = await loader.CanLoadAsync(artifact);
 
-        canLoad.Should().BeFalse();
+        canLoad.Should().BeTrue();
     }
 
     [Test]
@@ -188,6 +188,8 @@ public sealed class JsonLoaderTests
         records.Artifacts.Should().HaveCount(1);
 
         var documentNode = records.Nodes.Single(n => n.Kind == "document");
+        documentNode.Props["media_type"].Should().NotBeNull();
+        documentNode.Props["media_type"]!.GetValue<string>().Should().Contain("json");
         documentNode.Props["shape"]!.GetValue<string>().Should().Be("object");
         documentNode.Props["key_count"]!.GetValue<int>().Should().Be(3);
         documentNode.Props["max_depth"]!.GetValue<int>().Should().Be(0);

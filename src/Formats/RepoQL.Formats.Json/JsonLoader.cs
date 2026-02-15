@@ -41,9 +41,6 @@ public sealed class JsonLoader(JsonStructureParser parser) : IFormatLoader, IFor
         ArgumentNullException.ThrowIfNull(artifact);
 
         var fileName = artifact.File.Name;
-        if (IsAppSettingsFile(fileName) || IsLaunchSettingsFile(fileName))
-            return Task.FromResult(false);
-
         if (fileName.EndsWith(".json5", StringComparison.OrdinalIgnoreCase))
             return Task.FromResult(false);
 
@@ -174,6 +171,7 @@ public sealed class JsonLoader(JsonStructureParser parser) : IFormatLoader, IFor
             ArtifactId = artifact.Id,
             Props = new JsonObject
             {
+                ["media_type"] = document.MediaType?.ToString(),
                 ["shape"] = shape,
                 ["key_count"] = parseResult.TotalKeyCount,
                 ["max_depth"] = parseResult.MaxDepth
@@ -238,13 +236,6 @@ public sealed class JsonLoader(JsonStructureParser parser) : IFormatLoader, IFor
     private static bool IsJsonLinesExtension(string fileName)
         => fileName.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)
            || fileName.EndsWith(".ndjson", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsAppSettingsFile(string fileName)
-        => fileName.StartsWith("appsettings", StringComparison.OrdinalIgnoreCase)
-           && fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsLaunchSettingsFile(string fileName)
-        => string.Equals(fileName, "launchSettings.json", StringComparison.OrdinalIgnoreCase);
 
     private JsonParseResult ParseJsonWithCommentFallback(string text, JsonParseOptions? options)
     {

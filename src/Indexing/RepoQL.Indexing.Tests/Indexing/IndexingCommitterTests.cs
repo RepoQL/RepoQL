@@ -55,15 +55,21 @@ public class IndexingCommitterTests
 
         using var db = new DuckDbDataStore(); // in-memory
         var catalog = A.Fake<IDocumentCatalog>();
-        using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
+        var registry = new UriRegistry();
+        registry.TryRegisterDiscovered(item.Uri);
+        using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance, registry);
 
         // Act
-        await committer.CommitAsync(item, CancellationToken.None);
+        var result = await committer.CommitAsync(item, CancellationToken.None);
 
         // Assert - no document should exist (no records to commit)
         var allNodes = db.GetAllNodes();
+        result.Should().Be(RepoQL.Indexing.Indexing.Commit.CommitOutcome.Skipped);
         allNodes.Should().BeEmpty("no records means no write");
         A.CallTo(() => catalog.ApplyUpsert(A<DocumentCatalogEntry>._)).MustNotHaveHappened();
+        registry.Should().ContainKey(item.Uri);
+        registry[item.Uri].Status.Should().Be(UriStatus.Failed);
+        registry[item.Uri].Error.Should().Contain("commit: no records were produced");
     }
 
     [Test]
@@ -81,7 +87,7 @@ public class IndexingCommitterTests
         using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
 
         // Act
-        var act = async () => await committer.CommitAsync(item, CancellationToken.None);
+        var act = async () => { await committer.CommitAsync(item, CancellationToken.None); };
 
         // Assert - should throw due to disposed connection
         await act.Should().ThrowAsync<Exception>();
@@ -146,7 +152,7 @@ public class IndexingCommitterTests
         using var committer = new IndexingCommitter(db, catalog, NullLogger<IndexingCommitter>.Instance);
 
         // Act
-        var act = async () => await committer.CommitAsync(item, CancellationToken.None);
+        var act = async () => { await committer.CommitAsync(item, CancellationToken.None); };
 
         // Assert
         await act.Should().NotThrowAsync();
@@ -304,3 +310,4 @@ public class IndexingCommitterTests
             => Task.FromResult(Array.Empty<float[]?>());
     }
 }
+

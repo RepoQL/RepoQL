@@ -591,50 +591,25 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
     }
 
-    private async IAsyncEnumerable<ReindexProgressSnapshot> TrackHotPathAsync(
+    private IAsyncEnumerable<ReindexProgressSnapshot> TrackHotPathAsync(
         long total,
         long epoch,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
     {
-        var timer = Stopwatch.StartNew();
-        var activity = StartPhaseActivity(CoordinatorReindexPhase.HotPath, epoch, total);
-        var completed = false;
-        long lastProcessed = 0;
-        try
-        {
-            _logger.LogInformation("Hot path processing started [Items: {Items:N0}]", total);
-            while (true)
+        return TrackPhaseAsync(
+            CoordinatorReindexPhase.HotPath,
+            total,
+            epoch,
+            () =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 var snapshot = _engine.GetHotPathQueueSnapshot();
-                var queued = snapshot.Queued;
-                var processed = Math.Clamp(total - queued, 0, total);
-                lastProcessed = processed;
-                var progress = new ReindexProgressSnapshot(CoordinatorReindexPhase.HotPath, total, processed, timer.Elapsed);
-                LogPhaseProgress(progress, queueDepth: queued, inProgress: snapshot.InProgress);
-                yield return progress;
-
-                if (snapshot.Depth <= 0 && (_engine.State & IndexingState.Started) == 0)
-                    break;
-
-                await Task.Delay(StatusPollInterval, cancellationToken).ConfigureAwait(false);
-            }
-
-            _logger.LogInformation("Hot path processing completed [Processed: {Processed:N0} Duration: {Duration:F1}s]", lastProcessed, timer.Elapsed.TotalSeconds);
-            completed = true;
-        }
-        finally
-        {
-            CompletePhaseActivity(
-                activity,
-                timer,
-                completed,
-                act =>
-                {
-                    act?.AddTag("reindex.items_processed", lastProcessed);
-                    act?.AddTag("reindex.items_total", total);
-                });
-        }
+                return new PhaseSnapshot(
+                    Math.Clamp(total - snapshot.Queued, 0, total),
+                    snapshot.Depth <= 0 && (_engine.State & IndexingState.Started) == 0,
+                    snapshot.Queued,
+                    snapshot.InProgress);
+            },
+            cancellationToken: cancellationToken);
     }
 
     private async IAsyncEnumerable<ReindexProgressSnapshot> TrackPruningAsync(
@@ -691,132 +666,103 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
     }
 
-    private async IAsyncEnumerable<ReindexProgressSnapshot> TrackVectorRefreshAsync(
+    private IAsyncEnumerable<ReindexProgressSnapshot> TrackVectorRefreshAsync(
         long epoch,
         long total,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
     {
-        var timer = Stopwatch.StartNew();
-        var activity = StartPhaseActivity(CoordinatorReindexPhase.VectorRefresh, epoch, total);
-        var completed = false;
-        long lastProcessed = 0;
-        try
-        {
-            _logger.LogInformation("Vector refresh started [Items: {Items:N0}]", total);
-            while (!cancellationToken.IsCancellationRequested)
+        return TrackPhaseAsync(
+            CoordinatorReindexPhase.VectorRefresh,
+            total,
+            epoch,
+            () =>
             {
                 var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
                 var pending = analysisSnapshot.Depth;
-                var processed = Math.Clamp(total - pending, 0, total);
-                lastProcessed = processed;
-                var progress = new ReindexProgressSnapshot(CoordinatorReindexPhase.VectorRefresh, total, processed, timer.Elapsed);
-                LogPhaseProgress(progress, queueDepth: pending);
-                yield return progress;
-
-                if (pending <= 0)
-                    break;
-
-                await Task.Delay(StatusPollInterval, cancellationToken).ConfigureAwait(false);
-            }
-
-            _logger.LogInformation(
-                "Vector refresh completed [Processed: {Processed:N0} Duration: {Duration:F1}s]",
-                lastProcessed,
-                timer.Elapsed.TotalSeconds);
-            completed = true;
-        }
-        finally
-        {
-            CompletePhaseActivity(
-                activity,
-                timer,
-                completed,
-                act =>
-                {
-                    act?.AddTag("reindex.items_processed", lastProcessed);
-                    act?.AddTag("reindex.items_total", total);
-                });
-        }
+                return new PhaseSnapshot(
+                    Math.Clamp(total - pending, 0, total),
+                    pending <= 0,
+                    pending);
+            },
+            cancellationToken: cancellationToken);
     }
 
-    private async IAsyncEnumerable<ReindexProgressSnapshot> TrackMultiFileAnalysisAsync(
+    private IAsyncEnumerable<ReindexProgressSnapshot> TrackMultiFileAnalysisAsync(
         long epoch,
         long total,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
     {
-        var timer = Stopwatch.StartNew();
-        var activity = StartPhaseActivity(CoordinatorReindexPhase.MultiFileAnalysis, epoch, total);
-        var completed = false;
-        long lastProcessed = 0;
-        try
-        {
-            _logger.LogInformation("Multi-file analysis started [Items: {Items:N0}]", total);
-            while (!cancellationToken.IsCancellationRequested)
+        return TrackPhaseAsync(
+            CoordinatorReindexPhase.MultiFileAnalysis,
+            total,
+            epoch,
+            () =>
             {
                 var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
                 var multiBusy = _engine.GetActiveCount(IndexingState.MultiFileAnalysisBusy);
                 var pending = analysisSnapshot.Depth + multiBusy;
-                var processed = Math.Clamp(total - pending, 0, total);
-                lastProcessed = processed;
-                var progress = new ReindexProgressSnapshot(CoordinatorReindexPhase.MultiFileAnalysis, total, processed, timer.Elapsed);
-                LogPhaseProgress(progress, queueDepth: pending);
-                yield return progress;
-
-                if (pending == 0)
-                    break;
-
-                await Task.Delay(StatusPollInterval, cancellationToken).ConfigureAwait(false);
-            }
-
-            _logger.LogInformation(
-                "Multi-file analysis completed [Processed: {Processed:N0} Duration: {Duration:F1}s]",
-                lastProcessed,
-                timer.Elapsed.TotalSeconds);
-            completed = true;
-        }
-        finally
-        {
-            CompletePhaseActivity(
-                activity,
-                timer,
-                completed,
-                act =>
-                {
-                    act?.AddTag("reindex.items_processed", lastProcessed);
-                    act?.AddTag("reindex.items_total", total);
-                });
-        }
+                return new PhaseSnapshot(
+                    Math.Clamp(total - pending, 0, total),
+                    pending == 0,
+                    pending);
+            },
+            cancellationToken: cancellationToken);
     }
 
-    private async IAsyncEnumerable<ReindexProgressSnapshot> TrackIndexRebuildAsync(
+    private IAsyncEnumerable<ReindexProgressSnapshot> TrackIndexRebuildAsync(
         long epoch,
         long total,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        CancellationToken cancellationToken)
+    {
+        return TrackPhaseAsync(
+            CoordinatorReindexPhase.IndexRebuild,
+            total,
+            epoch,
+            () =>
+            {
+                var rebuildBusy = _engine.GetActiveCount(IndexingState.IndexRebuildBusy);
+                return new PhaseSnapshot(
+                    Math.Clamp(total - rebuildBusy, 0, total),
+                    rebuildBusy == 0,
+                    rebuildBusy);
+            },
+            cancellationToken: cancellationToken);
+    }
+
+    private async IAsyncEnumerable<ReindexProgressSnapshot> TrackPhaseAsync(
+        CoordinatorReindexPhase phase,
+        long total,
+        long epoch,
+        Func<PhaseSnapshot> poll,
+        Action<Activity?>? configureTags = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         var timer = Stopwatch.StartNew();
-        var activity = StartPhaseActivity(CoordinatorReindexPhase.IndexRebuild, epoch, total);
+        var activity = StartPhaseActivity(phase, epoch, total);
         var completed = false;
         long lastProcessed = 0;
         try
         {
-            _logger.LogInformation("Index rebuild started [Items: {Items:N0}]", total);
-            while (!cancellationToken.IsCancellationRequested)
+            _logger.LogInformation("{Phase} started [Items: {Items:N0}]", phase, total);
+            while (true)
             {
-                var rebuildBusy = _engine.GetActiveCount(IndexingState.IndexRebuildBusy);
-                var processed = Math.Clamp(total - rebuildBusy, 0, total);
-                lastProcessed = processed;
-                var progress = new ReindexProgressSnapshot(CoordinatorReindexPhase.IndexRebuild, total, processed, timer.Elapsed);
-                LogPhaseProgress(progress, queueDepth: rebuildBusy);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var snapshot = poll();
+                lastProcessed = snapshot.Processed;
+                var progress = new ReindexProgressSnapshot(phase, total, snapshot.Processed, timer.Elapsed);
+                LogPhaseProgress(progress, queueDepth: snapshot.QueueDepth, inProgress: snapshot.InProgress);
                 yield return progress;
 
-                if (rebuildBusy == 0)
+                if (snapshot.Complete)
                     break;
 
                 await Task.Delay(StatusPollInterval, cancellationToken).ConfigureAwait(false);
             }
 
             _logger.LogInformation(
-                "Index rebuild completed [Processed: {Processed:N0} Duration: {Duration:F1}s]",
+                "{Phase} completed [Processed: {Processed:N0} Duration: {Duration:F1}s]",
+                phase,
                 lastProcessed,
                 timer.Elapsed.TotalSeconds);
             completed = true;
@@ -831,9 +777,12 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 {
                     act?.AddTag("reindex.items_processed", lastProcessed);
                     act?.AddTag("reindex.items_total", total);
+                    configureTags?.Invoke(act);
                 });
         }
     }
+
+    private readonly record struct PhaseSnapshot(long Processed, bool Complete, long? QueueDepth = null, long? InProgress = null);
 
     private readonly record struct EnumeratedArtifact(IFileInfo File, IVirtualFileSystem Store);
 
@@ -1104,3 +1053,4 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
     }
 }
+

@@ -199,7 +199,7 @@ public sealed class IndexingEngineTestBuilder
         if (_committer is null)
         {
             A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
-                .Returns(Task.CompletedTask);
+                .Returns(Task.FromResult(RepoQL.Indexing.Indexing.Commit.CommitOutcome.Committed));
         }
 
         var artifactPruner = _artifactPruner ?? NullArtifactPruner.Instance;
@@ -304,3 +304,4 @@ public sealed class IndexingEngineTestContext
     public ILogger<IndexingEngine> Logger { get; }
     public UriRegistry? UriRegistry { get; }
 }
+
