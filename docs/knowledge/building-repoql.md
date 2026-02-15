@@ -57,7 +57,7 @@ The intelligence between "agent asks" and "agent gets an answer." Explore does b
 **Go deeper:** `src/RepoQL.Explore/`, `docs/north-star/read-tool.md`
 
 ### 6. The UDF System
-Add SQL functions by writing C# with `[UdfClass]`/`[ScalarUdf]`/`[StructuredUdf]` attributes. Auto-discovered at startup. Framework generates SQL macros wrapping C# implementations. 22 UDF classes currently.
+Add SQL functions by writing C# with `[UdfClass]`/`[ScalarUdf]`/`[StructuredUdf]` attributes. Auto-discovered at startup. Framework generates SQL macros wrapping C# implementations.
 
 **Go deeper:** `src/RepoQL.Data.DuckDB/UdfFramework/`, `src/RepoQL.Data.DuckDB/UdfImplementations/`
 
