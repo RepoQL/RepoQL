@@ -609,9 +609,31 @@ internal class HostCommands(IAnsiConsole console)
         var pidFile = new HostPidFile(repo);
         if (!pidFile.TryRead(out var zombiePid) || zombiePid <= 0)
         {
-            logger.Warning("Zombie detected (lock held, no socket after {Grace}s) but host.pid is missing or empty. Cannot evict.",
-                grace.TotalSeconds);
-            return false;
+            // No PID file → can't identify or kill the lock holder.
+            // Best-effort: delete the lock file so a new host can take over.
+            // On Unix, this removes the directory entry; any old process retains its lock
+            // on the now-unlinked inode, harmless since it's not serving.
+            // On Windows, File.Delete will fail if a live process holds the file handle.
+            var lockPath = HostLock.GetLockPath(repo);
+            try
+            {
+                File.Delete(lockPath);
+                pidFile.TryDelete(out _);
+                UnixSocketTransport.TryCleanupStaleSocket(socketPath, out _);
+                logger.Warning(
+                    "Zombie detected (lock held, no socket after {Grace}s, no PID). Deleted stale lock file at {LockPath}.",
+                    grace.TotalSeconds, lockPath);
+                await Task.Delay(500, ct).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                logger.Warning(ex,
+                    "Zombie detected (lock held, no socket after {Grace}s, no PID). " +
+                    "Could not remove stale lock file at {LockPath}; manual deletion may be required.",
+                    grace.TotalSeconds, lockPath);
+                return false;
+            }
         }
 
         if (!RepoQlProcessInspector.TryGetRepoQlProcess(zombiePid, out var process))
