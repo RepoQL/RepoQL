@@ -241,6 +241,27 @@ WITH RECURSIVE deps AS (...) SELECT ... FROM deps JOIN node JOIN Files;
 | Dependencies | WITH RECURSIVE | GraphComposition |
 | Comparative | Window functions | AggregateInsights |
 | External data | MCP tools | ExternalEnrich |
+| Steer summary | SQL comment | CommentAsPrompt |
+
+---
+
+## Capsule: CommentAsPrompt
+
+**Invariant**
+SQL comments become the summarizer's prompt; use deliberately, never for debugging notes.
+
+**Example**
+```sql
+-- What authentication patterns exist across services?
+SELECT uri, headline, structure FROM search('authentication', k := 20)
+```
+
+**Depth**
+- When query results exceed the token budget and the SQL contains comments, the summarizer uses comments as its guiding question
+- A comment like `-- What patterns exist?` produces a focused synthesis; no comment returns raw data
+- **Trap**: debugging comments (`-- Fix: column is document_uri`) pollute the synthesis with irrelevant context
+- Strip scratch comments before the final query; keep only the question you want answered
+- SeeAlso: SearchEnrich, MultiStepAnalysis
 
 ---
 

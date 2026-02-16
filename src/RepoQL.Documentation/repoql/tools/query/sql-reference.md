@@ -364,6 +364,17 @@ FROM _search_candidates('ClassName', mode := 'symbol', k := 10)
 WHERE scope = 'object' AND kind LIKE '%class%';
 ```
 
+### Comments Steer the Summarizer
+
+When results exceed the token budget and SQL contains comments, the LLM summarizer uses those comments as its guiding question. This is powerful when deliberate — and a trap when accidental.
+
+```sql
+-- What error handling patterns exist?
+SELECT uri, headline, structure FROM search('error handling', k := 20)
+```
+
+Strip debugging comments (`-- Fix: wrong column`) before running final queries — they pollute the synthesis. See `help:///data-analysis.md` CommentAsPrompt capsule.
+
 ---
 
 ## See Also
