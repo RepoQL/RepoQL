@@ -1,0 +1,273 @@
+.operation-tracker {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.ot-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ot-title {
+  font-size: 0.6rem;
+  font-weight: 500;
+  color: var(--fg3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.ot-counts {
+  display: flex;
+  gap: 10px;
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+}
+
+.ot-active-count {
+  color: var(--blue);
+}
+
+.ot-total-count {
+  color: var(--fg3);
+}
+
+.ot-empty {
+  padding: 20px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--fg3);
+  text-align: center;
+}
+
+.ot-list {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+/* Operation row */
+.ot-row {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.ot-row.active {
+  background: rgba(74, 158, 255, 0.03);
+}
+
+.ot-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ot-row-header:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ot-row-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ot-kind-icon {
+  font-size: 0.7rem;
+  color: var(--fg3);
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.ot-row-info {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ot-description {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--fg2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.op-state {
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  padding: 1px 6px;
+  border-radius: 2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.op-state.running {
+  color: var(--blue);
+  background: rgba(74, 158, 255, 0.1);
+}
+
+.op-state.completed {
+  color: var(--green);
+  background: rgba(61, 214, 140, 0.08);
+}
+
+.op-state.with-failures {
+  color: var(--amber);
+  background: rgba(240, 160, 48, 0.08);
+}
+
+.op-state.cancelled {
+  color: var(--fg3);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ot-elapsed {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  color: var(--fg3);
+  flex-shrink: 0;
+}
+
+/* Progress */
+.ot-progress {
+  padding: 0 16px 8px 40px;
+}
+
+.ot-progress-bar {
+  height: 4px;
+  background: var(--well);
+  border-radius: 2px;
+  overflow: hidden;
+  display: flex;
+}
+
+.ot-progress-indexed {
+  height: 100%;
+  background: var(--blue);
+  opacity: 0.6;
+  transition: width 0.4s ease;
+}
+
+.ot-progress-embedded {
+  height: 100%;
+  background: var(--green);
+  opacity: 0.6;
+  transition: width 0.4s ease;
+}
+
+.ot-progress-failed {
+  height: 100%;
+  background: var(--red);
+  opacity: 0.6;
+  transition: width 0.4s ease;
+}
+
+.ot-progress-labels {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  color: var(--fg3);
+}
+
+.ot-failed-label {
+  color: var(--red);
+}
+
+/* Detail: milestones + log */
+.ot-detail {
+  padding: 4px 16px 10px 40px;
+}
+
+.ot-milestones {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.ot-milestone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+}
+
+.ot-ms-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+
+.ot-ms-name {
+  color: var(--fg2);
+  font-weight: 500;
+}
+
+.ot-ms-detail {
+  color: var(--fg3);
+}
+
+.ot-ms-time {
+  color: var(--fg4);
+  margin-left: auto;
+}
+
+/* Log */
+.ot-log {
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ot-log-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.48rem;
+  color: var(--fg3);
+}
+
+.ot-log-type {
+  color: var(--fg3);
+  min-width: 70px;
+}
+
+.ot-log-type.failed {
+  color: var(--red);
+}
+
+.ot-log-uri {
+  color: var(--fg2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ot-log-msg {
+  color: var(--fg3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

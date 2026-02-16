@@ -1,0 +1,128 @@
+.query-activity {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.qa-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.qa-title {
+  font-size: 0.6rem;
+  font-weight: 500;
+  color: var(--fg3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.qa-count {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--fg3);
+}
+
+.qa-list {
+  flex: 1;
+  overflow-y: auto;
+  max-height: 400px;
+}
+
+.qa-empty {
+  padding: 20px 16px;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--fg3);
+  text-align: center;
+}
+
+/* Query row */
+.qa-row {
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  animation: qa-in 0.25s ease;
+}
+
+@keyframes qa-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+.qa-row-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.qa-tool {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 500;
+}
+
+.qa-elapsed {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  color: var(--fg3);
+}
+
+.qa-params {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  color: var(--fg2);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qa-row-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: 3px;
+}
+
+.qa-result {
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  color: var(--fg3);
+}
+
+.qa-tokens {
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  color: var(--fg3);
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.qa-eff {
+  font-size: 0.45rem;
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+.qa-eff.high {
+  color: var(--green);
+  background: rgba(61, 214, 140, 0.08);
+}
+
+.qa-eff.mid {
+  color: var(--amber);
+  background: rgba(240, 160, 48, 0.08);
+}
+
+.qa-eff.low {
+  color: var(--fg3);
+  background: rgba(255, 255, 255, 0.03);
+}

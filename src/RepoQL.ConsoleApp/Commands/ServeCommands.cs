@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Net;
 using System.Net.Sockets;
 using Grpc.Core;
 using Grpc.Health.V1;
@@ -7,7 +8,10 @@ using Grpc.HealthCheck;
 using Grpc.Net.Client;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
@@ -16,6 +20,7 @@ using OpenTelemetry.Trace;
 using RepoQL.Contracts;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
+using RepoQL.ConsoleApp.Dashboard;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.ConsoleApp.Logging;
 using RepoQL.ConsoleApp.Search;
@@ -128,7 +133,14 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton(hostState);
             builder.Services.AddSingleton<ServiceDegradationTracker>(_ => new ServiceDegradationTracker(hostState, repo));
             builder.Services.AddSingleton<IServiceDegradationTracker>(sp => sp.GetRequiredService<ServiceDegradationTracker>());
-            builder.WebHost.ConfigureKestrel(options => { GrpcServerHelper.ConfigureUnixSocket(options, repo); });
+            builder.WebHost.ConfigureKestrel(options =>
+            {
+                GrpcServerHelper.ConfigureUnixSocket(options, repo);
+                options.Listen(IPAddress.Loopback, 0, listenOptions =>
+                {
+                    listenOptions.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http1;
+                });
+            });
             serilogLogger.Information("Phase: database init");
             var dbInit = DatabaseInitCoordinator.Prepare(repo, serilogLogger);
             builder.Services.AddSingleton(dbInit.Options);
@@ -191,10 +203,48 @@ internal class HostCommands(IAnsiConsole console)
             await DatabaseInitCoordinator.InitializeAsync(app.Services, repo, dbInit.Report, serilogLogger, CancellationToken.None)
                 .ConfigureAwait(false);
 
+            // Dashboard: serve embedded static files
+            try
+            {
+                var dashboardProvider = new ManifestEmbeddedFileProvider(typeof(HostState).Assembly, "wwwroot");
+                app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = dashboardProvider });
+                app.UseStaticFiles(new StaticFileOptions { FileProvider = dashboardProvider });
+            }
+            catch (InvalidOperationException)
+            {
+                // No embedded dashboard files (dev build without npm run build) - skip silently
+            }
+
             // Always log startup info
             app.Logger.LogInformation("[Host] cwd={WorkingDirectory} repository={Repository} resolved repo={ResolvedRepository}", cwd, repository, repo);
             app.MapGrpcService<RepoQlServiceImpl>();
             app.MapGrpcService<HealthServiceImpl>();
+            DashboardEndpoints.Map(app);
+
+            // SPA fallback for client-side routing
+            try
+            {
+                var fallbackProvider = new ManifestEmbeddedFileProvider(typeof(HostState).Assembly, "wwwroot");
+                app.MapFallback(async context =>
+                {
+                    var file = fallbackProvider.GetFileInfo("index.html");
+                    if (file.Exists)
+                    {
+                        context.Response.ContentType = "text/html";
+                        await using var stream = file.CreateReadStream();
+                        await stream.CopyToAsync(context.Response.Body);
+                    }
+                    else
+                    {
+                        context.Response.StatusCode = 404;
+                    }
+                });
+            }
+            catch (InvalidOperationException)
+            {
+                // No embedded dashboard - skip fallback
+            }
+
             var health = app.Services.GetRequiredService<HealthServiceImpl>();
             var degradationTracker = app.Services.GetRequiredService<ServiceDegradationTracker>();
             degradationTracker.AttachHealth(health);
@@ -203,7 +253,23 @@ internal class HostCommands(IAnsiConsole console)
             health.SetStatus("repoql.v1.RepoQL", HealthCheckResponse.Types.ServingStatus.Serving);
             app.Logger.LogInformation("Phase: ready");
             app.Logger.LogInformation("Host ready");
-            await app.RunAsync().ConfigureAwait(false);
+            await app.StartAsync().ConfigureAwait(false);
+
+            // Discover and publish dashboard URL
+            var serverAddresses = app.Services.GetRequiredService<IServer>()
+                .Features.Get<IServerAddressesFeature>();
+            var dashboardUrl = serverAddresses?.Addresses
+                .FirstOrDefault(a => a.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                                     && !a.StartsWith("http://unix:", StringComparison.OrdinalIgnoreCase));
+            if (dashboardUrl != null)
+            {
+                hostState.DashboardUrl = dashboardUrl;
+                HostDiagnosticsStore.TryWriteReport(repo, "dashboard-bind.json",
+                    new { url = dashboardUrl, startedAt = DateTime.UtcNow.ToString("O") });
+                app.Logger.LogInformation("Dashboard available at {DashboardUrl}", dashboardUrl);
+            }
+
+            await app.WaitForShutdownAsync().ConfigureAwait(false);
         }
         finally
         {

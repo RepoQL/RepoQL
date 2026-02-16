@@ -1,0 +1,51 @@
+.status-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.hdr-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hdr-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg3);
+  transition: all 1s;
+}
+
+.hdr-dot.active {
+  background: var(--blue);
+  box-shadow: 0 0 8px rgba(74, 158, 255, 0.3);
+  animation: hdot 2s ease-in-out infinite;
+}
+
+.hdr-dot.done {
+  background: var(--green);
+  box-shadow: 0 0 10px rgba(61, 214, 140, 0.3);
+  animation: none;
+}
+
+@keyframes hdot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.hdr-title {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--fg2);
+}
+
+.hdr-right {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--fg3);
+}

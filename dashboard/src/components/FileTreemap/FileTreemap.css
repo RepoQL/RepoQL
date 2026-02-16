@@ -1,0 +1,186 @@
+.treemap-area {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.treemap-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.treemap-title {
+  font-size: 0.6rem;
+  font-weight: 500;
+  color: var(--fg3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.treemap-stats {
+  display: flex;
+  gap: 16px;
+}
+
+.tm-stat {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--fg3);
+}
+
+.tm-stat span {
+  color: var(--fg2);
+}
+
+.treemap-body {
+  flex: 1;
+  padding: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-content: flex-start;
+}
+
+/* Directory group */
+.dir-group {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px;
+  background: var(--surface);
+  position: relative;
+  overflow: hidden;
+}
+
+.dir-label {
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  color: var(--fg3);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.dir-count {
+  font-size: 0.45rem;
+  color: var(--fg4);
+}
+
+.dir-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-content: flex-start;
+}
+
+/* File tile */
+.ftile {
+  width: 7px;
+  height: 7px;
+  border-radius: 1px;
+  background: var(--fg4);
+  border: 1px solid transparent;
+  transition: background 0.5s ease, border-color 0.4s ease, box-shadow 0.6s ease, filter 0.6s ease, opacity 0.5s ease;
+}
+
+.ftile.processing {
+  animation: shimmer 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes shimmer {
+  from { filter: brightness(1) blur(0.3px); }
+  to { filter: brightness(1.6) blur(0px); }
+}
+
+.ftile.failed {
+  background: var(--red) !important;
+  border-color: var(--red) !important;
+  opacity: 0.7;
+}
+
+.ftile.selected {
+  outline: 2px solid var(--fg1);
+  outline-offset: 1px;
+  z-index: 1;
+}
+
+/* Clickable cursor */
+.dir-files .ftile {
+  cursor: pointer;
+}
+
+/* Detail strip */
+.treemap-detail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  flex-shrink: 0;
+  min-height: 28px;
+}
+
+.detail-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.detail-path {
+  color: var(--fg1);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-lang {
+  color: var(--fg3);
+  flex-shrink: 0;
+}
+
+.detail-state {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.5rem;
+  flex-shrink: 0;
+  background: rgba(255,255,255,.06);
+  color: var(--fg2);
+}
+
+.detail-state.failed {
+  background: rgba(255,60,60,.15);
+  color: var(--red);
+}
+
+.detail-state.full_embedded {
+  background: rgba(80,200,120,.12);
+  color: var(--green, #50c878);
+}
+
+.detail-close {
+  background: none;
+  border: none;
+  color: var(--fg4);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.detail-close:hover {
+  color: var(--fg1);
+}

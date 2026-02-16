@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+:root {
+  /* Surface */
+  --bg: #0e0e11;
+  --surface: #161619;
+  --raised: #1c1c20;
+  --well: #0a0a0d;
+
+  /* Borders */
+  --border: #252530;
+  --border-l: #32323e;
+
+  /* Foreground */
+  --fg: #e0dfd8;
+  --fg1: #c8c8c0;
+  --fg2: #a0a098;
+  --fg3: #727268;
+  --fg4: #484850;
+
+  /* Accent */
+  --blue: #4a9eff;
+  --amber: #f0a030;
+  --green: #3dd68c;
+  --green-soft: rgba(61, 214, 140, 0.08);
+  --red: #e05050;
+
+  /* Language colors — GitHub-inspired */
+  --lang-cs: #68217a;
+  --lang-ts: #3178c6;
+  --lang-py: #3572a5;
+  --lang-rs: #dea584;
+  --lang-go: #00add8;
+  --lang-java: #b07219;
+  --lang-md: #083fa1;
+  --lang-json: #40d47e;
+  --lang-yaml: #cb171e;
+  --lang-toml: #9c4221;
+  --lang-js: #f1e05a;
+  --lang-rb: #701516;
+  --lang-cpp: #f34b7d;
+  --lang-css: #563d7c;
+  --lang-html: #e34c26;
+  --lang-sql: #e38c00;
+  --lang-sh: #89e051;
+  --lang-xml: #0060ac;
+  --lang-proto: #4a6a87;
+  --lang-unknown: #555560;
+
+  /* Typography */
+  --font-mono: 'IBM Plex Mono', monospace;
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}

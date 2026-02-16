@@ -1,0 +1,19 @@
+.phase-section {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.phase-label {
+  font-size: 0.55rem;
+  font-weight: 500;
+  color: var(--fg3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.phase-val {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--fg2);
+}

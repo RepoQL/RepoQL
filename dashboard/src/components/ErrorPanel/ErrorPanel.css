@@ -1,0 +1,131 @@
+.error-panel {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.error-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.error-panel-title {
+  font-size: 0.6rem;
+  font-weight: 500;
+  color: var(--fg3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.error-panel-count {
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  color: var(--red);
+  background: rgba(224, 80, 80, 0.1);
+  padding: 1px 8px;
+  border-radius: 8px;
+}
+
+.error-panel-count.zero {
+  color: var(--fg3);
+  background: transparent;
+}
+
+.error-panel-body {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* Error group */
+.err-group {
+  border-bottom: 1px solid var(--border);
+}
+
+.err-group:last-child {
+  border-bottom: none;
+}
+
+.err-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  color: var(--fg2);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.err-group-header:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.err-group-chevron {
+  color: var(--fg3);
+  font-size: 0.55rem;
+  width: 10px;
+}
+
+.err-group-label {
+  flex: 1;
+}
+
+.err-group-count {
+  color: var(--fg3);
+}
+
+/* Error item */
+.err-group-items {
+  padding: 0 16px 8px 26px;
+}
+
+.err-item {
+  padding: 4px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.err-item:first-child {
+  border-top: none;
+}
+
+.err-item-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--fg2);
+}
+
+.err-lang-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.err-item-msg {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  color: var(--red);
+  opacity: 0.8;
+  margin-top: 2px;
+  padding-left: 10px;
+}
+
+.err-item-hint {
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  color: var(--fg3);
+  margin-top: 1px;
+  padding-left: 10px;
+  font-style: italic;
+}

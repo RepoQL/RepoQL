@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Google.Protobuf.WellKnownTypes;
@@ -28,10 +29,7 @@ public sealed class StatusEventAggregator : IDisposable
     private readonly StageMetricsListener _stageMetrics;
     private readonly ILogger<StatusEventAggregator> _logger;
 
-    /// <summary>
-    /// Broadcast channel for all subscribers. Bounded to prevent memory issues if clients are slow.
-    /// </summary>
-    private readonly Channel<StatusEvent> _broadcast;
+    private readonly ConcurrentDictionary<Guid, Channel<StatusEvent>> _subscribers = new();
 
     private readonly object _stateLock = new();
     private PipelineStatusSnapshot? _lastSnapshot;
@@ -48,14 +46,6 @@ public sealed class StatusEventAggregator : IDisposable
         _stageMetrics = stageMetrics ?? throw new ArgumentNullException(nameof(stageMetrics));
         _logger = logger ?? NullLogger<StatusEventAggregator>.Instance;
 
-        // Bounded channel with dropping oldest on overflow - prefer fresh events
-        _broadcast = Channel.CreateBounded<StatusEvent>(new BoundedChannelOptions(1000)
-        {
-            FullMode = BoundedChannelFullMode.DropOldest,
-            SingleWriter = false,
-            SingleReader = false
-        });
-
         // Subscribe to engine state changes
         _engine.StateChanged += OnStateChanged;
         _engine.HotPathIdle += OnHotPathIdle;
@@ -70,14 +60,35 @@ public sealed class StatusEventAggregator : IDisposable
     public async IAsyncEnumerable<StatusEvent> WatchAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Send initial pipeline status immediately on subscription
-        var initialStatus = CreatePipelineStatusEvent(_coordinator.GetPipelineStatus());
-        yield return initialStatus;
-
-        // Stream all subsequent events
-        await foreach (var evt in _broadcast.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+        var subscriberId = Guid.NewGuid();
+        var subscriberChannel = Channel.CreateBounded<StatusEvent>(new BoundedChannelOptions(256)
         {
-            yield return evt;
+            FullMode = BoundedChannelFullMode.DropOldest,
+            SingleWriter = false,
+            SingleReader = true
+        });
+
+        while (!_subscribers.TryAdd(subscriberId, subscriberChannel))
+        {
+            subscriberId = Guid.NewGuid();
+        }
+
+        try
+        {
+            // Send initial pipeline status immediately on subscription
+            var initialStatus = CreatePipelineStatusEvent(_coordinator.GetPipelineStatus());
+            yield return initialStatus;
+
+            // Stream all subsequent events
+            await foreach (var evt in subscriberChannel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            {
+                yield return evt;
+            }
+        }
+        finally
+        {
+            _subscribers.TryRemove(subscriberId, out _);
+            subscriberChannel.Writer.TryComplete();
         }
     }
 
@@ -409,9 +420,12 @@ public sealed class StatusEventAggregator : IDisposable
         if (_disposed)
             return;
 
-        if (!_broadcast.Writer.TryWrite(evt))
+        foreach (var subscriber in _subscribers.Values)
         {
-            _logger.LogDebug("Status event dropped (channel full)");
+            if (!subscriber.Writer.TryWrite(evt))
+            {
+                _logger.LogDebug("Status event dropped (channel full)");
+            }
         }
     }
 
@@ -423,6 +437,12 @@ public sealed class StatusEventAggregator : IDisposable
 
         _engine.StateChanged -= OnStateChanged;
         _engine.HotPathIdle -= OnHotPathIdle;
-        _broadcast.Writer.TryComplete();
+
+        foreach (var subscriber in _subscribers.Values)
+        {
+            subscriber.Writer.TryComplete();
+        }
+
+        _subscribers.Clear();
     }
 }

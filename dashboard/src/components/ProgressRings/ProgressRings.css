@@ -1,0 +1,75 @@
+.rings-section {
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ring-bg {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 6;
+}
+
+.ring-fill {
+  fill: none;
+  stroke-width: 6;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.4s ease;
+}
+
+.ring-center-pct {
+  font-family: var(--font-mono);
+  font-size: 1.6rem;
+  font-weight: 300;
+  fill: var(--fg);
+  text-anchor: middle;
+  transition: fill 1s;
+}
+
+.ring-center-pct.done {
+  fill: var(--green);
+}
+
+.ring-center-label {
+  font-size: 0.5rem;
+  fill: var(--fg3);
+  text-anchor: middle;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.ring-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  width: 100%;
+}
+
+.rl {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  color: var(--fg3);
+}
+
+.rl-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rl-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.rl-val {
+  color: var(--fg2);
+}

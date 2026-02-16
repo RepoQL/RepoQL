@@ -1,0 +1,75 @@
+.stream-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.stream-label {
+  font-size: 0.55rem;
+  font-weight: 500;
+  color: var(--fg3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 14px 20px 8px;
+  flex-shrink: 0;
+}
+
+.stream-list {
+  flex: 1;
+  overflow: hidden;
+  padding: 0 20px;
+  position: relative;
+}
+
+.stream-list::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: linear-gradient(transparent, var(--surface));
+  pointer-events: none;
+}
+
+.s-item {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--fg3);
+  padding: 2px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  animation: s-in 0.3s ease forwards;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.s-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  flex-shrink: 0;
+}
+
+.s-op {
+  color: var(--fg3);
+}
+
+.s-path {
+  color: var(--fg2);
+}
+
+@keyframes s-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

@@ -1,0 +1,28 @@
+.sankey-area {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  height: 120px;
+  padding: 8px 24px;
+}
+
+.sankey-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.sk-label {
+  font-size: 0.55rem;
+  fill: var(--fg3);
+  font-family: var(--font-mono);
+}
+
+.sk-val {
+  font-size: 0.85rem;
+  fill: var(--fg2);
+  font-family: var(--font-mono);
+  font-weight: 400;
+}
+
+.sk-val.active {
+  fill: var(--fg);
+}
