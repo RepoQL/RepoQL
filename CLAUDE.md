@@ -121,7 +121,7 @@ Budget management is a cross-cutting concern:
 | `read` | Fetch known content with budget control | URI + budget → richest representation that fits. Modifiers transform output. |
 | `query` | SQL over everything | Graph, git, external MCP servers, parsed data — all in one query. |
 | `import` | Bring external data into the graph | Repos (VFS mount), analysis reports (SARIF → annotations), observability data, anything. |
-| `::commands` | Admin without leaving the query surface | `::diagnostics`, `::reindex[scope]`, `::host.restart`, `::parse`. Imperative actions via `::` prefix. |
+| `::commands` | Admin without leaving the query surface | `::` prefix, auto-discovered. `::?` lists available commands. |
 
 ### Two Processes
 

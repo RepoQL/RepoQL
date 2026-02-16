@@ -19,7 +19,7 @@ These are the major subsystems. When you encounter one, you know it exists and r
 ### 1. The Graph Store
 DuckDB with five frozen tables (`artifact`, `node`, `edge`, `span`, `annotation`). Single writer enforced through `DuckDbDataStore`. Never add tables — extend via views, macros, UDFs. Plus `document_embedding` for vector search and git tables for history.
 
-Key views: `Files`, `Types`, `Functions`. Key macros: `search()`, `snippet()`, `entities_by_uri()`, `glob_files()`, `parse()`, git functions. The SQL surface is where capability grows while the schema stays stable.
+Views expose the graph as familiar SQL (e.g. `Files`, `Types`, `Functions`). Macros add capabilities (e.g. `search()`, `snippet()`). The SQL surface is where capability grows while the schema stays stable.
 
 **Go deeper:** `docs/Schema.md`, `src/RepoQL.Data.DuckDB/`
 
@@ -38,7 +38,7 @@ Pluggable parsers that teach the pipeline how to understand each file type. Each
 
 `IFormatLoader` implementations discovered via DI. Naming has tension from rewrites — format handlers are used BY pipeline stages, not the other way around.
 
-Supported: C#, TypeScript, Markdown, GraphQL, JSON, CSV, Excel, PDF, Word, Mermaid, Ruby, PHP, Terraform, SQL, CSS.
+Many formats supported — see `Formats/*` projects. Each is a separate project per format family.
 
 **Go deeper:** `PROCESSOR_GUIDE.md`, any `Formats/*` project, `docs/north-star/formats.md`
 
@@ -80,7 +80,7 @@ Claude Code ←stdio/JSON-RPC→ MCP Client ←gRPC/Unix socket→ Host
 **Go deeper:** `src/RepoQL.ConsoleApp/Host/`, `src/RepoQL.Protocol/`
 
 ### 9. The Command System
-`::commands` provide imperative admin actions through the query surface. `::diagnostics`, `::reindex[scope]`, `::host.restart`, `::parse`, `::dashboard`, `::repo`, `::?`. Attribute-based discovery: `[CommandClass]` + `[Command("name")]`. Commands never overlap with what SQL can do.
+`::commands` provide imperative admin actions through the query surface (e.g. `::diagnostics`, `::reindex[scope]`). Attribute-based discovery: `[CommandClass]` + `[Command("name")]`. Commands never overlap with what SQL can do — `::?` lists what's available.
 
 **Go deeper:** `src/RepoQL.Commands/`, `src/RepoQL.ConsoleApp/CommandImplementations/`, `docs/north-star/commands.md`
 
