@@ -12,6 +12,8 @@ using RepoQL.Indexing.Indexing.Pipelines.Analysis;
 using RepoQL.Indexing.Indexing.Pipelines.Classification;
 using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Indexing.Indexing.State;
+using Microsoft.Extensions.FileProviders;
+using RepoQL.FileSystem.Abstractions;
 using RepoQL.Testing;
 using RepoQL.Testing.Indexing;
 using ModelSpan = RepoQL.Contracts.Models.Span;
@@ -1606,6 +1608,42 @@ public class IndexingEngineTests
         // Trailing newline means 3 lines (line1, line2, empty line after)
         var result = IndexingEngine.ExtractLineCount(records);
         result.Should().Be(3);
+    }
+
+    [Test]
+    [DisplayName("Handles file deleted between discovery and indexing without logging an error")]
+    public async Task Given_FileDeletedBeforeDigest_When_IndexItemAsync_Then_MarkedAsPrunedNotError()
+    {
+        // Arrange: create a RawArtifact whose stream throws DirectoryNotFoundException (simulating deleted file)
+        var fileInfo = A.Fake<IFileInfo>();
+        A.CallTo(() => fileInfo.Name).Returns("deleted.md");
+        A.CallTo(() => fileInfo.Exists).Returns(true);
+        A.CallTo(() => fileInfo.Length).Returns(100);
+        A.CallTo(() => fileInfo.LastModified).Returns(DateTimeOffset.UtcNow);
+        A.CallTo(() => fileInfo.IsDirectory).Returns(false);
+        A.CallTo(() => fileInfo.PhysicalPath).Returns("/repo/research/deleted.md");
+        A.CallTo(() => fileInfo.CreateReadStream())
+            .Throws(new DirectoryNotFoundException("Could not find a part of the path '/repo/research/deleted.md'."));
+
+        var fileSystem = A.Fake<IVirtualFileSystem>();
+        var uri = CreateUri("file:///research/deleted.md");
+        A.CallTo(() => fileSystem.GetUri(fileInfo)).Returns(uri);
+
+        var rawArtifact = new RawArtifact(fileInfo, fileSystem);
+        var item = new IndexItem(rawArtifact, IndexItemOptions.Default);
+
+        var uriRegistry = new UriRegistry();
+        var context = IndexingEngineTestFactory.Create(builder => builder.WithUriRegistry(uriRegistry));
+
+        // Pipeline should NOT be invoked for a deleted file
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Throws(new InvalidOperationException("Classifier should not run for deleted files."));
+
+        // Act
+        await context.Engine.IndexItemAsync(item, CancellationToken.None);
+
+        // Assert: file was removed from registry, not marked as failed
+        uriRegistry.TryGetValue(uri, out _).Should().BeFalse("deleted file should be removed from registry, not marked as failed");
     }
 }
 

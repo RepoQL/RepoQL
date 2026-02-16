@@ -733,6 +733,19 @@ public partial class IndexingEngine : IAsyncDisposable
             LogIndexingCancelledForItem(Logger, item.Name);
             return;
         }
+        catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException)
+        {
+            // File was deleted between discovery and indexing — not an error, just a state transition.
+            status = "pruned";
+            Metrics?.FilesFiltered.Add(1, new TagList
+            {
+                { "reason", "deleted_before_indexing" },
+                { "mime_type", mime }
+            });
+            LogFileDeletedBeforeIndexing(Logger, item.Uri);
+            UriRegistry?.RemoveFile(item.Uri);
+            return;
+        }
         catch (Exception ex)
         {
             status = "error";
@@ -1996,6 +2009,9 @@ public partial class IndexingEngine : IAsyncDisposable
 
     [LoggerMessage(LogLevel.Warning, "Slow operation detected: {Operation} took {ElapsedSeconds:F1}s for {Uri} (threshold={ThresholdSeconds:F0}s). Consider investigating if this pattern repeats.")]
     static partial void LogSlowOperation(ILogger<IndexingEngine> logger, string operation, RepoUri uri, double elapsedSeconds, double thresholdSeconds);
+
+    [LoggerMessage(LogLevel.Information, "{Uri} was deleted before indexing completed; marking as pruned.")]
+    static partial void LogFileDeletedBeforeIndexing(ILogger<IndexingEngine> logger, RepoUri uri);
     #endregion
 }
 
