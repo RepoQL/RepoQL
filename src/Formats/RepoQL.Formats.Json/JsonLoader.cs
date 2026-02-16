@@ -41,10 +41,8 @@ public sealed class JsonLoader(JsonStructureParser parser) : IFormatLoader, IFor
         ArgumentNullException.ThrowIfNull(artifact);
 
         var fileName = artifact.File.Name;
-        if (fileName.EndsWith(".json5", StringComparison.OrdinalIgnoreCase))
-            return Task.FromResult(false);
-
         if (fileName.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
+            || fileName.EndsWith(".json5", StringComparison.OrdinalIgnoreCase)
             || fileName.EndsWith(".jsonc", StringComparison.OrdinalIgnoreCase)
             || fileName.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)
             || fileName.EndsWith(".ndjson", StringComparison.OrdinalIgnoreCase))
@@ -68,6 +66,7 @@ public sealed class JsonLoader(JsonStructureParser parser) : IFormatLoader, IFor
 
         var isJsonLines = IsJsonLinesExtension(artifact.File.Name);
         var isJsonc = artifact.File.Name.EndsWith(".jsonc", StringComparison.OrdinalIgnoreCase);
+        var isJson5 = artifact.File.Name.EndsWith(".json5", StringComparison.OrdinalIgnoreCase);
         var options = isJsonLines
             ? new JsonParseOptions { IsJsonl = true }
             : null;
@@ -76,6 +75,11 @@ public sealed class JsonLoader(JsonStructureParser parser) : IFormatLoader, IFor
         if (isJsonLines)
         {
             parseResult = _parser.Parse(loaded.Text, options);
+        }
+        else if (isJson5)
+        {
+            var normalized = Json5Normalizer.Normalize(loaded.Text);
+            parseResult = _parser.Parse(normalized, options);
         }
         else if (isJsonc)
         {

@@ -28,17 +28,19 @@ public sealed class JsonLoaderTests
     }
 
     [Test]
-    [Arguments("data.json5")]
-    [Arguments("DATA.JSON5")]
-    [DisplayName("CanLoadAsync rejects JSON variants not yet supported")]
-    public async Task CanLoadAsync_RejectsUnsupportedVariants(string fileName)
+    [Arguments("config.json5")]
+    [Arguments("CONFIG.JSON5")]
+    [DisplayName("CanLoadAsync accepts JSON5 files")]
+    public async Task CanLoadAsync_AcceptsJson5(string fileName)
     {
         var loader = new JsonLoader(new JsonStructureParser());
         var artifact = CreateFakeArtifact(fileName);
 
         var canLoad = await loader.CanLoadAsync(artifact);
 
-        canLoad.Should().BeFalse();
+        canLoad.Should().BeTrue();
+        artifact.MediaType.Should().NotBeNull();
+        artifact.MediaType!.Kind.Should().Be("json");
     }
 
     [Test]
@@ -221,6 +223,41 @@ public sealed class JsonLoaderTests
         outputArtifact.Structure.Should().Contain("#/version");
         outputArtifact.Summary.Should().Contain("object | 3 keys | max depth 0");
         outputArtifact.TokenCount.Should().BeGreaterThan(0);
+    }
+
+    [Test]
+    [DisplayName("LoadAsync parses .json5 files with unquoted keys, trailing commas, and single-quoted strings")]
+    public async Task LoadAsync_Json5_ProducesCorrectStructure()
+    {
+        const string json5 = """
+        {
+          // JSON5 config
+          name: 'repoql',
+          version: 1,
+          enabled: true,
+        }
+        """;
+
+        using var testFile = new TestFileScope(json5, "config.json5");
+        using var artifact = CreateArtifactFromFile(testFile.FilePath);
+
+        var loader = new JsonLoader(new JsonStructureParser());
+        (await loader.CanLoadAsync(artifact.Artifact)).Should().BeTrue();
+
+        var document = await loader.LoadAsync(artifact.Artifact);
+
+        // Original JSON5 text is preserved in the document
+        document.Text.Should().Be(json5);
+
+        var parseResult = document.GetMetadataOrDefault<JsonParseResult>(JsonLoader.StateMetadataKey);
+        parseResult.Should().NotBeNull();
+        parseResult!.Shape.Should().Be(JsonShape.FlatObject);
+        parseResult.TotalKeyCount.Should().Be(3);
+
+        var keys = parseResult.Keys.Select(k => k.Name).ToList();
+        keys.Should().Contain("name");
+        keys.Should().Contain("version");
+        keys.Should().Contain("enabled");
     }
 
     private static void AssertEquivalentKeyTree(JsonParseResult actual, JsonParseResult expected)
