@@ -215,11 +215,26 @@ internal sealed class TextSearchHandlerTests
 
     // === SQL Macro Integration Tests ===
 
-    private static DuckDbDataStore CreateStoreWithDocuments()
+    private static readonly string TestFileContent =
+        "public class TokenService\n{\n    public bool ValidateToken(string token)\n    {\n        return token != null;\n    }\n}";
+
+    private static (DuckDbDataStore Store, string TempDir) CreateStoreWithDocuments()
     {
+        // Create a real temp dir with the test file
+        var tempDir = Path.Combine(Path.GetTempPath(), "repoql_test_" + Guid.NewGuid().ToString("N")[..8]);
+        var srcDir = Path.Combine(tempDir, "src");
+        Directory.CreateDirectory(srcDir);
+        File.WriteAllText(Path.Combine(srcDir, "TokenService.cs"), TestFileContent);
+
+        // Set up DI with real UriRegistry
+        var uriRegistry = new UriRegistry();
+        var fileUri = RepoUri.Parse("file:///src/TokenService.cs");
+        uriRegistry.TryRegisterDiscovered(fileUri);
+        uriRegistry.SetIndexed(fileUri, new Dictionary<RepoUri, string>());
+
         var services = new ServiceCollection();
-        services.AddSingleton(new RepositoryConfiguration { Path = "/repo" });
-        services.AddSingleton<UriRegistry>();
+        services.AddSingleton(new RepositoryConfiguration { Path = tempDir });
+        services.AddSingleton(uriRegistry);
         services.AddSingleton<IEmbeddingProvider?>(sp => null);
         services.AddSingleton<ILlmProvider?>(sp => null);
         services.AddSingleton<IMcpToolCaller?>(sp => null);
@@ -227,70 +242,148 @@ internal sealed class TextSearchHandlerTests
 
         var store = new DuckDbDataStore(":memory:", serviceProvider: provider);
 
-        var artId = Guid.NewGuid();
-        var nodeId = Guid.NewGuid();
-        var content = "public class TokenService\n{\n    public bool ValidateToken(string token)\n    {\n        return token != null;\n    }\n}";
-        var escaped = content.Replace("'", "''");
-        store.ExecuteRaw(
-            $"INSERT INTO artifact (id, digest, byte_size, media_type, text_content, token_count) " +
-            $"VALUES ('{artId}', 'abc', 100, 'text/plain', '{escaped}', 50)");
-        store.ExecuteRaw(
-            $"INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, properties, created_at, updated_at) " +
-            $"VALUES ('{nodeId}', 'document', 'file:///src/TokenService.cs', 'file:///src/tokenservice.cs', '{artId}', " +
-            "'{}'::JSON, NOW(), NOW())");
+        return (store, tempDir);
+    }
 
-        return store;
+    private static void CleanupTempDir(string tempDir)
+    {
+        try { Directory.Delete(tempDir, true); } catch { /* best effort */ }
     }
 
     [Test]
-    [DisplayName("grep_matches SQL macro finds case-insensitive literal matches")]
+    [DisplayName("grep_matches finds case-insensitive literal matches")]
     public void GrepMatches_Macro_FindsCaseInsensitiveMatches()
     {
-        using var store = CreateStoreWithDocuments();
+        var (store, tempDir) = CreateStoreWithDocuments();
+        try
+        {
+            using (store)
+            {
+                var rows = store.Query("SELECT * FROM grep_matches('validatetoken')").ToList();
 
-        var rows = store.Query("SELECT * FROM grep_matches('validatetoken')").ToList();
-
-        rows.Should().HaveCount(1);
-        rows[0]["uri"]?.ToString().Should().Be("file:///src/TokenService.cs");
-        Convert.ToInt32(rows[0]["line_number"]).Should().Be(3);
-        rows[0]["line_content"]?.ToString().Should().Contain("ValidateToken");
+                rows.Should().HaveCount(1);
+                rows[0]["uri"]?.ToString().Should().Be("file:///src/TokenService.cs");
+                Convert.ToInt32(rows[0]["line_number"]).Should().Be(3);
+                rows[0]["line_content"]?.ToString().Should().Contain("ValidateToken");
+                rows[0]["truncated_warning"].Should().BeNull();
+            }
+        }
+        finally { CleanupTempDir(tempDir); }
     }
 
     [Test]
-    [DisplayName("grep_matches SQL macro respects scope filter")]
+    [DisplayName("grep_matches respects scope filter")]
     public void GrepMatches_Macro_RespectsScope()
     {
-        using var store = CreateStoreWithDocuments();
+        var (store, tempDir) = CreateStoreWithDocuments();
+        try
+        {
+            using (store)
+            {
+                var matches = store.Query("SELECT * FROM grep_matches('ValidateToken', 'file:///src/**/*.cs')").ToList();
+                matches.Should().HaveCount(1);
 
-        var matches = store.Query("SELECT * FROM grep_matches('ValidateToken', 'file:///src/**/*.cs')").ToList();
-        matches.Should().HaveCount(1);
-
-        var noMatches = store.Query("SELECT * FROM grep_matches('ValidateToken', 'file:///lib/**')").ToList();
-        noMatches.Should().HaveCount(0);
+                var noMatches = store.Query("SELECT * FROM grep_matches('ValidateToken', 'file:///lib/**')").ToList();
+                noMatches.Should().HaveCount(0);
+            }
+        }
+        finally { CleanupTempDir(tempDir); }
     }
 
     [Test]
-    [DisplayName("regex_matches SQL macro finds pattern matches")]
+    [DisplayName("grep_matches truncates at max_results and warns")]
+    public void GrepMatches_Macro_TruncatesAtMaxResults()
+    {
+        var (store, tempDir) = CreateStoreWithDocuments();
+        try
+        {
+            using (store)
+            {
+                var rows = store.Query("SELECT * FROM grep_matches(' ', max_results := 2)").ToList();
+
+                // UDF yields max_results normal rows + 1 extra row with warning
+                rows.Should().HaveCount(3);
+                rows[0]["truncated_warning"].Should().BeNull();
+                rows[2]["truncated_warning"]?.ToString().Should().Contain("Truncated");
+                rows[2]["truncated_warning"]?.ToString().Should().Contain("max_results");
+            }
+        }
+        finally { CleanupTempDir(tempDir); }
+    }
+
+    [Test]
+    [DisplayName("grep_matches allows unlimited with max_results 0")]
+    public void GrepMatches_Macro_UnlimitedWithZero()
+    {
+        var (store, tempDir) = CreateStoreWithDocuments();
+        try
+        {
+            using (store)
+            {
+                var rows = store.Query("SELECT * FROM grep_matches(' ', max_results := 0)").ToList();
+
+                rows.Count.Should().BeGreaterThanOrEqualTo(5);
+                rows[0]["truncated_warning"].Should().BeNull();
+            }
+        }
+        finally { CleanupTempDir(tempDir); }
+    }
+
+    [Test]
+    [DisplayName("regex_matches finds pattern matches")]
     public void RegexMatches_Macro_FindsPatternMatches()
     {
-        using var store = CreateStoreWithDocuments();
+        var (store, tempDir) = CreateStoreWithDocuments();
+        try
+        {
+            using (store)
+            {
+                var rows = store.Query(@"SELECT * FROM regex_matches('public\s+\w+\s+\w+\(')").ToList();
 
-        var rows = store.Query(@"SELECT * FROM regex_matches('public\s+\w+\s+\w+\(')").ToList();
-
-        rows.Should().HaveCount(1);
-        rows[0]["line_content"]?.ToString().Should().Contain("ValidateToken");
+                rows.Should().HaveCount(1);
+                rows[0]["line_content"]?.ToString().Should().Contain("ValidateToken");
+                rows[0]["truncated_warning"].Should().BeNull();
+            }
+        }
+        finally { CleanupTempDir(tempDir); }
     }
 
     [Test]
-    [DisplayName("regex_matches SQL macro is case-sensitive by default")]
+    [DisplayName("regex_matches is case-sensitive by default")]
     public void RegexMatches_Macro_IsCaseSensitive()
     {
-        using var store = CreateStoreWithDocuments();
+        var (store, tempDir) = CreateStoreWithDocuments();
+        try
+        {
+            using (store)
+            {
+                var upper = store.Query("SELECT * FROM regex_matches('ValidateToken')").ToList();
+                upper.Should().HaveCount(1);
 
-        var upper = store.Query("SELECT * FROM regex_matches('ValidateToken')").ToList();
-        upper.Should().HaveCount(1);
+                var lower = store.Query("SELECT * FROM regex_matches('validatetoken')").ToList();
+                lower.Should().HaveCount(0);
+            }
+        }
+        finally { CleanupTempDir(tempDir); }
+    }
 
-        var lower = store.Query("SELECT * FROM regex_matches('validatetoken')").ToList();
-        lower.Should().HaveCount(0);
+    [Test]
+    [DisplayName("regex_matches truncates at max_results and warns")]
+    public void RegexMatches_Macro_TruncatesAtMaxResults()
+    {
+        var (store, tempDir) = CreateStoreWithDocuments();
+        try
+        {
+            using (store)
+            {
+                var rows = store.Query(@"SELECT * FROM regex_matches('\w', max_results := 2)").ToList();
+
+                // UDF yields max_results normal rows + 1 extra row with warning
+                rows.Should().HaveCount(3);
+                rows[0]["truncated_warning"].Should().BeNull();
+                rows[2]["truncated_warning"]?.ToString().Should().Contain("Truncated");
+            }
+        }
+        finally { CleanupTempDir(tempDir); }
     }
 }

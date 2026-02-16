@@ -71,9 +71,24 @@ SELECT * FROM search('query');
 
 ---
 
-## Symptom: NULL Results
+## Symptom: NULL Results (NULL Propagation)
 
 **UDF returns NULL unexpectedly**
+
+**Most common cause**: DuckDB's default NULL propagation. When ANY scalar function argument is NULL, DuckDB returns NULL without calling the function at all. This is DuckDB's standard behavior for scalar functions.
+
+**The framework handles this**: `GenerateMacro()` wraps all UDF arguments in `COALESCE(param::VARCHAR, '')`, converting NULL to empty string before it reaches the UDF. The UDF framework then handles empty-to-default conversion via `ApplyDefaults`. If you see NULL results, check that the macro is using COALESCE.
+
+**Diagnostic**:
+```sql
+-- Call internal UDF directly to confirm NULL propagation
+SELECT _my_func_internal('value', NULL, '10');  -- Returns NULL (skipped!)
+SELECT _my_func_internal('value', '', '10');    -- Returns result (called!)
+
+-- The generated macro should use COALESCE:
+SELECT macro_definition FROM duckdb_macros() WHERE macro_name = 'my_func';
+-- Should show: COALESCE(scope::VARCHAR, '')
+```
 
 **Debug steps**:
 

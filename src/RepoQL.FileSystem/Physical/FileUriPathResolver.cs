@@ -2,9 +2,9 @@ using RepoQL.Contracts;
 
 namespace RepoQL.FileSystem.Physical;
 
-internal static class FileUriPathResolver
+public static class FileUriPathResolver
 {
-    internal readonly record struct ResolvedPath(string RelativePath, string AbsolutePath);
+    public readonly record struct ResolvedPath(string RelativePath, string AbsolutePath);
 
     /// <summary>
     /// Resolves a repository URI to both a relative path (for file providers) and an absolute on-disk path rooted at

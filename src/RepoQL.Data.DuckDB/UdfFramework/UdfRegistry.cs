@@ -847,16 +847,21 @@ public class UdfRegistry
             else
                 paramDefs.Add(paramName);
 
+            // COALESCE prevents DuckDB NULL propagation — without it, any NULL
+            // argument causes DuckDB to skip the function call entirely and return NULL.
+            // The UDF framework handles empty-string-to-default conversion via ApplyDefaults.
+            var argExpr = $"COALESCE({paramName}::VARCHAR, '')";
+
             if (parameters.Length <= 4)
             {
                 // For <=4 params, pass directly (DuckDB UDFs are registered as VARCHAR params)
-                udfArgs.Add($"{paramName}::VARCHAR");
+                udfArgs.Add(argExpr);
             }
             else
             {
                 // For 5+ params, first 2 direct, rest packed into JSON
                 if (udfArgs.Count < 2)
-                    udfArgs.Add($"{paramName}::VARCHAR");
+                    udfArgs.Add(argExpr);
                 else
                     jsonFields.Add($"'{paramName}', {paramName}");
             }

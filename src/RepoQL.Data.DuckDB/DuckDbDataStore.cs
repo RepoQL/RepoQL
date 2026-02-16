@@ -1108,8 +1108,6 @@ public sealed class DuckDbDataStore : IDisposable
                 "Views/types.sql",
                 "Views/functions.sql",
                 "Macros/snippet.sql",
-                "Macros/grep_matches.sql",
-                "Macros/regex_matches.sql",
                 "Macros/node_primary_fragment.sql",
                 "Macros/search_helpers.sql",
                 "Macros/search_lexical.sql",

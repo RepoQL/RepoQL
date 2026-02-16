@@ -51,7 +51,7 @@ DuckDB passes `"hello"`, `"10"`, `"true"` → Framework parses to `string`, `int
 - Simplifies registration (one type signature)
 - Enables JSON for complex objects
 - `UdfRegistry.ConvertStringValue()` handles: `int`, `long`, `double`, `bool`, `string`
-- NULL handling: null string → type default or null
+- NULL handling: DuckDB propagates NULL (skips function call entirely). Generated macros COALESCE all args to `''` to prevent this. Empty string → `ConvertStringValue` → null for value types → `ApplyDefaults` applies `[UdfDefault]`
 
 ---
 

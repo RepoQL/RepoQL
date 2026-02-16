@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+**Repo:** https://github.com/stueeey/RepoQL
+
 ## What Is RepoQL
 
 Local, queryable knowledge graph for repositories. Files → DuckDB → SQL. Agents query structure without reading files.
