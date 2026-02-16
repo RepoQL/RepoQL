@@ -27,6 +27,7 @@ using RepoQL.ConsoleApp.Search;
 using RepoQL.Core;
 using RepoQL.Indexing.Hosting;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Snapshots;
 using RepoQL.Data.DuckDB;
 using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
@@ -145,6 +146,7 @@ internal class HostCommands(IAnsiConsole console)
             var dbInit = DatabaseInitCoordinator.Prepare(repo, serilogLogger);
             builder.Services.AddSingleton(dbInit.Options);
             builder.Services.AddRepoIndexer(repo);
+            builder.Services.AddSingleton<ISnapshotSource, HelpDocsSnapshotSource>();
 
             // Search services for ExploreOrchestrator (server-side, using DuckDbDataStore directly)
             builder.Services.AddSingleton<IDocumentSearchService, DocumentSearchService>();

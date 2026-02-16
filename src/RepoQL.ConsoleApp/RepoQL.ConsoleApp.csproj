@@ -235,4 +235,19 @@
       <Exec Command="npm run build" WorkingDirectory="$(RepositoryRoot)dashboard" />
     </Target>
 
+    <!-- Generate help:// snapshot for Release builds so documentation is queryable on first request -->
+    <Target Name="GenerateHelpSnapshot" BeforeTargets="BeforeBuild"
+            Condition="'$(Configuration)' == 'Release'">
+      <PropertyGroup>
+        <_SnapshotGeneratorProject>$(RepositoryRoot)src\tools\RepoQL.SnapshotGenerator\RepoQL.SnapshotGenerator.csproj</_SnapshotGeneratorProject>
+        <_SnapshotOutputDir>$(RepositoryRoot)artifacts\obj\RepoQL.ConsoleApp\_snapshot\</_SnapshotOutputDir>
+        <_SnapshotOutputPath>$(_SnapshotOutputDir)help-docs-snapshot.json</_SnapshotOutputPath>
+      </PropertyGroup>
+      <MakeDir Directories="$(_SnapshotOutputDir)" />
+      <Exec Command="dotnet run --project &quot;$(_SnapshotGeneratorProject)&quot; -c $(Configuration) --no-launch-profile -- &quot;$(RepositoryRoot)src\RepoQL.Documentation&quot; &quot;$(_SnapshotOutputPath)&quot; --version $(Version)" />
+      <ItemGroup>
+        <EmbeddedResource Include="$(_SnapshotOutputPath)" LogicalName="HelpDocsSnapshot.json" />
+      </ItemGroup>
+    </Target>
+
 </Project>

@@ -2,7 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Snapshots;
 using RepoQL.Data.DuckDB;
+using RepoQL.Data.DuckDB.Snapshots;
 
 namespace RepoQL.ConsoleApp.Host;
 
@@ -82,6 +84,17 @@ internal static class DatabaseInitCoordinator
             {
                 store = services.GetRequiredService<DuckDbDataStore>();
                 store.InitializeSchema();
+
+                // Load pre-computed snapshots (help:// docs in Release builds).
+                // After InitializeSchema (which calls CheckAndUpdateVersion),
+                // before UriRegistry hydration (so hydrator picks up snapshot URIs).
+                var snapshotSources = services.GetServices<ISnapshotSource>().ToList();
+                if (snapshotSources.Count > 0)
+                {
+                    var snapshotLogger = services.GetService<ILoggerFactory>()
+                        ?.CreateLogger("RepoQL.Snapshots");
+                    SnapshotLoader.LoadAll(store, snapshotSources, snapshotLogger);
+                }
 
                 // Hydrate the UriRegistry from the database
                 var registry = services.GetService<UriRegistry>();

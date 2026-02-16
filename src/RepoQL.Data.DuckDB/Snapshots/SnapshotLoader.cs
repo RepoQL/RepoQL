@@ -218,7 +218,10 @@ public static class SnapshotLoader
 
     private static void InsertNode(DuckDBConnection conn, DuckDBTransaction tx, Node n)
     {
-        var containerLc = n.Uri != null
+        // Only populate container_uri_lowercase for document nodes.
+        // The column has a UNIQUE index — child nodes with fragment URIs (e.g., #symbol=Foo)
+        // share the same container as their document and would violate the constraint.
+        var containerLc = string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase) && n.Uri != null
             ? RepoUri.Normalize(n.Uri.Container.AbsoluteUri).ToLowerInvariant()
             : null;
 
