@@ -705,4 +705,83 @@ Header text
     }
 
     #endregion
+
+    #region Extract - Transport-escaped JSON recovery
+
+    [Test]
+    public async Task Extract_WithDoubleEscapedJsonArray_UnescapesAndReturnsJson()
+    {
+        // MCP JSON-RPC transport double-escapes: {"id":1} becomes {\"id\":1}
+        var input = """[{\"service\":\"Identity\",\"team\":\"Foundation\"}]""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().Contain("\"service\"");
+        result.Should().Contain("Identity");
+        StructuredDataExtractor.IsValidJson(result).Should().BeTrue();
+    }
+
+    [Test]
+    public async Task Extract_WithDoubleEscapedJsonObject_UnescapesAndReturnsJson()
+    {
+        var input = """{\"name\":\"test\",\"value\":123}""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().Contain("\"name\"");
+        result.Should().Contain("test");
+        StructuredDataExtractor.IsValidJson(result).Should().BeTrue();
+    }
+
+    [Test]
+    public async Task Extract_WithValidJson_DoesNotAttemptUnescape()
+    {
+        // Already-valid JSON containing literal \" inside string values — must not be modified
+        var input = """[{"message":"He said \"hello\""}]""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().Be(input);
+    }
+
+    [Test]
+    public async Task Extract_WithPartiallyEscapedJson_FallsThrough()
+    {
+        // Only some quotes escaped — unescaping won't produce valid JSON, should fall through
+        var input = """[{\"service":"Identity"}]""";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        // Should not crash; may fall through to CSV or text wrapping
+        result.Should().NotBeNull();
+    }
+
+    [Test]
+    public async Task TryUnescapeJsonTransportLayer_WithCleanJson_ReturnsNull()
+    {
+        // No escaped quotes — nothing to unescape
+        var result = StructuredDataExtractor.TryUnescapeJsonTransportLayer("""[{"id":1}]""");
+
+        result.Should().BeNull();
+    }
+
+    [Test]
+    public async Task TryUnescapeJsonTransportLayer_WithDoubleEscaped_ReturnsValidJson()
+    {
+        var result = StructuredDataExtractor.TryUnescapeJsonTransportLayer("""[{\"id\":1}]""");
+
+        result.Should().NotBeNull();
+        result.Should().Be("""[{"id":1}]""");
+    }
+
+    [Test]
+    public async Task TryUnescapeJsonTransportLayer_WithGarbage_ReturnsNull()
+    {
+        // Contains \" but unescaping doesn't produce valid JSON
+        var result = StructuredDataExtractor.TryUnescapeJsonTransportLayer("""not json \" at all""");
+
+        result.Should().BeNull();
+    }
+
+    #endregion
 }

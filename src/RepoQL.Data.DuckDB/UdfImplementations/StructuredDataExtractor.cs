@@ -52,6 +52,16 @@ public static partial class StructuredDataExtractor
                     return UnwrapJsonEnvelope(trimmed);
                 return trimmed;
             }
+
+            // Recovery: MCP JSON-RPC transport can double-escape JSON strings, producing
+            // literal \" instead of ". Try one layer of unescaping before giving up on JSON.
+            var unescaped = TryUnescapeJsonTransportLayer(trimmed);
+            if (unescaped is not null)
+            {
+                if (unwrap && unescaped.StartsWith('{'))
+                    return UnwrapJsonEnvelope(unescaped);
+                return unescaped;
+            }
         }
 
         // 2. JSONL - multiple lines, each a valid JSON object
@@ -285,6 +295,23 @@ public static partial class StructuredDataExtractor
     {
         var escaped = EscapeJsonString(text);
         return $"{{\"text\": \"{escaped}\"}}";
+    }
+
+    /// <summary>
+    /// Attempts to recover JSON that was double-escaped by transport (e.g., MCP JSON-RPC).
+    /// Only called when the input starts with [ or { but fails JSON validation — never on valid input.
+    /// Returns the unescaped string if it produces valid JSON, null otherwise.
+    /// </summary>
+    internal static string? TryUnescapeJsonTransportLayer(string text)
+    {
+        // Only attempt if the text contains literal \" sequences (the hallmark of transport escaping)
+        if (!text.Contains("\\\""))
+            return null;
+
+        // One layer of unescaping: \" → " then \\ → \
+        // Order matters: unescape quotes first to avoid collapsing \\\" into \" prematurely.
+        var candidate = text.Replace("\\\"", "\"").Replace("\\\\", "\\");
+        return IsValidJson(candidate) ? candidate : null;
     }
 
     /// <summary>
