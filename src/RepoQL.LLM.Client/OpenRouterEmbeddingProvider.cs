@@ -152,24 +152,37 @@ public sealed class OpenRouterEmbeddingProvider : IEmbeddingProvider, IDisposabl
         float[]?[] allResults,
         CancellationToken cancellationToken)
     {
-        try
+        const int maxRetries = 3;
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
-            var embeddings = await CallApiAsync(batch.Texts, cancellationToken);
-
-            // Direct array writes are thread-safe (non-overlapping indices)
-            for (var i = 0; i < embeddings.Length && batch.StartIndex + i < allResults.Length; i++)
+            try
             {
-                allResults[batch.StartIndex + i] = embeddings[i];
-            }
+                var embeddings = await CallApiAsync(batch.Texts, cancellationToken);
 
-            _logger.LogDebug("Completed batch {BatchIndex} ({Count} embeddings)",
-                batch.BatchIndex, embeddings.Length);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error embedding batch {BatchIndex} of {Count} texts",
-                batch.BatchIndex, batch.Texts.Length);
-            // Array elements already initialized to null - no action needed
+                // Direct array writes are thread-safe (non-overlapping indices)
+                for (var i = 0; i < embeddings.Length && batch.StartIndex + i < allResults.Length; i++)
+                {
+                    allResults[batch.StartIndex + i] = embeddings[i];
+                }
+
+                _logger.LogDebug("Completed batch {BatchIndex} ({Count} embeddings)",
+                    batch.BatchIndex, embeddings.Length);
+                return;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) when (attempt < maxRetries)
+            {
+                var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt)); // 1s, 2s, 4s
+                _logger.LogWarning(ex, "Batch {BatchIndex} attempt {Attempt} failed, retrying in {Delay}s",
+                    batch.BatchIndex, attempt + 1, delay.TotalSeconds);
+                await Task.Delay(delay, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error embedding batch {BatchIndex} of {Count} texts after {Attempts} attempts",
+                    batch.BatchIndex, batch.Texts.Length, maxRetries + 1);
+                // Array elements already initialized to null - no action needed
+            }
         }
     }
 
@@ -206,7 +219,9 @@ public sealed class OpenRouterEmbeddingProvider : IEmbeddingProvider, IDisposabl
 
         if (!root.TryGetProperty("data", out var dataArray))
         {
-            throw new InvalidOperationException("No 'data' array in embeddings response");
+            // Log the actual response so we can diagnose what OpenRouter returned
+            var truncated = responseBody.Length > 500 ? responseBody[..500] + "…" : responseBody;
+            throw new InvalidOperationException($"No 'data' array in embeddings response: {truncated}");
         }
 
         var results = new List<float[]>();

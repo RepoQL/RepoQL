@@ -39,11 +39,12 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     private const string E5QueryPrefix = "query: ";
     private const string E5PassagePrefix = "passage: ";
     private const string BoostCacheKey = "OnnxBoostSession";
-    private const int BoostExpirySeconds = 60;
+    private const int BoostExpirySeconds = 15;
 
     private InferenceSession? _session;
     private readonly ILogger<OnnxEmbeddingProvider> _logger;
     private readonly IMemoryCache? _cache;
+    private Timer? _boostEvictionTimer;
     private readonly string _modelPath;
     private readonly int? _intraOp;
     private readonly int? _interOp;
@@ -609,21 +610,32 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     private InferenceSession? GetOrCreateBoostSession()
     {
         if (_cache is null) return null;
-        return _cache.GetOrCreate(BoostCacheKey, entry =>
+        var session = _cache.GetOrCreate(BoostCacheKey, entry =>
         {
             entry.SetSlidingExpiration(TimeSpan.FromSeconds(BoostExpirySeconds));
             entry.SetSize(64);
             entry.RegisterPostEvictionCallback((key, value, reason, state) =>
             {
-                if (value is InferenceSession session)
+                if (value is InferenceSession s)
                 {
                     _logger.LogInformation("Boost session evicted ({Reason}), releasing arena memory", reason);
-                    session.Dispose();
+                    s.Dispose();
                 }
             });
             _logger.LogInformation("Boost session created (arena enabled, kSameAsRequested)");
             return CreateBoostSession();
         });
+
+        // MemoryCache eviction is lazy — scans are throttled by ExpirationScanFrequency (default 1min).
+        // Use Remove() directly to guarantee eviction regardless of scan frequency.
+        _boostEvictionTimer?.Dispose();
+        _boostEvictionTimer = new Timer(
+            _ => { try { _cache.Remove(BoostCacheKey); } catch { /* disposed */ } },
+            null,
+            TimeSpan.FromSeconds(BoostExpirySeconds + 5),
+            Timeout.InfiniteTimeSpan);
+
+        return session;
     }
 
     private string ConfigureExecutionProvider(SessionOptions so)
@@ -749,6 +761,8 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     public void Dispose()
     {
         _disposed = true;
+        _boostEvictionTimer?.Dispose();
+        _boostEvictionTimer = null;
         _cache?.Remove(BoostCacheKey);
         _session?.Dispose();
         _session = null;

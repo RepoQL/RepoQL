@@ -356,7 +356,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             out var withDocNodes,
             out var alreadyEmbedded);
 
-        _logger.LogInformation(
+        _logger.LogDebug(
             "Structure embedding: {Total} items, {WithRecords} with records, {WithArtifacts} with artifacts, {WithDocNodes} with docNodes, {AlreadyEmbedded} already embedded, {WorkItems} work items",
             items.Count, withRecords, withArtifacts, withDocNodes, alreadyEmbedded, totalWorkItems);
 
@@ -366,7 +366,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             return;
         }
 
-        _logger.LogInformation("Generating {Count} structure embeddings...", totalWorkItems);
+        _logger.LogDebug("Generating {Count} structure embeddings...", totalWorkItems);
 
         // Generate embeddings in batches and write each batch immediately.
         var totalWritten = 0;
@@ -545,9 +545,13 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         var etaStr = eta.HasValue && eta.Value > TimeSpan.Zero
             ? $", ETA {eta.Value.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Second)}"
             : "";
-        _logger.LogInformation("Structure embeddings: {Batch}/{Total} ({Percent}%) - {BatchSize} items in {Time}{Eta}",
-            batchNumber, totalBatches, percentComplete, batchCount,
-            batchTimer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond), etaStr);
+        // Only log per-batch progress for multi-batch runs; single-batch runs get the completion line
+        if (totalBatches > 1)
+        {
+            _logger.LogInformation("Structure embeddings: {Batch}/{Total} ({Percent}%) - {BatchSize} items in {Time}{Eta}",
+                batchNumber, totalBatches, percentComplete, batchCount,
+                batchTimer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond), etaStr);
+        }
 
         var documentEmbeddings = new List<DocumentEmbedding>(batchCount);
         for (var i = 0; i < batchCount; i++)
