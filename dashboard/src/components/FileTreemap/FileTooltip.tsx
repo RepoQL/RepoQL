@@ -1,3 +1,4 @@
+import { For, Show } from 'solid-js';
 import type { FileEntry, SymbolNode } from '../../types';
 import './FileTooltip.css';
 
@@ -6,8 +7,8 @@ const STATE_LABELS: Record<string, string> = {
   discovered: 'Discovered',
   classified: 'Classifying',
   parsed: 'Indexed',
-  struct_embedded: 'Searchable',
-  full_embedded: 'Ready',
+  struct_embedded: 'Ready',
+  full_embedded: 'Fully Indexed',
   failed: 'Failed',
 };
 
@@ -26,122 +27,129 @@ export interface FileTooltipProps {
   y: number;
 }
 
-export function FileTooltip({ file, x, y }: FileTooltipProps) {
-  const dir = file.path.substring(0, file.path.lastIndexOf('/') + 1);
-  const name = file.path.substring(dir.length);
-  const stateLabel = STATE_LABELS[file.state] ?? file.state;
-  const isFailed = file.state === 'failed';
-  const hasMetrics = !!(file.lines || file.symbols);
-  const hasTree = !!(file.tree && file.tree.length > 0);
-  const hasTiming = !!(file.indexedAt || file.embeddedAt);
+export function FileTooltip(props: FileTooltipProps) {
+  const dir = () => props.file.path.substring(0, props.file.path.lastIndexOf('/') + 1);
+  const name = () => props.file.path.substring(dir().length);
+  const stateLabel = () => STATE_LABELS[props.file.state] ?? props.file.state;
+  const isFailed = () => props.file.state === 'failed';
+  const hasMetrics = () => Boolean(props.file.lines || props.file.symbols);
+  const hasTree = () => Boolean(props.file.tree && props.file.tree.length > 0);
+  const hasTiming = () => Boolean(props.file.indexedAt || props.file.embeddedAt);
 
   return (
     <div
-      className="ft-tooltip"
-      style={{ left: x, top: y }}
-      data-state={file.state}
+      class="ft-tooltip"
+      style={{ left: `${props.x}px`, top: `${props.y}px` }}
+      data-state={props.file.state}
     >
       {/* Language accent bar */}
       <div
-        className="ft-accent"
-        style={{ background: isFailed ? 'var(--red)' : file.lang.color }}
+        class="ft-accent"
+        style={{ background: isFailed() ? 'var(--red)' : props.file.lang.color }}
       />
 
-      <div className="ft-content">
+      <div class="ft-content">
         {/* Path */}
-        <div className="ft-path">
-          {dir && <span className="ft-dir">{dir}</span>}
-          <span className="ft-name">{name}</span>
+        <div class="ft-path">
+          <Show when={dir()}>
+            <span class="ft-dir">{dir()}</span>
+          </Show>
+          <span class="ft-name">{name()}</span>
         </div>
 
         {/* State + language row */}
-        <div className="ft-meta">
-          <span className={`ft-state ${file.state}`}>{stateLabel}</span>
-          {file.processing && <span className="ft-processing" />}
-          <span className="ft-lang">{file.lang.name}</span>
+        <div class="ft-meta">
+          <span class={`ft-state ${props.file.state}`}>{stateLabel()}</span>
+          <Show when={props.file.processing}>
+            <span class="ft-processing" />
+          </Show>
+          <span class="ft-lang">{props.file.lang.name}</span>
         </div>
 
         {/* Metrics row */}
-        {hasMetrics && (
-          <div className="ft-metrics">
-            {file.lines != null && file.lines > 0 && (
-              <span className="ft-metric">
-                <span className="ft-val">{file.lines.toLocaleString()}</span> lines
+        <Show when={hasMetrics()}>
+          <div class="ft-metrics">
+            <Show when={props.file.lines != null && props.file.lines > 0}>
+              <span class="ft-metric">
+                <span class="ft-val">{props.file.lines?.toLocaleString()}</span> lines
               </span>
-            )}
-            {file.symbols != null && file.symbols > 0 && (
-              <span className="ft-metric">
-                <span className="ft-val">{file.symbols}</span> symbols
+            </Show>
+            <Show when={props.file.symbols != null && props.file.symbols > 0}>
+              <span class="ft-metric">
+                <span class="ft-val">{props.file.symbols}</span> symbols
               </span>
-            )}
-            {file.chunks != null && file.chunks > 0 && (
-              <span className="ft-metric">
-                <span className="ft-val">{file.chunks}</span> chunks
+            </Show>
+            <Show when={props.file.chunks != null && props.file.chunks > 0}>
+              <span class="ft-metric">
+                <span class="ft-val">{props.file.chunks}</span> chunks
               </span>
-            )}
+            </Show>
           </div>
-        )}
+        </Show>
 
         {/* Symbol tree */}
-        {hasTree && (
-          <div className="ft-tree">
-            {file.tree!.map((sym, i) => (
-              <SymbolRow key={i} sym={sym} />
-            ))}
+        <Show when={hasTree()}>
+          <div class="ft-tree">
+            <For each={props.file.tree ?? []}>
+              {(sym) => (
+                <SymbolRow sym={sym} />
+              )}
+            </For>
           </div>
-        )}
+        </Show>
 
         {/* Phase timing */}
-        {hasTiming && (
-          <div className="ft-timing">
-            {file.indexedAt && (
-              <span className="ft-phase">
-                <span className="ft-phase-label">indexed</span>
-                <span className="ft-phase-val">{relativeTime(file.indexedAt)}</span>
+        <Show when={hasTiming()}>
+          <div class="ft-timing">
+            <Show when={props.file.indexedAt}>
+              <span class="ft-phase">
+                <span class="ft-phase-label">indexed</span>
+                <span class="ft-phase-val">{relativeTime(props.file.indexedAt ?? '')}</span>
               </span>
-            )}
-            {file.embeddedAt && (
-              <span className="ft-phase">
-                <span className="ft-phase-label">embedded</span>
-                <span className="ft-phase-val">{relativeTime(file.embeddedAt)}</span>
+            </Show>
+            <Show when={props.file.embeddedAt}>
+              <span class="ft-phase">
+                <span class="ft-phase-label">embedded</span>
+                <span class="ft-phase-val">{relativeTime(props.file.embeddedAt ?? '')}</span>
               </span>
-            )}
-            {file.indexedAt && file.embeddedAt && (
-              <span className="ft-phase">
-                <span className="ft-phase-label">embed time</span>
-                <span className="ft-phase-val">{duration(file.indexedAt, file.embeddedAt)}</span>
+            </Show>
+            <Show when={props.file.indexedAt && props.file.embeddedAt}>
+              <span class="ft-phase">
+                <span class="ft-phase-label">embed time</span>
+                <span class="ft-phase-val">{duration(props.file.indexedAt ?? '', props.file.embeddedAt ?? '')}</span>
               </span>
-            )}
+            </Show>
           </div>
-        )}
+        </Show>
 
         {/* Error — only for failed files */}
-        {isFailed && file.error && (
-          <div className="ft-error">{truncate(file.error, 120)}</div>
-        )}
+        <Show when={isFailed() && !!props.file.error}>
+          <div class="ft-error">{truncate(props.file.error ?? '', 120)}</div>
+        </Show>
       </div>
     </div>
   );
 }
 
-function SymbolRow({ sym }: { sym: SymbolNode }) {
-  const icon = KIND_ICONS[sym.k] ?? '\u2022';
-  const isContainer = sym.m != null && sym.m > 0;
-  const lineRange = sym.l && sym.e && sym.e > sym.l
-    ? `${sym.l}\u2013${sym.e}`
-    : sym.l ? `${sym.l}` : null;
+function SymbolRow(props: { sym: SymbolNode }) {
+  const icon = () => KIND_ICONS[props.sym.k] ?? '\u2022';
+  const isContainer = () => props.sym.m != null && props.sym.m > 0;
+  const lineRange = () =>
+    props.sym.l && props.sym.e && props.sym.e > props.sym.l
+      ? `${props.sym.l}\u2013${props.sym.e}`
+      : props.sym.l ? `${props.sym.l}` : null;
 
   return (
-    <div className={`ft-sym ${isContainer ? 'ft-sym-type' : ''}`}>
-      <span className="ft-sym-icon">{icon}</span>
-      <span className="ft-sym-name">{sym.n}</span>
-      <span className="ft-sym-kind">{sym.k}</span>
-      {isContainer && (
-        <span className="ft-sym-members">{sym.m}</span>
-      )}
-      {lineRange && (
-        <span className="ft-sym-line">{lineRange}</span>
-      )}
+    <div class={`ft-sym ${isContainer() ? 'ft-sym-type' : ''}`}>
+      <span class="ft-sym-icon">{icon()}</span>
+      <span class="ft-sym-name">{props.sym.n}</span>
+      <span class="ft-sym-kind">{props.sym.k}</span>
+      <Show when={isContainer()}>
+        <span class="ft-sym-members">{props.sym.m}</span>
+      </Show>
+      <Show when={lineRange()}>
+        {(line) => <span class="ft-sym-line">{line()}</span>}
+      </Show>
     </div>
   );
 }

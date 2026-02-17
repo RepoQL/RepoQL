@@ -162,7 +162,8 @@ public partial class IndexingEngine : IAsyncDisposable
         SingleWriter = false
     });
     private readonly Task _idleProcessingTask;
-    private readonly WorkQueue<IndexItem>? _structureEmbeddingQueue;
+    private readonly Channel<IndexItem>? _structureEmbeddingChannel;
+    private readonly Task? _structureEmbeddingWorker;
     private readonly ConcurrentDictionary<long, Activity> _epochActivities = new();
     private readonly Dictionary<IndexingState, StageCounter> _stageCounters = new();
     private bool _disposed;
@@ -400,15 +401,14 @@ public partial class IndexingEngine : IAsyncDisposable
             logger: Logger);
         if (StructureEmbeddingsEnabled)
         {
-            _structureEmbeddingQueue = new WorkQueue<IndexItem>(
-                "StructureEmbeddingQueue",
-                Options.AnalysisQueueSize,
-                Math.Max(1, Options.AnalysisWorkers),
-                ProcessEagerStructureEmbeddingAsync,
-                Shutdown.Token,
-                itemTimeout: Options.AnalysisItemTimeout,
-                meter: null,
-                logger: Logger);
+            _structureEmbeddingChannel = Channel.CreateBounded<IndexItem>(
+                new BoundedChannelOptions(Options.AnalysisQueueSize)
+                {
+                    FullMode = BoundedChannelFullMode.Wait,
+                    SingleReader = true,
+                    SingleWriter = false
+                });
+            _structureEmbeddingWorker = Task.Run(() => ProcessStructureEmbeddingBatchLoopAsync(Shutdown.Token));
         }
 
         _classificationStage = new StageContext(
@@ -545,11 +545,20 @@ public partial class IndexingEngine : IAsyncDisposable
         }
         catch (OperationCanceledException) { }
 
-        if (_structureEmbeddingQueue is not null)
+        if (_structureEmbeddingChannel is not null)
         {
             try
             {
-                await _structureEmbeddingQueue.DisposeAsync().ConfigureAwait(false);
+                _structureEmbeddingChannel.Writer.TryComplete();
+                if (_structureEmbeddingWorker is not null)
+                {
+                    // Bounded shutdown — don't hang if ONNX inference is stuck
+                    var completed = await Task.WhenAny(_structureEmbeddingWorker, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
+                    if (completed != _structureEmbeddingWorker)
+                    {
+                        Logger.LogWarning("Structure embedding worker did not finish within 2s grace period");
+                    }
+                }
             }
             catch (OperationCanceledException) { }
         }
@@ -848,7 +857,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private void ScheduleEagerStructureEmbedding(IndexItem item)
     {
-        if (_structureEmbeddingQueue is null)
+        if (_structureEmbeddingChannel is null)
             return;
 
         TrackEagerStructureEmbedding(item.Epoch);
@@ -857,16 +866,12 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private async Task EnqueueEagerStructureEmbeddingAsync(IndexItem item)
     {
-        if (_structureEmbeddingQueue is null)
+        if (_structureEmbeddingChannel is null)
             return;
 
         try
         {
-            var enqueued = await _structureEmbeddingQueue.EnqueueAsync(item, Shutdown.Token).ConfigureAwait(false);
-            if (!enqueued)
-            {
-                CompleteEagerStructureEmbedding(item.Epoch);
-            }
+            await _structureEmbeddingChannel.Writer.WriteAsync(item, Shutdown.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
         {
@@ -880,24 +885,91 @@ public partial class IndexingEngine : IAsyncDisposable
         }
     }
 
-    private async Task ProcessEagerStructureEmbeddingAsync(IndexItem item, CancellationToken cancellationToken)
+    private async Task ProcessStructureEmbeddingBatchLoopAsync(CancellationToken cancellationToken)
     {
+        const int maxBatchSize = 100;
+        var debounceDelay = TimeSpan.FromMilliseconds(100);
+        var batch = new List<IndexItem>(maxBatchSize);
+
         try
         {
-            await VectorCoordinator.GenerateStructureEmbeddingsAsync([item], cancellationToken).ConfigureAwait(false);
+            while (await _structureEmbeddingChannel!.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                batch.Clear();
+
+                // Read first item (guaranteed available after WaitToReadAsync returns true)
+                if (!_structureEmbeddingChannel.Reader.TryRead(out var first))
+                    continue;
+                batch.Add(first);
+
+                // Drain items already available before debouncing
+                while (batch.Count < maxBatchSize && _structureEmbeddingChannel.Reader.TryRead(out var ready))
+                    batch.Add(ready);
+
+                // Only debounce if batch is small (more items likely arriving)
+                if (batch.Count < maxBatchSize)
+                {
+                    try
+                    {
+                        await Task.Delay(debounceDelay, cancellationToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // Shutting down — process whatever we have
+                    }
+
+                    // Drain items that arrived during debounce
+                    while (batch.Count < maxBatchSize && _structureEmbeddingChannel.Reader.TryRead(out var item))
+                        batch.Add(item);
+                }
+
+                // Process batch with timeout protection
+                try
+                {
+                    using var batchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    if (Options.AnalysisItemTimeout.HasValue)
+                        batchCts.CancelAfter(Options.AnalysisItemTimeout.Value);
+
+                    await VectorCoordinator.GenerateStructureEmbeddingsAsync(batch, batchCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw; // Real shutdown — propagate
+                }
+                catch (OperationCanceledException)
+                {
+                    // Batch timeout — log and let catch-up handle it
+                    Logger.LogWarning("Structure embedding batch timed out for {Count} items", batch.Count);
+                    foreach (var item in batch)
+                        UriRegistry?.SetEmbeddingFailed(item.Uri, "structure embedding batch timed out");
+                }
+                catch (Exception ex)
+                {
+                    foreach (var item in batch)
+                        UriRegistry?.SetEmbeddingFailed(item.Uri, $"structure embedding failed: {ex.Message}");
+                    Logger.LogWarning(ex, "Batch structure embedding failed for {Count} items", batch.Count);
+                }
+                finally
+                {
+                    foreach (var item in batch)
+                        CompleteEagerStructureEmbedding(item.Epoch);
+                }
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            throw;
+            // Normal shutdown
         }
         catch (Exception ex)
         {
-            UriRegistry?.SetEmbeddingFailed(item.Uri, $"structure embedding failed: {ex.Message}");
-            Logger.LogWarning(ex, "Eager structure embedding failed for {Uri}", item.Uri);
+            Logger.LogError(ex, "Structure embedding batch worker faulted unexpectedly");
         }
         finally
         {
-            CompleteEagerStructureEmbedding(item.Epoch);
+            // Drain any items remaining in the channel so their epoch tracking is completed.
+            // Without this, shutdown can leave epoch completion TCSes permanently unsignaled.
+            while (_structureEmbeddingChannel!.Reader.TryRead(out var abandoned))
+                CompleteEagerStructureEmbedding(abandoned.Epoch);
         }
     }
 
@@ -949,7 +1021,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private async Task WaitForEagerStructureEmbeddingsAsync(IReadOnlyList<long> epochs, CancellationToken cancellationToken)
     {
-        if (_structureEmbeddingQueue is null || epochs.Count == 0)
+        if (_structureEmbeddingChannel is null || epochs.Count == 0)
             return;
 
         List<Task>? waitTasks = null;

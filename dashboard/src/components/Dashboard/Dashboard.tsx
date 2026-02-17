@@ -1,61 +1,64 @@
-import type { PipelineState, ActivityEntry, FileGroup, LanguageCount } from '../../types';
-import { StatusHeader } from '../StatusHeader';
-import { FileTreemap } from '../FileTreemap';
-import { ProgressRings } from '../ProgressRings';
-import { PhaseIndicator } from '../PhaseIndicator';
-import { LanguageSpectrum } from '../LanguageSpectrum';
+import { Show } from 'solid-js';
+import type { ActivityEntry, LanguageCount, PipelineState, SourceSection } from '../../types';
 import { ActivityStream } from '../ActivityStream';
+import { FileTreemap } from '../FileTreemap';
+import { LanguageSpectrum } from '../LanguageSpectrum';
+import { PhaseIndicator } from '../PhaseIndicator';
 import { PipelineSankey } from '../PipelineSankey';
+import { ProgressRings } from '../ProgressRings';
+import { StatusHeader } from '../StatusHeader';
 import './Dashboard.css';
 
 export interface DashboardProps {
   title: string;
   elapsed: number;
   pipeline: PipelineState;
-  groups: FileGroup[];
+  sections: SourceSection[];
   languages: LanguageCount[];
   activities: ActivityEntry[];
 }
 
-export function Dashboard({ title, elapsed, pipeline, groups, languages, activities }: DashboardProps) {
-  const complete = pipeline.phase === 'complete';
+export function Dashboard(props: DashboardProps) {
+  const complete = () => props.pipeline.phase === 'complete';
 
   return (
-    <div className="dashboard">
-      <StatusHeader title={title} phase={pipeline.phase} elapsed={elapsed} />
+    <div class="dashboard">
+      <StatusHeader title={props.title} phase={props.pipeline.phase} elapsed={props.elapsed} />
 
-      <div className="dashboard-main">
-        <div className="dashboard-treemap">
+      <div class="dashboard-main">
+        <div class="dashboard-treemap">
           <FileTreemap
-            groups={groups}
+            sections={props.sections}
             stats={{
-              total: pipeline.discovered,
-              classified: pipeline.classified,
-              parsed: pipeline.parsed,
-              searchable: pipeline.structEmbedded,
+              total: props.pipeline.discovered,
+              classified: props.pipeline.classified,
+              parsed: props.pipeline.parsed,
+              searchable: props.pipeline.structEmbedded,
             }}
           />
         </div>
 
-        <div className="dashboard-sidebar">
+        <div class="dashboard-sidebar">
           <ProgressRings
-            total={pipeline.total}
-            parsed={pipeline.parsed}
-            structEmbedded={pipeline.structEmbedded}
-            fullEmbedded={pipeline.fullEmbedded}
-            complete={complete}
+            total={props.pipeline.total}
+            parsed={props.pipeline.parsed}
+            structEmbedded={props.pipeline.structEmbedded}
+            fullEmbedded={props.pipeline.fullEmbedded}
+            complete={complete()}
           />
-          <PhaseIndicator phase={pipeline.phase} />
-          <LanguageSpectrum languages={languages} />
-          <ActivityStream entries={activities} />
+          <PhaseIndicator phase={props.pipeline.phase} />
+          <LanguageSpectrum languages={props.languages} />
+          <ActivityStream entries={props.activities} />
         </div>
 
-        <div className="dashboard-sankey">
-          <PipelineSankey pipeline={pipeline} />
+        <div class="dashboard-sankey">
+          <PipelineSankey pipeline={props.pipeline} />
         </div>
       </div>
 
-      {complete && <div className="done-wash show" />}
+      <Show when={complete()}>
+        <div class="done-wash show" />
+      </Show>
     </div>
   );
 }

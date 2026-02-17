@@ -1,3 +1,4 @@
+import { createMemo, For, Show } from 'solid-js';
 import type { QueryEntry, ToolName } from '../../types';
 import './QueryActivity.css';
 
@@ -12,44 +13,48 @@ const TOOL_COLORS: Record<ToolName, string> = {
   read: 'var(--fg2)',
 };
 
-export function QueryActivity({ entries }: QueryActivityProps) {
+export function QueryActivity(props: QueryActivityProps) {
   return (
-    <div className="query-activity">
-      <div className="qa-header">
-        <span className="qa-title">Tool Activity</span>
-        <span className="qa-count">{entries.length}</span>
+    <div class="query-activity">
+      <div class="qa-header">
+        <span class="qa-title">Tool Activity</span>
+        <span class="qa-count">{props.entries.length}</span>
       </div>
-      <div className="qa-list">
-        {entries.length === 0 && (
-          <div className="qa-empty">No queries yet</div>
-        )}
-        {entries.map((entry) => (
-          <QueryRow key={entry.id} entry={entry} />
-        ))}
+      <div class="qa-list">
+        <Show when={props.entries.length === 0}>
+          <div class="qa-empty">No queries yet</div>
+        </Show>
+        <For each={props.entries}>
+          {(entry) => (
+            <QueryRow entry={entry} />
+          )}
+        </For>
       </div>
     </div>
   );
 }
 
-function QueryRow({ entry }: { entry: QueryEntry }) {
-  const color = TOOL_COLORS[entry.tool];
-  const efficiency = entry.tokenBudget > 0
-    ? Math.round((entry.tokensUsed / entry.tokenBudget) * 100)
-    : 0;
+function QueryRow(props: { entry: QueryEntry }) {
+  const color = createMemo(() => TOOL_COLORS[props.entry.tool]);
+  const efficiency = createMemo(() =>
+    props.entry.tokenBudget > 0
+      ? Math.round((props.entry.tokensUsed / props.entry.tokenBudget) * 100)
+      : 0,
+  );
 
   return (
-    <div className="qa-row">
-      <div className="qa-row-top">
-        <span className="qa-tool" style={{ color }}>{entry.tool}</span>
-        <span className="qa-elapsed">{entry.elapsed}ms</span>
+    <div class="qa-row">
+      <div class="qa-row-top">
+        <span class="qa-tool" style={{ color: color() }}>{props.entry.tool}</span>
+        <span class="qa-elapsed">{props.entry.elapsed}ms</span>
       </div>
-      <div className="qa-params">{entry.params}</div>
-      <div className="qa-row-bottom">
-        <span className="qa-result">{entry.resultSummary}</span>
-        <span className="qa-tokens">
-          {entry.tokensUsed}/{entry.tokenBudget}t
-          <span className={`qa-eff ${efficiency > 85 ? 'high' : efficiency > 50 ? 'mid' : 'low'}`}>
-            {efficiency}%
+      <div class="qa-params">{props.entry.params}</div>
+      <div class="qa-row-bottom">
+        <span class="qa-result">{props.entry.resultSummary}</span>
+        <span class="qa-tokens">
+          {props.entry.tokensUsed}/{props.entry.tokenBudget}t
+          <span class={`qa-eff ${efficiency() > 85 ? 'high' : efficiency() > 50 ? 'mid' : 'low'}`}>
+            {efficiency()}%
           </span>
         </span>
       </div>

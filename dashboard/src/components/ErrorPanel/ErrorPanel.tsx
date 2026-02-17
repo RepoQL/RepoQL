@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import type { FileError, ErrorCategory } from '../../types';
+import { createMemo, createSignal, For, Show } from 'solid-js';
+import type { ErrorCategory, FileError } from '../../types';
 import { ERROR_CATEGORY_LABELS } from '../../types';
 import './ErrorPanel.css';
 
@@ -13,59 +13,66 @@ interface ErrorGroup {
   errors: FileError[];
 }
 
-export function ErrorPanel({ errors }: ErrorPanelProps) {
-  const groups = useMemo(() => groupErrors(errors), [errors]);
-
-  if (errors.length === 0) {
-    return (
-      <div className="error-panel">
-        <div className="error-panel-header">
-          <span className="error-panel-title">Errors</span>
-          <span className="error-panel-count zero">0</span>
-        </div>
-      </div>
-    );
-  }
+export function ErrorPanel(props: ErrorPanelProps) {
+  const groups = createMemo(() => groupErrors(props.errors));
 
   return (
-    <div className="error-panel">
-      <div className="error-panel-header">
-        <span className="error-panel-title">Errors</span>
-        <span className="error-panel-count">{errors.length}</span>
+    <Show
+      when={props.errors.length === 0}
+      fallback={(
+        <div class="error-panel">
+          <div class="error-panel-header">
+            <span class="error-panel-title">Errors</span>
+            <span class="error-panel-count">{props.errors.length}</span>
+          </div>
+          <div class="error-panel-body">
+            <For each={groups()}>
+              {(group) => (
+                <ErrorGroupSection group={group} />
+              )}
+            </For>
+          </div>
+        </div>
+      )}
+    >
+      <div class="error-panel">
+        <div class="error-panel-header">
+          <span class="error-panel-title">Errors</span>
+          <span class="error-panel-count zero">0</span>
+        </div>
       </div>
-      <div className="error-panel-body">
-        {groups.map((group) => (
-          <ErrorGroupSection key={group.category} group={group} />
-        ))}
-      </div>
-    </div>
+    </Show>
   );
 }
 
-function ErrorGroupSection({ group }: { group: ErrorGroup }) {
-  const [expanded, setExpanded] = useState(true);
+function ErrorGroupSection(props: { group: ErrorGroup }) {
+  const [expanded, setExpanded] = createSignal(true);
 
   return (
-    <div className="err-group">
-      <button className="err-group-header" onClick={() => setExpanded(!expanded)}>
-        <span className="err-group-chevron">{expanded ? '\u25BE' : '\u25B8'}</span>
-        <span className="err-group-label">{group.label}</span>
-        <span className="err-group-count">{group.errors.length}</span>
+    <div class="err-group">
+      <button class="err-group-header" onClick={() => setExpanded((value) => !value)}>
+        <span class="err-group-chevron">{expanded() ? '\u25BE' : '\u25B8'}</span>
+        <span class="err-group-label">{props.group.label}</span>
+        <span class="err-group-count">{props.group.errors.length}</span>
       </button>
-      {expanded && (
-        <div className="err-group-items">
-          {group.errors.map((err, i) => (
-            <div key={i} className="err-item">
-              <div className="err-item-path">
-                <span className="err-lang-dot" style={{ background: err.lang.color }} />
-                {err.path}
+      <Show when={expanded()}>
+        <div class="err-group-items">
+          <For each={props.group.errors}>
+            {(err) => (
+              <div class="err-item">
+                <div class="err-item-path">
+                  <span class="err-lang-dot" style={{ background: err.lang.color }} />
+                  {err.path}
+                </div>
+                <div class="err-item-msg">{err.message}</div>
+                <Show when={err.hint}>
+                  <div class="err-item-hint">{err.hint}</div>
+                </Show>
               </div>
-              <div className="err-item-msg">{err.message}</div>
-              {err.hint && <div className="err-item-hint">{err.hint}</div>}
-            </div>
-          ))}
+            )}
+          </For>
         </div>
-      )}
+      </Show>
     </div>
   );
 }

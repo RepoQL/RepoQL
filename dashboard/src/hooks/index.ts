@@ -1,2 +1,1 @@
-export { useRepoQLConnection } from './useRepoQLConnection';
-export type { RepoQLConnection, ConnectionStatus } from './useRepoQLConnection';
+export { useRepoQLDashboard } from './useRepoQLDashboard';

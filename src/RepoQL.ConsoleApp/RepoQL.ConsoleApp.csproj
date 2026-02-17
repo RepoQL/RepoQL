@@ -229,9 +229,22 @@
       </None>
     </ItemGroup>
 
-    <Target Name="BuildDashboard" BeforeTargets="BeforeBuild"
-            Condition="!Exists('$(RepositoryRoot)dashboard\dist\index.html')">
+    <ItemGroup>
+      <DashboardSource Include="$(RepositoryRoot)dashboard\src\**\*" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard\index.html" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard\vite.config.ts" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard\tsconfig.json" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard\package.json" />
+    </ItemGroup>
+
+    <Target Name="DashboardNpmInstall" BeforeTargets="BuildDashboard"
+            Condition="!Exists('$(RepositoryRoot)dashboard\node_modules\.package-lock.json')">
       <Exec Command="npm ci --silent" WorkingDirectory="$(RepositoryRoot)dashboard" />
+    </Target>
+
+    <Target Name="BuildDashboard" BeforeTargets="BeforeBuild"
+            Inputs="@(DashboardSource)"
+            Outputs="$(RepositoryRoot)dashboard\dist\index.html">
       <Exec Command="npm run build" WorkingDirectory="$(RepositoryRoot)dashboard" />
     </Target>
 

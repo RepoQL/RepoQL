@@ -1,3 +1,4 @@
+import { createMemo, For, Show } from 'solid-js';
 import type { ClientLease } from '../../types';
 import './ClientLeases.css';
 
@@ -14,70 +15,76 @@ const TOOL_COLORS: Record<string, string> = {
   read: 'var(--fg2)',
 };
 
-export function ClientLeases({ clients, now }: ClientLeasesProps) {
-  const active = clients.filter((c) => c.activeRequest !== null);
-  const idle = clients.filter((c) => c.activeRequest === null);
+export function ClientLeases(props: ClientLeasesProps) {
+  const active = createMemo(() => props.clients.filter((client) => client.activeRequest !== null));
+  const idle = createMemo(() => props.clients.filter((client) => client.activeRequest === null));
 
   return (
-    <div className="client-leases">
-      <div className="cl-header">
-        <span className="cl-title">Connected Clients</span>
-        <div className="cl-counts">
-          <span className="cl-active-count">{active.length} active</span>
-          <span className="cl-total-count">{clients.length} total</span>
+    <div class="client-leases">
+      <div class="cl-header">
+        <span class="cl-title">Connected Clients</span>
+        <div class="cl-counts">
+          <span class="cl-active-count">{active().length} active</span>
+          <span class="cl-total-count">{props.clients.length} total</span>
         </div>
       </div>
 
-      {clients.length === 0 && (
-        <div className="cl-empty">No clients connected</div>
-      )}
+      <Show when={props.clients.length === 0}>
+        <div class="cl-empty">No clients connected</div>
+      </Show>
 
-      <div className="cl-list">
-        {active.map((client) => (
-          <ClientRow key={client.id} client={client} now={now} />
-        ))}
-        {idle.map((client) => (
-          <ClientRow key={client.id} client={client} now={now} />
-        ))}
+      <div class="cl-list">
+        <For each={active()}>
+          {(client) => (
+            <ClientRow client={client} now={props.now} />
+          )}
+        </For>
+        <For each={idle()}>
+          {(client) => (
+            <ClientRow client={client} now={props.now} />
+          )}
+        </For>
       </div>
     </div>
   );
 }
 
-function ClientRow({ client, now }: { client: ClientLease; now: number }) {
-  const req = client.activeRequest;
-  const sessionDuration = formatDuration(now - client.connectedAt);
+function ClientRow(props: { client: ClientLease; now: number }) {
+  const req = () => props.client.activeRequest;
+  const sessionDuration = createMemo(() => formatDuration(props.now - props.client.connectedAt));
 
   return (
-    <div className={`cl-row ${req ? 'has-request' : 'idle'}`}>
-      <div className="cl-row-top">
-        <div className="cl-client-info">
-          <span className={`cl-dot ${req ? 'active' : ''}`} />
-          <span className="cl-name">{client.name}</span>
-          <span className="cl-session-id">{client.id.slice(0, 8)}</span>
+    <div class={`cl-row ${req() ? 'has-request' : 'idle'}`}>
+      <div class="cl-row-top">
+        <div class="cl-client-info">
+          <span class={`cl-dot ${req() ? 'active' : ''}`} />
+          <span class="cl-name">{props.client.name}</span>
+          <span class="cl-session-id">{props.client.id.slice(0, 8)}</span>
         </div>
-        <span className="cl-uptime">{sessionDuration}</span>
+        <span class="cl-uptime">{sessionDuration()}</span>
       </div>
 
-      {req && (
-        <div className="cl-request">
-          <div className="cl-req-tool" style={{ color: TOOL_COLORS[req.tool] ?? 'var(--fg2)' }}>
-            {req.tool}
+      <Show when={req()}>
+        {(request) => (
+          <div class="cl-request">
+            <div class="cl-req-tool" style={{ color: TOOL_COLORS[request().tool] ?? 'var(--fg2)' }}>
+              {request().tool}
+            </div>
+            <div class="cl-req-params">{request().params}</div>
+            <div class="cl-req-meta">
+              <span class="cl-req-elapsed">{formatDuration(props.now - request().startedAt)}</span>
+              <span class="cl-req-budget">{request().tokenBudget}t</span>
+            </div>
+            <div class="cl-req-bar">
+              <div class="cl-req-bar-fill" />
+            </div>
           </div>
-          <div className="cl-req-params">{req.params}</div>
-          <div className="cl-req-meta">
-            <span className="cl-req-elapsed">{formatDuration(now - req.startedAt)}</span>
-            <span className="cl-req-budget">{req.tokenBudget}t</span>
-          </div>
-          <div className="cl-req-bar">
-            <div className="cl-req-bar-fill" />
-          </div>
-        </div>
-      )}
+        )}
+      </Show>
 
-      <div className="cl-row-bottom">
-        <span className="cl-stat">{client.requestCount} requests</span>
-        <span className="cl-stat">{formatTokens(client.totalTokensUsed)} tokens</span>
+      <div class="cl-row-bottom">
+        <span class="cl-stat">{props.client.requestCount} requests</span>
+        <span class="cl-stat">{formatTokens(props.client.totalTokensUsed)} tokens</span>
       </div>
     </div>
   );

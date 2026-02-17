@@ -71,6 +71,8 @@ export interface FileEntry {
   processing: boolean;
   /** Line count (when indexed) */
   lines?: number | null;
+  /** Token count (from artifact) */
+  tokens?: number | null;
   /** Symbol count (when indexed) */
   symbols?: number | null;
   /** Embedding chunk count */
@@ -103,6 +105,18 @@ export interface SymbolNode {
 export interface FileGroup {
   label: string;
   files: FileEntry[];
+}
+
+/** A source section — local repo or an imported repo */
+export interface SourceSection {
+  /** Display label — repo name or "Local" */
+  label: string;
+  /** Source prefix for matching — empty string for local, "github://owner/repo" for imports */
+  prefix: string;
+  /** File groups within this source */
+  groups: FileGroup[];
+  /** Total file count */
+  total: number;
 }
 
 /** Aggregate pipeline counts */

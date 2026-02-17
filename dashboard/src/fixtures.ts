@@ -1,4 +1,4 @@
-import type { FileGroup, FileEntry, PipelineState, ActivityEntry, LanguageCount, FileState } from './types';
+import type { FileGroup, FileEntry, PipelineState, ActivityEntry, LanguageCount, FileState, SourceSection } from './types';
 import { LANGUAGES } from './types';
 
 /** Seeded PRNG for deterministic fixture generation */
@@ -60,16 +60,16 @@ export function generateFiles(total = TOTAL): FileEntry[] {
 
 /** Phase display order and labels */
 const PHASE_ORDER: FileState[] = [
-  'full_embedded', 'struct_embedded', 'parsed', 'classified', 'discovered', 'hidden', 'failed',
+  'hidden', 'discovered', 'classified', 'parsed', 'struct_embedded', 'full_embedded', 'failed',
 ];
 
 const PHASE_GROUP_LABELS: Record<FileState, string> = {
   hidden: 'Pending',
   discovered: 'Discovered',
-  classified: 'Classified',
+  classified: 'Indexing',
   parsed: 'Parsed',
-  struct_embedded: 'Searchable',
-  full_embedded: 'Fully Embedded',
+  struct_embedded: 'Ready',
+  full_embedded: 'Fully Indexed',
   failed: 'Failed',
 };
 
@@ -91,6 +91,52 @@ export function groupByPhase(files: FileEntry[]): FileGroup[] {
       label: PHASE_GROUP_LABELS[phase],
       files: map.get(phase)!,
     }));
+}
+
+/** Split files by source (local vs each imported repo), then group by phase within each */
+export function groupBySources(files: FileEntry[]): SourceSection[] {
+  // Partition files by source prefix
+  const sourceMap = new Map<string, FileEntry[]>();
+
+  for (const f of files) {
+    const match = f.path.match(/^(github:\/\/[^/]+\/[^/]+)\//);
+    const prefix = match ? match[1]! : '';
+    let arr = sourceMap.get(prefix);
+    if (!arr) {
+      arr = [];
+      sourceMap.set(prefix, arr);
+    }
+    arr.push(f);
+  }
+
+  // Build sections: local first, then imports sorted by name
+  const sections: SourceSection[] = [];
+  const localFiles = sourceMap.get('');
+  if (localFiles && localFiles.length > 0) {
+    sections.push({
+      label: 'Local',
+      prefix: '',
+      groups: groupByPhase(localFiles),
+      total: localFiles.length,
+    });
+  }
+
+  const imports = Array.from(sourceMap.entries())
+    .filter(([prefix]) => prefix !== '')
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  for (const [prefix, importFiles] of imports) {
+    // "github://owner/repo" → "owner/repo"
+    const label = prefix.replace(/^github:\/\//, '');
+    sections.push({
+      label,
+      prefix,
+      groups: groupByPhase(importFiles),
+      total: importFiles.length,
+    });
+  }
+
+  return sections;
 }
 
 /** Group files by directory */

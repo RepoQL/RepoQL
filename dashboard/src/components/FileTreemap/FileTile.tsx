@@ -1,32 +1,35 @@
-import { useMemo, useCallback } from 'react';
+import { createMemo } from 'solid-js';
+import type { JSX } from 'solid-js';
 import type { FileEntry } from '../../types';
 
-export function FileTile({ file, selected, onSelect, onHover }: {
+export interface FileTileProps {
   file: FileEntry;
   selected?: boolean;
   onSelect?: (file: FileEntry) => void;
   onHover?: (file: FileEntry | null, x: number, y: number) => void;
-}) {
-  const { style, className } = useMemo(() => computeTileStyle(file), [file.state, file.processing, file.lang.color]);
-  const cls = selected ? `${className} selected` : className;
+}
 
-  const handleEnter = useCallback((e: React.MouseEvent) => {
-    onHover?.(file, e.clientX, e.clientY);
-  }, [file, onHover]);
+export function FileTile(props: FileTileProps) {
+  const tile = createMemo(() => computeTileStyle(props.file));
+  const cls = createMemo(() => (props.selected ? `${tile().class} selected` : tile().class));
 
-  const handleMove = useCallback((e: React.MouseEvent) => {
-    onHover?.(file, e.clientX, e.clientY);
-  }, [file, onHover]);
+  const handleEnter = (event: MouseEvent) => {
+    props.onHover?.(props.file, event.clientX, event.clientY);
+  };
 
-  const handleLeave = useCallback(() => {
-    onHover?.(null, 0, 0);
-  }, [onHover]);
+  const handleMove = (event: MouseEvent) => {
+    props.onHover?.(props.file, event.clientX, event.clientY);
+  };
+
+  const handleLeave = () => {
+    props.onHover?.(null, 0, 0);
+  };
 
   return (
     <div
-      className={cls}
-      style={style}
-      onClick={onSelect ? (e) => { e.stopPropagation(); onSelect(file); } : undefined}
+      class={cls()}
+      style={tile().style}
+      onClick={props.onSelect ? (event) => { event.stopPropagation(); props.onSelect?.(props.file); } : undefined}
       onMouseEnter={handleEnter}
       onMouseMove={handleMove}
       onMouseLeave={handleLeave}
@@ -34,49 +37,60 @@ export function FileTile({ file, selected, onSelect, onHover }: {
   );
 }
 
-function computeTileStyle(file: FileEntry): { style: React.CSSProperties; className: string } {
+/** Map token count to tile size (px) via log scale. 0→4, ~100→5, ~1k→7, ~5k→9, ~20k→11, ~50k+→13 */
+function tileSize(tokens: number | null | undefined): number {
+  if (!tokens || tokens <= 0) return 4;
+  const s = Math.min(13, 4 + Math.log2(tokens / 50));
+  return Math.max(4, Math.round(s));
+}
+
+function computeTileStyle(file: FileEntry): { style: JSX.CSSProperties; class: string } {
   const color = file.lang.color;
   const base = 'ftile';
   const proc = file.processing ? ' processing' : '';
+  const size = `${tileSize(file.tokens)}px`;
 
   switch (file.state) {
     case 'hidden':
-      return { className: base, style: { filter: 'blur(3px)' } };
+      return { class: base, style: { width: size, height: size, opacity: 0.15 } };
 
     case 'discovered':
       return {
-        className: `${base} discovered`,
-        style: { background: 'rgba(255,255,255,.07)', borderColor: 'rgba(255,255,255,.05)', filter: 'blur(2px)' },
+        class: `${base} discovered`,
+        style: { width: size, height: size, background: 'rgba(255,255,255,.07)', opacity: 0.3 },
       };
 
     case 'classified':
       return {
-        className: `${base} classified${proc}`,
-        style: { background: 'rgba(255,255,255,.04)', borderColor: color, filter: 'blur(1.2px)' },
+        class: `${base} classified${proc}`,
+        style: { width: size, height: size, background: 'rgba(255,255,255,.04)', 'border-color': color, opacity: 0.5 },
       };
 
     case 'parsed':
       return {
-        className: `${base} parsed${proc}`,
-        style: { background: color, borderColor: color, opacity: 0.45, filter: 'blur(0.5px)' },
+        class: `${base} parsed${proc}`,
+        style: { width: size, height: size, background: color, 'border-color': color, opacity: 0.45 },
       };
 
     case 'struct_embedded':
       return {
-        className: `${base} searchable${proc}`,
-        style: { background: color, borderColor: color, opacity: 0.75, boxShadow: `0 0 3px ${color}40` },
+        class: `${base} searchable${proc}`,
+        style: { width: size, height: size, background: color, 'border-color': color, opacity: 0.75 },
       };
 
     case 'full_embedded':
       return {
-        className: `${base} full-embedded`,
-        style: { background: color, borderColor: color, opacity: 1, boxShadow: `0 0 4px ${color}50` },
+        class: `${base} full-embedded`,
+        style: { width: size, height: size, background: color, 'border-color': color, opacity: 1 },
       };
 
     case 'failed':
       return {
-        className: `${base} failed`,
-        style: { background: 'var(--red)', borderColor: 'var(--red)', opacity: 0.8 },
+        class: `${base} failed`,
+        style: { width: size, height: size, background: 'var(--red)', 'border-color': 'var(--red)', opacity: 0.8 },
       };
+
+    default:
+      return { class: base, style: { width: size, height: size } };
   }
 }

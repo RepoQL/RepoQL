@@ -6,11 +6,11 @@ export interface PhaseIndicatorProps {
   phase: PipelinePhase;
 }
 
-export function PhaseIndicator({ phase }: PhaseIndicatorProps) {
+export function PhaseIndicator(props: PhaseIndicatorProps) {
   return (
-    <div className="phase-section">
-      <div className="phase-label">Phase</div>
-      <div className="phase-val">{PHASE_LABELS[phase]}</div>
+    <div class="phase-section">
+      <div class="phase-label">Phase</div>
+      <div class="phase-val">{PHASE_LABELS[props.phase]}</div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { createMemo, createSignal, For, Show } from 'solid-js';
 import type { OperationSnapshot, OperationState } from '../../types';
 import './OperationTracker.css';
 
@@ -7,11 +7,11 @@ export interface OperationTrackerProps {
   now: number;
 }
 
-const STATE_CONFIG: Record<OperationState, { label: string; className: string }> = {
-  running: { label: 'Running', className: 'op-state running' },
-  completed: { label: 'Completed', className: 'op-state completed' },
-  completed_with_failures: { label: 'Completed (failures)', className: 'op-state with-failures' },
-  cancelled: { label: 'Cancelled', className: 'op-state cancelled' },
+const STATE_CONFIG: Record<OperationState, { label: string; class: string }> = {
+  running: { label: 'Running', class: 'op-state running' },
+  completed: { label: 'Completed', class: 'op-state completed' },
+  completed_with_failures: { label: 'Completed (failures)', class: 'op-state with-failures' },
+  cancelled: { label: 'Cancelled', class: 'op-state cancelled' },
 };
 
 const KIND_ICONS: Record<string, string> = {
@@ -20,114 +20,133 @@ const KIND_ICONS: Record<string, string> = {
   import: '\u2193',    // ↓
 };
 
-export function OperationTracker({ operations, now }: OperationTrackerProps) {
-  const active = operations.filter((o) => o.state === 'running');
-  const completed = operations.filter((o) => o.state !== 'running');
+export function OperationTracker(props: OperationTrackerProps) {
+  const active = createMemo(() => props.operations.filter((operation) => operation.state === 'running'));
+  const completed = createMemo(() => props.operations.filter((operation) => operation.state !== 'running'));
 
   return (
-    <div className="operation-tracker">
-      <div className="ot-header">
-        <span className="ot-title">Operations</span>
-        <div className="ot-counts">
-          {active.length > 0 && <span className="ot-active-count">{active.length} active</span>}
-          <span className="ot-total-count">{operations.length} total</span>
+    <div class="operation-tracker">
+      <div class="ot-header">
+        <span class="ot-title">Operations</span>
+        <div class="ot-counts">
+          <Show when={active().length > 0}>
+            <span class="ot-active-count">{active().length} active</span>
+          </Show>
+          <span class="ot-total-count">{props.operations.length} total</span>
         </div>
       </div>
 
-      {operations.length === 0 && (
-        <div className="ot-empty">No operations</div>
-      )}
+      <Show when={props.operations.length === 0}>
+        <div class="ot-empty">No operations</div>
+      </Show>
 
-      <div className="ot-list">
-        {active.map((op) => (
-          <OperationRow key={op.id} op={op} now={now} />
-        ))}
-        {completed.map((op) => (
-          <OperationRow key={op.id} op={op} now={now} />
-        ))}
+      <div class="ot-list">
+        <For each={active()}>
+          {(operation) => (
+            <OperationRow op={operation} now={props.now} />
+          )}
+        </For>
+        <For each={completed()}>
+          {(operation) => (
+            <OperationRow op={operation} now={props.now} />
+          )}
+        </For>
       </div>
     </div>
   );
 }
 
-function OperationRow({ op, now }: { op: OperationSnapshot; now: number }) {
-  const [expanded, setExpanded] = useState(op.state === 'running');
-  const config = STATE_CONFIG[op.state];
-  const elapsed = formatDuration((op.completedAt ?? now) - op.createdAt);
-  const icon = KIND_ICONS[op.kind] ?? '\u25CF';
+function OperationRow(props: { op: OperationSnapshot; now: number }) {
+  const [expanded, setExpanded] = createSignal(props.op.state === 'running');
+  const config = createMemo(() => STATE_CONFIG[props.op.state]);
+  const elapsed = createMemo(() => formatDuration((props.op.completedAt ?? props.now) - props.op.createdAt));
+  const icon = createMemo(() => KIND_ICONS[props.op.kind] ?? '\u25CF');
+  const recentLog = createMemo(() => props.op.recentLog.slice(0, 8));
 
   return (
-    <div className={`ot-row ${op.state === 'running' ? 'active' : ''}`}>
-      <button className="ot-row-header" onClick={() => setExpanded(!expanded)}>
-        <div className="ot-row-left">
-          <span className="ot-kind-icon">{icon}</span>
-          <div className="ot-row-info">
-            <span className="ot-description">{op.description}</span>
-            <span className={config.className}>{config.label}</span>
+    <div class={`ot-row ${props.op.state === 'running' ? 'active' : ''}`}>
+      <button class="ot-row-header" onClick={() => setExpanded((value) => !value)}>
+        <div class="ot-row-left">
+          <span class="ot-kind-icon">{icon()}</span>
+          <div class="ot-row-info">
+            <span class="ot-description">{props.op.description}</span>
+            <span class={config().class}>{config().label}</span>
           </div>
         </div>
-        <span className="ot-elapsed">{elapsed}</span>
+        <span class="ot-elapsed">{elapsed()}</span>
       </button>
 
       {/* Progress bar */}
-      {op.totalFiles > 0 && (
-        <div className="ot-progress">
-          <div className="ot-progress-bar">
+      <Show when={props.op.totalFiles > 0}>
+        <div class="ot-progress">
+          <div class="ot-progress-bar">
             <div
-              className="ot-progress-indexed"
-              style={{ width: `${(op.indexedCount / op.totalFiles) * 100}%` }}
+              class="ot-progress-indexed"
+              style={{ width: `${(props.op.indexedCount / props.op.totalFiles) * 100}%` }}
             />
             <div
-              className="ot-progress-embedded"
-              style={{ width: `${(op.embeddedCount / op.totalFiles) * 100}%` }}
+              class="ot-progress-embedded"
+              style={{ width: `${(props.op.embeddedCount / props.op.totalFiles) * 100}%` }}
             />
-            {op.failedCount > 0 && (
+            <Show when={props.op.failedCount > 0}>
               <div
-                className="ot-progress-failed"
-                style={{ width: `${(op.failedCount / op.totalFiles) * 100}%` }}
+                class="ot-progress-failed"
+                style={{ width: `${(props.op.failedCount / props.op.totalFiles) * 100}%` }}
               />
-            )}
+            </Show>
           </div>
-          <div className="ot-progress-labels">
-            <span>{op.readyPercent}% ready</span>
-            <span>{op.indexedCount}/{op.totalFiles} indexed</span>
-            <span>{op.embeddedCount} embedded</span>
-            {op.failedCount > 0 && <span className="ot-failed-label">{op.failedCount} failed</span>}
+          <div class="ot-progress-labels">
+            <span>{props.op.readyPercent}% ready</span>
+            <span>{props.op.indexedCount}/{props.op.totalFiles} indexed</span>
+            <span>{props.op.embeddedCount} embedded</span>
+            <Show when={props.op.failedCount > 0}>
+              <span class="ot-failed-label">{props.op.failedCount} failed</span>
+            </Show>
           </div>
         </div>
-      )}
+      </Show>
 
       {/* Expanded: milestones + recent log */}
-      {expanded && (
-        <div className="ot-detail">
-          {op.milestones.length > 0 && (
-            <div className="ot-milestones">
-              {op.milestones.map((m, i) => (
-                <div key={i} className="ot-milestone">
-                  <span className="ot-ms-dot" />
-                  <span className="ot-ms-name">{m.name}</span>
-                  {m.detail && <span className="ot-ms-detail">{m.detail}</span>}
-                  <span className="ot-ms-time">{formatTime(m.timestamp, op.createdAt)}</span>
-                </div>
-              ))}
+      <Show when={expanded()}>
+        <div class="ot-detail">
+          <Show when={props.op.milestones.length > 0}>
+            <div class="ot-milestones">
+              <For each={props.op.milestones}>
+                {(milestone) => (
+                  <div class="ot-milestone">
+                    <span class="ot-ms-dot" />
+                    <span class="ot-ms-name">{milestone.name}</span>
+                    <Show when={milestone.detail}>
+                      <span class="ot-ms-detail">{milestone.detail}</span>
+                    </Show>
+                    <span class="ot-ms-time">{formatTime(milestone.timestamp, props.op.createdAt)}</span>
+                  </div>
+                )}
+              </For>
             </div>
-          )}
+          </Show>
 
-          {op.recentLog.length > 0 && (
-            <div className="ot-log">
-              {op.recentLog.slice(0, 8).map((entry, i) => (
-                <div key={i} className="ot-log-entry">
-                  <span className={`ot-log-type ${entry.type.includes('failed') ? 'failed' : ''}`}>
-                    {entry.type}
-                  </span>
-                  {entry.uri && <span className="ot-log-uri">{truncateUri(entry.uri)}</span>}
-                  {entry.message && <span className="ot-log-msg">{entry.message}</span>}
-                </div>
-              ))}
+          <Show when={props.op.recentLog.length > 0}>
+            <div class="ot-log">
+              <For each={recentLog()}>
+                {(entry) => (
+                  <div class="ot-log-entry">
+                    <span class={`ot-log-type ${entry.type.includes('failed') ? 'failed' : ''}`}>
+                      {entry.type}
+                    </span>
+                    <Show when={entry.uri}>
+                      <span class="ot-log-uri">{truncateUri(entry.uri ?? '')}</span>
+                    </Show>
+                    <Show when={entry.message}>
+                      <span class="ot-log-msg">{entry.message}</span>
+                    </Show>
+                  </div>
+                )}
+              </For>
             </div>
-          )}
+          </Show>
         </div>
-      )}
+      </Show>
     </div>
   );
 }

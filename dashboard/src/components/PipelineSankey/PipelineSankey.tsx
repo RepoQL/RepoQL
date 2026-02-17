@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { createEffect, onCleanup, onMount } from 'solid-js';
 import type { PipelineState } from '../../types';
 import './PipelineSankey.css';
 
@@ -16,28 +16,33 @@ interface Stage {
 
 const STAGES: Omit<Stage, 'val'>[] = [
   { label: 'Discovered', xFrac: 0.025, color: 'var(--fg3)', activePhases: ['discovery'] },
-  { label: 'Classified', xFrac: 0.2, color: 'var(--fg2)', activePhases: ['classifying'] },
+  { label: 'Indexing', xFrac: 0.2, color: 'var(--fg2)', activePhases: ['classifying'] },
   { label: 'Parsed', xFrac: 0.4, color: 'var(--blue)', activePhases: ['parsing'] },
-  { label: 'Searchable', xFrac: 0.6, color: 'var(--amber)', activePhases: ['struct_embedding'] },
-  { label: 'Full Embed', xFrac: 0.8, color: 'var(--green)', activePhases: ['full_embedding'] },
+  { label: 'Ready', xFrac: 0.6, color: 'var(--amber)', activePhases: ['struct_embedding'] },
+  { label: 'Fully Indexed', xFrac: 0.8, color: 'var(--green)', activePhases: ['full_embedding'] },
 ];
 
-export function PipelineSankey({ pipeline }: PipelineSankeyProps) {
-  const svgRef = useRef<SVGSVGElement>(null);
+export function PipelineSankey(props: PipelineSankeyProps) {
+  let svgRef: SVGSVGElement | undefined;
 
-  const render = useCallback(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
+  const render = () => {
+    if (!svgRef) return;
 
-    const box = svg.getBoundingClientRect();
+    const box = svgRef.getBoundingClientRect();
     const W = box.width || 800;
     const H = box.height || 120;
-    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svgRef.setAttribute('viewBox', `0 0 ${W} ${H}`);
 
     const maxH = H - 40;
     const barW = 24;
-    const total = pipeline.total || 1;
-    const vals = [pipeline.discovered, pipeline.classified, pipeline.parsed, pipeline.structEmbedded, pipeline.fullEmbedded];
+    const total = props.pipeline.total || 1;
+    const vals = [
+      props.pipeline.discovered,
+      props.pipeline.classified,
+      props.pipeline.parsed,
+      props.pipeline.structEmbedded,
+      props.pipeline.fullEmbedded,
+    ];
 
     let html = '';
     for (let i = 0; i < STAGES.length; i++) {
@@ -51,7 +56,7 @@ export function PipelineSankey({ pipeline }: PipelineSankeyProps) {
       html += `<rect x="${x}" y="${y}" width="${barW}" height="${h}" fill="${s.color}" opacity=".5" rx="2"/>`;
 
       // Value
-      const isActive = s.activePhases.includes(pipeline.phase);
+      const isActive = s.activePhases.includes(props.pipeline.phase);
       html += `<text class="sk-val${isActive ? ' active' : ''}" x="${x + barW / 2}" y="${y - 6}" text-anchor="middle">${val}</text>`;
       html += `<text class="sk-label" x="${x + barW / 2}" y="${H - 4}" text-anchor="middle">${s.label}</text>`;
 
@@ -69,22 +74,29 @@ export function PipelineSankey({ pipeline }: PipelineSankeyProps) {
     }
 
     // Failed indicator
-    if (pipeline.failed > 0) {
-      html += `<text class="sk-label" x="${W - 20}" y="${H / 2 + 4}" text-anchor="end" fill="var(--red)">${pipeline.failed} failed</text>`;
+    if (props.pipeline.failed > 0) {
+      html += `<text class="sk-label" x="${W - 20}" y="${H / 2 + 4}" text-anchor="end" fill="var(--red)">${props.pipeline.failed} failed</text>`;
     }
 
-    svg.innerHTML = html;
-  }, [pipeline]);
+    svgRef.innerHTML = html;
+  };
 
-  useEffect(() => {
+  onMount(() => {
     render();
     window.addEventListener('resize', render);
-    return () => window.removeEventListener('resize', render);
-  }, [render]);
+  });
+
+  onCleanup(() => {
+    window.removeEventListener('resize', render);
+  });
+
+  createEffect(() => {
+    render();
+  });
 
   return (
-    <div className="sankey-area">
-      <svg ref={svgRef} className="sankey-svg" preserveAspectRatio="xMidYMid meet" />
+    <div class="sankey-area">
+      <svg ref={(el) => { svgRef = el; }} class="sankey-svg" preserveAspectRatio="xMidYMid meet" />
     </div>
   );
 }

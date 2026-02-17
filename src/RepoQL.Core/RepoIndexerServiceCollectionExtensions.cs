@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Reflection;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -166,6 +167,7 @@ public static class RepoIndexerServiceCollectionExtensions
             var degradation = sp.GetService<IServiceDegradationTracker>();
             string? failureMessage = null;
             var onnxLogger = sp.GetService<ILogger<OnnxEmbeddingProvider>>();
+            var cache = sp.GetService<IMemoryCache>();
 
             if (mode == EmbeddingMode.None)
             {
@@ -196,7 +198,7 @@ public static class RepoIndexerServiceCollectionExtensions
             var maxTokens = GetEmbeddingMaxTokens();
             if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
             {
-                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, out var error);
+                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, cache, out var error);
                 if (onnx is not null)
                     return onnx;
 
@@ -233,7 +235,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 if (File.Exists(shipped))
                 {
                     log?.LogInformation("Embedding provider: using model at {Path}", shipped);
-                    var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, out var error);
+                    var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, cache, out var error);
                     if (onnx is not null)
                         return onnx;
 
@@ -282,6 +284,7 @@ public static class RepoIndexerServiceCollectionExtensions
             var degradation = sp.GetService<IServiceDegradationTracker>();
             string? failureMessage = null;
             var onnxLogger = sp.GetService<ILogger<OnnxEmbeddingProvider>>();
+            var cache = sp.GetService<IMemoryCache>();
 
             if (mode == EmbeddingMode.None)
             {
@@ -295,7 +298,7 @@ public static class RepoIndexerServiceCollectionExtensions
 
             if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
             {
-                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, out var error);
+                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, cache, out var error);
                 if (onnx is not null)
                 {
                     log?.LogInformation("Local embedding provider: using ONNX from explicit path");
@@ -333,7 +336,7 @@ public static class RepoIndexerServiceCollectionExtensions
 
             if (File.Exists(shipped))
             {
-                var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, out var error);
+                var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, cache, out var error);
                 if (onnx is not null)
                 {
                     log?.LogInformation("Local embedding provider: using shipped ONNX model from {Path}", shipped);
@@ -746,12 +749,13 @@ public static class RepoIndexerServiceCollectionExtensions
         string path,
         ILogger<OnnxEmbeddingProvider>? logger,
         int maxTokens,
+        IMemoryCache? cache,
         out Exception? error)
     {
         error = null;
         try
         {
-            var onnx = new OnnxEmbeddingProvider(path, logger, maxTokens);
+            var onnx = new OnnxEmbeddingProvider(path, logger, maxTokens, cache: cache);
             if (onnx.Enabled)
                 return onnx;
 

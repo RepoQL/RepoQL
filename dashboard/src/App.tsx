@@ -1,13 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { createSignal, onMount, onCleanup, Show } from 'solid-js';
 import { Dashboard } from './components/Dashboard/Dashboard';
 import { useRepoQLDashboard } from './hooks/useRepoQLDashboard';
 import './theme.css';
 
-function useSingletonTab(): { isPrimary: boolean } {
-  const [isPrimary, setIsPrimary] = useState(false);
-  const isPrimaryRef = useRef(false);
+function useSingletonTab() {
+  const [isPrimary, setIsPrimary] = createSignal(false);
+  let isPrimaryRef = false;
 
-  useEffect(() => {
+  onMount(() => {
     const bc = new BroadcastChannel('repoql-dashboard');
 
     bc.postMessage({ type: 'ping' });
@@ -15,7 +15,7 @@ function useSingletonTab(): { isPrimary: boolean } {
     let gotPong = false;
     const timeout = setTimeout(() => {
       if (!gotPong) {
-        isPrimaryRef.current = true;
+        isPrimaryRef = true;
         setIsPrimary(true);
       }
     }, 300);
@@ -24,67 +24,75 @@ function useSingletonTab(): { isPrimary: boolean } {
       if (e.data?.type === 'pong') {
         gotPong = true;
         clearTimeout(timeout);
-        isPrimaryRef.current = false;
+        isPrimaryRef = false;
         setIsPrimary(false);
       } else if (e.data?.type === 'ping') {
-        if (isPrimaryRef.current) {
+        if (isPrimaryRef) {
           bc.postMessage({ type: 'pong' });
           window.focus();
         }
       }
     };
 
-    return () => {
+    onCleanup(() => {
       clearTimeout(timeout);
       bc.close();
-    };
-  }, []);
+    });
+  });
 
-  return { isPrimary };
+  return isPrimary;
 }
 
 export default function App() {
-  const { isPrimary } = useSingletonTab();
-  const { props, connected, error } = useRepoQLDashboard();
+  const isPrimary = useSingletonTab();
+  const dashboard = useRepoQLDashboard();
 
-  if (!isPrimary) {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          gap: '12px',
-          color: 'var(--fg3)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.8rem',
-        }}
+  return (
+    <Show
+      when={isPrimary()}
+      fallback={
+        <div
+          style={{
+            display: 'flex',
+            'flex-direction': 'column',
+            'align-items': 'center',
+            'justify-content': 'center',
+            height: '100vh',
+            gap: '12px',
+            color: 'var(--fg3)',
+            'font-family': 'var(--font-mono)',
+            'font-size': '0.8rem',
+          }}
+        >
+          <div>Dashboard is already open in another tab.</div>
+          <div style={{ color: 'var(--fg4)', 'font-size': '0.65rem' }}>The existing tab has been activated.</div>
+        </div>
+      }
+    >
+      <Show
+        when={dashboard.props()}
+        fallback={
+          <div
+            style={{
+              display: 'flex',
+              'align-items': 'center',
+              'justify-content': 'center',
+              height: '100vh',
+              color: 'var(--fg3)',
+              'font-family': 'var(--font-mono)',
+              'font-size': '0.8rem',
+            }}
+          >
+            {dashboard.error()
+              ? `Error: ${dashboard.error()}`
+              : dashboard.connected()
+                ? 'Connected - waiting for snapshot...'
+                : 'Connecting to host...'}
+          </div>
+        }
       >
-        <div>Dashboard is already open in another tab.</div>
-        <div style={{ color: 'var(--fg4)', fontSize: '0.65rem' }}>The existing tab has been activated.</div>
-      </div>
-    );
-  }
-
-  if (!props) {
-    return (
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          color: 'var(--fg3)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: '0.8rem',
-        }}
-      >
-        {error ? `Error: ${error}` : connected ? 'Connected - waiting for snapshot...' : 'Connecting to host...'}
-      </div>
-    );
-  }
-
-  return <Dashboard {...props} />;
+        {(p) => <Dashboard {...p()} />}
+      </Show>
+    </Show>
+  );
 }

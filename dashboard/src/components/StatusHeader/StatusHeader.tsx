@@ -10,19 +10,19 @@ export interface StatusHeaderProps {
   elapsed: number;
 }
 
-export function StatusHeader({ title, phase, elapsed }: StatusHeaderProps) {
-  const dotClass =
-    phase === 'complete' ? 'hdr-dot done' :
-    phase === 'idle' ? 'hdr-dot' :
+export function StatusHeader(props: StatusHeaderProps) {
+  const dotClass = () =>
+    props.phase === 'complete' ? 'hdr-dot done' :
+    props.phase === 'idle' ? 'hdr-dot' :
     'hdr-dot active';
 
   return (
-    <header className="status-header">
-      <div className="hdr-left">
-        <div className={dotClass} />
-        <span className="hdr-title">repoql · {title}</span>
+    <header class="status-header">
+      <div class="hdr-left">
+        <div class={dotClass()} />
+        <span class="hdr-title">repoql · {props.title}</span>
       </div>
-      <div className="hdr-right">{elapsed.toFixed(1)}s</div>
+      <div class="hdr-right">{props.elapsed.toFixed(1)}s</div>
     </header>
   );
 }

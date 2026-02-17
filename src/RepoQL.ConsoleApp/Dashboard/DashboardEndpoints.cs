@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
+using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Hosting;
 
 namespace RepoQL.ConsoleApp.Dashboard;
@@ -13,7 +14,7 @@ namespace RepoQL.ConsoleApp.Dashboard;
 /// Maps dashboard HTTP endpoints: GET /api/snapshot (JSON) and GET /api/events (SSE).
 /// Purpose: Bridge host-internal observability to the embedded React dashboard.
 /// Complexity: Composes real file data from UriRegistry with pipeline status and operations.
-/// SSE streams StatusEventAggregator events plus periodic file/lease/operation snapshots.
+/// SSE streams StatusEventAggregator events plus file deltas and periodic lease/operation snapshots.
 /// </summary>
 internal static class DashboardEndpoints
 {
@@ -36,11 +37,15 @@ internal static class DashboardEndpoints
         IIndexingCoordinator coordinator,
         IOperationManager operations,
         UriRegistry uriRegistry,
-        HostState hostState)
+        HostState hostState,
+        DuckDbDataStore dataStore)
     {
         var pipelineStatus = coordinator.GetPipelineStatus();
         var leases = LeaseRegistry.Snapshot();
         var activeOps = operations.ActiveOperations;
+
+        // Load token counts from artifact table — keyed by node URI.
+        var tokenCounts = LoadTokenCounts(dataStore);
 
         var snapshot = new
         {
@@ -83,25 +88,56 @@ internal static class DashboardEndpoints
                     readyPercent = op.Progress.ReadyPercent,
                 },
             }).ToArray(),
-            files = SnapshotFiles(uriRegistry),
+            files = SnapshotFiles(uriRegistry, tokenCounts),
         };
 
         return Results.Json(snapshot, JsonOptions);
     }
 
+    // --- Token counts from DuckDB ---
+
+    private static readonly Dictionary<string, int> EmptyTokenCounts = new();
+
+    private static Dictionary<string, int> LoadTokenCounts(DuckDbDataStore dataStore)
+    {
+        try
+        {
+            // Use a cancellation token with timeout to avoid blocking during heavy writes.
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+            var task = Task.Run(() => dataStore.Read(
+                "SELECT n.uri, a.token_count FROM node n JOIN artifact a ON n.artifact_id = a.id WHERE a.token_count > 0 AND n.kind = 'document'",
+                r => (uri: r.GetString(0), tokens: r.GetInt32(1))), cts.Token);
+
+            if (!task.Wait(500))
+                return EmptyTokenCounts;
+
+            var dict = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (uri, tokens) in task.Result)
+                dict[uri] = tokens;
+            return dict;
+        }
+        catch
+        {
+            return EmptyTokenCounts;
+        }
+    }
+
     // --- File snapshot from UriRegistry ---
 
-    private static object[] SnapshotFiles(UriRegistry registry)
+    private static object[] SnapshotFiles(UriRegistry registry, Dictionary<string, int> tokenCounts)
     {
         return registry
-            .Where(kvp => kvp.Key.Scheme == "file")
-            .OrderBy(kvp => kvp.Key.AbsolutePath, StringComparer.OrdinalIgnoreCase)
+            .Where(kvp => kvp.Key.Scheme is "file" or "github")
+            .OrderBy(kvp => kvp.Key.ToString(), StringComparer.OrdinalIgnoreCase)
             .Select(kvp =>
             {
                 var entry = kvp.Value;
-                var path = kvp.Key.AbsolutePath.TrimStart('/');
-                var ext = Path.GetExtension(path).ToLowerInvariant();
+                var path = kvp.Key.Scheme == "file"
+                    ? kvp.Key.AbsolutePath.TrimStart('/')
+                    : kvp.Key.ToString();
+                var ext = Path.GetExtension(kvp.Key.AbsolutePath).ToLowerInvariant();
                 var (state, processing) = MapFileState(entry);
+                tokenCounts.TryGetValue(kvp.Key.ToString(), out var tokens);
                 return (object)new
                 {
                     path,
@@ -109,12 +145,12 @@ internal static class DashboardEndpoints
                     state,
                     processing,
                     lines = entry.LineCount > 0 ? entry.LineCount : (int?)null,
+                    tokens = tokens > 0 ? tokens : (int?)null,
                     symbols = entry.Symbols.Count > 0 ? entry.Symbols.Count : (int?)null,
                     chunks = entry.EmbeddedChunkCount > 0 ? entry.EmbeddedChunkCount : (int?)null,
                     indexedAt = entry.IndexedAt?.ToString("O"),
                     embeddedAt = entry.EmbeddedAt?.ToString("O"),
                     error = entry.Status == UriStatus.Failed ? entry.Error : null,
-                    tree = entry.Symbols.Count > 0 ? BuildSymbolTree(entry.Symbols) : null,
                 };
             })
             .ToArray();
@@ -249,6 +285,7 @@ internal static class DashboardEndpoints
         StatusEventAggregator aggregator,
         UriRegistry uriRegistry,
         IOperationManager operations,
+        DuckDbDataStore dataStore,
         CancellationToken cancellationToken)
     {
         // Disable response buffering for real-time streaming.
@@ -260,6 +297,11 @@ internal static class DashboardEndpoints
 
         var lastPeriodicSend = DateTime.UtcNow;
         var periodicSnapshotInterval = TimeSpan.FromSeconds(2);
+        var lastSentEntries = new Dictionary<string, RepoQL.Contracts.FileEntry>(StringComparer.OrdinalIgnoreCase);
+        var lastDeltaHadChanges = false;
+        var lastPeriodicFilesSend = DateTime.UtcNow;
+        var tokenCounts = LoadTokenCounts(dataStore);
+        var lastTokenRefresh = DateTime.UtcNow;
 
         await foreach (var evt in aggregator.WatchAsync(cancellationToken))
         {
@@ -329,11 +371,35 @@ internal static class DashboardEndpoints
                 await WriteSseEvent(context.Response, eventType, data, cancellationToken).ConfigureAwait(false);
             }
 
-            // Periodic snapshots: files, leases, operations.
+            // Adaptive file deltas.
             var now = DateTime.UtcNow;
+
+            // Refresh token counts every 10s (they change as artifacts are committed).
+            if (now - lastTokenRefresh >= TimeSpan.FromSeconds(10))
+            {
+                tokenCounts = LoadTokenCounts(dataStore);
+                lastTokenRefresh = now;
+            }
+
+            var fileSnapshotInterval = lastDeltaHadChanges
+                ? TimeSpan.FromMilliseconds(150)
+                : TimeSpan.FromSeconds(1);
+            if (now - lastPeriodicFilesSend >= fileSnapshotInterval)
+            {
+                lastDeltaHadChanges = await WriteDeltaFiles(
+                        context.Response,
+                        uriRegistry,
+                        lastSentEntries,
+                        tokenCounts,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                lastPeriodicFilesSend = now;
+            }
+
+            // Periodic snapshots: leases and operations.
             if (now - lastPeriodicSend >= periodicSnapshotInterval)
             {
-                await WritePeriodicSnapshots(context.Response, uriRegistry, operations, cancellationToken).ConfigureAwait(false);
+                await WritePeriodicSnapshots(context.Response, operations, cancellationToken).ConfigureAwait(false);
                 lastPeriodicSend = now;
             }
         }
@@ -346,16 +412,95 @@ internal static class DashboardEndpoints
         await response.Body.FlushAsync(ct).ConfigureAwait(false);
     }
 
-    private static async Task WritePeriodicSnapshots(
-        HttpResponse response, UriRegistry uriRegistry, IOperationManager operations, CancellationToken ct)
+    private static async Task<bool> WriteDeltaFiles(
+        HttpResponse response,
+        UriRegistry uriRegistry,
+        Dictionary<string, RepoQL.Contracts.FileEntry> lastSentEntries,
+        Dictionary<string, int> tokenCounts,
+        CancellationToken ct)
     {
-        // Files — real state from UriRegistry.
-        await WriteSseEvent(
-            response,
-            "files",
-            JsonSerializer.Serialize(SnapshotFiles(uriRegistry), JsonOptions),
-            ct).ConfigureAwait(false);
+        var updates = new List<object>();
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        foreach (var kvp in uriRegistry
+                     .Where(kvp => kvp.Key.Scheme is "file" or "github")
+                     .OrderBy(kvp => kvp.Key.ToString(), StringComparer.OrdinalIgnoreCase))
+        {
+            var path = kvp.Key.Scheme == "file"
+                ? kvp.Key.AbsolutePath.TrimStart('/')
+                : kvp.Key.ToString();
+            seenPaths.Add(path);
+
+            if (lastSentEntries.TryGetValue(path, out var previousEntry) && ReferenceEquals(previousEntry, kvp.Value))
+                continue;
+
+            // Cap per-tick updates to prevent browser flooding during reindex.
+            if (updates.Count >= 50)
+                continue; // Will be picked up next tick (entry NOT updated in lastSentEntries)
+
+            var entry = kvp.Value;
+            var ext = Path.GetExtension(kvp.Key.AbsolutePath).ToLowerInvariant();
+            var (state, processing) = MapFileState(entry);
+            tokenCounts.TryGetValue(kvp.Key.ToString(), out var tokens);
+            updates.Add(new
+            {
+                path,
+                ext,
+                state,
+                processing,
+                lines = entry.LineCount > 0 ? entry.LineCount : (int?)null,
+                tokens = tokens > 0 ? tokens : (int?)null,
+                symbols = entry.Symbols.Count > 0 ? entry.Symbols.Count : (int?)null,
+                chunks = entry.EmbeddedChunkCount > 0 ? entry.EmbeddedChunkCount : (int?)null,
+                indexedAt = entry.IndexedAt?.ToString("O"),
+                embeddedAt = entry.EmbeddedAt?.ToString("O"),
+                error = entry.Status == UriStatus.Failed ? entry.Error : null,
+            });
+
+            lastSentEntries[path] = entry;
+        }
+
+        var removedPaths = lastSentEntries.Keys
+            .Where(path => !seenPaths.Contains(path))
+            .ToArray();
+
+        foreach (var removedPath in removedPaths)
+        {
+            lastSentEntries.Remove(removedPath);
+        }
+
+        var wroteUpdates = updates.Count > 0;
+        if (wroteUpdates)
+        {
+            await WriteSseEvent(
+                response,
+                "file_updates",
+                JsonSerializer.Serialize(updates, JsonOptions),
+                ct).ConfigureAwait(false);
+        }
+
+        var wroteRemovals = removedPaths.Length > 0;
+        if (wroteRemovals)
+        {
+            await WriteSseEvent(
+                response,
+                "file_removes",
+                JsonSerializer.Serialize(removedPaths, JsonOptions),
+                ct).ConfigureAwait(false);
+        }
+
+        return wroteUpdates || wroteRemovals;
+    }
+
+    private static async Task WritePeriodicSnapshots(
+        HttpResponse response, IOperationManager operations, CancellationToken ct)
+    {
+        await WriteLeaseSnapshot(response, ct).ConfigureAwait(false);
+        await WriteOperationsSnapshot(response, operations, ct).ConfigureAwait(false);
+    }
+
+    private static async Task WriteLeaseSnapshot(HttpResponse response, CancellationToken ct)
+    {
         // Leases.
         var leases = LeaseRegistry.Snapshot().Select(l => new
         {
@@ -368,7 +513,11 @@ internal static class DashboardEndpoints
             "leases",
             JsonSerializer.Serialize(leases, JsonOptions),
             ct).ConfigureAwait(false);
+    }
 
+    private static async Task WriteOperationsSnapshot(
+        HttpResponse response, IOperationManager operations, CancellationToken ct)
+    {
         // Operations.
         var ops = operations.ActiveOperations.Select(op => new
         {

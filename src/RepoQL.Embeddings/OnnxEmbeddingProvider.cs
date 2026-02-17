@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Humanizer;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.ML.OnnxRuntime;
@@ -37,9 +38,15 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     // E5 model prefixes for asymmetric embedding
     private const string E5QueryPrefix = "query: ";
     private const string E5PassagePrefix = "passage: ";
+    private const string BoostCacheKey = "OnnxBoostSession";
+    private const int BoostExpirySeconds = 60;
 
     private InferenceSession? _session;
     private readonly ILogger<OnnxEmbeddingProvider> _logger;
+    private readonly IMemoryCache? _cache;
+    private readonly string _modelPath;
+    private readonly int? _intraOp;
+    private readonly int? _interOp;
     private readonly string _inputIdsName = "";
     private readonly string _attnMaskName = "";
     private readonly string? _tokenTypeName;
@@ -64,18 +71,22 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     public string Provider { get; private set; } = "CPU";
     public bool Enabled => !_disposed && _session is not null && _tokenizer is not null;
 
-    public OnnxEmbeddingProvider(string modelPath, ILogger<OnnxEmbeddingProvider>? logger = null, int? maxTokens = null, int? intraOp = null, int? interOp = null)
+    public OnnxEmbeddingProvider(string modelPath, ILogger<OnnxEmbeddingProvider>? logger = null, int? maxTokens = null, int? intraOp = null, int? interOp = null, IMemoryCache? cache = null)
     {
         _logger = logger ?? NullLogger<OnnxEmbeddingProvider>.Instance;
+        _cache = cache;
+        _intraOp = intraOp;
+        _interOp = interOp;
         // Always use E5 prefixes for asymmetric embedding
         _queryPrefix = E5QueryPrefix;
         _passagePrefix = E5PassagePrefix;
 
-        if (string.IsNullOrWhiteSpace(modelPath)) return;
-        var modelFull = Path.GetFullPath(modelPath);
-        if (!File.Exists(modelFull)) { _logger.LogWarning("ONNX model not found at {Path}", modelFull); return; }
+        _modelPath = string.IsNullOrWhiteSpace(modelPath) ? "" : Path.GetFullPath(modelPath);
 
-        var modelDir = Path.GetDirectoryName(modelFull)!;
+        if (string.IsNullOrWhiteSpace(_modelPath)) return;
+        if (!File.Exists(_modelPath)) { _logger.LogWarning("ONNX model not found at {Path}", _modelPath); return; }
+
+        var modelDir = Path.GetDirectoryName(_modelPath)!;
         var tokenizerJson = Path.Combine(modelDir, "tokenizer.json");
         if (!File.Exists(tokenizerJson)) { _logger.LogWarning("Tokenizer not found at {Path}", tokenizerJson); return; }
 
@@ -84,44 +95,11 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
             _tokenizer = WordPieceTokenizer.LoadFromTokenizerJson(File.ReadAllText(tokenizerJson));
             _logger.LogInformation("Loaded tokenizer: lowercase={Lowercase} vocab={Vocab}", _tokenizer.Lowercase, _tokenizer.VocabSize);
 
-            using var so = new SessionOptions
-            {
-                GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-                ExecutionMode = ExecutionMode.ORT_SEQUENTIAL, // Optimal for single-model inference
-                // Default to quiet logs to avoid noisy provider-assignment warnings.
-                LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-                LogVerbosityLevel = 0,
-            };
+            using var so = BuildSessionOptions(boost: false);
+            _session = new InferenceSession(_modelPath, so);
+            _logger.LogInformation("ONNX session created for model {Model} using provider: {Provider}", Model, Provider);
 
-            // Memory arena configuration
-            ConfigureMemoryOptions(so);
-
-            // Thread config: env vars take precedence, then constructor params, then ONNX defaults
-            var intraOpThreads = intraOp;
-            var interOpThreads = interOp;
-            if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_ORT_INTRA_THREADS"), out var envIntra) && envIntra > 0)
-                intraOpThreads = envIntra;
-            if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_ORT_INTER_THREADS"), out var envInter) && envInter >= 0)
-                interOpThreads = envInter;
-
-            // IntraOp: 0 = ONNX auto-detect based on hardware. InterOp: 1 is sensible for sequential mode.
-            so.IntraOpNumThreads = intraOpThreads ?? 0;
-            so.InterOpNumThreads = interOpThreads ?? 1;
-            _logger.LogInformation("ONNX thread config: IntraOp={IntraOp}, InterOp={InterOp}",
-                so.IntraOpNumThreads, so.InterOpNumThreads);
-
-            // Int8 quantized model optimizations
-            so.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
-            so.AddSessionConfigEntry("session.use_onnx_model_bytes_directly", "1");
-            so.AddSessionConfigEntry("session.set_denormal_as_zero", "1");
-
-            var provider = ConfigureExecutionProvider(so);
-
-            _session = new InferenceSession(modelFull, so);
-            Provider = provider;
-            _logger.LogInformation("ONNX session created for model {Model} using provider: {Provider}", Model, provider);
-
-            Model = Path.GetFileNameWithoutExtension(modelFull);
+            Model = Path.GetFileNameWithoutExtension(_modelPath);
 
             _logger.LogInformation("Using E5 asymmetric prefixes: query='{QueryPrefix}', passage='{PassagePrefix}'",
                 _queryPrefix, _passagePrefix);
@@ -226,24 +204,25 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     /// Embed a batch of texts as queries (search texts). Prepends "query: " prefix.
     /// </summary>
     public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
-        => EmbedBatchCoreAsync(texts, default, _queryPrefix, cancellationToken);
+        => EmbedBatchCoreAsync(texts, default, _queryPrefix, useBoost: false, cancellationToken);
 
     /// <summary>
     /// Embed a batch of texts as passages (documents/content). Prepends "passage: " prefix.
     /// </summary>
     public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
-        => EmbedBatchCoreAsync(texts, default, _passagePrefix, cancellationToken);
+        => EmbedBatchCoreAsync(texts, default, _passagePrefix, useBoost: false, cancellationToken);
 
     /// <summary>
     /// Embed a batch of texts as passages with progress reporting. Prepends "passage: " prefix.
     /// </summary>
+    // Progress is used by indexing callers; this is the signal for boost-session routing.
     public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
-        => EmbedBatchCoreAsync(texts, progress, _passagePrefix, cancellationToken);
+        => EmbedBatchCoreAsync(texts, progress, _passagePrefix, useBoost: true, cancellationToken);
 
     /// <summary>
     /// Core batch embedding implementation with prefix.
     /// </summary>
-    private async Task<float[]?[]> EmbedBatchCoreAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, string prefix, CancellationToken cancellationToken = default)
+    private async Task<float[]?[]> EmbedBatchCoreAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, string prefix, bool useBoost = false, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("onnx.embed_batch", ActivityKind.Internal);
         activity?.SetTag("embed.provider", "onnx");
@@ -251,6 +230,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         activity?.SetTag("embed.count", texts?.Count ?? 0);
 
         if (!Enabled || texts is null || texts.Count == 0) return [];
+        var session = (useBoost ? GetOrCreateBoostSession() : null) ?? _session!;
         var batch = texts.Count;
         var totalTimer = System.Diagnostics.Stopwatch.StartNew();
 
@@ -264,7 +244,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         tokenizeTimer.Stop();
 
         // Autodetect input dtype
-        var idsType = _session!.InputMetadata[_inputIdsName].ElementType;
+        var idsType = session.InputMetadata[_inputIdsName].ElementType;
         var useInt32 = idsType == typeof(int) || idsType == typeof(Int32);
 
         // Flattened [B,T]
@@ -295,11 +275,11 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                 {
                     var tt = new int[batch * _maxSeqLen]; // zeros
                     var n2 = NamedOnnxValue.CreateFromTensor(_tokenTypeName!, new DenseTensor<int>(tt, shape));
-                    result = await RunAndPostprocessBatchAsync(new[] { n0, n1, n2 }, batch, cancellationToken).ConfigureAwait(false);
+                    result = await RunAndPostprocessBatchAsync(session, new[] { n0, n1, n2 }, batch, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
-                    result = await RunAndPostprocessBatchAsync(new[] { n0, n1 }, batch, cancellationToken).ConfigureAwait(false);
+                    result = await RunAndPostprocessBatchAsync(session, new[] { n0, n1 }, batch, cancellationToken).ConfigureAwait(false);
                 }
 
                 totalTimer.Stop();
@@ -337,11 +317,11 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
                 {
                     var tt = new long[batch * _maxSeqLen]; // zeros
                     var n2 = NamedOnnxValue.CreateFromTensor(_tokenTypeName!, new DenseTensor<long>(tt, shape));
-                    result = await RunAndPostprocessBatchAsync(new[] { n0, n1, n2 }, batch, cancellationToken).ConfigureAwait(false);
+                    result = await RunAndPostprocessBatchAsync(session, new[] { n0, n1, n2 }, batch, cancellationToken).ConfigureAwait(false);
                 }
                 else
                 {
-                    result = await RunAndPostprocessBatchAsync(new[] { n0, n1 }, batch, cancellationToken).ConfigureAwait(false);
+                    result = await RunAndPostprocessBatchAsync(session, new[] { n0, n1 }, batch, cancellationToken).ConfigureAwait(false);
                 }
 
                 totalTimer.Stop();
@@ -465,14 +445,14 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         }
     }
 
-    private Task<float[]?[]> RunAndPostprocessBatchAsync(IReadOnlyCollection<NamedOnnxValue> inputs, int batch, CancellationToken ct)
+    private Task<float[]?[]> RunAndPostprocessBatchAsync(InferenceSession session, IReadOnlyCollection<NamedOnnxValue> inputs, int batch, CancellationToken ct)
     {
         try
         {
             ct.ThrowIfCancellationRequested();
 
             var inferenceTimer = System.Diagnostics.Stopwatch.StartNew();
-            using var results = _session!.Run(inputs);
+            using var results = session.Run(inputs);
             inferenceTimer.Stop();
 
             var postprocessTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -560,13 +540,90 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         }
     }
 
-    private void ConfigureMemoryOptions(SessionOptions so)
+    private SessionOptions BuildSessionOptions(bool boost)
     {
-        // Disable arena - prevents unbounded memory growth.
-        // Memory is released after each inference instead of being pooled.
+        var so = new SessionOptions
+        {
+            GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+            ExecutionMode = ExecutionMode.ORT_SEQUENTIAL, // Optimal for single-model inference
+            // Default to quiet logs to avoid noisy provider-assignment warnings.
+            LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+            LogVerbosityLevel = 0,
+        };
+
+        if (boost)
+        {
+            ConfigureBoostMemoryOptions(so);
+        }
+        else
+        {
+            ConfigureBaseMemoryOptions(so);
+            _logger.LogInformation("ONNX memory arena: base session (no arena)");
+        }
+
+        // Thread config: env vars take precedence, then constructor params, then ONNX defaults
+        var intraOpThreads = _intraOp;
+        var interOpThreads = _interOp;
+        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_ORT_INTRA_THREADS"), out var envIntra) && envIntra > 0)
+            intraOpThreads = envIntra;
+        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_ORT_INTER_THREADS"), out var envInter) && envInter >= 0)
+            interOpThreads = envInter;
+
+        // IntraOp: 0 = ONNX auto-detect based on hardware. InterOp: 1 is sensible for sequential mode.
+        so.IntraOpNumThreads = intraOpThreads ?? 0;
+        so.InterOpNumThreads = interOpThreads ?? 1;
+        _logger.LogInformation("ONNX thread config: IntraOp={IntraOp}, InterOp={InterOp}",
+            so.IntraOpNumThreads, so.InterOpNumThreads);
+
+        // Int8 quantized model optimizations
+        so.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
+        so.AddSessionConfigEntry("session.use_onnx_model_bytes_directly", "1");
+        so.AddSessionConfigEntry("session.set_denormal_as_zero", "1");
+
+        var provider = ConfigureExecutionProvider(so);
+        if (!boost)
+            Provider = provider;
+
+        return so;
+    }
+
+    private static void ConfigureBaseMemoryOptions(SessionOptions so)
+    {
         so.EnableCpuMemArena = false;
         so.EnableMemoryPattern = false;
-        _logger.LogInformation("ONNX memory arena disabled (prevents unbounded memory growth)");
+    }
+
+    private static void ConfigureBoostMemoryOptions(SessionOptions so)
+    {
+        so.EnableCpuMemArena = true;
+        so.EnableMemoryPattern = true;
+        so.AddSessionConfigEntry("arena_extend_strategy", "kSameAsRequested");
+    }
+
+    private InferenceSession CreateBoostSession()
+    {
+        using var so = BuildSessionOptions(boost: true);
+        return new InferenceSession(_modelPath, so);
+    }
+
+    private InferenceSession? GetOrCreateBoostSession()
+    {
+        if (_cache is null) return null;
+        return _cache.GetOrCreate(BoostCacheKey, entry =>
+        {
+            entry.SetSlidingExpiration(TimeSpan.FromSeconds(BoostExpirySeconds));
+            entry.SetSize(64);
+            entry.RegisterPostEvictionCallback((key, value, reason, state) =>
+            {
+                if (value is InferenceSession session)
+                {
+                    _logger.LogInformation("Boost session evicted ({Reason}), releasing arena memory", reason);
+                    session.Dispose();
+                }
+            });
+            _logger.LogInformation("Boost session created (arena enabled, kSameAsRequested)");
+            return CreateBoostSession();
+        });
     }
 
     private string ConfigureExecutionProvider(SessionOptions so)
@@ -692,6 +749,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     public void Dispose()
     {
         _disposed = true;
+        _cache?.Remove(BoostCacheKey);
         _session?.Dispose();
         _session = null;
     }
