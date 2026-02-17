@@ -35,6 +35,14 @@ public static class DuckDbDataStoreExtensions
         return NormalizeUri(uri.ToString());
     }
 
+    private static string? GetContainerUriLowercase(Node node)
+    {
+        if (node.Uri is null || !string.Equals(node.Kind, "document", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return NormalizeUri(node.Uri.Container.AbsoluteUri).ToLowerInvariant();
+    }
+
     #endregion
 
     #region Public Write Methods
@@ -437,7 +445,7 @@ public static class DuckDbDataStoreExtensions
                     updated_at = excluded.updated_at;
                 """;
             var uriStr = node.Uri is not null ? NormalizeUri(node.Uri) : null;
-            var containerLc = uriStr?.ToLowerInvariant();
+            var containerLc = GetContainerUriLowercase(node);
             cmd.AddParameters(node.Id, node.Kind, uriStr, containerLc,
                 node.ArtifactId, node.SpanId, node.Props?.ToJsonString(),
                 node.Headline, node.Structure, node.CreatedAt, node.UpdatedAt);
@@ -891,12 +899,13 @@ public static class DuckDbDataStoreExtensions
         foreach (var node in sortedNodes)
         {
             var uriStr = node.Uri is not null ? NormalizeUri(node.Uri) : null;
+            var containerLc = GetContainerUriLowercase(node);
             var row = appender.CreateRow();
 
             AppendGuid(row, node.Id);
             row.AppendValue(node.Kind);
             AppendNullableString(row, uriStr);
-            AppendNullableString(row, uriStr?.ToLowerInvariant());
+            AppendNullableString(row, containerLc);
             AppendNullableGuid(row, node.ArtifactId);
             AppendNullableGuid(row, node.SpanId);
             row.AppendValue(node.Props.ToJsonString());

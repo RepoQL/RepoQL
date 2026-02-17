@@ -468,6 +468,98 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
+    [DisplayName("IndexArtifact keeps container URI key null for child nodes with fragment URIs")]
+    public void IndexArtifact_ChildNodesWithFragmentUris_ContainerKeyRemainsNull()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var uri = RepoUri.Parse("file:///test/duplicate-child-fragments.md")!;
+        var artifactId = Guid.NewGuid();
+        var docId = Guid.NewGuid();
+        var childOneId = Guid.NewGuid();
+        var childTwoId = Guid.NewGuid();
+        var sharedFragmentUri = RepoUri.FromAnchor(new Uri(uri.Container.AbsoluteUri), "lint-rule");
+
+        var artifact = new ParsedArtifact
+        {
+            Artifact = new RepoQL.Contracts.Models.Artifact
+            {
+                Id = artifactId,
+                Digest = $"sha256:{Guid.NewGuid():N}",
+                Size = 42,
+                MediaType = SemanticMediaType.Parse("text/markdown")
+            },
+            DocumentNode = new Node
+            {
+                Id = docId,
+                Kind = "document",
+                Uri = uri,
+                ArtifactId = artifactId,
+                Props = new JsonObject()
+            },
+            Children =
+            [
+                new Node
+                {
+                    Id = childOneId,
+                    Kind = "md_heading",
+                    Uri = sharedFragmentUri,
+                    Props = new JsonObject { ["slug"] = "lint-rule" }
+                },
+                new Node
+                {
+                    Id = childTwoId,
+                    Kind = "md_heading",
+                    Uri = sharedFragmentUri,
+                    Props = new JsonObject { ["slug"] = "lint-rule" }
+                }
+            ],
+            Spans = [],
+            Edges = []
+        };
+
+        var indexResult = db.IndexArtifact(uri, artifact);
+        indexResult.DocumentId.Should().NotBe(Guid.Empty);
+
+        var rows = db.Read(
+            $"SELECT id, uri, container_uri_lowercase FROM node WHERE id IN ('{childOneId:D}'::UUID, '{childTwoId:D}'::UUID) ORDER BY id",
+            r => new
+            {
+                Id = r.GetGuid(0),
+                Uri = r.IsDBNull(1) ? null : r.GetString(1),
+                ContainerKey = r.IsDBNull(2) ? null : r.GetString(2)
+            });
+
+        rows.Should().HaveCount(2);
+        rows.Should().OnlyContain(r => r.Uri == sharedFragmentUri.AbsoluteUri);
+        rows.Should().OnlyContain(r => r.ContainerKey == null);
+    }
+
+    [Test]
+    [DisplayName("UpsertNode keeps container URI key null for non-document URI nodes")]
+    public void UpsertNode_NonDocumentUriNode_ContainerKeyRemainsNull()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var nodeId = Guid.NewGuid();
+        var node = new Node
+        {
+            Id = nodeId,
+            Kind = "md_heading",
+            Uri = RepoUri.Parse("file:///test/upsert-child.md#heading")!,
+            Props = new JsonObject { ["slug"] = "heading" }
+        };
+
+        db.UpsertNode(node);
+
+        var containerKey = db.Read(
+            $"SELECT container_uri_lowercase FROM node WHERE id = '{nodeId:D}'::UUID",
+            r => r.IsDBNull(0) ? null : r.GetString(0)).Single();
+
+        containerKey.Should().BeNull();
+    }
+
+    [Test]
     [DisplayName("IndexArtifact stores mixed composition and reference edges")]
     public void IndexArtifact_MixedEdgeTypes_AreStoredCorrectly()
     {

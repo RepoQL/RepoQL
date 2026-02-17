@@ -12,12 +12,7 @@ $repoRoot = $PSScriptRoot
 $config = if ($Release) { "Release" } else { "Debug" }
 $configLower = $config.ToLower()
 
-Write-Host "Building dashboard..." -ForegroundColor Cyan
-Push-Location "$repoRoot/dashboard"
-npm install --silent 2>&1 | Out-Null
-npx --yes tsc -b
-npx --yes vite build
-Pop-Location
+# Dashboard assets are built via MSBuild during RepoQL.ConsoleApp publish.
 
 Write-Host "Publishing RepoQL.ConsoleApp ($config)..." -ForegroundColor Cyan
 dotnet publish "$repoRoot/src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj" -c $config -r win-x64 --nologo -v q

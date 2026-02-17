@@ -51,8 +51,8 @@ public class UriRegistryHydrator
                     n.kind,
                     n.container_uri_lowercase
                 FROM node n
-                WHERE n.kind = 'document' OR n.container_uri_lowercase IS NOT NULL
-                ORDER BY n.container_uri_lowercase NULLS FIRST, n.uri
+                WHERE n.kind = 'document' OR n.uri IS NOT NULL
+                ORDER BY n.kind, n.uri
                 """;
 
             var results = _db.ReadUntrusted(query, MapNodeRow);
@@ -70,11 +70,13 @@ public class UriRegistryHydrator
                 {
                     documents.Add(uri);
                 }
-                else if (!string.IsNullOrEmpty(containerUri))
+                else if (uri is not null)
                 {
                     // This is a symbol - add to its container's symbol list
-                    // Strip fragment from containerUri to get the base file path for grouping
-                    var containerKey = StripFragment(containerUri);
+                    // Prefer stored container URI for backwards compatibility, but derive from URI when absent.
+                    var containerKey = !string.IsNullOrEmpty(containerUri)
+                        ? StripFragment(containerUri).ToLowerInvariant()
+                        : uri.Container.AbsoluteUri.ToLowerInvariant();
 
                     if (!symbolsByFile.TryGetValue(containerKey, out var symbols))
                     {
