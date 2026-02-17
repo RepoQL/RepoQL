@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.4.1
+
+- Add RepoQL.Analyzers with 7 code convention analyzers (RQL001–RQL007) promoted to errors
+- Add cancellation-aware DuckDB read and query path
+- Rewrite dashboard to Solid.js with delta streaming and performance improvements
+- Add build-time `help://` snapshot for instant documentation on startup
+- Replace `grep_matches`/`regex_matches` SQL macros with C# UDFs to fix OOM
+- Add two-tier ONNX session management and reduce embedding log noise
+- Fix zombie lock preventing host self-recovery after crash
+- Fix search macro to honor `k` parameter after rescue expansion
+- Fix node container key collisions in deploy script
+- Handle files deleted between discovery and indexing gracefully
+- Recover double-escaped JSON in `parse()` from MCP transport
+
+## 1.4.0
+
+- Add JSON format support with parser, pipeline, JSONC/JSON5 normalization, and secret detection
+- Add embedded dashboard with real-time pipeline visualization
+- Add `::host.restart`, `::reindex[scope?]`, and `::?` command discovery
+- Add snapshot loader for pre-computed indexed data
+- Preserve semantic completeness during async VSS rebuilds
+- Push scope into search candidate generation
+- Replace URI fragment filters with typed `doc_id` joins
+- Fix edge fragment parsing for `snippet` and `entities` macros
+- Fix silent commit skips and simplify reindex coordinator
+- Surface operation summary in `::reindex` and add missing command docs
+
 ## 1.3.31
 
 - Add `::command` framework for imperative commands in the query tool
