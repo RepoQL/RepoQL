@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -128,7 +127,7 @@ internal sealed class DocumentSearchServiceTests
             startLine: 7,
             endLine: 9);
 
-        var chunkScores = InvokeGetChunkScores(service, [validDocId.ToString("D"), "not-a-guid"]);
+        var chunkScores = service.GetChunkScores([validDocId.ToString("D"), "not-a-guid"], CancellationToken.None);
 
         chunkScores.Should().ContainKey(uri);
         chunkScores[uri].Should().ContainSingle();
@@ -142,22 +141,9 @@ internal sealed class DocumentSearchServiceTests
         using var context = new DocumentSearchTestContext();
         var service = new DocumentSearchService(context.Store);
 
-        var chunkScores = InvokeGetChunkScores(service, ["not-a-guid", "still-not-a-guid"]);
+        var chunkScores = service.GetChunkScores(["not-a-guid", "still-not-a-guid"], CancellationToken.None);
 
         chunkScores.Should().BeEmpty();
-    }
-
-    private static Dictionary<string, IReadOnlyList<ChunkScore>> InvokeGetChunkScores(
-        DocumentSearchService service,
-        IReadOnlyList<string> docIds)
-    {
-        var method = typeof(DocumentSearchService)
-            .GetMethod("GetChunkScores", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Unable to locate DocumentSearchService.GetChunkScores");
-
-        var result = method.Invoke(service, [docIds, CancellationToken.None]);
-        return result as Dictionary<string, IReadOnlyList<ChunkScore>>
-            ?? throw new InvalidOperationException("GetChunkScores returned an unexpected result");
     }
 
     private sealed class DocumentSearchTestContext : IDisposable

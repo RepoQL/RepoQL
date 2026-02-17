@@ -191,7 +191,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
     /// <summary>
     /// Get chunk-level scores for proximity boosting.
     /// </summary>
-    private Dictionary<string, IReadOnlyList<ChunkScore>> GetChunkScores(IReadOnlyList<string> docIds, CancellationToken cancellationToken)
+    internal Dictionary<string, IReadOnlyList<ChunkScore>> GetChunkScores(IReadOnlyList<string> docIds, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
