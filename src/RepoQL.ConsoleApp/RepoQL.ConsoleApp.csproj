@@ -230,21 +230,21 @@
     </ItemGroup>
 
     <ItemGroup>
-      <DashboardSource Include="$(RepositoryRoot)dashboard\src\**\*" />
-      <DashboardSource Include="$(RepositoryRoot)dashboard\index.html" />
-      <DashboardSource Include="$(RepositoryRoot)dashboard\vite.config.ts" />
-      <DashboardSource Include="$(RepositoryRoot)dashboard\tsconfig.json" />
-      <DashboardSource Include="$(RepositoryRoot)dashboard\package.json" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard/src/**/*" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard/index.html" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard/vite.config.ts" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard/tsconfig.json" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard/package.json" />
     </ItemGroup>
 
     <Target Name="DashboardNpmInstall" BeforeTargets="BuildDashboard"
-            Condition="!Exists('$(RepositoryRoot)dashboard\node_modules\.package-lock.json')">
+            Condition="!Exists('$(RepositoryRoot)dashboard/node_modules/.package-lock.json')">
       <Exec Command="npm ci --silent" WorkingDirectory="$(RepositoryRoot)dashboard" />
     </Target>
 
     <Target Name="BuildDashboard" BeforeTargets="BeforeBuild"
             Inputs="@(DashboardSource)"
-            Outputs="$(RepositoryRoot)dashboard\dist\index.html">
+            Outputs="$(RepositoryRoot)dashboard/dist/index.html">
       <Exec Command="npm run build" WorkingDirectory="$(RepositoryRoot)dashboard" />
     </Target>
 
@@ -252,12 +252,12 @@
     <Target Name="GenerateHelpSnapshot" BeforeTargets="BeforeBuild"
             Condition="'$(Configuration)' == 'Release'">
       <PropertyGroup>
-        <_SnapshotGeneratorProject>$(RepositoryRoot)src\tools\RepoQL.SnapshotGenerator\RepoQL.SnapshotGenerator.csproj</_SnapshotGeneratorProject>
-        <_SnapshotOutputDir>$(RepositoryRoot)artifacts\obj\RepoQL.ConsoleApp\_snapshot\</_SnapshotOutputDir>
+        <_SnapshotGeneratorProject>$(RepositoryRoot)src/tools/RepoQL.SnapshotGenerator/RepoQL.SnapshotGenerator.csproj</_SnapshotGeneratorProject>
+        <_SnapshotOutputDir>$(RepositoryRoot)artifacts/obj/RepoQL.ConsoleApp/_snapshot/</_SnapshotOutputDir>
         <_SnapshotOutputPath>$(_SnapshotOutputDir)help-docs-snapshot.json</_SnapshotOutputPath>
       </PropertyGroup>
       <MakeDir Directories="$(_SnapshotOutputDir)" />
-      <Exec Command="dotnet run --project &quot;$(_SnapshotGeneratorProject)&quot; -c $(Configuration) --no-launch-profile -- &quot;$(RepositoryRoot)src\RepoQL.Documentation&quot; &quot;$(_SnapshotOutputPath)&quot; --version $(Version)" />
+      <Exec Command="dotnet run --project &quot;$(_SnapshotGeneratorProject)&quot; -c $(Configuration) --no-launch-profile -- &quot;$(RepositoryRoot)src/RepoQL.Documentation&quot; &quot;$(_SnapshotOutputPath)&quot; --version $(Version)" />
       <ItemGroup>
         <EmbeddedResource Include="$(_SnapshotOutputPath)" LogicalName="HelpDocsSnapshot.json" />
       </ItemGroup>
