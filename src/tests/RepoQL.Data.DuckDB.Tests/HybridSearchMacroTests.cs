@@ -291,6 +291,21 @@ public class SearchMacroTests : IDisposable
     }
 
     [Test]
+    public void HybridSearch_RespectsKAfterRescueExpansion()
+    {
+        var results = _store.Read(
+            @"SELECT uri
+              FROM search(
+                  'no_such_keyword',
+                  boost_pattern := 'database|index|parser',
+                  k := 2
+              )",
+            r => r.GetString(0));
+
+        results.Should().HaveCount(2, "search() should enforce k after rescue tiers are added");
+    }
+
+    [Test]
     public void SearchCandidates_WithUriLike_FiltersResults()
     {
         var results = _store.Read(

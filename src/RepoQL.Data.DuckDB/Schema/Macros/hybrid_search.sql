@@ -208,7 +208,8 @@ SELECT
         * (CASE WHEN deranked THEN derank_factor ELSE 1.0 END)
     , 3) AS score
 FROM features
-ORDER BY score DESC;
+ORDER BY score DESC
+LIMIT CAST(COALESCE(k, 200) AS BIGINT);
 
 -- Fetch raw object candidates from selected documents for second-pass object search.
 -- Does NOT compute final scores - just retrieves object metadata with cheap features.
