@@ -1,0 +1,9 @@
+<Project>
+
+    <!-- Shared packages for all test projects — prevents individual projects from missing these -->
+    <ItemGroup Condition="$(MSBuildProjectName.EndsWith('.Tests'))">
+        <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+        <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
+    </ItemGroup>
+
+</Project>
