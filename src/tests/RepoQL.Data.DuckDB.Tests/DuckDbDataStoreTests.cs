@@ -1,4 +1,3 @@
-using System.Reflection;
 using System.Text.Json.Nodes;
 using DuckDB.NET.Data;
 using AwesomeAssertions;
@@ -987,6 +986,150 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
+    [DisplayName("ReadUntrusted uses pooled reads for file-backed databases")]
+    public async Task ReadUntrusted_FileBacked_AllowsParallelExecution()
+    {
+        var databasePath = CreateTemporaryDatabasePath();
+        try
+        {
+            var options = DuckDbStartupOptionsBuilder.Build(databasePath) with { ReadPoolSize = 2 };
+            using var db = TestServiceCollectionExtensions.CreateTestDataStore(databasePath: databasePath, startupOptions: options);
+            using var start = new ManualResetEventSlim(false);
+
+            var activeCallbacks = 0;
+            var maxConcurrentCallbacks = 0;
+
+            Task<int> RunQuery() => Task.Run(() =>
+            {
+                start.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
+                var rows = db.ReadUntrusted("SELECT i FROM range(0, 30) AS t(i)", r =>
+                {
+                    var current = Interlocked.Increment(ref activeCallbacks);
+                    UpdateMax(ref maxConcurrentCallbacks, current);
+                    Thread.Sleep(10);
+                    Interlocked.Decrement(ref activeCallbacks);
+                    return r.GetInt64(0);
+                });
+                return rows.Count;
+            });
+
+            var tasks = new[] { RunQuery(), RunQuery(), RunQuery() };
+            start.Set();
+
+            var counts = await Task.WhenAll(tasks);
+            counts.Should().OnlyContain(c => c == 30);
+            maxConcurrentCallbacks.Should().BeGreaterThan(1);
+        }
+        finally
+        {
+            CleanupTemporaryDatabase(databasePath);
+        }
+    }
+
+    [Test]
+    [DisplayName("Waiting writer blocks new pooled ReadUntrusted queries")]
+    public async Task ReadUntrusted_WriterPriority_BlocksNewReads()
+    {
+        var databasePath = CreateTemporaryDatabasePath();
+        try
+        {
+            var options = DuckDbStartupOptionsBuilder.Build(databasePath) with { ReadPoolSize = 4 };
+            using var db = TestServiceCollectionExtensions.CreateTestDataStore(databasePath: databasePath, startupOptions: options);
+            using var warmReadersStarted = new CountdownEvent(2);
+            using var releaseWarmReaders = new ManualResetEventSlim(false);
+            using var writerEntered = new ManualResetEventSlim(false);
+            using var lateReadStarted = new ManualResetEventSlim(false);
+
+            Task WarmReader() => Task.Run(() =>
+            {
+                var signaled = 0;
+                _ = db.ReadUntrusted("SELECT i FROM range(0, 30) AS t(i)", r =>
+                {
+                    if (Interlocked.Exchange(ref signaled, 1) == 0)
+                        warmReadersStarted.Signal();
+
+                    releaseWarmReaders.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
+                    return r.GetInt64(0);
+                });
+            });
+
+            var warmReaderTasks = new[] { WarmReader(), WarmReader() };
+            warmReadersStarted.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
+
+            var writerTask = Task.Run(() =>
+            {
+                db.WriteTransaction((_, _) =>
+                {
+                    writerEntered.Set();
+                    Thread.Sleep(150);
+                });
+            });
+
+            Thread.Sleep(50); // Let writer queue up behind active reads.
+
+            var lateReaderTask = Task.Run(() =>
+            {
+                var rows = db.ReadUntrusted("SELECT i FROM range(0, 5) AS t(i)", r =>
+                {
+                    lateReadStarted.Set();
+                    return r.GetInt64(0);
+                });
+                return rows.Count;
+            });
+
+            Thread.Sleep(150);
+            lateReadStarted.IsSet.Should().BeFalse("new client reads should block once a writer is waiting");
+
+            releaseWarmReaders.Set();
+            writerEntered.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
+
+            Thread.Sleep(50);
+            lateReadStarted.IsSet.Should().BeFalse("late read should stay blocked while writer holds exclusive access");
+
+            await Task.WhenAll(warmReaderTasks);
+            await writerTask;
+
+            var lateCount = await lateReaderTask;
+            lateCount.Should().Be(5);
+            lateReadStarted.IsSet.Should().BeTrue();
+        }
+        finally
+        {
+            CleanupTemporaryDatabase(databasePath);
+        }
+    }
+
+    [Test]
+    [DisplayName("ReadUntrusted stays serialized for in-memory databases")]
+    public async Task ReadUntrusted_InMemory_StaysSerialized()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+        using var start = new ManualResetEventSlim(false);
+
+        var activeCallbacks = 0;
+        var maxConcurrentCallbacks = 0;
+
+        Task RunQuery() => Task.Run(() =>
+        {
+            start.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
+            _ = db.ReadUntrusted("SELECT i FROM range(0, 20) AS t(i)", r =>
+            {
+                var current = Interlocked.Increment(ref activeCallbacks);
+                UpdateMax(ref maxConcurrentCallbacks, current);
+                Thread.Sleep(10);
+                Interlocked.Decrement(ref activeCallbacks);
+                return r.GetInt64(0);
+            });
+        });
+
+        var tasks = new[] { RunQuery(), RunQuery() };
+        start.Set();
+        await Task.WhenAll(tasks);
+
+        maxConcurrentCallbacks.Should().Be(1);
+    }
+
+    [Test]
     [DisplayName("Concurrent writes are serialized correctly")]
     public async Task ConcurrentWrites_AreSerializedCorrectly()
     {
@@ -1720,15 +1863,7 @@ public class DuckDbDataStoreTests
         return (T)Convert.ChangeType(result!, typeof(T));
     }
 
-    private static DuckDBConnection GetPrimaryConnection(DuckDbDataStore db)
-    {
-        var field = typeof(DuckDbDataStore).GetField("_connection", BindingFlags.Instance | BindingFlags.NonPublic);
-        field.Should().NotBeNull("DuckDbDataStore should retain its primary DuckDBConnection");
-
-        var value = field!.GetValue(db);
-        value.Should().BeOfType<DuckDBConnection>();
-        return (DuckDBConnection)value!;
-    }
+    private static DuckDBConnection GetPrimaryConnection(DuckDbDataStore db) => db._connection;
 
     private static string CreateTemporaryDatabasePath()
     {
@@ -1777,6 +1912,19 @@ public class DuckDbDataStoreTests
         catch
         {
             // Best-effort test cleanup.
+        }
+    }
+
+    private static void UpdateMax(ref int target, int candidate)
+    {
+        while (true)
+        {
+            var current = Volatile.Read(ref target);
+            if (candidate <= current)
+                return;
+
+            if (Interlocked.CompareExchange(ref target, candidate, current) == current)
+                return;
         }
     }
 

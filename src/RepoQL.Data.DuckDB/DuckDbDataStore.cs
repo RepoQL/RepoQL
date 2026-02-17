@@ -23,10 +23,14 @@ public sealed class DuckDbDataStore : IDisposable
     private static readonly ActivitySource ActivitySource = new("RepoQL.DuckDB");
 
     private readonly string? _path;
-    private DuckDBConnection _connection = null!; // Initialized in InitializeConnections
+    internal DuckDBConnection _connection = null!; // Initialized in InitializeConnections
     private DuckDBConnection? _reentrantConnection; // Secondary read-only connection for UDF callbacks
     private readonly object _reentrantConnectionLock = new();
     private readonly SemaphoreSlim _lock = new(1, 1); // DuckDB connections aren't thread-safe for concurrent commands
+    private readonly object _readGateLock = new();
+    private readonly object _readPoolLock = new();
+    private readonly Queue<DuckDBConnection> _readPool = new();
+    private readonly SemaphoreSlim? _readPoolSlots;
     private readonly ILogger _logger;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly IReadOnlyList<FormatSqlScript> _formatSchemaScripts;
@@ -34,9 +38,14 @@ public sealed class DuckDbDataStore : IDisposable
     private readonly IServiceProvider? _serviceProvider;
     private readonly UdfRegistry _udfRegistry;
     private readonly DuckDbStartupOptions _startupOptions;
+    private readonly int _readPoolSize;
     private static readonly AsyncLocal<IServiceScope?> _currentScope = new();
     [ThreadStatic]
     private static bool _inQueryContext;
+    private int _activePooledReads;
+    private int _waitingExclusiveOperations;
+    private bool _exclusiveOperationActive;
+    private bool _readPoolDisabled;
     private bool _schemaInitialized;
     private bool _disposed;
     private bool _databaseInvalidated;
@@ -44,6 +53,7 @@ public sealed class DuckDbDataStore : IDisposable
     private int _consecutiveFailures;
     private const int MaxConsecutiveFailuresBeforeRecovery = 3;
     private const int SchemaVersion = 1;
+    private const int GateWaitMs = 50;
 
     /// <summary>
     /// Indicates that a database recovery occurred and data may have been lost.
@@ -106,6 +116,11 @@ public sealed class DuckDbDataStore : IDisposable
         // Always create UdfRegistry - it handles missing serviceProvider gracefully
         _udfRegistry = new UdfRegistry(serviceProvider);
         _startupOptions = startupOptions ?? DuckDbStartupOptionsBuilder.Build(path);
+        _readPoolSize = !_isInMemory ? _startupOptions.ReadPoolSize : 0;
+        if (_readPoolSize > 0)
+        {
+            _readPoolSlots = new SemaphoreSlim(_readPoolSize, _readPoolSize);
+        }
 
         _logger.LogDebug("[DuckDB] Initializing data store (path={Path}, inMemory={IsInMemory})",
             _isInMemory ? ":memory:" : path, _isInMemory);
@@ -210,8 +225,8 @@ public sealed class DuckDbDataStore : IDisposable
                 "[DuckDB] Hardware detected: {LogicalCores} logical cores, {TotalMemoryMb}MB total RAM",
                 Environment.ProcessorCount, totalMemoryMb);
             _logger.LogInformation(
-                "[DuckDB] Configuration applied: memory_limit={Limit}, threads={Threads}, object_cache=true, flush_threshold=64MB, temp_dir={TempDir}",
-                limit, threads, tempDirPath);
+                "[DuckDB] Configuration applied: memory_limit={Limit}, threads={Threads}, object_cache=true, flush_threshold=64MB, temp_dir={TempDir}, read_pool_size={ReadPoolSize}",
+                limit, threads, tempDirPath, _readPoolSize);
         }
     }
 
@@ -221,6 +236,225 @@ public sealed class DuckDbDataStore : IDisposable
         using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
         cmd.ExecuteNonQuery();
+    }
+
+    private void EnterExclusiveSection(CancellationToken cancellationToken = default)
+    {
+        lock (_readGateLock)
+        {
+            _waitingExclusiveOperations++;
+            try
+            {
+                while (_exclusiveOperationActive || _activePooledReads > 0)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Monitor.Wait(_readGateLock, GateWaitMs);
+                }
+
+                _exclusiveOperationActive = true;
+            }
+            finally
+            {
+                _waitingExclusiveOperations--;
+            }
+        }
+
+        try
+        {
+            if (cancellationToken.CanBeCanceled)
+                _lock.Wait(cancellationToken);
+            else
+                _lock.Wait();
+        }
+        catch
+        {
+            lock (_readGateLock)
+            {
+                _exclusiveOperationActive = false;
+                Monitor.PulseAll(_readGateLock);
+            }
+            throw;
+        }
+    }
+
+    private void ExitExclusiveSection()
+    {
+        _lock.Release();
+        lock (_readGateLock)
+        {
+            _exclusiveOperationActive = false;
+            Monitor.PulseAll(_readGateLock);
+        }
+    }
+
+    private void EnterPooledReadSection(CancellationToken cancellationToken)
+    {
+        lock (_readGateLock)
+        {
+            while (_exclusiveOperationActive || _waitingExclusiveOperations > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Monitor.Wait(_readGateLock, GateWaitMs);
+            }
+
+            _activePooledReads++;
+        }
+    }
+
+    private void ExitPooledReadSection()
+    {
+        lock (_readGateLock)
+        {
+            _activePooledReads = Math.Max(0, _activePooledReads - 1);
+            Monitor.PulseAll(_readGateLock);
+        }
+    }
+
+    private bool UsePooledClientReads
+    {
+        get
+        {
+            if (_readPoolSlots is null || _databaseInvalidated || _disposed)
+                return false;
+
+            lock (_readPoolLock)
+            {
+                return !_readPoolDisabled;
+            }
+        }
+    }
+
+    private DuckDBConnection RentPooledReadConnection(CancellationToken cancellationToken)
+    {
+        var slots = _readPoolSlots ?? throw new InvalidOperationException("Read pool not configured.");
+        slots.Wait(cancellationToken);
+
+        lock (_readPoolLock)
+        {
+            if (_readPoolDisabled)
+            {
+                slots.Release();
+                throw new InvalidOperationException("Read pool disabled.");
+            }
+
+            if (_readPool.Count > 0)
+                return _readPool.Dequeue();
+        }
+
+        try
+        {
+            var conn = new DuckDBConnection($"Data Source={_path};ACCESS_MODE=READ_ONLY");
+            conn.Open();
+            ApplyConnectionConfiguration(conn);
+            return conn;
+        }
+        catch
+        {
+            slots.Release();
+            throw;
+        }
+    }
+
+    private void ReturnPooledReadConnection(DuckDBConnection connection)
+    {
+        var slots = _readPoolSlots;
+        if (slots is null)
+        {
+            try { connection.Dispose(); } catch { /* ignore */ }
+            return;
+        }
+
+        var keepConnection = false;
+        lock (_readPoolLock)
+        {
+            if (!_readPoolDisabled && !_disposed && !_databaseInvalidated)
+            {
+                _readPool.Enqueue(connection);
+                keepConnection = true;
+            }
+        }
+
+        if (!keepConnection)
+        {
+            try { connection.Dispose(); }
+            catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing pooled read connection"); }
+        }
+
+        slots.Release();
+    }
+
+    private void DisablePooledReads(Exception? ex, string reason)
+    {
+        if (_readPoolSlots is null)
+            return;
+
+        var disabledNow = false;
+        lock (_readPoolLock)
+        {
+            if (!_readPoolDisabled)
+            {
+                _readPoolDisabled = true;
+                disabledNow = true;
+            }
+        }
+
+        if (!disabledNow)
+            return;
+
+        if (ex is null)
+            _logger.LogWarning("[DuckDB] Disabling pooled client reads and falling back to strict mode: {Reason}", reason);
+        else
+            _logger.LogWarning(ex, "[DuckDB] Disabling pooled client reads and falling back to strict mode: {Reason}", reason);
+
+        ClosePooledReadConnections();
+    }
+
+    private void ClosePooledReadConnections()
+    {
+        lock (_readPoolLock)
+        {
+            while (_readPool.Count > 0)
+            {
+                var conn = _readPool.Dequeue();
+                try { conn.Close(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error closing pooled read connection"); }
+                try { conn.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing pooled read connection"); }
+            }
+        }
+    }
+
+    private IReadOnlyList<T> ExecuteReadOnConnection<T>(
+        DuckDBConnection connection,
+        string activityName,
+        string sql,
+        Func<IDataRecord, T> map,
+        CancellationToken cancellationToken)
+    {
+        using var activity = ActivitySource.StartActivity(activityName, ActivityKind.Client);
+        activity?.SetTag("db.system", "duckdb");
+        activity?.SetTag("db.statement", sql.Length > 200 ? sql[..200] + "..." : sql);
+
+        using var cmd = connection.CreateCommand();
+        cmd.CommandText = sql;
+        using var cancellationRegistration = RegisterCommandCancellation(cmd, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var results = new List<T>();
+        try
+        {
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                results.Add(map(reader));
+            }
+        }
+        catch (DuckDBException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("DuckDB read query canceled.", ex, cancellationToken);
+        }
+
+        activity?.SetTag("db.row_count", results.Count);
+        return results;
     }
 
     public IReadOnlyList<T> Read<T>(string sql, Func<IDataRecord, T> map)
@@ -244,7 +478,7 @@ public sealed class DuckDbDataStore : IDisposable
             return ExecuteReentrantRead(sql, map, cancellationToken);
         }
 
-        _lock.Wait(cancellationToken);
+        EnterExclusiveSection(cancellationToken);
         try
         {
             // Set up DI scope for UDFs that need service resolution
@@ -254,7 +488,7 @@ public sealed class DuckDbDataStore : IDisposable
             _inQueryContext = true;
             try
             {
-                return ExecuteRead(sql, map, cancellationToken);
+                return ExecuteReadOnConnection(_connection, "duckdb.query", sql, map, cancellationToken);
             }
             finally
             {
@@ -275,38 +509,8 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.Release();
+            ExitExclusiveSection();
         }
-    }
-
-    private IReadOnlyList<T> ExecuteRead<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
-    {
-        using var activity = ActivitySource.StartActivity("duckdb.query", ActivityKind.Client);
-        activity?.SetTag("db.system", "duckdb");
-        activity?.SetTag("db.statement", sql.Length > 200 ? sql[..200] + "..." : sql);
-
-        using var cmd = _connection.CreateCommand();
-        cmd.CommandText = sql;
-        using var cancellationRegistration = RegisterCommandCancellation(cmd, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var results = new List<T>();
-        try
-        {
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                results.Add(map(reader));
-            }
-        }
-        catch (DuckDBException ex) when (cancellationToken.IsCancellationRequested)
-        {
-            throw new OperationCanceledException("DuckDB read query canceled.", ex, cancellationToken);
-        }
-
-        activity?.SetTag("db.row_count", results.Count);
-        return results;
     }
 
     /// <summary>
@@ -333,9 +537,10 @@ public sealed class DuckDbDataStore : IDisposable
                 return _connection;
             }
 
-            var connStr = $"Data Source={_path}";
+            var connStr = $"Data Source={_path};ACCESS_MODE=READ_ONLY";
             _reentrantConnection = new DuckDBConnection(connStr);
             _reentrantConnection.Open();
+            ApplyConnectionConfiguration(_reentrantConnection);
 
             return _reentrantConnection;
         }
@@ -343,33 +548,8 @@ public sealed class DuckDbDataStore : IDisposable
 
     private IReadOnlyList<T> ExecuteReentrantRead<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
     {
-        using var activity = ActivitySource.StartActivity("duckdb.query.reentrant", ActivityKind.Client);
-        activity?.SetTag("db.system", "duckdb");
-        activity?.SetTag("db.statement", sql.Length > 200 ? sql[..200] + "..." : sql);
-
         var conn = GetReentrantConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        using var cancellationRegistration = RegisterCommandCancellation(cmd, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var results = new List<T>();
-        try
-        {
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                results.Add(map(reader));
-            }
-        }
-        catch (DuckDBException ex) when (cancellationToken.IsCancellationRequested)
-        {
-            throw new OperationCanceledException("DuckDB reentrant read query canceled.", ex, cancellationToken);
-        }
-
-        activity?.SetTag("db.row_count", results.Count);
-        return results;
+        return ExecuteReadOnConnection(conn, "duckdb.query.reentrant", sql, map, cancellationToken);
     }
 
     private T? ExecuteReentrantScalar<T>(string sql, CancellationToken cancellationToken)
@@ -422,7 +602,41 @@ public sealed class DuckDbDataStore : IDisposable
             return ExecuteReentrantRead(sql, map, cancellationToken);
         }
 
-        _lock.Wait(cancellationToken);
+        if (UsePooledClientReads)
+        {
+            try
+            {
+                return ExecuteReadUntrustedPooled(sql, map, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
+            {
+                DisablePooledReads(ex, "fatal database error while executing pooled untrusted read");
+                HandleFatalError(ex, "ReadUntrusted(Pooled)");
+                throw;
+            }
+            catch (DuckDBException ex) when (IsWriteConflictError(ex))
+            {
+                DisablePooledReads(ex, "write conflict while executing pooled untrusted read");
+                HandleWriteConflict(ex, "ReadUntrusted(Pooled)");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                DisablePooledReads(ex, "unexpected pooled read failure");
+                return ExecuteReadUntrustedExclusive(sql, map, cancellationToken);
+            }
+        }
+
+        return ExecuteReadUntrustedExclusive(sql, map, cancellationToken);
+    }
+
+    private IReadOnlyList<T> ExecuteReadUntrustedExclusive<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
+    {
+        EnterExclusiveSection(cancellationToken);
         try
         {
             // Set up DI scope for UDFs that need service resolution
@@ -436,7 +650,7 @@ public sealed class DuckDbDataStore : IDisposable
                 _connection.Execute("BEGIN TRANSACTION READ ONLY;");
                 try
                 {
-                    var results = ExecuteRead(sql, map, cancellationToken);
+                    var results = ExecuteReadOnConnection(_connection, "duckdb.query.untrusted", sql, map, cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
                     _connection.Execute("COMMIT;");
                     return results;
@@ -458,9 +672,57 @@ public sealed class DuckDbDataStore : IDisposable
             HandleFatalError(ex, "ReadUntrusted");
             throw;
         }
+        catch (DuckDBException ex) when (IsWriteConflictError(ex))
+        {
+            HandleWriteConflict(ex, "ReadUntrusted");
+            throw;
+        }
         finally
         {
-            _lock.Release();
+            ExitExclusiveSection();
+        }
+    }
+
+    private IReadOnlyList<T> ExecuteReadUntrustedPooled<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
+    {
+        EnterPooledReadSection(cancellationToken);
+        DuckDBConnection? pooledConnection = null;
+        try
+        {
+            pooledConnection = RentPooledReadConnection(cancellationToken);
+
+            // Set up DI scope for UDFs that need service resolution
+            using var scope = _serviceProvider?.CreateScope();
+            var previousScope = _currentScope.Value;
+            _currentScope.Value = scope;
+            _inQueryContext = true;
+            try
+            {
+                pooledConnection.Execute("BEGIN TRANSACTION READ ONLY;");
+                try
+                {
+                    var results = ExecuteReadOnConnection(pooledConnection, "duckdb.query.untrusted.pooled", sql, map, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    pooledConnection.Execute("COMMIT;");
+                    return results;
+                }
+                catch
+                {
+                    try { pooledConnection.Execute("ROLLBACK;"); } catch { /* ignore rollback errors */ }
+                    throw;
+                }
+            }
+            finally
+            {
+                _currentScope.Value = previousScope;
+                _inQueryContext = false;
+            }
+        }
+        finally
+        {
+            if (pooledConnection is not null)
+                ReturnPooledReadConnection(pooledConnection);
+            ExitPooledReadSection();
         }
     }
 
@@ -484,7 +746,7 @@ public sealed class DuckDbDataStore : IDisposable
             return ExecuteReentrantScalar<T>(sql, cancellationToken);
         }
 
-        _lock.Wait(cancellationToken);
+        EnterExclusiveSection(cancellationToken);
         try
         {
             // Set up DI scope for UDFs that need service resolution
@@ -514,7 +776,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.Release();
+            ExitExclusiveSection();
         }
     }
 
@@ -571,7 +833,7 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
-        _lock.Wait();
+        EnterExclusiveSection();
         DuckDBTransaction? tx = null;
         try
         {
@@ -604,7 +866,7 @@ public sealed class DuckDbDataStore : IDisposable
         finally
         {
             TryDispose(tx);
-            _lock.Release();
+            ExitExclusiveSection();
         }
     }
 
@@ -660,7 +922,7 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
-        _lock.Wait();
+        EnterExclusiveSection();
         DuckDBTransaction? tx = null;
         try
         {
@@ -694,7 +956,7 @@ public sealed class DuckDbDataStore : IDisposable
         finally
         {
             TryDispose(tx);
-            _lock.Release();
+            ExitExclusiveSection();
         }
     }
 
@@ -773,14 +1035,14 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
-        _lock.Wait();
+        EnterExclusiveSection();
         try
         {
             _connection.Execute(sql);
         }
         finally
         {
-            _lock.Release();
+            ExitExclusiveSection();
         }
     }
 
@@ -791,7 +1053,7 @@ public sealed class DuckDbDataStore : IDisposable
     {
         if (!_databaseInvalidated) return;
 
-        _lock.Wait();
+        EnterExclusiveSection();
         try
         {
             if (!_databaseInvalidated) return; // Double-check after acquiring lock
@@ -801,7 +1063,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.Release();
+            ExitExclusiveSection();
         }
     }
 
@@ -868,6 +1130,7 @@ public sealed class DuckDbDataStore : IDisposable
 
     private void CloseConnections()
     {
+        ClosePooledReadConnections();
         try { _connection?.Close(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error closing connection"); }
         try { _connection?.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing connection"); }
 
@@ -902,7 +1165,7 @@ public sealed class DuckDbDataStore : IDisposable
         if (_isInMemory || _path is null)
             throw new InvalidOperationException("Cannot recreate an in-memory database.");
 
-        _lock.Wait();
+        EnterExclusiveSection();
         try
         {
             _logger.LogWarning("[DuckDB] Recreating database at {Path}", _path);
@@ -923,7 +1186,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.Release();
+            ExitExclusiveSection();
         }
     }
 
@@ -1094,14 +1357,14 @@ public sealed class DuckDbDataStore : IDisposable
     {
         if (_schemaInitialized) return;
 
-        _lock.Wait();
+        EnterExclusiveSection();
         try
         {
             EnsureSchemaInternal();
         }
         finally
         {
-            _lock.Release();
+            ExitExclusiveSection();
         }
     }
 
@@ -1500,7 +1763,7 @@ public sealed class DuckDbDataStore : IDisposable
         if (_isInMemory) return true;
         if (_databaseInvalidated) return false;
 
-        _lock.Wait();
+        EnterExclusiveSection();
         try
         {
             _connection.Execute("CHECKPOINT;");
@@ -1514,7 +1777,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.Release();
+            ExitExclusiveSection();
         }
     }
 
@@ -1525,7 +1788,7 @@ public sealed class DuckDbDataStore : IDisposable
 
         _logger.LogDebug("[DuckDB] Disposing data store...");
 
-        _lock.Wait();
+        EnterExclusiveSection();
         try
         {
             // Checkpoint WAL before closing to ensure clean state on next startup
@@ -1547,6 +1810,8 @@ public sealed class DuckDbDataStore : IDisposable
             try { _reentrantConnection?.Dispose(); }
             catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing reentrant connection"); }
 
+            ClosePooledReadConnections();
+
             // Dispose primary connection
             try { _connection?.Dispose(); }
             catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing connection"); }
@@ -1555,8 +1820,9 @@ public sealed class DuckDbDataStore : IDisposable
         }
         finally
         {
-            _lock.Release();
+            ExitExclusiveSection();
             _lock.Dispose();
+            _readPoolSlots?.Dispose();
         }
     }
 }

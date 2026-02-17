@@ -1,4 +1,3 @@
-using System.Reflection;
 using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Search;
@@ -29,8 +28,7 @@ internal sealed class JitObjectSearchServiceTests
             dim: dim,
             embeddingLiteral: "[0.11,0.22,0.33]");
 
-        var result = InvokeLoadPersistedObjectEmbeddings(
-            service,
+        var result = service.LoadPersistedObjectEmbeddings(
             [validNodeId.ToString("D"), "not-a-guid"],
             model,
             dim);
@@ -45,28 +43,12 @@ internal sealed class JitObjectSearchServiceTests
         using var context = new JitObjectSearchTestContext();
         var service = new JitObjectSearchService(context.Store, embeddingProvider: null);
 
-        var result = InvokeLoadPersistedObjectEmbeddings(
-            service,
+        var result = service.LoadPersistedObjectEmbeddings(
             ["not-a-guid", "still-not-a-guid"],
             "jit-test-model",
             3);
 
         result.Should().BeEmpty();
-    }
-
-    private static Dictionary<string, float[]> InvokeLoadPersistedObjectEmbeddings(
-        JitObjectSearchService service,
-        IReadOnlyList<string> nodeIds,
-        string model,
-        int dim)
-    {
-        var method = typeof(JitObjectSearchService)
-            .GetMethod("LoadPersistedObjectEmbeddings", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("Unable to locate JitObjectSearchService.LoadPersistedObjectEmbeddings");
-
-        var result = method.Invoke(service, [nodeIds, model, dim]);
-        return result as Dictionary<string, float[]>
-            ?? throw new InvalidOperationException("LoadPersistedObjectEmbeddings returned an unexpected result");
     }
 
     private sealed class JitObjectSearchTestContext : IDisposable

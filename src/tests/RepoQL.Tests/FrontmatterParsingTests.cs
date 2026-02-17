@@ -1,5 +1,4 @@
 using RepoQL.Data.DuckDB;
-using System.Reflection;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using RepoQL.Contracts.Models;
@@ -96,17 +95,12 @@ internal class FrontmatterParsingTests
     [Test]
     public void YamlFrontmatter_ScalarTypesPreserved()
     {
-        var loaderType = typeof(MarkdownLoader);
-        var method = loaderType
-            .GetMethod("YamlToJson", BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new InvalidOperationException("Unable to locate MarkdownLoader.YamlToJson");
-
         var yaml = """
         priority: 2
         description: hello
         """;
 
-        var node = (JsonNode?)method.Invoke(null, new object?[] { yaml });
+        var node = MarkdownLoader.YamlToJson(yaml);
         node.Should().NotBeNull();
 
         var json = node!.AsObject();

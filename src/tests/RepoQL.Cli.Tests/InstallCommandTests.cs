@@ -1,5 +1,4 @@
-﻿using System.Reflection;
-using System.Text.Json;
+﻿using System.Text.Json;
 using AwesomeAssertions;
 using RepoQL.ConsoleApp.Commands;
 
@@ -69,11 +68,7 @@ internal class InstallCommandTests
         agentType.Should().Be(InstallCommand.AgentType.GitHubCopilotJetBrains);
     }
 
-    private static string GetRepoqlCommandForTests()
-    {
-        var method = typeof(InstallCommand).GetMethod("GetRepoqlCommand", BindingFlags.Static | BindingFlags.NonPublic);
-        return (string)method!.Invoke(null, null)!;
-    }
+    private static string GetRepoqlCommandForTests() => InstallCommand.GetRepoqlCommand();
 
     private static void AssertVsCodePayload(string payload, string repoqlCommand, string? workingDir)
     {

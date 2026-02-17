@@ -4,8 +4,8 @@ using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
-using System.Collections;
-using System.Reflection;
+using RepoQL.Formats.Docx;
+using RepoQL.Formats.Docx.Surface;
 using System.Text.Json.Nodes;
 using A = DocumentFormat.OpenXml.Drawing;
 using DocProps = DocumentFormat.OpenXml.CustomProperties;
@@ -372,11 +372,11 @@ public sealed class DocxLoaderTests
         tableNode.Props["col_count"]!.GetValue<int>().Should().Be(3);
 
         var surfaceTable = GetSurfaceTables(document).Single();
-        var horizontalAnchor = GetSurfaceCell(surfaceTable, 0, 0)!;
-        GetSurfaceProperty<int>(horizontalAnchor, "ColSpan").Should().Be(2);
+        var horizontalAnchor = surfaceTable.Cells[0][0]!;
+        horizontalAnchor.ColSpan.Should().Be(2);
 
-        var verticalAnchor = GetSurfaceCell(surfaceTable, 1, 0)!;
-        GetSurfaceProperty<int>(verticalAnchor, "RowSpan").Should().Be(2);
+        var verticalAnchor = surfaceTable.Cells[1][0]!;
+        verticalAnchor.RowSpan.Should().Be(2);
     }
 
     [Test]
@@ -502,11 +502,10 @@ public sealed class DocxLoaderTests
         records.Nodes.Count(n => n.Kind == "docx_table").Should().Be(1);
 
         var surfaceTable = GetSurfaceTables(document).Single();
-        var nestedTextCell = GetSurfaceCell(surfaceTable, 1, 0)!;
-        var cellText = GetSurfaceProperty<string>(nestedTextCell, "Text");
-        cellText.Should().Contain("Before");
-        cellText.Should().Contain("Inner Value");
-        cellText.Should().Contain("After");
+        var nestedTextCell = surfaceTable.Cells[1][0]!;
+        nestedTextCell.Text.Should().Contain("Before");
+        nestedTextCell.Text.Should().Contain("Inner Value");
+        nestedTextCell.Text.Should().Contain("After");
     }
 
     [Test]
@@ -1108,10 +1107,10 @@ public sealed class DocxLoaderTests
 
         var hyperlinks = GetSurfaceHyperlinks(document);
         hyperlinks.Should().ContainSingle();
-        GetSurfaceProperty<bool>(hyperlinks[0], "IsExternal").Should().BeFalse();
-        GetSurfaceProperty<string>(hyperlinks[0], "DisplayText").Should().Be("Jump to target");
-        GetSurfaceProperty<string>(hyperlinks[0], "BookmarkName").Should().Be("TargetBookmark");
-        GetSurfacePropertyOrDefault<string>(hyperlinks[0], "TargetUrl").Should().BeNull();
+        hyperlinks[0].IsExternal.Should().BeFalse();
+        hyperlinks[0].DisplayText.Should().Be("Jump to target");
+        hyperlinks[0].BookmarkName.Should().Be("TargetBookmark");
+        hyperlinks[0].TargetUrl.Should().BeNull();
     }
 
     [Test]
@@ -1459,74 +1458,20 @@ public sealed class DocxLoaderTests
                 new InsideVerticalBorder { Val = BorderValues.None }));
     }
 
-    private static List<object> GetSurfaceTables(DocumentModel document)
+    private static DocumentSurface GetSurface(DocumentModel document)
     {
-#pragma warning disable IL2075
-        document.Metadata.TryGetValue("docx.state", out var state).Should().BeTrue();
-        state.Should().NotBeNull();
-
-        var surface = state!.GetType()
-            .GetProperty("Surface", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
-            .GetValue(state);
-        surface.Should().NotBeNull();
-
-        var tables = (IEnumerable)surface!.GetType()
-            .GetProperty("Tables", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
-            .GetValue(surface)!;
-#pragma warning restore IL2075
-
-        return tables.Cast<object>().ToList();
+        document.Metadata.TryGetValue(DocxLoader.StateMetadataKey, out var state).Should().BeTrue();
+        var docxState = state as DocxDocumentState;
+        docxState.Should().NotBeNull();
+        return docxState!.Surface;
     }
 
-    private static List<object> GetSurfaceHyperlinks(DocumentModel document)
-    {
-#pragma warning disable IL2075
-        document.Metadata.TryGetValue("docx.state", out var state).Should().BeTrue();
-        state.Should().NotBeNull();
+    private static IReadOnlyList<TableInfo> GetSurfaceTables(DocumentModel document) =>
+        GetSurface(document).Tables;
 
-        var surface = state!.GetType()
-            .GetProperty("Surface", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
-            .GetValue(state);
-        surface.Should().NotBeNull();
+    private static IReadOnlyList<HyperlinkInfo> GetSurfaceHyperlinks(DocumentModel document) =>
+        GetSurface(document).Hyperlinks;
 
-        var hyperlinks = (IEnumerable)surface!.GetType()
-            .GetProperty("Hyperlinks", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
-            .GetValue(surface)!;
-#pragma warning restore IL2075
-
-        return hyperlinks.Cast<object>().ToList();
-    }
-
-    private static object? GetSurfaceCell(object table, int row, int col)
-    {
-        var rows = (IEnumerable)GetSurfaceProperty<object>(table, "Cells");
-        var rowList = rows.Cast<object>().ToList();
-        var cells = (IEnumerable)rowList[row];
-        return cells.Cast<object?>().ElementAt(col);
-    }
-
-    private static T GetSurfaceProperty<T>(object source, string name)
-    {
-#pragma warning disable IL2075
-        var property = source.GetType()
-            .GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-#pragma warning restore IL2075
-        property.Should().NotBeNull($"expected property {name} on {source.GetType().Name}");
-        var value = property!.GetValue(source);
-        value.Should().NotBeNull();
-        return (T)value!;
-    }
-
-    private static T? GetSurfacePropertyOrDefault<T>(object source, string name)
-    {
-#pragma warning disable IL2075
-        var property = source.GetType()
-            .GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-#pragma warning restore IL2075
-        property.Should().NotBeNull($"expected property {name} on {source.GetType().Name}");
-        var value = property!.GetValue(source);
-        return (T?)value;
-    }
 
     private static TestFileScope CreateDocument(string fileName, Action<MainDocumentPart> configureDocument)
     {

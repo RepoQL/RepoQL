@@ -17,6 +17,15 @@ dotnet_diagnostic.CA1819.severity = none
 dotnet_diagnostic.CA1848.severity = none
 dotnet_diagnostic.CA1031.severity = none
 
+# RepoQL analyzers — errors so agents can't ignore them
+dotnet_diagnostic.RQL001.severity = error
+dotnet_diagnostic.RQL002.severity = error
+dotnet_diagnostic.RQL003.severity = error
+dotnet_diagnostic.RQL004.severity = error
+dotnet_diagnostic.RQL005.severity = error
+dotnet_diagnostic.RQL006.severity = error
+dotnet_diagnostic.RQL007.severity = error
+
 # Style
 csharp_style_var_for_built_in_types = true
 csharp_style_var_when_type_is_apparent = true

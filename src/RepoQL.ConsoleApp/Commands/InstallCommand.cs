@@ -2061,7 +2061,7 @@ internal class InstallCommand(IAnsiConsole console)
 
     private sealed record CliCommandResult(bool Success, int ExitCode, string StandardOutput, string StandardError, string? ErrorMessage);
 
-    private static string GetRepoqlCommand() => RepoqlCommandLazy.Value;
+    internal static string GetRepoqlCommand() => RepoqlCommandLazy.Value;
 
     private string? GetDefaultWorkingDirectory(AgentType agentType) => null;
 

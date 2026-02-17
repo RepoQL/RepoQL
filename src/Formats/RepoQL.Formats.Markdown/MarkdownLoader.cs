@@ -881,7 +881,7 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
     }
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("AOT", "IL3050", Justification = "YAML frontmatter deserialization uses reflection, not AOT-compatible by design")]
-    private static JsonNode? YamlToJson(string yaml)
+    internal static JsonNode? YamlToJson(string yaml)
     {
         var deserializer = new DeserializerBuilder()
             .WithNamingConvention(CamelCaseNamingConvention.Instance)

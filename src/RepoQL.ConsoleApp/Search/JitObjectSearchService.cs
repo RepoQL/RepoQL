@@ -951,7 +951,7 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
     /// <summary>
     /// Load persisted object embeddings from database.
     /// </summary>
-    private Dictionary<string, float[]> LoadPersistedObjectEmbeddings(
+    internal Dictionary<string, float[]> LoadPersistedObjectEmbeddings(
         IReadOnlyList<string> nodeIds,
         string model,
         int dim)
