@@ -193,6 +193,7 @@ dotnet run -- --output Detailed            # Verbose output
 | Current vs Future docs | Don't update future/ to match limitations. Don't update current/ with aspirations. The gap = work to do |
 | Class docs required | Purpose (why it exists) + Complexity (what's contained). The "and" test: rarely need "and" in a class's purpose |
 | Version lives in ConsoleApp | `src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj` → `<Version>` element. Nowhere else. |
+| Version bumps are patch only | Bump the revision number (e.g. 1.4.0 → 1.4.1). Minor/major bumps only when explicitly requested. |
 
 ### How Do I...
 
