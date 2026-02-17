@@ -155,7 +155,7 @@ internal sealed class DocumentSearchServiceTests
             .GetMethod("GetChunkScores", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Unable to locate DocumentSearchService.GetChunkScores");
 
-        var result = method.Invoke(service, [docIds]);
+        var result = method.Invoke(service, [docIds, CancellationToken.None]);
         return result as Dictionary<string, IReadOnlyList<ChunkScore>>
             ?? throw new InvalidOperationException("GetChunkScores returned an unexpected result");
     }
