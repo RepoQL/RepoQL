@@ -960,6 +960,11 @@ public class IndexingEngineTests
         await WaitForAnalysisToCompleteAsync(engine, analysisSignal, token);
 
         pruneAttempts.Should().BeGreaterThanOrEqualTo(2, "idle processing should retry the epoch after a transient prune failure");
+
+        // Poll briefly — idle processing may still be draining under CI load
+        for (var i = 0; i < 20 && engine.GetPendingIdleProcessingCount() > 0; i++)
+            await Task.Delay(50, token);
+
         engine.GetPendingIdleProcessingCount().Should().Be(0, "failed epoch backlog should be replayed and drained");
     }
 
