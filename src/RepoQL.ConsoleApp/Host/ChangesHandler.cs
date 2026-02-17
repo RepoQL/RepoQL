@@ -182,7 +182,7 @@ internal sealed class ChangesHandler(DuckDbDataStore db, RepositoryConfiguration
             WHERE uri IN ({inClause})
             """;
 
-        var rows = _db.Query(sql);
+        var rows = _db.Query(sql, ct);
         var result = new List<StatusRow>(rows.Count);
         foreach (var row in rows)
         {
@@ -211,7 +211,7 @@ internal sealed class ChangesHandler(DuckDbDataStore db, RepositoryConfiguration
             WHERE uri IN ({inClause})
             """;
 
-        var rows = _db.Query(sql);
+        var rows = _db.Query(sql, ct);
         var result = new Dictionary<(string Uri, string DiffTarget), PatchRow>(new UriTargetComparer());
         foreach (var row in rows)
         {

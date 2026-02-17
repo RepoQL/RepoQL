@@ -65,7 +65,7 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
                 LIMIT 100
                 """;
 
-            var anchorDocuments = QueryReadDocuments(anchorSql);
+            var anchorDocuments = QueryReadDocuments(anchorSql, cancellationToken);
             if (anchorDocuments.Count > 0)
                 return Task.FromResult(anchorDocuments);
         }
@@ -117,16 +117,17 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
             ORDER BY g.uri
             """;
 
-        return Task.FromResult(QueryReadDocuments(sql));
+        return Task.FromResult(QueryReadDocuments(sql, cancellationToken));
     }
 
-    private IReadOnlyList<ReadDocument> QueryReadDocuments(string sql)
+    private IReadOnlyList<ReadDocument> QueryReadDocuments(string sql, CancellationToken cancellationToken)
     {
-        var results = db.Query(sql);
+        var results = db.Query(sql, cancellationToken);
         var documents = new List<ReadDocument>();
 
         foreach (var row in results)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             documents.Add(new ReadDocument(
                 Uri: row.TryGetValue("uri", out var u) ? u?.ToString() ?? "" : "",
                 TextContent: row.TryGetValue("text_content", out var tc) ? tc?.ToString() : null,
@@ -173,7 +174,7 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
 
         try
         {
-            var results = db.Query(sql);
+            var results = db.Query(sql, cancellationToken);
             var row = results.FirstOrDefault();
 
             if (row is null || !row.TryGetValue("tree_output", out var treeOutput))
@@ -181,7 +182,7 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
 
             return Task.FromResult(treeOutput?.ToString());
         }
-        catch
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             // Tree generation failed - not critical, return null.
             return Task.FromResult<string?>(null);
@@ -196,7 +197,7 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
         string headlinesJson;
         if (includeHeadlines)
         {
-            var headlines = LoadHeadlines(uris);
+            var headlines = LoadHeadlines(uris, cancellationToken);
             var headlineList = uris.Select(uri => headlines.TryGetValue(uri, out var headline) ? headline : null).ToList();
             headlinesJson = JsonSerializer.Serialize(headlineList);
         }
@@ -214,7 +215,7 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
 
         try
         {
-            var results = db.Query(sql);
+            var results = db.Query(sql, cancellationToken);
             var row = results.FirstOrDefault();
 
             if (row is null || !row.TryGetValue("tree_output", out var treeOutput))
@@ -222,14 +223,14 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
 
             return Task.FromResult(treeOutput?.ToString());
         }
-        catch
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             // Tree generation failed - return null, caller will fall back to list.
             return Task.FromResult<string?>(null);
         }
     }
 
-    private Dictionary<string, string> LoadHeadlines(IReadOnlyList<string> uris)
+    private Dictionary<string, string> LoadHeadlines(IReadOnlyList<string> uris, CancellationToken cancellationToken)
     {
         var escapedUris = uris
             .Select(uri => $"'{uri.Replace("'", "''", StringComparison.Ordinal).ToLowerInvariant()}'")
@@ -245,11 +246,12 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
             WHERE lower(n.uri) IN ({string.Join(", ", escapedUris)})
             """;
 
-        var results = db.Query(sql);
+        var results = db.Query(sql, cancellationToken);
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var row in results)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var uri = row.TryGetValue("uri", out var u) ? u?.ToString() : null;
             var headline = row.TryGetValue("headline", out var h) ? h?.ToString() : null;
             if (string.IsNullOrWhiteSpace(uri) || string.IsNullOrWhiteSpace(headline))

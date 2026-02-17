@@ -228,7 +228,7 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
             ORDER BY c.author_date DESC, c.hash
             """;
 
-        var rows = _db.Query(sql);
+        var rows = _db.Query(sql, ct);
         var commits = new Dictionary<string, HistoryCommit>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var row in rows)

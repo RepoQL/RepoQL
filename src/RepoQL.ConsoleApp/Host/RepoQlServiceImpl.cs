@@ -105,7 +105,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         {
             // Substitute parameters into SQL (DuckDbDataStore.Query does not support params)
             var sql = SubstituteParameters(request.Sql, request.Parameters);
-            var rows = _db.Query(sql);
+            var rows = _db.Query(sql, context.CancellationToken);
 
             var limited = request.Limit > 0;
             var take = limited ? rows.Take(request.Limit) : rows;
@@ -131,7 +131,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 resp.Rows.Add(rd);
             }
             resp.RowCount = resp.Rows.Count;
-            resp.Truncated = limited && (first is not null) && (_db.Query(sql).Skip(resp.Rows.Count).Any());
+            resp.Truncated = limited && (first is not null) && (_db.Query(sql, context.CancellationToken).Skip(resp.Rows.Count).Any());
 
             // Check token budget and potentially summarize
             if (request.TokenBudget > 0 && resp.Rows.Count > 0)
@@ -174,6 +174,10 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     }
                 }
             }
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            throw new RpcException(new Status(StatusCode.Cancelled, "Query request was canceled."));
         }
         catch (Exception ex)
         {
@@ -324,7 +328,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                                    CASE WHEN {includeResolvedTargetUri} THEN resolved_target_uri ELSE NULL END AS resolved_target_uri,
                                    target_node_id, target_edge_id, target_span_id, created_at, expires_at
                             FROM annotations_for('{canonicalUri.Replace("'", "''")}', '{kindsList.Replace("'", "''")}', {(minSeverity is null ? "NULL" : $"'{minSeverity.Replace("'", "''")}'")})";
-                var rows = _db.Query(sql);
+                var rows = _db.Query(sql, context.CancellationToken);
 
                 var any = false;
                 foreach (var row in rows)
@@ -365,7 +369,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 if (!any)
                 {
                     var existsSql = $"SELECT 1 FROM node WHERE lower(uri)=lower(repository_uri_container('{canonicalUri.Replace("'", "''")}')) LIMIT 1";
-                    var exists = _db.Query(existsSql).Any();
+                    var exists = _db.Query(existsSql, context.CancellationToken).Any();
                     result.Status = exists ? SummaryStatus.Ok : SummaryStatus.NotFound;
                 }
                 else
@@ -1126,6 +1130,10 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
             return response;
         }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            throw new RpcException(new Status(StatusCode.Cancelled, "Explore request was canceled."));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Explore query failed");
@@ -1171,6 +1179,10 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 }
             };
         }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            throw new RpcException(new Status(StatusCode.Cancelled, "Read request was canceled."));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Read operation failed");
@@ -1215,7 +1227,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     {
         try
         {
-            var rows = _db.Query("SELECT indexing_diagnostics() as diag");
+            var rows = _db.Query("SELECT indexing_diagnostics() as diag", ct);
             var text = rows.FirstOrDefault()?.TryGetValue("diag", out var val) == true ? val?.ToString() : null;
 
             if (!string.IsNullOrEmpty(text))

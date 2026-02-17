@@ -72,7 +72,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
                 tokenBudget: tokenBudget));
         }
 
-        var symbolValidation = ValidateSeedSymbol(seedUri);
+        var symbolValidation = ValidateSeedSymbol(seedUri, ct);
         if (symbolValidation is not null)
         {
             return Task.FromResult(BuildSimpleResult(
@@ -191,10 +191,12 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         return null;
     }
 
-    private string? ValidateSeedSymbol(string seedUri)
+    private string? ValidateSeedSymbol(string seedUri, CancellationToken ct)
     {
         if (_db is null)
             return null;
+
+        ct.ThrowIfCancellationRequested();
 
         var fragment = ParseFragment(seedUri);
         if (fragment is null || fragment.Value.Symbol is null)
@@ -224,7 +226,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
             LIMIT 1
             """;
 
-        var exists = _db.Query(existsSql).Any();
+        var exists = _db.Query(existsSql, ct).Any();
         if (exists)
             return null;
 
@@ -258,7 +260,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
             LIMIT 5
             """;
 
-        var suggestions = _db.Query(suggestionSql)
+        var suggestions = _db.Query(suggestionSql, ct)
             .Select(row => row.TryGetValue("symbol_name", out var value) ? value?.ToString() : null)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Cast<string>()
@@ -354,7 +356,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
                 ORDER BY bp.similarity DESC NULLS LAST
                 """;
 
-            var rows = _db.Query(sql);
+            var rows = _db.Query(sql, ct);
             var results = new List<SimilarResult>();
             foreach (var row in rows)
             {
@@ -387,7 +389,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
 
             return results;
         }
-        catch
+        catch (Exception) when (!ct.IsCancellationRequested)
         {
             return [];
         }

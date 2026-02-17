@@ -21,6 +21,8 @@ internal sealed class ObjectSearchService : IObjectSearchService
         int objectsPerDocument,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (documentUris.Count == 0)
             return Task.FromResult<IReadOnlyList<ObjectMatch>>([]);
 
@@ -40,10 +42,11 @@ internal sealed class ObjectSearchService : IObjectSearchService
         // For strong matches with a question, do embedding search
         if (hasQuestion)
         {
-            var allObjects = SearchObjectsInDocuments(normalizedDocumentUris, question!, objectsPerDocument);
+            var allObjects = SearchObjectsInDocuments(normalizedDocumentUris, question!, objectsPerDocument, cancellationToken);
 
             foreach (var obj in allObjects)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 results.Add(obj);
                 objectCountByDoc.TryGetValue(obj.DocumentUri, out var count);
                 objectCountByDoc[obj.DocumentUri] = count + 1;
@@ -61,11 +64,12 @@ internal sealed class ObjectSearchService : IObjectSearchService
                 u => u,
                 u => objectCountByDoc.TryGetValue(u, out var count) ? objectsPerDocument - count : objectsPerDocument);
 
-            var fallbackObjects = GetObjectsByPosition(docsNeedingMore, objectsPerDocument);
+            var fallbackObjects = GetObjectsByPosition(docsNeedingMore, objectsPerDocument, cancellationToken);
 
             var existingUris = results.Select(r => r.Uri).ToHashSet();
             foreach (var obj in fallbackObjects)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 if (existingUris.Contains(obj.Uri))
                     continue;
 
@@ -83,8 +87,11 @@ internal sealed class ObjectSearchService : IObjectSearchService
     private List<ObjectMatch> SearchObjectsInDocuments(
         IReadOnlyList<string> documentUris,
         string question,
-        int objectsPerDocument)
+        int objectsPerDocument,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (documentUris.Count == 0)
             return [];
 
@@ -128,10 +135,11 @@ internal sealed class ObjectSearchService : IObjectSearchService
         try
         {
             var results = new List<ObjectMatch>();
-            var rows = _db.Query(sql);
+            var rows = _db.Query(sql, cancellationToken);
 
             foreach (var row in rows)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var uri = row.GetValueOrDefault("uri")?.ToString();
                 var kind = row.GetValueOrDefault("kind")?.ToString();
                 var docUri = row.GetValueOrDefault("document_uri")?.ToString();
@@ -157,7 +165,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
 
             return results;
         }
-        catch
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             return [];
         }
@@ -165,8 +173,11 @@ internal sealed class ObjectSearchService : IObjectSearchService
 
     private List<ObjectMatch> GetObjectsByPosition(
         IReadOnlyList<string> documentUris,
-        int objectsPerDocument)
+        int objectsPerDocument,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (documentUris.Count == 0)
             return [];
 
@@ -218,10 +229,11 @@ internal sealed class ObjectSearchService : IObjectSearchService
             """;
 
         var results = new List<ObjectMatch>();
-        var rows = _db.Query(sql);
+        var rows = _db.Query(sql, cancellationToken);
 
         foreach (var row in rows)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var uri = row.GetValueOrDefault("uri")?.ToString();
             var docUri = row.GetValueOrDefault("document_uri")?.ToString();
             var kind = row.GetValueOrDefault("kind")?.ToString();

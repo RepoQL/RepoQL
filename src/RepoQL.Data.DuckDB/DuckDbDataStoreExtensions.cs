@@ -334,6 +334,9 @@ public static class DuckDbDataStoreExtensions
     /// regardless of what SQL is passed. This is enforced at the database engine level.
     /// </summary>
     public static IReadOnlyList<IReadOnlyDictionary<string, object?>> Query(this DuckDbDataStore store, string sql)
+        => Query(store, sql, CancellationToken.None);
+
+    public static IReadOnlyList<IReadOnlyDictionary<string, object?>> Query(this DuckDbDataStore store, string sql, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(sql);
@@ -350,7 +353,7 @@ public static class DuckDbDataStoreExtensions
                 dict[name] = value;
             }
             return (IReadOnlyDictionary<string, object?>)dict;
-        });
+        }, cancellationToken);
     }
 
     /// <summary>
@@ -371,7 +374,10 @@ public static class DuckDbDataStoreExtensions
     /// Alias for Query - executes raw SQL and returns dictionary rows.
     /// </summary>
     public static IReadOnlyList<IReadOnlyDictionary<string, object?>> RawQuery(this DuckDbDataStore store, string sql)
-        => Query(store, sql);
+        => Query(store, sql, CancellationToken.None);
+
+    public static IReadOnlyList<IReadOnlyDictionary<string, object?>> RawQuery(this DuckDbDataStore store, string sql, CancellationToken cancellationToken)
+        => Query(store, sql, cancellationToken);
 
     /// <summary>
     /// Get all nodes in the database.

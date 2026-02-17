@@ -21,6 +21,8 @@ internal sealed class DocumentSearchService : IDocumentSearchService
         int limit,
         CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         var hasQuestion = !string.IsNullOrWhiteSpace(question);
         var hasScope = !string.IsNullOrWhiteSpace(scope);
 
@@ -149,13 +151,14 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                 """;
         }
 
-        var rows = _db.Query(sql);
+        var rows = _db.Query(sql, cancellationToken);
 
         var documents = new List<DocumentMatch>();
         var docIds = new List<string>();
 
         foreach (var row in rows)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var uri = row.GetValueOrDefault("uri")?.ToString();
             if (string.IsNullOrWhiteSpace(uri)) continue;
 
@@ -179,7 +182,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
         var chunkScores = new Dictionary<string, IReadOnlyList<ChunkScore>>();
         if (hasQuestion && docIds.Count > 0)
         {
-            chunkScores = GetChunkScores(docIds);
+            chunkScores = GetChunkScores(docIds, cancellationToken);
         }
 
         return Task.FromResult(new DocumentSearchResult(documents, chunkScores));
@@ -188,8 +191,10 @@ internal sealed class DocumentSearchService : IDocumentSearchService
     /// <summary>
     /// Get chunk-level scores for proximity boosting.
     /// </summary>
-    private Dictionary<string, IReadOnlyList<ChunkScore>> GetChunkScores(IReadOnlyList<string> docIds)
+    private Dictionary<string, IReadOnlyList<ChunkScore>> GetChunkScores(IReadOnlyList<string> docIds, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         if (docIds.Count == 0)
             return new Dictionary<string, IReadOnlyList<ChunkScore>>();
 
@@ -224,10 +229,11 @@ internal sealed class DocumentSearchService : IDocumentSearchService
         try
         {
             var result = new Dictionary<string, List<ChunkScore>>();
-            var rows = _db.Query(sql);
+            var rows = _db.Query(sql, cancellationToken);
 
             foreach (var row in rows)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var uri = row.GetValueOrDefault("uri")?.ToString();
                 if (string.IsNullOrWhiteSpace(uri)) continue;
 
@@ -246,7 +252,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
 
             return result.ToDictionary(kvp => kvp.Key, kvp => (IReadOnlyList<ChunkScore>)kvp.Value);
         }
-        catch
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             // If chunk query fails, return empty - proximity boosting will be skipped
             return new Dictionary<string, IReadOnlyList<ChunkScore>>();

@@ -206,7 +206,7 @@ internal sealed class BlameHandler(DuckDbDataStore db, RepositoryConfiguration r
         IReadOnlyList<IReadOnlyDictionary<string, object?>> rows;
         try
         {
-            rows = _db.Query(sql);
+            rows = _db.Query(sql, ct);
         }
         catch (Exception ex) when (ex.Message.Contains("Not a valid git repository") ||
                                    ex.Message.Contains("does not exist"))
@@ -260,7 +260,7 @@ internal sealed class BlameHandler(DuckDbDataStore db, RepositoryConfiguration r
                   AND n.kind = 'document'
                 LIMIT 1
                 """;
-            var rows = _db.Query(sql);
+            var rows = _db.Query(sql, ct);
 
             if (rows.Count == 0)
                 return result;
@@ -277,7 +277,7 @@ internal sealed class BlameHandler(DuckDbDataStore db, RepositoryConfiguration r
                 result[i + 1] = lines[i].TrimEnd('\r');
             }
         }
-        catch
+        catch (Exception) when (!ct.IsCancellationRequested)
         {
             // Ignore errors loading content - blame will just show line numbers
         }

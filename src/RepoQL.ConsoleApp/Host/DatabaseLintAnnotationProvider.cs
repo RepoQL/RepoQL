@@ -43,7 +43,7 @@ internal sealed class DatabaseLintAnnotationProvider(DuckDbDataStore db) : ILint
             ORDER BY severity_rank DESC, file_uri, line_start NULLS LAST, resolved_target_uri
             """;
 
-        var rows = db.Query(sql);
+        var rows = db.Query(sql, ct);
         var annotations = new List<LintAnnotation>(rows.Count);
 
         foreach (var row in rows)

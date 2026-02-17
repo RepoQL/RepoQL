@@ -208,7 +208,7 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
                 LIMIT {MaxResults * 2}
                 """;
 
-            var rows = _db.Query(sql);
+            var rows = _db.Query(sql, ct);
 
             foreach (var row in rows)
             {
@@ -287,7 +287,7 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
                 LIMIT {MaxResults * 2}
                 """;
 
-            var rows = _db.Query(sql);
+            var rows = _db.Query(sql, ct);
 
             foreach (var row in rows)
             {
@@ -322,7 +322,7 @@ internal sealed class FindHandler(DuckDbDataStore db) : IModifierHandler
                     SemanticScore: denseScore));
             }
         }
-        catch
+        catch (Exception) when (!ct.IsCancellationRequested)
         {
             // Search failed completely
         }

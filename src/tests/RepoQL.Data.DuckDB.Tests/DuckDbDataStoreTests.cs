@@ -47,6 +47,51 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
+    [DisplayName("Read throws OperationCanceledException when token is canceled before execution")]
+    public void Read_WithCanceledToken_ThrowsOperationCanceledException()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => db.Read("SELECT 1", r => r.GetInt32(0), cts.Token);
+
+        act.Should().Throw<OperationCanceledException>();
+    }
+
+    [Test]
+    [DisplayName("Query cancellation while waiting for lock throws and leaves connection usable")]
+    public async Task Query_CanceledWhileWaitingForLock_ThrowsAndConnectionRemainsUsable()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+        using var writeStarted = new ManualResetEventSlim(false);
+        using var releaseWrite = new ManualResetEventSlim(false);
+
+        var writerTask = Task.Run(() =>
+        {
+            db.WriteTransaction((_, _) =>
+            {
+                writeStarted.Set();
+                releaseWrite.Wait(TimeSpan.FromSeconds(5));
+            });
+        });
+
+        var started = writeStarted.Wait(TimeSpan.FromSeconds(5));
+        started.Should().BeTrue("writer should hold the store lock before query starts");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        Func<Task> act = () => Task.Run(() => db.Query("SELECT 1 AS value", cts.Token));
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        releaseWrite.Set();
+        await writerTask;
+
+        var rows = db.Query("SELECT 42 AS value");
+        rows.Should().HaveCount(1);
+        Convert.ToInt32(rows[0]["value"]).Should().Be(42);
+    }
+
+    [Test]
     [DisplayName("IndexArtifact inserts new document")]
     public void IndexArtifact_InsertsNewDocument()
     {

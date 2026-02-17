@@ -224,8 +224,12 @@ public sealed class DuckDbDataStore : IDisposable
     }
 
     public IReadOnlyList<T> Read<T>(string sql, Func<IDataRecord, T> map)
+        => Read(sql, map, CancellationToken.None);
+
+    public IReadOnlyList<T> Read<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
     {
         EnsureSchema();
+        cancellationToken.ThrowIfCancellationRequested();
 
         // If database is invalidated, attempt recovery before proceeding
         if (_databaseInvalidated)
@@ -237,10 +241,10 @@ public sealed class DuckDbDataStore : IDisposable
         // If already in a query context, use secondary connection to avoid deadlock
         if (_inQueryContext)
         {
-            return ExecuteReentrantRead(sql, map);
+            return ExecuteReentrantRead(sql, map, cancellationToken);
         }
 
-        _lock.Wait();
+        _lock.Wait(cancellationToken);
         try
         {
             // Set up DI scope for UDFs that need service resolution
@@ -250,7 +254,7 @@ public sealed class DuckDbDataStore : IDisposable
             _inQueryContext = true;
             try
             {
-                return ExecuteRead(sql, map);
+                return ExecuteRead(sql, map, cancellationToken);
             }
             finally
             {
@@ -275,7 +279,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
     }
 
-    private IReadOnlyList<T> ExecuteRead<T>(string sql, Func<IDataRecord, T> map)
+    private IReadOnlyList<T> ExecuteRead<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
     {
         using var activity = ActivitySource.StartActivity("duckdb.query", ActivityKind.Client);
         activity?.SetTag("db.system", "duckdb");
@@ -283,10 +287,23 @@ public sealed class DuckDbDataStore : IDisposable
 
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = sql;
-        using var reader = cmd.ExecuteReader();
+        using var cancellationRegistration = RegisterCommandCancellation(cmd, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
         var results = new List<T>();
-        while (reader.Read())
-            results.Add(map(reader));
+        try
+        {
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                results.Add(map(reader));
+            }
+        }
+        catch (DuckDBException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("DuckDB read query canceled.", ex, cancellationToken);
+        }
 
         activity?.SetTag("db.row_count", results.Count);
         return results;
@@ -324,7 +341,7 @@ public sealed class DuckDbDataStore : IDisposable
         }
     }
 
-    private IReadOnlyList<T> ExecuteReentrantRead<T>(string sql, Func<IDataRecord, T> map)
+    private IReadOnlyList<T> ExecuteReentrantRead<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
     {
         using var activity = ActivitySource.StartActivity("duckdb.query.reentrant", ActivityKind.Client);
         activity?.SetTag("db.system", "duckdb");
@@ -333,16 +350,29 @@ public sealed class DuckDbDataStore : IDisposable
         var conn = GetReentrantConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
-        using var reader = cmd.ExecuteReader();
+        using var cancellationRegistration = RegisterCommandCancellation(cmd, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
         var results = new List<T>();
-        while (reader.Read())
-            results.Add(map(reader));
+        try
+        {
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                results.Add(map(reader));
+            }
+        }
+        catch (DuckDBException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("DuckDB reentrant read query canceled.", ex, cancellationToken);
+        }
 
         activity?.SetTag("db.row_count", results.Count);
         return results;
     }
 
-    private T? ExecuteReentrantScalar<T>(string sql)
+    private T? ExecuteReentrantScalar<T>(string sql, CancellationToken cancellationToken)
     {
         using var activity = ActivitySource.StartActivity("duckdb.scalar.reentrant", ActivityKind.Client);
         activity?.SetTag("db.system", "duckdb");
@@ -351,7 +381,19 @@ public sealed class DuckDbDataStore : IDisposable
         var conn = GetReentrantConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
-        var result = cmd.ExecuteScalar();
+        using var cancellationRegistration = RegisterCommandCancellation(cmd, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        object? result;
+        try
+        {
+            result = cmd.ExecuteScalar();
+        }
+        catch (DuckDBException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("DuckDB reentrant scalar query canceled.", ex, cancellationToken);
+        }
+
         if (result is null or DBNull) return default;
         if (result is T typed) return typed;
         return (T)Convert.ChangeType(result, typeof(T));
@@ -362,8 +404,12 @@ public sealed class DuckDbDataStore : IDisposable
     /// DuckDB enforces at the engine level that no writes can occur, regardless of SQL content.
     /// </summary>
     public IReadOnlyList<T> ReadUntrusted<T>(string sql, Func<IDataRecord, T> map)
+        => ReadUntrusted(sql, map, CancellationToken.None);
+
+    public IReadOnlyList<T> ReadUntrusted<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
     {
         EnsureSchema();
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (_databaseInvalidated)
         {
@@ -373,10 +419,10 @@ public sealed class DuckDbDataStore : IDisposable
         // Detect reentrant calls - use secondary connection to avoid deadlock
         if (_inQueryContext)
         {
-            return ExecuteReentrantRead(sql, map);
+            return ExecuteReentrantRead(sql, map, cancellationToken);
         }
 
-        _lock.Wait();
+        _lock.Wait(cancellationToken);
         try
         {
             // Set up DI scope for UDFs that need service resolution
@@ -390,7 +436,8 @@ public sealed class DuckDbDataStore : IDisposable
                 _connection.Execute("BEGIN TRANSACTION READ ONLY;");
                 try
                 {
-                    var results = ExecuteRead(sql, map);
+                    var results = ExecuteRead(sql, map, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
                     _connection.Execute("COMMIT;");
                     return results;
                 }
@@ -418,8 +465,12 @@ public sealed class DuckDbDataStore : IDisposable
     }
 
     public T? ReadScalar<T>(string sql)
+        => ReadScalar<T>(sql, CancellationToken.None);
+
+    public T? ReadScalar<T>(string sql, CancellationToken cancellationToken)
     {
         EnsureSchema();
+        cancellationToken.ThrowIfCancellationRequested();
 
         // If database is invalidated, attempt recovery before proceeding
         if (_databaseInvalidated)
@@ -430,10 +481,10 @@ public sealed class DuckDbDataStore : IDisposable
         // Detect reentrant calls - use secondary connection to avoid deadlock
         if (_inQueryContext)
         {
-            return ExecuteReentrantScalar<T>(sql);
+            return ExecuteReentrantScalar<T>(sql, cancellationToken);
         }
 
-        _lock.Wait();
+        _lock.Wait(cancellationToken);
         try
         {
             // Set up DI scope for UDFs that need service resolution
@@ -443,7 +494,7 @@ public sealed class DuckDbDataStore : IDisposable
             _inQueryContext = true;
             try
             {
-                return ExecuteScalar<T>(sql);
+                return ExecuteScalar<T>(sql, cancellationToken);
             }
             finally
             {
@@ -467,14 +518,47 @@ public sealed class DuckDbDataStore : IDisposable
         }
     }
 
-    private T? ExecuteScalar<T>(string sql)
+    private T? ExecuteScalar<T>(string sql, CancellationToken cancellationToken)
     {
         using var cmd = _connection.CreateCommand();
         cmd.CommandText = sql;
-        var result = cmd.ExecuteScalar();
+        using var cancellationRegistration = RegisterCommandCancellation(cmd, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        object? result;
+        try
+        {
+            result = cmd.ExecuteScalar();
+        }
+        catch (DuckDBException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("DuckDB scalar query canceled.", ex, cancellationToken);
+        }
+
         if (result is null or DBNull) return default;
         if (result is T typed) return typed;
         return (T)Convert.ChangeType(result, typeof(T));
+    }
+
+    private static CancellationTokenRegistration RegisterCommandCancellation(DuckDBCommand command, CancellationToken cancellationToken)
+    {
+        if (!cancellationToken.CanBeCanceled)
+            return default;
+
+        return cancellationToken.Register(static state =>
+        {
+            if (state is not DuckDBCommand cmd)
+                return;
+
+            try
+            {
+                cmd.Cancel();
+            }
+            catch
+            {
+                // Best-effort cancellation; ignore failures from already-completed/disposed commands.
+            }
+        }, command);
     }
 
     public void WriteTransaction(Action<DuckDBConnection, DuckDBTransaction> work)
