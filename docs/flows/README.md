@@ -30,3 +30,4 @@ flows/
 |------|-------------|
 | [read/](future/read/) | Read tool modifiers: representation, search, graph, diagnostics, history (19 documents) |
 | [operations/](future/operations/) | Operation tracking, ready gating, and progress streaming (4 documents) |
+| [llm-service/](future/llm-service/) | gRPC LLM provider service: auth/billing, explain synthesis, reranking, batch embedding, lifecycle, failure modes (7 documents) |
