@@ -77,11 +77,11 @@ internal sealed class TextSearchHandler : IModifierHandler
             }
         }
 
-        var fileUris = ExtractFileUris(documents);
-        if (fileUris.Count == 0)
+        var consultedUris = ExtractConsultedUris(documents);
+        if (consultedUris.Count == 0)
         {
             return Task.FromResult(BuildSimpleResult(
-                "Text search is only available for file:/// URIs.",
+                "No valid URIs matched for text search.",
                 filesConsulted: documents.Select(d => d.Uri).ToArray(),
                 tokenBudget: tokenBudget));
         }
@@ -96,7 +96,7 @@ internal sealed class TextSearchHandler : IModifierHandler
         {
             return Task.FromResult(BuildSimpleResult(
                 "No indexed content available for matched files.",
-                filesConsulted: fileUris,
+                filesConsulted: consultedUris,
                 tokenBudget: tokenBudget));
         }
 
@@ -130,7 +130,7 @@ internal sealed class TextSearchHandler : IModifierHandler
         {
             return Task.FromResult(BuildSimpleResult(
                 $"No matches for '{pattern}' in {searchable.Count.ToString(CultureInfo.InvariantCulture)} files.",
-                filesConsulted: fileUris,
+                filesConsulted: consultedUris,
                 tokenBudget: tokenBudget));
         }
 
@@ -157,7 +157,7 @@ internal sealed class TextSearchHandler : IModifierHandler
             TotalAvailable: matches.Count,
             Shown: rendered.Shown,
             ExceedsBudget: rendered.TokenCount > tokenBudget,
-            Metadata: new ResultMetadata(fileUris, rendered.Warning, extra)));
+            Metadata: new ResultMetadata(consultedUris, rendered.Warning, extra)));
     }
 
     private static ModifierResult BuildSimpleResult(
@@ -178,7 +178,7 @@ internal sealed class TextSearchHandler : IModifierHandler
             Metadata: new ResultMetadata(filesConsulted, warning, new Dictionary<string, object>()));
     }
 
-    private static IReadOnlyList<string> ExtractFileUris(IReadOnlyList<ReadDocument> documents)
+    private static IReadOnlyList<string> ExtractConsultedUris(IReadOnlyList<ReadDocument> documents)
     {
         var uris = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var doc in documents)
@@ -187,9 +187,6 @@ internal sealed class TextSearchHandler : IModifierHandler
                 continue;
 
             if (!RepoUri.TryParse(doc.Uri, out var repoUri))
-                continue;
-
-            if (!string.Equals(repoUri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             uris.Add(repoUri.Container.AbsoluteUri);
@@ -204,9 +201,6 @@ internal sealed class TextSearchHandler : IModifierHandler
             return null;
 
         if (!RepoUri.TryParse(document.Uri, out var repoUri))
-            return null;
-
-        if (!string.Equals(repoUri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
             return null;
 
         return new SearchDocument(repoUri.Container.AbsoluteUri, document.TextContent!);

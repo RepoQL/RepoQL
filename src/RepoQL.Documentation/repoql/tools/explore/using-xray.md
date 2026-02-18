@@ -235,6 +235,27 @@ explore intent=Examine keywords="authentication" tokenBudget=3000
 
 ---
 
+## Capsule: ExamineRefinement
+
+**Invariant**
+When `intent=Examine` includes `keywords`, RepoQL runs a second semantic narrowing pass over shortlisted files to surface high-value method-body snippets.
+
+**Example**
+```
+-- Deep inspect with semantic narrowing on top-ranked files
+explore intent=Examine keywords="authentication flow token refresh" tokenBudget=3000
+```
+//BOUNDARY: Refinement is Examine (Inspect)-only. Find keeps headline/structure balance for breadth.
+
+**Depth**
+- Stage 1: breadth-first ranking and allocation still runs first
+- Stage 2: narrowed snippets are extracted from shortlisted files
+- Output favors `headline + focused snippet` evidence over long structure blocks
+- Token spend remains budgeted: breadth and refinement split adaptively by score concentration
+- If refinement times out or degrades, explore falls back to stage-1 output with an explicit footer hint
+
+---
+
 ## Capsule: UnderstandIntent
 
 **Invariant**

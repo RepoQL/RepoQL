@@ -194,6 +194,9 @@ read("file:///src/** => lint: errors", 1000)   -- show errors only
 - `blame`: git blame showing who changed each line
 - `lint`: diagnostics; `: errors` or `: warnings` filters severity
 - `find`: semantic search within matched files; `: keywords` to search
+  - `read => find` has a file-scope cap (default 64 files); broader scopes are rejected with guidance
+  - This is intentional: find is for snippet extraction, not broad repo discovery
+  - Use `explore(intent=Inspect, keywords="...")` first to shortlist likely files, then run `read(... => find: ...)`
 
 ---
 

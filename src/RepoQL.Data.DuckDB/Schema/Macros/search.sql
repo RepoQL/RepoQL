@@ -97,11 +97,20 @@ union_nodes AS (
 filtered_source AS (
     SELECT
         ri.*,
+        split_part(ri.uri, '#', 1) AS uri_container,
         CASE
             WHEN ri.uri IS NULL THEN NULL
             ELSE regexp_replace(LOWER(ri.uri), '^[^:]+://+', '')
         END AS uri_local
     FROM repo_index ri
+),
+scope_uris AS (
+    SELECT DISTINCT
+        gf.uri AS scoped_uri,
+        split_part(gf.uri, '#', 1) AS scoped_container_uri
+    FROM base_params bp_scope
+    CROSS JOIN glob_files(pattern_spec := bp_scope.uri_glob_filter) gf
+    WHERE bp_scope.uri_glob_filter IS NOT NULL
 ),
 filtered AS (
     SELECT fs.*
@@ -109,8 +118,14 @@ filtered AS (
     JOIN base_params bp ON TRUE
     WHERE (
             bp.uri_glob_filter IS NULL
-            OR repoql_glob_match(fs.uri, bp.uri_glob_filter, 'true','file:///') IS TRUE
-            OR repoql_glob_match(fs.uri_local, bp.uri_glob_filter, 'true',NULL) IS TRUE
+            OR EXISTS (
+                SELECT 1
+                FROM scope_uris su
+                WHERE su.scoped_uri = fs.uri
+                   OR su.scoped_container_uri = fs.uri_container
+            )
+            OR matches_glob(fs.uri, bp.uri_glob_filter, TRUE, 'file:///') IS TRUE
+            OR matches_glob(fs.uri_local, bp.uri_glob_filter, TRUE, NULL) IS TRUE
         )
       AND (
             bp.uri_like_filter IS NULL
@@ -291,6 +306,7 @@ seed AS (
 related_source AS (
     SELECT
         ri.*,
+        split_part(ri.uri, '#', 1) AS uri_container,
         CASE
             WHEN ri.uri IS NULL THEN NULL
             ELSE regexp_replace(LOWER(ri.uri), '^[^:]+://+', '')
@@ -299,14 +315,28 @@ related_source AS (
     JOIN base_params bp_rs ON TRUE
     WHERE ri.uri <> bp_rs.seed
 ),
+related_scope_uris AS (
+    SELECT DISTINCT
+        gf.uri AS scoped_uri,
+        split_part(gf.uri, '#', 1) AS scoped_container_uri
+    FROM base_params bp_scope
+    CROSS JOIN glob_files(pattern_spec := bp_scope.uri_glob_filter) gf
+    WHERE bp_scope.uri_glob_filter IS NOT NULL
+),
 filtered AS (
     SELECT rs.*
     FROM related_source rs
     JOIN base_params bp_filter ON TRUE
     WHERE (
             bp_filter.uri_glob_filter IS NULL
-            OR repoql_glob_match(rs.uri, bp_filter.uri_glob_filter, 'true','file:///') IS TRUE
-            OR repoql_glob_match(rs.uri_local, bp_filter.uri_glob_filter, 'true',NULL) IS TRUE
+            OR EXISTS (
+                SELECT 1
+                FROM related_scope_uris su
+                WHERE su.scoped_uri = rs.uri
+                   OR su.scoped_container_uri = rs.uri_container
+            )
+            OR matches_glob(rs.uri, bp_filter.uri_glob_filter, TRUE, 'file:///') IS TRUE
+            OR matches_glob(rs.uri_local, bp_filter.uri_glob_filter, TRUE, NULL) IS TRUE
         )
       AND (
             bp_filter.mime_glob_filter IS NULL

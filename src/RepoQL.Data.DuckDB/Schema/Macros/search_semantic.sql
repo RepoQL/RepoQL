@@ -25,11 +25,20 @@ params AS (
 filtered_source AS (
     SELECT
         ri.*,
+        split_part(ri.uri, '#', 1) AS uri_container,
         CASE
             WHEN ri.uri IS NULL THEN NULL
             ELSE regexp_replace(LOWER(ri.uri), '^[^:]+://+', '')
         END AS uri_local
     FROM repo_index ri
+),
+scope_uris AS (
+    SELECT DISTINCT
+        gf.uri AS scoped_uri,
+        split_part(gf.uri, '#', 1) AS scoped_container_uri
+    FROM params p
+    CROSS JOIN glob_files(pattern_spec := p.uri_filter) gf
+    WHERE p.uri_filter IS NOT NULL
 ),
 filtered AS (
     SELECT fs.*
@@ -37,8 +46,14 @@ filtered AS (
     JOIN params p ON TRUE
     WHERE (
             p.uri_filter IS NULL
-            OR repoql_glob_match(fs.uri, p.uri_filter, 'true','file:///') IS TRUE
-            OR repoql_glob_match(fs.uri_local, p.uri_filter, 'true',NULL) IS TRUE
+            OR EXISTS (
+                SELECT 1
+                FROM scope_uris su
+                WHERE su.scoped_uri = fs.uri
+                   OR su.scoped_container_uri = fs.uri_container
+            )
+            OR matches_glob(fs.uri, p.uri_filter, TRUE, 'file:///') IS TRUE
+            OR matches_glob(fs.uri_local, p.uri_filter, TRUE, NULL) IS TRUE
         )
       AND (
             p.uri_like_filter IS NULL

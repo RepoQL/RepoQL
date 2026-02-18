@@ -111,6 +111,54 @@ public sealed class FindCandidatesMacroTests : IDisposable
         Convert.ToDouble(rows[0]["sem_score"]).Should().BeGreaterThan(0.80);
     }
 
+    [Test]
+    public void SearchCandidates_UriGlob_SupportsSemicolonScope()
+    {
+        var docA = CreateDocument("file:///src/a.cs", "class A {}\n");
+        var docB = CreateDocument("file:///src/b.cs", "class B {}\n");
+        _ = CreateDocument("file:///src/c.cs", "class C {}\n");
+
+        var probe = _store.Query("""
+            SELECT
+                matches_glob('file:///src/a.cs', 'file:///src/a.cs;file:///src/b.cs') AS match_a,
+                matches_glob('file:///src/c.cs', 'file:///src/a.cs;file:///src/b.cs') AS match_c
+            """);
+        probe.Should().HaveCount(1);
+        probe[0]["match_a"]?.ToString().Should().Be("true");
+        probe[0]["match_c"]?.ToString().Should().Be("false");
+
+        var matchRows = _store.Query("""
+            SELECT uri
+            FROM repo_index
+            WHERE matches_glob(uri, 'file:///src/a.cs;file:///src/b.cs') IS TRUE
+            ORDER BY uri
+            """);
+        matchRows.Should().HaveCount(2);
+
+        var lexicalRows = _store.Query("""
+            SELECT node_id
+            FROM _search_lexical(
+                'missing term',
+                uri_glob := 'file:///src/a.cs;file:///src/b.cs'
+            )
+            """);
+        lexicalRows.Should().HaveCount(2);
+
+        var rows = _store.Query("""
+            SELECT DISTINCT uri
+            FROM _search_candidates(
+                'missing term',
+                k := 50,
+                uri_glob := 'file:///src/a.cs;file:///src/b.cs'
+            )
+            WHERE scope = 'document'
+            ORDER BY uri
+            """);
+
+        rows.Should().HaveCount(2);
+        rows.Select(r => r["uri"]?.ToString()).Should().BeEquivalentTo([docA.Uri, docB.Uri]);
+    }
+
     private DocumentInfo CreateDocument(string uri, string content)
     {
         var docId = Guid.NewGuid();

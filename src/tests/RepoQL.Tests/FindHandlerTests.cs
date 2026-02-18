@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
@@ -135,6 +136,36 @@ internal sealed class FindHandlerTests
     }
 
     [Test]
+    public async Task FindHandler_TooManyFiles_ReturnsInspectGuidance()
+    {
+        var config = new RepoQlConfig
+        {
+            Find = new RepoQlConfig.FindSettings
+            {
+                MaxScopeDocuments = 2
+            }
+        };
+        using var context = new FindTestContext(config);
+
+        var documents = new[]
+        {
+            new ReadDocument("file:///src/A.cs", null, "text/plain", null, null, null),
+            new ReadDocument("file:///src/B.cs", null, "text/plain", null, null, null),
+            new ReadDocument("file:///src/C.cs", null, "text/plain", null, null, null)
+        };
+
+        var result = await context.Handler.ExecuteAsync(
+            documents,
+            parameter: "auth workflow",
+            tokenBudget: 2000,
+            ct: CancellationToken.None);
+
+        result.Content.Should().Contain("Scope too broad for read => find");
+        result.Content.Should().Contain("explore(intent=Inspect");
+        result.Metadata.Warning.Should().Contain("file limit");
+    }
+
+    [Test]
     [Skip("Requires full schema with _search_candidates macro - run integration tests instead")]
     public async Task FindHandler_NoMatches_ReturnsNoMatchesMessage()
     {
@@ -168,7 +199,7 @@ internal sealed class FindHandlerTests
 
     private sealed class FindTestContext : IDisposable
     {
-        public FindTestContext()
+        public FindTestContext(RepoQlConfig? config = null)
         {
             RepoConfig = new RepositoryConfiguration { Path = Path.GetTempPath() };
             var services = new ServiceCollection();
@@ -180,7 +211,7 @@ internal sealed class FindHandlerTests
             var provider = services.BuildServiceProvider();
 
             Store = new DuckDbDataStore(":memory:", serviceProvider: provider);
-            Handler = new FindHandler(Store);
+            Handler = new FindHandler(Store, config);
         }
 
         private sealed class DisabledEmbeddingProvider : IEmbeddingProvider

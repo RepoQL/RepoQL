@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using RepoQL.Contracts;
 using RepoQL.Explore.Search;
@@ -14,6 +16,8 @@ public sealed class ExploreOrchestrator
     private readonly IExploreSearchEngine _searchEngine;
     private readonly IJitObjectSearchService? _jitService;
     private readonly ILlmProvider? _llmProvider;
+    private readonly IInspectRefinementService? _inspectRefinementService;
+    private readonly InspectRefinementOptions _inspectRefinementOptions;
 
     /// <summary>
     /// Minimum token budget for Understand intent to ensure sufficient context for LLM synthesis.
@@ -23,11 +27,15 @@ public sealed class ExploreOrchestrator
     public ExploreOrchestrator(
         IExploreSearchEngine searchEngine,
         IJitObjectSearchService? jitService = null,
-        ILlmProvider? llmProvider = null)
+        ILlmProvider? llmProvider = null,
+        IInspectRefinementService? inspectRefinementService = null,
+        InspectRefinementOptions? inspectRefinementOptions = null)
     {
         _searchEngine = searchEngine ?? throw new ArgumentNullException(nameof(searchEngine));
         _jitService = jitService;
         _llmProvider = llmProvider;
+        _inspectRefinementService = inspectRefinementService;
+        _inspectRefinementOptions = inspectRefinementOptions ?? new InspectRefinementOptions();
     }
 
     /// <summary>
@@ -144,9 +152,14 @@ public sealed class ExploreOrchestrator
         exploreResults = DeduplicateResults(exploreResults);
 
         var hasSearchCriteria = !string.IsNullOrWhiteSpace(query.Keywords) || boostPatterns.Count > 0;
+        var inspectRefinementEnabled = ShouldRunInspectRefinement(query);
+        var refineBudget = inspectRefinementEnabled
+            ? CalculateInspectRefineBudget(effectiveBudget, searchResult.Results)
+            : 0;
+        var breadthBudget = Math.Max(1, effectiveBudget - refineBudget);
 
         // Hierarchical token allocation (files compete first, then children within each file)
-        var decisions = ValueBasedAllocator.Allocate(exploreResults, effectiveBudget, searchIntent);
+        var decisions = ValueBasedAllocator.Allocate(exploreResults, breadthBudget, searchIntent);
 
         // Apply limit if specified
         var limitedDecisions = query.Limit.HasValue && query.Limit.Value > 0
@@ -157,11 +170,27 @@ public sealed class ExploreOrchestrator
         var omittedCount = exploreResults.Count - limitedDecisions.Count;
         var decisionResult = new DecisionResult(limitedDecisions, omittedCount, null);
 
-        // Compose output
+        // Compose output (Inspect can optionally replace structure-heavy output with narrowed snippets)
         var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status);
-
-        // Determine truncation
         var truncated = omittedCount > 0;
+
+        if (inspectRefinementEnabled && refineBudget > 0)
+        {
+            var refined = await TryRenderInspectRefinementAsync(
+                query,
+                limitedDecisions,
+                status,
+                effectiveBudget,
+                refineBudget,
+                omittedCount,
+                cancellationToken).ConfigureAwait(false);
+
+            if (refined is not null)
+            {
+                renderedOutput = refined.Value.RenderedOutput;
+                truncated = truncated || refined.Value.Truncated;
+            }
+        }
 
         // If Understand intent, synthesize via LLM
         if (isUnderstand && _llmProvider is not null)
@@ -181,6 +210,280 @@ public sealed class ExploreOrchestrator
         }
 
         return new ExploreExecutionResult(renderedOutput, exploreResults, truncated);
+    }
+
+    private bool ShouldRunInspectRefinement(ExploreQuery query)
+    {
+        if (!_inspectRefinementOptions.Enabled)
+            return false;
+
+        if (_inspectRefinementService is null)
+            return false;
+
+        if (query.Intent != Intent.Inspect)
+            return false;
+
+        return !string.IsNullOrWhiteSpace(query.Keywords);
+    }
+
+    private int CalculateInspectRefineBudget(int totalBudget, IReadOnlyList<SearchResult> rankedResults)
+    {
+        if (totalBudget < 900)
+            return 0;
+
+        var basePercent = Math.Clamp(
+            _inspectRefinementOptions.BaseRefineBudgetPercent,
+            _inspectRefinementOptions.MinRefineBudgetPercent,
+            _inspectRefinementOptions.MaxRefineBudgetPercent);
+
+        var adjustedPercent = basePercent;
+        var topConfidence = rankedResults.Count > 0 ? rankedResults[0].Confidence : 0;
+        var pivotIndex = Math.Min(3, rankedResults.Count - 1);
+        var pivotConfidence = pivotIndex >= 0 ? rankedResults[pivotIndex].Confidence : topConfidence;
+        var margin = topConfidence - pivotConfidence;
+
+        // Lumpy rankings benefit from deeper narrowing; flat rankings preserve breadth.
+        if (margin >= 18)
+            adjustedPercent += 15;
+        else if (margin <= 8)
+            adjustedPercent -= 10;
+
+        adjustedPercent = Math.Clamp(
+            adjustedPercent,
+            _inspectRefinementOptions.MinRefineBudgetPercent,
+            _inspectRefinementOptions.MaxRefineBudgetPercent);
+
+        var refineBudget = (int)Math.Round(totalBudget * adjustedPercent / 100.0, MidpointRounding.AwayFromZero);
+        return Math.Clamp(refineBudget, 0, Math.Max(0, totalBudget - 1));
+    }
+
+    private async Task<(string RenderedOutput, bool Truncated)?> TryRenderInspectRefinementAsync(
+        ExploreQuery query,
+        IReadOnlyList<RenderingDecision> limitedDecisions,
+        IndexerStatus status,
+        int totalBudget,
+        int refineBudget,
+        int omittedCount,
+        CancellationToken cancellationToken)
+    {
+        if (_inspectRefinementService is null || string.IsNullOrWhiteSpace(query.Keywords))
+            return null;
+
+        var candidates = BuildRefinementCandidates(limitedDecisions);
+        if (candidates.Count == 0)
+            return null;
+
+        var refinementResult = await _inspectRefinementService.RefineAsync(
+            query.Keywords!,
+            candidates,
+            refineBudget,
+            cancellationToken).ConfigureAwait(false);
+
+        if (refinementResult.Results.Count == 0)
+            return null;
+
+        return ComposeInspectRefinedOutput(
+            limitedDecisions,
+            refinementResult,
+            status,
+            totalBudget,
+            refineBudget,
+            omittedCount);
+    }
+
+    private IReadOnlyList<InspectRefinementCandidate> BuildRefinementCandidates(IReadOnlyList<RenderingDecision> decisions)
+    {
+        var byUri = new Dictionary<string, InspectRefinementCandidate>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var decision in decisions)
+        {
+            var documentUri = ToDocumentUri(decision.Result.Uri);
+            if (string.IsNullOrWhiteSpace(documentUri))
+                continue;
+
+            if (!byUri.TryGetValue(documentUri, out var existing) || decision.Result.Confidence > existing.Confidence)
+            {
+                byUri[documentUri] = new InspectRefinementCandidate(
+                    Uri: documentUri,
+                    Confidence: decision.Result.Confidence,
+                    Headline: decision.Result.Headline,
+                    Lang: decision.Result.Lang);
+            }
+        }
+
+        return byUri.Values
+            .OrderByDescending(c => c.Confidence)
+            .Take(Math.Max(1, _inspectRefinementOptions.MaxDocumentsToRefine))
+            .ToList();
+    }
+
+    private (string RenderedOutput, bool Truncated) ComposeInspectRefinedOutput(
+        IReadOnlyList<RenderingDecision> decisions,
+        InspectRefinementResult refinement,
+        IndexerStatus status,
+        int totalBudget,
+        int refineBudget,
+        int omittedCount)
+    {
+        var snippetsByDocument = refinement.Results
+            .GroupBy(r => ToDocumentUri(r.Uri), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => (IReadOnlyList<InspectRefinedSnippet>)g
+                    .OrderByDescending(s => s.Score)
+                    .ToList(),
+                StringComparer.OrdinalIgnoreCase);
+
+        var lines = new List<string>(decisions.Count * 2);
+        var includedDocuments = 0;
+        var truncatedByBudget = false;
+
+        foreach (var decision in decisions)
+        {
+            var documentUri = ToDocumentUri(decision.Result.Uri);
+            snippetsByDocument.TryGetValue(documentUri, out var snippets);
+            var maxSnippets = SnippetsPerDocument(decision.Result.Confidence);
+
+            var block = BuildInspectBlock(decision, snippets, maxSnippets);
+            var tentative = string.Join("\n\n", lines.Append(block));
+            var hint = BuildInspectRefinementHint(refinement, refineBudget, totalBudget);
+            var footer = RepresentationFormatter.FormatStatusFooter(
+                status,
+                CoreTokenEstimator.EstimateTokens(tentative),
+                hint);
+            var candidateOutput = $"{tentative}\n\n{footer}";
+            var candidateTokens = CoreTokenEstimator.EstimateTokens(candidateOutput);
+
+            if (includedDocuments > 0 && candidateTokens > totalBudget)
+            {
+                truncatedByBudget = true;
+                break;
+            }
+
+            lines.Add(block);
+            includedDocuments++;
+        }
+
+        var content = lines.Count == 0
+            ? BuildInspectBlock(decisions[0], snippetsByDocument.GetValueOrDefault(ToDocumentUri(decisions[0].Result.Uri)), SnippetsPerDocument(decisions[0].Result.Confidence))
+            : string.Join("\n\n", lines);
+
+        var hintText = BuildInspectRefinementHint(refinement, refineBudget, totalBudget);
+        var tokenCount = CoreTokenEstimator.EstimateTokens(content);
+        var footerText = RepresentationFormatter.FormatStatusFooter(status, tokenCount, hintText);
+        var rendered = $"{content}\n\n{footerText}";
+        var finalTruncated = truncatedByBudget || omittedCount > 0 || includedDocuments < decisions.Count;
+        return (rendered, finalTruncated);
+    }
+
+    private int SnippetsPerDocument(int confidence)
+    {
+        if (confidence >= _inspectRefinementOptions.HighConfidenceThreshold)
+            return Math.Max(1, _inspectRefinementOptions.HighConfidenceSnippetsPerDocument);
+
+        if (confidence >= _inspectRefinementOptions.MediumConfidenceThreshold)
+            return Math.Max(1, _inspectRefinementOptions.MediumConfidenceSnippetsPerDocument);
+
+        return Math.Max(1, _inspectRefinementOptions.LowConfidenceSnippetsPerDocument);
+    }
+
+    private static string BuildInspectBlock(
+        RenderingDecision decision,
+        IReadOnlyList<InspectRefinedSnippet>? snippets,
+        int snippetLimit)
+    {
+        var builder = new StringBuilder();
+        builder.Append('[');
+        builder.Append(decision.Result.Confidence.ToString(CultureInfo.InvariantCulture).PadLeft(3));
+        builder.Append("%] ");
+        builder.Append(decision.Result.Uri);
+
+        var headline = decision.Result.Headline;
+        if (!string.IsNullOrWhiteSpace(headline))
+        {
+            builder.Append('\n');
+            builder.Append("  ");
+            builder.Append(headline);
+        }
+
+        if (snippets is null || snippets.Count == 0 || snippetLimit <= 0)
+            return builder.ToString();
+
+        foreach (var snippet in snippets.Take(snippetLimit))
+        {
+            if (string.IsNullOrWhiteSpace(snippet.Snippet))
+                continue;
+
+            var fragment = BuildLineFragment(snippet.LineStart, snippet.LineEnd);
+            if (!string.IsNullOrWhiteSpace(fragment))
+            {
+                builder.Append('\n');
+                builder.Append("  ");
+                builder.Append(snippet.Uri);
+                builder.Append(fragment);
+                builder.Append("  [score: ");
+                builder.Append(snippet.Score.ToString("F2", CultureInfo.InvariantCulture));
+                builder.Append(']');
+            }
+
+            builder.Append('\n');
+            builder.Append("  ```");
+            if (!string.IsNullOrWhiteSpace(snippet.Lang))
+                builder.Append(snippet.Lang);
+            builder.Append('\n');
+            builder.Append(snippet.Snippet.TrimEnd());
+            builder.Append("\n  ```");
+        }
+
+        return builder.ToString();
+    }
+
+    private static string BuildLineFragment(int? lineStart, int? lineEnd)
+    {
+        if (!lineStart.HasValue)
+            return string.Empty;
+
+        if (!lineEnd.HasValue || lineEnd.Value == lineStart.Value)
+            return $"#line={lineStart.Value}";
+
+        return $"#line={lineStart.Value},{lineEnd.Value}";
+    }
+
+    private static string BuildInspectRefinementHint(
+        InspectRefinementResult refinement,
+        int refineBudget,
+        int totalBudget)
+    {
+        var parts = new List<string>
+        {
+            "showing: inspect refined",
+            $"refine_budget: {Math.Clamp((int)Math.Round(refineBudget * 100.0 / Math.Max(1, totalBudget)), 0, 100)}%"
+        };
+
+        parts.Add($"adaptive: rounds={refinement.Rounds}, widenings={refinement.Widenings}, cap={refinement.FinalCandidateLimit}");
+
+        if (refinement.FallbackUsed)
+            parts.Add("fallback: used");
+
+        if (refinement.TimedOut)
+            parts.Add("refine: timeout");
+
+        if (!string.IsNullOrWhiteSpace(refinement.DegradedReason))
+            parts.Add($"degraded: {refinement.DegradedReason}");
+
+        return string.Join(" | ", parts);
+    }
+
+    private static string ToDocumentUri(string uri)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+            return uri;
+
+        if (RepoUri.TryParse(uri, out var parsed))
+            return parsed.Container.AbsoluteUri;
+
+        var hash = uri.IndexOf('#', StringComparison.Ordinal);
+        return hash >= 0 ? uri[..hash] : uri;
     }
 
     /// <summary>

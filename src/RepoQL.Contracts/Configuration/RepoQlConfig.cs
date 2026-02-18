@@ -177,6 +177,10 @@ public sealed class RepoQlConfig
 
     public sealed class FindSettings
     {
+        [Setting("Maximum files allowed in read => find scope before refusing broad search",
+            DefaultValue = "64")]
+        public int? MaxScopeDocuments { get; set; }
+
         [Setting("Max find results returned after scoring",
             DefaultValue = "20")]
         public int? MaxResults { get; set; }

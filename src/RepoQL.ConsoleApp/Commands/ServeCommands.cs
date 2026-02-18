@@ -163,10 +163,13 @@ internal class HostCommands(IAnsiConsole console)
                 var logger = sp.GetService<ILogger<JitObjectSearchService>>();
                 return new JitObjectSearchService(store, embeddingProvider, logger);
             });
+            builder.Services.AddSingleton<IInspectRefinementService, InspectRefinementService>();
             builder.Services.AddSingleton(sp => new ExploreOrchestrator(
                 sp.GetRequiredService<IExploreSearchEngine>(),
                 sp.GetService<IJitObjectSearchService>(),
-                sp.GetService<ILlmProvider>()
+                sp.GetService<ILlmProvider>(),
+                sp.GetService<IInspectRefinementService>(),
+                new InspectRefinementOptions()
             ));
             builder.Services.AddSingleton<IReadContentProvider, DatabaseReadContentProvider>();
             builder.Services.AddSingleton<ILintAnnotationProvider, DatabaseLintAnnotationProvider>();

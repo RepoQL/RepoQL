@@ -5,6 +5,9 @@ using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
+using RepoQL.FileSystem;
+using RepoQL.FileSystem.Abstractions;
+using RepoQL.FileSystem.InMemory;
 
 namespace RepoQL.Tests;
 
@@ -75,6 +78,25 @@ internal sealed class TextSearchHandlerTests
 
         result.Content.Should().Contain("file:///src/Auth.cs#line=1");
         result.Content.Should().Contain("   1: validateToken");
+    }
+
+    [Test]
+    [DisplayName("TextSearchHandler grep mode supports non-file URI schemes")]
+    public async Task TextSearchHandler_Grep_NonFileScheme_Matches()
+    {
+        var handler = new TextSearchHandler();
+        handler.CanHandle("grep").Should().BeTrue();
+
+        var result = await handler.ExecuteAsync(
+            [
+                new ReadDocument("help:///repoql/tools/read/read-command.md", "Search token here", "text/markdown", null, null, null)
+            ],
+            "TOKEN",
+            5000,
+            CancellationToken.None);
+
+        result.Content.Should().Contain("help:///repoql/tools/read/read-command.md#line=1");
+        result.Content.Should().Contain("   1: Search token here");
     }
 
     [Test]
@@ -176,6 +198,25 @@ internal sealed class TextSearchHandlerTests
     }
 
     [Test]
+    [DisplayName("TextSearchHandler regex mode supports non-file URI schemes")]
+    public async Task TextSearchHandler_Regex_NonFileScheme_Matches()
+    {
+        var handler = new TextSearchHandler();
+        handler.CanHandle("regex").Should().BeTrue();
+
+        var result = await handler.ExecuteAsync(
+            [
+                new ReadDocument("help:///repoql/tools/query/functions/mcp.md", "accounts: 12345", "text/markdown", null, null, null)
+            ],
+            @"\d{5}",
+            5000,
+            CancellationToken.None);
+
+        result.Content.Should().Contain("help:///repoql/tools/query/functions/mcp.md#line=1");
+        result.Content.Should().Contain("   1: accounts: 12345");
+    }
+
+    [Test]
     [DisplayName("TextSearchHandler regex mode rejects invalid patterns")]
     public async Task TextSearchHandler_Regex_InvalidPattern_ReturnsError()
     {
@@ -245,6 +286,32 @@ internal sealed class TextSearchHandlerTests
         return (store, tempDir);
     }
 
+    private static DuckDbDataStore CreateStoreWithInMemoryDocument()
+    {
+        var uriRegistry = new UriRegistry();
+        var memFs = new MemoryFileSystem(defaultRoot: "repo");
+        memFs.AddOrUpdateText("docs/reference.md", "title\nNeedle value\ndigits: 12345");
+
+        var memUri = RepoUri.Parse("mem://repo/docs/reference.md");
+        uriRegistry.TryRegisterDiscovered(memUri);
+        uriRegistry.SetIndexed(memUri, new Dictionary<RepoUri, string>());
+
+        var services = new ServiceCollection();
+        services.AddSingleton(new RepositoryConfiguration { Path = Environment.CurrentDirectory });
+        services.AddSingleton(uriRegistry);
+        services.AddSingleton<IMultiFileSystem>(_ =>
+        {
+            var stores = new IVirtualFileSystem[] { memFs };
+            var registry = new FileSystemRegistry(stores);
+            return new MultiFileSystem(registry, stores);
+        });
+        services.AddSingleton<IEmbeddingProvider?>(_ => null);
+        services.AddSingleton<ILlmProvider?>(_ => null);
+        services.AddSingleton<IMcpToolCaller?>(_ => null);
+
+        return new DuckDbDataStore(":memory:", serviceProvider: services.BuildServiceProvider());
+    }
+
     private static void CleanupTempDir(string tempDir)
     {
         try { Directory.Delete(tempDir, true); } catch { /* best effort */ }
@@ -288,6 +355,20 @@ internal sealed class TextSearchHandlerTests
             }
         }
         finally { CleanupTempDir(tempDir); }
+    }
+
+    [Test]
+    [DisplayName("grep_matches supports non-file URI schemes via mounted file systems")]
+    public void GrepMatches_Macro_SupportsNonFileSchemes()
+    {
+        using var store = CreateStoreWithInMemoryDocument();
+
+        var rows = store.Query("SELECT * FROM grep_matches('needle', 'mem://repo/**')").ToList();
+
+        rows.Should().HaveCount(1);
+        rows[0]["uri"]?.ToString().Should().Be("mem://repo/docs/reference.md");
+        rows[0]["line_content"]?.ToString().Should().Contain("Needle value");
+        rows[0]["truncated_warning"].Should().BeNull();
     }
 
     [Test]
@@ -365,6 +446,20 @@ internal sealed class TextSearchHandlerTests
             }
         }
         finally { CleanupTempDir(tempDir); }
+    }
+
+    [Test]
+    [DisplayName("regex_matches supports non-file URI schemes via mounted file systems")]
+    public void RegexMatches_Macro_SupportsNonFileSchemes()
+    {
+        using var store = CreateStoreWithInMemoryDocument();
+
+        var rows = store.Query(@"SELECT * FROM regex_matches('\d{5}', 'mem://repo/**')").ToList();
+
+        rows.Should().HaveCount(1);
+        rows[0]["uri"]?.ToString().Should().Be("mem://repo/docs/reference.md");
+        rows[0]["line_content"]?.ToString().Should().Contain("12345");
+        rows[0]["truncated_warning"].Should().BeNull();
     }
 
     [Test]
