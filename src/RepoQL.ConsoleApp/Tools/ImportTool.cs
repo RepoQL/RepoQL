@@ -31,24 +31,24 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<CallToolResult> ImportAsync(
-        [Description("URI to import (e.g., github://owner/repo@ref). Prefix with '-' to remove an import.")] string uri,
+        [Description("URI to import (e.g., github://owner/repo@ref). Prefix with '-' to remove an import.")] string importUri,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(uri))
-            return ToolResult.Error("uri is required");
+        if (string.IsNullOrWhiteSpace(importUri))
+            return ToolResult.Error("importUri is required");
 
         // Check for removal prefix - server handles this
-        var isRemoval = uri.TrimStart().StartsWith('-');
+        var isRemoval = importUri.TrimStart().StartsWith('-');
 
         try
         {
             var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-            var result = await client.ImportRepositoryAsync(uri.Trim(), cancellationToken).ConfigureAwait(false);
+            var result = await client.ImportRepositoryAsync(importUri.Trim(), cancellationToken).ConfigureAwait(false);
 
             if (isRemoval)
             {
                 return ToolResult.Success($"""
-                    Import removed: {uri.Trim().TrimStart('-')}
+                    Import removed: {importUri.Trim().TrimStart('-')}
 
                     The import and all its indexed data have been deleted.
 
@@ -57,7 +57,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
             }
 
             // Extract repository information for query guidance
-            var uriPattern = GetUriPattern(uri.Trim());
+            var uriPattern = GetUriPattern(importUri.Trim());
 
             // Generate tree visualization of imported content
             var treeOutput = await GenerateTreeAsync(uriPattern, cancellationToken).ConfigureAwait(false);
@@ -79,7 +79,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
             return ToolResult.Success($"""
                 [DEBUG] contextUri={contextUri ?? "NULL"} repoContext={(repoContext is null ? "NULL" : $"len={repoContext.Length}")}
-                Import completed: {uri.Trim()}
+                Import completed: {importUri.Trim()}
                 {progressSummary}
 
                 {treeOutput}

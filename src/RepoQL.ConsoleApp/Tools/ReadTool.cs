@@ -213,33 +213,33 @@ internal sealed class ReadTool(
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<CallToolResult> ReadAsync(
-        [Description("URI or glob pattern (e.g., file:///path, help:///file.md). Append ' => question: <question>' for LLM synthesis.")]
-        string uri,
+        [Description("URI or glob pattern (e.g., file:///path, help:///file.md). Append ' => modifier: param' for views.")]
+        string uriGlob,
         [Description("Token budget - determines representation depth (full/structure/headline)")]
         int tokenBudget,
         CancellationToken cancel = default)
     {
-        if (string.IsNullOrWhiteSpace(uri))
+        if (string.IsNullOrWhiteSpace(uriGlob))
             return ToolResult.Error("Error: URI cannot be empty.");
 
         if (tokenBudget <= 0)
             return ToolResult.Error("Error: tokenBudget must be a positive integer.");
 
         // Check orientation (reading help:// will mark as oriented)
-        var orientationFooter = _sessionOrientation.CheckOrientation(uri);
+        var orientationFooter = _sessionOrientation.CheckOrientation(uriGlob);
 
         // Create request signature for "call again to wait" pattern
-        var requestSignature = $"{uri}|{tokenBudget}";
+        var requestSignature = $"{uriGlob}|{tokenBudget}";
         var isRepeatRequest = _lastRequestSignature == requestSignature;
 
         // Check if URI requires semantic search (find or question modifiers)
-        var requiresSemantic = uri.Contains("=> find:", StringComparison.OrdinalIgnoreCase) ||
-                               uri.Contains("=> question:", StringComparison.OrdinalIgnoreCase);
+        var requiresSemantic = uriGlob.Contains("=> find:", StringComparison.OrdinalIgnoreCase) ||
+                               uriGlob.Contains("=> question:", StringComparison.OrdinalIgnoreCase);
 
         if (requiresSemantic)
         {
             // Extract base URI (before =>) for scope check
-            var scopeUri = ExtractBaseUri(uri);
+            var scopeUri = ExtractBaseUri(uriGlob);
 
             var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
             var scopeStatus = await client.GetScopeReadinessAsync(scopeUri, cancel).ConfigureAwait(false);
@@ -264,7 +264,7 @@ internal sealed class ReadTool(
         try
         {
             var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
-            var response = await client.ReadAsync(uri, tokenBudget, cancel).ConfigureAwait(false);
+            var response = await client.ReadAsync(uriGlob, tokenBudget, cancel).ConfigureAwait(false);
 
             if (!response.Success)
             {
