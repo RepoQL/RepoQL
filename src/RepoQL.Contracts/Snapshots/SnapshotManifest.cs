@@ -9,22 +9,22 @@ public sealed class SnapshotManifest
     /// <summary>
     /// Manifest format version. Bump when the serialization shape changes.
     /// </summary>
-    public required string FormatVersion { get; init; }
+    public required string FormatVersion { get; set; }
 
     /// <summary>
     /// The snapshot source identifier (matches <see cref="ISnapshotSource.Id"/>).
     /// </summary>
-    public required string SourceId { get; init; }
+    public required string SourceId { get; set; }
 
     /// <summary>
     /// The snapshot version (matches <see cref="ISnapshotSource.Version"/>).
     /// </summary>
-    public required string Version { get; init; }
+    public required string Version { get; set; }
 
     /// <summary>
     /// The serialized documents.
     /// </summary>
-    public required IReadOnlyList<SnapshotDocumentDto> Documents { get; init; }
+    public required IReadOnlyList<SnapshotDocumentDto> Documents { get; set; }
 }
 
 /// <summary>
@@ -36,37 +36,37 @@ public sealed class SnapshotDocumentDto
     /// <summary>
     /// The document URI as a string.
     /// </summary>
-    public required string Uri { get; init; }
+    public required string Uri { get; set; }
 
     /// <summary>
     /// The artifact record.
     /// </summary>
-    public required ArtifactDto Artifact { get; init; }
+    public required ArtifactDto Artifact { get; set; }
 
     /// <summary>
     /// All nodes (document node + children).
     /// </summary>
-    public required IReadOnlyList<NodeDto> Nodes { get; init; }
+    public required IReadOnlyList<NodeDto> Nodes { get; set; }
 
     /// <summary>
     /// Spans within the document.
     /// </summary>
-    public IReadOnlyList<SpanDto> Spans { get; init; } = [];
+    public IReadOnlyList<SpanDto> Spans { get; set; } = [];
 
     /// <summary>
     /// Edges scoped to this document.
     /// </summary>
-    public IReadOnlyList<EdgeDto> Edges { get; init; } = [];
+    public IReadOnlyList<EdgeDto> Edges { get; set; } = [];
 
     /// <summary>
     /// Annotations for this document.
     /// </summary>
-    public IReadOnlyList<AnnotationDto> Annotations { get; init; } = [];
+    public IReadOnlyList<AnnotationDto> Annotations { get; set; } = [];
 
     /// <summary>
     /// Annotation source identifiers.
     /// </summary>
-    public IReadOnlyList<string> AnnotationSources { get; init; } = [];
+    public IReadOnlyList<string> AnnotationSources { get; set; } = [];
 }
 
 /// <summary>
@@ -74,16 +74,16 @@ public sealed class SnapshotDocumentDto
 /// </summary>
 public sealed class ArtifactDto
 {
-    public required Guid Id { get; init; }
-    public required string Digest { get; init; }
-    public long Size { get; init; }
-    public string? MediaType { get; init; }
-    public string? Text { get; init; }
-    public string? StoreUri { get; init; }
-    public string? Headline { get; init; }
-    public string? Summary { get; init; }
-    public string? Structure { get; init; }
-    public int? TokenCount { get; init; }
+    public required Guid Id { get; set; }
+    public required string Digest { get; set; }
+    public long Size { get; set; }
+    public string? MediaType { get; set; }
+    public string? Text { get; set; }
+    public string? StoreUri { get; set; }
+    public string? Headline { get; set; }
+    public string? Summary { get; set; }
+    public string? Structure { get; set; }
+    public int? TokenCount { get; set; }
 }
 
 /// <summary>
@@ -91,16 +91,16 @@ public sealed class ArtifactDto
 /// </summary>
 public sealed class NodeDto
 {
-    public required Guid Id { get; init; }
-    public required string Kind { get; init; }
-    public string? Uri { get; init; }
-    public Guid? ArtifactId { get; init; }
-    public Guid? SpanId { get; init; }
-    public string? Props { get; init; }
-    public string? Headline { get; init; }
-    public string? Structure { get; init; }
-    public DateTimeOffset CreatedAt { get; init; }
-    public DateTimeOffset UpdatedAt { get; init; }
+    public required Guid Id { get; set; }
+    public required string Kind { get; set; }
+    public string? Uri { get; set; }
+    public Guid? ArtifactId { get; set; }
+    public Guid? SpanId { get; set; }
+    public string? Props { get; set; }
+    public string? Headline { get; set; }
+    public string? Structure { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
 }
 
 /// <summary>
@@ -108,14 +108,14 @@ public sealed class NodeDto
 /// </summary>
 public sealed class SpanDto
 {
-    public required Guid Id { get; init; }
-    public required Guid DocumentId { get; init; }
-    public long? StartByte { get; init; }
-    public long? EndByte { get; init; }
-    public int? StartLine { get; init; }
-    public int? StartColumn { get; init; }
-    public int? EndLine { get; init; }
-    public int? EndColumn { get; init; }
+    public required Guid Id { get; set; }
+    public required Guid DocumentId { get; set; }
+    public long? StartByte { get; set; }
+    public long? EndByte { get; set; }
+    public int? StartLine { get; set; }
+    public int? StartColumn { get; set; }
+    public int? EndLine { get; set; }
+    public int? EndColumn { get; set; }
 }
 
 /// <summary>
@@ -123,19 +123,19 @@ public sealed class SpanDto
 /// </summary>
 public sealed class EdgeDto
 {
-    public required Guid Id { get; init; }
-    public required Guid SrcId { get; init; }
-    public Guid? DstId { get; init; }
-    public string? DstUri { get; init; }
-    public required string Type { get; init; }
-    public bool IsComposition { get; init; }
-    public int? Ordinal { get; init; }
-    public Guid? ScopeDocumentId { get; init; }
-    public string? EdgeKey { get; init; }
-    public Guid? SrcSpanId { get; init; }
-    public Guid? DstSpanId { get; init; }
-    public string? Props { get; init; }
-    public DateTimeOffset CreatedAt { get; init; }
+    public required Guid Id { get; set; }
+    public required Guid SrcId { get; set; }
+    public Guid? DstId { get; set; }
+    public string? DstUri { get; set; }
+    public required string Type { get; set; }
+    public bool IsComposition { get; set; }
+    public int? Ordinal { get; set; }
+    public Guid? ScopeDocumentId { get; set; }
+    public string? EdgeKey { get; set; }
+    public Guid? SrcSpanId { get; set; }
+    public Guid? DstSpanId { get; set; }
+    public string? Props { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
 }
 
 /// <summary>
@@ -143,19 +143,19 @@ public sealed class EdgeDto
 /// </summary>
 public sealed class AnnotationDto
 {
-    public required Guid Id { get; init; }
-    public string? SemanticKey { get; init; }
-    public required string Kind { get; init; }
-    public required string Severity { get; init; }
-    public required string Source { get; init; }
-    public string? RuleId { get; init; }
-    public required string Message { get; init; }
-    public string? Data { get; init; }
-    public required Guid ScopeDocumentId { get; init; }
-    public Guid? TargetNodeId { get; init; }
-    public Guid? TargetEdgeId { get; init; }
-    public Guid? TargetSpanId { get; init; }
-    public string? TargetUri { get; init; }
-    public DateTimeOffset CreatedAt { get; init; }
-    public DateTimeOffset? ExpiresAt { get; init; }
+    public required Guid Id { get; set; }
+    public string? SemanticKey { get; set; }
+    public required string Kind { get; set; }
+    public required string Severity { get; set; }
+    public required string Source { get; set; }
+    public string? RuleId { get; set; }
+    public required string Message { get; set; }
+    public string? Data { get; set; }
+    public required Guid ScopeDocumentId { get; set; }
+    public Guid? TargetNodeId { get; set; }
+    public Guid? TargetEdgeId { get; set; }
+    public Guid? TargetSpanId { get; set; }
+    public string? TargetUri { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ExpiresAt { get; set; }
 }
