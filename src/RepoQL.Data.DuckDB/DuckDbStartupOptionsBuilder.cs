@@ -65,21 +65,6 @@ public static class DuckDbStartupOptionsBuilder
         return parsed;
     }
 
-    private static int ResolveReadPoolSize(List<DuckDbEnvironmentIssue> invalid)
-    {
-        var raw = Environment.GetEnvironmentVariable("DUCKDB_READ_POOL_SIZE");
-        if (string.IsNullOrWhiteSpace(raw))
-            return 2;
-
-        if (!int.TryParse(raw.Trim(), out var parsed) || parsed < 0)
-        {
-            invalid.Add(new DuckDbEnvironmentIssue("DUCKDB_READ_POOL_SIZE", raw, "Read pool size must be non-negative."));
-            return 2;
-        }
-
-        return parsed;
-    }
-
     private static string ResolveTempDirectory(string? databasePath)
     {
         var env = Environment.GetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY");

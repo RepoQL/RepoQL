@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
-using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -31,10 +31,13 @@ public sealed class ZoomAndEnhanceUdf(
     private const int DefaultMinLines = 8;
     private const double DefaultThreshold = 0.2;
     private const int MaxBatchSize = 128;
+    private static readonly TimeSpan QueryEmbeddingTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan BatchEmbeddingTimeout = TimeSpan.FromMinutes(5);
 
     private static readonly ConcurrentDictionary<string, CacheEntry> EmbeddingCache = new();
     private static readonly TimeSpan CacheExpiry = TimeSpan.FromSeconds(60);
     private const int MaxCacheSize = 200;
+    private static long _cacheAccessCounter;
 
     [StructuredUdf("_zoom_and_enhance_internal", MacroName = "zoom_and_enhance",
         Description = "Refine semantic chunks with BFS binary chop and local embeddings")]
@@ -59,26 +62,29 @@ public sealed class ZoomAndEnhanceUdf(
 
         // If embeddings are unavailable, return base ranges with original scores.
         if (_embeddingProvider?.Enabled != true)
-            return inputs
-                .Select(i => TryBuildBaseRow(i, documents))
-                .Where(r => r is not null)
-                .Cast<RefinedChunkRow>()
-                .ToList();
+            return BuildBaseRows(inputs, documents);
 
         float[]? queryEmbedding;
         try
         {
-            queryEmbedding = _embeddingProvider.EmbedQueryAsync(query, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            queryEmbedding = RunEmbeddingWithTimeout(
+                ct => _embeddingProvider.EmbedQueryAsync(query, ct),
+                QueryEmbeddingTimeout,
+                "query embedding");
+        }
+        catch (TimeoutException)
+        {
+            // Timeout is treated as a partial capability loss, not a hard failure.
+            return BuildBaseRows(inputs, documents);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "zoom_and_enhance: query embedding failed");
-            return [];
+            return BuildBaseRows(inputs, documents);
         }
 
         if (queryEmbedding is null)
-            return [];
+            return BuildBaseRows(inputs, documents);
 
         var queue = new Queue<WorkItem>();
         foreach (var input in inputs)
@@ -143,7 +149,8 @@ public sealed class ZoomAndEnhanceUdf(
     private sealed class CacheEntry
     {
         public required float[] Embedding { get; init; }
-        public DateTime Timestamp { get; init; }
+        public DateTime ExpiresAtUtc { get; set; }
+        public long LastAccess { get; set; }
     }
 
     private static List<InputChunk> ParseInputs(string? chunksJson)
@@ -379,8 +386,14 @@ public sealed class ZoomAndEnhanceUdf(
         float[]?[] computed;
         try
         {
-            computed = _embeddingProvider!.EmbedPassageBatchAsync(uncachedTexts, CancellationToken.None)
-                .GetAwaiter().GetResult();
+            computed = RunEmbeddingWithTimeout(
+                ct => _embeddingProvider!.EmbedPassageBatchAsync(uncachedTexts, ct),
+                BatchEmbeddingTimeout,
+                "passage batch embedding");
+        }
+        catch (TimeoutException)
+        {
+            return results;
         }
         catch (Exception ex)
         {
@@ -400,16 +413,72 @@ public sealed class ZoomAndEnhanceUdf(
         return results;
     }
 
+    private IReadOnlyList<RefinedChunkRow> BuildBaseRows(
+        IReadOnlyList<InputChunk> inputs,
+        IReadOnlyDictionary<string, DocumentText> documents)
+        => inputs
+            .Select(i => TryBuildBaseRow(i, documents))
+            .Where(r => r is not null)
+            .Cast<RefinedChunkRow>()
+            .ToList();
+
+    private T RunEmbeddingWithTimeout<T>(
+        Func<CancellationToken, Task<T>> operation,
+        TimeSpan timeout,
+        string operationName)
+    {
+        using var timeoutCts = new CancellationTokenSource();
+        var task = Task.Run(
+            async () => await operation(timeoutCts.Token).ConfigureAwait(false),
+            CancellationToken.None);
+
+        try
+        {
+            return task.WaitAsync(timeout).GetAwaiter().GetResult();
+        }
+        catch (TimeoutException)
+        {
+            timeoutCts.Cancel();
+            _logger.LogWarning(
+                "zoom_and_enhance: {Operation} timed out after {Timeout}.",
+                operationName,
+                timeout);
+            throw;
+        }
+    }
+
     private static string BuildCacheKey(string text)
-        => $"{text}";
+    {
+        // Keep cache keys bounded regardless of input size.
+        var bytes = Encoding.UTF8.GetBytes(text);
+        var hash = SHA256.HashData(bytes);
+        return Convert.ToHexString(hash, 0, 16); // 128-bit prefix
+    }
+
+    // Test hooks: avoid reflection-based test access and keep cache invariants verifiable.
+    internal static string BuildCacheKeyForTests(string text) => BuildCacheKey(text);
+
+    internal static int CacheEntryCountForTests => EmbeddingCache.Count;
+
+    internal static int MaxCacheSizeForTests => MaxCacheSize;
+
+    internal static void ClearCacheForTests() => EmbeddingCache.Clear();
+
+    internal void AddCacheForTests(string key, float[] embedding) => AddCache(key, embedding);
 
     private float[]? TryGetCached(string key)
     {
         var cacheKey = $"{_embeddingProvider?.Model ?? "unknown"}:passage:{key}";
         if (EmbeddingCache.TryGetValue(cacheKey, out var entry))
         {
-            if (DateTime.UtcNow - entry.Timestamp < CacheExpiry)
+            var now = DateTime.UtcNow;
+            if (now <= entry.ExpiresAtUtc)
+            {
+                // Sliding TTL keeps hot entries alive and supports deterministic LRU eviction.
+                entry.ExpiresAtUtc = now + CacheExpiry;
+                entry.LastAccess = Interlocked.Increment(ref _cacheAccessCounter);
                 return entry.Embedding;
+            }
             EmbeddingCache.TryRemove(cacheKey, out _);
         }
         return null;
@@ -418,22 +487,45 @@ public sealed class ZoomAndEnhanceUdf(
     private void AddCache(string key, float[] embedding)
     {
         var cacheKey = $"{_embeddingProvider?.Model ?? "unknown"}:passage:{key}";
-
-        if (EmbeddingCache.Count >= MaxCacheSize)
-        {
-            var cutoff = DateTime.UtcNow - CacheExpiry;
-            foreach (var k in EmbeddingCache.Keys)
-            {
-                if (EmbeddingCache.TryGetValue(k, out var entry) && entry.Timestamp < cutoff)
-                    EmbeddingCache.TryRemove(k, out _);
-            }
-        }
-
+        var now = DateTime.UtcNow;
         EmbeddingCache[cacheKey] = new CacheEntry
         {
             Embedding = embedding,
-            Timestamp = DateTime.UtcNow
+            ExpiresAtUtc = now + CacheExpiry,
+            LastAccess = Interlocked.Increment(ref _cacheAccessCounter)
         };
+
+        TrimCache(now);
+    }
+
+    private static void TrimCache(DateTime now)
+    {
+        if (EmbeddingCache.Count <= MaxCacheSize)
+            return;
+
+        // First pass: remove expired entries.
+        foreach (var (key, entry) in EmbeddingCache)
+        {
+            if (entry.ExpiresAtUtc <= now)
+                EmbeddingCache.TryRemove(key, out _);
+        }
+
+        if (EmbeddingCache.Count <= MaxCacheSize)
+            return;
+
+        // Second pass: enforce hard cap by evicting least recently used entries.
+        var overflow = EmbeddingCache.Count - MaxCacheSize;
+        if (overflow <= 0)
+            return;
+
+        var evictionKeys = EmbeddingCache
+            .OrderBy(static kvp => kvp.Value.LastAccess)
+            .Take(overflow)
+            .Select(static kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in evictionKeys)
+            EmbeddingCache.TryRemove(key, out _);
     }
 
     private static bool TryResolveLineRange(InputChunk input, DocumentText doc, out int startLine, out int endLine)
@@ -622,7 +714,9 @@ public sealed class ZoomAndEnhanceUdf(
         return null;
     }
 
-    private RefinedChunkRow? TryBuildBaseRow(InputChunk input, Dictionary<string, DocumentText> documents)
+    private RefinedChunkRow? TryBuildBaseRow(
+        InputChunk input,
+        IReadOnlyDictionary<string, DocumentText> documents)
     {
         if (!documents.TryGetValue(input.DocumentUri, out var doc))
             return null;
