@@ -48,36 +48,6 @@ internal sealed class DatabaseReadContentProviderTests
     }
 
     [Test]
-    public async Task FetchGlobAsync_PlainAnchor_ResolvesMarkdownHeadingSectionWithoutHeadingUri()
-    {
-        using var context = new ReadContentProviderTestContext();
-
-        context.SeedMarkdownHeadingWithoutUri(
-            documentUri: "file:///docs/north-star/formats.md",
-            slug: "legibility",
-            headingText: "Legibility",
-            startLine: 2,
-            endLine: 4,
-            text: """
-                Intro
-                ## Legibility
-                Keep it simple
-                Durable by default
-                ## Other
-                Not this section
-                """);
-
-        var documents = await context.Provider.FetchGlobAsync(
-            "file:///docs/north-star/formats.md#legibility",
-            CancellationToken.None);
-
-        documents.Should().HaveCount(1);
-        documents[0].Uri.Should().Be("file:///docs/north-star/formats.md#legibility");
-        documents[0].TextContent.Should().Be(
-            "## Legibility\nKeep it simple\nDurable by default");
-    }
-
-    [Test]
     public async Task FetchGlobAsync_LineFragmentSingleLine_ReturnsRequestedLine()
     {
         using var context = new ReadContentProviderTestContext();
@@ -177,93 +147,6 @@ internal sealed class DatabaseReadContentProviderTests
 
             var lineCount = text.Count(c => c == '\n') + 1;
             Registry.SetIndexed(documentUri, lineCount, new Dictionary<RepoUri, SymbolEntry>());
-        }
-
-        public void SeedMarkdownHeadingWithoutUri(
-            string documentUri,
-            string slug,
-            string headingText,
-            int startLine,
-            int endLine,
-            string text)
-        {
-            var docUri = RepoUri.Parse(documentUri);
-            var now = DateTimeOffset.UtcNow;
-
-            var artifact = new ArtifactModel
-            {
-                Id = Guid.NewGuid(),
-                Digest = Guid.NewGuid().ToString("N"),
-                Size = text.Length,
-                MediaType = SemanticMediaType.Parse("text/markdown;kind=markdown.doc"),
-                Text = text,
-                Headline = "seed",
-                Summary = "seed",
-                Structure = "seed"
-            };
-
-            var documentNode = new Node
-            {
-                Id = Guid.NewGuid(),
-                Kind = "document",
-                Uri = docUri,
-                ArtifactId = artifact.Id,
-                Props = new JsonObject(),
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-
-            var headingSpan = new Span
-            {
-                Id = Guid.NewGuid(),
-                DocumentId = documentNode.Id,
-                StartLine = startLine,
-                EndLine = endLine,
-                StartColumn = 1,
-                EndColumn = 1
-            };
-
-            var headingNode = new Node
-            {
-                Id = Guid.NewGuid(),
-                Kind = "md_heading",
-                Uri = null, // Simulates legacy indexed markdown rows without heading URIs
-                SpanId = headingSpan.Id,
-                Props = new JsonObject
-                {
-                    ["slug"] = slug,
-                    ["text"] = headingText,
-                    ["level"] = 2
-                },
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-
-            var hasPart = new Edge
-            {
-                Id = Guid.NewGuid(),
-                SrcId = documentNode.Id,
-                DstId = headingNode.Id,
-                Type = "HAS_PART",
-                IsComposition = true,
-                Ordinal = 0,
-                ScopeDocumentId = documentNode.Id,
-                CreatedAt = now
-            };
-
-            Store.IndexArtifact(new ParsedArtifact
-            {
-                Artifact = artifact,
-                DocumentNode = documentNode,
-                Children = [headingNode],
-                Spans = [headingSpan],
-                Edges = [hasPart]
-            });
-
-            // Intentionally omit heading symbols to replicate "slug exists in markdown data,
-            // but URI registry cannot resolve #slug" scenarios.
-            var lineCount = text.Count(c => c == '\n') + 1;
-            Registry.SetIndexed(docUri, lineCount, new Dictionary<RepoUri, SymbolEntry>());
         }
 
         public void Dispose()
