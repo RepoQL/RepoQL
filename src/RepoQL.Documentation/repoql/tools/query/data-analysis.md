@@ -92,7 +92,7 @@ JOIN owners o ON f.uri LIKE o.pattern
 ```
 
 **Depth**
-- parse() auto-detects columns from header
+- parse() auto-detects structure (JSON/JSONL/CSV/TSV/YAML/embedded/plain text fallback)
 - Joins work normally with inline data
 - No file I/O for small lookup tables
 - Alternative: VALUES clause for typed data
@@ -236,7 +236,7 @@ WITH RECURSIVE deps AS (...) SELECT ... FROM deps JOIN node JOIN Files;
 |------|---------|---------|
 | Find + metadata | search() JOIN Files | SearchEnrich |
 | Per-row expansion | LATERAL snippet() | LateralExpand |
-| Ad-hoc lookup | parse('csv...') | InlineLookup |
+| Ad-hoc lookup | parse('structured text...') | InlineLookup |
 | Multi-step | CTE chain | MultiStepAnalysis |
 | Dependencies | WITH RECURSIVE | GraphComposition |
 | Comparative | Window functions | AggregateInsights |

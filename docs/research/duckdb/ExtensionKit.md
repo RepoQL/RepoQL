@@ -412,7 +412,7 @@ SELECT * FROM read_csv_auto(_write_temp_csv(text), header := true)
 
 -- MCP tool macros (auto-generated)
 SELECT * FROM read_json_auto(
-    _write_temp_json(parse_structured(_mcp_call_internal('server', 'tool', params))),
+    _write_temp_json(convert_to_json(_mcp_call_internal('server', 'tool', params), 'true')),
     maximum_object_size := 67108864
 )
 ```

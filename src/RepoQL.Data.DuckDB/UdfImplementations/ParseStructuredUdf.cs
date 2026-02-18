@@ -16,7 +16,7 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 public class ParseStructuredUdf
 {
     /// <summary>
-    /// Parses text containing structured data and returns JSON.
+    /// Canonical function name for converting structured text into normalized JSON.
     /// Automatically detects format: JSON, JSONL, TSV, CSV, YAML, or embedded data.
     /// </summary>
     /// <remarks>
@@ -31,11 +31,16 @@ public class ParseStructuredUdf
     /// 8. Fallback - wraps as {"text": "..."}
     ///
     /// Usage:
-    ///   SELECT parse_structured('id,name\n1,Alice\n2,Bob')
-    ///   SELECT * FROM (SELECT unnest(from_json(parse_structured(response), '["json"]')) AS row)
+    ///   SELECT convert_to_json('id,name\n1,Alice\n2,Bob', 'true')
+    ///   SELECT * FROM (SELECT unnest(from_json(convert_to_json(response, 'true'), '["json"]')) AS row)
     /// </remarks>
-    [ScalarUdf("parse_structured", Description = "Parse text as JSON/JSONL/CSV/TSV/YAML, returns JSON. Unwraps envelope objects by default.")]
-    public string Parse(string? text, [UdfDefault("'true'")] string? unwrap)
+    [ScalarUdf("convert_to_json", Description = "Canonical parser: detect JSON/JSONL/CSV/TSV/YAML/embedded and return normalized JSON. Unwraps envelope objects by default.")]
+    public string ConvertToJson(string? text, [UdfDefault("'true'")] string? unwrap)
+    {
+        return ParseCore(text, unwrap);
+    }
+
+    private static string ParseCore(string? text, string? unwrap)
     {
         var shouldUnwrap = unwrap?.Trim().Equals("true", StringComparison.OrdinalIgnoreCase) ?? true;
         return StructuredDataExtractor.Extract(text, shouldUnwrap);

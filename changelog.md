@@ -38,7 +38,7 @@
 
 - Add `similar` read modifier with `find_similar()` SQL macro for semantic similarity search
 - Surface repo context file (claude.md/agents.md/readme.md) in import response
-- Fix MCP startup error with parse_structured unwrap arg
+- Fix MCP startup error with convert_to_json unwrap arg
 - Fix Filesystems view grouping by scheme instead of per-mount
 - Fix timeout cleanup for pending document catalog state
 - Add shared DI memory cache and C# workspace session expiry

@@ -319,27 +319,37 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         }
 
         var result = await client.CallToolAsync(toolName, parameters, cancellationToken: cancellationToken).ConfigureAwait(false);
+        return SerializeToolResult(result);
+    }
 
-        // Extract content from result
+    internal static string SerializeToolResult(CallToolResult result)
+    {
+        // Prefer structured payload when available: it's already machine-readable JSON.
+        if (result.StructuredContent is not null)
+        {
+            var structuredJson = result.StructuredContent.ToJsonString();
+            if (!string.IsNullOrWhiteSpace(structuredJson) &&
+                !structuredJson.Equals("null", StringComparison.OrdinalIgnoreCase))
+            {
+                return structuredJson;
+            }
+        }
+
         var contents = result.Content?.ToList() ?? [];
         if (contents.Count == 0)
             return "null";
 
         // If single text content, return as-is
-        // The parse_structured() UDF will handle format detection and conversion in SQL
+        // The convert_to_json() UDF handles format detection and conversion in SQL
         if (contents.Count == 1 && contents[0] is TextContentBlock textContent)
         {
             return textContent.Text ?? "null";
         }
 
-        // Multiple contents or non-text: serialize as array
-        var contentArray = contents.Select(c => c switch
-        {
-            TextContentBlock tc => (object)tc.Text,
-            _ => c.ToString() ?? ""
-        }).ToArray();
-
-        return JsonSerializer.Serialize(contentArray);
+        // Preserve non-text blocks as JSON instead of lossy ToString() output.
+        return contents.Count == 1
+            ? JsonSerializer.Serialize(contents[0])
+            : JsonSerializer.Serialize(contents);
     }
 
     private async Task<IMcpClient> CreateClientAsync(McpServerConfig config, CancellationToken cancellationToken)

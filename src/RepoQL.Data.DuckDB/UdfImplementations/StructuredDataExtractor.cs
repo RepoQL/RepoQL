@@ -14,7 +14,7 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// </summary>
 /// <remarks>
 /// <para><b>Purpose:</b> Convert diverse text formats into JSON for DuckDB querying.
-/// Used by the parse_structured UDF and MCP response processing.</para>
+/// Used by the convert_to_json UDF and MCP response processing.</para>
 /// <para><b>Complexity:</b> Multi-format detection with priority ordering to minimize false positives.
 /// The detection order (JSON -> JSONL -> TSV -> CSV -> YAML -> Embedded -> Structured Text) is carefully
 /// chosen based on format distinctiveness and false positive risk.</para>

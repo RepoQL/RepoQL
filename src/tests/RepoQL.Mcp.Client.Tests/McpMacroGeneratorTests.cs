@@ -21,10 +21,11 @@ public class McpMacroGeneratorTests
 
         result.Should().Contain("CREATE OR REPLACE MACRO test_server_list_items()");
         result.Should().Contain("_mcp_call_internal('test-server', 'list_items'");
-        // Must wrap in params_json for UDF framework (extracts 3rd+ params by property name)
-        result.Should().Contain("json_object('params_json', '{}')");
-        // Uses parse_structured UDF to convert response to JSON (nested directly, no intermediate variable)
-        result.Should().Contain("parse_structured(");
+        // _mcp_call_internal has 3 args, so the 3rd arg is direct params_json payload.
+        result.Should().Contain("'{}'");
+        result.Should().NotContain("params_json");
+        // Uses convert_to_json UDF to normalize response payloads (nested directly, no intermediate variable)
+        result.Should().Contain("convert_to_json(");
         // Must pass explicit 'true' unwrap arg (DuckDB can't resolve macro defaults inside CREATE MACRO)
         result.Should().Contain("'true'");
         result.Should().Contain("_write_temp_json(");
@@ -61,8 +62,8 @@ public class McpMacroGeneratorTests
         // JSON keys preserve original case for MCP server, SQL params use sanitized names
         result.Should().Contain("'resourceName', \"resourcename\"");
         result.Should().Contain("'limit', \"limit\"");
-        // Must wrap in params_json for UDF framework
-        result.Should().Contain("json_object('params_json',");
+        // Params payload is passed directly as the 3rd _mcp_call_internal argument.
+        result.Should().NotContain("params_json");
     }
 
     [Test]

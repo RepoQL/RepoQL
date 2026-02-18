@@ -47,7 +47,8 @@ public static partial class McpMacroGenerator
 
         // Generate macro that:
         // 1. Calls _mcp_call_internal to get raw response text
-        // 2. Uses parse_structured() UDF to convert to JSON (handles JSON/JSONL/CSV/TSV/YAML/embedded)
+        // 2. Uses convert_to_json() UDF to normalize response payloads
+        //    (handles JSON/JSONL/CSV/TSV/YAML/embedded)
         // 3. Writes JSON to temp file and uses read_json_auto for dynamic column detection
         // Note: DuckDB table functions cannot contain subqueries, so we chain the temp file write
         // directly with the scalar UDFs to avoid subquery issues
@@ -55,7 +56,7 @@ public static partial class McpMacroGenerator
             CREATE OR REPLACE MACRO {{macroName}}({{paramList}}) AS TABLE (
                 SELECT * FROM read_json_auto(
                     _write_temp_json(
-                        parse_structured(
+                        convert_to_json(
                             _mcp_call_internal('{{EscapeSql(tool.ServerName)}}', '{{EscapeSql(tool.ToolName)}}', {{paramsJsonExpr}}),
                             'true'
                         )
@@ -240,9 +241,7 @@ public static partial class McpMacroGenerator
     {
         if (parameters.Count == 0)
         {
-            // IMPORTANT: UDF framework extracts 3rd+ params from JSON by property name.
-            // Even with no MCP params, we must wrap in params_json for the framework.
-            return "json_object('params_json', '{}')";
+            return "'{}'";
         }
 
         // Build JSON for MCP tool parameters
@@ -250,11 +249,9 @@ public static partial class McpMacroGenerator
         var jsonPairs = parameters.Select(p =>
             $"'{p.OriginalName}', \"{p.Name}\"");
 
-        // IMPORTANT: The UDF framework (UdfRegistry) packs 3rd+ method params into JSON and extracts by property name.
-        // _mcp_call_internal has 3 params (server, tool, params_json), so the framework expects the 3rd DuckDB arg
-        // to be a JSON object with a property named "params_json". We must wrap our params JSON accordingly.
-        var innerJson = $"COALESCE(json_object({string.Join(", ", jsonPairs)})::VARCHAR, '{{}}')";
-        return $"json_object('params_json', {innerJson})";
+        // _mcp_call_internal has exactly 3 parameters, so the 3rd DuckDB argument maps directly
+        // to the UDF's params_json parameter. Pass the JSON object itself, not an envelope.
+        return $"COALESCE(json_object({string.Join(", ", jsonPairs)})::VARCHAR, '{{}}')";
     }
 
     /// <summary>

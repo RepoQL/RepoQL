@@ -1,6 +1,6 @@
 ---
 description: "MCP tool integration: discover servers, call tools, parse structured responses into queryable rows"
-tags: ["mcp", "mcp_tools", "mcp_tool_params", "parse", "parse_structured", "external", "integration"]
+tags: ["mcp", "mcp_tools", "mcp_tool_params", "parse", "convert_to_json", "external", "integration"]
 audience: ["LLMs"]
 categories: ["Reference[100%]", "Tools[100%]"]
 ---
@@ -92,7 +92,7 @@ debug: true');
 - Detection order: JSON → JSONL → TSV → CSV → YAML → Embedded → Structured text
 - Type inference: numbers, booleans, floats auto-detected
 - Structured text: `- Key: Value` format with `----------` delimiters
-- Scalar version: `parse_structured(text)` returns JSON string
+- Scalar version: `convert_to_json(text, 'true')` returns normalized JSON string
 
 ---
 
