@@ -1,0 +1,244 @@
+namespace RepoQL.Contracts.Configuration;
+
+/// <summary>
+/// Purpose: Single source of truth for every configurable setting in RepoQL.
+/// Complexity: Nested classes group settings by concern. All properties nullable — null means
+/// "use consumer's default." The class structure defines the key hierarchy.
+/// </summary>
+public sealed class RepoQlConfig
+{
+    public DuckDbSettings DuckDb { get; set; } = new();
+    public EmbeddingSettings Embedding { get; set; } = new();
+    public OrtSettings Ort { get; set; } = new();
+    public LlmSettings Llm { get; set; } = new();
+    public HostSettings Host { get; set; } = new();
+    public McpSettings Mcp { get; set; } = new();
+    public DotnetSettings Dotnet { get; set; } = new();
+    public CacheSettings Cache { get; set; } = new();
+    public FindSettings Find { get; set; } = new();
+
+    public sealed class DuckDbSettings
+    {
+        [Setting("DuckDB memory cap (e.g. 4GB, 512MB)",
+            RequiresRestart = true, ValidValues = "e.g. 4GB, 512MB",
+            LegacyEnvVar = "DUCKDB_MEMORY_LIMIT")]
+        public string? MemoryLimit { get; set; }
+
+        [Setting("DuckDB thread count",
+            RequiresRestart = true,
+            LegacyEnvVar = "DUCKDB_THREADS")]
+        public int? Threads { get; set; }
+
+        [Setting("DuckDB temp file location",
+            RequiresRestart = true,
+            LegacyEnvVar = "DUCKDB_TEMP_DIRECTORY")]
+        public string? TempDirectory { get; set; }
+
+        [Setting("Read connection pool size (1-4)",
+            RequiresRestart = true, DefaultValue = "2",
+            LegacyEnvVar = "DUCKDB_READ_POOL_SIZE")]
+        public int? ReadPoolSize { get; set; }
+    }
+
+    public sealed class EmbeddingSettings
+    {
+        [Setting("Embedding generation mode",
+            RequiresRestart = true, ValidValues = "none|structure|full|hybrid",
+            DefaultValue = "hybrid",
+            LegacyEnvVar = "REPOQL_EMBED_MODE")]
+        public string? Mode { get; set; }
+
+        [Setting("Path to ONNX model override",
+            RequiresRestart = true,
+            LegacyEnvVar = "REPOQL_EMBED_MODEL_PATH")]
+        public string? ModelPath { get; set; }
+
+        [Setting("Max tokens per embedding sample",
+            RequiresRestart = true, DefaultValue = "256",
+            LegacyEnvVar = "REPOQL_EMBED_MAX_TOKENS")]
+        public int? MaxTokens { get; set; }
+
+        [Setting("Embedding dimension for hashed provider",
+            RequiresRestart = true, DefaultValue = "384",
+            LegacyEnvVar = "REPOQL_EMBED_DIM")]
+        public int? Dim { get; set; }
+
+        [Setting("Batch size for embedding generation",
+            LegacyEnvVar = "REPOQL_EMBED_BATCH_SIZE")]
+        public int? BatchSize { get; set; }
+
+        [Setting("Concurrency for vector indexing",
+            LegacyEnvVar = "REPOQL_EMBED_CONCURRENCY")]
+        public int? Concurrency { get; set; }
+    }
+
+    public sealed class OrtSettings
+    {
+        [Setting("ONNX Runtime execution provider",
+            RequiresRestart = true, ValidValues = "CPU|CUDA|DML|COREML",
+            DefaultValue = "CPU",
+            LegacyEnvVar = "REPOQL_ORT_PROVIDER")]
+        public string? Provider { get; set; }
+
+        [Setting("ONNX intra-op thread count (0 = auto)",
+            RequiresRestart = true, DefaultValue = "0",
+            LegacyEnvVar = "REPOQL_ORT_INTRA_THREADS")]
+        public int? IntraThreads { get; set; }
+
+        [Setting("ONNX inter-op thread count",
+            RequiresRestart = true, DefaultValue = "1",
+            LegacyEnvVar = "REPOQL_ORT_INTER_THREADS")]
+        public int? InterThreads { get; set; }
+    }
+
+    public sealed class LlmSettings
+    {
+        [Setting("LLM API key",
+            Sensitive = true, RequiresRestart = true,
+            LegacyEnvVar = "OPENROUTER_API_KEY")]
+        public string? ApiKey { get; set; }
+
+        [Setting("Max concurrent LLM API calls",
+            RequiresRestart = true, DefaultValue = "4",
+            LegacyEnvVar = "REPOQL_OPENROUTER_CONCURRENCY")]
+        public int? Concurrency { get; set; }
+    }
+
+    public sealed class HostSettings
+    {
+        [Setting("Seconds before idle host shuts down",
+            DefaultValue = "45",
+            LegacyEnvVar = "REPOQL_IDLE_GRACE_SECONDS")]
+        public int? IdleGraceSeconds { get; set; }
+
+        [Setting("Client lease TTL in seconds",
+            DefaultValue = "30",
+            LegacyEnvVar = "REPOQL_LEASE_TTL_SECONDS")]
+        public int? LeaseTtlSeconds { get; set; }
+
+        [Setting("Watchdog timeout after shutdown in seconds",
+            DefaultValue = "15",
+            LegacyEnvVar = "REPOQL_IMPLICIT_SHUTDOWN_WATCHDOG_SECONDS")]
+        public int? ShutdownWatchdogSeconds { get; set; }
+
+        [Setting("Host startup timeout in milliseconds",
+            DefaultValue = "120000",
+            LegacyEnvVar = "REPOQL_START_TIMEOUT_MS")]
+        public int? StartTimeoutMs { get; set; }
+
+        [Setting("Lease establishment timeout in milliseconds",
+            DefaultValue = "5000",
+            LegacyEnvVar = "REPOQL_LEASE_START_TIMEOUT_MS")]
+        public int? LeaseStartTimeoutMs { get; set; }
+    }
+
+    public sealed class McpSettings
+    {
+        [Setting("Load global agent MCP configs",
+            DefaultValue = "true",
+            LegacyEnvVar = "REPOQL_MCP_INCLUDE_GLOBALS")]
+        public bool? IncludeGlobals { get; set; }
+
+        [Setting("Comma-separated list of enabled agent types",
+            LegacyEnvVar = "REPOQL_MCP_ENABLED_AGENTS")]
+        public string? EnabledAgents { get; set; }
+    }
+
+    public sealed class DotnetSettings
+    {
+        [Setting("Enable deep Roslyn analysis (expensive)",
+            DefaultValue = "false",
+            LegacyEnvVar = "REPOQL_DOTNET_ANALYSIS")]
+        public bool? Analysis { get; set; }
+
+        [Setting("Roslyn workspace session sliding expiration (seconds)",
+            DefaultValue = "60",
+            LegacyEnvVar = "REPOQL_CSHARP_WORKSPACE_SESSION_SLIDING_SECONDS")]
+        public int? CsharpWorkspaceSessionSlidingSeconds { get; set; }
+
+        [Setting("Roslyn workspace session absolute expiration (seconds)",
+            DefaultValue = "600",
+            LegacyEnvVar = "REPOQL_CSHARP_WORKSPACE_SESSION_ABSOLUTE_SECONDS")]
+        public int? CsharpWorkspaceSessionAbsoluteSeconds { get; set; }
+
+        [Setting("Roslyn workspace session cache entry size",
+            DefaultValue = "1",
+            LegacyEnvVar = "REPOQL_CSHARP_WORKSPACE_SESSION_ENTRY_SIZE")]
+        public int? CsharpWorkspaceSessionEntrySize { get; set; }
+    }
+
+    public sealed class CacheSettings
+    {
+        [Setting("Shared memory cache size limit",
+            RequiresRestart = true, DefaultValue = "128",
+            LegacyEnvVar = "REPOQL_SHARED_CACHE_SIZE_LIMIT")]
+        public long? SizeLimit { get; set; }
+    }
+
+    public sealed class FindSettings
+    {
+        [Setting("Max find results returned after scoring",
+            DefaultValue = "20")]
+        public int? MaxResults { get; set; }
+
+        [Setting("Minimum score threshold for accepted find matches",
+            DefaultValue = "0.10")]
+        public double? MinScoreThreshold { get; set; }
+
+        [Setting("Initial semantic candidate chunk limit per find round",
+            DefaultValue = "96")]
+        public int? InitialCandidateLimit { get; set; }
+
+        [Setting("Maximum semantic candidate chunk limit across adaptive widening",
+            DefaultValue = "768")]
+        public int? MaxCandidateLimit { get; set; }
+
+        [Setting("Adaptive widening growth percentage per round (200 = 2x)",
+            DefaultValue = "200")]
+        public int? GrowthPercent { get; set; }
+
+        [Setting("Maximum adaptive widening rounds for find",
+            DefaultValue = "4")]
+        public int? MaxWideningRounds { get; set; }
+
+        [Setting("Target number of qualified matches before stopping widening",
+            DefaultValue = "24")]
+        public int? TargetQualifiedMatches { get; set; }
+
+        [Setting("Confidence margin required to stop widening early",
+            DefaultValue = "0.05")]
+        public double? ConfidenceMargin { get; set; }
+
+        [Setting("Precomputed chunk cap per document during candidate selection",
+            DefaultValue = "3")]
+        public int? PerDocumentChunkLimit { get; set; }
+
+        [Setting("Maximum new chunks to refine with zoom_and_enhance per round",
+            DefaultValue = "192")]
+        public int? MaxZoomInputsPerRound { get; set; }
+
+        [Setting("Minimum line span for zoom_and_enhance splits",
+            DefaultValue = "8")]
+        public int? ZoomMinLines { get; set; }
+
+        [Setting("Maximum split depth for zoom_and_enhance",
+            DefaultValue = "3")]
+        public int? ZoomMaxDepth { get; set; }
+
+        [Setting("Score threshold used by zoom_and_enhance split acceptance",
+            DefaultValue = "0.20")]
+        public double? ZoomThreshold { get; set; }
+
+        [Setting("Context lines around refined matches in find output",
+            DefaultValue = "2")]
+        public int? ContextLines { get; set; }
+
+        [Setting("Per-round timeout in milliseconds for find SQL phases",
+            DefaultValue = "20000")]
+        public int? RoundTimeoutMs { get; set; }
+
+        [Setting("Total timeout in milliseconds across all adaptive find rounds",
+            DefaultValue = "90000")]
+        public int? TotalTimeoutMs { get; set; }
+    }
+}

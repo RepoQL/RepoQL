@@ -1458,6 +1458,7 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/node_primary_fragment.sql",
                 "Macros/search_helpers.sql",
                 "Macros/search_lexical.sql",
+                "Macros/find_candidates.sql",
                 "Macros/search_semantic.sql",
                 "Macros/search_debug.sql",
                 "Macros/search.sql",

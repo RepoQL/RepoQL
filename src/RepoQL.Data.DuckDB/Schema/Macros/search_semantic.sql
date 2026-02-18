@@ -152,17 +152,32 @@ full_text_chunks AS (
       AND de.dim = array_length(qv.vec::FLOAT[])
 ),
 
--- Aggregate full-text to best chunk per document
+-- Rank chunks once and keep only the best-scoring row per document.
+-- This avoids ARRAY_AGG materialization for large files/scope.
+full_text_ranked AS (
+    SELECT
+        node_id,
+        doc_id,
+        chunk_index,
+        start_byte,
+        end_byte,
+        chunk_sem,
+        ROW_NUMBER() OVER (
+            PARTITION BY node_id
+            ORDER BY chunk_sem DESC, chunk_index
+        ) AS chunk_rank
+    FROM full_text_chunks
+),
 full_text_scored AS (
     SELECT
         node_id,
         doc_id,
-        MAX(chunk_sem) AS full_sem,
-        (ARRAY_AGG(chunk_index ORDER BY chunk_sem DESC))[1] AS best_chunk_index,
-        (ARRAY_AGG(start_byte ORDER BY chunk_sem DESC))[1] AS best_chunk_start,
-        (ARRAY_AGG(end_byte ORDER BY chunk_sem DESC))[1] AS best_chunk_end
-    FROM full_text_chunks
-    GROUP BY node_id, doc_id
+        chunk_sem AS full_sem,
+        chunk_index AS best_chunk_index,
+        start_byte AS best_chunk_start,
+        end_byte AS best_chunk_end
+    FROM full_text_ranked
+    WHERE chunk_rank = 1
 ),
 
 -- ============================================================================

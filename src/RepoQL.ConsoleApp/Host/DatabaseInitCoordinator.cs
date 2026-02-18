@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Snapshots;
 using RepoQL.Data.DuckDB;
@@ -14,7 +15,10 @@ namespace RepoQL.ConsoleApp.Host;
 /// </summary>
 internal static class DatabaseInitCoordinator
 {
-    public static DatabaseInitPreparation Prepare(string repoRoot, Serilog.ILogger logger)
+    public static DatabaseInitPreparation Prepare(
+        string repoRoot,
+        Serilog.ILogger logger,
+        RepoQlConfig.DuckDbSettings? duckDbSettings = null)
     {
         var repoqlDir = RepoLocator.EnsureRepoqlDirectory(repoRoot);
         var dbPath = Path.Combine(repoqlDir, "index.duckdb");
@@ -28,7 +32,7 @@ internal static class DatabaseInitCoordinator
 
         report.DiskFreeBytes = TryGetDiskFreeBytes(dbPath);
 
-        var options = DuckDbStartupOptionsBuilder.Build(dbPath);
+        var options = DuckDbStartupOptionsBuilder.Build(dbPath, duckDbSettings);
         report.EnvVarsValidated = true;
         foreach (var issue in options.InvalidEnvironmentVariables)
         {

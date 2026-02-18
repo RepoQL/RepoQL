@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Data.DuckDB.Tests;
@@ -8,97 +9,63 @@ public class DuckDbStartupOptionsBuilderTests
     [Test]
     public void Build_FallsBackWhenMemoryLimitInvalid()
     {
-        var original = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT");
-        try
+        var settings = new RepoQlConfig.DuckDbSettings
         {
-            Environment.SetEnvironmentVariable("DUCKDB_MEMORY_LIMIT", "not-a-number");
+            MemoryLimit = "not-a-number"
+        };
 
-            var options = DuckDbStartupOptionsBuilder.Build(null);
+        var options = DuckDbStartupOptionsBuilder.Build(null, settings);
 
-            options.InvalidEnvironmentVariables.Should().ContainSingle(issue => issue.Name == "DUCKDB_MEMORY_LIMIT");
-            options.MemoryLimit.Should().NotBe("NOT-A-NUMBER");
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("DUCKDB_MEMORY_LIMIT", original);
-        }
+        options.InvalidEnvironmentVariables.Should().ContainSingle(issue => issue.Name == "DUCKDB_MEMORY_LIMIT");
+        options.MemoryLimit.Should().NotBe("NOT-A-NUMBER");
     }
 
     [Test]
     public void Build_FallsBackWhenThreadsInvalid()
     {
-        var original = Environment.GetEnvironmentVariable("DUCKDB_THREADS");
-        try
+        var settings = new RepoQlConfig.DuckDbSettings
         {
-            Environment.SetEnvironmentVariable("DUCKDB_THREADS", "-5");
+            Threads = -5
+        };
 
-            var options = DuckDbStartupOptionsBuilder.Build(null);
+        var options = DuckDbStartupOptionsBuilder.Build(null, settings);
 
-            options.InvalidEnvironmentVariables.Should().ContainSingle(issue => issue.Name == "DUCKDB_THREADS");
-            options.Threads.Should().BeGreaterThan(0);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("DUCKDB_THREADS", original);
-        }
+        options.InvalidEnvironmentVariables.Should().ContainSingle(issue => issue.Name == "DUCKDB_THREADS");
+        options.Threads.Should().BeGreaterThan(0);
     }
 
     [Test]
     public void Build_DefaultsTempDirectoryNextToDatabase()
     {
-        var original = Environment.GetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY");
-        try
-        {
-            Environment.SetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY", null);
-            using var temp = new TempDir();
-            var repoqlDir = Path.Combine(temp.Path, ".repoql");
-            var dbPath = Path.Combine(repoqlDir, "index.duckdb");
+        using var temp = new TempDir();
+        var repoqlDir = Path.Combine(temp.Path, ".repoql");
+        var dbPath = Path.Combine(repoqlDir, "index.duckdb");
 
-            var options = DuckDbStartupOptionsBuilder.Build(dbPath);
+        var options = DuckDbStartupOptionsBuilder.Build(dbPath, new RepoQlConfig.DuckDbSettings());
 
-            options.TempDirectory.Should().Be(Path.Combine(repoqlDir, "temp"));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY", original);
-        }
+        options.TempDirectory.Should().Be(Path.Combine(repoqlDir, "temp"));
     }
 
     [Test]
     public void Build_DefaultsReadPoolSize()
     {
-        var original = Environment.GetEnvironmentVariable("DUCKDB_READ_POOL_SIZE");
-        try
-        {
-            Environment.SetEnvironmentVariable("DUCKDB_READ_POOL_SIZE", null);
+        var options = DuckDbStartupOptionsBuilder.Build(null, new RepoQlConfig.DuckDbSettings());
 
-            var options = DuckDbStartupOptionsBuilder.Build(null);
-
-            options.ReadPoolSize.Should().Be(2);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("DUCKDB_READ_POOL_SIZE", original);
-        }
+        options.ReadPoolSize.Should().Be(2);
     }
 
     [Test]
     public void Build_FallsBackWhenReadPoolSizeInvalid()
     {
-        var original = Environment.GetEnvironmentVariable("DUCKDB_READ_POOL_SIZE");
-        try
+        var settings = new RepoQlConfig.DuckDbSettings
         {
-            Environment.SetEnvironmentVariable("DUCKDB_READ_POOL_SIZE", "99");
+            ReadPoolSize = 99
+        };
 
-            var options = DuckDbStartupOptionsBuilder.Build(null);
+        var options = DuckDbStartupOptionsBuilder.Build(null, settings);
 
-            options.InvalidEnvironmentVariables.Should().ContainSingle(issue => issue.Name == "DUCKDB_READ_POOL_SIZE");
-            options.ReadPoolSize.Should().Be(2);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("DUCKDB_READ_POOL_SIZE", original);
-        }
+        options.InvalidEnvironmentVariables.Should().ContainSingle(issue => issue.Name == "DUCKDB_READ_POOL_SIZE");
+        options.ReadPoolSize.Should().Be(2);
     }
 
     private sealed class TempDir : IDisposable

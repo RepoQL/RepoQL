@@ -25,6 +25,7 @@ using RepoQL.ConsoleApp.Host;
 using RepoQL.ConsoleApp.Logging;
 using RepoQL.ConsoleApp.Search;
 using RepoQL.Core;
+using RepoQL.Core.Configuration;
 using RepoQL.Indexing.Hosting;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Snapshots;
@@ -143,7 +144,9 @@ internal class HostCommands(IAnsiConsole console)
                 });
             });
             serilogLogger.Information("Phase: database init");
-            var dbInit = DatabaseInitCoordinator.Prepare(repo, serilogLogger);
+            builder.Services.AddResolvedConfig(repo);
+            var startupConfig = ConfigurationLoader.Load(SettingRegistry.Build(), repo);
+            var dbInit = DatabaseInitCoordinator.Prepare(repo, serilogLogger, startupConfig.Settings.DuckDb);
             builder.Services.AddSingleton(dbInit.Options);
             builder.Services.AddRepoIndexer(repo);
             builder.Services.AddSingleton<ISnapshotSource, HelpDocsSnapshotSource>();

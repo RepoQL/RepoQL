@@ -1,9 +1,10 @@
 using System.Text.RegularExpressions;
+using RepoQL.Contracts.Configuration;
 
 namespace RepoQL.Data.DuckDB;
 
 /// <summary>
-/// Purpose: Build validated DuckDB startup options from environment and defaults.
+/// Purpose: Build validated DuckDB startup options from resolved config and defaults.
 /// Complexity: Normalizes input and tracks invalid overrides without throwing.
 /// </summary>
 public static class DuckDbStartupOptionsBuilder
@@ -16,15 +17,18 @@ public static class DuckDbStartupOptionsBuilder
         RegexOptions.Compiled | RegexOptions.IgnoreCase,
         TimeSpan.FromMilliseconds(100));
 
-    public static DuckDbStartupOptions Build(string? databasePath)
+    public static DuckDbStartupOptions Build(
+        string? databasePath,
+        RepoQlConfig.DuckDbSettings? duckDbSettings = null)
     {
         var invalid = new List<DuckDbEnvironmentIssue>();
         var (defaultThreads, defaultMemory) = DuckDbDefaults.GetOptimalConfig();
+        duckDbSettings ??= new RepoQlConfig.DuckDbSettings();
 
-        var memoryLimit = ResolveMemoryLimit(defaultMemory, invalid);
-        var threads = ResolveThreads(defaultThreads, invalid);
-        var tempDirectory = ResolveTempDirectory(databasePath);
-        var readPoolSize = ResolveReadPoolSize(invalid);
+        var memoryLimit = ResolveMemoryLimit(defaultMemory, duckDbSettings, invalid);
+        var threads = ResolveThreads(defaultThreads, duckDbSettings, invalid);
+        var tempDirectory = ResolveTempDirectory(databasePath, duckDbSettings);
+        var readPoolSize = ResolveReadPoolSize(duckDbSettings, invalid);
 
         return new DuckDbStartupOptions(
             memoryLimit,
@@ -34,9 +38,12 @@ public static class DuckDbStartupOptionsBuilder
             invalid);
     }
 
-    private static string ResolveMemoryLimit(string defaultMemory, List<DuckDbEnvironmentIssue> invalid)
+    private static string ResolveMemoryLimit(
+        string defaultMemory,
+        RepoQlConfig.DuckDbSettings settings,
+        List<DuckDbEnvironmentIssue> invalid)
     {
-        var raw = Environment.GetEnvironmentVariable("DUCKDB_MEMORY_LIMIT");
+        var raw = settings.MemoryLimit;
         if (string.IsNullOrWhiteSpace(raw))
             return defaultMemory;
 
@@ -50,14 +57,18 @@ public static class DuckDbStartupOptionsBuilder
         return normalized;
     }
 
-    private static int ResolveThreads(string defaultThreads, List<DuckDbEnvironmentIssue> invalid)
+    private static int ResolveThreads(
+        string defaultThreads,
+        RepoQlConfig.DuckDbSettings settings,
+        List<DuckDbEnvironmentIssue> invalid)
     {
-        var raw = Environment.GetEnvironmentVariable("DUCKDB_THREADS");
-        if (string.IsNullOrWhiteSpace(raw))
+        if (!settings.Threads.HasValue)
             return int.Parse(defaultThreads);
 
-        if (!int.TryParse(raw.Trim(), out var parsed) || parsed <= 0)
+        var parsed = settings.Threads.Value;
+        if (parsed <= 0)
         {
+            var raw = settings.Threads.Value.ToString();
             invalid.Add(new DuckDbEnvironmentIssue("DUCKDB_THREADS", raw, "Thread count must be positive."));
             return int.Parse(defaultThreads);
         }
@@ -65,12 +76,11 @@ public static class DuckDbStartupOptionsBuilder
         return parsed;
     }
 
-    private static string ResolveTempDirectory(string? databasePath)
+    private static string ResolveTempDirectory(string? databasePath, RepoQlConfig.DuckDbSettings settings)
     {
-        var env = Environment.GetEnvironmentVariable("DUCKDB_TEMP_DIRECTORY");
-        if (!string.IsNullOrWhiteSpace(env))
+        if (!string.IsNullOrWhiteSpace(settings.TempDirectory))
         {
-            return env.Trim();
+            return settings.TempDirectory.Trim();
         }
 
         var baseDir = string.IsNullOrWhiteSpace(databasePath)
@@ -80,14 +90,17 @@ public static class DuckDbStartupOptionsBuilder
         return Path.Combine(baseDir, "temp");
     }
 
-    private static int ResolveReadPoolSize(List<DuckDbEnvironmentIssue> invalid)
+    private static int ResolveReadPoolSize(
+        RepoQlConfig.DuckDbSettings settings,
+        List<DuckDbEnvironmentIssue> invalid)
     {
-        var raw = Environment.GetEnvironmentVariable("DUCKDB_READ_POOL_SIZE");
-        if (string.IsNullOrWhiteSpace(raw))
+        if (!settings.ReadPoolSize.HasValue)
             return DefaultReadPoolSize;
 
-        if (!int.TryParse(raw.Trim(), out var parsed) || parsed <= 0 || parsed > MaxReadPoolSize)
+        var parsed = settings.ReadPoolSize.Value;
+        if (parsed <= 0 || parsed > MaxReadPoolSize)
         {
+            var raw = settings.ReadPoolSize.Value.ToString();
             invalid.Add(new DuckDbEnvironmentIssue(
                 "DUCKDB_READ_POOL_SIZE",
                 raw,
