@@ -42,12 +42,7 @@ internal static class ServiceCollectionExtensions
 
         // Configuration + settings metadata for ::config commands
         services.AddResolvedConfig(startupRepoRoot);
-        services.AddScoped<string>(sp =>
-        {
-            var clientProvider = sp.GetRequiredService<RepoQlClientProvider>();
-            return clientProvider.GetConfiguredRepositoryPath()
-                   ?? RepoLocator.FindRepoRoot();
-        });
+        services.AddScoped<EnvironmentContext>();
 
         // Command framework
         services.AddSingleton<CommandRegistry>();

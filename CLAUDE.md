@@ -71,6 +71,7 @@ Violating these causes corruption, test failures, or architectural drift.
 | Transport parity | Anything you do via MCP you can do via CLI or gRPC. The MCP client is one of potentially many |
 | Docs with features | New functionality must include `help://` docs |
 | Perfection > compatibility | Get it right rather than accumulate debt. Stability over backwards compatibility |
+| Never push without asking | Do not `git push` unless the user explicitly asks. Commit locally is fine; pushing is their call. |
 
 ---
 

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RepoQL.Commands;
+using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Configuration;
 
@@ -15,7 +16,7 @@ namespace RepoQL.ConsoleApp.CommandImplementations;
 /// Levenshtein suggestions, and atomic JSON updates with scope-specific file paths.
 /// </summary>
 [CommandClass]
-internal sealed class ConfigCommand(SettingRegistry registry, ResolvedConfig config, string repoRoot)
+internal sealed class ConfigCommand(SettingRegistry registry, ResolvedConfig config, EnvironmentContext environmentContext)
 {
     private static readonly JsonDocumentOptions JsonOptions = new()
     {
@@ -23,7 +24,7 @@ internal sealed class ConfigCommand(SettingRegistry registry, ResolvedConfig con
         AllowTrailingCommas = true,
     };
 
-    private readonly string _repoRoot = Path.GetFullPath(repoRoot);
+    private string RepoRoot => environmentContext.RepoRootPath;
 
     [Command("config", Description = "List all settings with values, sources, and descriptions")]
     public Task<CommandResult> List(CancellationToken cancel)
@@ -213,7 +214,7 @@ internal sealed class ConfigCommand(SettingRegistry registry, ResolvedConfig con
     }
 
     private void Reload() =>
-        config.Reload(_repoRoot, userConfigDir: config.UserConfigDir);
+        config.Reload(RepoRoot, userConfigDir: config.UserConfigDir);
 
     private CommandResult UnknownKey(string key)
     {
@@ -246,8 +247,8 @@ internal sealed class ConfigCommand(SettingRegistry registry, ResolvedConfig con
     private string PathForScope(WriteScope scope) =>
         scope switch
         {
-            WriteScope.Local => Path.Combine(_repoRoot, ".repoql", "config.json"),
-            WriteScope.Repo => Path.Combine(_repoRoot, ".repoql.json"),
+            WriteScope.Local => Path.Combine(RepoRoot, ".repoql", "config.json"),
+            WriteScope.Repo => Path.Combine(RepoRoot, ".repoql.json"),
             WriteScope.User => Path.Combine(config.UserConfigDir, "config.json"),
             _ => throw new ArgumentOutOfRangeException(nameof(scope), scope, null),
         };

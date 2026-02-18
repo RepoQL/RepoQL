@@ -6,5 +6,6 @@
 <linker>
   <assembly fullname="repoql">
     <type fullname="RepoQL.ConsoleApp.CommandImplementations.*" preserve="all" />
+    <type fullname="RepoQL.ConsoleApp.Tools.*" preserve="all" />
   </assembly>
 </linker>
