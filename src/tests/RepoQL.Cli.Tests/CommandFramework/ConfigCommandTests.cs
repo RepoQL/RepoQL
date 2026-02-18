@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using RepoQL.ConsoleApp.CommandImplementations;
+using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Core.Configuration;
 
 namespace RepoQL.Cli.Tests.CommandFramework;
@@ -40,7 +41,7 @@ internal sealed class ConfigCommandTests : IDisposable
         _savedEnvVars = SnapshotConfigEnvironment(_registry);
         ClearEnvironmentValues(_savedEnvVars.Keys);
         _resolved = ConfigurationLoader.Load(_registry, _repoRoot, userConfigDir: _userConfigDir);
-        _command = new ConfigCommand(_registry, _resolved, _repoRoot);
+        _command = new ConfigCommand(_registry, _resolved, new EnvironmentContext(_repoRoot));
     }
 
     public void Dispose()
