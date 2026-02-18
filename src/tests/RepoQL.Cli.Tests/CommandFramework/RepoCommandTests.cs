@@ -261,7 +261,7 @@ internal sealed class RepoCommandTests : IDisposable
     /// </summary>
     private static async Task<CommandResult> ExecuteRepo(string path)
     {
-        var provider = new RepoQlClientProvider();
+        var provider = new RepoQlClientProvider(new RepoQL.Contracts.Configuration.RepoQlConfig());
         var command = new RepoCommand(provider);
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         return await command.Execute(path, cts.Token);
@@ -270,6 +270,7 @@ internal sealed class RepoCommandTests : IDisposable
     private static CommandRegistry CreateRegistryWithRepoCommand()
     {
         var services = new ServiceCollection();
+        services.AddSingleton(new RepoQL.Contracts.Configuration.RepoQlConfig());
         services.AddSingleton<RepoQlClientProvider>();
         var provider = services.BuildServiceProvider();
         var registry = new CommandRegistry(provider);

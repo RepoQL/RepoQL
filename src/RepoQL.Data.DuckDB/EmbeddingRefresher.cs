@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Embeddings;
 
 namespace RepoQL.Data.DuckDB;
@@ -28,7 +29,7 @@ public sealed class EmbeddingRefresher
     private const string DocumentEmbeddingScope = "document";
     private const string FullEmbeddingType = "full";
 
-    // Batch size for embedding. Override with REPOQL_EMBED_BATCH_SIZE env var.
+    // Batch size for embedding from configuration (embedding.batch_size).
     // Default aligns with OpenRouter's 100-item API limit to avoid split batches.
     private const int DefaultEmbeddingBatchSize = 100;
 
@@ -40,12 +41,18 @@ public sealed class EmbeddingRefresher
 
     private readonly DuckDbDataStore _store;
     private readonly EmbeddingMode _embeddingMode;
+    private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
     private readonly ILogger<EmbeddingRefresher> _logger;
 
-    public EmbeddingRefresher(DuckDbDataStore store, EmbeddingMode embeddingMode = EmbeddingMode.Full, ILogger<EmbeddingRefresher>? logger = null)
+    public EmbeddingRefresher(
+        DuckDbDataStore store,
+        EmbeddingMode embeddingMode = EmbeddingMode.Full,
+        ILogger<EmbeddingRefresher>? logger = null,
+        RepoQlConfig.EmbeddingSettings? embeddingSettings = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _embeddingMode = embeddingMode;
+        _embeddingSettings = embeddingSettings ?? new RepoQlConfig.EmbeddingSettings();
         _logger = logger ?? NullLogger<EmbeddingRefresher>.Instance;
     }
 
@@ -237,11 +244,9 @@ public sealed class EmbeddingRefresher
 
     private int GetEffectiveBatchSize(IEmbeddingProvider provider)
     {
-        var batchSize = DefaultEmbeddingBatchSize;
-        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_BATCH_SIZE"), out var bs) && bs > 0)
-        {
-            batchSize = bs;
-        }
+        var batchSize = _embeddingSettings.BatchSize is > 0
+            ? _embeddingSettings.BatchSize.Value
+            : DefaultEmbeddingBatchSize;
 
         if (provider is RepoQL.Embeddings.OnnxEmbeddingProvider onnx)
         {

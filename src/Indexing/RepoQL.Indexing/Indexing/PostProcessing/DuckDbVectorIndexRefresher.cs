@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 
@@ -21,13 +22,14 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
         DuckDbDataStore dataStore,
         IEmbeddingProvider embeddingProvider,
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
-        ILogger<DuckDbVectorIndexRefresher>? logger = null)
+        ILogger<DuckDbVectorIndexRefresher>? logger = null,
+        RepoQlConfig.EmbeddingSettings? embeddingSettings = null)
     {
         if (dataStore is null) throw new ArgumentNullException(nameof(dataStore));
         _embeddingProvider = embeddingProvider ?? throw new ArgumentNullException(nameof(embeddingProvider));
         _embeddingMode = embeddingMode;
         _logger = logger ?? NullLogger<DuckDbVectorIndexRefresher>.Instance;
-        _refresher = new EmbeddingRefresher(dataStore, embeddingMode, logger as ILogger<EmbeddingRefresher>);
+        _refresher = new EmbeddingRefresher(dataStore, embeddingMode, logger as ILogger<EmbeddingRefresher>, embeddingSettings);
     }
 
     public async Task<bool> RefreshAsync(CancellationToken cancellationToken)

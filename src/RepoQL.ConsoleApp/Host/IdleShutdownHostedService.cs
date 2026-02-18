@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using RepoQL.Contracts.Configuration;
 
 namespace RepoQL.ConsoleApp.Host;
 
@@ -22,6 +23,7 @@ internal sealed class IdleShutdownHostedService : BackgroundService
         ILogger<IdleShutdownHostedService> logger,
         HostState state,
         HostMetrics metrics,
+        RepoQlConfig? config = null,
         TimeSpan? pollInterval = null,
         TimeSpan? leaseTtl = null,
         TimeSpan? idleGrace = null,
@@ -32,10 +34,11 @@ internal sealed class IdleShutdownHostedService : BackgroundService
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _state = state ?? throw new ArgumentNullException(nameof(state));
         _metrics = metrics ?? throw new ArgumentNullException(nameof(metrics));
+        var hostSettings = config?.Host;
         _poll = pollInterval ?? TimeSpan.FromSeconds(5);
-        _leaseTtl = leaseTtl ?? TimeSpan.FromSeconds(GetEnvInt("REPOQL_LEASE_TTL_SECONDS", 30));
-        _idleGrace = idleGrace ?? GetIdleGrace();
-        _shutdownWatchdog = shutdownWatchdog ?? GetImplicitShutdownWatchdog();
+        _leaseTtl = leaseTtl ?? TimeSpan.FromSeconds(ResolvePositiveInt(hostSettings?.LeaseTtlSeconds, 30));
+        _idleGrace = idleGrace ?? GetIdleGrace(hostSettings);
+        _shutdownWatchdog = shutdownWatchdog ?? GetImplicitShutdownWatchdog(hostSettings);
         _forceTerminate = forceTerminate ?? ForceTerminateCurrentProcess;
     }
 
@@ -136,22 +139,22 @@ internal sealed class IdleShutdownHostedService : BackgroundService
         }, CancellationToken.None);
     }
 
-    private static int GetEnvInt(string name, int dflt)
-        => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
+    private static int ResolvePositiveInt(int? value, int dflt)
+        => value is > 0 ? value.Value : dflt;
 
-    private static int GetEnvIntAllowZero(string name, int dflt)
-        => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v >= 0 ? v : dflt;
+    private static int ResolveNonNegativeInt(int? value, int dflt)
+        => value is >= 0 ? value.Value : dflt;
 
-    private static TimeSpan GetIdleGrace()
+    private static TimeSpan GetIdleGrace(RepoQlConfig.HostSettings? settings)
     {
         if (IsMcpImplicitSource())
             return TimeSpan.FromSeconds(10); // Minimum grace for client to connect
 
-        return TimeSpan.FromSeconds(GetEnvInt("REPOQL_IDLE_GRACE_SECONDS", 45));
+        return TimeSpan.FromSeconds(ResolvePositiveInt(settings?.IdleGraceSeconds, 45));
     }
 
-    private static TimeSpan GetImplicitShutdownWatchdog()
-        => TimeSpan.FromSeconds(GetEnvIntAllowZero("REPOQL_IMPLICIT_SHUTDOWN_WATCHDOG_SECONDS", 15));
+    private static TimeSpan GetImplicitShutdownWatchdog(RepoQlConfig.HostSettings? settings)
+        => TimeSpan.FromSeconds(ResolveNonNegativeInt(settings?.ShutdownWatchdogSeconds, 15));
 
     private static void ForceTerminateCurrentProcess()
         => Process.GetCurrentProcess().Kill(entireProcessTree: true);

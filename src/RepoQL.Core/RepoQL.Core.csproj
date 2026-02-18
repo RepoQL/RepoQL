@@ -44,6 +44,7 @@
 
     <ItemGroup>
         <InternalsVisibleTo Include="RepoQL.Tests"/>
+        <InternalsVisibleTo Include="RepoQL.Core.Tests"/>
     </ItemGroup>
 
 </Project>

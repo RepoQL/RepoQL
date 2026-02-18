@@ -5,10 +5,10 @@ using AwesomeAssertions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Formats.DotNet;
 using RepoQL.Core;
 using AnalysisResult = RepoQL.Contracts.Analysis.AnalysisResult;
@@ -1586,16 +1586,14 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
         }
     }
 
-    private static IConfiguration CreateAnalysisConfiguration()
-    {
-        var values = new Dictionary<string, string?>
+    private static RepoQlConfig CreateAnalysisConfiguration()
+        => new()
         {
-            ["REPOQL_DOTNET_ANALYSIS"] = "true"
+            Dotnet = new RepoQlConfig.DotnetSettings
+            {
+                Analysis = true
+            }
         };
-        return new ConfigurationBuilder()
-            .AddInMemoryCollection(values)
-            .Build();
-    }
 
     #endregion
 }

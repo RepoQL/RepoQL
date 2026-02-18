@@ -10,6 +10,7 @@ using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Configuration;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 
@@ -40,6 +41,7 @@ public class RepoQlConnectionClient : IRepoQlClient
     private CancellationTokenSource? _leaseCts;
     private AsyncClientStreamingCall<ClientLeaseBeat, ClientLeaseSummary>? _leaseCall;
     private readonly ILogger _logger;
+    private readonly RepoQlConfig.HostSettings _hostSettings;
     private string? _activeSocketPath;
 
     public GrpcChannel Channel => _channel ?? throw new InvalidOperationException("RepoQL client is not connected.");
@@ -60,6 +62,7 @@ public class RepoQlConnectionClient : IRepoQlClient
         _client = new Contracts.RepoQL.RepoQLClient(channel);
         _defaultTimeout = defaultTimeout;
         _logger = logger ?? NullLogger.Instance;
+        _hostSettings = new RepoQlConfig.HostSettings();
     }
 
     protected RepoQlConnectionClient(RepoQlClientOptions options, string repoPath, string? socketPath, ILogger? logger = null)
@@ -69,6 +72,7 @@ public class RepoQlConnectionClient : IRepoQlClient
         _configuredSocketPath = socketPath;
         _defaultTimeout = options.DefaultTimeout;
         _logger = logger ?? NullLogger.Instance;
+        _hostSettings = options.HostSettings ?? new RepoQlConfig.HostSettings();
     }
 
     protected virtual async Task EnsureConnectedAsync(bool forceReconnect, CancellationToken cancellationToken)
@@ -116,7 +120,7 @@ public class RepoQlConnectionClient : IRepoQlClient
             repoDirectory,
             socketPath,
             allowReResolve,
-            TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_START_TIMEOUT_MS", 120_000)),
+            TimeSpan.FromMilliseconds(ResolvePositiveInt(_hostSettings.StartTimeoutMs, 120_000)),
             cancellationToken).ConfigureAwait(false);
         _activeSocketPath = finalSocketPath;
 
@@ -146,7 +150,7 @@ public class RepoQlConnectionClient : IRepoQlClient
 
         _client = new Contracts.RepoQL.RepoQLClient(_channel);
         _leaseCts = new CancellationTokenSource();
-        EstablishLeaseOrThrow(repoDirectory.RepoRoot, TimeSpan.FromMilliseconds(EnvironmentTimeout("REPOQL_LEASE_START_TIMEOUT_MS", 5000)));
+        EstablishLeaseOrThrow(repoDirectory.RepoRoot, TimeSpan.FromMilliseconds(ResolvePositiveInt(_hostSettings.LeaseStartTimeoutMs, 5000)));
     }
 
     protected virtual void DisposeChannel()
@@ -594,8 +598,8 @@ public class RepoQlConnectionClient : IRepoQlClient
         });
     }
 
-    private static int EnvironmentTimeout(string name, int dflt) =>
-        int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
+    private static int ResolvePositiveInt(int? value, int dflt)
+        => value is > 0 ? value.Value : dflt;
 
     private void EstablishLeaseOrThrow(string repoPath, TimeSpan timeout)
     {

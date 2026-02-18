@@ -1,12 +1,12 @@
 using System.Diagnostics.Metrics;
 using System.Reflection;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
@@ -116,51 +116,52 @@ public static class RepoIndexerServiceCollectionExtensions
 
         services.AddOptions<IndexingEngineOptions>();
         services.AddOptions<RepoqlHostOptions>();
-        services.AddMemoryCache(options =>
+        services.AddSingleton<IMemoryCache>(sp =>
         {
             // Shared process cache for expensive reusable resources (Roslyn sessions, etc.).
             // Entries must set Size to participate in this cap.
-            options.SizeLimit = ResolveSharedCacheSizeLimit();
-            options.CompactionPercentage = 0.2;
+            var config = sp.GetRequiredService<RepoQlConfig>();
+            return new MemoryCache(new MemoryCacheOptions
+            {
+                SizeLimit = ResolveSharedCacheSizeLimit(config.Cache),
+                CompactionPercentage = 0.2
+            });
         });
 
-        // Embedding mode: controls resource usage for constrained hardware
-        // REPOQL_EMBED_MODE: none|structure|full (default: full)
-        // Legacy REPOQL_EMBED_ENABLED=0 maps to mode=none
-        var embeddingMode = EmbeddingModeExtensions.ParseEmbeddingMode(
-            Environment.GetEnvironmentVariable("REPOQL_EMBED_MODE"));
-
-        // Legacy: REPOQL_EMBED_ENABLED=0 forces None mode
-        if (string.Equals(Environment.GetEnvironmentVariable("REPOQL_EMBED_ENABLED"), "0", StringComparison.Ordinal))
-            embeddingMode = EmbeddingMode.None;
-
-        // Check for OpenRouter API key - used for LLM provider
-        var openRouterKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
-        var useOpenRouter = !string.IsNullOrWhiteSpace(openRouterKey);
-        if (embeddingMode != EmbeddingMode.None)
+        services.AddSingleton(sp =>
         {
-            // Always use full mode for best quality
-            embeddingMode = EmbeddingMode.Full;
-        }
+            var config = sp.GetRequiredService<RepoQlConfig>();
+            // Embedding mode: controls resource usage for constrained hardware.
+            // Non-none modes are currently forced to Full for best quality.
+            var embeddingMode = EmbeddingModeExtensions.ParseEmbeddingMode(config.Embedding.Mode);
+            if (embeddingMode != EmbeddingMode.None)
+            {
+                embeddingMode = EmbeddingMode.Full;
+            }
 
-        services.AddSingleton(new EmbeddingModeOptions(embeddingMode));
+            return new EmbeddingModeOptions(embeddingMode);
+        });
 
         // LLM provider: OpenRouter (cloud) if API key present, otherwise disabled
         services.AddSingleton<ILlmProvider>(sp =>
         {
-            if (!useOpenRouter)
+            var config = sp.GetRequiredService<RepoQlConfig>();
+            var openRouterKey = config.Llm.ApiKey;
+            if (string.IsNullOrWhiteSpace(openRouterKey))
             {
                 return new DisabledLlmProvider();
             }
 
             return new RepoQL.LLM.Client.OpenRouterLlmProvider(
                 apiKey: openRouterKey,
+                settings: config.Llm,
                 logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterLlmProvider>>());
         });
 
         // Embeddings provider: OpenRouter (cloud) if API key present, otherwise local ONNX
         services.AddSingleton<IEmbeddingProvider>(sp =>
         {
+            var config = sp.GetRequiredService<RepoQlConfig>();
             var lf = sp.GetService<ILoggerFactory>();
             var log = lf?.CreateLogger("RepoQL.Embeddings");
             var mode = sp.GetRequiredService<EmbeddingModeOptions>().Mode;
@@ -168,6 +169,8 @@ public static class RepoIndexerServiceCollectionExtensions
             string? failureMessage = null;
             var onnxLogger = sp.GetService<ILogger<OnnxEmbeddingProvider>>();
             var cache = sp.GetService<IMemoryCache>();
+            var openRouterKey = config.Llm.ApiKey;
+            var useOpenRouter = !string.IsNullOrWhiteSpace(openRouterKey);
 
             if (mode == EmbeddingMode.None)
             {
@@ -183,6 +186,7 @@ public static class RepoIndexerServiceCollectionExtensions
                     log?.LogInformation("Embedding provider: using OpenRouter (all-MiniLM-L6-v2, 384 dims, mode=Full)");
                     return new RepoQL.LLM.Client.OpenRouterEmbeddingProvider(
                         apiKey: openRouterKey,
+                        settings: config.Llm,
                         logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterEmbeddingProvider>>());
                 }
                 catch (Exception ex)
@@ -193,12 +197,11 @@ public static class RepoIndexerServiceCollectionExtensions
             }
 
             // No API key - use local ONNX embeddings
-            // Prefer explicit ONNX model path via env
-            var onnxPath = GetEmbeddingModelPath();
-            var maxTokens = GetEmbeddingMaxTokens();
+            var onnxPath = GetEmbeddingModelPath(config.Embedding);
+            var maxTokens = GetEmbeddingMaxTokens(config.Embedding);
             if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
             {
-                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, cache, out var error);
+                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, cache, config.Ort, out var error);
                 if (onnx is not null)
                     return onnx;
 
@@ -235,7 +238,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 if (File.Exists(shipped))
                 {
                     log?.LogInformation("Embedding provider: using model at {Path}", shipped);
-                    var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, cache, out var error);
+                    var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, cache, config.Ort, out var error);
                     if (onnx is not null)
                         return onnx;
 
@@ -263,9 +266,7 @@ public static class RepoIndexerServiceCollectionExtensions
             }
 
             // Fallback: hashed provider (deterministic, lightweight)
-            var dimEnv = Environment.GetEnvironmentVariable("REPOQL_EMBED_DIM");
-            var dim = 384;
-            if (int.TryParse(dimEnv, out var parsed) && parsed > 0) dim = parsed;
+            var dim = config.Embedding.Dim is > 0 ? config.Embedding.Dim.Value : 384;
             log?.LogInformation("Embedding provider: using hashed fallback with dim={Dim}", dim);
             if (!string.IsNullOrWhiteSpace(failureMessage))
             {
@@ -278,6 +279,7 @@ public static class RepoIndexerServiceCollectionExtensions
         // Local ONNX embedding provider for fast interactive search (JIT embeddings)
         services.AddKeyedSingleton<IEmbeddingProvider>("local", (sp, _) =>
         {
+            var config = sp.GetRequiredService<RepoQlConfig>();
             var lf = sp.GetService<ILoggerFactory>();
             var log = lf?.CreateLogger("RepoQL.Embeddings.Local");
             var mode = sp.GetRequiredService<EmbeddingModeOptions>().Mode;
@@ -293,12 +295,12 @@ public static class RepoIndexerServiceCollectionExtensions
             }
 
             // Always use local ONNX for speed
-            var onnxPath = GetEmbeddingModelPath();
-            var maxTokens = GetEmbeddingMaxTokens();
+            var onnxPath = GetEmbeddingModelPath(config.Embedding);
+            var maxTokens = GetEmbeddingMaxTokens(config.Embedding);
 
             if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
             {
-                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, cache, out var error);
+                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, cache, config.Ort, out var error);
                 if (onnx is not null)
                 {
                     log?.LogInformation("Local embedding provider: using ONNX from explicit path");
@@ -336,7 +338,7 @@ public static class RepoIndexerServiceCollectionExtensions
 
             if (File.Exists(shipped))
             {
-                var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, cache, out var error);
+                var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, cache, config.Ort, out var error);
                 if (onnx is not null)
                 {
                     log?.LogInformation("Local embedding provider: using shipped ONNX model from {Path}", shipped);
@@ -398,9 +400,9 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<CSharpLoader>(sp =>
         {
             var host = sp.GetRequiredService<CSharpWorkspaceHost>();
-            var configuration = sp.GetService<IConfiguration>();
+            var config = sp.GetRequiredService<RepoQlConfig>();
             var logger = sp.GetService<ILogger<CSharpLoader>>();
-            return new CSharpLoader(host, configuration, logger);
+            return new CSharpLoader(host, config, logger);
         });
         services.AddSingleton<IFormatSchemaProvider>(sp => sp.GetRequiredService<CSharpLoader>());
         services.AddSingleton<CSharpAnalyzer>();
@@ -529,7 +531,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton(sp =>
         {
             var logger = sp.GetService<ILogger<McpClientRegistry>>();
-            var options = McpConfigOptions.FromEnvironment();
+            var options = McpConfigOptions.FromConfig(sp.GetRequiredService<RepoQlConfig>().Mcp);
             var degradation = sp.GetService<IServiceDegradationTracker>();
 
             try
@@ -577,7 +579,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<IEmbeddingProvider>(),
             sp.GetRequiredService<EmbeddingModeOptions>().Mode,
             sp.GetService<ILogger<VectorIndexCoordinator>>(),
-            sp.GetService<UriRegistry>()));
+            sp.GetService<UriRegistry>(),
+            sp.GetRequiredService<RepoQlConfig>().Embedding));
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IDocumentCatalog>(),
@@ -717,25 +720,24 @@ public static class RepoIndexerServiceCollectionExtensions
         return services;
     }
 
-    private static int GetEmbeddingMaxTokens()
+    private static int GetEmbeddingMaxTokens(RepoQlConfig.EmbeddingSettings settings)
     {
         var maxTokens = 256;
-        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_MAX_TOKENS"), out var parsed) && parsed > 0)
-            maxTokens = parsed;
+        if (settings.MaxTokens is > 0)
+            maxTokens = settings.MaxTokens.Value;
         return maxTokens;
     }
 
-    private static long ResolveSharedCacheSizeLimit()
+    private static long ResolveSharedCacheSizeLimit(RepoQlConfig.CacheSettings settings)
     {
         const long defaultLimit = 128;
-        var raw = Environment.GetEnvironmentVariable("REPOQL_SHARED_CACHE_SIZE_LIMIT");
-        if (long.TryParse(raw, out var configured) && configured > 0)
-            return configured;
+        if (settings.SizeLimit is > 0)
+            return settings.SizeLimit.Value;
         return defaultLimit;
     }
 
-    private static string? GetEmbeddingModelPath()
-        => Environment.GetEnvironmentVariable("REPOQL_EMBED_MODEL_PATH");
+    private static string? GetEmbeddingModelPath(RepoQlConfig.EmbeddingSettings settings)
+        => settings.ModelPath;
 
     private static (string BaseDir, string ModelDir, string ShippedPath) GetEmbeddingModelPaths()
     {
@@ -750,12 +752,13 @@ public static class RepoIndexerServiceCollectionExtensions
         ILogger<OnnxEmbeddingProvider>? logger,
         int maxTokens,
         IMemoryCache? cache,
+        RepoQlConfig.OrtSettings ortSettings,
         out Exception? error)
     {
         error = null;
         try
         {
-            var onnx = new OnnxEmbeddingProvider(path, logger, maxTokens, cache: cache);
+            var onnx = new OnnxEmbeddingProvider(path, logger, maxTokens, cache: cache, ortSettings: ortSettings);
             if (onnx.Enabled)
                 return onnx;
 

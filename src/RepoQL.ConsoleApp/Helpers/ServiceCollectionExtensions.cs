@@ -4,6 +4,8 @@ using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Tools;
+using RepoQL.Contracts;
+using RepoQL.Core.Configuration;
 using RepoQL.Templating;
 using Spectre.Console;
 
@@ -17,6 +19,8 @@ internal static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddRepoQlConsoleServices(this IServiceCollection services, bool prewarmClient = true)
     {
+        var startupRepoRoot = RepoLocator.FindRepoRoot();
+
         services.AddSingleton<IAnsiConsole>(_ => AnsiConsole.Console);
         services.AddSingleton<IResultFormatter, JsonLDFormatter>();
         services.AddSingleton<IResultFormatter, ToonFormatter>();
@@ -35,6 +39,15 @@ internal static class ServiceCollectionExtensions
 
         // Session orientation nudge
         services.AddSingleton<SessionOrientation>();
+
+        // Configuration + settings metadata for ::config commands
+        services.AddResolvedConfig(startupRepoRoot);
+        services.AddScoped<string>(sp =>
+        {
+            var clientProvider = sp.GetRequiredService<RepoQlClientProvider>();
+            return clientProvider.GetConfiguredRepositoryPath()
+                   ?? RepoLocator.FindRepoRoot();
+        });
 
         // Command framework
         services.AddSingleton<CommandRegistry>();

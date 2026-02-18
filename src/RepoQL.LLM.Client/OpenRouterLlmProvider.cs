@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Configuration;
 
 namespace RepoQL.LLM.Client;
 
@@ -35,11 +36,12 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
 
     public OpenRouterLlmProvider(
         string? apiKey = null,
+        RepoQlConfig.LlmSettings? settings = null,
         string? model = null,
         HttpClient? httpClient = null,
         ILogger<OpenRouterLlmProvider>? logger = null)
     {
-        _apiKey = apiKey ?? Environment.GetEnvironmentVariable("OPENROUTER_API_KEY") ?? "";
+        _apiKey = apiKey ?? settings?.ApiKey ?? "";
         _model = model ?? DefaultModel;
         _logger = logger ?? NullLogger<OpenRouterLlmProvider>.Instance;
 
@@ -81,7 +83,7 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         CancellationToken ct = default)
     {
         if (!Enabled)
-            return new LlmSummaryResult("LLM not configured (set OPENROUTER_API_KEY environment variable)");
+            return new LlmSummaryResult("LLM not configured (set llm.api_key)");
 
         try
         {
@@ -120,7 +122,7 @@ public sealed class OpenRouterLlmProvider : ILlmProvider, IDisposable
         CancellationToken ct = default)
     {
         if (!Enabled)
-            return "LLM not configured (set OPENROUTER_API_KEY environment variable)";
+            return "LLM not configured (set llm.api_key)";
 
         try
         {

@@ -281,7 +281,11 @@ public sealed class CommandRegistry
         return best.Distance <= (name.Length / 2) + 2 ? best.Name : null;
     }
 
-    private static int LevenshteinDistance(string s, string t)
+    /// <summary>
+    /// Compute Levenshtein edit distance between two strings.
+    /// Shared by command and setting suggestion helpers.
+    /// </summary>
+    public static int LevenshteinDistance(string s, string t)
     {
         var n = s.Length;
         var m = t.Length;

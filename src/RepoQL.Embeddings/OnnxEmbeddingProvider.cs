@@ -8,6 +8,7 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using System.Buffers;
 using System.Numerics;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Configuration;
 
 namespace RepoQL.Embeddings;
 
@@ -24,11 +25,11 @@ namespace RepoQL.Embeddings;
 ///   <item>Passages (documents): "passage: " prefix</item>
 /// </list>
 /// <para>Use <see cref="EmbedQueryAsync"/> for search queries and <see cref="EmbedPassageAsync"/> for documents.</para>
-/// <para><strong>Environment Variables:</strong></para>
+/// <para><strong>Configuration:</strong></para>
 /// <list type="bullet">
-///   <item><c>REPOQL_ORT_PROVIDER</c> - Execution provider override (CPU, CUDA, DML, COREML). macOS users can set COREML for ANE/GPU acceleration.</item>
-///   <item><c>REPOQL_ORT_INTRA_THREADS</c> - Intra-op parallelism threads (default: auto-detect based on hardware)</item>
-///   <item><c>REPOQL_ORT_INTER_THREADS</c> - Inter-op parallelism threads (default: 1, ignored in sequential mode)</item>
+///   <item><c>ort.provider</c> - Execution provider override (CPU, CUDA, DML, COREML). macOS users can set COREML for ANE/GPU acceleration.</item>
+///   <item><c>ort.intra_threads</c> - Intra-op parallelism threads (default: auto-detect based on hardware).</item>
+///   <item><c>ort.inter_threads</c> - Inter-op parallelism threads (default: 1, ignored in sequential mode).</item>
 /// </list>
 /// </remarks>
 public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
@@ -46,6 +47,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     private readonly IMemoryCache? _cache;
     private Timer? _boostEvictionTimer;
     private readonly string _modelPath;
+    private readonly RepoQlConfig.OrtSettings _ortSettings;
     private readonly int? _intraOp;
     private readonly int? _interOp;
     private readonly string _inputIdsName = "";
@@ -72,10 +74,18 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     public string Provider { get; private set; } = "CPU";
     public bool Enabled => !_disposed && _session is not null && _tokenizer is not null;
 
-    public OnnxEmbeddingProvider(string modelPath, ILogger<OnnxEmbeddingProvider>? logger = null, int? maxTokens = null, int? intraOp = null, int? interOp = null, IMemoryCache? cache = null)
+    public OnnxEmbeddingProvider(
+        string modelPath,
+        ILogger<OnnxEmbeddingProvider>? logger = null,
+        int? maxTokens = null,
+        int? intraOp = null,
+        int? interOp = null,
+        IMemoryCache? cache = null,
+        RepoQlConfig.OrtSettings? ortSettings = null)
     {
         _logger = logger ?? NullLogger<OnnxEmbeddingProvider>.Instance;
         _cache = cache;
+        _ortSettings = ortSettings ?? new RepoQlConfig.OrtSettings();
         _intraOp = intraOp;
         _interOp = interOp;
         // Always use E5 prefixes for asymmetric embedding
@@ -562,13 +572,9 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
             _logger.LogInformation("ONNX memory arena: base session (no arena)");
         }
 
-        // Thread config: env vars take precedence, then constructor params, then ONNX defaults
-        var intraOpThreads = _intraOp;
-        var interOpThreads = _interOp;
-        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_ORT_INTRA_THREADS"), out var envIntra) && envIntra > 0)
-            intraOpThreads = envIntra;
-        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_ORT_INTER_THREADS"), out var envInter) && envInter >= 0)
-            interOpThreads = envInter;
+        // Thread config: explicit constructor args, then resolved config, then ONNX defaults.
+        var intraOpThreads = _intraOp ?? (_ortSettings.IntraThreads is >= 0 ? _ortSettings.IntraThreads : null);
+        var interOpThreads = _interOp ?? (_ortSettings.InterThreads is >= 0 ? _ortSettings.InterThreads : null);
 
         // IntraOp: 0 = ONNX auto-detect based on hardware. InterOp: 1 is sensible for sequential mode.
         so.IntraOpNumThreads = intraOpThreads ?? 0;
@@ -640,34 +646,33 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
 
     private string ConfigureExecutionProvider(SessionOptions so)
     {
-        var envOverrideRaw = Environment.GetEnvironmentVariable("REPOQL_ORT_PROVIDER");
-        var envOverride = envOverrideRaw?.Trim();
-        if (!string.IsNullOrEmpty(envOverride))
+        var configuredOverride = _ortSettings.Provider?.Trim();
+        if (!string.IsNullOrEmpty(configuredOverride))
         {
-            var normalized = envOverride.ToUpperInvariant();
+            var normalized = configuredOverride.ToUpperInvariant();
 
             // Providers that do not require explicit registration (CPU, defaults, etc.) should still
             // short-circuit GPU probing when requested.
             if (normalized is "CPU" or "CPUEXECUTIONPROVIDER" or "CPU_ONLY")
             {
-                _logger.LogInformation("Using CPU execution provider (REPOQL_ORT_PROVIDER={Provider})", envOverride);
+                _logger.LogInformation("Using CPU execution provider (ort.provider={Provider})", configuredOverride);
                 return "CPU";
             }
 
-            _logger.LogInformation("Attempting to use {Provider} execution provider (REPOQL_ORT_PROVIDER={Provider})", normalized, envOverride);
+            _logger.LogInformation("Attempting to use {Provider} execution provider (ort.provider={Provider})", normalized, configuredOverride);
             if (TryAppendProvider(so, normalized, out var error))
             {
                 _logger.LogInformation("Successfully configured {Provider} execution provider", normalized);
                 return normalized;
             }
 
-            _logger.LogWarning("Failed to configure {Provider} execution provider: {Error}. Honoring override by staying on CPU.", envOverride, error);
+            _logger.LogWarning("Failed to configure {Provider} execution provider: {Error}. Honoring override by staying on CPU.", configuredOverride, error);
             // Unknown/unsupported override: do not probe GPU; fall back to CPU per explicit request.
             return "CPU";
         }
 
         // Windows: Default to CPU. GPU providers (DirectML, CUDA) are slower than CPU for this workload,
-        // and CoreML causes memory leaks. Users can override via REPOQL_ORT_PROVIDER if needed.
+        // and CoreML causes memory leaks. Users can override via ort.provider if needed.
         if (OperatingSystem.IsWindows())
         {
             _logger.LogInformation("Using CPU execution provider (default for Windows - GPU is slower for embeddings)");

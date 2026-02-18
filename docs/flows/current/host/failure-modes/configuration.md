@@ -196,6 +196,7 @@ ConfigurationReport
 | `DUCKDB_MEMORY_LIMIT` | memory | `\d+[KMGT]B?` | `4GB` |
 | `DUCKDB_THREADS` | int | `> 0` | CPU count |
 | `DUCKDB_TEMP_DIRECTORY` | path | exists, writable | `.repoql/temp` |
+| `DUCKDB_READ_POOL_SIZE` | int | `1-4` | `2` |
 | `REPOQL_EMBED_MODE` | enum | `onnx\|openrouter\|disabled` | `onnx` |
 | `REPOQL_EMBED_BATCH_SIZE` | int | `> 0` | `100` |
 | `REPOQL_IDLE_GRACE_SECONDS` | int | `> 0` | `45` |

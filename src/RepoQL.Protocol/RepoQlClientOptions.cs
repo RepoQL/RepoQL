@@ -1,4 +1,5 @@
 using RepoQL.Contracts;
+using RepoQL.Contracts.Configuration;
 
 namespace RepoQL.Protocol;
 
@@ -24,4 +25,10 @@ public sealed class RepoQlClientOptions
     /// Default deadline for unary calls (e.g., raw query, summaries). <c>null</c> means no explicit deadline.
     /// </summary>
     public TimeSpan? DefaultTimeout { get; init; }
+
+    /// <summary>
+    /// Host lifecycle settings consumed by the client for startup and lease timeouts.
+    /// Defaults to an empty settings object (consumer falls back to built-in defaults).
+    /// </summary>
+    public RepoQlConfig.HostSettings HostSettings { get; init; } = new();
 }

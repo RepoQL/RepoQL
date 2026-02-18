@@ -4,18 +4,19 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Configuration;
 
 namespace RepoQL.LLM.Client;
 
 /// <summary>
 /// Embedding provider using OpenRouter API with all-MiniLM-L6-v2.
-/// Activated when OPENROUTER_API_KEY environment variable is set.
+/// Activated when <c>llm.api_key</c> is configured.
 /// </summary>
 /// <remarks>
-/// <para><strong>Environment Variables:</strong></para>
+/// <para><strong>Configuration:</strong></para>
 /// <list type="bullet">
-///   <item><c>OPENROUTER_API_KEY</c> - Required. Your OpenRouter API key.</item>
-///   <item><c>REPOQL_OPENROUTER_CONCURRENCY</c> - Max concurrent API calls for batch processing (default: 4, max: 16).</item>
+///   <item><c>llm.api_key</c> - Required. Your OpenRouter API key.</item>
+///   <item><c>llm.concurrency</c> - Max concurrent API calls for batch processing (default: 4, max: 16).</item>
 /// </list>
 /// <para>
 /// Batch embedding uses <see cref="Parallel.ForEachAsync"/> to process multiple 100-item batches
@@ -32,19 +33,16 @@ public sealed class OpenRouterEmbeddingProvider : IEmbeddingProvider, IDisposabl
     private const int MaxBatchSize = 100;
     private const int DefaultTimeoutSeconds = 120;
 
-    private static int GetApiConcurrency()
-    {
-        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_OPENROUTER_CONCURRENCY"), out var c) && c > 0)
-            return Math.Min(c, 16); // Cap to prevent abuse
-        return 4; // Default: 4 concurrent API calls
-    }
-
-    private static readonly int ApiConcurrency = GetApiConcurrency();
+    private static int ResolveApiConcurrency(RepoQlConfig.LlmSettings? settings)
+        => settings?.Concurrency is > 0 and var configured
+            ? Math.Min(configured, 16)
+            : 4;
 
     private readonly record struct BatchWorkItem(int BatchIndex, int StartIndex, string[] Texts);
 
     private readonly HttpClient _httpClient;
     private readonly string _apiKey;
+    private readonly int _apiConcurrency;
     private readonly ILogger _logger;
     private readonly bool _ownsHttpClient;
 
@@ -54,10 +52,12 @@ public sealed class OpenRouterEmbeddingProvider : IEmbeddingProvider, IDisposabl
 
     public OpenRouterEmbeddingProvider(
         string? apiKey = null,
+        RepoQlConfig.LlmSettings? settings = null,
         HttpClient? httpClient = null,
         ILogger<OpenRouterEmbeddingProvider>? logger = null)
     {
-        _apiKey = apiKey ?? Environment.GetEnvironmentVariable("OPENROUTER_API_KEY") ?? "";
+        _apiKey = apiKey ?? settings?.ApiKey ?? "";
+        _apiConcurrency = ResolveApiConcurrency(settings);
         _logger = logger ?? NullLogger<OpenRouterEmbeddingProvider>.Instance;
 
         if (httpClient is not null)
@@ -135,7 +135,7 @@ public sealed class OpenRouterEmbeddingProvider : IEmbeddingProvider, IDisposabl
         // Parallel processing for multiple batches
         var options = new ParallelOptions
         {
-            MaxDegreeOfParallelism = ApiConcurrency,
+            MaxDegreeOfParallelism = _apiConcurrency,
             CancellationToken = cancellationToken
         };
 

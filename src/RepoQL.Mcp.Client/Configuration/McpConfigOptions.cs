@@ -1,3 +1,5 @@
+using RepoQL.Contracts.Configuration;
+
 namespace RepoQL.Mcp.Client.Configuration;
 
 /// <summary>
@@ -7,8 +9,7 @@ namespace RepoQL.Mcp.Client.Configuration;
 /// are enabled. Can enable/disable global agent configs (Claude Code,
 /// Claude Desktop) or restrict to repo-level only.
 ///
-/// Complexity: Simple options record. Environment variable support
-/// enables configuration without code changes.
+/// Complexity: Simple options record parsed from centralized configuration.
 /// </summary>
 public sealed record McpConfigOptions
 {
@@ -31,26 +32,17 @@ public sealed record McpConfigOptions
     /// </summary>
     public string SelfServerName { get; init; } = "repoql";
 
-    /// <summary>
-    /// Creates options from environment variables.
-    /// REPOQL_MCP_INCLUDE_GLOBALS: "true" or "false"
-    /// REPOQL_MCP_ENABLED_AGENTS: comma-separated list of agent types
-    /// </summary>
-    public static McpConfigOptions FromEnvironment()
+    public static McpConfigOptions FromConfig(RepoQlConfig.McpSettings settings)
     {
-        var options = new McpConfigOptions();
-
-        var includeGlobals = Environment.GetEnvironmentVariable("REPOQL_MCP_INCLUDE_GLOBALS");
-        if (!string.IsNullOrEmpty(includeGlobals))
+        var options = new McpConfigOptions
         {
-            options = options with { IncludeGlobalAgents = !string.Equals(includeGlobals, "false", StringComparison.OrdinalIgnoreCase) };
-        }
+            IncludeGlobalAgents = settings.IncludeGlobals ?? true
+        };
 
-        var enabledAgentsStr = Environment.GetEnvironmentVariable("REPOQL_MCP_ENABLED_AGENTS");
-        if (!string.IsNullOrEmpty(enabledAgentsStr))
+        if (!string.IsNullOrWhiteSpace(settings.EnabledAgents))
         {
             var enabledAgents = new HashSet<AgentType>();
-            foreach (var agentStr in enabledAgentsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            foreach (var agentStr in settings.EnabledAgents.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
                 if (Enum.TryParse<AgentType>(agentStr, ignoreCase: true, out var agent))
                 {

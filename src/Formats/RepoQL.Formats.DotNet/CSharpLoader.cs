@@ -3,10 +3,10 @@ using System.Text.Json.Nodes;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Models;
 
 namespace RepoQL.Formats.DotNet;
@@ -84,10 +84,10 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
     }
 
     /// <summary>
-    /// Initializes a new instance with a workspace host and configuration.
+    /// Initializes a new instance with a workspace host and resolved configuration.
     /// </summary>
-    public CSharpLoader(CSharpWorkspaceHost? workspaceHost, IConfiguration? configuration)
-        : this(workspaceHost, configuration, null)
+    public CSharpLoader(CSharpWorkspaceHost? workspaceHost, RepoQlConfig? config)
+        : this(workspaceHost, config, null)
     {
     }
 
@@ -96,11 +96,11 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
     /// </summary>
     /// <param name="workspaceHost">Workspace host for project-aware analysis. If null, creates a new instance (not recommended for production).</param>
     /// <param name="logger">Optional logger for diagnostic information. Uses null logger if null.</param>
-    public CSharpLoader(CSharpWorkspaceHost? workspaceHost, IConfiguration? configuration, ILogger<CSharpLoader>? logger)
+    public CSharpLoader(CSharpWorkspaceHost? workspaceHost, RepoQlConfig? config, ILogger<CSharpLoader>? logger)
     {
-        _workspaceHost = workspaceHost ?? new CSharpWorkspaceHost();
+        _workspaceHost = workspaceHost ?? new CSharpWorkspaceHost(workspaceFactory: null, dotnetSettings: config?.Dotnet);
         _logger = logger ?? NullLogger<CSharpLoader>.Instance;
-        _analysisEnabled = ResolveAnalysisEnabled(configuration);
+        _analysisEnabled = ResolveAnalysisEnabled(config?.Dotnet);
     }
 
     /// <summary>
@@ -1094,30 +1094,7 @@ public sealed class CSharpLoader : IFormatLoader, IFormatMaterializer, IFormatSc
         "CS1660"  // cannot convert lambda expression
     };
 
-    private static bool ResolveAnalysisEnabled(IConfiguration? configuration)
-    {
-        static bool? TryParse(string? raw)
-        {
-            if (string.IsNullOrWhiteSpace(raw))
-                return null;
-            if (bool.TryParse(raw, out var boolValue))
-                return boolValue;
-            if (int.TryParse(raw, out var numeric))
-                return numeric != 0;
-            return null;
-        }
-
-        bool? value = null;
-
-        if (configuration is not null)
-        {
-            value = TryParse(configuration["REPOQL_DOTNET_ANALYSIS"]) ??
-                    TryParse(configuration["RepoQL:DotNet:Analysis"]) ??
-                    TryParse(configuration["repoql:dotnet:analysis"]);
-        }
-
-        value ??= TryParse(Environment.GetEnvironmentVariable("REPOQL_DOTNET_ANALYSIS"));
-        return value ?? false;
-    }
+    private static bool ResolveAnalysisEnabled(RepoQlConfig.DotnetSettings? settings)
+        => settings?.Analysis ?? false;
 
 }

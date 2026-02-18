@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Protocol;
 
 namespace RepoQL.ConsoleApp.Helpers;
@@ -10,14 +11,19 @@ namespace RepoQL.ConsoleApp.Helpers;
 internal sealed class RepoQlClientProvider : IAsyncDisposable
 {
     private readonly ILogger<RepoQlClientProvider> _logger;
+    private readonly RepoQlConfig.HostSettings _hostSettings;
     private readonly object _sync = new();
     private RepoQlClientOptions _options;
     private Task<IRepoQlClient>? _clientTask;
 
-    public RepoQlClientProvider(ILogger<RepoQlClientProvider>? logger = null)
+    public RepoQlClientProvider(RepoQlConfig config, ILogger<RepoQlClientProvider>? logger = null)
     {
         _logger = logger ?? NullLogger<RepoQlClientProvider>.Instance;
-        _options = new RepoQlClientOptions();
+        _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
+        _options = new RepoQlClientOptions
+        {
+            HostSettings = _hostSettings
+        };
     }
 
     /// <summary>
@@ -117,9 +123,18 @@ internal sealed class RepoQlClientProvider : IAsyncDisposable
             {
                 RepositoryPath = resolved,
                 SocketPath = _options.SocketPath,
-                DefaultTimeout = _options.DefaultTimeout
+                DefaultTimeout = _options.DefaultTimeout,
+                HostSettings = _hostSettings
             };
             _clientTask = null; // force re-create with new path
+        }
+    }
+
+    public string? GetConfiguredRepositoryPath()
+    {
+        lock (_sync)
+        {
+            return _options.RepositoryPath;
         }
     }
 

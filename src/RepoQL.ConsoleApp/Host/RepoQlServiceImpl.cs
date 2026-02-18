@@ -13,6 +13,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
@@ -41,20 +42,19 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly ExploreOrchestrator _exploreOrchestrator;
     private readonly ReadOrchestrator _readOrchestrator;
     private readonly StatusEventAggregator _statusAggregator;
+    private readonly RepoQlConfig.HostSettings _hostSettings;
+    private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
     private readonly ILogger<RepoQlServiceImpl> _logger;
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
     {
         TypeInfoResolver = new DefaultJsonTypeInfoResolver()
     };
-    private static int GetEnvInt(string name, int dflt)
-        => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v > 0 ? v : dflt;
-
-    private static int GetIdleGraceSeconds()
+    private int GetIdleGraceSeconds()
     {
         if (IsMcpImplicitSource())
             return 0;
 
-        return GetEnvInt("REPOQL_IDLE_GRACE_SECONDS", 45);
+        return _hostSettings.IdleGraceSeconds is > 0 ? _hostSettings.IdleGraceSeconds.Value : 45;
     }
 
     private static bool IsMcpImplicitSource()
@@ -74,6 +74,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         ExploreOrchestrator exploreOrchestrator,
         ReadOrchestrator readOrchestrator,
         StatusEventAggregator statusAggregator,
+        RepoQlConfig config,
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
         ILlmProvider? llmProvider = null,
@@ -92,6 +93,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
         _readOrchestrator = readOrchestrator ?? throw new ArgumentNullException(nameof(readOrchestrator));
         _statusAggregator = statusAggregator ?? throw new ArgumentNullException(nameof(statusAggregator));
+        _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
+        _embeddingSettings = config.Embedding;
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
     }
 
@@ -876,7 +879,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     var bgStart = Stopwatch.StartNew();
                     try
                     {
-                        var refresher = new EmbeddingRefresher(db, embeddingMode, logger as ILogger<EmbeddingRefresher>);
+                        var refresher = new EmbeddingRefresher(db, embeddingMode, logger as ILogger<EmbeddingRefresher>, _embeddingSettings);
                         await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
                         logger.LogInformation("[Import] Background batch embedding refresh completed ({ElapsedMs}ms)", bgStart.ElapsedMilliseconds);
                     }

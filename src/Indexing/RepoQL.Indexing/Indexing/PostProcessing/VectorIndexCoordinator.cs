@@ -3,6 +3,7 @@ using Humanizer;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
@@ -16,9 +17,9 @@ namespace RepoQL.Indexing.Indexing.PostProcessing;
 /// Coordinates post-index vector refreshes. The heavy lifting is delegated to an <see cref="IVectorIndexRefresher"/>.
 /// </summary>
 /// <remarks>
-/// <para><strong>Environment Variables:</strong></para>
+/// <para><strong>Configuration:</strong></para>
 /// <list type="bullet">
-///   <item><c>REPOQL_EMBED_CONCURRENCY</c> - Max concurrent refresh operations (default: 1). Increase to allow parallel embedding batches for higher throughput.</item>
+///   <item><c>embedding.concurrency</c> - Max concurrent refresh operations (default: 2). Increase to allow parallel embedding batches for higher throughput.</item>
 /// </list>
 /// </remarks>
 public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposable
@@ -28,7 +29,6 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private static readonly TimeSpan VssRefreshDebounce = TimeSpan.FromMilliseconds(250);
     private const string MetadataValueTrue = "true";
     private const string MetadataValueFalse = "false";
-    private static readonly int RefreshConcurrency = GetRefreshConcurrency();
     private readonly IVectorIndexRefresher _refresher;
     private readonly DuckDbDataStore? _db;
     private readonly IEmbeddingProvider? _embeddingProvider;
@@ -36,7 +36,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private readonly ILogger<VectorIndexCoordinator> _logger;
     private readonly UriRegistry? _uriRegistry;
     private readonly Func<IVssIndexManager>? _vssIndexManagerFactory;
-    private readonly SemaphoreSlim _refreshGate = new(RefreshConcurrency, RefreshConcurrency);
+    private readonly SemaphoreSlim _refreshGate;
     private readonly SemaphoreSlim _vssRefreshSignal = new(0);
     private readonly CancellationTokenSource _vssRefreshShutdown = new();
     private long _lastRefreshedEpoch = long.MinValue;
@@ -48,20 +48,28 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private int _vssRefreshRequested;
     private int _vssStructureReadyState = -1;
 
-    private static int GetRefreshConcurrency()
-    {
-        if (int.TryParse(Environment.GetEnvironmentVariable("REPOQL_EMBED_CONCURRENCY"), out var c) && c > 0)
-            return c;
-        return 2; // Default to 2 concurrent batches for better throughput
-    }
+    private static int ResolveRefreshConcurrency(RepoQlConfig.EmbeddingSettings? settings)
+        => settings?.Concurrency is > 0 and var configured ? configured : 2;
 
     public VectorIndexCoordinator(
         DuckDbDataStore database,
         IEmbeddingProvider embeddingProvider,
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
         ILogger<VectorIndexCoordinator>? logger = null,
-        UriRegistry? uriRegistry = null)
-        : this(new DuckDbVectorIndexRefresher(database, embeddingProvider, embeddingMode), database, embeddingProvider, embeddingMode, logger, uriRegistry)
+        UriRegistry? uriRegistry = null,
+        RepoQlConfig.EmbeddingSettings? embeddingSettings = null)
+        : this(
+            new DuckDbVectorIndexRefresher(
+                database,
+                embeddingProvider,
+                embeddingMode,
+                embeddingSettings: embeddingSettings),
+            database,
+            embeddingProvider,
+            embeddingMode,
+            logger,
+            uriRegistry,
+            embeddingSettings: embeddingSettings)
     {
     }
 
@@ -72,7 +80,8 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
         ILogger<VectorIndexCoordinator>? logger = null,
         UriRegistry? uriRegistry = null,
-        Func<IVssIndexManager>? vssIndexManagerFactory = null)
+        Func<IVssIndexManager>? vssIndexManagerFactory = null,
+        RepoQlConfig.EmbeddingSettings? embeddingSettings = null)
     {
         _refresher = refresher ?? throw new ArgumentNullException(nameof(refresher));
         _db = db;
@@ -81,6 +90,8 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         _logger = logger ?? NullLogger<VectorIndexCoordinator>.Instance;
         _uriRegistry = uriRegistry;
         _vssIndexManagerFactory = vssIndexManagerFactory;
+        var refreshConcurrency = ResolveRefreshConcurrency(embeddingSettings);
+        _refreshGate = new SemaphoreSlim(refreshConcurrency, refreshConcurrency);
 
         // VSS is ephemeral; force semantic fallback until this process completes an in-memory rebuild.
         SetVssStructureReadyMetadata(isReady: false);

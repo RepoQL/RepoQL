@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Collections.Immutable;
 using System.Text;
 using Microsoft.Extensions.Caching.Memory;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -14,6 +13,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Configuration;
 
 namespace RepoQL.Formats.DotNet;
 
@@ -66,8 +66,8 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
     /// <summary>
     /// Initializes a new instance of the <see cref="CSharpWorkspaceHost"/> class using a shared cache.
     /// </summary>
-    public CSharpWorkspaceHost(IMemoryCache sessionCache, IConfiguration? configuration = null, ILogger<CSharpWorkspaceHost>? logger = null)
-        : this(null, logger, sessionCache, configuration)
+    public CSharpWorkspaceHost(IMemoryCache sessionCache, RepoQlConfig config, ILogger<CSharpWorkspaceHost>? logger = null)
+        : this(null, logger, sessionCache, config?.Dotnet)
     {
     }
 
@@ -80,7 +80,7 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         Func<MSBuildWorkspace>? workspaceFactory,
         ILogger<CSharpWorkspaceHost>? logger = null,
         IMemoryCache? sessionCache = null,
-        IConfiguration? configuration = null)
+        RepoQlConfig.DotnetSettings? dotnetSettings = null)
     {
         _logger = logger ?? NullLogger<CSharpWorkspaceHost>.Instance;
         EnsureLocator(_logger);
@@ -88,25 +88,19 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         _sessionCache = sessionCache ?? new MemoryCache(new MemoryCacheOptions { SizeLimit = 8 });
         _ownsSessionCache = sessionCache is null;
         _sessionSlidingExpiration = TimeSpan.FromSeconds(ResolveIntSetting(
-            configuration,
-            "RepoQL:CSharp:WorkspaceSessionSlidingSeconds",
-            "REPOQL_CSHARP_WORKSPACE_SESSION_SLIDING_SECONDS",
+            dotnetSettings?.CsharpWorkspaceSessionSlidingSeconds,
             60,
             minimum: 1,
             maximum: 3600));
         _sessionAbsoluteExpiration = TimeSpan.FromSeconds(ResolveIntSetting(
-            configuration,
-            "RepoQL:CSharp:WorkspaceSessionAbsoluteSeconds",
-            "REPOQL_CSHARP_WORKSPACE_SESSION_ABSOLUTE_SECONDS",
+            dotnetSettings?.CsharpWorkspaceSessionAbsoluteSeconds,
             600,
             minimum: 10,
             maximum: 14400));
         if (_sessionAbsoluteExpiration < _sessionSlidingExpiration)
             _sessionAbsoluteExpiration = _sessionSlidingExpiration + _sessionSlidingExpiration;
         _sessionEntrySize = ResolveIntSetting(
-            configuration,
-            "RepoQL:CSharp:WorkspaceSessionEntrySize",
-            "REPOQL_CSHARP_WORKSPACE_SESSION_ENTRY_SIZE",
+            dotnetSettings?.CsharpWorkspaceSessionEntrySize,
             1,
             minimum: 1,
             maximum: 1024);
@@ -222,20 +216,13 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
     }
 
     private static int ResolveIntSetting(
-        IConfiguration? configuration,
-        string configurationKey,
-        string envKey,
+        int? configured,
         int defaultValue,
         int minimum,
         int maximum)
     {
-        var raw = configuration?[configurationKey];
-        if (int.TryParse(raw, out var configured))
-            return Math.Clamp(configured, minimum, maximum);
-
-        var env = Environment.GetEnvironmentVariable(envKey);
-        if (int.TryParse(env, out var fromEnv))
-            return Math.Clamp(fromEnv, minimum, maximum);
+        if (configured.HasValue)
+            return Math.Clamp(configured.Value, minimum, maximum);
 
         return defaultValue;
     }
