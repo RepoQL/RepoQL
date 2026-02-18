@@ -43,6 +43,11 @@ CREATE OR REPLACE MACRO csv_schema(file_uri) AS TABLE (
 -- Parameters:
 --   pattern     - Optional glob pattern to filter file URIs
 CREATE OR REPLACE MACRO csv_files(pattern := NULL) AS TABLE (
+    WITH scope_uris AS (
+        SELECT DISTINCT gf.uri AS scoped_uri
+        FROM glob_files(pattern_spec := pattern) gf
+        WHERE pattern IS NOT NULL
+    )
     SELECT
         n.uri,
         a.storage_uri AS file_path,
@@ -61,7 +66,15 @@ CREATE OR REPLACE MACRO csv_files(pattern := NULL) AS TABLE (
           OR a.media_type LIKE '%tab-separated%'
           OR a.media_type LIKE '%data.psv%'
       )
-      AND (pattern IS NULL OR matches_glob(n.uri, pattern))
+      AND (
+          pattern IS NULL
+          OR EXISTS (
+              SELECT 1
+              FROM scope_uris su
+              WHERE su.scoped_uri = n.uri
+          )
+          OR matches_glob(n.uri, pattern)
+      )
     ORDER BY n.uri
 );
 

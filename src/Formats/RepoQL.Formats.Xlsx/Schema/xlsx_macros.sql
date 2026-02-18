@@ -232,6 +232,11 @@ CREATE OR REPLACE MACRO xlsx_schema(
 --   SELECT * FROM xlsx_files() WHERE headline LIKE '%expense%';
 --
 CREATE OR REPLACE MACRO xlsx_files(pattern := NULL) AS TABLE (
+    WITH scope_uris AS (
+        SELECT DISTINCT gf.uri AS scoped_uri
+        FROM glob_files(pattern_spec := pattern) gf
+        WHERE pattern IS NOT NULL
+    )
     SELECT
         n.uri,
         a.storage_uri AS file_path,
@@ -246,7 +251,15 @@ CREATE OR REPLACE MACRO xlsx_files(pattern := NULL) AS TABLE (
     JOIN artifact a ON a.id = n.artifact_id
     WHERE n.kind = 'document'
       AND a.media_type LIKE '%xlsx%'
-      AND (pattern IS NULL OR matches_glob(n.uri, pattern))
+      AND (
+          pattern IS NULL
+          OR EXISTS (
+              SELECT 1
+              FROM scope_uris su
+              WHERE su.scoped_uri = n.uri
+          )
+          OR matches_glob(n.uri, pattern)
+      )
     ORDER BY n.uri
 );
 
@@ -277,7 +290,11 @@ CREATE OR REPLACE MACRO xlsx_union(
     sheet := NULL,
     header := TRUE
 ) AS TABLE (
-    WITH matched_files AS (
+    WITH scope_uris AS (
+        SELECT DISTINCT gf.uri AS scoped_uri
+        FROM glob_files(pattern_spec := pattern) gf
+    ),
+    matched_files AS (
         SELECT
             n.uri,
             a.storage_uri AS file_path,
@@ -294,7 +311,14 @@ CREATE OR REPLACE MACRO xlsx_union(
         JOIN artifact a ON a.id = n.artifact_id
         WHERE n.kind = 'document'
           AND a.media_type LIKE '%xlsx%'
-          AND matches_glob(n.uri, pattern, TRUE, 'file:///')
+          AND (
+              EXISTS (
+                  SELECT 1
+                  FROM scope_uris su
+                  WHERE su.scoped_uri = n.uri
+              )
+              OR matches_glob(n.uri, pattern, TRUE, 'file:///')
+          )
     )
     SELECT
         mf.uri AS _source_file,
@@ -327,6 +351,11 @@ CREATE OR REPLACE MACRO xlsx_find_amounts(
     pattern := NULL,
     column_hint := '(?i)(amount|total|sum|price|cost|value|revenue|expense)'
 ) AS TABLE (
+    WITH scope_uris AS (
+        SELECT DISTINCT gf.uri AS scoped_uri
+        FROM glob_files(pattern_spec := pattern) gf
+        WHERE pattern IS NOT NULL
+    )
     SELECT
         n.uri AS file_uri,
         json_extract_string(ws.properties, '$.name') AS sheet_name,
@@ -342,7 +371,15 @@ CREATE OR REPLACE MACRO xlsx_find_amounts(
     ) AS cols(key, value)
     WHERE n.kind = 'document'
       AND a.media_type LIKE '%xlsx%'
-      AND (pattern IS NULL OR matches_glob(n.uri, pattern))
+      AND (
+          pattern IS NULL
+          OR EXISTS (
+              SELECT 1
+              FROM scope_uris su
+              WHERE su.scoped_uri = n.uri
+          )
+          OR matches_glob(n.uri, pattern)
+      )
       AND (cols.value = 'numeric' OR cols.value = 'currency')
     ORDER BY n.uri, json_extract(ws.properties, '$.name'), cols.key
 );
@@ -362,6 +399,11 @@ CREATE OR REPLACE MACRO xlsx_find_amounts(
 --   SELECT * FROM xlsx_summary('**/2024*.xlsx');
 --
 CREATE OR REPLACE MACRO xlsx_summary(pattern := NULL) AS TABLE (
+    WITH scope_uris AS (
+        SELECT DISTINCT gf.uri AS scoped_uri
+        FROM glob_files(pattern_spec := pattern) gf
+        WHERE pattern IS NOT NULL
+    )
     SELECT
         n.uri AS file_uri,
         json_extract(n.properties, '$.sheet_count')::INTEGER AS sheets,
@@ -380,6 +422,14 @@ CREATE OR REPLACE MACRO xlsx_summary(pattern := NULL) AS TABLE (
     JOIN artifact a ON a.id = n.artifact_id
     WHERE n.kind = 'document'
       AND a.media_type LIKE '%xlsx%'
-      AND (pattern IS NULL OR matches_glob(n.uri, pattern))
+      AND (
+          pattern IS NULL
+          OR EXISTS (
+              SELECT 1
+              FROM scope_uris su
+              WHERE su.scoped_uri = n.uri
+          )
+          OR matches_glob(n.uri, pattern)
+      )
     ORDER BY n.uri
 );

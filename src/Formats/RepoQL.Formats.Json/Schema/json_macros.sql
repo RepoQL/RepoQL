@@ -1,5 +1,10 @@
 -- Inventory: list all indexed JSON files with metadata
 CREATE OR REPLACE MACRO json_files(pattern := NULL) AS TABLE (
+    WITH scope_uris AS (
+        SELECT DISTINCT gf.uri AS scoped_uri
+        FROM glob_files(pattern_spec := pattern) gf
+        WHERE pattern IS NOT NULL
+    )
     SELECT
         n.uri,
         a.headline,
@@ -13,12 +18,25 @@ CREATE OR REPLACE MACRO json_files(pattern := NULL) AS TABLE (
     JOIN artifact a ON a.id = n.artifact_id
     WHERE n.kind = 'document'
       AND a.media_type LIKE 'application/json%'
-      AND (pattern IS NULL OR matches_glob(n.uri, pattern))
+      AND (
+          pattern IS NULL
+          OR EXISTS (
+              SELECT 1
+              FROM scope_uris su
+              WHERE su.scoped_uri = n.uri
+          )
+          OR matches_glob(n.uri, pattern)
+      )
     ORDER BY n.uri
 );
 
 -- Key structure: query keys across all JSON files
 CREATE OR REPLACE MACRO json_keys(file_pattern := NULL, key_pattern := NULL) AS TABLE (
+    WITH scope_uris AS (
+        SELECT DISTINCT gf.uri AS scoped_uri
+        FROM glob_files(pattern_spec := file_pattern) gf
+        WHERE file_pattern IS NOT NULL
+    )
     SELECT
         doc.uri AS file_uri,
         key_node.uri AS key_uri,
@@ -35,7 +53,15 @@ CREATE OR REPLACE MACRO json_keys(file_pattern := NULL, key_pattern := NULL) AS 
     JOIN node key_node ON key_node.id = e.destination_node_id AND key_node.kind = 'json_key'
     LEFT JOIN span s ON s.id = key_node.span_id
     WHERE doc.kind = 'document'
-      AND (file_pattern IS NULL OR matches_glob(doc.uri, file_pattern))
+      AND (
+          file_pattern IS NULL
+          OR EXISTS (
+              SELECT 1
+              FROM scope_uris su
+              WHERE su.scoped_uri = doc.uri
+          )
+          OR matches_glob(doc.uri, file_pattern)
+      )
       AND (key_pattern IS NULL OR json_extract_string(key_node.properties, '$.path') LIKE key_pattern)
     ORDER BY doc.uri, e.ordinal
 );
