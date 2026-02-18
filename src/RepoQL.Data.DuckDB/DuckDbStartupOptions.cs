@@ -8,6 +8,7 @@ public sealed record DuckDbStartupOptions(
     string MemoryLimit,
     int Threads,
     string TempDirectory,
+    int ReadPoolSize,
     IReadOnlyList<DuckDbEnvironmentIssue> InvalidEnvironmentVariables);
 
 /// <summary>

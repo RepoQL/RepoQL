@@ -21,11 +21,13 @@ public static class DuckDbStartupOptionsBuilder
         var memoryLimit = ResolveMemoryLimit(defaultMemory, invalid);
         var threads = ResolveThreads(defaultThreads, invalid);
         var tempDirectory = ResolveTempDirectory(databasePath);
+        var readPoolSize = ResolveReadPoolSize(invalid);
 
         return new DuckDbStartupOptions(
             memoryLimit,
             threads,
             tempDirectory,
+            readPoolSize,
             invalid);
     }
 
@@ -55,6 +57,21 @@ public static class DuckDbStartupOptionsBuilder
         {
             invalid.Add(new DuckDbEnvironmentIssue("DUCKDB_THREADS", raw, "Thread count must be positive."));
             return int.Parse(defaultThreads);
+        }
+
+        return parsed;
+    }
+
+    private static int ResolveReadPoolSize(List<DuckDbEnvironmentIssue> invalid)
+    {
+        var raw = Environment.GetEnvironmentVariable("DUCKDB_READ_POOL_SIZE");
+        if (string.IsNullOrWhiteSpace(raw))
+            return 2;
+
+        if (!int.TryParse(raw.Trim(), out var parsed) || parsed < 0)
+        {
+            invalid.Add(new DuckDbEnvironmentIssue("DUCKDB_READ_POOL_SIZE", raw, "Read pool size must be non-negative."));
+            return 2;
         }
 
         return parsed;
