@@ -13,8 +13,6 @@
     </PackageReference>
     <PackageReference Include="AwesomeAssertions" />
     <PackageReference Include="DocumentFormat.OpenXml" />
-    <PackageReference Include="Microsoft.Testing.Extensions.TrxReport" />
-    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="TUnit" />
   </ItemGroup>
 
