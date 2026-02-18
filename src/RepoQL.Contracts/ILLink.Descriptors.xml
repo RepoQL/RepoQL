@@ -1,0 +1,10 @@
+<linker>
+  <!-- RepoQlConfig and nested settings classes are accessed via reflection
+       by SettingRegistry.Build() and ConfigurationLoader.BuildConfig().
+       Preserve all public properties (including setters) so the IL trimmer
+       does not strip them from published binaries. -->
+  <assembly fullname="RepoQL.Contracts">
+    <type fullname="RepoQL.Contracts.Configuration.RepoQlConfig" preserve="all" />
+    <type fullname="RepoQL.Contracts.Configuration.RepoQlConfig/*" preserve="all" />
+  </assembly>
+</linker>

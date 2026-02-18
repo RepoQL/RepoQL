@@ -7,6 +7,12 @@
     </PropertyGroup>
 
   <ItemGroup>
+      <EmbeddedResource Include="ILLink.Descriptors.xml">
+          <LogicalName>ILLink.Descriptors.xml</LogicalName>
+      </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
       <PackageReference Include="LLMSharp.Anthropic.Tokenizer" />
       <PackageReference Include="Microsoft.Extensions.FileProviders.Abstractions" />
       <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
