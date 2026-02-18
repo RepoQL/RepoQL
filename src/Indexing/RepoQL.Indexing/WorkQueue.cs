@@ -246,7 +246,6 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     private void HandleItemTimeout(T item, long startTimestamp)
     {
         var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
-        Interlocked.Increment(ref _timeoutCount);
 
         _logger.LogWarning(
             "WorkQueue {QueueName} item timed out after {ElapsedSeconds:F1}s (timeout={TimeoutSeconds:F0}s). Item: {Item}",
@@ -256,6 +255,8 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             item);
 
         // Invoke timeout callback so caller can clean up (e.g., decrement epoch counters).
+        // This runs BEFORE incrementing the timeout counter so that cleanup is complete
+        // before the count becomes observable to consumers polling TimeoutCount.
         try
         {
             OnItemTimeout?.Invoke(item, elapsed);
@@ -264,6 +265,8 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         {
             _logger.LogError(ex, "WorkQueue {QueueName} OnItemTimeout callback threw exception", _name);
         }
+
+        Interlocked.Increment(ref _timeoutCount);
     }
 
     private void ObserveFaultedBackgroundTask(Task processingTask, T item)
