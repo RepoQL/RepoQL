@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
 using RepoQL.Contracts.Configuration;
@@ -28,6 +29,16 @@ public sealed class SettingRegistry
     /// <summary>
     /// Builds the registry by reflecting over <see cref="RepoQlConfig"/>.
     /// </summary>
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig.DuckDbSettings))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig.EmbeddingSettings))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig.OrtSettings))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig.LlmSettings))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig.HostSettings))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig.McpSettings))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig.DotnetSettings))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig.CacheSettings))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(RepoQlConfig.FindSettings))]
     public static SettingRegistry Build()
     {
         var entries = new Dictionary<string, SettingDefinition>(StringComparer.OrdinalIgnoreCase);

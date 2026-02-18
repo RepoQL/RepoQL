@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace RepoQL.Contracts.Configuration;
 
 /// <summary>
@@ -5,6 +7,7 @@ namespace RepoQL.Contracts.Configuration;
 /// Complexity: Nested classes group settings by concern. All properties nullable — null means
 /// "use consumer's default." The class structure defines the key hierarchy.
 /// </summary>
+[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
 public sealed class RepoQlConfig
 {
     public DuckDbSettings DuckDb { get; set; } = new();
@@ -17,6 +20,7 @@ public sealed class RepoQlConfig
     public CacheSettings Cache { get; set; } = new();
     public FindSettings Find { get; set; } = new();
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public sealed class DuckDbSettings
     {
         [Setting("DuckDB memory cap (e.g. 4GB, 512MB)",
@@ -40,6 +44,7 @@ public sealed class RepoQlConfig
         public int? ReadPoolSize { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public sealed class EmbeddingSettings
     {
         [Setting("Embedding generation mode",
@@ -72,6 +77,7 @@ public sealed class RepoQlConfig
         public int? Concurrency { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public sealed class OrtSettings
     {
         [Setting("ONNX Runtime execution provider",
@@ -91,6 +97,7 @@ public sealed class RepoQlConfig
         public int? InterThreads { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public sealed class LlmSettings
     {
         [Setting("LLM API key",
@@ -104,6 +111,7 @@ public sealed class RepoQlConfig
         public int? Concurrency { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public sealed class HostSettings
     {
         [Setting("Seconds before idle host shuts down",
@@ -132,6 +140,7 @@ public sealed class RepoQlConfig
         public int? LeaseStartTimeoutMs { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public sealed class McpSettings
     {
         [Setting("Load global agent MCP configs",
@@ -144,6 +153,7 @@ public sealed class RepoQlConfig
         public string? EnabledAgents { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public sealed class DotnetSettings
     {
         [Setting("Enable deep Roslyn analysis (expensive)",
@@ -167,6 +177,7 @@ public sealed class RepoQlConfig
         public int? CsharpWorkspaceSessionEntrySize { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public sealed class CacheSettings
     {
         [Setting("Shared memory cache size limit",
@@ -175,6 +186,7 @@ public sealed class RepoQlConfig
         public long? SizeLimit { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public sealed class FindSettings
     {
         [Setting("Max find results returned after scoring",
