@@ -8,6 +8,9 @@ namespace RepoQL.Data.DuckDB;
 /// </summary>
 public static class DuckDbStartupOptionsBuilder
 {
+    private const int DefaultReadPoolSize = 2;
+    private const int MaxReadPoolSize = 4;
+
     private static readonly Regex MemoryLimitPattern = new(
         "^\\s*\\d+\\s*(B|KB|MB|GB|TB)?\\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase,
@@ -90,5 +93,23 @@ public static class DuckDbStartupOptionsBuilder
             : Path.GetDirectoryName(Path.GetFullPath(databasePath)) ?? ".";
 
         return Path.Combine(baseDir, "temp");
+    }
+
+    private static int ResolveReadPoolSize(List<DuckDbEnvironmentIssue> invalid)
+    {
+        var raw = Environment.GetEnvironmentVariable("DUCKDB_READ_POOL_SIZE");
+        if (string.IsNullOrWhiteSpace(raw))
+            return DefaultReadPoolSize;
+
+        if (!int.TryParse(raw.Trim(), out var parsed) || parsed <= 0 || parsed > MaxReadPoolSize)
+        {
+            invalid.Add(new DuckDbEnvironmentIssue(
+                "DUCKDB_READ_POOL_SIZE",
+                raw,
+                $"Read pool size must be between 1 and {MaxReadPoolSize}."));
+            return DefaultReadPoolSize;
+        }
+
+        return parsed;
     }
 }

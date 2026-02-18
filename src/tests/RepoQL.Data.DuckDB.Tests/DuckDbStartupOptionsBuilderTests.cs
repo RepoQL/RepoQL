@@ -64,6 +64,43 @@ public class DuckDbStartupOptionsBuilderTests
         }
     }
 
+    [Test]
+    public void Build_DefaultsReadPoolSize()
+    {
+        var original = Environment.GetEnvironmentVariable("DUCKDB_READ_POOL_SIZE");
+        try
+        {
+            Environment.SetEnvironmentVariable("DUCKDB_READ_POOL_SIZE", null);
+
+            var options = DuckDbStartupOptionsBuilder.Build(null);
+
+            options.ReadPoolSize.Should().Be(2);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DUCKDB_READ_POOL_SIZE", original);
+        }
+    }
+
+    [Test]
+    public void Build_FallsBackWhenReadPoolSizeInvalid()
+    {
+        var original = Environment.GetEnvironmentVariable("DUCKDB_READ_POOL_SIZE");
+        try
+        {
+            Environment.SetEnvironmentVariable("DUCKDB_READ_POOL_SIZE", "99");
+
+            var options = DuckDbStartupOptionsBuilder.Build(null);
+
+            options.InvalidEnvironmentVariables.Should().ContainSingle(issue => issue.Name == "DUCKDB_READ_POOL_SIZE");
+            options.ReadPoolSize.Should().Be(2);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("DUCKDB_READ_POOL_SIZE", original);
+        }
+    }
+
     private sealed class TempDir : IDisposable
     {
         public TempDir()

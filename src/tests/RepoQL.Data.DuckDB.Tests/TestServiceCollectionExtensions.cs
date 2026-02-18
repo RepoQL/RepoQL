@@ -44,12 +44,15 @@ public static class TestServiceCollectionExtensions
     /// <summary>
     /// Creates a DuckDbDataStore configured for testing with all UDF dependencies.
     /// </summary>
-    public static DuckDbDataStore CreateTestDataStore(string? repoPath = null, string? databasePath = null)
+    public static DuckDbDataStore CreateTestDataStore(
+        string? repoPath = null,
+        string? databasePath = null,
+        DuckDbStartupOptions? startupOptions = null)
     {
         var services = new ServiceCollection();
         services.AddTestUdfDependencies(repoPath);
         var serviceProvider = services.BuildServiceProvider();
-        return new DuckDbDataStore(path: databasePath, serviceProvider: serviceProvider);
+        return new DuckDbDataStore(path: databasePath, serviceProvider: serviceProvider, startupOptions: startupOptions);
     }
 
     private class DisabledEmbeddingProvider : IEmbeddingProvider
