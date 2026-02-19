@@ -171,7 +171,7 @@ public sealed class ExploreOrchestrator
         var decisionResult = new DecisionResult(limitedDecisions, omittedCount, null);
 
         // Compose output (Inspect can optionally replace structure-heavy output with narrowed snippets)
-        var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status);
+        var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status, searchIntent);
         var truncated = omittedCount > 0;
 
         if (inspectRefinementEnabled && refineBudget > 0)
@@ -185,7 +185,7 @@ public sealed class ExploreOrchestrator
                 omittedCount,
                 cancellationToken).ConfigureAwait(false);
 
-            if (refined is not null)
+            if (refined is not null && !string.IsNullOrEmpty(refined.Value.RenderedOutput))
             {
                 renderedOutput = refined.Value.RenderedOutput;
                 truncated = truncated || refined.Value.Truncated;
@@ -199,7 +199,7 @@ public sealed class ExploreOrchestrator
             const int llmTokenBudget = 50_000;
             var llmDecisions = ValueBasedAllocator.Allocate(exploreResults, llmTokenBudget, Intent.Inspect);
             var llmDecisionResult = new DecisionResult(llmDecisions, 0, null);
-            var llmOutput = OutputComposer.Compose(llmDecisionResult, hasSearchCriteria, status);
+            var llmOutput = OutputComposer.Compose(llmDecisionResult, hasSearchCriteria, status, Intent.Inspect);
 
             var synthesized = await SynthesizeUnderstandingAsync(
                 llmOutput,
@@ -288,7 +288,8 @@ public sealed class ExploreOrchestrator
             status,
             totalBudget,
             refineBudget,
-            omittedCount);
+            omittedCount,
+            query.Keywords!);
     }
 
     private IReadOnlyList<InspectRefinementCandidate> BuildRefinementCandidates(IReadOnlyList<RenderingDecision> decisions)
@@ -323,120 +324,317 @@ public sealed class ExploreOrchestrator
         IndexerStatus status,
         int totalBudget,
         int refineBudget,
-        int omittedCount)
+        int omittedCount,
+        string keywords)
     {
-        var snippetsByDocument = refinement.Results
-            .GroupBy(r => ToDocumentUri(r.Uri), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                g => g.Key,
-                g => (IReadOnlyList<InspectRefinedSnippet>)g
-                    .OrderByDescending(s => s.Score)
-                    .ToList(),
-                StringComparer.OrdinalIgnoreCase);
+        // Index decisions by document URI for short headline lookup
+        var decisionByUri = new Dictionary<string, RenderingDecision>(StringComparer.OrdinalIgnoreCase);
+        foreach (var decision in decisions)
+            decisionByUri.TryAdd(ToDocumentUri(decision.Result.Uri), decision);
 
-        var lines = new List<string>(decisions.Count * 2);
-        var includedDocuments = 0;
+        // Deduplicate snippets: different URIs can resolve to the same physical file
+        // (help://, file:///.claude/Skills/, file:///src/RepoQL.Documentation/).
+        // Keep the highest-scored snippet per unique content.
+        var deduped = refinement.Results
+            .Where(s => !string.IsNullOrWhiteSpace(s.Snippet))
+            .GroupBy(s => s.Snippet!.Trim(), StringComparer.Ordinal)
+            .Select(g => g.OrderByDescending(s => s.Score).First())
+            .ToList();
+
+        // Generate variants for each snippet (full + peak-narrowed options).
+        var allVariants = new List<SnippetVariant>();
+        foreach (var snippet in deduped)
+            allVariants.AddRange(GenerateVariants(snippet, keywords));
+
+        // Multiple-choice knapsack: pick one variant per snippet to maximize value within budget.
+        var variantsBySnippet = allVariants
+            .GroupBy(v => v.SnippetKey)
+            .Select(g => (
+                Key: g.Key,
+                BestRatio: g.Max(v => v.Value / Math.Max(1, v.Cost)),
+                Variants: g.OrderByDescending(v => v.Cost).ToList()))
+            .OrderByDescending(g => g.BestRatio)
+            .ToList();
+
+        var selectedByDocument = new Dictionary<string, List<(InspectRefinedSnippet Snippet, string Rendered)>>(
+            StringComparer.OrdinalIgnoreCase);
+        var snippetBudgetRemaining = refineBudget;
+
+        foreach (var group in variantsBySnippet)
+        {
+            if (snippetBudgetRemaining <= 0)
+                break;
+
+            var chosen = group.Variants.FirstOrDefault(v => v.Cost <= snippetBudgetRemaining);
+
+            if (chosen is null && selectedByDocument.Count == 0)
+                chosen = group.Variants[^1]; // First snippet always gets included
+
+            if (chosen is null)
+                continue;
+
+            var docUri = ToDocumentUri(chosen.Snippet.Uri);
+            if (!selectedByDocument.TryGetValue(docUri, out var list))
+            {
+                list = [];
+                selectedByDocument[docUri] = list;
+            }
+
+            list.Add((chosen.Snippet, chosen.Rendered));
+            snippetBudgetRemaining -= chosen.Cost;
+        }
+
+        // Only render documents that have evidence. No headline-only blocks.
+        var evidenceBlocks = new List<string>();
         var truncatedByBudget = false;
 
-        foreach (var decision in decisions)
-        {
-            var documentUri = ToDocumentUri(decision.Result.Uri);
-            snippetsByDocument.TryGetValue(documentUri, out var snippets);
-            var maxSnippets = SnippetsPerDocument(decision.Result.Confidence);
+        var documentsWithEvidence = selectedByDocument
+            .Select(kvp => (Uri: kvp.Key, BestScore: kvp.Value.Max(s => s.Snippet.Score), Snippets: kvp.Value))
+            .OrderByDescending(d => d.BestScore)
+            .ToList();
 
-            var block = BuildInspectBlock(decision, snippets, maxSnippets);
-            var tentative = string.Join("\n\n", lines.Append(block));
+        foreach (var doc in documentsWithEvidence)
+        {
+            decisionByUri.TryGetValue(doc.Uri, out var decision);
+            var block = BuildInspectEvidenceBlock(decision, doc.Uri, doc.Snippets);
+
+            var tentative = string.Join("\n\n", evidenceBlocks.Append(block));
             var hint = BuildInspectRefinementHint(refinement, refineBudget, totalBudget);
             var footer = RepresentationFormatter.FormatStatusFooter(
                 status,
                 CoreTokenEstimator.EstimateTokens(tentative),
                 hint);
-            var candidateOutput = $"{tentative}\n\n{footer}";
-            var candidateTokens = CoreTokenEstimator.EstimateTokens(candidateOutput);
+            var candidateTokens = CoreTokenEstimator.EstimateTokens($"{tentative}\n\n{footer}");
 
-            if (includedDocuments > 0 && candidateTokens > totalBudget)
+            if (evidenceBlocks.Count > 0 && candidateTokens > totalBudget)
             {
                 truncatedByBudget = true;
                 break;
             }
 
-            lines.Add(block);
-            includedDocuments++;
+            evidenceBlocks.Add(block);
         }
 
-        var content = lines.Count == 0
-            ? BuildInspectBlock(decisions[0], snippetsByDocument.GetValueOrDefault(ToDocumentUri(decisions[0].Result.Uri)), SnippetsPerDocument(decisions[0].Result.Confidence))
-            : string.Join("\n\n", lines);
+        if (evidenceBlocks.Count == 0)
+            return (string.Empty, false); // Signal to caller: no evidence, use stage-1
 
+        var content = string.Join("\n\n", evidenceBlocks);
         var hintText = BuildInspectRefinementHint(refinement, refineBudget, totalBudget);
         var tokenCount = CoreTokenEstimator.EstimateTokens(content);
         var footerText = RepresentationFormatter.FormatStatusFooter(status, tokenCount, hintText);
         var rendered = $"{content}\n\n{footerText}";
-        var finalTruncated = truncatedByBudget || omittedCount > 0 || includedDocuments < decisions.Count;
+        var finalTruncated = truncatedByBudget || omittedCount > 0;
         return (rendered, finalTruncated);
     }
 
-    private int SnippetsPerDocument(int confidence)
+    private sealed record SnippetVariant(
+        string SnippetKey,
+        InspectRefinedSnippet Snippet,
+        string Rendered,
+        int Cost,
+        double Value);
+
+    private const int MinLinesForVariants = 6;
+    private const double MediumValueFactor = 0.95;
+    private const double TightValueFactor = 0.85;
+    private const double PeakCoverageThreshold = 0.75;
+
+    private static IReadOnlyList<SnippetVariant> GenerateVariants(
+        InspectRefinedSnippet snippet,
+        string keywords)
     {
-        if (confidence >= _inspectRefinementOptions.HighConfidenceThreshold)
-            return Math.Max(1, _inspectRefinementOptions.HighConfidenceSnippetsPerDocument);
-
-        if (confidence >= _inspectRefinementOptions.MediumConfidenceThreshold)
-            return Math.Max(1, _inspectRefinementOptions.MediumConfidenceSnippetsPerDocument);
-
-        return Math.Max(1, _inspectRefinementOptions.LowConfidenceSnippetsPerDocument);
-    }
-
-    private static string BuildInspectBlock(
-        RenderingDecision decision,
-        IReadOnlyList<InspectRefinedSnippet>? snippets,
-        int snippetLimit)
-    {
-        var builder = new StringBuilder();
-        builder.Append('[');
-        builder.Append(decision.Result.Confidence.ToString(CultureInfo.InvariantCulture).PadLeft(3));
-        builder.Append("%] ");
-        builder.Append(decision.Result.Uri);
-
-        var headline = decision.Result.Headline;
-        if (!string.IsNullOrWhiteSpace(headline))
+        var key = $"{snippet.Uri}|{snippet.LineStart}|{snippet.LineEnd}";
+        var fullRendered = RenderSnippetBlock(snippet);
+        var fullCost = Math.Max(1, CoreTokenEstimator.EstimateTokens(fullRendered));
+        var variants = new List<SnippetVariant>
         {
-            builder.Append('\n');
-            builder.Append("  ");
-            builder.Append(headline);
+            new(key, snippet, fullRendered, fullCost, snippet.Score)
+        };
+
+        var lines = snippet.Snippet!.Split('\n');
+        if (lines.Length < MinLinesForVariants)
+            return variants;
+
+        var peak = FindPeakLines(lines, keywords);
+        if (peak is null)
+            return variants;
+
+        var (peakStart, peakEnd) = peak.Value;
+
+        // Medium: peak ± 2 lines of context
+        var medStart = Math.Max(0, peakStart - 2);
+        var medEnd = Math.Min(lines.Length - 1, peakEnd + 2);
+        if (medEnd - medStart + 1 < lines.Length)
+        {
+            var medSnippet = BuildVariantSnippet(snippet, lines, medStart, medEnd);
+            var medRendered = RenderSnippetBlock(medSnippet);
+            var medCost = Math.Max(1, CoreTokenEstimator.EstimateTokens(medRendered));
+            variants.Add(new SnippetVariant(key, medSnippet, medRendered, medCost, snippet.Score * MediumValueFactor));
         }
 
-        if (snippets is null || snippets.Count == 0 || snippetLimit <= 0)
-            return builder.ToString();
-
-        foreach (var snippet in snippets.Take(snippetLimit))
+        // Tight: peak ± 1 line of context
+        var tightStart = Math.Max(0, peakStart - 1);
+        var tightEnd = Math.Min(lines.Length - 1, peakEnd + 1);
+        if (tightEnd - tightStart + 1 < medEnd - medStart + 1)
         {
-            if (string.IsNullOrWhiteSpace(snippet.Snippet))
+            var tightSnippet = BuildVariantSnippet(snippet, lines, tightStart, tightEnd);
+            var tightRendered = RenderSnippetBlock(tightSnippet);
+            var tightCost = Math.Max(1, CoreTokenEstimator.EstimateTokens(tightRendered));
+            variants.Add(new SnippetVariant(key, tightSnippet, tightRendered, tightCost, snippet.Score * TightValueFactor));
+        }
+
+        return variants;
+    }
+
+    /// <summary>
+    /// Find the contiguous region of keyword-matching lines within a snippet.
+    /// Returns null if no keywords match or if the peak spans most of the snippet.
+    /// </summary>
+    private static (int Start, int End)? FindPeakLines(string[] lines, string keywords)
+    {
+        var terms = keywords.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (terms.Length == 0)
+            return null;
+
+        var matchingLines = new List<int>();
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (IsStructuralNoise(line))
                 continue;
 
-            var fragment = BuildLineFragment(snippet.LineStart, snippet.LineEnd);
-            if (!string.IsNullOrWhiteSpace(fragment))
+            foreach (var term in terms)
+            {
+                if (term.Length >= 3 && line.Contains(term, StringComparison.OrdinalIgnoreCase))
+                {
+                    matchingLines.Add(i);
+                    break;
+                }
+            }
+        }
+
+        if (matchingLines.Count == 0)
+            return null;
+
+        var peakStart = matchingLines[0];
+        var peakEnd = matchingLines[^1];
+
+        // If peak spans most of the snippet, there's no useful narrowing
+        if ((peakEnd - peakStart + 1) > lines.Length * PeakCoverageThreshold)
+            return null;
+
+        return (peakStart, peakEnd);
+    }
+
+    /// <summary>
+    /// A line is structural noise if it carries no semantic content worth anchoring a peak on.
+    /// Intentionally minimal: only filters lines that could never be evidence regardless of query.
+    /// </summary>
+    private static bool IsStructuralNoise(string line)
+    {
+        var trimmed = line.Trim();
+        // Empty or whitespace-only
+        if (trimmed.Length == 0) return true;
+        // Too short to carry meaning: single braces, brackets, parens, semicolons
+        if (trimmed.Length <= 2) return true;
+        return false;
+    }
+
+    private static InspectRefinedSnippet BuildVariantSnippet(
+        InspectRefinedSnippet original,
+        string[] allLines,
+        int variantStart,
+        int variantEnd)
+    {
+        var narrowedText = string.Join('\n',
+            allLines[variantStart..(variantEnd + 1)]
+                .Select(l => l.TrimEnd('\r')));
+
+        // Compute the file line numbers for the variant.
+        // The snippet text may include context lines beyond the zoom's LineStart..LineEnd.
+        int? newLineStart = null, newLineEnd = null;
+        if (original.LineStart.HasValue && original.LineEnd.HasValue)
+        {
+            var coreLines = original.LineEnd.Value - original.LineStart.Value + 1;
+            var contextBefore = Math.Max(0, (allLines.Length - coreLines) / 2);
+            var snippetFileStart = original.LineStart.Value - contextBefore;
+
+            newLineStart = snippetFileStart + variantStart;
+            newLineEnd = snippetFileStart + variantEnd;
+        }
+
+        return original with
+        {
+            Snippet = narrowedText,
+            LineStart = newLineStart,
+            LineEnd = newLineEnd
+        };
+    }
+
+    /// <summary>Render a single snippet's code block (without document header). Used for cost estimation.</summary>
+    private static string RenderSnippetBlock(InspectRefinedSnippet snippet)
+    {
+        var builder = new StringBuilder();
+        var fragment = BuildLineFragment(snippet.LineStart, snippet.LineEnd);
+        if (!string.IsNullOrWhiteSpace(fragment))
+        {
+            builder.Append("  ");
+            builder.Append(snippet.Uri);
+            builder.Append(fragment);
+            builder.Append("  [score: ");
+            builder.Append(snippet.Score.ToString("F2", CultureInfo.InvariantCulture));
+            builder.Append("]\n");
+        }
+
+        builder.Append("  ```");
+        if (!string.IsNullOrWhiteSpace(snippet.Lang))
+            builder.Append(snippet.Lang);
+        builder.Append('\n');
+        builder.Append(snippet.Snippet!.TrimEnd());
+        builder.Append("\n  ```");
+        return builder.ToString();
+    }
+
+    /// <summary>
+    /// Build an evidence-first block for Inspect output.
+    /// Short headline + code snippets. No Inventory-style metadata.
+    /// </summary>
+    private static string BuildInspectEvidenceBlock(
+        RenderingDecision? decision,
+        string documentUri,
+        IReadOnlyList<(InspectRefinedSnippet Snippet, string Rendered)> snippets)
+    {
+        var builder = new StringBuilder();
+
+        if (decision is not null)
+        {
+            builder.Append('[');
+            builder.Append(decision.Result.Confidence.ToString(CultureInfo.InvariantCulture).PadLeft(3));
+            builder.Append("%] ");
+            builder.Append(decision.Result.Uri);
+
+            var headline = RepresentationFormatter.ShortHeadline(decision.Result.Headline);
+            if (!string.IsNullOrWhiteSpace(headline))
             {
                 builder.Append('\n');
                 builder.Append("  ");
-                builder.Append(snippet.Uri);
-                builder.Append(fragment);
-                builder.Append("  [score: ");
-                builder.Append(snippet.Score.ToString("F2", CultureInfo.InvariantCulture));
-                builder.Append(']');
+                builder.Append(headline);
             }
+        }
+        else
+        {
+            builder.Append(documentUri);
+        }
 
+        foreach (var (_, rendered) in snippets)
+        {
             builder.Append('\n');
-            builder.Append("  ```");
-            if (!string.IsNullOrWhiteSpace(snippet.Lang))
-                builder.Append(snippet.Lang);
-            builder.Append('\n');
-            builder.Append(snippet.Snippet.TrimEnd());
-            builder.Append("\n  ```");
+            builder.Append(rendered);
         }
 
         return builder.ToString();
     }
+
 
     private static string BuildLineFragment(int? lineStart, int? lineEnd)
     {
@@ -454,16 +652,7 @@ public sealed class ExploreOrchestrator
         int refineBudget,
         int totalBudget)
     {
-        var parts = new List<string>
-        {
-            "showing: inspect refined",
-            $"refine_budget: {Math.Clamp((int)Math.Round(refineBudget * 100.0 / Math.Max(1, totalBudget)), 0, 100)}%"
-        };
-
-        parts.Add($"adaptive: rounds={refinement.Rounds}, widenings={refinement.Widenings}, cap={refinement.FinalCandidateLimit}");
-
-        if (refinement.FallbackUsed)
-            parts.Add("fallback: used");
+        var parts = new List<string>();
 
         if (refinement.TimedOut)
             parts.Add("refine: timeout");

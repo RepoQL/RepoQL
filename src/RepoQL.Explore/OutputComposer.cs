@@ -13,22 +13,25 @@ public static class OutputComposer
     /// <param name="decisionResult">The decision result containing decisions and omitted info.</param>
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="indexerStatus">Optional indexer status for footer.</param>
+    /// <param name="intent">Optional intent — Inspect uses short headlines.</param>
     /// <returns>The composed output string.</returns>
     public static string Compose(
         DecisionResult decisionResult,
         bool showConfidence,
-        IndexerStatus? indexerStatus = null)
+        IndexerStatus? indexerStatus = null,
+        Intent? intent = null)
     {
         if (decisionResult.Decisions.Count == 0)
             return string.Empty;
 
+        var useShortHeadlines = intent == Intent.Inspect;
         var sb = new StringBuilder();
         var previousWasMultiline = false;
 
         for (var i = 0; i < decisionResult.Decisions.Count; i++)
         {
             var decision = decisionResult.Decisions[i];
-            var formatted = FormatWithChildren(decision, showConfidence, indent: 0, parentUri: null);
+            var formatted = FormatWithChildren(decision, showConfidence, indent: 0, parentUri: null, useShortHeadlines);
             var isMultiline = IsMultiline(decision) || decision.ChildDecisions is { Count: > 0 };
 
             // Add blank line before multi-line items (except first)
@@ -103,13 +106,13 @@ public static class OutputComposer
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="indent">Current indentation level.</param>
     /// <param name="parentUri">Parent URI for fragment-only display of children.</param>
-    private static string FormatWithChildren(RenderingDecision decision, bool showConfidence, int indent, string? parentUri)
+    private static string FormatWithChildren(RenderingDecision decision, bool showConfidence, int indent, string? parentUri, bool useShortHeadlines = false)
     {
         var sb = new StringBuilder();
         var indentStr = new string(' ', indent * 2);
 
         // Format this decision at its assigned level
-        var formatted = RepresentationFormatter.Format(decision, showConfidence, parentUri);
+        var formatted = RepresentationFormatter.Format(decision, showConfidence, parentUri, useShortHeadlines);
 
         // Apply indentation to each line
         var lines = formatted.Split('\n');
@@ -130,7 +133,7 @@ public static class OutputComposer
             foreach (var child in decision.ChildDecisions)
             {
                 sb.Append('\n');
-                sb.Append(FormatWithChildren(child, showConfidence, indent + 1, thisUri));
+                sb.Append(FormatWithChildren(child, showConfidence, indent + 1, thisUri, useShortHeadlines));
             }
         }
 

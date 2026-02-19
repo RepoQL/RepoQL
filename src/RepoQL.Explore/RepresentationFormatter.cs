@@ -11,10 +11,10 @@ public static class RepresentationFormatter
     /// Format a result at Minimal level (headline only, no URI).
     /// Used for wide Explore results without search criteria.
     /// </summary>
-    public static string FormatMinimal(ExploreResult result)
+    public static string FormatMinimal(ExploreResult result, bool useShortHeadlines = false)
     {
         // Just the headline (first line only), or filename as fallback
-        var headline = GetSingleLineHeadline(result);
+        var headline = GetHeadline(result, useShortHeadlines);
         return headline ?? ExtractFileName(result.Uri);
     }
 
@@ -22,17 +22,17 @@ public static class RepresentationFormatter
     /// Format a result at Compact level (uri + headline on same line).
     /// Note: Children are now handled separately via nested decisions in OutputComposer.
     /// </summary>
-    public static string FormatCompact(ExploreResult result, bool showConfidence, string? parentUri = null)
+    public static string FormatCompact(ExploreResult result, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
     {
         var sb = new StringBuilder();
-        AppendHeader(sb, result, showConfidence, parentUri);
+        AppendHeader(sb, result, showConfidence, parentUri, useShortHeadlines);
 
         // For files (non-children), append headline on same line after URI
         // Children already have headline in header
         var (_, isChild) = GetDisplayUri(result.Uri, parentUri);
         if (!isChild)
         {
-            var headline = GetSingleLineHeadline(result);
+            var headline = GetHeadline(result, useShortHeadlines);
             if (headline != null)
             {
                 sb.Append("  ");
@@ -47,10 +47,10 @@ public static class RepresentationFormatter
     /// Format a result at Standard level (uri + headline + structure).
     /// Note: Children are now handled separately via nested decisions in OutputComposer.
     /// </summary>
-    public static string FormatStandard(ExploreResult result, bool showConfidence, string? parentUri = null)
+    public static string FormatStandard(ExploreResult result, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
     {
         var sb = new StringBuilder();
-        AppendHeader(sb, result, showConfidence, parentUri);
+        AppendHeader(sb, result, showConfidence, parentUri, useShortHeadlines);
 
         // Alignment prefix for continuation lines when confidence is shown
         var alignPrefix = showConfidence ? "  " : "";
@@ -59,7 +59,7 @@ public static class RepresentationFormatter
         var (_, isChild) = GetDisplayUri(result.Uri, parentUri);
         if (!isChild)
         {
-            var headline = GetSingleLineHeadline(result);
+            var headline = GetHeadline(result, useShortHeadlines);
             if (headline != null)
             {
                 sb.Append("  ");
@@ -88,10 +88,10 @@ public static class RepresentationFormatter
     /// Format a result at Rich level (uri + snippet).
     /// Note: Children are now handled separately via nested decisions in OutputComposer.
     /// </summary>
-    public static string FormatRich(ExploreResult result, bool showConfidence, string? parentUri = null)
+    public static string FormatRich(ExploreResult result, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
     {
         var sb = new StringBuilder();
-        AppendHeader(sb, result, showConfidence, parentUri);
+        AppendHeader(sb, result, showConfidence, parentUri, useShortHeadlines);
 
         if (!string.IsNullOrEmpty(result.Snippet))
         {
@@ -115,14 +115,15 @@ public static class RepresentationFormatter
     /// <param name="decision">The rendering decision to format.</param>
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="parentUri">If provided, child URIs will display only the fragment portion.</param>
-    public static string Format(RenderingDecision decision, bool showConfidence, string? parentUri = null)
+    /// <param name="useShortHeadlines">When true, strips metadata from headlines (for Inspect intent).</param>
+    public static string Format(RenderingDecision decision, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
     {
         return decision.Level switch
         {
-            Representation.Minimal => FormatMinimal(decision.Result),
-            Representation.Compact => FormatCompact(decision.Result, showConfidence, parentUri),
-            Representation.Standard => FormatStandard(decision.Result, showConfidence, parentUri),
-            Representation.Rich => FormatRich(decision.Result, showConfidence, parentUri),
+            Representation.Minimal => FormatMinimal(decision.Result, useShortHeadlines),
+            Representation.Compact => FormatCompact(decision.Result, showConfidence, parentUri, useShortHeadlines),
+            Representation.Standard => FormatStandard(decision.Result, showConfidence, parentUri, useShortHeadlines),
+            Representation.Rich => FormatRich(decision.Result, showConfidence, parentUri, useShortHeadlines),
             _ => throw new ArgumentOutOfRangeException(nameof(decision))
         };
     }
@@ -330,7 +331,7 @@ public static class RepresentationFormatter
     /// Append the header line: [confidence] [kind] uri
     /// When parentUri is provided and result is a child, shows headline before the fragment (no kind badge).
     /// </summary>
-    private static void AppendHeader(StringBuilder sb, ExploreResult result, bool showConfidence, string? parentUri = null)
+    private static void AppendHeader(StringBuilder sb, ExploreResult result, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
     {
         if (showConfidence)
             sb.Append($"{result.Confidence,3}% ");
@@ -340,7 +341,7 @@ public static class RepresentationFormatter
         if (isChild)
         {
             // For children: show headline first, then fragment
-            var headline = GetSingleLineHeadline(result);
+            var headline = GetHeadline(result, useShortHeadlines);
             if (!string.IsNullOrEmpty(headline))
             {
                 sb.Append(headline);
@@ -382,6 +383,15 @@ public static class RepresentationFormatter
     }
 
     /// <summary>
+    /// Get headline, optionally stripped to just the description (no metadata).
+    /// </summary>
+    private static string? GetHeadline(ExploreResult result, bool useShort)
+    {
+        var full = GetSingleLineHeadline(result);
+        return useShort ? ShortHeadline(full) : full;
+    }
+
+    /// <summary>
     /// Get headline as a single line (truncate at first newline).
     /// </summary>
     private static string? GetSingleLineHeadline(ExploreResult result)
@@ -393,6 +403,20 @@ public static class RepresentationFormatter
         return newlineIndex >= 0
             ? result.Headline[..newlineIndex].TrimEnd()
             : result.Headline;
+    }
+
+    /// <summary>
+    /// Extract the short description from an x-ray headline.
+    /// X-ray headlines use pipe-delimited format: "Description | type | size | tokens | sections".
+    /// Returns just the description.
+    /// </summary>
+    public static string? ShortHeadline(string? headline)
+    {
+        if (string.IsNullOrWhiteSpace(headline))
+            return null;
+
+        var pipeIndex = headline.IndexOf(" | ", StringComparison.Ordinal);
+        return pipeIndex >= 0 ? headline[..pipeIndex].TrimEnd() : headline;
     }
 
     /// <summary>

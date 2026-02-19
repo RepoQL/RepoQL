@@ -57,7 +57,6 @@ internal sealed class ExploreOrchestratorInspectRefinementTests
             CancellationToken.None);
 
         refinement.CallCount.Should().Be(1);
-        result.RenderedOutput.Should().Contain("showing: inspect refined");
         result.RenderedOutput.Should().Contain("Auth service");
         result.RenderedOutput.Should().Contain("if (token.IsExpired)");
         result.RenderedOutput.Should().Contain("```csharp");
@@ -91,7 +90,6 @@ internal sealed class ExploreOrchestratorInspectRefinementTests
             CancellationToken.None);
 
         refinement.CallCount.Should().Be(0);
-        result.RenderedOutput.Should().NotContain("showing: inspect refined");
     }
 
     [Test]
@@ -122,7 +120,6 @@ internal sealed class ExploreOrchestratorInspectRefinementTests
             CancellationToken.None);
 
         refinement.CallCount.Should().Be(1);
-        result.RenderedOutput.Should().NotContain("showing: inspect refined");
         result.RenderedOutput.Should().Contain("index: ready");
     }
 
