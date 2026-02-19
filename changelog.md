@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.4
+
+- Add multi-source git history indexing for imported repos
+- Stream text search through mounted file systems with multiline regex support
+- Rewrite inspect refinement with knapsack budget allocation and short headlines
+- Clean up orphaned git history on import removal
+- Add regex timeout protection to grep/regex read modifiers
+
 ## 1.4.1
 
 - Add RepoQL.Analyzers with 7 code convention analyzers (RQL001–RQL007) promoted to errors
