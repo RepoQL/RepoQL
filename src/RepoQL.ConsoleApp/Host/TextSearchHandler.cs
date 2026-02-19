@@ -66,7 +66,10 @@ internal sealed class TextSearchHandler : IModifierHandler
         {
             try
             {
-                regex = new Regex(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant);
+                regex = new Regex(
+                    pattern,
+                    RegexOptions.Compiled | RegexOptions.CultureInvariant,
+                    TimeSpan.FromSeconds(5));
             }
             catch (ArgumentException ex)
             {
@@ -107,22 +110,36 @@ internal sealed class TextSearchHandler : IModifierHandler
         {
             ct.ThrowIfCancellationRequested();
 
-            var lines = doc.TextContent.Split('\n');
-            for (var i = 0; i < lines.Length; i++)
+            if (regexMode)
             {
-                var currentLine = lines[i].TrimEnd('\r');
-                var isMatch = regexMode
-                    ? regex!.IsMatch(currentLine)
-                    : currentLine.Contains(pattern, StringComparison.OrdinalIgnoreCase);
+                try
+                {
+                    AddRegexMatches(doc, regex!, matches, filesWithMatches);
+                }
+                catch (RegexMatchTimeoutException)
+                {
+                    return Task.FromResult(BuildSimpleResult(
+                        $"Regex timed out while searching {doc.Uri}. Simplify the pattern.",
+                        filesConsulted: consultedUris,
+                        tokenBudget: tokenBudget));
+                }
+            }
+            else
+            {
+                var lines = doc.TextContent.Split('\n');
+                for (var i = 0; i < lines.Length; i++)
+                {
+                    var currentLine = lines[i].TrimEnd('\r');
+                    var isMatch = currentLine.Contains(pattern, StringComparison.OrdinalIgnoreCase);
+                    if (!isMatch)
+                        continue;
 
-                if (!isMatch)
-                    continue;
-
-                var lineNumber = i + 1;
-                var before = i > 0 ? lines[i - 1].TrimEnd('\r') : null;
-                var after = i + 1 < lines.Length ? lines[i + 1].TrimEnd('\r') : null;
-                matches.Add(new LineMatch(doc.Uri, lineNumber, currentLine, before, after));
-                filesWithMatches.Add(doc.Uri);
+                    var lineNumber = i + 1;
+                    var before = i > 0 ? lines[i - 1].TrimEnd('\r') : null;
+                    var after = i + 1 < lines.Length ? lines[i + 1].TrimEnd('\r') : null;
+                    matches.Add(new LineMatch(doc.Uri, lineNumber, currentLine, before, after));
+                    filesWithMatches.Add(doc.Uri);
+                }
             }
         }
 
@@ -322,6 +339,72 @@ internal sealed class TextSearchHandler : IModifierHandler
         }
 
         return sb.ToString();
+    }
+
+    private static void AddRegexMatches(
+        SearchDocument doc,
+        Regex regex,
+        List<LineMatch> matches,
+        HashSet<string> filesWithMatches)
+    {
+        var content = doc.TextContent;
+        if (string.IsNullOrEmpty(content))
+            return;
+
+        var lines = content.Split('\n');
+        var newlinePositions = BuildNewlinePositions(content);
+        var matchedLineIndexes = new HashSet<int>();
+
+        foreach (Match match in regex.Matches(content))
+        {
+            if (!match.Success)
+                continue;
+
+            var lineIndex = GetLineIndexAtCharPosition(newlinePositions, match.Index);
+            if (lineIndex < 0 || lineIndex >= lines.Length)
+                continue;
+
+            if (!matchedLineIndexes.Add(lineIndex))
+                continue;
+
+            var currentLine = lines[lineIndex].TrimEnd('\r');
+            var before = lineIndex > 0 ? lines[lineIndex - 1].TrimEnd('\r') : null;
+            var after = lineIndex + 1 < lines.Length ? lines[lineIndex + 1].TrimEnd('\r') : null;
+            matches.Add(new LineMatch(doc.Uri, lineIndex + 1, currentLine, before, after));
+            filesWithMatches.Add(doc.Uri);
+        }
+    }
+
+    private static int[] BuildNewlinePositions(string content)
+    {
+        if (string.IsNullOrEmpty(content))
+            return [];
+
+        var positions = new List<int>(capacity: Math.Min(1024, content.Length / 20));
+        for (var i = 0; i < content.Length; i++)
+        {
+            if (content[i] == '\n')
+                positions.Add(i);
+        }
+
+        return [.. positions];
+    }
+
+    private static int GetLineIndexAtCharPosition(IReadOnlyList<int> newlinePositions, int charPosition)
+    {
+        var low = 0;
+        var high = newlinePositions.Count;
+
+        while (low < high)
+        {
+            var mid = low + ((high - low) / 2);
+            if (newlinePositions[mid] < charPosition)
+                low = mid + 1;
+            else
+                high = mid;
+        }
+
+        return low;
     }
 
     private sealed record SearchDocument(string Uri, string TextContent);

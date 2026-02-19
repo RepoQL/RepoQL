@@ -217,6 +217,26 @@ internal sealed class TextSearchHandlerTests
     }
 
     [Test]
+    [DisplayName("TextSearchHandler regex mode supports multi-line patterns")]
+    public async Task TextSearchHandler_Regex_MultilinePattern_MatchesAcrossLines()
+    {
+        var handler = new TextSearchHandler();
+        handler.CanHandle("regex").Should().BeTrue();
+
+        var result = await handler.ExecuteAsync(
+            [
+                new ReadDocument("file:///src/Multi.cs", "alpha\nbeta\ngamma", "text/plain", null, null, null)
+            ],
+            @"alpha\s+beta",
+            5000,
+            CancellationToken.None);
+
+        result.Content.Should().Contain("file:///src/Multi.cs#line=1");
+        result.Content.Should().Contain("   1: alpha");
+        result.Content.Should().Contain("   2: beta");
+    }
+
+    [Test]
     [DisplayName("TextSearchHandler regex mode rejects invalid patterns")]
     public async Task TextSearchHandler_Regex_InvalidPattern_ReturnsError()
     {
@@ -460,6 +480,27 @@ internal sealed class TextSearchHandlerTests
         rows[0]["uri"]?.ToString().Should().Be("mem://repo/docs/reference.md");
         rows[0]["line_content"]?.ToString().Should().Contain("12345");
         rows[0]["truncated_warning"].Should().BeNull();
+    }
+
+    [Test]
+    [DisplayName("regex_matches supports multi-line patterns")]
+    public void RegexMatches_Macro_SupportsMultilinePatterns()
+    {
+        var (store, tempDir) = CreateStoreWithDocuments();
+        try
+        {
+            using (store)
+            {
+                var rows = store.Query(
+                    @"SELECT * FROM regex_matches('ValidateToken\(string token\)\s*\{\s*return token != null;')").ToList();
+
+                rows.Should().HaveCount(1);
+                Convert.ToInt32(rows[0]["line_number"]).Should().Be(3);
+                rows[0]["line_content"]?.ToString().Should().Contain("ValidateToken");
+                rows[0]["truncated_warning"].Should().BeNull();
+            }
+        }
+        finally { CleanupTempDir(tempDir); }
     }
 
     [Test]
