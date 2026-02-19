@@ -120,22 +120,26 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
             return;
         }
 
-        var repoRoot = RepoLocator.FindRepoRoot();
-        if (repoRoot is null)
-        {
-            _logger.LogInformation("Not in a git repository, skipping incremental git indexing");
-            return;
-        }
-
         _logger.LogInformation("Waiting for pipeline to become idle before git indexing...");
 
         // Wait for the file indexing pipeline to stabilize first
         await WaitForIdleAsync(cancellationToken).ConfigureAwait(false);
 
-        _logger.LogInformation("Pipeline idle, starting git indexing for {RepoRoot}", repoRoot);
+        var scopes = GetGitRepositoryScopes();
+        if (scopes.Count == 0)
+        {
+            _logger.LogInformation("No git repositories found, skipping incremental git indexing");
+            return;
+        }
 
-        // Now index any new git commits
-        await _gitIndexer.IndexIncrementalAsync(repoRoot, cancellationToken).ConfigureAwait(false);
+        _logger.LogInformation("Pipeline idle, starting git indexing for {Count} repository scope(s)", scopes.Count);
+
+        foreach (var scope in scopes)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _logger.LogInformation("Incremental git indexing for {SourceUri} at {RepoRoot}", scope.SourceUri, scope.RepoPath);
+            await _gitIndexer.IndexIncrementalAsync(scope.RepoPath, scope.SourceUri, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public PipelineStatusSnapshot GetPipelineStatus()
@@ -539,11 +543,11 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         // Index git history after file indexing completes
         if (_gitIndexer is not null)
         {
-            var repoRoot = RepoLocator.FindRepoRoot();
-            if (repoRoot is not null)
+            var scopes = GetGitRepositoryScopes();
+            foreach (var gitScope in scopes)
             {
-                _logger.LogInformation("Indexing git history...");
-                await _gitIndexer.IndexAsync(repoRoot, cancellationToken).ConfigureAwait(false);
+                _logger.LogInformation("Indexing git history for {SourceUri}...", gitScope.SourceUri);
+                await _gitIndexer.IndexAsync(gitScope.RepoPath, gitScope.SourceUri, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -984,6 +988,23 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 await Task.Delay(100, cancellationToken).ConfigureAwait(false);
             }
 
+            // Index git history for this mount after file indexing completes.
+            if (_gitIndexer is not null)
+            {
+                var gitScope = TryGetGitRepositoryScopeForMount(mount);
+                if (gitScope is not null)
+                {
+                    _logger.LogInformation(
+                        "Indexing git history for mount {MountId} [source={SourceUri}]",
+                        mount.Id,
+                        gitScope.SourceUri);
+                    await _gitIndexer.IndexIncrementalAsync(
+                        gitScope.RepoPath,
+                        gitScope.SourceUri,
+                        cancellationToken).ConfigureAwait(false);
+                }
+            }
+
             // No flush needed - sync writes mean structure embeddings are already written
 
             sw.Stop();
@@ -1001,6 +1022,102 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
             _logger.LogError(ex, "Failed to index mount {MountId} after {Duration:F1}s", mount.Id, sw.Elapsed.TotalSeconds);
         }
     }
+
+    private IReadOnlyList<GitRepositoryScope> GetGitRepositoryScopes()
+    {
+        var scopes = new List<GitRepositoryScope>();
+        var seenSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void TryAddScope(string repoPath, string sourceUri)
+        {
+            if (string.IsNullOrWhiteSpace(repoPath) || string.IsNullOrWhiteSpace(sourceUri))
+                return;
+
+            if (!IsGitRepositoryPath(repoPath))
+                return;
+
+            var normalizedSource = NormalizeGitSourceUri(sourceUri);
+            if (!seenSources.Add(normalizedSource))
+                return;
+
+            scopes.Add(new GitRepositoryScope(repoPath, normalizedSource));
+        }
+
+        var primaryRepoRoot = RepoLocator.FindRepoRoot();
+        if (!string.IsNullOrWhiteSpace(primaryRepoRoot))
+        {
+            TryAddScope(primaryRepoRoot, "file://");
+        }
+
+        try
+        {
+            foreach (var mount in _db.GetAllMounts())
+            {
+                TryAddScope(mount.LocalPath, BuildMountSourceUri(mount));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to enumerate persisted mounts for git indexing scopes");
+        }
+
+        return scopes;
+    }
+
+    private GitRepositoryScope? TryGetGitRepositoryScopeForMount(CompositeFileSystemMount mount)
+    {
+        if (mount.IsPrimary)
+            return null;
+
+        var record = _db.GetMount(mount.Id);
+        if (record is null)
+            return null;
+
+        if (!IsGitRepositoryPath(record.LocalPath))
+            return null;
+
+        return new GitRepositoryScope(record.LocalPath, NormalizeGitSourceUri(BuildMountSourceUri(record)));
+    }
+
+    private static bool IsGitRepositoryPath(string path)
+    {
+        var gitMetadataPath = Path.Combine(path, ".git");
+        return Directory.Exists(gitMetadataPath) || File.Exists(gitMetadataPath);
+    }
+
+    private static string BuildMountSourceUri(FileSystemMountRecord mount)
+    {
+        var scheme = (mount.Scheme ?? string.Empty).Trim().ToLowerInvariant();
+        var authority = mount.Authority?.Trim();
+        var pathPrefix = (mount.PathPrefix ?? string.Empty).Trim('/').Replace('\\', '/');
+
+        if (string.IsNullOrWhiteSpace(authority))
+            return string.IsNullOrWhiteSpace(pathPrefix)
+                ? $"{scheme}://"
+                : $"{scheme}:///{pathPrefix}";
+
+        return string.IsNullOrWhiteSpace(pathPrefix)
+            ? $"{scheme}://{authority}"
+            : $"{scheme}://{authority}/{pathPrefix}";
+    }
+
+    private static string NormalizeGitSourceUri(string sourceUri)
+    {
+        if (string.IsNullOrWhiteSpace(sourceUri))
+            return "file://";
+
+        var normalized = sourceUri.Trim();
+        if (normalized.Equals("file:///", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("file://", StringComparison.OrdinalIgnoreCase))
+            return "file://";
+
+        if (normalized.EndsWith("://", StringComparison.Ordinal))
+            return normalized;
+
+        return normalized.TrimEnd('/');
+    }
+
+    private sealed record GitRepositoryScope(string RepoPath, string SourceUri);
 
     /// <summary>
     /// Reindex operation handle returned by <see cref="ReindexAsync"/>.

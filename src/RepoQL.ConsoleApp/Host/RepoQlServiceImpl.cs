@@ -981,6 +981,19 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _logger.LogInformation("[Import:Remove] Deleted {Count} documents ({ElapsedMs}ms)",
             deleted, sw.ElapsedMilliseconds - deleteStart);
 
+        // Remove indexed git history for this source so query/read history does not return stale results.
+        var historyPrefix = BuildMountHistoryPrefix(matchingMount);
+        _db.ExecuteRaw(
+            $"""
+            DELETE FROM git_file_change
+            WHERE starts_with(uri, '{historyPrefix}')
+               OR (old_uri IS NOT NULL AND starts_with(old_uri, '{historyPrefix}'));
+
+            DELETE FROM git_commit
+            WHERE hash NOT IN (SELECT DISTINCT commit_hash FROM git_file_change);
+            """);
+        _logger.LogInformation("[Import:Remove] Deleted git history rows matching prefix '{Prefix}'", historyPrefix);
+
         // Delete the mount record
         _logger.LogDebug("[Import:Remove] Deleting mount record...");
         _db.DeleteMount(matchingMount.Id);
@@ -995,6 +1008,31 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         var snapshot = coordinator.GetPipelineStatus();
         return Task.FromResult(new ImportResponse { Status = ToProtoStatus(snapshot) });
     }
+
+    private static string BuildMountHistoryPrefix(FileSystemMountRecord mount)
+    {
+        var sourceUri = BuildMountSourceUri(mount).TrimEnd('/');
+        return EscapeSqlLiteral($"{sourceUri}/");
+    }
+
+    private static string BuildMountSourceUri(FileSystemMountRecord mount)
+    {
+        var scheme = (mount.Scheme ?? string.Empty).Trim().ToLowerInvariant();
+        var authority = mount.Authority?.Trim();
+        var pathPrefix = (mount.PathPrefix ?? string.Empty).Trim('/').Replace('\\', '/');
+
+        if (string.IsNullOrWhiteSpace(authority))
+            return string.IsNullOrWhiteSpace(pathPrefix)
+                ? $"{scheme}://"
+                : $"{scheme}:///{pathPrefix}";
+
+        return string.IsNullOrWhiteSpace(pathPrefix)
+            ? $"{scheme}://{authority}"
+            : $"{scheme}://{authority}/{pathPrefix}";
+    }
+
+    private static string EscapeSqlLiteral(string value)
+        => value.Replace("'", "''", StringComparison.Ordinal);
 
     public override Task<GetPipelineStatusResponse> GetPipelineStatus(GetPipelineStatusRequest request, ServerCallContext context)
     {

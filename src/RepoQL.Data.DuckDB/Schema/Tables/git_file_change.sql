@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS git_file_change (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     commit_hash TEXT NOT NULL,                -- References git_commit.hash
-    uri TEXT NOT NULL,                        -- file:/// URI (e.g., file:///src/Foo.cs)
+    uri TEXT NOT NULL,                        -- Repository URI (e.g., file:///src/Foo.cs, github://owner/repo/src/Foo.cs)
     change_type TEXT NOT NULL,                -- 'A' (add), 'M' (modify), 'D' (delete), 'R' (rename), 'C' (copy)
     old_uri TEXT,                             -- Previous URI for renames/copies
     insertions INTEGER DEFAULT 0,

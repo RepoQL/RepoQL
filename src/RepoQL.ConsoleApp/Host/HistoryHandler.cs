@@ -40,22 +40,22 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
         if (fileUris.Count == 0)
         {
             return Task.FromResult(BuildSimpleResult(
-                "History is only available for file:/// URIs.",
+                "History is only available for document URIs.",
                 filesConsulted: documents.Select(d => d.Uri).ToArray(),
-                tokenBudget: tokenBudget));
-        }
-
-        if (!IsGitRepository(_repoConfig.Path))
-        {
-            return Task.FromResult(BuildSimpleResult(
-                "Not in a git repository.",
-                filesConsulted: fileUris,
                 tokenBudget: tokenBudget));
         }
 
         var commits = LoadHistory(fileUris, ct);
         if (commits.Count == 0)
         {
+            if (AllUrisAreFileScheme(fileUris) && !IsGitRepository(_repoConfig.Path))
+            {
+                return Task.FromResult(BuildSimpleResult(
+                    "Not in a git repository.",
+                    filesConsulted: fileUris,
+                    tokenBudget: tokenBudget));
+            }
+
             return Task.FromResult(BuildSimpleResult(
                 "No commits found for matched files.",
                 filesConsulted: fileUris,
@@ -181,23 +181,25 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
 
             if (RepoUri.TryParse(doc.Uri, out var repoUri))
             {
-                var container = repoUri.Container.AbsoluteUri;
-                if (container.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
-                {
-                    uris.Add(container);
-                    continue;
-                }
+                uris.Add(repoUri.Container.AbsoluteUri);
+                continue;
             }
 
-            if (doc.Uri.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
-                uris.Add(doc.Uri);
+            var hashIndex = doc.Uri.IndexOf('#', StringComparison.Ordinal);
+            uris.Add(hashIndex >= 0 ? doc.Uri[..hashIndex] : doc.Uri);
         }
 
         return uris.ToList();
     }
 
+    private static bool AllUrisAreFileScheme(IReadOnlyList<string> uris)
+        => uris.Count > 0 && uris.All(uri => uri.StartsWith("file:///", StringComparison.OrdinalIgnoreCase));
+
     private static bool IsGitRepository(string repoRoot)
-        => Directory.Exists(Path.Combine(repoRoot, ".git"));
+    {
+        var gitMetadataPath = Path.Combine(repoRoot, ".git");
+        return Directory.Exists(gitMetadataPath) || File.Exists(gitMetadataPath);
+    }
 
     private IReadOnlyList<HistoryCommit> LoadHistory(IReadOnlyList<string> fileUris, CancellationToken ct)
     {

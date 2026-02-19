@@ -21,6 +21,7 @@ public sealed class GitHistoryIndexer
 {
     private const int BatchSize = 100;
     private const int HistoryMonths = 12;
+    private const string DefaultSourceUri = "file://";
 
     private readonly DuckDbDataStore _db;
     private readonly ILogger<GitHistoryIndexer> _logger;
@@ -36,24 +37,48 @@ public sealed class GitHistoryIndexer
     /// Clears existing git data and repopulates from the last 12 months.
     /// </summary>
     public Task IndexAsync(string repoPath, CancellationToken cancellationToken = default)
-        => IndexCoreAsync(repoPath, fullReindex: true, cancellationToken);
+        => IndexCoreAsync(repoPath, DefaultSourceUri, fullReindex: true, cancellationToken);
+
+    /// <summary>
+    /// Indexes git history for a specific repository source URI (for example:
+    /// <c>file://</c>, <c>github://owner/repo</c>, or <c>local:///path</c>).
+    /// Clears existing indexed history for this source and repopulates from the last 12 months.
+    /// </summary>
+    public Task IndexAsync(string repoPath, string sourceUri, CancellationToken cancellationToken = default)
+        => IndexCoreAsync(repoPath, sourceUri, fullReindex: true, cancellationToken);
 
     /// <summary>
     /// Incrementally indexes new commits since the last indexed commit.
     /// If no commits are indexed yet, performs a full index.
     /// </summary>
     public Task IndexIncrementalAsync(string repoPath, CancellationToken cancellationToken = default)
-        => IndexCoreAsync(repoPath, fullReindex: false, cancellationToken);
+        => IndexCoreAsync(repoPath, DefaultSourceUri, fullReindex: false, cancellationToken);
+
+    /// <summary>
+    /// Incrementally indexes new commits for the specified source URI.
+    /// If no commits are indexed yet for this source, performs a full index.
+    /// </summary>
+    public Task IndexIncrementalAsync(string repoPath, string sourceUri, CancellationToken cancellationToken = default)
+        => IndexCoreAsync(repoPath, sourceUri, fullReindex: false, cancellationToken);
 
     /// <summary>
     /// Gets the hash of the most recently indexed commit, or null if none indexed.
     /// </summary>
-    public string? GetLatestIndexedCommitHash()
+    public string? GetLatestIndexedCommitHash(string sourceUri = DefaultSourceUri)
     {
         try
         {
+            var prefix = BuildSourceUriPrefix(sourceUri);
             return _db.ReadScalar<string?>(
-                "SELECT hash FROM git_commit ORDER BY committer_date DESC LIMIT 1");
+                $"""
+                SELECT c.hash
+                FROM git_commit c
+                JOIN git_file_change fc ON fc.commit_hash = c.hash
+                WHERE starts_with(fc.uri, '{EscapeSqlLiteral(prefix)}')
+                   OR (fc.old_uri IS NOT NULL AND starts_with(fc.old_uri, '{EscapeSqlLiteral(prefix)}'))
+                ORDER BY c.committer_date DESC
+                LIMIT 1
+                """);
         }
         catch
         {
@@ -64,11 +89,19 @@ public sealed class GitHistoryIndexer
     /// <summary>
     /// Gets the count of indexed commits.
     /// </summary>
-    public int GetIndexedCommitCount()
+    public int GetIndexedCommitCount(string sourceUri = DefaultSourceUri)
     {
         try
         {
-            return _db.ReadScalar<int>("SELECT COUNT(*) FROM git_commit");
+            var prefix = BuildSourceUriPrefix(sourceUri);
+            return _db.ReadScalar<int>(
+                $"""
+                SELECT COUNT(DISTINCT c.hash)
+                FROM git_commit c
+                JOIN git_file_change fc ON fc.commit_hash = c.hash
+                WHERE starts_with(fc.uri, '{EscapeSqlLiteral(prefix)}')
+                   OR (fc.old_uri IS NOT NULL AND starts_with(fc.old_uri, '{EscapeSqlLiteral(prefix)}'))
+                """);
         }
         catch
         {
@@ -76,7 +109,7 @@ public sealed class GitHistoryIndexer
         }
     }
 
-    private async Task IndexCoreAsync(string repoPath, bool fullReindex, CancellationToken cancellationToken)
+    private async Task IndexCoreAsync(string repoPath, string sourceUri, bool fullReindex, CancellationToken cancellationToken)
     {
         if (!Repository.IsValid(repoPath))
         {
@@ -84,27 +117,35 @@ public sealed class GitHistoryIndexer
             return;
         }
 
+        var normalizedSourceUri = NormalizeSourceUri(sourceUri);
+
         // For incremental, check if we have any commits indexed
         string? lastIndexedHash = null;
         if (!fullReindex)
         {
-            lastIndexedHash = GetLatestIndexedCommitHash();
+            lastIndexedHash = GetLatestIndexedCommitHash(normalizedSourceUri);
             if (lastIndexedHash is null)
             {
-                _logger.LogInformation("No commits indexed yet, performing full git history index");
+                _logger.LogInformation(
+                    "No commits indexed yet for {SourceUri}, performing full git history index",
+                    normalizedSourceUri);
                 fullReindex = true;
             }
         }
 
         var mode = fullReindex ? "full" : "incremental";
-        _logger.LogInformation("Indexing git history ({Mode}) from {Path}...", mode, repoPath);
+        _logger.LogInformation(
+            "Indexing git history ({Mode}) from {Path} [source={SourceUri}]...",
+            mode,
+            repoPath,
+            normalizedSourceUri);
         var sw = System.Diagnostics.Stopwatch.StartNew();
 
         try
         {
             if (fullReindex)
             {
-                ClearGitTables();
+                ClearGitTables(normalizedSourceUri);
             }
 
             var commitCount = 0;
@@ -165,7 +206,7 @@ public sealed class GitHistoryIndexer
                 // Flush batch when full
                 if (commitBatch.Count >= BatchSize)
                 {
-                    FlushBatch(commitBatch, fileChangeBatch);
+                    FlushBatch(commitBatch, fileChangeBatch, normalizedSourceUri);
                     commitBatch.Clear();
                     fileChangeBatch.Clear();
                 }
@@ -174,7 +215,7 @@ public sealed class GitHistoryIndexer
             // Flush remaining
             if (commitBatch.Count > 0)
             {
-                FlushBatch(commitBatch, fileChangeBatch);
+                FlushBatch(commitBatch, fileChangeBatch, normalizedSourceUri);
             }
 
             sw.Stop();
@@ -184,12 +225,12 @@ public sealed class GitHistoryIndexer
                 _db.TryCheckpoint();
 
                 _logger.LogInformation(
-                    "Git history indexed ({Mode}): {CommitCount} commits, {FileChangeCount} file changes in {ElapsedMs}ms",
-                    mode, commitCount, fileChangeCount, sw.ElapsedMilliseconds);
+                    "Git history indexed ({Mode}) [source={SourceUri}]: {CommitCount} commits, {FileChangeCount} file changes in {ElapsedMs}ms",
+                    mode, normalizedSourceUri, commitCount, fileChangeCount, sw.ElapsedMilliseconds);
             }
             else
             {
-                _logger.LogDebug("Git history up to date, no new commits");
+                _logger.LogDebug("Git history up to date, no new commits [source={SourceUri}]", normalizedSourceUri);
             }
         }
         catch (RepositoryNotFoundException ex)
@@ -267,12 +308,21 @@ public sealed class GitHistoryIndexer
         _ => "M"
     };
 
-    private void ClearGitTables()
+    private void ClearGitTables(string sourceUri)
     {
-        _db.ExecuteRaw("DELETE FROM git_file_change; DELETE FROM git_commit;");
+        var prefix = EscapeSqlLiteral(BuildSourceUriPrefix(sourceUri));
+        _db.ExecuteRaw(
+            $"""
+            DELETE FROM git_file_change
+            WHERE starts_with(uri, '{prefix}')
+               OR (old_uri IS NOT NULL AND starts_with(old_uri, '{prefix}'));
+
+            DELETE FROM git_commit
+            WHERE hash NOT IN (SELECT DISTINCT commit_hash FROM git_file_change);
+            """);
     }
 
-    private void FlushBatch(List<CommitRecord> commits, List<FileChangeRecord> fileChanges)
+    private void FlushBatch(List<CommitRecord> commits, List<FileChangeRecord> fileChanges, string sourceUri)
     {
         if (commits.Count == 0)
             return;
@@ -282,7 +332,7 @@ public sealed class GitHistoryIndexer
             BulkInsertCommits(conn, tx, commits);
 
             if (fileChanges.Count > 0)
-                BulkInsertFileChanges(conn, tx, fileChanges);
+                BulkInsertFileChanges(conn, tx, fileChanges, sourceUri);
         });
     }
 
@@ -325,7 +375,11 @@ public sealed class GitHistoryIndexer
         }
     }
 
-    private static void BulkInsertFileChanges(DuckDBConnection conn, DuckDBTransaction tx, IReadOnlyList<FileChangeRecord> changes)
+    private static void BulkInsertFileChanges(
+        DuckDBConnection conn,
+        DuckDBTransaction tx,
+        IReadOnlyList<FileChangeRecord> changes,
+        string sourceUri)
     {
         const int batchSize = 100; // 7 columns, larger batch ok
         for (var offset = 0; offset < changes.Count; offset += batchSize)
@@ -344,8 +398,8 @@ public sealed class GitHistoryIndexer
                 sb.Append($"(${p + 1},${p + 2},${p + 3},${p + 4},${p + 5},${p + 6},${p + 7})");
 
                 var fc = batch[i];
-                var uri = PathToUri(fc.FilePath);
-                var oldUri = fc.OldPath is not null ? PathToUri(fc.OldPath) : null;
+                var uri = PathToUri(fc.FilePath, sourceUri);
+                var oldUri = fc.OldPath is not null ? PathToUri(fc.OldPath, sourceUri) : null;
 
                 cmd.Parameters.Add(new DuckDBParameter { Value = fc.CommitHash });
                 cmd.Parameters.Add(new DuckDBParameter { Value = uri });
@@ -361,12 +415,34 @@ public sealed class GitHistoryIndexer
         }
     }
 
-    private static string PathToUri(string relativePath)
+    private static string PathToUri(string relativePath, string sourceUri)
     {
-        // Normalize to forward slashes for URI
-        var normalized = relativePath.Replace('\\', '/');
-        return $"file:///{normalized}";
+        var normalizedPath = relativePath.Replace('\\', '/').TrimStart('/');
+        var normalizedSource = NormalizeSourceUri(sourceUri);
+        return $"{normalizedSource}/{normalizedPath}";
     }
+
+    private static string NormalizeSourceUri(string sourceUri)
+    {
+        if (string.IsNullOrWhiteSpace(sourceUri))
+            return DefaultSourceUri;
+
+        var normalized = sourceUri.Trim();
+        if (normalized.Equals("file:///", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Equals("file://", StringComparison.OrdinalIgnoreCase))
+            return DefaultSourceUri;
+
+        if (normalized.EndsWith("://", StringComparison.Ordinal))
+            return normalized;
+
+        return normalized.TrimEnd('/');
+    }
+
+    private static string BuildSourceUriPrefix(string sourceUri)
+        => $"{NormalizeSourceUri(sourceUri)}/";
+
+    private static string EscapeSqlLiteral(string value)
+        => value.Replace("'", "''", StringComparison.Ordinal);
 
     private sealed record CommitRecord
     {

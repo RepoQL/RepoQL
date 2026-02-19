@@ -180,7 +180,36 @@ internal sealed class HistoryHandlerTests
         result.Shown.Should().Be(0);
     }
 
-    private static void SeedHistory(DuckDbDataStore store)
+    [Test]
+    public async Task HistoryHandler_Supports_ImportedRepositoryUris()
+    {
+        using var context = new HistoryTestContext(gitRepo: false);
+        SeedHistory(context.Store, "github://owner/repo/src/Auth/TokenService.cs");
+
+        var documents = new[]
+        {
+            new ReadDocument(
+                "github://owner/repo/src/Auth/TokenService.cs",
+                TextContent: null,
+                MediaType: "text/plain",
+                Headline: null,
+                Summary: null,
+                Structure: null)
+        };
+
+        var result = await context.Handler.ExecuteAsync(
+            documents,
+            parameter: null,
+            tokenBudget: 10_000,
+            ct: CancellationToken.None);
+
+        result.Content.Should().Contain("aaaaaaa 2024-01-15 Alice Developer | Fix token expiration check");
+        result.Content.Should().Contain("bbbbbbb 2024-01-10 Bob Engineer | Add configurable token expiration");
+        result.TotalAvailable.Should().Be(2);
+        result.Shown.Should().Be(2);
+    }
+
+    private static void SeedHistory(DuckDbDataStore store, string uri = "file:///src/Auth/TokenService.cs")
     {
         store.ExecuteRaw("""
             INSERT INTO git_commit (
@@ -200,10 +229,13 @@ internal sealed class HistoryHandlerTests
             INSERT INTO git_file_change (
                 commit_hash, uri, change_type, old_uri, insertions, deletions, is_binary
             ) VALUES
-                ('aaaaaaaaaaaa', 'file:///src/Auth/TokenService.cs', 'M', NULL, 1, 1, FALSE),
-                ('bbbbbbbbbbbb', 'file:///src/Auth/TokenService.cs', 'M', NULL, 15, 3, FALSE);
-            """);
+                ('aaaaaaaaaaaa', '{URI_PLACEHOLDER}', 'M', NULL, 1, 1, FALSE),
+                ('bbbbbbbbbbbb', '{URI_PLACEHOLDER}', 'M', NULL, 15, 3, FALSE);
+            """.Replace("{URI_PLACEHOLDER}", Esc(uri), StringComparison.Ordinal));
     }
+
+    private static string Esc(string value)
+        => value.Replace("'", "''", StringComparison.Ordinal);
 
     private sealed class HistoryTestContext : IDisposable
     {

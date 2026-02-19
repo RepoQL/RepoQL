@@ -88,9 +88,10 @@ SELECT author_name, COUNT(*) FROM git_blame('file:///src/Core.cs') GROUP BY auth
 **Example**
 ```sql
 SELECT * FROM git_file_history('file:///src/Foo.cs');
+SELECT * FROM git_file_history('github://owner/repo/src/Foo.cs');
 SELECT hash, author_name, message FROM git_file_history('file:///src/Core.cs') LIMIT 10;
 ```
-//BOUNDARY: Queries indexed history (last 12 months). Includes renames.
+//BOUNDARY: Queries indexed history (last 12 months). Includes renames across primary and imported repositories.
 
 **Depth**
 - `uri`: File URI (required)

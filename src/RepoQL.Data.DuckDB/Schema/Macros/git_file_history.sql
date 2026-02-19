@@ -1,7 +1,7 @@
 -- Returns commit history for a specific file URI.
 -- Includes commits where the file was added, modified, deleted, or renamed.
 -- Parameters:
---   uri: File URI (file:///src/Foo.cs)
+--   uri: File URI (file:///src/Foo.cs, github://owner/repo/src/Foo.cs, local:///path/src/Foo.cs)
 CREATE OR REPLACE MACRO git_file_history(uri) AS TABLE (
     SELECT
         c.hash,
