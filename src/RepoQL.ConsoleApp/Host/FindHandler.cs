@@ -14,8 +14,8 @@ namespace RepoQL.ConsoleApp.Host;
 /// </summary>
 internal sealed class FindHandler(DuckDbDataStore db, RepoQlConfig? config = null) : IModifierHandler
 {
-    private const int DefaultMaxScopeDocuments = 64;
-    private const int BroadScopeDocumentThreshold = 64;
+    private const int DefaultMaxScopeDocuments = 96;
+    private const int BroadScopeDocumentThreshold = 96;
     private const int BroadScopeShortlistMaxDocuments = 96;
     private const int BroadScopeShortlistTimeoutMs = 8_000;
     private const int BroadScopeTotalTimeoutMs = 40_000;
