@@ -75,7 +75,17 @@ public class RepoQlConnectionClient : IRepoQlClient
         _hostSettings = options.HostSettings ?? new RepoQlConfig.HostSettings();
     }
 
-    protected virtual async Task EnsureConnectedAsync(bool forceReconnect, CancellationToken cancellationToken)
+    protected virtual Task EnsureConnectedAsync(bool forceReconnect, CancellationToken cancellationToken)
+        => EnsureConnectedInternalAsync(forceReconnect, forceHostRestart: false, cancellationToken);
+
+    /// <summary>
+    /// Force channel reconnection and host relaunch attempt, even if an existing host reports healthy.
+    /// Intended for recovery paths after repeated transport failures.
+    /// </summary>
+    protected virtual Task EnsureConnectedForHostRestartAsync(CancellationToken cancellationToken)
+        => EnsureConnectedInternalAsync(forceReconnect: true, forceHostRestart: true, cancellationToken);
+
+    private async Task EnsureConnectedInternalAsync(bool forceReconnect, bool forceHostRestart, CancellationToken cancellationToken)
     {
         if (_mode == ConnectionMode.ExternalChannel)
         {
@@ -84,17 +94,17 @@ public class RepoQlConnectionClient : IRepoQlClient
             return;
         }
 
-        if (!forceReconnect && _client != null)
+        if (!forceReconnect && !forceHostRestart && _client != null)
             return;
 
         await _connectLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!forceReconnect && _client != null)
+            if (!forceReconnect && !forceHostRestart && _client != null)
                 return;
 
             DisposeChannel();
-            await ConnectManagedAsync(cancellationToken).ConfigureAwait(false);
+            await ConnectManagedAsync(forceHostRestart, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -102,7 +112,7 @@ public class RepoQlConnectionClient : IRepoQlClient
         }
     }
 
-    private async Task ConnectManagedAsync(CancellationToken cancellationToken)
+    private async Task ConnectManagedAsync(bool forceHostRestart, CancellationToken cancellationToken)
     {
         if (_mode != ConnectionMode.Managed)
             throw new InvalidOperationException("Managed connection is not enabled for this client.");
@@ -120,6 +130,7 @@ public class RepoQlConnectionClient : IRepoQlClient
             repoDirectory,
             socketPath,
             allowReResolve,
+            forceHostRestart,
             TimeSpan.FromMilliseconds(ResolvePositiveInt(_hostSettings.StartTimeoutMs, 120_000)),
             cancellationToken).ConfigureAwait(false);
         _activeSocketPath = finalSocketPath;
@@ -200,23 +211,33 @@ public class RepoQlConnectionClient : IRepoQlClient
         RepoDirectoryAccessor repoDirectory,
         string initialSocketPath,
         bool allowReResolve,
+        bool forceHostRestart,
         TimeSpan timeout,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation(
-            "RepoQlClient: ensure server running (repoRoot='{RepoRoot}', initialSocket='{Socket}', allowReResolve={Allow}, timeoutMs={Timeout}).",
+            "RepoQlClient: ensure server running (repoRoot='{RepoRoot}', initialSocket='{Socket}', allowReResolve={Allow}, forceHostRestart={ForceHostRestart}, timeoutMs={Timeout}).",
             repoDirectory.RepoRoot,
             initialSocketPath,
             allowReResolve,
+            forceHostRestart,
             timeout.TotalMilliseconds);
 
-        if (await TryHealthCheckAsync(initialSocketPath, cancellationToken))
+        if (!forceHostRestart && await TryHealthCheckAsync(initialSocketPath, cancellationToken))
         {
             _logger.LogInformation("RepoQlClient: existing host healthy on '{Socket}'.", initialSocketPath);
             return initialSocketPath;
         }
 
-        _logger.LogInformation("RepoQlClient: launching host for repoRoot='{RepoRoot}'.", repoDirectory.RepoRoot);
+        if (forceHostRestart)
+        {
+            _logger.LogWarning("RepoQlClient: forcing host relaunch for repoRoot='{RepoRoot}'.", repoDirectory.RepoRoot);
+        }
+        else
+        {
+            _logger.LogInformation("RepoQlClient: launching host for repoRoot='{RepoRoot}'.", repoDirectory.RepoRoot);
+        }
+
         LaunchHost(repoDirectory.RepoRoot, _logger);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();

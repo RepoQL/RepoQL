@@ -347,9 +347,12 @@ public sealed class RepoQlClient : RepoQlConnectionClient
         var requiresConnect = shouldReconnect || Client is null;
         if (requiresConnect && _circuitBreaker.IsOpen(now))
         {
-            ThrowDiagnostics(new InvalidOperationException("RepoQL host repeatedly failed to start."),
-                recoveryAttempted: shouldReconnect,
-                circuitBreakerOpen: true);
+            Logger.LogWarning("RepoQlClient: circuit breaker open; forcing host restart recovery attempt.");
+            await EnsureConnectedForHostRestartAsync(cancellationToken).ConfigureAwait(false);
+            _circuitBreaker.RecordSuccess(DateTime.UtcNow);
+            _leaseFaulted = false;
+            EnsureHealthWatchActive();
+            return;
         }
 
         await EnsureConnectedAsync(forceReconnect: shouldReconnect, cancellationToken).ConfigureAwait(false);
