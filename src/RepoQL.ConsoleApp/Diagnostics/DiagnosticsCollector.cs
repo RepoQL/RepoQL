@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using Grpc.Core;
@@ -75,6 +76,11 @@ internal sealed class DiagnosticsCollector
         string? healthOverall = null;
         string? healthRepoQl = null;
         string? healthReason = null;
+        int? rpcActiveRequests = null;
+        int? rpcHangingRequests = null;
+        long? rpcOldestRequestAgeMs = null;
+        string? rpcOldestRequestMethod = null;
+        long? rpcHangThresholdMs = null;
         string? channelState = null;
 
         bool? dbExists = null;
@@ -167,23 +173,32 @@ internal sealed class DiagnosticsCollector
             {
                 using var channel = CreateGrpcChannel(socketPath);
 
-                (healthOverall, healthReason, degradedServices) = await TryCheckHealthAsync(
+                var overallHealth = await TryCheckHealthAsync(
                     channel,
                     string.Empty,
                     probeFailures,
                     ct).ConfigureAwait(false);
+                healthOverall = overallHealth.Status;
+                healthReason = overallHealth.Reason;
+                degradedServices = overallHealth.Degraded;
+                rpcActiveRequests = overallHealth.RpcActiveRequests;
+                rpcHangingRequests = overallHealth.RpcHangingRequests;
+                rpcOldestRequestAgeMs = overallHealth.RpcOldestRequestAgeMs;
+                rpcOldestRequestMethod = overallHealth.RpcOldestRequestMethod;
+                rpcHangThresholdMs = overallHealth.RpcHangThresholdMs;
 
-                (healthRepoQl, _, _) = await TryCheckHealthAsync(
+                var repoQlHealth = await TryCheckHealthAsync(
                     channel,
                     "repoql.v1.RepoQL",
                     probeFailures,
                     ct).ConfigureAwait(false);
+                healthRepoQl = repoQlHealth.Status;
 
                 foreach (var service in HealthServiceNames)
                 {
-                    var (status, _, _) = await TryCheckHealthAsync(channel, service, probeFailures, ct).ConfigureAwait(false);
-                    if (!string.IsNullOrWhiteSpace(status))
-                        healthServices[service] = status;
+                    var serviceHealth = await TryCheckHealthAsync(channel, service, probeFailures, ct).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(serviceHealth.Status))
+                        healthServices[service] = serviceHealth.Status;
                 }
 
                 if (mode == DiagnosticCollectionMode.Full)
@@ -230,6 +245,11 @@ internal sealed class DiagnosticsCollector
             HealthReason = healthReason,
             HealthDegradedServices = degradedServices,
             HealthServices = healthServices,
+            RpcActiveRequests = rpcActiveRequests,
+            RpcHangingRequests = rpcHangingRequests,
+            RpcOldestRequestAgeMs = rpcOldestRequestAgeMs,
+            RpcOldestRequestMethod = rpcOldestRequestMethod,
+            RpcHangThresholdMs = rpcHangThresholdMs,
             ChannelState = channelState,
             LeaseStreamActive = null,
             LeaseLastHeartbeatUtc = null,
@@ -286,7 +306,7 @@ internal sealed class DiagnosticsCollector
         }
     }
 
-    private static async Task<(string? Status, string? Reason, List<string> Degraded)> TryCheckHealthAsync(
+    private static async Task<HealthProbeSnapshot> TryCheckHealthAsync(
         GrpcChannel channel,
         string service,
         List<string> probeFailures,
@@ -306,13 +326,21 @@ internal sealed class DiagnosticsCollector
                 ? new List<string>()
                 : degradedRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
             var status = NormalizeHealthStatus(response.Status);
-            return (status, reason, degraded);
+            return new HealthProbeSnapshot(
+                status,
+                reason,
+                degraded,
+                TryParseInt(GetTrailerValue(trailers, "repoql-rpc-active")),
+                TryParseInt(GetTrailerValue(trailers, "repoql-rpc-hanging")),
+                TryParseLong(GetTrailerValue(trailers, "repoql-rpc-oldest-ms")),
+                GetTrailerValue(trailers, "repoql-rpc-oldest-method"),
+                TryParseLong(GetTrailerValue(trailers, "repoql-rpc-hang-threshold-ms")));
         }
         catch (Exception ex)
         {
             var label = string.IsNullOrWhiteSpace(service) ? "health" : $"health[{service}]";
             probeFailures.Add($"{label}: {ex.GetType().Name} - {ex.Message}");
-            return (null, null, new List<string>());
+            return new HealthProbeSnapshot(null, null, new List<string>(), null, null, null, null, null);
         }
     }
 
@@ -390,6 +418,24 @@ internal sealed class DiagnosticsCollector
         return null;
     }
 
+    private static int? TryParseInt(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
+    }
+
+    private static long? TryParseLong(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+        return long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
+    }
+
     private static IReadOnlyList<string> ReadHostLogTail(string repoRoot, List<string> probeFailures)
     {
         try
@@ -454,4 +500,18 @@ internal sealed class DiagnosticsCollector
         var status = report.Issues.Count == 0 ? "OK" : "DEGRADED";
         artifacts["services-start.json"] = status;
     }
+
+    /// <summary>
+    /// Purpose: Carry one health check result plus diagnostic trailers.
+    /// Complexity: Value-only transport for health probe outputs.
+    /// </summary>
+    private sealed record HealthProbeSnapshot(
+        string? Status,
+        string? Reason,
+        List<string> Degraded,
+        int? RpcActiveRequests,
+        int? RpcHangingRequests,
+        long? RpcOldestRequestAgeMs,
+        string? RpcOldestRequestMethod,
+        long? RpcHangThresholdMs);
 }

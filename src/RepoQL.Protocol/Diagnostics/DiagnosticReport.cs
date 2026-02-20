@@ -49,6 +49,11 @@ public sealed record DiagnosticReport
     public IReadOnlyList<string> HealthDegradedServices { get; init; } = Array.Empty<string>();
     public IReadOnlyDictionary<string, string> HealthServices { get; init; }
         = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    public int? RpcActiveRequests { get; init; }
+    public int? RpcHangingRequests { get; init; }
+    public long? RpcOldestRequestAgeMs { get; init; }
+    public string? RpcOldestRequestMethod { get; init; }
+    public long? RpcHangThresholdMs { get; init; }
 
     public string? ChannelState { get; init; }
     public bool? LeaseStreamActive { get; init; }
@@ -311,6 +316,27 @@ internal static class DiagnosticReportProblems
                 "Database locked by external process",
                 [$"holder={holder}"],
                 "Close the process holding the lock or restart the host."));
+        }
+
+        if (report.RpcHangingRequests is > 0)
+        {
+            var facts = new List<string>
+            {
+                $"hanging={report.RpcHangingRequests.Value}"
+            };
+            if (report.RpcActiveRequests.HasValue)
+                facts.Add($"active={report.RpcActiveRequests.Value}");
+            if (report.RpcHangThresholdMs.HasValue)
+                facts.Add($"hang_threshold_ms={report.RpcHangThresholdMs.Value}");
+            if (report.RpcOldestRequestAgeMs.HasValue)
+                facts.Add($"oldest_age_ms={report.RpcOldestRequestAgeMs.Value}");
+            if (!string.IsNullOrWhiteSpace(report.RpcOldestRequestMethod))
+                facts.Add($"oldest_method={report.RpcOldestRequestMethod}");
+
+            problems.Add(new DiagnosticProblem(
+                "Requests hanging",
+                facts,
+                "Inspect the reported RPC method and restart the host if it does not recover."));
         }
 
         if (report.HostRunning == false && report.HostLogTail.Any(line => line.Contains("ERROR", StringComparison.OrdinalIgnoreCase)))

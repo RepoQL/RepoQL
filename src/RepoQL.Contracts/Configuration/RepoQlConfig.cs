@@ -130,6 +130,11 @@ public sealed class RepoQlConfig
             DefaultValue = "5000",
             LegacyEnvVar = "REPOQL_LEASE_START_TIMEOUT_MS")]
         public int? LeaseStartTimeoutMs { get; set; }
+
+        [Setting("RPC hang detection threshold in milliseconds",
+            DefaultValue = "30000",
+            LegacyEnvVar = "REPOQL_RPC_HANG_THRESHOLD_MS")]
+        public int? RpcHangThresholdMs { get; set; }
     }
 
     public sealed class McpSettings

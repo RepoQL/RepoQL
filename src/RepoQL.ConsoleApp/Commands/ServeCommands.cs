@@ -120,9 +120,12 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddGrpc(options =>
             {
                 options.Interceptors.Add<DegradationWarningInterceptor>();
+                options.Interceptors.Add<RpcActivityInterceptor>();
                 options.Interceptors.Add<HealthDiagnosticsInterceptor>();
             });
             builder.Services.AddSingleton<DegradationWarningInterceptor>();
+            builder.Services.AddSingleton<RpcActivityTracker>();
+            builder.Services.AddSingleton<RpcActivityInterceptor>();
             builder.Services.AddSingleton<HealthDiagnosticsInterceptor>();
             builder.Services.AddSingleton<HealthServiceImpl>();
             builder.Services.AddSingleton(new RepositoryConfiguration { Path = repo });

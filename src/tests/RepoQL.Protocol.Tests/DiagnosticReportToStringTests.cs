@@ -41,4 +41,26 @@ internal sealed class DiagnosticReportToStringTests
         output.Should().Contain("host log:");
         output.Should().Contain("- ERROR: boom");
     }
+
+    [Test]
+    public void ToString_ReportsHangingRequestsAsProblem()
+    {
+        var report = new DiagnosticReport
+        {
+            TimestampUtc = new DateTimeOffset(2026, 2, 20, 12, 0, 0, TimeSpan.Zero),
+            SocketConnectable = true,
+            HealthOverall = "SERVING",
+            RpcActiveRequests = 2,
+            RpcHangingRequests = 1,
+            RpcHangThresholdMs = 30_000,
+            RpcOldestRequestAgeMs = 65_000,
+            RpcOldestRequestMethod = "/repoql.v1.RepoQL/ExecuteRawQuery"
+        };
+
+        var output = report.ToString();
+        output.Should().Contain("RepoQL: DEGRADED");
+        output.Should().Contain("Requests hanging");
+        output.Should().Contain("hanging=1");
+        output.Should().Contain("oldest_method=/repoql.v1.RepoQL/ExecuteRawQuery");
+    }
 }
