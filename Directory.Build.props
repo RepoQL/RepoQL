@@ -11,6 +11,13 @@
         <NoWarn>$(NoWarn);CA1056;CA1054</NoWarn>
     </PropertyGroup>
 
+    <!-- Apply test-project warning policy consistently across all *.Tests projects -->
+    <PropertyGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').EndsWith('.Tests'))">
+        <WarningLevel>1</WarningLevel>
+        <NoWarn>$(NoWarn);CA1707;CA1515</NoWarn>
+        <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    </PropertyGroup>
+
     <!-- Repository Areas -->
     <PropertyGroup>
         <!-- Msbuild extensions to apply everywhere -->
