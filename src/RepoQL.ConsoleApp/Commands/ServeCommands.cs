@@ -214,16 +214,20 @@ internal class HostCommands(IAnsiConsole console)
             await DatabaseInitCoordinator.InitializeAsync(app.Services, repo, dbInit.Report, serilogLogger, CancellationToken.None)
                 .ConfigureAwait(false);
 
+            ManifestEmbeddedFileProvider? dashboardProvider = null;
             // Dashboard: serve embedded static files
             try
             {
-                var dashboardProvider = new ManifestEmbeddedFileProvider(typeof(HostState).Assembly, "wwwroot");
+                dashboardProvider = new ManifestEmbeddedFileProvider(typeof(HostState).Assembly, "wwwroot");
                 app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = dashboardProvider });
                 app.UseStaticFiles(new StaticFileOptions { FileProvider = dashboardProvider });
             }
-            catch (InvalidOperationException)
+            catch (InvalidOperationException ex)
             {
-                // No embedded dashboard files (dev build without npm run build) - skip silently
+                app.Logger.LogWarning(
+                    ex,
+                    "Dashboard assets are missing from embedded resources. " +
+                    "Build/publish RepoQL.ConsoleApp with dashboard assets to enable the web dashboard.");
             }
 
             // Always log startup info
@@ -233,12 +237,11 @@ internal class HostCommands(IAnsiConsole console)
             DashboardEndpoints.Map(app);
 
             // SPA fallback for client-side routing
-            try
+            if (dashboardProvider is not null)
             {
-                var fallbackProvider = new ManifestEmbeddedFileProvider(typeof(HostState).Assembly, "wwwroot");
                 app.MapFallback(async context =>
                 {
-                    var file = fallbackProvider.GetFileInfo("index.html");
+                    var file = dashboardProvider.GetFileInfo("index.html");
                     if (file.Exists)
                     {
                         context.Response.ContentType = "text/html";
@@ -251,9 +254,10 @@ internal class HostCommands(IAnsiConsole console)
                     }
                 });
             }
-            catch (InvalidOperationException)
+            else
             {
-                // No embedded dashboard - skip fallback
+                app.Logger.LogWarning(
+                    "Dashboard SPA fallback is disabled because index.html is not embedded in the host assembly.");
             }
 
             var health = app.Services.GetRequiredService<HealthServiceImpl>();

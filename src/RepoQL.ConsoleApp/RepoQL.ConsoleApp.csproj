@@ -60,10 +60,6 @@
       <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
     </ItemGroup>
 
-    <ItemGroup>
-      <EmbeddedResource Include="..\..\dashboard\dist\**" LinkBase="wwwroot" Condition="Exists('..\..\dashboard\dist\index.html')" />
-    </ItemGroup>
-
     <!-- Ensure duckdb native library is always copied alongside trimmed single-file publishes -->
     <ItemGroup Condition="'$(RuntimeIdentifier)' != ''">
         <Content Include="$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-x64\native\duckdb.dll" Condition="'$(RuntimeIdentifier)' == 'win-x64' and Exists('$(PkgDuckDB_NET_Bindings_Full)\runtimes\win-x64\native\duckdb.dll')">
@@ -246,6 +242,14 @@
             Inputs="@(DashboardSource)"
             Outputs="$(RepositoryRoot)dashboard/dist/index.html">
       <Exec Command="npm run build" WorkingDirectory="$(RepositoryRoot)dashboard" />
+    </Target>
+
+    <Target Name="EmbedDashboardAssets" AfterTargets="BuildDashboard">
+      <Error Condition="!Exists('$(RepositoryRoot)dashboard/dist/index.html')"
+             Text="Dashboard build did not produce dashboard/dist/index.html. Ensure npm is available and dashboard build succeeds." />
+      <ItemGroup>
+        <EmbeddedResource Include="$(RepositoryRoot)dashboard/dist/**" LinkBase="wwwroot" />
+      </ItemGroup>
     </Target>
 
     <!-- Generate help:// snapshot for Release builds so documentation is queryable on first request -->
