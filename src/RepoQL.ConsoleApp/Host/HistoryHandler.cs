@@ -9,6 +9,8 @@ namespace RepoQL.ConsoleApp.Host;
 /// <summary>
 /// Purpose: Renders git history for matched files as a read modifier output.
 /// Complexity: Aggregates indexed history into commit-centric summaries while enforcing token budgets.
+/// When URIs include symbol or line fragments, filters to only commits that touched those specific lines
+/// using git blame for precise attribution.
 /// </summary>
 internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration repoConfig) : IModifierHandler
 {
@@ -36,8 +38,8 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
                 tokenBudget: tokenBudget));
         }
 
-        var fileUris = ExtractFileUris(documents);
-        if (fileUris.Count == 0)
+        var fileInfos = ExtractFileInfos(documents);
+        if (fileInfos.Count == 0)
         {
             return Task.FromResult(BuildSimpleResult(
                 "History is only available for document URIs.",
@@ -45,7 +47,51 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
                 tokenBudget: tokenBudget));
         }
 
-        var commits = LoadHistory(fileUris, ct);
+        var fileUris = fileInfos.Select(f => f.Uri).ToList();
+        var hasLineRanges = fileInfos.Any(f => f.StartLine.HasValue);
+
+        // Route: blame-based filtering for file:// URIs with line ranges, file-level otherwise
+        IReadOnlyList<HistoryCommit> commits;
+        string? lineRangeLabel = null;
+
+        if (hasLineRanges)
+        {
+            var blameFiles = fileInfos
+                .Where(f => f.StartLine.HasValue && f.Uri.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var plainFiles = fileInfos
+                .Where(f => !f.StartLine.HasValue || !f.Uri.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
+                .Select(f => f.Uri)
+                .ToList();
+
+            var allCommits = new Dictionary<string, HistoryCommit>(StringComparer.OrdinalIgnoreCase);
+
+            if (blameFiles.Count > 0)
+            {
+                foreach (var blameCommit in LoadBlameBasedHistory(blameFiles, ct))
+                    allCommits.TryAdd(blameCommit.Hash, blameCommit);
+
+                // Build a label for the summary line
+                if (blameFiles.Count == 1)
+                {
+                    var f = blameFiles[0];
+                    lineRangeLabel = $"lines {f.StartLine}-{f.EndLine ?? f.StartLine}";
+                }
+            }
+
+            if (plainFiles.Count > 0)
+            {
+                foreach (var fileCommit in LoadHistory(plainFiles, ct))
+                    allCommits.TryAdd(fileCommit.Hash, fileCommit);
+            }
+
+            commits = allCommits.Values.ToList();
+        }
+        else
+        {
+            commits = LoadHistory(fileUris, ct);
+        }
+
         if (commits.Count == 0)
         {
             if (AllUrisAreFileScheme(fileUris) && !IsGitRepository(_repoConfig.Path))
@@ -118,7 +164,7 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
         string content;
         while (blocks.Count > 0)
         {
-            content = BuildContent(blocks, totalAvailable, usedRelevance);
+            content = BuildContent(blocks, totalAvailable, usedRelevance, lineRangeLabel);
             if (TokenEstimator.EstimateTokens(content) <= tokenBudget)
                 break;
 
@@ -135,7 +181,7 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
                 warning: warning));
         }
 
-        content = BuildContent(blocks, totalAvailable, usedRelevance);
+        content = BuildContent(blocks, totalAvailable, usedRelevance, lineRangeLabel);
         var tokenCount = TokenEstimator.EstimateTokens(content);
 
         var extra = new Dictionary<string, object>(StringComparer.Ordinal)
@@ -171,25 +217,48 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
             Metadata: new ResultMetadata(filesConsulted, warning, new Dictionary<string, object>()));
     }
 
-    private static IReadOnlyList<string> ExtractFileUris(IReadOnlyList<ReadDocument> documents)
+    private static IReadOnlyList<FileHistoryInfo> ExtractFileInfos(IReadOnlyList<ReadDocument> documents)
     {
-        var uris = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new Dictionary<string, FileHistoryInfo>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var doc in documents)
         {
             if (string.IsNullOrWhiteSpace(doc.Uri))
                 continue;
 
+            string containerUri;
+            int? startLine = null;
+            int? endLine = null;
+
             if (RepoUri.TryParse(doc.Uri, out var repoUri))
             {
-                uris.Add(repoUri.Container.AbsoluteUri);
-                continue;
+                containerUri = repoUri.Container.AbsoluteUri;
+
+                if (repoUri.Loc.Line is { } lineRange)
+                {
+                    startLine = lineRange.Start;
+                    endLine = lineRange.End;
+                }
+            }
+            else
+            {
+                var hashIndex = doc.Uri.IndexOf('#', StringComparison.Ordinal);
+                containerUri = hashIndex >= 0 ? doc.Uri[..hashIndex] : doc.Uri;
             }
 
-            var hashIndex = doc.Uri.IndexOf('#', StringComparison.Ordinal);
-            uris.Add(hashIndex >= 0 ? doc.Uri[..hashIndex] : doc.Uri);
+            // If we already have this URI, keep the one with a line range (more specific)
+            if (seen.TryGetValue(containerUri, out var existing))
+            {
+                if (!existing.StartLine.HasValue && startLine.HasValue)
+                    seen[containerUri] = new FileHistoryInfo(containerUri, startLine, endLine);
+            }
+            else
+            {
+                seen[containerUri] = new FileHistoryInfo(containerUri, startLine, endLine);
+            }
         }
 
-        return uris.ToList();
+        return seen.Values.ToList();
     }
 
     private static bool AllUrisAreFileScheme(IReadOnlyList<string> uris)
@@ -274,6 +343,124 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
         return commits.Values.ToList();
     }
 
+    /// <summary>
+    /// Purpose: Loads history filtered to commits that touched specific line ranges using git blame.
+    /// Complexity: Queries git_blame() per file to get commit hashes, then fetches full metadata.
+    /// </summary>
+    private IReadOnlyList<HistoryCommit> LoadBlameBasedHistory(
+        IReadOnlyList<FileHistoryInfo> blameFiles,
+        CancellationToken ct)
+    {
+        if (blameFiles.Count == 0)
+            return Array.Empty<HistoryCommit>();
+
+        // Collect distinct commit hashes from blame for all files
+        var commitHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var fileUris = new List<string>();
+
+        foreach (var file in blameFiles)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!file.StartLine.HasValue)
+                continue;
+
+            fileUris.Add(file.Uri);
+            var escapedUri = EscapeSqlLiteral(file.Uri);
+
+            var sql = file.EndLine.HasValue
+                ? $"SELECT DISTINCT commit_hash FROM git_blame('{escapedUri}', {file.StartLine.Value}, {file.EndLine.Value})"
+                : $"SELECT DISTINCT commit_hash FROM git_blame('{escapedUri}', {file.StartLine.Value}, NULL)";
+
+            IReadOnlyList<IReadOnlyDictionary<string, object?>> rows;
+            try
+            {
+                rows = _db.Query(sql, ct);
+            }
+            catch (Exception ex) when (ex.Message.Contains("Not a valid git repository", StringComparison.OrdinalIgnoreCase) ||
+                                       ex.Message.Contains("does not exist", StringComparison.OrdinalIgnoreCase) ||
+                                       ex.Message.Contains("object not found", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (var row in rows)
+            {
+                var hash = row.TryGetValue("commit_hash", out var hashVal) ? hashVal?.ToString() : null;
+                if (!string.IsNullOrWhiteSpace(hash))
+                    commitHashes.Add(hash!);
+            }
+        }
+
+        if (commitHashes.Count == 0)
+            return Array.Empty<HistoryCommit>();
+
+        // Fetch full commit metadata for the blame-identified commits
+        var hashList = string.Join(", ", commitHashes.Select(h => $"'{EscapeSqlLiteral(h)}'"));
+        var uriList = string.Join(", ", fileUris.Select(u => $"'{EscapeSqlLiteral(u)}'"));
+
+        var metaSql = $"""
+            SELECT c.hash,
+                   c.author_name,
+                   c.author_email,
+                   c.author_date,
+                   c.message,
+                   fc.uri,
+                   fc.old_uri,
+                   fc.change_type,
+                   fc.insertions,
+                   fc.deletions
+            FROM git_commit c
+            LEFT JOIN git_file_change fc ON fc.commit_hash = c.hash
+                AND (fc.uri IN ({uriList}) OR fc.old_uri IN ({uriList}))
+            WHERE c.hash IN ({hashList})
+            ORDER BY c.author_date DESC, c.hash
+            """;
+
+        var metaRows = _db.Query(metaSql, ct);
+        var commits = new Dictionary<string, HistoryCommit>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in metaRows)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var hash = row.TryGetValue("hash", out var hashValue) ? hashValue?.ToString() : null;
+            if (string.IsNullOrWhiteSpace(hash))
+                continue;
+
+            if (!commits.TryGetValue(hash, out var commit))
+            {
+                var author = row.TryGetValue("author_name", out var authorValue) ? authorValue?.ToString() : null;
+                var dateValue = row.TryGetValue("author_date", out var dateRaw) ? dateRaw : null;
+                var message = row.TryGetValue("message", out var messageValue) ? messageValue?.ToString() : null;
+                commit = new HistoryCommit(
+                    hash,
+                    string.IsNullOrWhiteSpace(author) ? "Unknown" : author!,
+                    ParseDate(dateValue),
+                    message ?? string.Empty);
+                commits[hash] = commit;
+            }
+
+            var uri = row.TryGetValue("uri", out var uriValue) ? uriValue?.ToString() : null;
+            if (string.IsNullOrWhiteSpace(uri))
+                continue;
+
+            var oldUri = row.TryGetValue("old_uri", out var oldValue) ? oldValue?.ToString() : null;
+            var changeType = row.TryGetValue("change_type", out var changeValue) ? changeValue?.ToString() : null;
+            var insertions = row.TryGetValue("insertions", out var insertValue) ? Convert.ToInt32(insertValue, CultureInfo.InvariantCulture) : 0;
+            var deletions = row.TryGetValue("deletions", out var deleteValue) ? Convert.ToInt32(deleteValue, CultureInfo.InvariantCulture) : 0;
+
+            commit.AddChange(new HistoryChange(
+                uri!,
+                oldUri,
+                string.IsNullOrWhiteSpace(changeType) ? "M" : changeType!,
+                insertions,
+                deletions));
+        }
+
+        return commits.Values.ToList();
+    }
+
     private static string? FitCommitBlock(HistoryCommit commit, int tokenBudget)
     {
         // Try with detailed file changes
@@ -296,7 +483,7 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
         return TokenEstimator.EstimateTokens(block) <= tokenBudget ? block : null;
     }
 
-    private static string BuildContent(IReadOnlyList<string> blocks, int totalAvailable, bool usedRelevance)
+    private static string BuildContent(IReadOnlyList<string> blocks, int totalAvailable, bool usedRelevance, string? lineRangeLabel = null)
     {
         var builder = new StringBuilder();
         for (var i = 0; i < blocks.Count; i++)
@@ -307,16 +494,18 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
         }
 
         builder.Append("\n\n");
-        builder.Append(BuildSummaryLine(blocks.Count, totalAvailable, usedRelevance));
+        builder.Append(BuildSummaryLine(blocks.Count, totalAvailable, usedRelevance, lineRangeLabel));
         return builder.ToString();
     }
 
-    private static string BuildSummaryLine(int shown, int totalAvailable, bool usedRelevance)
+    private static string BuildSummaryLine(int shown, int totalAvailable, bool usedRelevance, string? lineRangeLabel = null)
     {
         var remainder = Math.Max(0, totalAvailable - shown);
         var shownLabel = shown == 1 ? "commit" : "commits";
         var qualifier = usedRelevance ? " (by relevance)" : string.Empty;
-        return $"[{shown} {shownLabel} shown{qualifier}, {remainder} more in history]";
+        var scope = lineRangeLabel is not null ? $" for {lineRangeLabel}" : string.Empty;
+        var historyType = lineRangeLabel is not null ? "symbol history" : "history";
+        return $"[{shown} {shownLabel} shown{scope}{qualifier}, {remainder} more in {historyType}]";
     }
 
     private static string BuildCommitBlock(
@@ -775,4 +964,10 @@ internal sealed class HistoryHandler(DuckDbDataStore db, RepositoryConfiguration
     /// Complexity: Keeps scoring data together to simplify ordering logic.
     /// </summary>
     private sealed record CommitScore(HistoryCommit Commit, int Score);
+
+    /// <summary>
+    /// Purpose: Carries file URI with optional line range from fragment resolution.
+    /// Complexity: Enables routing between file-level and blame-based history queries.
+    /// </summary>
+    private sealed record FileHistoryInfo(string Uri, int? StartLine, int? EndLine);
 }
