@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 
 namespace RepoQL.Commands;
@@ -8,7 +9,7 @@ namespace RepoQL.Commands;
 /// </summary>
 public sealed record CommandRegistration(
     CommandAttribute Attribute,
-    Type ClassType,
+    [property: DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors | DynamicallyAccessedMemberTypes.PublicMethods)] Type ClassType,
     MethodInfo Method,
     ParameterInfo[] UserParameters,
     bool HasCancellationToken);

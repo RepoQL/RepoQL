@@ -30,7 +30,7 @@ public static class RepoQlClientScopeExtensions
     {
         try
         {
-            var escapedScope = scope?.Replace("'", "''") ?? "";
+            var escapedScope = scope?.Replace("'", "''", StringComparison.Ordinal) ?? "";
             var sql = string.IsNullOrEmpty(escapedScope)
                 ? "SELECT * FROM _scope_readiness_internal(NULL)"
                 : $"SELECT * FROM _scope_readiness_internal('{escapedScope}')";

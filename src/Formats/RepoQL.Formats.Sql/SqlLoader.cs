@@ -19,7 +19,7 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
         .Create("text", "plain")
         .WithKind("query.sql");
 
-    private readonly ITemplateRenderer _renderer = new LiquidTemplateRenderer(
+    private readonly LiquidTemplateRenderer _renderer = new(
         assembly: typeof(SqlLoader).Assembly,
         resourceRoot: "RepoQL.Formats.Sql.Templates",
         configure: StandardFilters.RegisterAll);
@@ -42,8 +42,8 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
     public Task<bool> CanLoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(artifact);
-        var name = artifact.File.Name.ToLowerInvariant();
-        if (name.EndsWith(".sql"))
+        var name = artifact.File.Name;
+        if (name.EndsWith(".sql", StringComparison.OrdinalIgnoreCase))
         {
             artifact.MediaType = SqlType;
             return Task.FromResult(true);
@@ -216,7 +216,7 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
 
             var props = new JsonObject
             {
-                ["type"] = obj.Type.ToString().ToLowerInvariant(),
+                ["type"] = GetObjectTypeToken(obj.Type),
                 ["name"] = obj.Name
             };
 
@@ -225,7 +225,7 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
             if (obj.IsUnique)
                 props["is_unique"] = true;
 
-            var objType = obj.Type.ToString().ToLowerInvariant();
+            var objType = GetObjectTypeToken(obj.Type);
             var nodeHeadline = obj.OnTable is not null
                 ? $"{objType} {obj.Name} on {obj.OnTable}"
                 : $"{objType} {obj.Name}";
@@ -361,7 +361,9 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
                 trimmed.StartsWith("UNIQUE", StringComparison.OrdinalIgnoreCase) ||
                 trimmed.StartsWith("CHECK", StringComparison.OrdinalIgnoreCase) ||
                 trimmed.StartsWith("CONSTRAINT", StringComparison.OrdinalIgnoreCase))
+            {
                 continue;
+            }
 
             // Parse column: name TYPE [DEFAULT ...] [constraints]
             var tokens = trimmed.Split([' ', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
@@ -450,7 +452,7 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
         var searchText = text.Substring(startIndex, Math.Min(500, text.Length - startIndex));
 
         // Find closing paren of params
-        var parenStart = searchText.IndexOf('(');
+        var parenStart = searchText.IndexOf('(', StringComparison.Ordinal);
         if (parenStart < 0) return null;
 
         var depth = 1;
@@ -552,6 +554,18 @@ public sealed partial class SqlLoader : IFormatLoader, IFormatMaterializer
         var slash = ap.LastIndexOf('/') >= 0 ? ap[(ap.LastIndexOf('/') + 1)..] : ap;
         return string.IsNullOrEmpty(slash) ? uri.AbsoluteUri : slash;
     }
+
+    private static string GetObjectTypeToken(SqlObjectType type) => type switch
+    {
+        SqlObjectType.Table => "table",
+        SqlObjectType.View => "view",
+        SqlObjectType.Function => "function",
+        SqlObjectType.Procedure => "procedure",
+        SqlObjectType.Macro => "macro",
+        SqlObjectType.Trigger => "trigger",
+        SqlObjectType.Index => "index",
+        _ => "table"
+    };
 
     private static Edge HasPart(Guid documentId, Guid childId, Guid scopeDocumentId, int ordinal, DateTimeOffset ts)
         => new()

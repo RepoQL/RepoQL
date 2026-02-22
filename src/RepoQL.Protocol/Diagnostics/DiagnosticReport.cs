@@ -197,7 +197,7 @@ public sealed record DiagnosticReport
         var serving = HealthServices.Count(kvp => kvp.Value == "SERVING");
         var notServing = HealthServices
             .Where(kvp => kvp.Value != "SERVING")
-            .Select(kvp => kvp.Key.Replace("repoql.", ""))
+            .Select(kvp => kvp.Key.Replace("repoql.", "", StringComparison.Ordinal))
             .ToList();
         return (serving, HealthServices.Count, notServing);
     }

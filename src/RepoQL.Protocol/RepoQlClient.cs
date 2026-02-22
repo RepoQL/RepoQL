@@ -1,9 +1,7 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
-using System.Threading;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
@@ -450,6 +448,7 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
     /// Gets diagnostic information from the last host launch attempt.
     /// Useful for debugging startup failures.
     /// </summary>
+    [SuppressMessage("Design", "CA1024", Justification = "This returns a point-in-time snapshot that may involve synchronization and is clearer as an action-style API.")]
     public static (string? Stderr, int? ExitCode) GetLastHostDiagnostics()
     {
         lock (_hostDiagnosticsLock)
@@ -467,7 +466,7 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
         lock (_hostDiagnosticsLock)
         {
             bool? hasExited = null;
-            int? exitCode = _lastHostExitCode;
+            var exitCode = _lastHostExitCode;
 
             if (_hostProcess != null)
             {
@@ -566,14 +565,15 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
             var stderrLines = new List<string>();
             try
             {
-                while (!process.HasExited || !process.StandardError.EndOfStream)
+                while (true)
                 {
-                    var line = await process.StandardError.ReadLineAsync();
-                    if (line == null) break;
+                    var line = await process.StandardError.ReadLineAsync().ConfigureAwait(false);
+                    if (line is null)
+                        break;
 
                     // Add timestamp and prefix, write to stderr
                     var timestamped = $"[host {DateTime.UtcNow:HH:mm:ss}] {line}";
-                    await Console.Error.WriteLineAsync(timestamped);
+                    await Console.Error.WriteLineAsync(timestamped).ConfigureAwait(false);
 
                     // Add to ring buffer and full capture
                     AddToStderrBuffer(timestamped);
@@ -602,7 +602,7 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
             // Log if exited with error
             if (process.HasExited && process.ExitCode != 0)
             {
-                await Console.Error.WriteLineAsync($"[host] Process exited with code {process.ExitCode}");
+                await Console.Error.WriteLineAsync($"[host] Process exited with code {process.ExitCode}").ConfigureAwait(false);
             }
         });
 
@@ -611,13 +611,14 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
         {
             try
             {
-                while (!process.HasExited || !process.StandardOutput.EndOfStream)
+                while (true)
                 {
-                    var line = await process.StandardOutput.ReadLineAsync();
-                    if (line == null) break;
+                    var line = await process.StandardOutput.ReadLineAsync().ConfigureAwait(false);
+                    if (line is null)
+                        break;
 
                     var timestamped = $"[host stdout {DateTime.UtcNow:HH:mm:ss}] {line}";
-                    await Console.Error.WriteLineAsync(timestamped);
+                    await Console.Error.WriteLineAsync(timestamped).ConfigureAwait(false);
                     AddToStderrBuffer(timestamped);
                 }
             }
@@ -830,14 +831,18 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
         };
 
         foreach (var u in documentUris)
+        {
             if (!string.IsNullOrWhiteSpace(u))
                 req.Uris.Add(u);
+        }
 
         if (annotationKinds != null)
         {
             foreach (var k in annotationKinds)
+            {
                 if (!string.IsNullOrWhiteSpace(k))
                     req.Kinds.Add(k);
+            }
         }
 
         return req;

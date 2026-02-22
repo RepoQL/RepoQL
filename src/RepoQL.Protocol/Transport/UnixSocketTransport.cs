@@ -1,4 +1,5 @@
 using System.Net.Sockets;
+using System.Diagnostics.CodeAnalysis;
 
 namespace RepoQL.Protocol.Transport;
 
@@ -52,6 +53,10 @@ public sealed class UnixSocketTransport
         };
     }
 
+    [SuppressMessage(
+        "Reliability",
+        "CA2000:Dispose objects before losing scope",
+        Justification = "Socket ownership is transferred to NetworkStream via ownsSocket: true.")]
     private async ValueTask<Stream> ConnectAsync(
         SocketsHttpConnectionContext context,
         CancellationToken cancellationToken)

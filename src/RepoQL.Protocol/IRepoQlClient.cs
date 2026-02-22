@@ -108,7 +108,7 @@ public interface IRepoQlClient : IAsyncDisposable
         string? mediaTypeHint = null,
         CancellationToken cancellationToken = default);
 
-    public IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, string? scope = null, TimeSpan? timeout = null,
+    IAsyncEnumerable<ReindexProgress> ReindexAllAsync(bool clear = false, string? scope = null, TimeSpan? timeout = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>

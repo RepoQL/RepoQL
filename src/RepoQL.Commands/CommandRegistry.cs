@@ -52,7 +52,7 @@ public sealed class CommandRegistry
         _logger.LogInformation("[CommandRegistry] Registered {Count} commands", _commands.Count);
     }
 
-    private void RegisterCommandClass(Type type)
+    private void RegisterCommandClass([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type)
     {
         foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
         {
@@ -198,7 +198,7 @@ public sealed class CommandRegistry
         return count;
     }
 
-    private string GenerateUsage(CommandRegistration reg, bool wrongParamCount = false, int actual = 0)
+    private static string GenerateUsage(CommandRegistration reg, bool wrongParamCount = false, int actual = 0)
     {
         var sb = new StringBuilder();
 
@@ -272,8 +272,9 @@ public sealed class CommandRegistry
     {
         if (_commands.Count == 0) return null;
 
+        var normalizedName = name.ToUpperInvariant();
         var best = _commands.Keys
-            .Select(k => (Name: k, Distance: LevenshteinDistance(name.ToLowerInvariant(), k.ToLowerInvariant())))
+            .Select(k => (Name: k, Distance: LevenshteinDistance(normalizedName, k.ToUpperInvariant())))
             .OrderBy(x => x.Distance)
             .First();
 
