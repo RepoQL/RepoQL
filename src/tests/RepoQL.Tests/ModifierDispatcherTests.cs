@@ -88,6 +88,61 @@ internal sealed class ModifierDispatcherTests
         second.RenderedOutput.Should().Contain("budget override");
     }
 
+    [Test]
+    public async Task WithinToleranceBandPassesThroughWithoutConfirmation()
+    {
+        // 110 tokens on a 100-token budget = 10% over, within 15% tolerance
+        var handler = new StubModifierHandler(
+            "headline",
+            _ => new ModifierResult(
+                "content within tolerance",
+                TokenCount: 110,
+                TotalAvailable: 1,
+                Shown: 1,
+                ExceedsBudget: true, // handler says exceeds, but gate should allow it
+                Metadata: new ResultMetadata([], null, new Dictionary<string, object>())));
+
+        var dispatcher = new ModifierDispatcher(new StubContentProvider(), [handler]);
+        var pattern = $"file:///repo/{Guid.NewGuid():N}.md";
+
+        var result = await dispatcher.TryExecuteAsync(
+            $"{pattern} => headline",
+            tokenBudget: 100,
+            status: new IndexerStatus(0, true, true, 0),
+            cancellationToken: CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.RenderedOutput.Should().Contain("content within tolerance");
+        result.RenderedOutput.Should().NotContain("Repeat request to proceed");
+    }
+
+    [Test]
+    public async Task BeyondToleranceBandTriggersConfirmation()
+    {
+        // 120 tokens on a 100-token budget = 20% over, beyond 15% tolerance
+        var handler = new StubModifierHandler(
+            "headline",
+            _ => new ModifierResult(
+                "content beyond tolerance",
+                TokenCount: 120,
+                TotalAvailable: 1,
+                Shown: 1,
+                ExceedsBudget: true,
+                Metadata: new ResultMetadata([], null, new Dictionary<string, object>())));
+
+        var dispatcher = new ModifierDispatcher(new StubContentProvider(), [handler]);
+        var pattern = $"file:///repo/{Guid.NewGuid():N}.md";
+
+        var result = await dispatcher.TryExecuteAsync(
+            $"{pattern} => headline",
+            tokenBudget: 100,
+            status: new IndexerStatus(0, true, true, 0),
+            cancellationToken: CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.RenderedOutput.Should().Contain("Repeat request to proceed");
+    }
+
     private sealed class StubContentProvider : IReadContentProvider
     {
         public Task<ReadDocument?> FetchDocumentAsync(string uri, CancellationToken cancellationToken)

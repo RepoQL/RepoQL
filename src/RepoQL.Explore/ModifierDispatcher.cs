@@ -11,6 +11,12 @@ namespace RepoQL.Explore;
 /// </summary>
 public sealed class ModifierDispatcher
 {
+    /// <summary>
+    /// Small overages (within 15%) pass through without requiring a repeat-to-confirm round-trip.
+    /// Only overages beyond this threshold trigger the confirmation gate.
+    /// </summary>
+    private const double BudgetToleranceFactor = 1.15;
+
     private const int CacheSeconds = 60;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromSeconds(CacheSeconds);
     private static readonly ConcurrentDictionary<string, ModifierDispatchCacheEntry> Cache = new(StringComparer.Ordinal);
@@ -92,7 +98,8 @@ public sealed class ModifierDispatcher
                 Error: $"Modifier '{request.Modifier}' failed: {ex.Message}");
         }
 
-        var exceedsBudget = result.ExceedsBudget || result.TokenCount > tokenBudget;
+        var toleranceBudget = (int)(tokenBudget * BudgetToleranceFactor);
+        var exceedsBudget = result.TokenCount > toleranceBudget;
         if (exceedsBudget)
         {
             Cache[cacheKey] = new ModifierDispatchCacheEntry(result, DateTimeOffset.UtcNow.Add(CacheDuration));

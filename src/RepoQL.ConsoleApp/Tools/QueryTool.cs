@@ -14,6 +14,11 @@ namespace RepoQL.ConsoleApp.Tools;
 internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner selfTestRunner, SessionOrientation sessionOrientation)
 {
     /// <summary>
+    /// Small overages (within 15%) pass through without requiring a repeat-to-confirm round-trip.
+    /// </summary>
+    private const double BudgetToleranceFactor = 1.15;
+
+    /// <summary>
     /// Track the last query that exceeded token budget for "repeat to confirm" pattern.
     /// </summary>
     private static string? _lastBudgetExceededQuery;
@@ -184,7 +189,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
             if (tokenBudget > 0 && !isRepeatRequest)
             {
                 var estimatedTokens = TokenEstimator.EstimateTokens(output);
-                if (estimatedTokens > tokenBudget)
+                if (estimatedTokens > (int)(tokenBudget * BudgetToleranceFactor))
                 {
                     // Store this query so next identical call bypasses the check
                     _lastBudgetExceededQuery = requestSignature;
