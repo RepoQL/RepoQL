@@ -16,4 +16,9 @@
     <ProjectReference Include="..\RepoQL.Web\RepoQL.Web.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Update="$(RepositoryRoot)src/RepoQL.Analyzers/RepoQL.Analyzers.csproj"
+                      IsAspireProjectResource="false" />
+  </ItemGroup>
+
 </Project>
