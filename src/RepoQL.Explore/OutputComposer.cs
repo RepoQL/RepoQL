@@ -106,6 +106,7 @@ public static class OutputComposer
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="indent">Current indentation level.</param>
     /// <param name="parentUri">Parent URI for fragment-only display of children.</param>
+    /// <param name="useShortHeadlines">When true, strips metadata from headlines for nested formatting.</param>
     private static string FormatWithChildren(RenderingDecision decision, bool showConfidence, int indent, string? parentUri, bool useShortHeadlines = false)
     {
         var sb = new StringBuilder();

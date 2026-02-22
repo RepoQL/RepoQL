@@ -103,7 +103,7 @@ public sealed class ModifierDispatcher
         if (exceedsBudget)
         {
             Cache[cacheKey] = new ModifierDispatchCacheEntry(result, DateTimeOffset.UtcNow.Add(CacheDuration));
-            var confirmation = FormatBudgetConfirmationMessage(request, result, tokenBudget);
+            var confirmation = FormatBudgetConfirmationMessage(result, tokenBudget);
             return new ReadExecutionResult(
                 Success: true,
                 RenderedOutput: confirmation,
@@ -115,7 +115,7 @@ public sealed class ModifierDispatcher
         return BuildReadExecutionResult(request, result, status, stopwatch, budgetOverridden: false);
     }
 
-    private ReadExecutionResult BuildReadExecutionResult(
+    private static ReadExecutionResult BuildReadExecutionResult(
         ParsedReadRequest request,
         ModifierResult result,
         IndexerStatus status,
@@ -149,7 +149,7 @@ public sealed class ModifierDispatcher
             FilesOmitted: filesOmitted);
     }
 
-    private bool TryGetCachedResult(string cacheKey, out ModifierResult result)
+    private static bool TryGetCachedResult(string cacheKey, out ModifierResult result)
     {
         result = default!;
 
@@ -166,10 +166,7 @@ public sealed class ModifierDispatcher
         return true;
     }
 
-    private static string FormatBudgetConfirmationMessage(
-        ParsedReadRequest request,
-        ModifierResult result,
-        int tokenBudget)
+    private static string FormatBudgetConfirmationMessage(ModifierResult result, int tokenBudget)
     {
         var matched = result.TotalAvailable > 0
             ? $"{result.TotalAvailable} item{(result.TotalAvailable == 1 ? string.Empty : "s")} matched."
@@ -217,7 +214,7 @@ public sealed class ModifierDispatcher
         var modifier = remainder;
         string? parameter = null;
 
-        var paramIndex = remainder.IndexOf(':');
+        var paramIndex = remainder.IndexOf(':', StringComparison.Ordinal);
         if (paramIndex >= 0)
         {
             modifier = remainder[..paramIndex].Trim();

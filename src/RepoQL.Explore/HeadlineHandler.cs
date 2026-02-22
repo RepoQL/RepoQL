@@ -70,7 +70,7 @@ public sealed class HeadlineHandler : IModifierHandler
         if (string.IsNullOrWhiteSpace(headline))
             return null;
 
-        var newlineIndex = headline.IndexOf('\n');
+        var newlineIndex = headline.IndexOf('\n', StringComparison.Ordinal);
         var singleLine = newlineIndex >= 0
             ? headline[..newlineIndex]
             : headline;

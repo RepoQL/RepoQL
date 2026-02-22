@@ -262,15 +262,15 @@ public sealed class LintHandler : IModifierHandler
         if (string.IsNullOrWhiteSpace(parameter))
             return LintSeverityFilter.Default;
 
-        var normalized = parameter.Trim().ToLowerInvariant();
-        return normalized switch
-        {
-            "errors" => LintSeverityFilter.Errors,
-            "warnings" => LintSeverityFilter.Warnings,
-            _ => throw new ArgumentException(
-                "lint modifier parameters must be 'errors' or 'warnings'.",
-                nameof(parameter))
-        };
+        var normalized = parameter.Trim();
+        if (string.Equals(normalized, "errors", StringComparison.OrdinalIgnoreCase))
+            return LintSeverityFilter.Errors;
+        if (string.Equals(normalized, "warnings", StringComparison.OrdinalIgnoreCase))
+            return LintSeverityFilter.Warnings;
+
+        throw new ArgumentException(
+            "lint modifier parameters must be 'errors' or 'warnings'.",
+            nameof(parameter));
     }
 
     private static bool ShouldInclude(LintAnnotation annotation, LintSeverityFilter filter)
@@ -401,18 +401,33 @@ public sealed class LintHandler : IModifierHandler
     }
 
     private static string NormalizeSeverity(string? severity)
-        => string.IsNullOrWhiteSpace(severity) ? "unknown" : severity.Trim().ToLowerInvariant();
+    {
+        if (string.IsNullOrWhiteSpace(severity))
+            return "unknown";
+
+        var normalized = severity.Trim();
+        if (string.Equals(normalized, "error", StringComparison.OrdinalIgnoreCase))
+            return "error";
+        if (string.Equals(normalized, "warning", StringComparison.OrdinalIgnoreCase))
+            return "warning";
+        if (string.Equals(normalized, "info", StringComparison.OrdinalIgnoreCase))
+            return "info";
+        if (string.Equals(normalized, "hint", StringComparison.OrdinalIgnoreCase))
+            return "hint";
+
+        return normalized;
+    }
 
     private static string GetContainerUri(string? uri)
     {
         if (string.IsNullOrWhiteSpace(uri))
             return string.Empty;
 
-        var hashIndex = uri.IndexOf('#');
+        var hashIndex = uri.IndexOf('#', StringComparison.Ordinal);
         return hashIndex < 0 ? uri : uri[..hashIndex];
     }
 
-    private static IReadOnlyDictionary<string, string> BuildFileTextLookup(IReadOnlyList<ReadDocument> documents)
+    private static Dictionary<string, string> BuildFileTextLookup(IReadOnlyList<ReadDocument> documents)
     {
         var lookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var doc in documents)

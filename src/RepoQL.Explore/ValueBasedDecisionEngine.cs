@@ -24,7 +24,7 @@ public class ValueBasedDecisionEngine
     /// <param name="intent">The user's intent (Explore, Find, Read).</param>
     /// <param name="tokenBudget">The total token budget available.</param>
     /// <returns>An allocation result showing which items to include and at what levels.</returns>
-    public AllocationResult Allocate(
+    public static AllocationResult Allocate(
         IReadOnlyList<SearchResult> candidates,
         Intent intent,
         int tokenBudget)

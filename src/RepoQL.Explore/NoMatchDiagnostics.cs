@@ -14,11 +14,11 @@ public static class NoMatchDiagnostics
         CancellationToken ct)
     {
         // Multi-pattern URIs (semicolon-separated) — keep generic
-        if (uriPattern.Contains(';'))
+        if (uriPattern.Contains(";", StringComparison.Ordinal))
             return FormatGenericMessage(uriPattern, status);
 
         // Check for fragment
-        var hashIndex = uriPattern.IndexOf('#');
+        var hashIndex = uriPattern.IndexOf('#', StringComparison.Ordinal);
         if (hashIndex > 0)
         {
             var baseUri = uriPattern[..hashIndex];
@@ -49,7 +49,8 @@ public static class NoMatchDiagnostics
         }
 
         // No fragment, or base file also not found
-        var isGlob = uriPattern.Contains('*') || uriPattern.Contains('?');
+        var isGlob = uriPattern.Contains("*", StringComparison.Ordinal)
+            || uriPattern.Contains("?", StringComparison.Ordinal);
 
         if (status.IndexPending > 0)
         {

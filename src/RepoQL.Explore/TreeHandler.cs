@@ -123,7 +123,7 @@ public sealed class TreeHandler : IModifierHandler
                 : null;
 
             return BuildResult(fit.Content, fit.TokenCount, documents.Count, filesConsulted,
-                new Dictionary<string, object> { ["verbosity"] = fit.Verbosity.ToString().ToLowerInvariant() },
+                new Dictionary<string, object> { ["verbosity"] = FormatVerbosity(fit.Verbosity) },
                 exceedsBudget: false, warning: warning);
         }
 
@@ -163,14 +163,16 @@ public sealed class TreeHandler : IModifierHandler
         if (string.IsNullOrWhiteSpace(parameter))
             return TreeDetailLevel.Files; // default
 
-        return parameter.Trim().ToLowerInvariant() switch
-        {
-            "folders" => TreeDetailLevel.Folders,
-            "files" => TreeDetailLevel.Files,
-            "headlines" => TreeDetailLevel.Headlines,
-            _ => throw new ArgumentException(
-                $"tree modifier parameter must be 'folders', 'files', or 'headlines', got '{parameter}'.")
-        };
+        var normalized = parameter.Trim();
+        if (string.Equals(normalized, "folders", StringComparison.OrdinalIgnoreCase))
+            return TreeDetailLevel.Folders;
+        if (string.Equals(normalized, "files", StringComparison.OrdinalIgnoreCase))
+            return TreeDetailLevel.Files;
+        if (string.Equals(normalized, "headlines", StringComparison.OrdinalIgnoreCase))
+            return TreeDetailLevel.Headlines;
+
+        throw new ArgumentException(
+            $"tree modifier parameter must be 'folders', 'files', or 'headlines', got '{parameter}'.");
     }
 
     private static ModifierResult BuildResult(
@@ -190,4 +192,12 @@ public sealed class TreeHandler : IModifierHandler
             ExceedsBudget: exceedsBudget,
             Metadata: new ResultMetadata(filesConsulted, Warning: warning, Extra: extra));
     }
+
+    private static string FormatVerbosity(TreeDetailLevel verbosity) => verbosity switch
+    {
+        TreeDetailLevel.Folders => "folders",
+        TreeDetailLevel.Files => "files",
+        TreeDetailLevel.Headlines => "headlines",
+        _ => "files"
+    };
 }

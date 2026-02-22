@@ -399,7 +399,7 @@ public static class RepresentationFormatter
         if (string.IsNullOrEmpty(result.Headline))
             return null;
 
-        var newlineIndex = result.Headline.IndexOf('\n');
+        var newlineIndex = result.Headline.IndexOf('\n', StringComparison.Ordinal);
         return newlineIndex >= 0
             ? result.Headline[..newlineIndex].TrimEnd()
             : result.Headline;
@@ -426,7 +426,7 @@ public static class RepresentationFormatter
     {
         var trimmed = uri.TrimEnd('/');
         // Remove fragment
-        var hashIndex = trimmed.IndexOf('#');
+        var hashIndex = trimmed.IndexOf('#', StringComparison.Ordinal);
         if (hashIndex >= 0)
             trimmed = trimmed[..hashIndex];
         // Get last segment
