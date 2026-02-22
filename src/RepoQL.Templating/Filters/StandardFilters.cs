@@ -195,7 +195,7 @@ public static class StandardFilters
     private static ValueTask<FluidValue> NormalizeNewlines(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
         var s = input.ToStringValue() ?? string.Empty;
-        s = s.Replace("\r\n", "\n").Replace('\r', '\n');
+        s = s.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         return new ValueTask<FluidValue>(new StringValue(s));
     }
 
@@ -203,7 +203,7 @@ public static class StandardFilters
     private static ValueTask<FluidValue> IsMultiline(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
         var s = input.ToStringValue() ?? string.Empty;
-        var has = s.Contains('\n');
+        var has = s.Contains('\n', StringComparison.Ordinal);
         return new ValueTask<FluidValue>(has ? BooleanValue.True : BooleanValue.False);
     }
 
@@ -211,7 +211,7 @@ public static class StandardFilters
     private static ValueTask<FluidValue> NonEmptyLines(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
         var s = input.ToStringValue() ?? string.Empty;
-        s = s.Replace("\r\n", "\n").Replace('\r', '\n');
+        s = s.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         var lines = s.Split('\n');
         var list = new List<FluidValue>(lines.Length);
         foreach (var ln in lines)
@@ -225,7 +225,7 @@ public static class StandardFilters
     private static ValueTask<FluidValue> SingleLine(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
         var s = input.ToStringValue() ?? string.Empty;
-        s = s.Replace("\r\n", "\n").Replace('\r', '\n');
+        s = s.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
         s = s.Replace('\n', ' ').Replace('\t', ' ');
         return new ValueTask<FluidValue>(new StringValue(s));
     }
@@ -244,4 +244,3 @@ public static class StandardFilters
         return new ValueTask<FluidValue>(new StringValue($"~{formatted} tok"));
     }
 }
-

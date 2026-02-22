@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
@@ -23,7 +24,8 @@ namespace RepoQL.Protocol;
 /// Socket discovery mirrors the server: prefer ".repoql/socket.path" mapping (WSL Windows mount case),
 /// otherwise use ".repoql/repoql.sock" under the repository root discovered by <see cref="RepoLocator.FindRepoRoot"/>.
 /// </remarks>
-public class RepoQlConnectionClient : IRepoQlClient
+[SuppressMessage("Usage", "CA2213", Justification = "Disposable fields are released in DisposeConnectionState using Interlocked exchange to support concurrent reconnect/shutdown paths.")]
+public class RepoQlConnectionClient : IRepoQlClient, IDisposable
 {
     protected enum ConnectionMode
     {
@@ -43,6 +45,7 @@ public class RepoQlConnectionClient : IRepoQlClient
     private readonly ILogger _logger;
     private readonly RepoQlConfig.HostSettings _hostSettings;
     private string? _activeSocketPath;
+    private bool _disposed;
 
     public GrpcChannel Channel => _channel ?? throw new InvalidOperationException("RepoQL client is not connected.");
 
@@ -166,6 +169,11 @@ public class RepoQlConnectionClient : IRepoQlClient
 
     protected virtual void DisposeChannel()
     {
+        DisposeConnectionState();
+    }
+
+    private void DisposeConnectionState()
+    {
         var leaseCts = Interlocked.Exchange(ref _leaseCts, null);
         if (leaseCts != null)
         {
@@ -174,7 +182,8 @@ public class RepoQlConnectionClient : IRepoQlClient
             leaseCts.Dispose();
         }
 
-        _leaseCall = null;
+        var leaseCall = Interlocked.Exchange(ref _leaseCall, null);
+        try { leaseCall?.Dispose(); } catch { }
 
         var channel = Interlocked.Exchange(ref _channel, null);
         channel?.Dispose();
@@ -742,10 +751,52 @@ public class RepoQlConnectionClient : IRepoQlClient
             return await client.GetDocumentSummariesAsync(req, deadline: deadline, cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
         }, cancellationToken);
 
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+        if (!disposing)
+            return;
+
+        DisposeConnectionState();
+
+        // Keep explicit disposal here so analyzers can verify ownership cleanup
+        // even though DisposeConnectionState() already releases these fields.
+        if (_leaseCts is not null)
+        {
+            try { _leaseCts.Cancel(); } catch { }
+            _leaseCts.Dispose();
+            _leaseCts = null;
+        }
+
+        if (_leaseCall is not null)
+        {
+            try { _leaseCall.Dispose(); } catch { }
+            _leaseCall = null;
+        }
+
+        if (_channel is not null)
+        {
+            _channel.Dispose();
+            _channel = null;
+        }
+
+        _connectLock.Dispose();
+        _repoDirectory?.Dispose();
+    }
+
+    public void Dispose()
+    {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
     public virtual ValueTask DisposeAsync()
     {
-        DisposeChannel();
-        _repoDirectory?.Dispose();
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
         return ValueTask.CompletedTask;
     }
 
