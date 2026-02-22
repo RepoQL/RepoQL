@@ -77,6 +77,7 @@ internal class McpCommands
                                            **explain** — Ask a question, get a synthesized answer with citations. An LLM reads wide (50k tokens), returns focused prose. Use when you want understanding, not raw text.
                                            **read** — Fetch known URIs. Append `=> modifier` for views (tree, history, blame, lint, question).
                                            **query** — SQL for aggregation, graph traversal, git history, cross-file analysis. Also: call MCP servers, parse JSON/CSV/Excel/Parquet.
+                                           **command** — Imperative operations: diagnostics, reindex, config. Use `command(command="?")` to list all.
                                            </TOOLS>
 
                                            <START>
@@ -107,6 +108,7 @@ internal class McpCommands
                 .WithTools<ExplainTool>()
                 .WithTools<ReadTool>()
                 .WithTools<ImportTool>()
+                .WithTools<CommandTool>()
 #if DEBUG
                 .WithTools<SelfTestTool>()
 #endif
