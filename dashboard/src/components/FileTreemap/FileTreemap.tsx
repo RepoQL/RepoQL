@@ -2,6 +2,8 @@ import { createMemo, createSignal, Index, onCleanup, Show } from 'solid-js';
 import type { FileEntry, SourceSection } from '../../types';
 import { FileTile } from './FileTile';
 import { FileTooltip } from './FileTooltip';
+import { FileDetailPanel } from './FileDetailPanel';
+import { SourceCard } from './SourceCard';
 import './FileTreemap.css';
 
 export interface FileTreemapProps {
@@ -14,16 +16,6 @@ export interface FileTreemapProps {
   };
 }
 
-const STATE_LABELS: Record<string, string> = {
-  hidden: 'Pending',
-  discovered: 'Discovered',
-  classified: 'Indexing',
-  parsed: 'Parsed',
-  struct_embedded: 'Ready',
-  full_embedded: 'Fully Indexed',
-  failed: 'Failed',
-};
-
 interface HoverState {
   file: FileEntry;
   x: number;
@@ -31,6 +23,7 @@ interface HoverState {
 }
 
 export function FileTreemap(props: FileTreemapProps) {
+  const [selectedSection, setSelectedSection] = createSignal(0);
   const [selected, setSelected] = createSignal<FileEntry | null>(null);
   const [hover, setHover] = createSignal<HoverState | null>(null);
   let hoverTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -40,6 +33,26 @@ export function FileTreemap(props: FileTreemapProps) {
       clearTimeout(hoverTimeout);
       hoverTimeout = null;
     }
+  });
+
+  const activeSection = createMemo(() => {
+    return props.sections[selectedSection()] ?? props.sections[0] ?? null;
+  });
+
+  const sectionStats = createMemo(() => {
+    const section = activeSection();
+    if (!section) return props.stats;
+    const allFiles = section.groups.flatMap((g) => g.files);
+    const byState: Record<string, number> = {};
+    for (const f of allFiles) {
+      byState[f.state] = (byState[f.state] ?? 0) + 1;
+    }
+    const total = allFiles.length;
+    const classified = total - (byState['hidden'] ?? 0) - (byState['discovered'] ?? 0);
+    const parsed = (byState['parsed'] ?? 0) + (byState['struct_embedded'] ?? 0)
+      + (byState['full_embedded'] ?? 0) + (byState['failed'] ?? 0);
+    const searchable = (byState['struct_embedded'] ?? 0) + (byState['full_embedded'] ?? 0);
+    return { total, classified, parsed, searchable };
   });
 
   const handleSelect = (file: FileEntry) => {
@@ -61,45 +74,44 @@ export function FileTreemap(props: FileTreemapProps) {
     }
   };
 
+  const handleTabClick = (i: number, e: MouseEvent) => {
+    e.stopPropagation();
+    setSelectedSection(i);
+    setSelected(null);
+    setHover(null);
+  };
+
   return (
     <div class="treemap-area" onClick={handleBackdrop}>
       <div class="treemap-header">
-        <span class="treemap-title">Codebase</span>
+        <div class="treemap-tabs">
+          <Index each={props.sections}>
+            {(section, i) => (
+              <SourceCard
+                section={section()}
+                active={i === selectedSection()}
+                onClick={(e) => handleTabClick(i, e)}
+              />
+            )}
+          </Index>
+        </div>
         <div class="treemap-stats">
-          <div class="tm-stat"><span>{props.stats.total}</span> files</div>
-          <div class="tm-stat"><span>{props.stats.classified}</span> classified</div>
-          <div class="tm-stat"><span>{props.stats.parsed}</span> parsed</div>
-          <div class="tm-stat"><span>{props.stats.searchable}</span> ready</div>
+          <div class="tm-stat"><span>{sectionStats().total}</span> files</div>
+          <div class="tm-stat"><span>{sectionStats().classified}</span> classified</div>
+          <div class="tm-stat"><span>{sectionStats().parsed}</span> parsed</div>
+          <div class="tm-stat"><span>{sectionStats().searchable}</span> ready</div>
         </div>
       </div>
 
-      <Show when={selected()}>
-        {(selectedFile) => (
-          <div class="treemap-detail" onClick={(event) => event.stopPropagation()}>
-            <span
-              class="detail-swatch"
-              style={{ background: selectedFile().state === 'failed' ? 'var(--red)' : selectedFile().lang.color }}
-            />
-            <span class="detail-path">{selectedFile().path}</span>
-            <span class="detail-lang">{selectedFile().lang.name}</span>
-            <span class={`detail-state ${selectedFile().state}`}>
-              {STATE_LABELS[selectedFile().state] ?? selectedFile().state}
-            </span>
-            <button class="detail-close" onClick={() => setSelected(null)} aria-label="Close">
-              &times;
-            </button>
-          </div>
-        )}
-      </Show>
-
-      <div class="treemap-body">
-        <Index each={props.sections}>
-          {(section) => {
-            const totalTokens = createMemo(() => {
-              const allFiles = section().groups.flatMap((g) => g.files);
-              return sumTokens(allFiles) || 1;
-            });
-            return (
+      {/* Active section content */}
+      <Show when={activeSection()}>
+        {(section) => {
+          const totalTokens = createMemo(() => {
+            const allFiles = section().groups.flatMap((g) => g.files);
+            return sumTokens(allFiles) || 1;
+          });
+          return (
+            <div class="treemap-body">
               <SourceBlock
                 section={section()}
                 totalTokens={totalTokens()}
@@ -107,14 +119,24 @@ export function FileTreemap(props: FileTreemapProps) {
                 onSelect={handleSelect}
                 onHover={handleHover}
               />
-            );
-          }}
-        </Index>
-      </div>
+            </div>
+          );
+        }}
+      </Show>
 
-      <Show when={hover()}>
+      {/* Tooltip on hover (hidden when flyout is open) */}
+      <Show when={!selected() ? hover() : null}>
         {(hoverState) => (
           <FileTooltip file={hoverState().file} x={hoverState().x} y={hoverState().y} />
+        )}
+      </Show>
+
+      {/* Flyout on click */}
+      <Show when={selected()}>
+        {(file) => (
+          <div class="treemap-flyout" onClick={(e) => e.stopPropagation()}>
+            <FileDetailPanel file={file()} onClose={() => setSelected(null)} />
+          </div>
         )}
       </Show>
     </div>
@@ -134,19 +156,11 @@ function SourceBlock(props: {
   onSelect: (file: FileEntry) => void;
   onHover: (file: FileEntry | null, x: number, y: number) => void;
 }) {
-  const isImport = () => props.section.prefix !== '';
   const normalGroups = () => props.section.groups.filter((g) => g.label !== 'Failed');
   const failedGroups = () => props.section.groups.filter((g) => g.label === 'Failed');
 
   return (
-    <div class={`treemap-source ${isImport() ? 'treemap-import' : ''}`}>
-      <Show when={isImport()}>
-        <div class="source-label">
-          <span class="source-icon">&#x2197;</span>
-          {props.section.label}
-          <span class="source-count">{props.section.total}</span>
-        </div>
-      </Show>
+    <div class="treemap-source">
       <div class="treemap-pipeline">
         <Index each={normalGroups()}>
           {(group) => (

@@ -4,7 +4,6 @@
   pointer-events: none;
   display: flex;
   min-width: 200px;
-  max-width: 380px;
   background: var(--raised);
   border: 1px solid var(--border-l);
   border-radius: 4px;
@@ -49,175 +48,17 @@
   font-weight: 500;
 }
 
-/* State + language row */
-.ft-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+/* Structure — preformatted x-ray output */
+.ft-structure {
   font-family: var(--font-mono);
-  font-size: 0.55rem;
-}
-
-.ft-state {
-  padding: 1px 5px;
+  font-size: 0.6rem;
+  line-height: 1.5;
+  color: var(--fg3);
+  margin: 0;
+  padding: 4px 6px;
+  background: rgba(255,255,255,.03);
   border-radius: 2px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  background: rgba(255,255,255,.06);
-  color: var(--fg2);
-}
-
-.ft-state.full_embedded {
-  background: rgba(61, 214, 140, .12);
-  color: var(--green);
-}
-
-.ft-state.struct_embedded {
-  background: rgba(74, 158, 255, .12);
-  color: var(--blue);
-}
-
-.ft-state.parsed {
-  background: rgba(240, 160, 48, .12);
-  color: var(--amber);
-}
-
-.ft-state.discovered,
-.ft-state.classified {
-  background: rgba(255,255,255,.04);
-  color: var(--fg3);
-}
-
-.ft-state.failed {
-  background: rgba(224, 80, 80, .15);
-  color: var(--red);
-}
-
-/* Processing pulse dot */
-.ft-processing {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--amber);
-  animation: ft-pulse 1s ease-in-out infinite;
-}
-
-@keyframes ft-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
-}
-
-.ft-lang {
-  color: var(--fg3);
-  margin-left: auto;
-}
-
-/* Metrics row */
-.ft-metrics {
-  display: flex;
-  gap: 10px;
-  font-family: var(--font-mono);
-  font-size: 0.55rem;
-  color: var(--fg3);
-}
-
-.ft-val {
-  color: var(--fg2);
-  font-weight: 500;
-}
-
-/* Symbol tree */
-.ft-tree {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 4px 0;
-  border-top: 1px solid var(--border);
-  margin-top: 1px;
-}
-
-.ft-sym {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  font-family: var(--font-mono);
-  font-size: 0.55rem;
-  line-height: 1.6;
-  color: var(--fg3);
-}
-
-.ft-sym-type {
-  color: var(--fg2);
-}
-
-.ft-sym-icon {
-  width: 10px;
-  text-align: center;
-  flex-shrink: 0;
-  font-size: 0.5rem;
-  opacity: 0.6;
-}
-
-.ft-sym-name {
-  color: var(--fg);
-  font-weight: 400;
-}
-
-.ft-sym-type .ft-sym-name {
-  font-weight: 500;
-}
-
-.ft-sym-kind {
-  color: var(--fg3);
-  font-size: 0.45rem;
-}
-
-.ft-sym-members {
-  color: var(--fg3);
-  font-size: 0.45rem;
-}
-
-.ft-sym-members::before {
-  content: '\b7 ';
-}
-
-.ft-sym-members::after {
-  content: ' members';
-}
-
-.ft-sym-line {
-  margin-left: auto;
-  color: var(--fg4);
-  font-size: 0.45rem;
-  flex-shrink: 0;
-}
-
-/* Phase timing */
-.ft-timing {
-  display: flex;
-  gap: 10px;
-  padding-top: 3px;
-  border-top: 1px solid var(--border);
-  margin-top: 1px;
-}
-
-.ft-phase {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  font-family: var(--font-mono);
-}
-
-.ft-phase-label {
-  font-size: 0.4rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--fg4);
-}
-
-.ft-phase-val {
-  font-size: 0.55rem;
-  color: var(--fg2);
+  white-space: pre;
 }
 
 /* Error message */
@@ -230,4 +71,6 @@
   background: rgba(224, 80, 80, .06);
   border-radius: 2px;
   border-left: 2px solid var(--red);
+  white-space: pre-wrap;
+  word-break: break-word;
 }

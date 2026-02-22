@@ -1,0 +1,79 @@
+/* Source tab — compact horizontal selector */
+.source-tab {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.source-tab:hover {
+  border-color: var(--border-l);
+  background: var(--raised);
+}
+
+.source-tab.active {
+  border-color: var(--fg4);
+  background: var(--raised);
+}
+
+/* Top row — icon + label + count */
+.st-top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.st-icon {
+  font-size: 0.65rem;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+
+.st-label {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--fg2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-tab.active .st-label {
+  color: var(--fg1);
+}
+
+.st-count {
+  font-size: 0.55rem;
+  color: var(--fg4);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* Progress bar — stacked segments */
+.st-progress {
+  display: flex;
+  height: 2px;
+  border-radius: 1px;
+  overflow: hidden;
+  background: rgba(255,255,255,.04);
+}
+
+.st-seg {
+  height: 100%;
+}
+
+.st-seg.full_embedded { background: var(--green); opacity: 0.9; }
+.st-seg.struct_embedded { background: var(--blue); opacity: 0.8; }
+.st-seg.parsed { background: var(--amber); opacity: 0.6; }
+.st-seg.classified { background: var(--fg3); opacity: 0.4; }
+.st-seg.discovered { background: var(--fg4); opacity: 0.3; }
+.st-seg.hidden { background: rgba(255,255,255,.04); }
+.st-seg.failed { background: var(--red); opacity: 0.7; }

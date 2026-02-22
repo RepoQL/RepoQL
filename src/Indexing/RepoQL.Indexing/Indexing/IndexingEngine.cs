@@ -722,7 +722,8 @@ public partial class IndexingEngine : IAsyncDisposable
                 {
                     var symbols = ExtractSymbolsFromRecords(item.Records);
                     var lineCount = ExtractLineCount(item.Records);
-                    UriRegistry.SetIndexed(item.Uri, lineCount, symbols);
+                    var (headline, structure) = ExtractXraySummaries(item.Records);
+                    UriRegistry.SetIndexed(item.Uri, lineCount, symbols, headline, structure);
                 }
 
                 ScheduleEagerStructureEmbedding(item);
@@ -1896,6 +1897,18 @@ public partial class IndexingEngine : IAsyncDisposable
         }
 
         return symbols.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Extracts x-ray headline and structure from the primary artifact in records.
+    /// </summary>
+    internal static (string? Headline, string? Structure) ExtractXraySummaries(Records? records)
+    {
+        if (records is null || records.Artifacts.Length == 0)
+            return (null, null);
+
+        var artifact = records.Artifacts[0];
+        return (artifact.Headline, artifact.Structure);
     }
 
     /// <summary>

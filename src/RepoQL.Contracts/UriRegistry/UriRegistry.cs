@@ -45,12 +45,15 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     }
 
     /// <summary>
-    /// Updates a file's status to Indexed with its symbols and line count.
+    /// Updates a file's status to Indexed with its symbols, line count, and x-ray summaries.
     /// </summary>
     /// <param name="uri">The file URI.</param>
     /// <param name="lineCount">Total number of lines in the file.</param>
     /// <param name="symbols">Symbol URIs mapped to their entries (kind and span).</param>
-    public void SetIndexed(RepoUri uri, int lineCount, IReadOnlyDictionary<RepoUri, SymbolEntry> symbols)
+    /// <param name="headline">X-ray headline from the artifact.</param>
+    /// <param name="structure">X-ray structure from the artifact.</param>
+    public void SetIndexed(RepoUri uri, int lineCount, IReadOnlyDictionary<RepoUri, SymbolEntry> symbols,
+        string? headline = null, string? structure = null)
     {
         AddOrUpdate(
             uri,
@@ -62,14 +65,18 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
                 EmbeddedChunkCount: 0,
                 EmbeddedAt: null,
                 LineCount: lineCount,
-                Symbols: symbols),
+                Symbols: symbols,
+                Headline: headline,
+                Structure: structure),
             (_, existing) => existing with
             {
                 Status = UriStatus.Indexed,
                 IndexedAt = DateTime.UtcNow,
                 Error = null,
                 LineCount = lineCount,
-                Symbols = symbols
+                Symbols = symbols,
+                Headline = headline,
+                Structure = structure
             });
     }
 

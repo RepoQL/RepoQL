@@ -22,6 +22,8 @@ interface ServerFile {
   embeddedAt?: string | null;
   error?: string | null;
   tree?: Array<{ n: string; k: string; l?: number | null; e?: number | null; m?: number | null }> | null;
+  headline?: string | null;
+  structure?: string | null;
 }
 
 interface SnapshotResponse {
@@ -131,6 +133,8 @@ function mapServerFile(f: ServerFile, id: number): FileEntry {
     embeddedAt: f.embeddedAt,
     error: f.error,
     tree: f.tree,
+    headline: f.headline,
+    structure: f.structure,
   };
 }
 

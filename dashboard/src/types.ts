@@ -85,6 +85,10 @@ export interface FileEntry {
   error?: string | null;
   /** Symbol tree for tooltip */
   tree?: SymbolNode[] | null;
+  /** X-ray headline — essential identity in a single line */
+  headline?: string | null;
+  /** X-ray structure — detailed outline for navigation */
+  structure?: string | null;
 }
 
 /** Compact symbol node from the server */

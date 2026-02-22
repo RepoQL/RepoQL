@@ -17,6 +17,8 @@ namespace RepoQL.Contracts;
 /// <param name="EmbeddedAt">When embeddings were last successfully computed.</param>
 /// <param name="LineCount">Total number of lines in the file. Zero if unavailable.</param>
 /// <param name="Symbols">Child symbol URIs mapped to their entry (kind and span).</param>
+/// <param name="Headline">X-ray headline (Level 0) — essential identity in a single line.</param>
+/// <param name="Structure">X-ray structure (Level 2) — detailed outline for navigation.</param>
 public record FileEntry(
     UriStatus Status,
     DateTime? IndexedAt,
@@ -25,7 +27,9 @@ public record FileEntry(
     int EmbeddedChunkCount,
     DateTime? EmbeddedAt,
     int LineCount,
-    IReadOnlyDictionary<RepoUri, SymbolEntry> Symbols)
+    IReadOnlyDictionary<RepoUri, SymbolEntry> Symbols,
+    string? Headline = null,
+    string? Structure = null)
 {
     /// <summary>
     /// Creates a new FileEntry in Discovered state with no symbols.

@@ -1,0 +1,186 @@
+/* File detail panel — hover flyout overlay */
+.fdp {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+/* Header row — matches the old strip layout */
+.fdp-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  min-height: 32px;
+}
+
+.fdp-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.fdp-path {
+  color: var(--fg1);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fdp-lang {
+  color: var(--fg3);
+  flex-shrink: 0;
+}
+
+.fdp-state {
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 0.65rem;
+  flex-shrink: 0;
+  background: rgba(255,255,255,.06);
+  color: var(--fg2);
+}
+
+.fdp-state.failed {
+  background: rgba(255,60,60,.15);
+  color: var(--red);
+}
+
+.fdp-state.full_embedded {
+  background: rgba(80,200,120,.12);
+  color: var(--green, #50c878);
+}
+
+.fdp-close {
+  background: none;
+  border: none;
+  color: var(--fg4);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.fdp-close:hover {
+  color: var(--fg1);
+}
+
+/* Body — scrollable detail area */
+.fdp-body {
+  padding: 8px 20px 12px;
+  max-height: 250px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Headline */
+.fdp-headline {
+  color: var(--fg2);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Metrics row */
+.fdp-metrics {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: var(--fg3);
+}
+
+.fdp-metric {
+  white-space: nowrap;
+}
+
+.fdp-val {
+  color: var(--fg2);
+}
+
+/* Timing */
+.fdp-timing {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.fdp-phase {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.fdp-phase-label {
+  color: var(--fg4);
+}
+
+.fdp-phase-val {
+  color: var(--fg3);
+}
+
+/* Symbol tree */
+.fdp-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.fdp-sym {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 0;
+  color: var(--fg3);
+  font-size: 0.65rem;
+}
+
+.fdp-sym-type {
+  color: var(--fg2);
+}
+
+.fdp-sym-icon {
+  width: 10px;
+  text-align: center;
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.fdp-sym-name {
+  flex-shrink: 0;
+}
+
+.fdp-sym-kind {
+  color: var(--fg4);
+  font-size: 0.6rem;
+}
+
+.fdp-sym-members {
+  font-size: 0.55rem;
+  color: var(--fg4);
+  padding: 0 4px;
+  background: rgba(255,255,255,.05);
+  border-radius: 2px;
+}
+
+.fdp-sym-line {
+  margin-left: auto;
+  color: var(--fg4);
+  font-size: 0.55rem;
+}
+
+/* Error — full message */
+.fdp-error {
+  color: var(--red);
+  font-size: 0.65rem;
+  line-height: 1.4;
+  padding: 6px 8px;
+  background: rgba(255,60,60,.08);
+  border-radius: 3px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

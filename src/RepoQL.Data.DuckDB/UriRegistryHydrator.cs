@@ -44,13 +44,16 @@ public class UriRegistryHydrator
 
         try
         {
-            // Query all documents and their symbols
+            // Query all documents and their symbols, joining artifact for x-ray summaries.
             const string query = """
                 SELECT
                     n.uri,
                     n.kind,
-                    n.container_uri_lowercase
+                    n.container_uri_lowercase,
+                    a.headline,
+                    a.structure
                 FROM node n
+                LEFT JOIN artifact a ON n.artifact_id = a.id
                 WHERE n.kind = 'document' OR n.uri IS NOT NULL
                 ORDER BY n.kind, n.uri
                 """;
@@ -59,16 +62,16 @@ public class UriRegistryHydrator
 
             // Group symbols by their container (file)
             var symbolsByFile = new Dictionary<string, Dictionary<RepoUri, SymbolEntry>>(StringComparer.OrdinalIgnoreCase);
-            var documents = new List<RepoUri>();
+            var documents = new List<(RepoUri Uri, string? Headline, string? Structure)>();
 
-            foreach (var (uri, kind, containerUri) in results)
+            foreach (var (uri, kind, containerUri, headline, structure) in results)
             {
                 if (uri is null)
                     continue;
 
                 if (kind == "document")
                 {
-                    documents.Add(uri);
+                    documents.Add((uri, headline, structure));
                 }
                 else if (uri is not null)
                 {
@@ -92,7 +95,7 @@ public class UriRegistryHydrator
             }
 
             // Create file entries
-            foreach (var docUri in documents)
+            foreach (var (docUri, headline, structure) in documents)
             {
                 var containerKey = docUri.AbsoluteUri.ToLowerInvariant();
                 var symbols = symbolsByFile.GetValueOrDefault(containerKey)
@@ -106,7 +109,9 @@ public class UriRegistryHydrator
                     EmbeddedChunkCount: 0,
                     EmbeddedAt: null,
                     LineCount: 0, // Line count not available during hydration; will be populated during indexing
-                    Symbols: symbols.AsReadOnly());
+                    Symbols: symbols.AsReadOnly(),
+                    Headline: headline,
+                    Structure: structure);
 
                 _registry[docUri] = entry;
                 fileCount++;
@@ -170,11 +175,13 @@ public class UriRegistryHydrator
         }
     }
 
-    private static (RepoUri? Uri, string? Kind, string? ContainerUri) MapNodeRow(IDataRecord record)
+    private static (RepoUri? Uri, string? Kind, string? ContainerUri, string? Headline, string? Structure) MapNodeRow(IDataRecord record)
     {
         var uriStr = record["uri"]?.ToString();
         var kind = record["kind"]?.ToString();
         var containerUri = record["container_uri_lowercase"]?.ToString();
+        var headline = record["headline"]?.ToString();
+        var structure = record["structure"]?.ToString();
 
         RepoUri? uri = null;
         if (!string.IsNullOrEmpty(uriStr))
@@ -182,7 +189,7 @@ public class UriRegistryHydrator
             RepoUri.TryParse(uriStr, out uri);
         }
 
-        return (uri, kind, containerUri);
+        return (uri, kind, containerUri, headline, structure);
     }
 
     private static (string? ContainerUri, int ChunkCount) MapEmbeddingRow(IDataRecord record)

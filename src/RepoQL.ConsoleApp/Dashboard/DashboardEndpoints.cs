@@ -129,31 +129,43 @@ internal static class DashboardEndpoints
         return registry
             .Where(kvp => kvp.Key.Scheme is "file" or "github")
             .OrderBy(kvp => kvp.Key.ToString(), StringComparer.OrdinalIgnoreCase)
-            .Select(kvp =>
-            {
-                var entry = kvp.Value;
-                var path = kvp.Key.Scheme == "file"
-                    ? kvp.Key.AbsolutePath.TrimStart('/')
-                    : kvp.Key.ToString();
-                var ext = Path.GetExtension(kvp.Key.AbsolutePath).ToLowerInvariant();
-                var (state, processing) = MapFileState(entry);
-                tokenCounts.TryGetValue(kvp.Key.ToString(), out var tokens);
-                return (object)new
-                {
-                    path,
-                    ext,
-                    state,
-                    processing,
-                    lines = entry.LineCount > 0 ? entry.LineCount : (int?)null,
-                    tokens = tokens > 0 ? tokens : (int?)null,
-                    symbols = entry.Symbols.Count > 0 ? entry.Symbols.Count : (int?)null,
-                    chunks = entry.EmbeddedChunkCount > 0 ? entry.EmbeddedChunkCount : (int?)null,
-                    indexedAt = entry.IndexedAt?.ToString("O"),
-                    embeddedAt = entry.EmbeddedAt?.ToString("O"),
-                    error = entry.Status == UriStatus.Failed ? entry.Error : null,
-                };
-            })
+            .Select(kvp => BuildFileDto(kvp.Key, kvp.Value, tokenCounts))
             .ToArray();
+    }
+
+    /// <summary>
+    /// Builds a dictionary-based DTO for a file entry.
+    /// Uses Dictionary instead of anonymous types for trim-safe JSON serialization.
+    /// </summary>
+    private static object BuildFileDto(RepoUri uri, FileEntry entry, Dictionary<string, int> tokenCounts)
+    {
+        var path = uri.Scheme == "file"
+            ? uri.AbsolutePath.TrimStart('/')
+            : uri.ToString();
+        var ext = Path.GetExtension(uri.AbsolutePath).ToLowerInvariant();
+        var (state, processing) = MapFileState(entry);
+        tokenCounts.TryGetValue(uri.ToString(), out var tokens);
+
+        var dto = new Dictionary<string, object?>
+        {
+            ["path"] = path,
+            ["ext"] = ext,
+            ["state"] = state,
+            ["processing"] = processing,
+        };
+
+        if (entry.LineCount > 0) dto["lines"] = entry.LineCount;
+        if (tokens > 0) dto["tokens"] = tokens;
+        if (entry.Symbols.Count > 0) dto["symbols"] = entry.Symbols.Count;
+        if (entry.EmbeddedChunkCount > 0) dto["chunks"] = entry.EmbeddedChunkCount;
+        if (entry.IndexedAt.HasValue) dto["indexedAt"] = entry.IndexedAt.Value.ToString("O");
+        if (entry.EmbeddedAt.HasValue) dto["embeddedAt"] = entry.EmbeddedAt.Value.ToString("O");
+        if (entry.Status == UriStatus.Failed && entry.Error is not null) dto["error"] = entry.Error;
+        if (entry.Headline is not null) dto["headline"] = entry.Headline;
+        if (entry.Structure is not null) dto["structure"] = entry.Structure;
+        if (entry.Symbols.Count > 0) dto["tree"] = BuildSymbolTree(entry.Symbols);
+
+        return dto;
     }
 
     /// <summary>
@@ -438,26 +450,9 @@ internal static class DashboardEndpoints
             if (updates.Count >= 50)
                 continue; // Will be picked up next tick (entry NOT updated in lastSentEntries)
 
-            var entry = kvp.Value;
-            var ext = Path.GetExtension(kvp.Key.AbsolutePath).ToLowerInvariant();
-            var (state, processing) = MapFileState(entry);
-            tokenCounts.TryGetValue(kvp.Key.ToString(), out var tokens);
-            updates.Add(new
-            {
-                path,
-                ext,
-                state,
-                processing,
-                lines = entry.LineCount > 0 ? entry.LineCount : (int?)null,
-                tokens = tokens > 0 ? tokens : (int?)null,
-                symbols = entry.Symbols.Count > 0 ? entry.Symbols.Count : (int?)null,
-                chunks = entry.EmbeddedChunkCount > 0 ? entry.EmbeddedChunkCount : (int?)null,
-                indexedAt = entry.IndexedAt?.ToString("O"),
-                embeddedAt = entry.EmbeddedAt?.ToString("O"),
-                error = entry.Status == UriStatus.Failed ? entry.Error : null,
-            });
+            updates.Add(BuildFileDto(kvp.Key, kvp.Value, tokenCounts));
 
-            lastSentEntries[path] = entry;
+            lastSentEntries[path] = kvp.Value;
         }
 
         var removedPaths = lastSentEntries.Keys
