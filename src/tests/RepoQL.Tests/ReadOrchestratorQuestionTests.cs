@@ -223,7 +223,7 @@ internal sealed class ReadOrchestratorQuestionTests
         public Task<IReadOnlyList<ReadDocument>> FetchGlobAsync(string uriPattern, CancellationToken cancellationToken)
             => Task.FromResult(_documents);
 
-        public Task<string?> GetRepoTreeAsync(string? scope, CancellationToken cancellationToken)
+        public Task<string?> GetRepoTreeAsync(string? scope, int tokenBudget, CancellationToken cancellationToken)
             => Task.FromResult<string?>("src/\n  test.cs");
 
         public Task<string?> FormatAsTreeAsync(IReadOnlyList<string> uris, bool foldersOnly, bool includeHeadlines, CancellationToken cancellationToken)

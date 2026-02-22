@@ -436,7 +436,9 @@ public sealed partial class ReadOrchestrator
         var contextWithFiles = contextBuilder.ToString();
 
         // Get repo tree for context (allows agent to suggest related files)
-        var repoTree = await _contentProvider.GetRepoTreeAsync(scope: null, cancellationToken).ConfigureAwait(false);
+        // Budget is for LLM input context, not tool output — generous but bounded.
+        const int repoTreeBudget = 10_000;
+        var repoTree = await _contentProvider.GetRepoTreeAsync(scope: null, tokenBudget: repoTreeBudget, cancellationToken).ConfigureAwait(false);
 
         try
         {
@@ -613,11 +615,13 @@ public interface IReadContentProvider
     Task<IReadOnlyList<ReadDocument>> FetchGlobAsync(string uriPattern, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Get ASCII tree of repository structure for a scope. Returns null if not supported.
+    /// Get ASCII tree of repository structure for a scope, fitted to a token budget.
+    /// Uses progressive fallback: headlines → files → folders → null.
     /// </summary>
     /// <param name="scope">Optional scope glob pattern (e.g., "file:///src/**"). Null for full repo.</param>
+    /// <param name="tokenBudget">Maximum tokens for the tree output.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<string?> GetRepoTreeAsync(string? scope, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+    Task<string?> GetRepoTreeAsync(string? scope, int tokenBudget, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
 
     /// <summary>
     /// Format a list of URIs as an ASCII tree. Returns null if not supported.

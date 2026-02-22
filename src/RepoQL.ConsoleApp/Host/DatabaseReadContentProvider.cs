@@ -86,36 +86,29 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
         return documents;
     }
 
-    public Task<string?> GetRepoTreeAsync(string? scope, CancellationToken cancellationToken)
+    public async Task<string?> GetRepoTreeAsync(string? scope, int tokenBudget, CancellationToken cancellationToken)
     {
-        // Generate ASCII tree of repository structure using the tree() macro.
-        // Include headlines for full context - the tree with headlines typically fits
-        // within ~20k tokens even for large repos, and gives the LLM useful file summaries.
-        var sql = """
-            SELECT tree(
-                json_group_array(n.uri ORDER BY n.uri),
-                json_group_array(a.headline ORDER BY n.uri),
-                false
-            ) as tree_output
-            FROM node n
-            JOIN artifact a ON a.id = n.artifact_id
-            WHERE n.kind = 'document'
-            """;
-
         try
         {
+            // Fetch all document URIs (lightweight — no tree rendering yet).
+            var sql = "SELECT n.uri FROM node n WHERE n.kind = 'document' ORDER BY n.uri";
             var results = db.Query(sql, cancellationToken);
-            var row = results.FirstOrDefault();
+            var uris = results.Select(r => r["uri"]?.ToString()!).Where(u => u is not null).ToList();
 
-            if (row is null || !row.TryGetValue("tree_output", out var treeOutput))
-                return Task.FromResult<string?>(null);
+            if (uris.Count == 0)
+                return null;
 
-            return Task.FromResult(treeOutput?.ToString());
+            // Progressive fallback: headlines → files → folders → null.
+            var fit = await TreeHandler.FitToBudgetAsync(
+                this, uris, tokenBudget, TreeHandler.TreeDetailLevel.Headlines, cancellationToken)
+                .ConfigureAwait(false);
+
+            return fit?.Content;
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
             // Tree generation failed - not critical, return null.
-            return Task.FromResult<string?>(null);
+            return null;
         }
     }
 

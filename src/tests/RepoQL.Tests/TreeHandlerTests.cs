@@ -277,3 +277,133 @@ internal sealed class TreeHandlerTests
             => Task.FromResult<string?>(foldersOnly ? _foldersTree : (includeHeadlines ? _headlinesTree : _filesTree));
     }
 }
+
+internal sealed class FitToBudgetTests
+{
+    [Test]
+    public async Task HeadlinesFitReturnHeadlines()
+    {
+        var headlinesTree = "file:///\n└── src/\n    └── a.cs | Alpha";
+        var filesTree = "file:///\n└── src/\n    └── a.cs";
+        var foldersTree = "file:///\n└── src/ (1 cs)";
+        var provider = new StubContentProvider(headlinesTree, filesTree, foldersTree);
+        var uris = new[] { "file:///src/a.cs" };
+
+        var result = await TreeHandler.FitToBudgetAsync(
+            provider, uris, tokenBudget: 10_000, TreeHandler.TreeDetailLevel.Headlines, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Content.Should().Be(headlinesTree);
+        result.Verbosity.Should().Be(TreeHandler.TreeDetailLevel.Headlines);
+    }
+
+    [Test]
+    public async Task HeadlinesExceedFallsBackToFiles()
+    {
+        var headlinesTree = "file:///\n└── src/\n    └── a.cs | " + string.Join(' ', Enumerable.Repeat("Alpha", 20));
+        var filesTree = "file:///\n└── src/\n    └── a.cs";
+        var foldersTree = "file:///\n└── src/ (1 cs)";
+        var provider = new StubContentProvider(headlinesTree, filesTree, foldersTree);
+        var uris = new[] { "file:///src/a.cs" };
+
+        var headlineTokens = TokenEstimator.EstimateTokens(headlinesTree);
+        var filesTokens = TokenEstimator.EstimateTokens(filesTree);
+        // Budget fits files but not headlines
+        var budget = headlineTokens - 1;
+        budget.Should().BeGreaterThanOrEqualTo(filesTokens);
+
+        var result = await TreeHandler.FitToBudgetAsync(
+            provider, uris, tokenBudget: budget, TreeHandler.TreeDetailLevel.Headlines, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Content.Should().Be(filesTree);
+        result.Verbosity.Should().Be(TreeHandler.TreeDetailLevel.Files);
+    }
+
+    [Test]
+    public async Task FilesExceedFallsBackToFolders()
+    {
+        var headlinesTree = "file:///\n└── src/\n    ├── a.cs | Alpha\n    ├── b.cs | Beta\n    └── c.cs | Gamma";
+        var filesTree = "file:///\n└── src/\n    ├── a.cs\n    ├── b.cs\n    └── c.cs";
+        var foldersTree = "file:///\n└── src/ (3 cs)";
+        var provider = new StubContentProvider(headlinesTree, filesTree, foldersTree);
+        var uris = new[] { "file:///src/a.cs", "file:///src/b.cs", "file:///src/c.cs" };
+
+        var foldersTokens = TokenEstimator.EstimateTokens(foldersTree);
+
+        var result = await TreeHandler.FitToBudgetAsync(
+            provider, uris, tokenBudget: foldersTokens, TreeHandler.TreeDetailLevel.Headlines, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Content.Should().Be(foldersTree);
+        result.Verbosity.Should().Be(TreeHandler.TreeDetailLevel.Folders);
+    }
+
+    [Test]
+    public async Task EverythingExceedsReturnsNull()
+    {
+        var headlinesTree = "file:///\n└── src/\n    └── a.cs | Alpha";
+        var filesTree = "file:///\n└── src/\n    └── a.cs";
+        var foldersTree = "file:///\n└── src/ (1 cs)";
+        var provider = new StubContentProvider(headlinesTree, filesTree, foldersTree);
+        var uris = new[] { "file:///src/a.cs" };
+
+        var result = await TreeHandler.FitToBudgetAsync(
+            provider, uris, tokenBudget: 1, TreeHandler.TreeDetailLevel.Headlines, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Test]
+    public async Task MaxLevelFilesNeverTriesHeadlines()
+    {
+        var headlinesTree = "file:///\n└── src/\n    └── a.cs | Alpha";
+        var filesTree = "file:///\n└── src/\n    └── a.cs";
+        var foldersTree = "file:///\n└── src/ (1 cs)";
+        var provider = new StubContentProvider(headlinesTree, filesTree, foldersTree);
+        var uris = new[] { "file:///src/a.cs" };
+
+        // Budget is huge — would fit headlines — but maxLevel is Files
+        var result = await TreeHandler.FitToBudgetAsync(
+            provider, uris, tokenBudget: 100_000, TreeHandler.TreeDetailLevel.Files, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.Content.Should().Be(filesTree);
+        result.Verbosity.Should().Be(TreeHandler.TreeDetailLevel.Files);
+    }
+
+    [Test]
+    public async Task EmptyUrisReturnsNull()
+    {
+        var provider = new StubContentProvider("", "", "");
+        var uris = Array.Empty<string>();
+
+        var result = await TreeHandler.FitToBudgetAsync(
+            provider, uris, tokenBudget: 10_000, TreeHandler.TreeDetailLevel.Headlines, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    private sealed class StubContentProvider : IReadContentProvider
+    {
+        private readonly string _headlinesTree;
+        private readonly string _filesTree;
+        private readonly string _foldersTree;
+
+        public StubContentProvider(string headlinesTree, string filesTree, string foldersTree)
+        {
+            _headlinesTree = headlinesTree;
+            _filesTree = filesTree;
+            _foldersTree = foldersTree;
+        }
+
+        public Task<ReadDocument?> FetchDocumentAsync(string uri, CancellationToken cancellationToken)
+            => Task.FromResult<ReadDocument?>(null);
+
+        public Task<IReadOnlyList<ReadDocument>> FetchGlobAsync(string globUri, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<ReadDocument>>([]);
+
+        public Task<string?> FormatAsTreeAsync(IReadOnlyList<string> uris, bool foldersOnly, bool includeHeadlines, CancellationToken cancellationToken)
+            => Task.FromResult<string?>(foldersOnly ? _foldersTree : (includeHeadlines ? _headlinesTree : _filesTree));
+    }
+}
