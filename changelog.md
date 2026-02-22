@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.5
+
+- Add file detail panel to dashboard with headline, metrics, timing, symbols, and error display
+- Flow x-ray headline and structure from artifact table through UriRegistry to dashboard API
+- Add source tabs to switch between local and imported repos in the dashboard
+- Add structure tooltip on hover and detail flyout on click
+- Fix anonymous type trimming in dashboard endpoints with Dictionary-based DTOs
+
 ## 1.4.4
 
 - Add multi-source git history indexing for imported repos

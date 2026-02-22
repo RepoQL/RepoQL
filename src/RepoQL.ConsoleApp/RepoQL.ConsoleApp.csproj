@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <Version>1.4.4</Version>
+        <Version>1.4.5</Version>
         <TargetFramework>net10.0</TargetFramework>
         <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
         <OutputType>Exe</OutputType>
@@ -233,6 +233,13 @@
       <DashboardSource Include="$(RepositoryRoot)dashboard/package.json" />
     </ItemGroup>
 
+    <!-- Static ItemGroup: MSBuild evaluates this before targets run, so the manifest
+         generator (_GenerateEmbeddedFilesManifest) sees the resources during its
+         incremental check. A dynamic ItemGroup inside a target was invisible to it. -->
+    <ItemGroup Condition="Exists('$(RepositoryRoot)dashboard/dist/index.html')">
+      <EmbeddedResource Include="$(RepositoryRoot)dashboard/dist/**" LinkBase="wwwroot" />
+    </ItemGroup>
+
     <Target Name="DashboardNpmInstall" BeforeTargets="BuildDashboard"
             Condition="!Exists('$(RepositoryRoot)dashboard/node_modules/.package-lock.json')">
       <Exec Command="npm ci --silent" WorkingDirectory="$(RepositoryRoot)dashboard" />
@@ -242,14 +249,6 @@
             Inputs="@(DashboardSource)"
             Outputs="$(RepositoryRoot)dashboard/dist/index.html">
       <Exec Command="npm run build" WorkingDirectory="$(RepositoryRoot)dashboard" />
-    </Target>
-
-    <Target Name="EmbedDashboardAssets" AfterTargets="BuildDashboard">
-      <Error Condition="!Exists('$(RepositoryRoot)dashboard/dist/index.html')"
-             Text="Dashboard build did not produce dashboard/dist/index.html. Ensure npm is available and dashboard build succeeds." />
-      <ItemGroup>
-        <EmbeddedResource Include="$(RepositoryRoot)dashboard/dist/**" LinkBase="wwwroot" />
-      </ItemGroup>
     </Target>
 
     <!-- Generate help:// snapshot for Release builds so documentation is queryable on first request -->
