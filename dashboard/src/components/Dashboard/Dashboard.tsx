@@ -1,8 +1,13 @@
 import { Show } from 'solid-js';
-import type { ActivityEntry, LanguageCount, PipelineState, SourceSection } from '../../types';
+import type {
+  ActivityEntry, ClientLease, LanguageCount, OperationSnapshot,
+  PipelineState, SourceSection,
+} from '../../types';
 import { ActivityStream } from '../ActivityStream';
+import { ClientLeases } from '../ClientLeases';
 import { FileTreemap } from '../FileTreemap';
 import { LanguageSpectrum } from '../LanguageSpectrum';
+import { OperationTracker } from '../OperationTracker';
 import { PhaseIndicator } from '../PhaseIndicator';
 import { PipelineSankey } from '../PipelineSankey';
 import { ProgressRings } from '../ProgressRings';
@@ -16,6 +21,9 @@ export interface DashboardProps {
   sections: SourceSection[];
   languages: LanguageCount[];
   activities: ActivityEntry[];
+  leases: ClientLease[];
+  operations: OperationSnapshot[];
+  now: number;
 }
 
 export function Dashboard(props: DashboardProps) {
@@ -26,6 +34,10 @@ export function Dashboard(props: DashboardProps) {
       <StatusHeader title={props.title} phase={props.pipeline.phase} elapsed={props.elapsed} />
 
       <div class="dashboard-main">
+        <div class="dashboard-sankey">
+          <PipelineSankey pipeline={props.pipeline} />
+        </div>
+
         <div class="dashboard-treemap">
           <FileTreemap
             sections={props.sections}
@@ -48,11 +60,13 @@ export function Dashboard(props: DashboardProps) {
           />
           <PhaseIndicator phase={props.pipeline.phase} />
           <LanguageSpectrum languages={props.languages} />
+          <Show when={props.operations.length > 0}>
+            <OperationTracker operations={props.operations} now={props.now} />
+          </Show>
+          <Show when={props.leases.length > 0}>
+            <ClientLeases clients={props.leases} now={props.now} />
+          </Show>
           <ActivityStream entries={props.activities} />
-        </div>
-
-        <div class="dashboard-sankey">
-          <PipelineSankey pipeline={props.pipeline} />
         </div>
       </div>
 

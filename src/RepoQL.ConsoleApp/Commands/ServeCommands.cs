@@ -215,19 +215,51 @@ internal class HostCommands(IAnsiConsole console)
                 .ConfigureAwait(false);
 
             ManifestEmbeddedFileProvider? dashboardProvider = null;
-            // Dashboard: serve embedded static files
-            try
+            // Dashboard: serve embedded static files.
+            // LinkBase="wwwroot" in the csproj should place files under wwwroot/ in the manifest,
+            // but some MSBuild configurations (notably publish with RID) drop the LinkBase, leaving
+            // files at the manifest root. Probe both locations so the dashboard works regardless.
             {
-                dashboardProvider = new ManifestEmbeddedFileProvider(typeof(HostState).Assembly, "wwwroot");
-                app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = dashboardProvider });
-                app.UseStaticFiles(new StaticFileOptions { FileProvider = dashboardProvider });
-            }
-            catch (InvalidOperationException ex)
-            {
-                app.Logger.LogWarning(
-                    ex,
-                    "Dashboard assets are missing from embedded resources. " +
-                    "Build/publish RepoQL.ConsoleApp with dashboard assets to enable the web dashboard.");
+                var assembly = typeof(HostState).Assembly;
+
+                // Try wwwroot/ subdirectory first (when LinkBase is respected).
+                try
+                {
+                    var sub = new ManifestEmbeddedFileProvider(assembly, "wwwroot");
+                    if (sub.GetFileInfo("index.html").Exists)
+                        dashboardProvider = sub;
+                }
+                catch (InvalidOperationException)
+                {
+                    // "Invalid path: 'wwwroot'" — directory doesn't exist in manifest.
+                }
+
+                // Fallback: files at manifest root (when LinkBase is stripped).
+                if (dashboardProvider is null)
+                {
+                    try
+                    {
+                        var root = new ManifestEmbeddedFileProvider(assembly);
+                        if (root.GetFileInfo("index.html").Exists)
+                            dashboardProvider = root;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        // No manifest at all.
+                    }
+                }
+
+                if (dashboardProvider is not null)
+                {
+                    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = dashboardProvider });
+                    app.UseStaticFiles(new StaticFileOptions { FileProvider = dashboardProvider });
+                }
+                else
+                {
+                    app.Logger.LogWarning(
+                        "Dashboard index.html not found in embedded resources (tried wwwroot/ and root). " +
+                        "Build/publish RepoQL.ConsoleApp with dashboard assets to enable the web dashboard.");
+                }
             }
 
             // Always log startup info

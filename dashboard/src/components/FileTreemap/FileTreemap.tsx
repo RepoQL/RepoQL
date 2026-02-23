@@ -1,4 +1,4 @@
-import { createMemo, createSignal, Index, onCleanup, Show } from 'solid-js';
+import { createMemo, createSelector, createSignal, Index, onCleanup, Show } from 'solid-js';
 import type { FileEntry, SourceSection } from '../../types';
 import { FileTile } from './FileTile';
 import { FileTooltip } from './FileTooltip';
@@ -25,6 +25,7 @@ interface HoverState {
 export function FileTreemap(props: FileTreemapProps) {
   const [selectedSection, setSelectedSection] = createSignal(0);
   const [selected, setSelected] = createSignal<FileEntry | null>(null);
+  const isSelected = createSelector<string | null, string>(() => selected()?.path ?? null);
   const [hover, setHover] = createSignal<HoverState | null>(null);
   let hoverTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -115,7 +116,7 @@ export function FileTreemap(props: FileTreemapProps) {
               <SourceBlock
                 section={section()}
                 totalTokens={totalTokens()}
-                selectedPath={selected()?.path ?? null}
+                isSelected={isSelected}
                 onSelect={handleSelect}
                 onHover={handleHover}
               />
@@ -152,7 +153,7 @@ function sumTokens(files: FileEntry[]): number {
 function SourceBlock(props: {
   section: SourceSection;
   totalTokens: number;
-  selectedPath: string | null;
+  isSelected: (key: string) => boolean;
   onSelect: (file: FileEntry) => void;
   onHover: (file: FileEntry | null, x: number, y: number) => void;
 }) {
@@ -167,7 +168,7 @@ function SourceBlock(props: {
             <TileGroup
               group={group()}
               totalTokens={props.totalTokens}
-              selectedPath={props.selectedPath}
+              isSelected={props.isSelected}
               onSelect={props.onSelect}
               onHover={props.onHover}
             />
@@ -180,7 +181,7 @@ function SourceBlock(props: {
             <TileGroup
               group={group()}
               totalTokens={props.totalTokens}
-              selectedPath={props.selectedPath}
+              isSelected={props.isSelected}
               onSelect={props.onSelect}
               onHover={props.onHover}
             />
@@ -194,7 +195,7 @@ function SourceBlock(props: {
 function TileGroup(props: {
   group: { label: string; files: FileEntry[] };
   totalTokens: number;
-  selectedPath: string | null;
+  isSelected: (key: string) => boolean;
   onSelect: (file: FileEntry) => void;
   onHover: (file: FileEntry | null, x: number, y: number) => void;
 }) {
@@ -215,7 +216,7 @@ function TileGroup(props: {
           {(file) => (
             <FileTile
               file={file()}
-              selected={file().path === props.selectedPath}
+              selected={props.isSelected(file().path)}
               onSelect={props.onSelect}
               onHover={props.onHover}
             />

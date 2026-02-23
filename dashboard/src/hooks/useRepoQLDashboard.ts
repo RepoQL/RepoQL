@@ -1,5 +1,9 @@
 import { createSignal, createMemo, createEffect, onMount, onCleanup, batch } from 'solid-js';
-import type { ActivityEntry, FileEntry, FileState, Language, PipelinePhase } from '../types';
+import { throttle, leadingAndTrailing, scheduleIdle } from '@solid-primitives/scheduled';
+import type {
+  ActivityEntry, ClientLease, FileEntry, FileState, Language, LanguageCount,
+  OperationKind, OperationSnapshot, OperationState, PipelinePhase,
+} from '../types';
 import { LANGUAGES } from '../types';
 import {
   computeLanguageCounts,
@@ -143,6 +147,53 @@ function lookupLang(ext: string): Language {
   return LANGUAGES[normalized] ?? { name: normalized.slice(1) || 'Other', color: '#555560' };
 }
 
+// --- Map server leases to client type ---
+
+function mapServerLease(s: SnapshotResponse['leases'][number]): ClientLease {
+  return {
+    id: s.clientId,
+    name: s.clientId.slice(0, 12),
+    connectedAt: Date.parse(s.lastBeatUtc) || Date.now(),
+    activeRequest: null,
+    requestCount: 0,
+    totalTokensUsed: 0,
+  };
+}
+
+// --- Map server operations to client type ---
+
+const STATE_MAP: Record<string, OperationState> = {
+  Running: 'running',
+  Completed: 'completed',
+  CompletedWithFailures: 'completed_with_failures',
+  Cancelled: 'cancelled',
+};
+
+function mapServerOperation(s: SnapshotResponse['operations'][number]): OperationSnapshot {
+  const state = STATE_MAP[s.state] ?? 'running';
+  return {
+    id: s.id,
+    kind: inferOperationKind(s.description),
+    description: s.description,
+    state,
+    createdAt: Date.parse(s.createdAt) || Date.now(),
+    completedAt: state !== 'running' ? Date.now() : null,
+    totalFiles: s.progress.totalFiles,
+    indexedCount: s.progress.indexedCount,
+    embeddedCount: s.progress.embeddedCount,
+    failedCount: s.progress.failedCount,
+    readyPercent: s.progress.readyPercent,
+    milestones: [],
+    recentLog: [],
+  };
+}
+
+function inferOperationKind(description: string): OperationKind {
+  if (description.includes('import')) return 'import';
+  if (description.includes('reindex') || description.includes('Reindex')) return 'reindex';
+  return 'startup';
+}
+
 // --- Count files by state ---
 
 function countByState(files: FileEntry[]): Record<string, number> {
@@ -166,6 +217,8 @@ export function useRepoQLDashboard(): {
   const [pipelineEvent, setPipelineEvent] = createSignal<PipelineEvent | null>(null);
   const [activities, setActivities] = createSignal<ActivityEntry[]>([]);
   const [fileMap, setFileMap] = createSignal<Map<string, ServerFile>>(new Map());
+  const [leases, setLeases] = createSignal<ClientLease[]>([]);
+  const [operations, setOperations] = createSignal<OperationSnapshot[]>([]);
   const [now, setNow] = createSignal(Date.now());
 
   let startTime = Date.now();
@@ -181,7 +234,15 @@ export function useRepoQLDashboard(): {
   function stableFile(f: ServerFile): FileEntry {
     const state = (f.state as FileState) || 'discovered';
     const existing = fileCache.get(f.path);
-    if (existing && existing.state === state && existing.processing === f.processing) {
+    if (
+      existing
+      && existing.state === state
+      && existing.processing === f.processing
+      && existing.tokens === (f.tokens ?? null)
+      && existing.headline === (f.headline ?? null)
+      && existing.structure === (f.structure ?? null)
+      && existing.error === (f.error ?? null)
+    ) {
       return existing;
     }
     const entry = mapServerFile(f, existing?.id ?? nextFileId++);
@@ -250,6 +311,14 @@ export function useRepoQLDashboard(): {
             map.set(f.path, f);
           }
           setFileMap(map);
+
+          // Populate leases and operations from snapshot
+          if (data.leases.length > 0) {
+            setLeases(data.leases.map(mapServerLease));
+          }
+          if (data.operations.length > 0) {
+            setOperations(data.operations.map(mapServerOperation));
+          }
 
           const startedAt = Date.parse(data.host.startedAt);
           if (Number.isFinite(startedAt)) {
@@ -362,27 +431,28 @@ export function useRepoQLDashboard(): {
     });
 
     es.addEventListener('leases', (event) => {
-      parseJson<SnapshotResponse['leases']>((event as MessageEvent).data);
+      const parsed = parseJson<SnapshotResponse['leases']>((event as MessageEvent).data);
+      if (parsed) setLeases(parsed.map(mapServerLease));
     });
 
     es.addEventListener('operations', (event) => {
-      parseJson<SnapshotResponse['operations']>((event as MessageEvent).data);
+      const parsed = parseJson<SnapshotResponse['operations']>((event as MessageEvent).data);
+      if (parsed) setOperations(parsed.map(mapServerOperation));
     });
 
     onCleanup(() => es.close());
   });
 
-  // Throttle file map updates to max 1/sec to avoid freezing during reindex.
+  // Throttle file map updates — leading edge fires immediately, trailing coalesces.
+  // During continuous SSE at 150ms cadence, tiles update at most 4x/sec instead of freezing.
   const [renderMap, setRenderMap] = createSignal<Map<string, ServerFile>>(new Map());
-  let throttleTimer: ReturnType<typeof setTimeout> | undefined;
+  const updateRenderMap = leadingAndTrailing(throttle, setRenderMap, 250);
   createEffect(() => {
-    const map = fileMap(); // track dependency
-    if (throttleTimer) clearTimeout(throttleTimer);
-    throttleTimer = setTimeout(() => setRenderMap(map), 250);
+    updateRenderMap(fileMap());
   });
-  onCleanup(() => { if (throttleTimer) clearTimeout(throttleTimer); });
+  onCleanup(() => updateRenderMap.clear());
 
-  // HEAVY memo: only depends on file data (renderMap + snapshot). Runs at most 1/sec.
+  // HEAVY memo: only depends on file data (renderMap + snapshot). Runs at most 4x/sec.
   const fileData = createMemo(() => {
     const snap = snapshot();
     const map = renderMap();
@@ -416,14 +486,31 @@ export function useRepoQLDashboard(): {
 
     return {
       title: snap?.host.repositoryPath ?? 'Indexing...',
-      stateCounts,
+      stateCounts, files,
       total, discovered, classified, parsed, structEmbedded, fullEmbedded, failed,
       sections: stabilizeSections(groupBySources(files)),
-      languages: computeLanguageCounts(files, files.length),
     };
   });
 
-  // LIGHT memo: composes cached file data with volatile signals. Runs on every tick.
+  // Language distribution — deferred to idle time so it doesn't block tile rendering.
+  const [languages, setLanguages] = createSignal<LanguageCount[]>([]);
+  const updateLanguages = scheduleIdle(
+    (data: { files: FileEntry[]; total: number }) => {
+      setLanguages(computeLanguageCounts(data.files, data.total));
+    },
+    500,
+  );
+  createEffect(() => {
+    const fd = fileData();
+    if (!fd) return;
+    updateLanguages({ files: fd.files, total: fd.total });
+  });
+  onCleanup(() => updateLanguages.clear());
+
+  // Elapsed time — ticks every second but isolated so it doesn't rebuild pipeline/sections.
+  const elapsed = createMemo(() => Math.max(0, (now() - startTime) / 1000));
+
+  // LIGHT memo: composes cached file data with event-driven signals. Does NOT track now().
   const props = createMemo<DashboardProps | null>(() => {
     const fd = fileData();
     if (!fd) return null;
@@ -438,7 +525,7 @@ export function useRepoQLDashboard(): {
 
     return {
       title: fd.title,
-      elapsed: Math.max(0, (now() - startTime) / 1000),
+      get elapsed() { return elapsed(); },
       pipeline: {
         total: fd.total,
         discovered: fd.discovered,
@@ -451,8 +538,11 @@ export function useRepoQLDashboard(): {
         rate: stageRate,
       },
       sections: fd.sections,
-      languages: fd.languages,
+      languages: languages(),
       activities: activities(),
+      leases: leases(),
+      operations: operations(),
+      get now() { return now(); },
     };
   });
 

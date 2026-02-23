@@ -82,12 +82,8 @@ export function PipelineSankey(props: PipelineSankeyProps) {
   };
 
   onMount(() => {
-    render();
     window.addEventListener('resize', render);
-  });
-
-  onCleanup(() => {
-    window.removeEventListener('resize', render);
+    onCleanup(() => window.removeEventListener('resize', render));
   });
 
   createEffect(() => {

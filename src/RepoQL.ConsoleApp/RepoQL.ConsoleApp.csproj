@@ -231,13 +231,7 @@
       <DashboardSource Include="$(RepositoryRoot)dashboard/vite.config.ts" />
       <DashboardSource Include="$(RepositoryRoot)dashboard/tsconfig.json" />
       <DashboardSource Include="$(RepositoryRoot)dashboard/package.json" />
-    </ItemGroup>
-
-    <!-- Static ItemGroup: MSBuild evaluates this before targets run, so the manifest
-         generator (_GenerateEmbeddedFilesManifest) sees the resources during its
-         incremental check. A dynamic ItemGroup inside a target was invisible to it. -->
-    <ItemGroup Condition="Exists('$(RepositoryRoot)dashboard/dist/index.html')">
-      <EmbeddedResource Include="$(RepositoryRoot)dashboard/dist/**" LinkBase="wwwroot" />
+      <DashboardSource Include="$(RepositoryRoot)dashboard/package-lock.json" />
     </ItemGroup>
 
     <Target Name="DashboardNpmInstall" BeforeTargets="BuildDashboard"
@@ -245,10 +239,25 @@
       <Exec Command="npm ci --silent" WorkingDirectory="$(RepositoryRoot)dashboard" />
     </Target>
 
-    <Target Name="BuildDashboard" BeforeTargets="BeforeBuild"
+    <Target Name="BuildDashboard" BeforeTargets="_CalculateEmbeddedFilesManifestInputs;BeforeBuild"
             Inputs="@(DashboardSource)"
             Outputs="$(RepositoryRoot)dashboard/dist/index.html">
       <Exec Command="npm run build" WorkingDirectory="$(RepositoryRoot)dashboard" />
+    </Target>
+
+    <!-- Collect dashboard dist files into a temporary item, capturing RecursiveDir while it's
+         still available (glob metadata is lost once items are re-included via @() references).
+         Then add them as EmbeddedResource with TargetPath explicitly set to wwwroot\{path}. -->
+    <Target Name="RegisterDashboardEmbeddedResources"
+            DependsOnTargets="BuildDashboard"
+            BeforeTargets="_CalculateEmbeddedFilesManifestInputs">
+      <ItemGroup>
+        <EmbeddedResource Remove="$(RepositoryRoot)dashboard/dist/**" />
+        <DashboardDistFile Include="$(RepositoryRoot)dashboard/dist/**"
+                           Condition="Exists('$(RepositoryRoot)dashboard/dist/index.html')" />
+        <EmbeddedResource Include="@(DashboardDistFile)"
+                          TargetPath="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)" />
+      </ItemGroup>
     </Target>
 
     <!-- Generate help:// snapshot for Release builds so documentation is queryable on first request -->

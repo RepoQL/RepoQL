@@ -118,6 +118,8 @@
   overflow: hidden;
   flex: 1 1 auto;
   min-width: 100px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 100px 80px;
 }
 
 .dir-label {
