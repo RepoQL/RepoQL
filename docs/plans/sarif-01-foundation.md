@@ -110,6 +110,7 @@ The normalizer absorbs all producer-specific variance in one place. Downstream c
 - Each result shall produce a `NormalizedResult` with `RuleId`, `Message`, `Level`, `NormalizedPath`, `Region`, `PartialFingerprints`, `Fingerprints`, `RuleMetadata`, `Data`
 - Results missing a message (after the full fallback chain: `text` → `markdown` → `message.id` resolved against rule `messageStrings`) shall be skipped and counted in `SkippedResults`
 - Results missing a `ruleId` shall be skipped and counted in `SkippedResults`
+- Results missing a location (no `locations[]` or no `artifactLocation.uri`) shall be skipped and counted in `SkippedResults` — a finding without a file path cannot produce a stable semantic key
 - `PartialFingerprints` shall carry the SARIF `partialFingerprints` dictionary (nullable)
 - `Fingerprints` shall carry the SARIF `fingerprints` dictionary (nullable)
 - The two dictionaries shall be kept separate so the import service (Plan 02) can apply priority: partialFingerprints > fingerprints > content hash

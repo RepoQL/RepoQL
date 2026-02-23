@@ -132,8 +132,8 @@ When a document node is found:
 
 When a document node is NOT found:
 - The result is still imported — unresolved findings are valuable
-- `scope_document_id` is set to a synthetic "unresolved imports" document node
-- `target_uri` carries the normalized path for later resolution
+- `scope_document_id` is set to a synthetic "unresolved imports" document node (`repoql:///sarif/unresolved`)
+- `target_uri` is set to `file:///{normalizedPath}#line={startLine}` for repo-relative paths, or preserved as-is for external/absolute paths that couldn't be relativized
 - This handles files that haven't been indexed yet, were excluded, or are external
 
 ### 4. Semantic Key Computation
@@ -227,7 +227,7 @@ The scope of expiration is per-source. Importing Snyk results never touches Qoda
 
 All annotations from a single SARIF import are written in one transaction:
 1. Delete expired annotations (same source, missing semantic keys)
-2. Upsert new/updated annotations (INSERT OR REPLACE on semantic_key)
+2. Upsert new/updated annotations (INSERT ... ON CONFLICT(semantic_key) DO UPDATE — preserves `created_at` for unchanged findings)
 
 This is atomic — either all findings from this import land, or none do.
 

@@ -92,9 +92,10 @@ BEGIN TRANSACTION
     AND kind = 'lint'
     AND semantic_key NOT IN (@newKeys)
 
-  -- Upsert: insert or replace all new results
-  INSERT OR REPLACE INTO annotation (semantic_key, kind, severity, source, ...)
+  -- Upsert: insert or update all new results (preserves created_at)
+  INSERT INTO annotation (semantic_key, kind, severity, source, ...)
   VALUES (...)
+  ON CONFLICT(semantic_key) DO UPDATE SET severity=excluded.severity, ...
 
 COMMIT
 ```

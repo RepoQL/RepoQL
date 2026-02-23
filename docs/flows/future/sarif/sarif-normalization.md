@@ -185,6 +185,7 @@ Unknown names: strip non-alphanumeric, lowercase, collapse whitespace to hyphens
 
 Per result:
 - `ruleId`: verbatim (required by our import, skip result if absent)
+- `location`: at least one `physicalLocation` with `artifactLocation.uri` required (skip result if absent — locationless findings cannot produce stable semantic keys)
 - `message`: `result.message.text` preferred; fall back to `result.message.markdown`; fall back to `result.message.id` resolved against rule `messageStrings`
 - `level`: from stage 4
 - `path`: from stage 2
@@ -193,8 +194,7 @@ Per result:
 - `fingerprints`: from SARIF `fingerprints` (kept separate from partialFingerprints)
 - `ruleMetadata`: from stage 3 lookup (may be null)
 - `source`: from stage 5
-- `toolSpecificSeverity`: from stage 4 extraction
-- `codeFlows`, `relatedLocations`, `fixes`, `properties`: preserved verbatim for the data payload
+- `codeFlows`, `relatedLocations`, `fixes`, `properties`, tool-specific severity: preserved verbatim in the `Data` payload (not as separate fields on `NormalizedResult`)
 
 ## Termination
 
@@ -229,7 +229,7 @@ flowchart TD
         NormRegion[Normalize region to lines]
         PreserveFingerprints[Preserve partialFingerprints + fingerprints separately]
         ExtractMeta[Extract tool-specific severity]
-        NormPath --> ResolveSev --> NormRegion --> MergeFingerprints --> ExtractMeta
+        NormPath --> ResolveSev --> NormRegion --> PreserveFingerprints --> ExtractMeta
     end
 
     ForEachResult --> Output([Normalized results + skip count]):::success

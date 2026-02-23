@@ -82,13 +82,15 @@ An agent calls `import("sarif:///build/snyk-results.sarif")` and immediately get
 - For each normalized result, the service shall resolve `normalizedPath` to a document node via `file:///{normalizedPath}` and `GetDocumentByUri`
 - When a document is found, `scope_document_id` shall be set to the document node's ID
 - When a document is found and a region with `StartLine` exists, the service shall create a `Span` with the region's line/column info and set `target_span_id`
-- When a document is NOT found, the annotation shall still be created with `target_uri` set to `file:///{normalizedPath}#line={startLine}` and `scope_document_id` set to a synthetic unresolved-imports document
+- When a document is NOT found, the annotation shall still be created with `scope_document_id` set to the synthetic unresolved-imports document (`repoql:///sarif/unresolved`)
+- For unresolved repo-relative paths, `target_uri` shall be set to `file:///{normalizedPath}#line={startLine}`
+- For unresolved external/absolute paths (flagged as unresolvable by the normalizer), `target_uri` shall preserve the original path as-is
 - The count of unresolved paths shall be reported in per-source result entries
 
 ### Semantic Keys
 
 - The service shall compute semantic keys in the format `{source}:{ruleId}:{normalizedPath}:{startLine}:{fingerprint}`
-- Fingerprint shall be the first non-empty value from: `PartialFingerprints` dictionary values (on the `NormalizedResult`), then `Fingerprints` dictionary values — the normalizer preserves these as separate fields for this priority
+- Fingerprint shall be selected deterministically: first from `PartialFingerprints`, then from `Fingerprints` (on the `NormalizedResult`). Within each dictionary, keys are sorted alphabetically and the first non-empty value is used. This ensures stable key selection regardless of dictionary iteration order
 - When no fingerprints exist, the service shall compute a SHA-256 hash of `{ruleId}:{path}:{startLine}:{message}` as the fingerprint
 - Semantic keys shall be stable across re-imports of the same scan results
 
@@ -98,7 +100,7 @@ An agent calls `import("sarif:///build/snyk-results.sarif")` and immediately get
 - `Severity` shall map SARIF levels: `"error"` → `"error"`, `"warning"` → `"warning"`, `"note"` → `"info"`, `"none"` → `"hint"`
 - `RuleId` shall be the verbatim SARIF `ruleId`
 - `Message` shall be the normalized message text (fallback chain: text → markdown → messageStrings resolution)
-- `Data` shall be a JSON object carrying: rule metadata, fingerprints, codeFlows, relatedLocations, fixes, properties, tool-specific severity
+- `Data` shall be a JSON object carrying: `sarif_source`, `sarif_run_index`, `original_level`, rule metadata, partialFingerprints, fingerprints, codeFlows, relatedLocations, fixes, properties, tool-specific severity
 - The service shall call `ReplaceAnnotationsBySource` once per source (aggregated across runs)
 
 ### Scheme Routing
