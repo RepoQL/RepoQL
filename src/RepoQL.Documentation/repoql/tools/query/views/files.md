@@ -73,7 +73,25 @@ SELECT uri FROM Files WHERE source = 'file://';
 //BOUNDARY: `lang` comes from semantic media type; `extension` is literal file extension. They may differ.
 
 **Depth**
-- `lang`: Semantic type from indexer (`code.csharp`, `markdown.doc`, `dotnet.csproj`)
+- `lang`: Semantic type from indexer — **not** the common language name. Common values:
+
+| `lang` value | What it matches |
+|-------------|----------------|
+| `code.csharp` | `.cs` files |
+| `code.python` | `.py` files |
+| `code.javascript` | `.js` files |
+| `code.typescript` | `.ts` files |
+| `code.typescript.react` | `.tsx` files |
+| `code.css` | `.css` files |
+| `markdown.doc` | `.md` files |
+| `json` | `.json` files |
+| `dotnet.csproj` | `.csproj` files |
+| `csv.table` | `.csv` files |
+| `plain.document` | `.txt` and other plain text |
+| `query.sql` | `.sql` files |
+| `template.razor` | `.razor` files |
+| `config.lock` | Lock files |
+
 - `extension`: Raw file extension (`.cs`, `.md`, `.csproj`)
 - `source`: Scheme prefix; `file://` for local, `github://owner/repo` for imports
 - `dirname`: Parent directory path; use LIKE for nested matching

@@ -191,7 +191,7 @@ dotnet run -- --output Detailed            # Verbose output
 |--------|--------|
 | Don't read files for structure | X-ray summaries (`headline`, `summary`, `structure`) are pre-computed on artifacts |
 | Spans: 1-based lines, 0-based chars | `#line=42` = line 42. `#char=100,150` = bytes [100,150) |
-| Current vs Future docs | Don't update future/ to match limitations. Don't update current/ with aspirations. The gap = work to do |
+| Current vs Future docs | `docs/*/current/` = built and working. `docs/*/future/` = designed but not yet built. New designs and flows go in `future/` and move to `current/` when implemented. Don't update future/ to match limitations. Don't update current/ with aspirations. The gap = work to do |
 | Class docs required | Purpose (why it exists) + Complexity (what's contained). The "and" test: rarely need "and" in a class's purpose |
 | Version lives in ConsoleApp | `src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj` → `<Version>` element. Nowhere else. |
 | Version bumps are patch only | Bump the revision number (e.g. 1.4.0 → 1.4.1). Minor/major bumps only when explicitly requested. |

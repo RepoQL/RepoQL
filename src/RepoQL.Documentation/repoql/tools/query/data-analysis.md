@@ -242,6 +242,9 @@ WITH RECURSIVE deps AS (...) SELECT ... FROM deps JOIN node JOIN Files;
 | Comparative | Window functions | AggregateInsights |
 | External data | MCP tools | ExternalEnrich |
 | Steer summary | SQL comment | CommentAsPrompt |
+| Topic neighborhood | search() → related() | ConceptExpansion |
+| Dev process | git_commit + window funcs | GitAnalytics |
+| Cross-repo metrics | CASE + PIVOT | CrossRepoComparison |
 
 ---
 
@@ -262,6 +265,100 @@ SELECT uri, headline, structure FROM search('authentication', k := 20)
 - **Trap**: debugging comments (`-- Fix: column is document_uri`) pollute the synthesis with irrelevant context
 - Strip scratch comments before the final query; keep only the question you want answered
 - SeeAlso: SearchEnrich, MultiStepAnalysis
+
+---
+
+## Capsule: ConceptExpansion
+
+**Invariant**
+Chain `search()` → `related()` to walk through embedding space: find a seed by keyword, then expand to its semantic neighborhood.
+
+**Example**
+```sql
+WITH seed AS (
+  SELECT uri, score FROM search('authentication token', k := 1)
+)
+SELECT 'seed' as source, s.uri, s.score FROM seed s
+UNION ALL
+SELECT 'neighbor', r.uri, r.score
+FROM seed s, LATERAL (SELECT * FROM related(s.uri, 5)) r
+WHERE r.uri != s.uri
+ORDER BY source, score DESC
+```
+
+**Depth**
+- search() finds the best match for a concept
+- related() expands to semantically similar files
+- One hop covers the full topic neighborhood (docs, implementation, tests)
+- Chain further: JOIN with Types or Functions to see what's inside each neighbor
+- SeeAlso: SearchEnrich, LateralExpand
+
+---
+
+## Capsule: GitAnalytics
+
+**Invariant**
+`git_commit` + `git_file_change` + window functions enable development process analysis.
+
+**Example**
+```sql
+-- Commit velocity with burst detection
+WITH daily AS (
+  SELECT DATE_TRUNC('day', c.author_date::TIMESTAMP) as day,
+    COUNT(DISTINCT c.hash) as commits
+  FROM git_commit c JOIN git_file_change fc ON c.hash = fc.commit_hash
+  GROUP BY 1
+)
+SELECT day, commits,
+  AVG(commits) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) as rolling_7d,
+  CASE WHEN commits > 3 * AVG(commits) OVER (ORDER BY day ROWS BETWEEN 13 PRECEDING AND 7 PRECEDING)
+    THEN 'BURST' ELSE '' END as flag
+FROM daily ORDER BY day DESC
+
+-- Co-change coupling: files that always change together
+WITH pairs AS (
+  SELECT a.uri as file_a, b.uri as file_b, COUNT(*) as co_changes
+  FROM git_file_change a
+  JOIN git_file_change b ON a.commit_hash = b.commit_hash AND a.uri < b.uri
+  GROUP BY 1, 2 HAVING COUNT(*) >= 3
+)
+SELECT file_a, file_b, co_changes FROM pairs ORDER BY co_changes DESC
+```
+
+**Depth**
+- `git_commit`: hash, author_name, author_email, author_date, message, insertions, deletions
+- `git_file_change`: commit_hash, uri, insertions, deletions
+- `git_hotspots`: pre-computed churn analysis (commits, authors, churn per file)
+- `git_recent`: recent commits with LLM summarization when results exceed budget
+- Self-join `git_file_change` on `commit_hash` for co-change coupling
+- Window functions (LAG, rolling AVG) for trend analysis
+- SeeAlso: AggregateInsights, MultiStepAnalysis
+
+---
+
+## Capsule: CrossRepoComparison
+
+**Invariant**
+CASE expressions on URIs + GROUP BY + PIVOT compare metrics across imported repositories.
+
+**Example**
+```sql
+-- Type system comparison via PIVOT
+PIVOT (
+  SELECT
+    CASE WHEN file_uri LIKE 'github://owner/repo%' THEN 'repo-a'
+         WHEN file_uri LIKE 'file://%' THEN 'local' END as repo,
+    type_kind, COUNT(*) as cnt
+  FROM Types GROUP BY 1, 2
+) ON repo USING SUM(cnt) ORDER BY type_kind
+```
+
+**Depth**
+- `CASE WHEN uri LIKE 'github://owner/repo%'` classifies by source repo
+- PIVOT turns repo names into columns for side-by-side comparison
+- Works with Files, Types, Functions, git_commit — any indexed data
+- VALUES cross join creates inline rubrics for multi-dimensional scoring
+- SeeAlso: AggregateInsights, InlineLookup
 
 ---
 

@@ -194,9 +194,52 @@ read("file:///src/** => lint: errors", 1000)   -- show errors only
 - `blame`: git blame showing who changed each line
 - `lint`: diagnostics; `: errors` or `: warnings` filters severity
 - `find`: semantic search within matched files; `: keywords` to search
-  - `read => find` has a file-scope cap (default 64 files); broader scopes are rejected with guidance
+  - `read => find` has a file-scope cap (default 96 files); broader scopes are rejected with guidance
   - This is intentional: find is for snippet extraction, not broad repo discovery
   - Use `explore(intent=Inspect, keywords="...")` first to shortlist likely files, then run `read(... => find: ...)`
+- `similar`: find semantically related files; `: seed_uri` specifies what to match against
+  - **The URI pattern controls WHERE to search; the seed controls WHAT to look for**
+  - `file:///src/tests/** => similar: file:///src/Auth.cs` — find tests for this code
+  - `file:///docs/** => similar: file:///src/Auth.cs` — find docs for this code
+  - `file:///src/**/*.cs => similar: file:///docs/design.md` — find code implementing this design
+  - `github://owner/repo/src/** => similar: file:///src/Logging.cs` — find similar code in another repo
+  - Works across repos and across languages when there is genuine semantic overlap
+  - Returns 0.00 when the seed and scope have no semantic relationship — that's signal, not failure
+- `grep`: case-insensitive literal text search; `: search_text` specifies the string
+  - `file:///src/** => grep: connectionString` — find every line containing the text
+- `regex`: regular expression search; `: pattern` specifies the regex
+  - `file:///src/**/*.cs => regex: class\s+\w+Handler` — find all Handler class declarations
+- `changes`: working copy diffs grouped by changelist (staged, unstaged, untracked)
+  - Shows patches for modified files, binary markers, and line counts
+
+---
+
+## Capsule: CrossRepoBehavior
+
+**Invariant**
+Not all modifiers work across repository boundaries. Imported repos (github://) have different capabilities than local repos (file:///).
+
+**Example**
+```
+-- Works everywhere: content, structure, headline, tree, history, find, grep, regex, similar
+read("github://owner/repo/src/** => structure", 3000)
+read("github://owner/repo/src/** => similar: file:///src/Logging.cs", 2000)
+
+-- Works only on file:// URIs
+read("file:///src/Auth.cs => blame", 2000)
+read("file:///src/** => changes", 2000)
+```
+//BOUNDARY: blame/changes require local git. Everything else works on all URI schemes.
+
+**Depth**
+- `blame`: Only `file:///` — requires local git repository
+- `changes`: Only `file:///` — working copy is local only
+- `similar`: Works across repos when content is genuinely related; returns 0.00 when it isn't
+- `history`: Works on both — imported repos index git history
+- `find`, `grep`, `regex`: Work on both — operate on indexed content
+- `tree`, `headline`, `structure`, `content`: Work on both — use x-ray data
+- Cross-language similar works within a repo (markdown ↔ code)
+- SQL queries (`search()`, `Files`, `Types`) work across all repos uniformly
 
 ---
 
@@ -209,3 +252,4 @@ read("file:///src/** => lint: errors", 1000)   -- show errors only
 | `read("src/Foo.cs", 3000)` | Missing scheme, use `file:///src/Foo.cs` |
 | `read("file:///src/Foo.cs => question:...", 2000)` | Missing the actual question after colon |
 | `read("file:///src/*.cs;!/tests/", 3000)` | Exclusion path wrong, use `!**/tests/**` |
+| `=> similar: file:///path` returns 0.00 | Seed and scope aren't semantically related — that's valid signal, not a bug |

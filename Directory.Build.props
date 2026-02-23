@@ -29,8 +29,8 @@
     <!-- Include all the target files under /build -->
     <Import Project="$(BuildExtensionsDirectory)*.props"/>
 
-    <!-- RepoQL analyzers — applied to all projects except the analyzer itself -->
-    <ItemGroup Condition="'$(MSBuildProjectName)' != 'RepoQL.Analyzers'">
+    <!-- RepoQL analyzers — applied to all projects except the analyzer itself and AOT publishes -->
+    <ItemGroup Condition="'$(MSBuildProjectName)' != 'RepoQL.Analyzers' and '$(PublishAot)' != 'true' and '$(PublishAot)' != 'True'">
         <ProjectReference Include="$(RepositoryRoot)src/RepoQL.Analyzers/RepoQL.Analyzers.csproj"
                           OutputItemType="Analyzer"
                           ReferenceOutputAssembly="false"

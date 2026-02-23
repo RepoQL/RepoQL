@@ -1,5 +1,6 @@
-using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Reflection;
+using System.Xml.Linq;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
 using RepoQL.FileSystem.Abstractions;
@@ -8,12 +9,16 @@ namespace RepoQL.FileSystem.Embedded;
 
 /// <summary>
 ///     Embedded resource store. Canonical URI scheme: <c>embed:///logical/path.ext</c>.
+///     Canonical paths are sourced from the embedded manifest XML when available.
 /// </summary>
 public sealed class EmbeddedStore : IVirtualFileSystem
 {
-    private readonly Assembly _asm;
-    private readonly EmbeddedFileProvider _fileProvider;
-    private readonly Dictionary<string, string> _uriToRes;
+    private const string EmbeddedManifestResourceName = "Microsoft.Extensions.FileProviders.Embedded.Manifest.xml";
+
+    private readonly record struct EmbeddedEntry(string CanonicalPath, string ProviderPath);
+
+    private readonly IFileProvider _fileProvider;
+    private readonly Dictionary<string, EmbeddedEntry> _uriToEntry;
     private readonly string _scheme;
 
     /// <summary>
@@ -22,18 +27,16 @@ public sealed class EmbeddedStore : IVirtualFileSystem
     /// </summary>
     public EmbeddedStore(Assembly asm, string? scheme = null)
     {
-        _asm = asm ?? throw new ArgumentNullException(nameof(asm));
-        _fileProvider = new EmbeddedFileProvider(asm);
+        ArgumentNullException.ThrowIfNull(asm);
+        _fileProvider = CreateFileProvider(asm);
         _scheme = string.IsNullOrWhiteSpace(scheme)
             ? "embed"
             : scheme.Trim().ToLowerInvariant();
-        var asmName = _asm.GetName().Name ?? "asm";
-        _uriToRes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var full in _asm.GetManifestResourceNames())
-        {
-            var logical = ToLogicalPath(full, asmName);
-            _uriToRes[$"{Scheme}:///{logical}"] = logical;
-        }
+
+        _uriToEntry = new Dictionary<string, EmbeddedEntry>(StringComparer.OrdinalIgnoreCase);
+
+        if (!TryIndexFromManifest(asm) && !TryIndexFromResourceNames(asm))
+            EnumerateDirectoryViaProvider("");
     }
 
     /// <inheritdoc />
@@ -42,20 +45,13 @@ public sealed class EmbeddedStore : IVirtualFileSystem
     /// <inheritdoc />
     public async IAsyncEnumerable<IFileInfo> EnumerateAsync([EnumeratorCancellation] CancellationToken ct)
     {
-        // EmbeddedFileProvider doesn't support directory enumeration well,
-        // so we enumerate all manifest resources
-        foreach (var full in _asm.GetManifestResourceNames())
+        foreach (var entry in _uriToEntry.Values)
         {
             if (ct.IsCancellationRequested) yield break;
 
-            var asmName = _asm.GetName().Name ?? "asm";
-            var logical = ToLogicalPath(full, asmName);
-            var fileInfo = _fileProvider.GetFileInfo(logical);
+            var fileInfo = _fileProvider.GetFileInfo(entry.ProviderPath);
             if (fileInfo.Exists)
-            {
-                // PhysicalPath set to absolute logical path so hub emits embed:///logical
-                yield return new EmbeddedLogicalFileInfo(fileInfo, $"/{logical}");
-            }
+                yield return new EmbeddedLogicalFileInfo(fileInfo, $"/{entry.CanonicalPath}");
 
             await Task.Yield();
         }
@@ -64,11 +60,11 @@ public sealed class EmbeddedStore : IVirtualFileSystem
     /// <inheritdoc />
     public IFileInfo GetFile(RepoUri uri)
     {
-        if (!_uriToRes.TryGetValue(uri.AbsoluteUri, out var resourceName))
+        if (!_uriToEntry.TryGetValue(uri.AbsoluteUri, out var entry))
             return new NotFoundFileInfo(uri.AbsoluteUri);
 
-        var fi = _fileProvider.GetFileInfo(resourceName);
-        return new EmbeddedLogicalFileInfo(fi, $"/{resourceName}");
+        var fi = _fileProvider.GetFileInfo(entry.ProviderPath);
+        return new EmbeddedLogicalFileInfo(fi, $"/{entry.CanonicalPath}");
     }
 
     /// <inheritdoc />
@@ -77,7 +73,6 @@ public sealed class EmbeddedStore : IVirtualFileSystem
         if (file.PhysicalPath == null)
             throw new ArgumentException("File must have a PhysicalPath", nameof(file));
 
-        // PhysicalPath is in the format "/logical/path.ext", convert to "embed:///logical/path.ext"
         var logicalPath = file.PhysicalPath.TrimStart('/');
         return RepoUri.Parse($"{Scheme}:///{logicalPath}");
     }
@@ -85,17 +80,187 @@ public sealed class EmbeddedStore : IVirtualFileSystem
     /// <inheritdoc />
     public IFileSystemWatcher Watch() => new ManualWatcher();
 
-    private static string ToLogicalPath(string manifestName, string asmName)
+    private static IFileProvider CreateFileProvider(Assembly asm)
     {
-        // Strip the assembly prefix if present
-        var prefix = asmName + ".";
-        var rest = manifestName.StartsWith(prefix, StringComparison.Ordinal) ? manifestName[prefix.Length..] : manifestName;
+        try
+        {
+            return new ManifestEmbeddedFileProvider(asm);
+        }
+        catch (InvalidOperationException)
+        {
+            return new EmbeddedFileProvider(asm);
+        }
+    }
 
-        // Split at last '.' to keep extension intact
-        var lastDot = rest.LastIndexOf('.');
-        if (lastDot < 0) return rest.Replace('.', '/');
-        var withoutExt = rest[..lastDot];
-        var ext = rest[(lastDot + 1)..];
-        return withoutExt.Replace('.', '/') + "." + ext;
+    private bool TryIndexFromManifest(Assembly asm)
+    {
+        using var stream = OpenManifestStream(asm);
+        if (stream == null)
+            return false;
+
+        XDocument manifest;
+        try
+        {
+            manifest = XDocument.Load(stream, LoadOptions.None);
+        }
+        catch
+        {
+            return false;
+        }
+
+        var fileSystem = manifest.Root?.Element("FileSystem");
+        if (fileSystem == null)
+            return false;
+
+        var countBefore = _uriToEntry.Count;
+        EnumerateManifestDirectory(fileSystem, "");
+        return _uriToEntry.Count > countBefore;
+    }
+
+    private static Stream? OpenManifestStream(Assembly asm)
+    {
+        var manifestStream = asm.GetManifestResourceStream(EmbeddedManifestResourceName);
+        if (manifestStream != null)
+            return manifestStream;
+
+        var fallbackResourceName = asm.GetManifestResourceNames()
+            .FirstOrDefault(static name => name.EndsWith(".Manifest.xml", StringComparison.Ordinal));
+        if (fallbackResourceName == null)
+            return null;
+
+        return asm.GetManifestResourceStream(fallbackResourceName);
+    }
+
+    private bool TryIndexFromResourceNames(Assembly asm)
+    {
+        var assemblyName = asm.GetName().Name;
+        if (string.IsNullOrWhiteSpace(assemblyName))
+            return false;
+
+        var prefix = $"{assemblyName}.";
+        var countBefore = _uriToEntry.Count;
+
+        foreach (var resourceName in asm.GetManifestResourceNames())
+        {
+            if (!resourceName.StartsWith(prefix, StringComparison.Ordinal))
+                continue;
+
+            var relativeResourceName = resourceName[prefix.Length..];
+            var providerPath = TryResolveProviderPathFromResourceName(relativeResourceName);
+            if (providerPath == null)
+                continue;
+
+            RegisterPath(providerPath, providerPath);
+        }
+
+        return _uriToEntry.Count > countBefore;
+    }
+
+    private string? TryResolveProviderPathFromResourceName(string relativeResourceName)
+    {
+        var parts = relativeResourceName.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return null;
+
+        var initialFileStart = parts.Length > 1 ? parts.Length - 2 : 0;
+        for (var fileStart = initialFileStart; fileStart >= 0; fileStart--)
+        {
+            var fileName = string.Join('.', parts.Skip(fileStart));
+            var directoryPath = fileStart == 0
+                ? string.Empty
+                : string.Join('/', parts.Take(fileStart));
+            var candidatePath = string.IsNullOrEmpty(directoryPath)
+                ? fileName
+                : $"{directoryPath}/{fileName}";
+            if (_fileProvider.GetFileInfo(candidatePath).Exists)
+                return candidatePath;
+        }
+
+        return null;
+    }
+
+    private void EnumerateManifestDirectory(XContainer directoryElement, string path)
+    {
+        foreach (var fileElement in directoryElement.Elements("File"))
+        {
+            var fileName = fileElement.Attribute("Name")?.Value;
+            if (string.IsNullOrWhiteSpace(fileName))
+                continue;
+
+            var canonicalPath = string.IsNullOrEmpty(path) ? fileName : $"{path}/{fileName}";
+            var providerPath = ResolveProviderPath(canonicalPath);
+            if (!_fileProvider.GetFileInfo(providerPath).Exists)
+                continue;
+            RegisterPath(canonicalPath, providerPath);
+        }
+
+        foreach (var childDirectory in directoryElement.Elements("Directory"))
+        {
+            var directoryName = childDirectory.Attribute("Name")?.Value;
+            if (string.IsNullOrWhiteSpace(directoryName))
+                continue;
+
+            var childPath = string.IsNullOrEmpty(path) ? directoryName : $"{path}/{directoryName}";
+            EnumerateManifestDirectory(childDirectory, childPath);
+        }
+    }
+
+    private string ResolveProviderPath(string canonicalPath)
+    {
+        if (_fileProvider.GetFileInfo(canonicalPath).Exists)
+            return canonicalPath;
+
+        var segments = canonicalPath.Split('/', StringSplitOptions.None);
+        if (segments.Length < 2)
+            return canonicalPath;
+
+        var candidate = TryResolveMangledDirectoryPath(segments, 0);
+        return candidate ?? canonicalPath;
+    }
+
+    private string? TryResolveMangledDirectoryPath(string[] segments, int startIndex)
+    {
+        for (var i = startIndex; i < segments.Length - 1; i++)
+        {
+            var original = segments[i];
+            if (!original.Contains('-', StringComparison.Ordinal))
+                continue;
+
+            segments[i] = original.Replace('-', '_');
+            var candidatePath = string.Join('/', segments);
+            if (_fileProvider.GetFileInfo(candidatePath).Exists)
+            {
+                segments[i] = original;
+                return candidatePath;
+            }
+
+            var deeperCandidate = TryResolveMangledDirectoryPath(segments, i + 1);
+            segments[i] = original;
+            if (deeperCandidate != null)
+                return deeperCandidate;
+        }
+
+        return null;
+    }
+
+    private void EnumerateDirectoryViaProvider(string path)
+    {
+        foreach (var entry in _fileProvider.GetDirectoryContents(path))
+        {
+            var entryPath = string.IsNullOrEmpty(path) ? entry.Name : $"{path}/{entry.Name}";
+            if (entry.IsDirectory)
+            {
+                EnumerateDirectoryViaProvider(entryPath);
+                continue;
+            }
+
+            RegisterPath(entryPath, entryPath);
+        }
+    }
+
+    private void RegisterPath(string canonicalPath, string providerPath)
+    {
+        var uri = $"{Scheme}:///{canonicalPath}";
+        _uriToEntry[uri] = new EmbeddedEntry(canonicalPath, providerPath);
     }
 }
