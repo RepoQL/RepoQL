@@ -135,7 +135,7 @@ The normalizer absorbs all producer-specific variance in one place. Downstream c
 ## References
 
 - [SARIF Import Design](../designs/future/sarif-import.md) — architecture, contracts, trade-offs
-- [SARIF Normalization Flow](../flows/future/sarif-normalization.md) — the producer gauntlet in detail
+- [SARIF Normalization Flow](../flows/future/sarif/sarif-normalization.md) — the producer gauntlet in detail
 - [SARIF Producer Landscape](../research/sarif-producer-landscape.md) — what real SARIF files contain
 - Existing `ReplaceAnnotations` in `src/RepoQL.Data.DuckDB/DuckDbDataStoreExtensions.cs` (lines 220-259) — pattern to follow
 - Existing `UpsertAnnotation` in same file (lines 1134-1168) — semantic_key conflict resolution

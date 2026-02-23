@@ -292,6 +292,6 @@ The SARIF import flow's job is to get findings into the annotation table correct
 
 ## Related
 
-- `docs/flows/future/sarif-import.md` — how findings get into the graph
-- `docs/flows/future/sarif-reimport.md` — how findings stay current
+- `docs/flows/future/sarif/sarif-import.md` — how findings get into the graph
+- `docs/flows/future/sarif/sarif-reimport.md` — how findings stay current
 - `docs/Schema.md` — `annotations` view, `annotations_for()`, `annotations_all()` macros

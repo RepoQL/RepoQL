@@ -144,8 +144,8 @@ An agent calls `import("sarif:///build/snyk-results.sarif")` and immediately get
 ## References
 
 - [SARIF Import Design](../designs/future/sarif-import.md) — data flow, location resolution, semantic keys
-- [SARIF Import Flow](../flows/future/sarif-import.md) — end-to-end pipeline stages
-- [SARIF Re-Import Flow](../flows/future/sarif-reimport.md) — expiration lifecycle
+- [SARIF Import Flow](../flows/future/sarif/sarif-import.md) — end-to-end pipeline stages
+- [SARIF Re-Import Flow](../flows/future/sarif/sarif-reimport.md) — expiration lifecycle
 - [SARIF Import North Star](../north-star/sarif-import.md) — what great looks like
 - `RepoQlServiceImpl.ImportRepository` at `src/RepoQL.ConsoleApp/Host/RepoQlServiceImpl.cs` — scheme detection + async return
 - `repoql.proto` at `src/RepoQL.Protocol/Protos/repoql.proto` — `ImportResponse` message to extend

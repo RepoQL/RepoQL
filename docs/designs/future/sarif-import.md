@@ -16,10 +16,10 @@ An agent imports a SARIF file with one call and queries every finding from every
 Static analysis scanners (Snyk, CodeQL, Qodana, Semgrep, ESLint, Roslyn, Trivy) emit SARIF 2.1.0 files. These need to become `annotation(kind='lint')` records in the graph — scoped to documents, targeting line ranges, carrying severity and rule metadata, queryable through `annotations` view and `annotations_for()` macro.
 
 **Enables:**
-- [SARIF Import Flow](../flows/future/sarif-import.md) — end-to-end pipeline
-- [SARIF Normalization Flow](../flows/future/sarif-normalization.md) — producer quirk handling
-- [SARIF Re-Import Flow](../flows/future/sarif-reimport.md) — stale finding expiration
-- [SARIF Query Patterns Flow](../flows/future/sarif-query-patterns.md) — agent consumption
+- [SARIF Import Flow](../flows/future/sarif/sarif-import.md) — end-to-end pipeline
+- [SARIF Normalization Flow](../flows/future/sarif/sarif-normalization.md) — producer quirk handling
+- [SARIF Re-Import Flow](../flows/future/sarif/sarif-reimport.md) — stale finding expiration
+- [SARIF Query Patterns Flow](../flows/future/sarif/sarif-query-patterns.md) — agent consumption
 
 **Informed by:**
 - [SARIF Producer Landscape](../research/sarif-producer-landscape.md) — what real SARIF files look like
@@ -495,7 +495,7 @@ The normalizer needs only `System.Text.Json` and the repo root path string. The 
 - [Vocabulary](../../Vocabulary.md) — `annotation.kind = 'lint'`, severity mapping
 - [SARIF Import North Star](../../north-star/sarif-import.md)
 - [SARIF Producer Landscape](../../research/sarif-producer-landscape.md)
-- [SARIF Import Flow](../../flows/future/sarif-import.md)
-- [SARIF Normalization Flow](../../flows/future/sarif-normalization.md)
-- [SARIF Re-Import Flow](../../flows/future/sarif-reimport.md)
-- [SARIF Query Patterns Flow](../../flows/future/sarif-query-patterns.md)
+- [SARIF Import Flow](../../flows/future/sarif/sarif-import.md)
+- [SARIF Normalization Flow](../../flows/future/sarif/sarif-normalization.md)
+- [SARIF Re-Import Flow](../../flows/future/sarif/sarif-reimport.md)
+- [SARIF Query Patterns Flow](../../flows/future/sarif/sarif-query-patterns.md)

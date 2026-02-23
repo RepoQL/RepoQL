@@ -253,5 +253,5 @@ Feed real SARIF → assert uniform output. One test per producer:
 
 ## Related
 
-- `docs/flows/future/sarif-import.md` — the pipeline that consumes normalized output
+- `docs/flows/future/sarif/sarif-import.md` — the pipeline that consumes normalized output
 - `docs/research/sarif-producer-landscape.md` — the research that catalogued producer differences

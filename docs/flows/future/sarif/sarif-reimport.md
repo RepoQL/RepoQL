@@ -202,6 +202,6 @@ flowchart TD
 
 ## Related
 
-- `docs/flows/future/sarif-import.md` — the pipeline that produces the annotation records
-- `docs/flows/future/sarif-normalization.md` — how paths/rules/severity are cleaned
+- `docs/flows/future/sarif/sarif-import.md` — the pipeline that produces the annotation records
+- `docs/flows/future/sarif/sarif-normalization.md` — how paths/rules/severity are cleaned
 - `docs/Schema.md` — `semantic_key` uniqueness constraint on annotation table

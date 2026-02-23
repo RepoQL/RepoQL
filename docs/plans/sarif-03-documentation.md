@@ -72,5 +72,5 @@ An agent that has never used SARIF import can discover it via `help://` and use 
 
 - Existing doc pattern: `src/RepoQL.Documentation/repoql/tools/query/views/annotations.md` — capsule structure
 - [SARIF Import North Star](../north-star/sarif-import.md) — query examples to include
-- [SARIF Query Patterns Flow](../flows/future/sarif-query-patterns.md) — agent consumption patterns
+- [SARIF Query Patterns Flow](../flows/future/sarif/sarif-query-patterns.md) — agent consumption patterns
 - [SARIF Producer Landscape](../research/sarif-producer-landscape.md) — supported producer list and quirks
