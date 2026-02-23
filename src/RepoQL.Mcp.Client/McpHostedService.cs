@@ -1,41 +1,47 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Mcp.Client;
 
 /// <summary>
-/// Background service that connects to MCP servers asynchronously at startup
-/// and registers SQL macros for discovered tools.
+/// Purpose: Connect to MCP servers and register SQL macros for discovered tools.
+/// Complexity: Runs initialization in the background so it doesn't block host startup.
+/// Cancellation is owned via a dedicated CTS; StopAsync awaits completion.
+/// MCP is purely additive — failures are logged but never mark RepoQL as degraded.
 /// </summary>
 public sealed class McpHostedService : IHostedService
 {
     private readonly McpClientRegistry _registry;
     private readonly DuckDbDataStore _store;
-    private readonly IServiceDegradationTracker? _degradation;
     private readonly ILogger _logger;
+    private CancellationTokenSource? _cts;
+    private Task? _initTask;
 
     public McpHostedService(
         McpClientRegistry registry,
         DuckDbDataStore store,
-        IServiceDegradationTracker? degradation = null,
         ILogger<McpHostedService>? logger = null)
     {
         _registry = registry;
         _store = store;
-        _degradation = degradation;
         _logger = logger ?? NullLogger<McpHostedService>.Instance;
     }
 
-    public async Task StartAsync(CancellationToken cancellationToken)
+    public Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Starting MCP integration...");
+        _logger.LogInformation("MCP integration starting in background...");
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _initTask = InitializeAsync(_cts.Token);
+        return Task.CompletedTask;
+    }
 
+    private async Task InitializeAsync(CancellationToken cancellationToken)
+    {
         try
         {
-            // 1. Connect to MCP servers asynchronously (parallel)
+            // 1. Connect to MCP servers in parallel
             await _registry.StartAsync(cancellationToken).ConfigureAwait(false);
 
             // 2. Discover tools from connected servers
@@ -55,16 +61,34 @@ public sealed class McpHostedService : IHostedService
                 tools.Count,
                 tools.Select(t => t.ServerName).Distinct().Count());
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogInformation("MCP integration cancelled during shutdown");
+        }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "MCP integration failed - tools will not be available via SQL");
-            _degradation?.MarkDegraded(ServiceDegradationKind.Mcp, $"MCP integration failed: {ex.Message}");
+            _logger.LogWarning(ex, "MCP integration failed — external tools will not be available via SQL");
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
-        // Cleanup is handled by McpClientRegistry.DisposeAsync
-        return Task.CompletedTask;
+        _cts?.Cancel();
+        if (_initTask is not null)
+        {
+            // Respect the host's shutdown timeout — don't hang if init is stuck
+            try
+            {
+                await _initTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected — either init was cancelled or shutdown timed out.
+                // Don't dispose the CTS yet — init may still be running.
+                // It will complete shortly once cancellation propagates, and GC handles the rest.
+                return;
+            }
+        }
+        _cts?.Dispose();
     }
 }

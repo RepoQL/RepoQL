@@ -532,7 +532,6 @@ public static class RepoIndexerServiceCollectionExtensions
         {
             var logger = sp.GetService<ILogger<McpClientRegistry>>();
             var options = McpConfigOptions.FromConfig(sp.GetRequiredService<RepoQlConfig>().Mcp);
-            var degradation = sp.GetService<IServiceDegradationTracker>();
 
             try
             {
@@ -544,9 +543,8 @@ public static class RepoIndexerServiceCollectionExtensions
             }
             catch (Exception ex)
             {
+                // MCP is purely additive — config failures don't degrade RepoQL
                 logger?.LogWarning(ex, "MCP configuration failed; MCP tools will be disabled.");
-                degradation?.MarkDegraded(ServiceDegradationKind.Mcp,
-                    $"MCP configuration failed: {ex.Message}");
                 return McpClientRegistry.CreateFromConfigs(
                     new Dictionary<string, McpServerConfig>(StringComparer.OrdinalIgnoreCase),
                     selfServerName: options.SelfServerName,
