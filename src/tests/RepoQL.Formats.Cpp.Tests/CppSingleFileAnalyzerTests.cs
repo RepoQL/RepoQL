@@ -18,11 +18,6 @@ public sealed class CppSingleFileAnalyzerTests
     public async Task Analyzer_CreatesIncludeEdges_AndMarksResolution()
     {
         using var materializer = new CppMaterializer();
-        if (!materializer.IsGrammarAvailable)
-        {
-            Skip.Test("tree-sitter-cpp grammar is not bundled on this machine.");
-            return;
-        }
 
         var source = CppTestHelpers.ReadFixture("plan02_preprocessor_nodes.hpp");
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "plan02_preprocessor_nodes.hpp");
@@ -54,11 +49,6 @@ public sealed class CppSingleFileAnalyzerTests
     public async Task Analyzer_ExtractsDocComments_AndAttributes()
     {
         using var materializer = new CppMaterializer();
-        if (!materializer.IsGrammarAvailable)
-        {
-            Skip.Test("tree-sitter-cpp grammar is not bundled on this machine.");
-            return;
-        }
 
         var source = CppTestHelpers.ReadFixture("plan02_doc_attributes_tests.cpp");
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "plan02_doc_attributes_tests.cpp");
@@ -93,11 +83,6 @@ public sealed class CppSingleFileAnalyzerTests
     public async Task Analyzer_DetectsTestFramework_MarksNodeAsTest()
     {
         using var materializer = new CppMaterializer();
-        if (!materializer.IsGrammarAvailable)
-        {
-            Skip.Test("tree-sitter-cpp grammar is not bundled on this machine.");
-            return;
-        }
 
         var source = CppTestHelpers.ReadFixture("plan02_doc_attributes_tests.cpp");
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "plan02_doc_attributes_tests.cpp");
@@ -124,11 +109,6 @@ public sealed class CppSingleFileAnalyzerTests
     public async Task Analyzer_FailureIsolation_ContinuesAfterStepError()
     {
         using var materializer = new CppMaterializer();
-        if (!materializer.IsGrammarAvailable)
-        {
-            Skip.Test("tree-sitter-cpp grammar is not bundled on this machine.");
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "plan02_preprocessor_nodes.hpp");
         var item = BuildIndexItemWithThrowingStream(

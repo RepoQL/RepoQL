@@ -11,10 +11,6 @@ public sealed class CppMaterializerTests
     public async Task Materialize_ClassExtraction_ExtractsTypesMembersAndProperties()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "class_extraction.hpp");
 
@@ -78,10 +74,6 @@ public sealed class CppMaterializerTests
     public async Task Materialize_StructExtraction_UsesPublicDefaultAccess()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "struct_enum_namespace.hpp");
 
@@ -105,10 +97,6 @@ public sealed class CppMaterializerTests
     public async Task Materialize_EnumExtraction_TracksScopedAndEnumeratorValues()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "struct_enum_namespace.hpp");
 
@@ -134,10 +122,6 @@ public sealed class CppMaterializerTests
     public async Task Materialize_NamespaceExtraction_HandlesNestedQualifiedNames()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "nested_namespace.hpp");
 
@@ -161,10 +145,6 @@ public sealed class CppMaterializerTests
     public async Task Materialize_FreeFunctions_ExtractsFunctionPropertiesAndQualifiers()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "free_functions.cpp");
 
@@ -194,10 +174,6 @@ public sealed class CppMaterializerTests
     public async Task Materialize_ForwardDeclaration_SetsIsForwardDeclaration()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(
             materializer,
@@ -213,10 +189,6 @@ public sealed class CppMaterializerTests
     public async Task Materialize_AnonymousNamespace_SetsAnonymousProperties()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "anonymous_namespace.cpp");
 
@@ -231,10 +203,6 @@ public sealed class CppMaterializerTests
     public async Task Materialize_InlineNamespace_SetsInlineProperty()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "inline_namespace.hpp");
 
@@ -249,56 +217,12 @@ public sealed class CppMaterializerTests
     public async Task Materialize_ParseTimeout_EmitsAnnotationAndReturnsPartialResults()
     {
         using var materializer = new CppMaterializer(parseTimeout: TimeSpan.Zero);
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "class_extraction.hpp");
 
         records.Annotations.Should().Contain(a => a.RuleId == "cpp/parse_timeout");
         records.Annotations.Should().NotContain(a => a.RuleId == "cpp/grammar_load_failure");
         records.Nodes.Should().NotBeEmpty();
-    }
-
-    [Test]
-    public async Task Materialize_GrammarLoadFailure_EmitsDiagnosticAnnotationAndNoStructureNodes()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"repoql_cpp_missing_grammar_{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempDir);
-        try
-        {
-            using var client = new CppTreeSitterClient(runtimeBasePath: tempDir);
-            using var materializer = new CppMaterializer(client: client);
-
-            var records = await CppTestHelpers.LoadRecordsAsync(materializer, "free_functions.cpp");
-
-            client.IsGrammarAvailable.Should().BeFalse();
-            records.Nodes.Should().ContainSingle(n => n.Kind == "document");
-            records.Edges.Should().BeEmpty();
-            records.Spans.Should().BeEmpty();
-            records.Annotations.Should().ContainSingle(a => a.RuleId == "cpp/grammar_load_failure");
-            records.Annotations[0].Severity.Should().Be("error");
-            records.Artifacts[0].Headline.Should().Contain("parse failed");
-        }
-        finally
-        {
-            if (Directory.Exists(tempDir))
-            {
-                Directory.Delete(tempDir, recursive: true);
-            }
-        }
-    }
-
-    private static bool RequireGrammar(CppMaterializer materializer)
-    {
-        if (materializer.IsGrammarAvailable)
-        {
-            return true;
-        }
-
-        Skip.Test("tree-sitter-cpp grammar is not bundled on this machine. Build runtimes/* native libraries to run extraction assertions.");
-        return false;
     }
 
     private static string Prop(Node node, string key)

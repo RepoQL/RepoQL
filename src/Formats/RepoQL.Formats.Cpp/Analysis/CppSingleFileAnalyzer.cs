@@ -18,7 +18,7 @@ namespace RepoQL.Formats.Cpp.Analysis;
 ///
 /// Complexity: Multi-step analysis with per-step isolation and partial-result continuation.
 /// </summary>
-public sealed class CppSingleFileAnalyzer(
+public sealed partial class CppSingleFileAnalyzer(
     UriRegistry? uriRegistry = null,
     ILogger<CppSingleFileAnalyzer>? logger = null)
     : IAsyncPipeline<IParsedArtifact, Annotation[]>
@@ -61,7 +61,17 @@ public sealed class CppSingleFileAnalyzer(
 
         var annotations = new List<Annotation>();
         var workingRecords = records;
-        string? sourceText = null;
+
+        // Read source text once and normalize lines once — avoids re-allocating the
+        // line array in every analysis step that needs it.
+        string sourceText;
+        using (var stream = item.CreateReadStream())
+        using (var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false))
+        {
+            sourceText = reader.ReadToEnd();
+        }
+
+        var sourceLines = NormalizeLines(sourceText);
 
         void RunStep(string stepName, Action action)
         {
@@ -80,19 +90,6 @@ public sealed class CppSingleFileAnalyzer(
             }
         }
 
-        string GetSourceText()
-        {
-            if (sourceText is not null)
-            {
-                return sourceText;
-            }
-
-            using var stream = item.CreateReadStream();
-            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
-            sourceText = reader.ReadToEnd();
-            return sourceText;
-        }
-
         RunStep("include_edges", () =>
         {
             workingRecords = AddIncludeEdges(item, workingRecords, documentNode);
@@ -100,22 +97,22 @@ public sealed class CppSingleFileAnalyzer(
 
         RunStep("doc_comments", () =>
         {
-            ApplyDocComments(workingRecords, GetSourceText());
+            ApplyDocComments(workingRecords, sourceLines);
         });
 
         RunStep("attributes", () =>
         {
-            ApplyAttributes(workingRecords, GetSourceText());
+            ApplyAttributes(workingRecords, sourceLines);
         });
 
         RunStep("test_framework_detection", () =>
         {
-            annotations.AddRange(DetectTestFramework(workingRecords, GetSourceText(), documentNode.Id));
+            annotations.AddRange(DetectTestFramework(workingRecords, sourceText, documentNode.Id));
         });
 
         RunStep("exception_structure", () =>
         {
-            annotations.AddRange(DetectExceptionStructure(workingRecords, GetSourceText(), documentNode.Id));
+            annotations.AddRange(DetectExceptionStructure(workingRecords, sourceLines, documentNode.Id));
         });
 
         if (!ReferenceEquals(workingRecords, records))
@@ -220,14 +217,14 @@ public sealed class CppSingleFileAnalyzer(
         };
     }
 
-    private static void ApplyDocComments(Records records, string source)
+    private static void ApplyDocComments(Records records, string[] lines)
     {
-        if (string.IsNullOrWhiteSpace(source))
+        if (lines.Length == 0)
         {
             return;
         }
 
-        var commentsByLine = ExtractDocCommentsByNextLine(source);
+        var commentsByLine = ExtractDocCommentsByNextLine(lines);
         if (commentsByLine.Count == 0)
         {
             return;
@@ -251,14 +248,13 @@ public sealed class CppSingleFileAnalyzer(
         }
     }
 
-    private static void ApplyAttributes(Records records, string source)
+    private static void ApplyAttributes(Records records, string[] lines)
     {
-        if (string.IsNullOrWhiteSpace(source))
+        if (lines.Length == 0)
         {
             return;
         }
 
-        var lines = NormalizeLines(source);
         var spanById = records.Spans.ToDictionary(s => s.Id);
         foreach (var node in records.Nodes.Where(IsDeclarationLikeNode))
         {
@@ -348,15 +344,14 @@ public sealed class CppSingleFileAnalyzer(
         return annotations;
     }
 
-    private static IReadOnlyList<Annotation> DetectExceptionStructure(Records records, string source, Guid documentId)
+    private static IReadOnlyList<Annotation> DetectExceptionStructure(Records records, string[] lines, Guid documentId)
     {
         var annotations = new List<Annotation>();
-        if (string.IsNullOrWhiteSpace(source))
+        if (lines.Length == 0)
         {
             return annotations;
         }
 
-        var lines = NormalizeLines(source);
         var spanById = records.Spans.ToDictionary(s => s.Id);
         foreach (var node in records.Nodes.Where(IsCallableNode))
         {
@@ -376,12 +371,12 @@ public sealed class CppSingleFileAnalyzer(
                 continue;
             }
 
-            var caughtTypes = Regex.Matches(body, @"catch\s*\(\s*(?<type>[^)]+)\)", RegexOptions.CultureInvariant)
+            var caughtTypes = CatchTypeRegex().Matches(body)
                 .Select(m => m.Groups["type"].Value.Trim())
                 .Where(v => !string.IsNullOrWhiteSpace(v))
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
-            if (caughtTypes.Length > 0 || Regex.IsMatch(body, @"\btry\b", RegexOptions.CultureInvariant))
+            if (caughtTypes.Length > 0 || TryKeywordRegex().IsMatch(body))
             {
                 var caughtTypesArray = new JsonArray();
                 foreach (var caught in caughtTypes)
@@ -409,7 +404,7 @@ public sealed class CppSingleFileAnalyzer(
                 });
             }
 
-            foreach (Match throwMatch in Regex.Matches(body, @"throw\s+(?<expr>[^;]+);", RegexOptions.CultureInvariant))
+            foreach (Match throwMatch in ThrowExprRegex().Matches(body))
             {
                 var thrownType = InferThrownType(throwMatch.Groups["expr"].Value);
                 annotations.Add(new Annotation
@@ -439,7 +434,7 @@ public sealed class CppSingleFileAnalyzer(
     private static JsonArray ExtractStandardAttributes(string text)
     {
         var attributes = new JsonArray();
-        foreach (Match match in Regex.Matches(text, @"\[\[(?<body>.*?)\]\]", RegexOptions.CultureInvariant | RegexOptions.Singleline))
+        foreach (Match match in DoubleBracketAttributeRegex().Matches(text))
         {
             foreach (var token in SplitTopLevel(match.Groups["body"].Value, ','))
             {
@@ -455,7 +450,7 @@ public sealed class CppSingleFileAnalyzer(
                     continue;
                 }
 
-                var deprecated = Regex.Match(normalized, @"^deprecated\s*\(\s*""(?<reason>[^""]*)""\s*\)$", RegexOptions.CultureInvariant);
+                var deprecated = DeprecatedWithReasonRegex().Match(normalized);
                 if (deprecated.Success)
                 {
                     attributes.Add((JsonNode)new JsonObject
@@ -476,7 +471,7 @@ public sealed class CppSingleFileAnalyzer(
     private static JsonArray ExtractVendorAttributes(string text)
     {
         var attributes = new JsonArray();
-        foreach (Match match in Regex.Matches(text, @"__attribute__\s*\(\((?<value>[^)]*)\)\)", RegexOptions.CultureInvariant))
+        foreach (Match match in GnuAttributeRegex().Matches(text))
         {
             var value = match.Groups["value"].Value.Trim();
             if (!string.IsNullOrWhiteSpace(value))
@@ -485,7 +480,7 @@ public sealed class CppSingleFileAnalyzer(
             }
         }
 
-        foreach (Match match in Regex.Matches(text, @"__declspec\s*\((?<value>[^)]*)\)", RegexOptions.CultureInvariant))
+        foreach (Match match in DeclspecAttributeRegex().Matches(text))
         {
             var value = match.Groups["value"].Value.Trim();
             if (!string.IsNullOrWhiteSpace(value))
@@ -497,10 +492,9 @@ public sealed class CppSingleFileAnalyzer(
         return attributes;
     }
 
-    private static Dictionary<int, DocCommentInfo> ExtractDocCommentsByNextLine(string source)
+    private static Dictionary<int, DocCommentInfo> ExtractDocCommentsByNextLine(string[] lines)
     {
         var comments = new Dictionary<int, DocCommentInfo>();
-        var lines = NormalizeLines(source);
 
         for (var i = 0; i < lines.Length; i++)
         {
@@ -562,7 +556,7 @@ public sealed class CppSingleFileAnalyzer(
         foreach (var rawLine in lines)
         {
             var line = rawLine.Trim();
-            var match = Regex.Match(line, @"^@(?<tag>\w+)\s*(?<rest>.*)$", RegexOptions.CultureInvariant);
+            var match = DocTagRegex().Match(line);
             if (!match.Success)
             {
                 continue;
@@ -596,7 +590,7 @@ public sealed class CppSingleFileAnalyzer(
     {
         var hits = new List<TestMacroHit>();
 
-        foreach (Match match in Regex.Matches(source, @"^\s*(?<macro>TEST|TEST_F|TEST_P)\s*\(\s*(?<suite>[A-Za-z_][A-Za-z0-9_]*)\s*,\s*(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\)", RegexOptions.CultureInvariant | RegexOptions.Multiline))
+        foreach (Match match in GoogleTestMacroRegex().Matches(source))
         {
             hits.Add(new TestMacroHit(
                 Framework: match.Groups["macro"].Value,
@@ -605,7 +599,7 @@ public sealed class CppSingleFileAnalyzer(
                 Line: GetLineNumber(source, match.Index)));
         }
 
-        foreach (Match match in Regex.Matches(source, @"^\s*TEST_CASE\s*\(\s*""(?<name>[^""]+)""", RegexOptions.CultureInvariant | RegexOptions.Multiline))
+        foreach (Match match in Catch2TestCaseRegex().Matches(source))
         {
             hits.Add(new TestMacroHit(
                 Framework: "TEST_CASE",
@@ -614,7 +608,7 @@ public sealed class CppSingleFileAnalyzer(
                 Line: GetLineNumber(source, match.Index)));
         }
 
-        foreach (Match match in Regex.Matches(source, @"^\s*SECTION\s*\(\s*""(?<name>[^""]+)""", RegexOptions.CultureInvariant | RegexOptions.Multiline))
+        foreach (Match match in Catch2SectionRegex().Matches(source))
         {
             hits.Add(new TestMacroHit(
                 Framework: "SECTION",
@@ -784,13 +778,13 @@ public sealed class CppSingleFileAnalyzer(
             return "rethrow";
         }
 
-        var directCtor = Regex.Match(normalized, @"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)\s*\(", RegexOptions.CultureInvariant);
+        var directCtor = CtorPatternRegex().Match(normalized);
         if (directCtor.Success)
         {
             return directCtor.Groups["type"].Value;
         }
 
-        var firstToken = Regex.Match(normalized, @"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)", RegexOptions.CultureInvariant);
+        var firstToken = LeadingTypeRegex().Match(normalized);
         return firstToken.Success ? firstToken.Groups["type"].Value : "unknown";
     }
 
@@ -942,4 +936,45 @@ public sealed class CppSingleFileAnalyzer(
     private readonly record struct DocCommentInfo(string Text, JsonArray Tags);
 
     private readonly record struct TestMacroHit(string Framework, string? Suite, string Name, int Line);
+
+    // ── Source-generated regex declarations ──────────────────────────────
+
+    [GeneratedRegex(@"catch\s*\(\s*(?<type>[^)]+)\)", RegexOptions.CultureInvariant)]
+    private static partial Regex CatchTypeRegex();
+
+    [GeneratedRegex(@"\btry\b", RegexOptions.CultureInvariant)]
+    private static partial Regex TryKeywordRegex();
+
+    [GeneratedRegex(@"throw\s+(?<expr>[^;]+);", RegexOptions.CultureInvariant)]
+    private static partial Regex ThrowExprRegex();
+
+    [GeneratedRegex(@"\[\[(?<body>.*?)\]\]", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex DoubleBracketAttributeRegex();
+
+    [GeneratedRegex(@"^deprecated\s*\(\s*""(?<reason>[^""]*)""\s*\)$", RegexOptions.CultureInvariant)]
+    private static partial Regex DeprecatedWithReasonRegex();
+
+    [GeneratedRegex(@"__attribute__\s*\(\((?<value>[^)]*)\)\)", RegexOptions.CultureInvariant)]
+    private static partial Regex GnuAttributeRegex();
+
+    [GeneratedRegex(@"__declspec\s*\((?<value>[^)]*)\)", RegexOptions.CultureInvariant)]
+    private static partial Regex DeclspecAttributeRegex();
+
+    [GeneratedRegex(@"^@(?<tag>\w+)\s*(?<rest>.*)$", RegexOptions.CultureInvariant)]
+    private static partial Regex DocTagRegex();
+
+    [GeneratedRegex(@"^\s*(?<macro>TEST|TEST_F|TEST_P)\s*\(\s*(?<suite>[A-Za-z_][A-Za-z0-9_]*)\s*,\s*(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\)", RegexOptions.CultureInvariant | RegexOptions.Multiline)]
+    private static partial Regex GoogleTestMacroRegex();
+
+    [GeneratedRegex(@"^\s*TEST_CASE\s*\(\s*""(?<name>[^""]+)""", RegexOptions.CultureInvariant | RegexOptions.Multiline)]
+    private static partial Regex Catch2TestCaseRegex();
+
+    [GeneratedRegex(@"^\s*SECTION\s*\(\s*""(?<name>[^""]+)""", RegexOptions.CultureInvariant | RegexOptions.Multiline)]
+    private static partial Regex Catch2SectionRegex();
+
+    [GeneratedRegex(@"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)\s*\(", RegexOptions.CultureInvariant)]
+    private static partial Regex CtorPatternRegex();
+
+    [GeneratedRegex(@"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)", RegexOptions.CultureInvariant)]
+    private static partial Regex LeadingTypeRegex();
 }

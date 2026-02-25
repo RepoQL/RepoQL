@@ -13,7 +13,7 @@ public sealed class CppParserTests
     [Test]
     public async Task Parser_PassesThroughUnsupportedKinds()
     {
-        using var materializer = new CppMaterializer(client: new CppTreeSitterClient(runtimeBasePath: Path.GetTempPath()));
+        using var materializer = new CppMaterializer(client: new CppTreeSitterClient());
         var parser = new CppParser(materializer);
         var item = A.Fake<IClassifiedArtifact>();
         A.CallTo(() => item.MediaType).Returns(SemanticMediaType.Create("text", "plain").WithKind("code.markdown"));
@@ -37,7 +37,7 @@ public sealed class CppParserTests
     [Test]
     public async Task Parser_ReturnsError_WhenReadFails()
     {
-        using var materializer = new CppMaterializer(client: new CppTreeSitterClient(runtimeBasePath: Path.GetTempPath()));
+        using var materializer = new CppMaterializer(client: new CppTreeSitterClient());
         var parser = new CppParser(materializer);
         var item = A.Fake<IClassifiedArtifact>();
         A.CallTo(() => item.MediaType).Returns(SemanticMediaType.Create("text", "plain").WithKind("code.cpp"));

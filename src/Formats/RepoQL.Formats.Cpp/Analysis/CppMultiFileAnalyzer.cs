@@ -15,7 +15,7 @@ namespace RepoQL.Formats.Cpp.Analysis;
 ///
 /// Complexity: Graph correlation over flattened record batches with defensive matching and isolated failure behavior.
 /// </summary>
-public sealed class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger = null)
+public sealed partial class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger = null)
 {
     private const string DefinesRelationship = "defines";
     private const string ForwardDeclaresRelationship = "forward_declares";
@@ -23,10 +23,6 @@ public sealed class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger =
 
     private static readonly string[] HeaderExtensions = [".h", ".hpp", ".hh", ".hxx"];
     private static readonly string[] SourceExtensions = [".cpp", ".cc", ".cxx"];
-
-    private static readonly Regex CallableNameRegex = new(
-        @"(?<name>(?:~?[A-Za-z_][A-Za-z0-9_]*|operator\s*[^\s(]+)(?:::(?:~?[A-Za-z_][A-Za-z0-9_]*|operator\s*[^\s(]+))*)\s*$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly ILogger<CppMultiFileAnalyzer> _logger = logger ?? NullLogger<CppMultiFileAnalyzer>.Instance;
 
@@ -607,7 +603,7 @@ public sealed class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger =
         }
 
         var before = normalized[..openIndex].Trim();
-        var match = CallableNameRegex.Match(before);
+        var match = CallableNameRegex().Match(before);
         if (!match.Success)
         {
             return false;
@@ -649,7 +645,7 @@ public sealed class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger =
             .Select(s => NormalizeWhitespace(s))
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .Select(s => new BaseSpec(
-                NormalizeWhitespace(Regex.Replace(s, @"\b(class|struct|typename)\b", string.Empty, RegexOptions.CultureInvariant)),
+                NormalizeWhitespace(BaseSpecifierKeywordRegex().Replace(s, string.Empty)),
                 defaultAccess,
                 false))
             .Where(s => !string.IsNullOrWhiteSpace(s.Name))
@@ -680,7 +676,7 @@ public sealed class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger =
         var endLine = span.EndLine.GetValueOrDefault(startLine);
         var maxLine = Math.Min(lines.Length, Math.Max(startLine, Math.Min(endLine, startLine + 32)));
         var snippet = string.Join('\n', lines[(startLine - 1)..maxLine]);
-        snippet = Regex.Replace(snippet, @"//.*$", string.Empty, RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        snippet = SingleLineCommentRegex().Replace(snippet, string.Empty);
 
         var prefix = ExtractDeclarationPrefix(snippet);
         var colon = prefix.IndexOf(':');
@@ -699,11 +695,7 @@ public sealed class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger =
 
             var access = ExtractAccess(normalized, defaultAccess);
             var isVirtual = ContainsWord(normalized, "virtual");
-            var baseName = NormalizeWhitespace(Regex.Replace(
-                normalized,
-                @"\b(public|private|protected|virtual|class|struct|typename)\b",
-                string.Empty,
-                RegexOptions.CultureInvariant));
+            var baseName = NormalizeWhitespace(BaseClauseKeywordRegex().Replace(normalized, string.Empty));
             if (!string.IsNullOrWhiteSpace(baseName))
             {
                 specs.Add(new BaseSpec(baseName, access, isVirtual));
@@ -820,7 +812,15 @@ public sealed class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger =
         => (text ?? string.Empty).Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
 
     private static string NormalizeWhitespace(string? value)
-        => Regex.Replace(value?.Trim() ?? string.Empty, @"\s+", " ");
+    {
+        var trimmed = value?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        return string.Join(" ", trimmed.Split(default(char[]), StringSplitOptions.RemoveEmptyEntries));
+    }
 
     private static string StripDefaultValue(string value)
     {
@@ -905,8 +905,35 @@ public sealed class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger =
         return defaultAccess;
     }
 
-    private static bool ContainsWord(string value, string word)
-        => Regex.IsMatch(value, $@"\b{Regex.Escape(word)}\b", RegexOptions.CultureInvariant);
+    private static bool ContainsWord(string text, string word)
+    {
+        var textSpan = text.AsSpan();
+        var wordSpan = word.AsSpan();
+        var index = 0;
+        while (index <= textSpan.Length - wordSpan.Length)
+        {
+            var pos = textSpan[index..].IndexOf(wordSpan, StringComparison.Ordinal);
+            if (pos < 0)
+            {
+                return false;
+            }
+
+            pos += index;
+
+            var leftOk = pos == 0 || !IsWordChar(textSpan[pos - 1]);
+            var rightOk = pos + wordSpan.Length >= textSpan.Length || !IsWordChar(textSpan[pos + wordSpan.Length]);
+            if (leftOk && rightOk)
+            {
+                return true;
+            }
+
+            index = pos + 1;
+        }
+
+        return false;
+
+        static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+    }
 
     private static int FindMatchingParen(string text, int openIndex)
     {
@@ -1050,6 +1077,20 @@ public sealed class CppMultiFileAnalyzer(ILogger<CppMultiFileAnalyzer>? logger =
         Found,
         Ambiguous
     }
+
+    [GeneratedRegex(
+        @"(?<name>(?:~?[A-Za-z_][A-Za-z0-9_]*|operator\s*[^\s(]+)(?:::(?:~?[A-Za-z_][A-Za-z0-9_]*|operator\s*[^\s(]+))*)\s*$",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex CallableNameRegex();
+
+    [GeneratedRegex(@"\b(class|struct|typename)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex BaseSpecifierKeywordRegex();
+
+    [GeneratedRegex(@"//.*$", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    private static partial Regex SingleLineCommentRegex();
+
+    [GeneratedRegex(@"\b(public|private|protected|virtual|class|struct|typename)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex BaseClauseKeywordRegex();
 }
 
 public readonly record struct CppMultiFileAnalysisResult(Edge[] Edges, Annotation[] Annotations)

@@ -88,15 +88,18 @@ public sealed class CppTreeSitterClient : IDisposable
 
     private static int CountErrorNodes(Node root)
     {
+        if (!root.HasError && !root.IsError && !root.IsMissing)
+        {
+            return 0;
+        }
+
         var count = (root.IsError || root.IsMissing) ? 1 : 0;
         foreach (var child in root.NamedChildren)
         {
-            count += CountErrorNodes(child);
-        }
-
-        if (count == 0 && root.HasError)
-        {
-            return 1;
+            if (child.HasError || child.IsError || child.IsMissing)
+            {
+                count += CountErrorNodes(child);
+            }
         }
 
         return count;
@@ -137,9 +140,6 @@ public sealed class CppParseResult : IDisposable
         ArgumentNullException.ThrowIfNull(tree);
         return new CppParseResult(tree, grammarAvailable: true, diagnostic: null, errorNodeCount);
     }
-
-    public static CppParseResult GrammarUnavailable(string diagnostic)
-        => new(tree: null, grammarAvailable: false, diagnostic: diagnostic, errorNodeCount: 0);
 
     public static CppParseResult ParseFailure(string diagnostic)
         => new(tree: null, grammarAvailable: true, diagnostic: diagnostic, errorNodeCount: 0);

@@ -12,10 +12,6 @@ public sealed class CppMultiFileAnalyzerTests
     public async Task Analyze_HeaderSourceLinking_CreatesDefinesEdgesForMethodsAndAmbiguousOverloads()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await LoadBatchAsync(
             materializer,
@@ -64,10 +60,6 @@ public sealed class CppMultiFileAnalyzerTests
     public async Task Analyze_InheritanceCompletion_CreatesExtendsEdgesWithAccessAndVirtualFlags()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await LoadBatchAsync(
             materializer,
@@ -116,10 +108,6 @@ public sealed class CppMultiFileAnalyzerTests
     public async Task Analyze_TransitiveIncludes_CreatesTransitiveIncludeEdgesWithDepth()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var rawRecords = await LoadBatchAsync(
             materializer,
@@ -150,10 +138,6 @@ public sealed class CppMultiFileAnalyzerTests
     public async Task Analyze_IncludeCycle_EmitsCycleAnnotation()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var rawRecords = await LoadBatchAsync(
             materializer,
@@ -172,10 +156,6 @@ public sealed class CppMultiFileAnalyzerTests
     public async Task Analyze_ForwardDeclarations_LinkToDefinitions()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await LoadBatchAsync(
             materializer,
@@ -277,17 +257,6 @@ public sealed class CppMultiFileAnalyzerTests
         }
 
         return [.. updated];
-    }
-
-    private static bool RequireGrammar(CppMaterializer materializer)
-    {
-        if (materializer.IsGrammarAvailable)
-        {
-            return true;
-        }
-
-        Skip.Test("tree-sitter-cpp grammar is not bundled on this machine.");
-        return false;
     }
 
     private static string Prop(Node node, string key)

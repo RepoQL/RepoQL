@@ -13,15 +13,9 @@ namespace RepoQL.Formats.Cpp.Analysis;
 ///
 /// Complexity: Single-pass CST traversal with lexical context heuristics and macro family scoring.
 /// </summary>
-public sealed class MacroInterferenceDetector
+public sealed partial class MacroInterferenceDetector
 {
-    private static readonly Regex AllCapsIdentifierRegex = new(
-        @"^[A-Z][A-Z0-9_]*$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex IdentifierTailRegex = new(
-        @"(?<id>[A-Za-z_][A-Za-z0-9_]*)\s*$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // GeneratedRegex declarations are at the bottom of the class.
 
     private static readonly MacroFamily[] KnownMacroFamilies =
     [
@@ -49,6 +43,10 @@ public sealed class MacroInterferenceDetector
         var annotations = new List<Annotation>();
         var ancestors = new Stack<string>();
         var source = document.Text;
+        var preprocessorStats = new PreprocessorStats(
+            source.Contains("extern \"C\"", StringComparison.Ordinal),
+            PreprocIfDirectiveRegex().Matches(source).Count,
+            PreprocEndifRegex().Matches(source).Count);
 
         Visit(root);
         if (annotations.Count == 0 && root.HasError)
@@ -92,7 +90,8 @@ public sealed class MacroInterferenceDetector
                     source,
                     start,
                     end,
-                    preview);
+                    preview,
+                    preprocessorStats);
 
                 var mapped = document.LineMap.GetSpan(start, end);
                 annotations.Add(new Annotation
@@ -125,8 +124,9 @@ public sealed class MacroInterferenceDetector
 
         void EmitFallback(TsNode rootNode, string sourceText)
         {
-            var macroCandidate = DetectKnownMacroInWindow(sourceText);
-            var classification = ClassifyFallback(sourceText, macroCandidate);
+            var preview = sourceText.Length > 4096 ? sourceText[..4096] : sourceText;
+            var macroCandidate = DetectKnownMacroInWindow(preview);
+            var classification = ClassifyFallback(sourceText, macroCandidate, preprocessorStats, preview);
             var mapped = document.LineMap.GetSpan(0, Math.Max(0, sourceText.Length));
             annotations.Add(new Annotation
             {
@@ -157,9 +157,10 @@ public sealed class MacroInterferenceDetector
         string source,
         int start,
         int end,
-        string preview)
+        string preview,
+        PreprocessorStats preprocessorStats)
     {
-        if ((isMissing || isError) && IsPreprocessorBoundaryContext(source, start, end, preview))
+        if ((isMissing || isError) && IsPreprocessorBoundaryContext(source, start, end, preview, preprocessorStats))
         {
             return new Classification(
                 CppAnnotationRuleIds.PreprocessorBoundary,
@@ -254,9 +255,13 @@ public sealed class MacroInterferenceDetector
             "low");
     }
 
-    private static Classification ClassifyFallback(string source, string? macroCandidate)
+    private static Classification ClassifyFallback(
+        string source,
+        string? macroCandidate,
+        PreprocessorStats preprocessorStats,
+        string preview)
     {
-        if (IsPreprocessorBoundaryContext(source, 0, source.Length, source))
+        if (IsPreprocessorBoundaryContext(source, 0, preview.Length, preview, preprocessorStats))
         {
             return new Classification(
                 CppAnnotationRuleIds.PreprocessorBoundary,
@@ -330,7 +335,7 @@ public sealed class MacroInterferenceDetector
             return null;
         }
 
-        foreach (var token in Regex.Matches(window, @"\b[A-Za-z_][A-Za-z0-9_]*\b")
+        foreach (var token in IdentifierTokenRegex().Matches(window)
                      .Select(m => m.Value))
         {
             if (TryMatchKnownMacroFamily(token, out _))
@@ -353,7 +358,7 @@ public sealed class MacroInterferenceDetector
     private static bool IsBeforeClassDeclaration(string source, int end)
     {
         var ahead = ExtractForwardWindow(source, end, 96);
-        return Regex.IsMatch(ahead, @"\b(class|struct)\b", RegexOptions.CultureInvariant);
+        return ClassOrStructKeywordRegex().IsMatch(ahead);
     }
 
     private static bool IsTemplateContext(IReadOnlyCollection<string> ancestors, string source, int start, int end)
@@ -367,30 +372,37 @@ public sealed class MacroInterferenceDetector
         return around.Contains('<') && around.Contains('>');
     }
 
-    private static bool IsPreprocessorBoundaryContext(string source, int start, int end, string preview)
+    private static bool IsPreprocessorBoundaryContext(
+        string source,
+        int start,
+        int end,
+        string preview,
+        PreprocessorStats preprocessorStats)
     {
+        if (!preprocessorStats.HasExternC || !preprocessorStats.HasAnyPreprocIf)
+        {
+            return false;
+        }
+
+        if (preprocessorStats.IfDirectiveCount <= preprocessorStats.EndifCount)
+        {
+            return false;
+        }
+
         var window = ExtractWindow(source, start, end, 256);
         var hasExternC = preview.Contains("extern \"C\"", StringComparison.Ordinal)
-                         || window.Contains("extern \"C\"", StringComparison.Ordinal)
-                         || source.Contains("extern \"C\"", StringComparison.Ordinal);
+                         || window.Contains("extern \"C\"", StringComparison.Ordinal);
         if (!hasExternC)
         {
             return false;
         }
 
-        var ifCount = Regex.Matches(source, @"#\s*if(n?def)?", RegexOptions.CultureInvariant).Count;
-        var endifCount = Regex.Matches(source, @"#\s*endif", RegexOptions.CultureInvariant).Count;
-        if (ifCount <= endifCount)
-        {
-            return false;
-        }
-
-        return Regex.IsMatch(window, @"#\s*if(n?def)?", RegexOptions.CultureInvariant)
-               || Regex.IsMatch(source, @"#\s*if(n?def)?", RegexOptions.CultureInvariant);
+        return PreprocIfDirectiveRegex().IsMatch(window)
+               || PreprocIfDirectiveRegex().IsMatch(preview);
     }
 
     private static bool IsAllCapsIdentifier(string value)
-        => AllCapsIdentifierRegex.IsMatch(value);
+        => AllCapsIdentifierRegex().IsMatch(value);
 
     private static string? ExtractPreviousIdentifier(string source, int start)
     {
@@ -412,7 +424,7 @@ public sealed class MacroInterferenceDetector
 
         var begin = Math.Max(0, cursor - 80);
         var slice = source.Substring(begin, cursor - begin + 1);
-        var match = IdentifierTailRegex.Match(slice);
+        var match = IdentifierTailRegex().Match(slice);
         return match.Success ? match.Groups["id"].Value : null;
     }
 
@@ -460,5 +472,33 @@ public sealed class MacroInterferenceDetector
         string Context,
         string Confidence);
 
+    private readonly record struct PreprocessorStats(
+        bool HasExternC,
+        int IfDirectiveCount,
+        int EndifCount)
+    {
+        public bool HasAnyPreprocIf => IfDirectiveCount > 0;
+    }
+
     private readonly record struct MacroFamily(string Name, Regex Pattern);
+
+    // ── Source-generated regex declarations ──────────────────────────────
+
+    [GeneratedRegex(@"^[A-Z][A-Z0-9_]*$", RegexOptions.CultureInvariant)]
+    private static partial Regex AllCapsIdentifierRegex();
+
+    [GeneratedRegex(@"(?<id>[A-Za-z_][A-Za-z0-9_]*)\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex IdentifierTailRegex();
+
+    [GeneratedRegex(@"\b[A-Za-z_][A-Za-z0-9_]*\b", RegexOptions.CultureInvariant)]
+    private static partial Regex IdentifierTokenRegex();
+
+    [GeneratedRegex(@"\b(class|struct)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex ClassOrStructKeywordRegex();
+
+    [GeneratedRegex(@"#\s*if(n?def)?", RegexOptions.CultureInvariant)]
+    private static partial Regex PreprocIfDirectiveRegex();
+
+    [GeneratedRegex(@"#\s*endif", RegexOptions.CultureInvariant)]
+    private static partial Regex PreprocEndifRegex();
 }

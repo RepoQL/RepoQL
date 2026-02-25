@@ -18,57 +18,11 @@ namespace RepoQL.Formats.Cpp;
 ///
 /// Complexity: Single-pass depth-first CST walk with state tracking and X-ray generation.
 /// </summary>
-public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDisposable
+public sealed partial class CppMaterializer : IFormatLoader, IFormatMaterializer, IDisposable
 {
     internal const string StateMetadataKey = "cpp.state";
 
-    private static readonly Regex NamespaceNameRegex = new(
-        @"\bnamespace\s+(?<name>[A-Za-z_][A-Za-z0-9_:]*)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex EnumUnderlyingTypeRegex = new(
-        @"\benum(?:\s+class|\s+struct)?\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*(?<type>[^{]+)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex CallableNameRegex = new(
-        @"(?<name>(?:~?[A-Za-z_][A-Za-z0-9_]*|operator\s*[^\s(]+)(?:::(?:~?[A-Za-z_][A-Za-z0-9_]*|operator\s*[^\s(]+))*)\s*$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex IncludeRegex = new(
-        "#\\s*include\\s*(?<style><|\")(?<target>[^\">]+)(?<close>>|\")",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex MacroDefinitionRegex = new(
-        @"(?:#\s*define\s+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:\((?<parameters>[^)]*)\))?\s*(?<replacement>.*)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex UsingAliasRegex = new(
-        @"\busing\s+(?<alias>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<target>.+)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex TypedefRegex = new(
-        @"\btypedef\s+(?<target>.+?)\s+(?<alias>[A-Za-z_][A-Za-z0-9_]*)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex FunctionPointerRegex = new(
-        @"(?<return>.+?)\(\s*\*\s*(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\((?<signature>[^)]*)\)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex BitfieldWidthRegex = new(
-        @"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?<width>\d+)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex ModuleRegex = new(
-        @"\b(?<export>export\s+)?module\s+(?<name>[A-Za-z_][A-Za-z0-9_.]*)(?::(?<partition>[A-Za-z_][A-Za-z0-9_.]*))?",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex ConceptRegex = new(
-        @"\bconcept\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<constraint>.+)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    private static readonly Regex FriendTargetRegex = new(
-        @"\bfriend\s+(?:class|struct|typename)?\s*(?<target>[A-Za-z_][A-Za-z0-9_:]*)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    // GeneratedRegex declarations are at the bottom of the class.
 
     private static readonly HashSet<string> ParameterNameKeywords = new(StringComparer.Ordinal)
     {
@@ -292,6 +246,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         var templateStack = new Stack<IReadOnlyList<string>>();
 
         var timedOut = false;
+        var depthLimitWarningEmitted = false;
         string? crashMessage = null;
         var deadline = _parseTimeout <= TimeSpan.Zero
             ? DateTimeOffset.UtcNow
@@ -399,10 +354,16 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             AnnotationSources = annotationSources
         };
 
-        void VisitNode(TsNode node)
+        void VisitNode(TsNode node, int depth = 0)
         {
             if (timedOut || IsNullNode(node))
             {
+                return;
+            }
+
+            if (depth > 256)
+            {
+                EmitDepthLimitWarning(node, depth, "materializing syntax nodes");
                 return;
             }
 
@@ -415,7 +376,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             switch (node.Type)
             {
                 case "template_declaration":
-                    HandleTemplateDeclaration(node);
+                    HandleTemplateDeclaration(node, depth);
                     return;
                 case "preproc_include":
                     HandleInclude(node);
@@ -426,19 +387,19 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
                     return;
                 case "preproc_ifdef":
                 case "preproc_if":
-                    HandleConditionalCompilation(node);
+                    HandleConditionalCompilation(node, depth);
                     return;
                 case "namespace_definition":
-                    HandleNamespace(node);
+                    HandleNamespace(node, depth);
                     return;
                 case "class_specifier":
-                    HandleType(node, "class");
+                    HandleType(node, "class", depth);
                     return;
                 case "struct_specifier":
-                    HandleType(node, "struct");
+                    HandleType(node, "struct", depth);
                     return;
                 case "union_specifier":
-                    HandleType(node, "union");
+                    HandleType(node, "union", depth);
                     return;
                 case "concept_definition":
                     HandleConceptDefinition(node);
@@ -479,7 +440,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
 
             foreach (var child in node.NamedChildren)
             {
-                VisitNode(child);
+                VisitNode(child, depth + 1);
                 if (timedOut)
                 {
                     return;
@@ -489,7 +450,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
 
         void HandleInclude(TsNode node)
         {
-            var match = IncludeRegex.Match(node.Text);
+            var match = IncludeRegex().Match(node.Text);
             if (!match.Success)
             {
                 return;
@@ -520,7 +481,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
 
         void HandleMacro(TsNode node)
         {
-            var match = MacroDefinitionRegex.Match(node.Text.Trim());
+            var match = MacroDefinitionRegex().Match(node.Text.Trim());
             if (!match.Success)
             {
                 return;
@@ -559,7 +520,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
                 structure: null);
         }
 
-        void HandleConditionalCompilation(TsNode node)
+        void HandleConditionalCompilation(TsNode node, int depth)
         {
             var span = CreateSpan(node.StartIndex, node.EndIndex, document, documentId);
             spans.Add(span);
@@ -577,7 +538,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
 
             foreach (var child in node.NamedChildren)
             {
-                VisitNode(child);
+                VisitNode(child, depth + 1);
                 if (timedOut)
                 {
                     return;
@@ -588,7 +549,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         void HandleConceptDefinition(TsNode node)
         {
             var normalized = NormalizeWhitespace(node.Text.Trim().TrimEnd(';'));
-            var match = ConceptRegex.Match(normalized);
+            var match = ConceptRegex().Match(normalized);
             var conceptName = match.Success
                 ? NormalizeName(match.Groups["name"].Value)
                 : ResolveTypeName(node);
@@ -640,7 +601,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         void HandleModuleDeclaration(TsNode node)
         {
             var normalized = NormalizeWhitespace(node.Text.Trim().TrimEnd(';'));
-            var match = ModuleRegex.Match(normalized);
+            var match = ModuleRegex().Match(normalized);
             var moduleName = match.Success ? NormalizeName(match.Groups["name"].Value) : string.Empty;
             if (string.IsNullOrWhiteSpace(moduleName))
             {
@@ -833,7 +794,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             return false;
         }
 
-        void HandleTemplateDeclaration(TsNode node)
+        void HandleTemplateDeclaration(TsNode node, int depth)
         {
             var templateParams = ExtractTemplateParameters(node.Text);
             templateStack.Push(templateParams);
@@ -841,7 +802,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             {
                 foreach (var child in node.NamedChildren.Where(c => c.Type != "template_parameter_list"))
                 {
-                    VisitNode(child);
+                    VisitNode(child, depth + 1);
                     if (timedOut)
                     {
                         return;
@@ -854,10 +815,10 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             }
         }
 
-        void HandleNamespace(TsNode node)
+        void HandleNamespace(TsNode node, int depth)
         {
             var namespaceText = ExtractDeclarationPrefix(node.Text, '{');
-            var isInline = Regex.IsMatch(namespaceText, @"\binline\s+namespace\b", RegexOptions.CultureInvariant);
+            var isInline = InlineNamespaceRegex().IsMatch(namespaceText);
             var segments = ResolveNamespaceSegments(node, namespaceText);
             if (segments.Count == 0)
             {
@@ -921,7 +882,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             {
                 foreach (var child in body!.NamedChildren)
                 {
-                    VisitNode(child);
+                    VisitNode(child, depth + 1);
                     if (timedOut)
                     {
                         break;
@@ -936,7 +897,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             }
         }
 
-        void HandleType(TsNode node, string typeKind)
+        void HandleType(TsNode node, string typeKind, int depth)
         {
             var name = ResolveTypeName(node);
             if (string.IsNullOrWhiteSpace(name))
@@ -1002,7 +963,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
                 {
                     foreach (var child in body!.NamedChildren)
                     {
-                        VisitNode(child);
+                        VisitNode(child, depth + 1);
                         if (timedOut)
                         {
                             return;
@@ -1034,7 +995,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             var scope = BuildScopeQualifiedName();
             var qualifiedName = string.IsNullOrWhiteSpace(scope) ? name : $"{scope}::{name}";
             var header = ExtractDeclarationPrefix(node.Text, '{');
-            var isScoped = Regex.IsMatch(header, @"\benum\s+(class|struct)\b", RegexOptions.CultureInvariant);
+            var isScoped = ScopedEnumRegex().IsMatch(header);
             var underlyingType = ExtractEnumUnderlyingType(header);
 
             var props = new JsonObject
@@ -1453,7 +1414,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             }
 
             var cleaned = NormalizeWhitespace(target);
-            cleaned = Regex.Replace(cleaned, @"\b(class|struct|typename)\b", string.Empty, RegexOptions.CultureInvariant).Trim();
+            cleaned = ClassStructTypenameRegex().Replace(cleaned, string.Empty).Trim();
             if (symbolLookup.TryGetValue(cleaned, out var exact))
             {
                 return exact;
@@ -1608,13 +1569,13 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             var span = CreateSpan(functionNode.StartIndex, functionNode.EndIndex, document, documentId);
             spans.Add(span);
 
-            var caughtTypes = Regex.Matches(text, @"catch\s*\(\s*(?<type>[^)]+)\)", RegexOptions.CultureInvariant)
+            var caughtTypes = CatchTypeRegex().Matches(text)
                 .Select(m => NormalizeWhitespace(m.Groups["type"].Value))
                 .Where(v => !string.IsNullOrWhiteSpace(v))
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
-            if (Regex.IsMatch(text, @"\btry\b", RegexOptions.CultureInvariant)
-                || Regex.IsMatch(text, @"\bcatch\s*\(", RegexOptions.CultureInvariant))
+            if (TryKeywordRegex().IsMatch(text)
+                || CatchKeywordRegex().IsMatch(text))
             {
                 AddLintAnnotation(
                     CppAnnotationRuleIds.ExceptionHandler,
@@ -1633,7 +1594,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
                     });
             }
 
-            foreach (Match throwMatch in Regex.Matches(text, @"throw\s+(?<expr>[^;]+);", RegexOptions.CultureInvariant))
+            foreach (Match throwMatch in ThrowExprRegex().Matches(text))
             {
                 var thrownType = InferThrownType(throwMatch.Groups["expr"].Value);
                 AddLintAnnotation(
@@ -1683,15 +1644,21 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         {
             Visit(rootNode, inModule: false);
 
-            void Visit(TsNode node, bool inModule)
+            void Visit(TsNode node, bool inModule, int depth = 0)
             {
                 if (IsNullNode(node))
                 {
                     return;
                 }
 
+                if (depth > 256)
+                {
+                    EmitDepthLimitWarning(node, depth, "scanning module syntax");
+                    return;
+                }
+
                 var contextWindow = ExtractWindow(document.Text, node.StartIndex, node.EndIndex, 96);
-                var hasModuleContext = Regex.IsMatch(contextWindow, @"\bmodule\b", RegexOptions.CultureInvariant);
+                var hasModuleContext = ModuleKeywordRegex().IsMatch(contextWindow);
                 var nextInModule = inModule
                                    || string.Equals(node.Type, "module_declaration", StringComparison.Ordinal)
                                    || hasModuleContext;
@@ -1709,9 +1676,30 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
 
                 foreach (var child in node.Children)
                 {
-                    Visit(child, nextInModule);
+                    Visit(child, nextInModule, depth + 1);
                 }
             }
+        }
+
+        void EmitDepthLimitWarning(TsNode node, int depth, string context)
+        {
+            if (depthLimitWarningEmitted || IsNullNode(node))
+            {
+                return;
+            }
+
+            depthLimitWarningEmitted = true;
+            var span = CreateSpan(node.StartIndex, node.EndIndex, document, documentId);
+            spans.Add(span);
+            AddLintAnnotation(
+                CppAnnotationRuleIds.ParseFailure,
+                "warning",
+                $"C/C++ traversal depth exceeded 256 while {context}. Nested nodes were skipped.",
+                span,
+                dataBuilder: data =>
+                {
+                    data[CppPropertyKeys.Depth] = depth;
+                });
         }
 
         string? ExtractMacroWarningName(IReadOnlyCollection<Annotation> values)
@@ -1734,7 +1722,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
 
         string ExtractConditionalPredicate(string text)
         {
-            var match = Regex.Match(text, @"#\s*if(?:n?def)?\s+(?<predicate>[^\r\n]+)", RegexOptions.CultureInvariant);
+            var match = PreprocIfRegex().Match(text);
             return match.Success ? NormalizeWhitespace(match.Groups["predicate"].Value) : string.Empty;
         }
     }
@@ -1831,7 +1819,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         }
 
         var header = ExtractDeclarationPrefix(node.Text, '{');
-        var match = Regex.Match(header, @"\b(?:class|struct|union|enum(?:\s+class|\s+struct)?)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)");
+        var match = TypeNameExtractRegex().Match(header);
         return match.Success ? NormalizeName(match.Groups["name"].Value) : string.Empty;
     }
 
@@ -1859,7 +1847,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
                 continue;
             }
 
-            candidate = Regex.Replace(candidate, @"\b(public|private|protected|virtual)\b", string.Empty, RegexOptions.CultureInvariant);
+            candidate = AccessModifierRegex().Replace(candidate, string.Empty);
             candidate = NormalizeWhitespace(candidate);
             if (!string.IsNullOrWhiteSpace(candidate))
             {
@@ -1872,7 +1860,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
 
     private static string ExtractEnumUnderlyingType(string header)
     {
-        var match = EnumUnderlyingTypeRegex.Match(header);
+        var match = EnumUnderlyingTypeRegex().Match(header);
         return match.Success ? NormalizeWhitespace(match.Groups["type"].Value) : string.Empty;
     }
 
@@ -1892,7 +1880,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             }
         }
 
-        var match = NamespaceNameRegex.Match(header);
+        var match = NamespaceNameRegex().Match(header);
         if (match.Success)
         {
             return match.Groups["name"].Value
@@ -1902,7 +1890,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
                 .ToList();
         }
 
-        if (Regex.IsMatch(header, @"\bnamespace\s*\{", RegexOptions.CultureInvariant))
+        if (AnonymousNamespaceRegex().IsMatch(header))
         {
             return ["(anonymous)"];
         }
@@ -1980,7 +1968,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
 
         var before = parsingSignature[..openIndex].Trim();
         var after = parsingSignature[(closeIndex + 1)..].Trim();
-        var nameMatch = CallableNameRegex.Match(before);
+        var nameMatch = CallableNameRegex().Match(before);
         if (!nameMatch.Success)
         {
             return false;
@@ -1998,7 +1986,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         var parametersRaw = parsingSignature[(openIndex + 1)..closeIndex];
         var parameters = ParseParameters(parametersRaw);
 
-        var isPureVirtual = Regex.IsMatch(parsingSignature, @"=\s*0\s*$", RegexOptions.CultureInvariant);
+        var isPureVirtual = PureVirtualRegex().IsMatch(parsingSignature);
         callable = new CallableInfo(
             Name: name,
             ReturnType: string.IsNullOrWhiteSpace(returnType) ? null : returnType,
@@ -2137,7 +2125,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             return (string.Empty, string.Empty);
         }
 
-        var nameMatch = Regex.Match(trimmed, @"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?$");
+        var nameMatch = EnumeratorNameRegex().Match(trimmed);
         if (!nameMatch.Success)
         {
             return (string.Empty, trimmed);
@@ -2230,7 +2218,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             return false;
         }
 
-        var match = FunctionPointerRegex.Match(normalized);
+        var match = FunctionPointerRegex().Match(normalized);
         if (!match.Success)
         {
             return false;
@@ -2260,7 +2248,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             return null;
         }
 
-        foreach (Match match in BitfieldWidthRegex.Matches(segment))
+        foreach (Match match in BitfieldWidthRegex().Matches(segment))
         {
             if (string.Equals(match.Groups["name"].Value, fieldName, StringComparison.Ordinal))
             {
@@ -2282,7 +2270,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             return false;
         }
 
-        var match = Regex.Match(normalized, @"(?<base>[A-Za-z_][A-Za-z0-9_:]*)\s*<(?<args>[^>]+)>");
+        var match = TemplateBaseRegex().Match(normalized);
         if (!match.Success)
         {
             return false;
@@ -2298,7 +2286,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         aliasName = string.Empty;
         aliasTarget = string.Empty;
 
-        var match = UsingAliasRegex.Match(declaration.Trim().TrimEnd(';'));
+        var match = UsingAliasRegex().Match(declaration.Trim().TrimEnd(';'));
         if (!match.Success)
         {
             return false;
@@ -2315,7 +2303,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         aliasTarget = string.Empty;
 
         var normalized = declaration.Trim().TrimEnd(';');
-        var withoutTypedefKeyword = Regex.Replace(normalized, @"^\s*typedef\s+", string.Empty, RegexOptions.CultureInvariant);
+        var withoutTypedefKeyword = TypedefPrefixRegex().Replace(normalized, string.Empty);
         if (TryParseFunctionPointerDeclaration(withoutTypedefKeyword, out var functionPointer))
         {
             aliasName = functionPointer.Name;
@@ -2323,7 +2311,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             return true;
         }
 
-        var match = TypedefRegex.Match(normalized);
+        var match = TypedefRegex().Match(normalized);
         if (!match.Success)
         {
             return false;
@@ -2345,7 +2333,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         }
 
         var normalized = NormalizeWhitespace(StripDefaultValue(declaration));
-        var nameMatch = Regex.Match(normalized, @"(?<name>[A-Za-z_][A-Za-z0-9_]*)$");
+        var nameMatch = TrailingNameRegex().Match(normalized);
         if (!nameMatch.Success)
         {
             return false;
@@ -2353,7 +2341,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
 
         variableName = nameMatch.Groups["name"].Value;
         var typePart = normalized[..nameMatch.Index];
-        typePart = Regex.Replace(typePart, @"\bconstexpr\b", string.Empty, RegexOptions.CultureInvariant);
+        typePart = ConstexprKeywordRegex().Replace(typePart, string.Empty);
         variableType = NormalizeWhitespace(typePart);
         return !string.IsNullOrWhiteSpace(variableName);
     }
@@ -2365,13 +2353,13 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             return string.Empty;
         }
 
-        var callableMatch = Regex.Match(declaration, @"friend\s+.*?\b(?<name>[A-Za-z_][A-Za-z0-9_:]*)\s*\(", RegexOptions.CultureInvariant);
+        var callableMatch = FriendCallableRegex().Match(declaration);
         if (callableMatch.Success)
         {
             return callableMatch.Groups["name"].Value;
         }
 
-        var match = FriendTargetRegex.Match(declaration);
+        var match = FriendTargetRegex().Match(declaration);
         return match.Success ? NormalizeWhitespace(match.Groups["target"].Value) : string.Empty;
     }
 
@@ -2390,21 +2378,21 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
             return "unknown";
         }
 
-        var ctor = Regex.Match(normalized, @"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)\s*\(", RegexOptions.CultureInvariant);
+        var ctor = CtorPatternRegex().Match(normalized);
         if (ctor.Success)
         {
             return ctor.Groups["type"].Value;
         }
 
-        var token = Regex.Match(normalized, @"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)", RegexOptions.CultureInvariant);
+        var token = LeadingTypeRegex().Match(normalized);
         return token.Success ? token.Groups["type"].Value : "unknown";
     }
 
     private static string ExtractTrailingIdentifier(string text)
     {
         var withoutInitializer = StripDefaultValue(text);
-        var withoutBitfield = Regex.Replace(withoutInitializer, @":\s*\d+\s*$", string.Empty, RegexOptions.CultureInvariant);
-        var match = Regex.Match(withoutBitfield, @"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?$");
+        var withoutBitfield = BitfieldSuffixRegex().Replace(withoutInitializer, string.Empty);
+        var match = FieldNameRegex().Match(withoutBitfield);
         return match.Success ? match.Groups["name"].Value : string.Empty;
     }
 
@@ -2613,7 +2601,7 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         }
 
         var normalized = NormalizeWhitespace(raw);
-        normalized = Regex.Replace(normalized, @"\b(?:virtual|static|inline|constexpr|friend|explicit|extern)\b", string.Empty, RegexOptions.CultureInvariant);
+        normalized = StorageSpecifierRegex().Replace(normalized, string.Empty);
         return NormalizeWhitespace(normalized);
     }
 
@@ -2661,7 +2649,26 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
     }
 
     private static bool ContainsWord(string text, string word)
-        => Regex.IsMatch(text, $@"\b{Regex.Escape(word)}\b", RegexOptions.CultureInvariant);
+    {
+        var textSpan = text.AsSpan();
+        var wordSpan = word.AsSpan();
+        int index = 0;
+        while (index <= textSpan.Length - wordSpan.Length)
+        {
+            var pos = textSpan.Slice(index).IndexOf(wordSpan, StringComparison.Ordinal);
+            if (pos < 0) return false;
+            pos += index;
+
+            var leftOk = pos == 0 || !IsWordChar(textSpan[pos - 1]);
+            var rightOk = pos + wordSpan.Length >= textSpan.Length || !IsWordChar(textSpan[pos + wordSpan.Length]);
+
+            if (leftOk && rightOk) return true;
+            index = pos + 1;
+        }
+        return false;
+
+        static bool IsWordChar(char c) => char.IsLetterOrDigit(c) || c == '_';
+    }
 
     private static string NormalizeName(string text)
         => text.Trim().Trim('"', '\'', '`');
@@ -2756,4 +2763,114 @@ public sealed class CppMaterializer : IFormatLoader, IFormatMaterializer, IDispo
         string? BitfieldWidth,
         bool IsFunctionPointer,
         string? PointedSignature);
+
+    // ── Source-generated regex declarations ──────────────────────────────
+
+    [GeneratedRegex(@"\bnamespace\s+(?<name>[A-Za-z_][A-Za-z0-9_:]*)", RegexOptions.CultureInvariant)]
+    private static partial Regex NamespaceNameRegex();
+
+    [GeneratedRegex(@"\benum(?:\s+class|\s+struct)?\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*(?<type>[^{]+)", RegexOptions.CultureInvariant)]
+    private static partial Regex EnumUnderlyingTypeRegex();
+
+    [GeneratedRegex(@"(?<name>(?:~?[A-Za-z_][A-Za-z0-9_]*|operator\s*[^\s(]+)(?:::(?:~?[A-Za-z_][A-Za-z0-9_]*|operator\s*[^\s(]+))*)\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex CallableNameRegex();
+
+    [GeneratedRegex("#\\s*include\\s*(?<style><|\")(?<target>[^\">]+)(?<close>>|\")", RegexOptions.CultureInvariant)]
+    private static partial Regex IncludeRegex();
+
+    [GeneratedRegex(@"(?:#\s*define\s+)?(?<name>[A-Za-z_][A-Za-z0-9_]*)(?:\((?<parameters>[^)]*)\))?\s*(?<replacement>.*)$", RegexOptions.CultureInvariant)]
+    private static partial Regex MacroDefinitionRegex();
+
+    [GeneratedRegex(@"\busing\s+(?<alias>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<target>.+)$", RegexOptions.CultureInvariant)]
+    private static partial Regex UsingAliasRegex();
+
+    [GeneratedRegex(@"\btypedef\s+(?<target>.+?)\s+(?<alias>[A-Za-z_][A-Za-z0-9_]*)$", RegexOptions.CultureInvariant)]
+    private static partial Regex TypedefRegex();
+
+    [GeneratedRegex(@"(?<return>.+?)\(\s*\*\s*(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\((?<signature>[^)]*)\)", RegexOptions.CultureInvariant)]
+    private static partial Regex FunctionPointerRegex();
+
+    [GeneratedRegex(@"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?<width>\d+)", RegexOptions.CultureInvariant)]
+    private static partial Regex BitfieldWidthRegex();
+
+    [GeneratedRegex(@"\b(?<export>export\s+)?module\s+(?<name>[A-Za-z_][A-Za-z0-9_.]*)(?::(?<partition>[A-Za-z_][A-Za-z0-9_.]*))?", RegexOptions.CultureInvariant)]
+    private static partial Regex ModuleRegex();
+
+    [GeneratedRegex(@"\bconcept\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<constraint>.+)$", RegexOptions.CultureInvariant)]
+    private static partial Regex ConceptRegex();
+
+    [GeneratedRegex(@"\bfriend\s+(?:class|struct|typename)?\s*(?<target>[A-Za-z_][A-Za-z0-9_:]*)", RegexOptions.CultureInvariant)]
+    private static partial Regex FriendTargetRegex();
+
+    [GeneratedRegex(@"\binline\s+namespace\b", RegexOptions.CultureInvariant)]
+    private static partial Regex InlineNamespaceRegex();
+
+    [GeneratedRegex(@"\benum\s+(class|struct)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex ScopedEnumRegex();
+
+    [GeneratedRegex(@"\b(class|struct|typename)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex ClassStructTypenameRegex();
+
+    [GeneratedRegex(@"catch\s*\(\s*(?<type>[^)]+)\)", RegexOptions.CultureInvariant)]
+    private static partial Regex CatchTypeRegex();
+
+    [GeneratedRegex(@"\btry\b", RegexOptions.CultureInvariant)]
+    private static partial Regex TryKeywordRegex();
+
+    [GeneratedRegex(@"\bcatch\s*\(", RegexOptions.CultureInvariant)]
+    private static partial Regex CatchKeywordRegex();
+
+    [GeneratedRegex(@"throw\s+(?<expr>[^;]+);", RegexOptions.CultureInvariant)]
+    private static partial Regex ThrowExprRegex();
+
+    [GeneratedRegex(@"\bmodule\b", RegexOptions.CultureInvariant)]
+    private static partial Regex ModuleKeywordRegex();
+
+    [GeneratedRegex(@"#\s*if(?:n?def)?\s+(?<predicate>[^\r\n]+)", RegexOptions.CultureInvariant)]
+    private static partial Regex PreprocIfRegex();
+
+    [GeneratedRegex(@"\b(?:class|struct|union|enum(?:\s+class|\s+struct)?)\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)", RegexOptions.CultureInvariant)]
+    private static partial Regex TypeNameExtractRegex();
+
+    [GeneratedRegex(@"\b(public|private|protected|virtual)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex AccessModifierRegex();
+
+    [GeneratedRegex(@"\bnamespace\s*\{", RegexOptions.CultureInvariant)]
+    private static partial Regex AnonymousNamespaceRegex();
+
+    [GeneratedRegex(@"=\s*0\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex PureVirtualRegex();
+
+    [GeneratedRegex(@"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?$", RegexOptions.CultureInvariant)]
+    private static partial Regex EnumeratorNameRegex();
+
+    [GeneratedRegex(@"(?<base>[A-Za-z_][A-Za-z0-9_:]*)\s*<(?<args>[^>]+)>", RegexOptions.CultureInvariant)]
+    private static partial Regex TemplateBaseRegex();
+
+    [GeneratedRegex(@"^\s*typedef\s+", RegexOptions.CultureInvariant)]
+    private static partial Regex TypedefPrefixRegex();
+
+    [GeneratedRegex(@"(?<name>[A-Za-z_][A-Za-z0-9_]*)$", RegexOptions.CultureInvariant)]
+    private static partial Regex TrailingNameRegex();
+
+    [GeneratedRegex(@"\bconstexpr\b", RegexOptions.CultureInvariant)]
+    private static partial Regex ConstexprKeywordRegex();
+
+    [GeneratedRegex(@"friend\s+.*?\b(?<name>[A-Za-z_][A-Za-z0-9_:]*)\s*\(", RegexOptions.CultureInvariant)]
+    private static partial Regex FriendCallableRegex();
+
+    [GeneratedRegex(@"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)\s*\(", RegexOptions.CultureInvariant)]
+    private static partial Regex CtorPatternRegex();
+
+    [GeneratedRegex(@"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)", RegexOptions.CultureInvariant)]
+    private static partial Regex LeadingTypeRegex();
+
+    [GeneratedRegex(@":\s*\d+\s*$", RegexOptions.CultureInvariant)]
+    private static partial Regex BitfieldSuffixRegex();
+
+    [GeneratedRegex(@"(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?$", RegexOptions.CultureInvariant)]
+    private static partial Regex FieldNameRegex();
+
+    [GeneratedRegex(@"\b(?:virtual|static|inline|constexpr|friend|explicit|extern)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex StorageSpecifierRegex();
 }

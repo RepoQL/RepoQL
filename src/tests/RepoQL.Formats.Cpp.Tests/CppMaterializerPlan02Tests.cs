@@ -9,10 +9,6 @@ public sealed class CppMaterializerPlan02Tests
     public async Task Materialize_PreprocessorNodes_ExtractsIncludeMacroUsingAndConditionalAnnotations()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "plan02_preprocessor_nodes.hpp");
 
@@ -47,10 +43,6 @@ public sealed class CppMaterializerPlan02Tests
     public async Task Materialize_TemplateConceptAndModule_ExtractsPlan02Properties()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "plan02_templates_concepts_module.cpp");
 
@@ -77,10 +69,6 @@ public sealed class CppMaterializerPlan02Tests
     public async Task Materialize_ModuleError_EmitsUnsupportedModuleSyntaxAnnotation()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "plan02_module_error.cpp");
 
@@ -91,10 +79,6 @@ public sealed class CppMaterializerPlan02Tests
     public async Task Materialize_FriendCoroutineExceptionsAndPointers_AreMaterialized()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "plan02_friend_coroutine_exception.hpp");
 
@@ -127,10 +111,6 @@ public sealed class CppMaterializerPlan02Tests
     public async Task Materialize_TypedefUsingAliasAndConstexpr_AreExtracted()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "plan02_type_aliases.hpp");
 
@@ -162,26 +142,11 @@ public sealed class CppMaterializerPlan02Tests
     public async Task Materialize_HeadlineIncludesMacroWarning_WhenInterferenceDetected()
     {
         using var materializer = new CppMaterializer();
-        if (!RequireGrammar(materializer))
-        {
-            return;
-        }
 
         var records = await CppTestHelpers.LoadRecordsAsync(materializer, "macro_qobject_interference.hpp");
 
         records.Artifacts[0].Headline.Should().Contain("⚠");
         records.Artifacts[0].Headline.Should().Contain("Q_OBJECT");
-    }
-
-    private static bool RequireGrammar(CppMaterializer materializer)
-    {
-        if (materializer.IsGrammarAvailable)
-        {
-            return true;
-        }
-
-        Skip.Test("tree-sitter-cpp grammar is not bundled on this machine.");
-        return false;
     }
 
     private static string Prop(Node node, string key)

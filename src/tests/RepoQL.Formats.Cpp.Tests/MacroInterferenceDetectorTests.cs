@@ -60,12 +60,6 @@ public sealed class MacroInterferenceDetectorTests
     {
         var source = CppTestHelpers.ReadFixture(fixtureName);
         using var client = new CppTreeSitterClient();
-        if (!client.IsGrammarAvailable)
-        {
-            Skip.Test("tree-sitter-cpp grammar is not bundled on this machine.");
-            return [];
-        }
-
         using var parse = client.Parse(source);
         parse.HasTree.Should().BeTrue();
         parse.RootNode.Should().NotBeNull();
