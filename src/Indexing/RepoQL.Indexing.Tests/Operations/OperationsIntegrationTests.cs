@@ -35,7 +35,7 @@ internal class OperationsIntegrationTests
 
         var importer = A.Fake<IVirtualFileSystemImporter>();
         A.CallTo(() => importer.CanHandle(source)).Returns(true);
-        A.CallTo(() => importer.ImportAsync(source, A<CancellationToken>._)).Returns(mount);
+        A.CallTo(() => importer.ImportAsync(source, A<bool>._, A<CancellationToken>._)).Returns(mount);
 
         var mountManager = A.Fake<ICompositeFileSystemManager>();
         var uriRegistry = new UriRegistry();
@@ -233,7 +233,7 @@ internal class OperationsIntegrationTests
 
         var importer = A.Fake<IVirtualFileSystemImporter>();
         A.CallTo(() => importer.CanHandle(source)).Returns(true);
-        A.CallTo(() => importer.ImportAsync(source, A<CancellationToken>._)).Returns(mount);
+        A.CallTo(() => importer.ImportAsync(source, A<bool>._, A<CancellationToken>._)).Returns(mount);
 
         var mountManager = A.Fake<ICompositeFileSystemManager>();
         var importService = new FileSystemImportService(

@@ -1,0 +1,14 @@
+go 1.22
+toolchain go1.22.3
+
+use (
+    ./cmd/api
+    ./pkg/shared
+)
+
+use ./tools
+
+replace github.com/acme/common => ../common
+replace (
+    example.com/dependency v1.0.0 => ../dependency
+)

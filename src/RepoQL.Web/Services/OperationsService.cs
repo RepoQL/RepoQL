@@ -175,7 +175,7 @@ internal sealed class OperationsService
         try
         {
             var client = await _connectionManager.GetClientAsync(linkedToken).ConfigureAwait(false);
-            var result = await client.ImportRepositoryAsync(uri, linkedToken).ConfigureAwait(false);
+            var result = await client.ImportRepositoryAsync(uri, cancellationToken: linkedToken).ConfigureAwait(false);
 
             UpdateState(UIOperationState.Idle($"Import of {uri} completed"));
             _logger.LogInformation("Import of {Uri} completed", uri);

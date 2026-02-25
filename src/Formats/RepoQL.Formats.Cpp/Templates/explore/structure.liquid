@@ -1,0 +1,2 @@
+{% if structure_lines.size == 0 %}(no extracted structure){% else %}{% for line in structure_lines %}{{ line }}{% unless forloop.last %}
+{% endunless %}{% endfor %}{% endif %}

@@ -1,0 +1,3 @@
+namespace net {
+class ForwardOnly;
+}

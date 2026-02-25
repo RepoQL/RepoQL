@@ -32,6 +32,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<CallToolResult> ImportAsync(
         [Description("URI to import (e.g., github://owner/repo@ref). Prefix with '-' to remove an import.")] string importUri,
+        [Description("When true, run full analysis (nodes, edges, annotations, type hierarchies). Enables Types/Functions/call-graph queries on the imported repo. Default: false.")] bool analyze = false,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(importUri))
@@ -43,7 +44,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         try
         {
             var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-            var result = await client.ImportRepositoryAsync(importUri.Trim(), cancellationToken).ConfigureAwait(false);
+            var result = await client.ImportRepositoryAsync(importUri.Trim(), analyze, cancellationToken).ConfigureAwait(false);
 
             if (isRemoval)
             {

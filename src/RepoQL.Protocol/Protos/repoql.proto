@@ -297,6 +297,8 @@ message ImportRequest {
   // DEPRECATED: This field is ignored. Import now always waits for operation completion
   // (all files indexed with structure embeddings ready for semantic search).
   optional PipelineStage wait_stage = 2 [deprecated = true];
+  // When true, run full analysis on imported files (nodes, edges, annotations, type hierarchies).
+  optional bool analyze = 3;
 }
 
 message ImportResponse {

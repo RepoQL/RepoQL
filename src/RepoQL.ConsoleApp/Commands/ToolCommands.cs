@@ -175,7 +175,7 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
             .Spinner(Spinner.Known.Dots)
             .StartAsync(isRemoval ? "Removing import..." : "Importing repository...", async _ =>
             {
-                await client.ImportRepositoryAsync(uri.Trim(), cancel).ConfigureAwait(false);
+                await client.ImportRepositoryAsync(uri.Trim(), cancellationToken: cancel).ConfigureAwait(false);
             });
 
         if (isRemoval)

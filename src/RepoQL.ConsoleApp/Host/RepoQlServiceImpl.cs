@@ -821,7 +821,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             Contracts.IOperation? operation = null;
             try
             {
-                var result = await importService.ImportAsync(repoUri, context.CancellationToken).ConfigureAwait(false);
+                var result = await importService.ImportAsync(repoUri, request.Analyze, context.CancellationToken).ConfigureAwait(false);
                 operation = result.Operation;
                 _logger.LogInformation("[Import] Clone/sync completed ({ElapsedMs}ms), operation={OpId}",
                     sw.ElapsedMilliseconds - importStart, operation?.Id ?? "(none)");

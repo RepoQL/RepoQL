@@ -85,6 +85,7 @@ public interface IRepoQlClient : IAsyncDisposable
     /// <returns>Import result including progress and failure counts.</returns>
     Task<ImportResult> ImportRepositoryAsync(
         string uri,
+        bool analyze = false,
         CancellationToken cancellationToken = default);
 
     /// <summary>

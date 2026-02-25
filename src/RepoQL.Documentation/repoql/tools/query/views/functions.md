@@ -38,7 +38,7 @@ SELECT * FROM Functions WHERE file_name = 'UserService.cs';
 //BOUNDARY: Includes methods, constructors, functions. Excludes properties, fields, type definitions.
 
 **Depth**
-- Filters: `csharp.member`, `typescript.member`, `typescript.function`, `php.member`, `php.function` with kind in `method`, `constructor`, `function`
+- Filters: `csharp.member`, `typescript.member`, `typescript.function`, `php.member`, `php.function`, `py.member`, `py.function` with kind in `method`, `constructor`, `function`
 - `qualified_name` computed as `declaring_type.name` if not explicitly set
 - `signature` falls back to `headline` if not set
 - SeeAlso: `Types` view for classes, `Files` view for documents

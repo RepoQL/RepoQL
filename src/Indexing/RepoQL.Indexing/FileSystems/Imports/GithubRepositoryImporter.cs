@@ -52,7 +52,7 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
     }
 
     /// <inheritdoc />
-    public async Task<CompositeFileSystemMount> ImportAsync(RepoUri source, CancellationToken cancellationToken)
+    public async Task<CompositeFileSystemMount> ImportAsync(RepoUri source, bool analyze = false, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -92,7 +92,7 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             pathPrefix: spec.Repository,
             includeInEnumeration: true,
             enableWatching: false,
-            enableAnalysis: false);
+            enableAnalysis: analyze);
 
         // Persist mount so it survives restarts
         _logger.LogDebug("[GitHub] Persisting mount record...");
@@ -106,7 +106,7 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             LocalPath = targetRoot,
             IncludeInEnumeration = true,
             EnableWatching = false,
-            EnableAnalysis = false
+            EnableAnalysis = analyze
         });
 
         _logger.LogInformation("[GitHub] Import completed for {Owner}/{Repo} in {ElapsedMs}ms",

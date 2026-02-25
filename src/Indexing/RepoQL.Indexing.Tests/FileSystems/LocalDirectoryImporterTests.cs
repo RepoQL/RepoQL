@@ -81,7 +81,7 @@ internal class LocalDirectoryImporterTests
             var uri = RepoUri.Parse($"local:///{importDir.Replace('\\', '/')}");
 
             // Act
-            var mount = await importer.ImportAsync(uri, CancellationToken.None);
+            var mount = await importer.ImportAsync(uri, cancellationToken: CancellationToken.None);
 
             // Assert
             mount.Should().NotBeNull();
@@ -117,7 +117,7 @@ internal class LocalDirectoryImporterTests
             var uri = RepoUri.Parse($"local:///{nonExistentPath.Replace('\\', '/')}");
 
             // Act & Assert
-            await importer.Invoking(i => i.ImportAsync(uri, CancellationToken.None))
+            await importer.Invoking(i => i.ImportAsync(uri, cancellationToken: CancellationToken.None))
                 .Should().ThrowAsync<DirectoryNotFoundException>();
         }
         finally
@@ -144,7 +144,7 @@ internal class LocalDirectoryImporterTests
             var uri = RepoUri.Parse($"local:///{importDir.Replace('\\', '/')}");
 
             // Act
-            var mount = await importer.ImportAsync(uri, CancellationToken.None);
+            var mount = await importer.ImportAsync(uri, cancellationToken: CancellationToken.None);
 
             // Assert - mount ID should contain the full path with forward slashes for predictable removal
             var expectedPath = absolutePath.Replace('\\', '/');
@@ -172,7 +172,7 @@ internal class LocalDirectoryImporterTests
             var uri = RepoUri.Parse($"local:///{primaryDir.Replace('\\', '/')}");
 
             // Act & Assert
-            await importer.Invoking(i => i.ImportAsync(uri, CancellationToken.None))
+            await importer.Invoking(i => i.ImportAsync(uri, cancellationToken: CancellationToken.None))
                 .Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("*primary repository*");
         }
@@ -198,7 +198,7 @@ internal class LocalDirectoryImporterTests
             var uri = RepoUri.Parse($"local:///{subDir.Replace('\\', '/')}");
 
             // Act & Assert
-            await importer.Invoking(i => i.ImportAsync(uri, CancellationToken.None))
+            await importer.Invoking(i => i.ImportAsync(uri, cancellationToken: CancellationToken.None))
                 .Should().ThrowAsync<InvalidOperationException>()
                 .WithMessage("*subdirectory*");
         }

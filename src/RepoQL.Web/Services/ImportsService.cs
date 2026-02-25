@@ -105,7 +105,7 @@ internal sealed class ImportsService
         {
             _logger.LogInformation("Starting import: {Uri}", uri);
 
-            var status = await client.ImportRepositoryAsync(uri, ct).ConfigureAwait(false);
+            var status = await client.ImportRepositoryAsync(uri, cancellationToken: ct).ConfigureAwait(false);
 
             return new ImportResult(
                 Success: true,
@@ -134,7 +134,7 @@ internal sealed class ImportsService
             // Use negative prefix to remove
             var removeUri = uri.StartsWith('-') ? uri : $"-{uri}";
 
-            var status = await client.ImportRepositoryAsync(removeUri, ct).ConfigureAwait(false);
+            var status = await client.ImportRepositoryAsync(removeUri, cancellationToken: ct).ConfigureAwait(false);
 
             return new ImportResult(
                 Success: true,

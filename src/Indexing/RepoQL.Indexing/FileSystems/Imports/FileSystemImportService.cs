@@ -14,7 +14,7 @@ public interface IFileSystemImportService
     /// Imports the specified source and returns the mount descriptor that was registered with the manager,
     /// plus any associated indexing operation.
     /// </summary>
-    Task<FileSystemImportResult> ImportAsync(RepoUri source, CancellationToken cancellationToken = default);
+    Task<FileSystemImportResult> ImportAsync(RepoUri source, bool analyze = false, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -50,7 +50,7 @@ public sealed class FileSystemImportService : IFileSystemImportService
         _filter = filter;
     }
 
-    public async Task<FileSystemImportResult> ImportAsync(RepoUri source, CancellationToken cancellationToken = default)
+    public async Task<FileSystemImportResult> ImportAsync(RepoUri source, bool analyze = false, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
 
@@ -58,7 +58,7 @@ public sealed class FileSystemImportService : IFileSystemImportService
         if (importer is null)
             throw new InvalidOperationException($"No importer registered for URI '{source}'.");
 
-        var mount = await importer.ImportAsync(source, cancellationToken).ConfigureAwait(false);
+        var mount = await importer.ImportAsync(source, analyze, cancellationToken).ConfigureAwait(false);
         var operation = await CreateImportOperationAsync(source, mount, cancellationToken).ConfigureAwait(false);
         _mountManager.AddOrUpdateMount(mount);
         return new FileSystemImportResult(mount, operation);

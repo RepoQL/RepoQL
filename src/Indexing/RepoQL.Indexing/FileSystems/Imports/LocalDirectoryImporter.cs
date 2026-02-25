@@ -36,7 +36,7 @@ public sealed class LocalDirectoryImporter : IVirtualFileSystemImporter
     }
 
     /// <inheritdoc />
-    public Task<CompositeFileSystemMount> ImportAsync(RepoUri source, CancellationToken cancellationToken)
+    public Task<CompositeFileSystemMount> ImportAsync(RepoUri source, bool analyze = false, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(source);
 
@@ -101,7 +101,7 @@ public sealed class LocalDirectoryImporter : IVirtualFileSystemImporter
             pathPrefix: uriPath,
             includeInEnumeration: true,
             enableWatching: false,
-            enableAnalysis: false);
+            enableAnalysis: analyze);
 
         // Persist mount so it survives restarts
         _logger?.LogDebug("[Local] Persisting mount record...");
@@ -115,7 +115,7 @@ public sealed class LocalDirectoryImporter : IVirtualFileSystemImporter
             LocalPath = absolutePath,
             IncludeInEnumeration = true,
             EnableWatching = false,
-            EnableAnalysis = false
+            EnableAnalysis = analyze
         });
 
         _logger?.LogInformation("[Local] Import completed for {Path}", absolutePath);

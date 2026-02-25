@@ -102,8 +102,11 @@ public static class DuckDbDataStoreExtensions
             // 8. Remap edges with scope document ID
             var edges = artifact.Edges.Select(e => e with { ScopeDocumentId = savedDoc.Id }).ToList();
 
-            // 9. Insert new document content
-            InsertDocumentContent(conn, tx, children, spans, edges, store.Logger);
+            // 9. Remap annotations with scope document ID
+            var annotations = artifact.Annotations.Select(a => a with { ScopeDocumentId = savedDoc.Id }).ToList();
+
+            // 10. Insert new document content
+            InsertDocumentContent(conn, tx, children, spans, edges, store.Logger, annotations);
 
             return new IndexResult(savedDoc.Id, isUpdate);
         });
@@ -166,13 +169,16 @@ public static class DuckDbDataStoreExtensions
                 // 8. Remap edges with scope document ID
                 var edges = artifact.Edges.Select(e => e with { ScopeDocumentId = savedDoc.Id }).ToList();
 
+                // 9. Remap annotations with scope document ID
+                var annotations = artifact.Annotations.Select(a => a with { ScopeDocumentId = savedDoc.Id }).ToList();
+
                 totalSpans += spans.Count;
                 totalNodes += children.Count;
                 totalEdges += edges.Count;
 
-                // 9. Insert new document content
+                // 10. Insert new document content
                 sw.Restart();
-                InsertDocumentContent(conn, tx, children, spans, edges, store.Logger);
+                InsertDocumentContent(conn, tx, children, spans, edges, store.Logger, annotations);
                 insertContentTicks += sw.ElapsedTicks;
 
                 results.Add(new IndexResult(savedDoc.Id, isUpdate));
@@ -841,7 +847,8 @@ public static class DuckDbDataStoreExtensions
                 queue.Enqueue(r.GetGuid(0));
         }
 
-        // Delete spans and edges scoped to this document
+        // Delete annotations, spans, and edges scoped to this document
+        conn.Execute(tx, "DELETE FROM annotation WHERE scope_document_id = ?;", documentId);
         conn.Execute(tx, "DELETE FROM span WHERE document_id = ?;", documentId);
         conn.Execute(tx, "DELETE FROM edge WHERE scope_document_id = ?;", documentId);
 
@@ -850,7 +857,7 @@ public static class DuckDbDataStoreExtensions
     }
 
     /// <summary>
-    /// Insert new document content (spans, edges, child nodes).
+    /// Insert new document content (spans, edges, child nodes, annotations).
     /// </summary>
     private static void InsertDocumentContent(
         DuckDBConnection conn,
@@ -858,7 +865,8 @@ public static class DuckDbDataStoreExtensions
         IReadOnlyList<Node> children,
         IReadOnlyList<Span> spans,
         IReadOnlyList<Edge> edges,
-        ILogger? logger)
+        ILogger? logger,
+        IReadOnlyList<Annotation>? annotations = null)
     {
         // Append spans in schema column order.
         if (spans.Count > 0)
@@ -871,6 +879,13 @@ public static class DuckDbDataStoreExtensions
         // Bulk insert edges
         if (edges.Count > 0)
             BulkInsertEdges(conn, tx, edges, logger);
+
+        // Upsert annotations
+        if (annotations is { Count: > 0 })
+        {
+            foreach (var annotation in annotations)
+                UpsertAnnotation(conn, tx, annotation);
+        }
     }
 
     private static void AppendSpans(DuckDBConnection conn, IReadOnlyList<Span> spans)

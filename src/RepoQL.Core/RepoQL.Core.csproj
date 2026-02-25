@@ -22,7 +22,11 @@
     <ProjectReference Include="..\Formats\RepoQL.Formats.GraphQL\RepoQL.Formats.GraphQL.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.TypeScript\RepoQL.Formats.TypeScript.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.PHP\RepoQL.Formats.PHP.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.Python\RepoQL.Formats.Python.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Ruby\RepoQL.Formats.Ruby.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.Go\RepoQL.Formats.Go.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.Rust\RepoQL.Formats.Rust.csproj" />
+    <ProjectReference Include="..\Formats\RepoQL.Formats.Cpp\RepoQL.Formats.Cpp.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Terraform\RepoQL.Formats.Terraform.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Sql\RepoQL.Formats.Sql.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.CSS\RepoQL.Formats.CSS.csproj" />
@@ -48,4 +52,3 @@
     </ItemGroup>
 
 </Project>
-

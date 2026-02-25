@@ -907,6 +907,7 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
 
     public Task<ImportResult> ImportRepositoryAsync(
         string uri,
+        bool analyze = false,
         CancellationToken cancellationToken = default)
         => InvokeWithReconnectAsync(async (client, ct) =>
         {
@@ -915,7 +916,8 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
 
             var request = new ImportRequest
             {
-                Uri = uri.Trim()
+                Uri = uri.Trim(),
+                Analyze = analyze
             };
 
             var response = await client.ImportRepositoryAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);

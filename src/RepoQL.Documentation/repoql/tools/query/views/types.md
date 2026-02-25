@@ -38,7 +38,7 @@ SELECT * FROM Types WHERE file_name = 'UserService.cs';
 //BOUNDARY: Only type-level nodes; methods/properties are in `Functions` view or raw `node` table.
 
 **Depth**
-- Filters nodes by `kind LIKE '%.type'` (e.g., `csharp.type`, `ts.type`)
+- Filters nodes by `kind LIKE '%.type'` (e.g., `csharp.type`, `ts.type`, `py.type`)
 - Properties extracted from node's JSON `properties` field
 - `signature` falls back to `headline` if not set
 - SeeAlso: `Functions` view for methods, `Files` view for documents

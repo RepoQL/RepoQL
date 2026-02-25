@@ -16,5 +16,5 @@ public interface IVirtualFileSystemImporter
     /// Imports the specified source and returns a mount descriptor. Callers are responsible for registering the mount
     /// with <see cref="ICompositeFileSystemManager"/>.
     /// </summary>
-    Task<CompositeFileSystemMount> ImportAsync(RepoUri source, CancellationToken cancellationToken);
+    Task<CompositeFileSystemMount> ImportAsync(RepoUri source, bool analyze = false, CancellationToken cancellationToken = default);
 }
