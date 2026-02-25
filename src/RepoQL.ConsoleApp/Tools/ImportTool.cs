@@ -79,7 +79,6 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                 : "";
 
             return ToolResult.Success($"""
-                [DEBUG] contextUri={contextUri ?? "NULL"} repoContext={(repoContext is null ? "NULL" : $"len={repoContext.Length}")}
                 Import completed: {importUri.Trim()}
                 {progressSummary}
 
@@ -210,9 +209,9 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                 LIMIT 1
                 """;
             var findResult = await _queryExecutor.ExecuteAsync(findSql, 1, ResultFormat.Toon, cancellationToken: cancellationToken).ConfigureAwait(false);
-            var uri = string.Join("", findResult.Lines).Trim();
+            var uri = StripToonQuotes(string.Join("", findResult.Lines).Trim());
             if (string.IsNullOrWhiteSpace(uri) || uri == "null")
-                return ("DEBUG_FIND_EMPTY", $"Lines={findResult.Lines.Length}, Raw=[{string.Join("|", findResult.Lines)}], Total={findResult.TotalRowCount}, Pattern={uriPattern}");
+                return (null, null);
 
             // Read its content with a token budget
             var readSql = $"""
@@ -231,9 +230,20 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
         }
         catch (Exception ex)
         {
-            // TODO: remove debug output after fixing
-            return ("DEBUG_ERROR", $"{ex.GetType().Name}: {ex.Message}");
+            await Console.Error.WriteLineAsync($"[ImportTool] TryGetRepoContextAsync failed: {ex.GetType().Name}: {ex.Message}");
+            return (null, null);
         }
+    }
+
+    /// <summary>
+    /// Strip TOON double-quote wrapping from a scalar value.
+    /// The Toon formatter quotes strings containing special characters (e.g. ':' in URIs).
+    /// </summary>
+    private static string StripToonQuotes(string value)
+    {
+        if (value.Length >= 2 && value[0] == '"' && value[^1] == '"')
+            return value[1..^1].Replace("\\\"", "\"").Replace("\\\\", "\\");
+        return value;
     }
 
     /// <summary>
