@@ -72,6 +72,7 @@ Violating these causes corruption, test failures, or architectural drift.
 | Docs with features | New functionality must include `help://` docs |
 | Perfection > compatibility | Get it right rather than accumulate debt. Stability over backwards compatibility |
 | Never push without asking | Do not `git push` unless the user explicitly asks. Commit locally is fine; pushing is their call. |
+| Only commit your own work | Never stage or commit changes you didn't make without explicit permission. Other agents or the user may have in-progress work in the tree. `git add -A` is almost never correct. |
 
 ---
 
