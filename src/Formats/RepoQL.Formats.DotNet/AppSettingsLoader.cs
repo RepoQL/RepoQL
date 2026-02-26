@@ -38,17 +38,18 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
     public Task<bool> CanLoadAsync(DiscoveredArtifact artifact, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(artifact);
-        var name = artifact.File.Name.ToLowerInvariant();
+        var name = artifact.File.Name;
 
         // Match appsettings*.json pattern
-        if (name.StartsWith("appsettings") && name.EndsWith(".json"))
+        if (name.StartsWith("appsettings", StringComparison.OrdinalIgnoreCase)
+            && name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
         {
             artifact.MediaType = AppSettingsType;
             return Task.FromResult(true);
         }
 
         // Also match launchSettings.json
-        if (name == "launchsettings.json")
+        if (string.Equals(name, "launchsettings.json", StringComparison.OrdinalIgnoreCase))
         {
             artifact.MediaType = AppSettingsType;
             return Task.FromResult(true);
@@ -73,11 +74,37 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
         // Extract environment from filename
         var environment = ExtractEnvironment(artifact.File.Name);
 
-        // Parse JSON
-        JsonDocument? jsonDoc = null;
         try
         {
-            jsonDoc = JsonDocument.Parse(text);
+            using var jsonDoc = JsonDocument.Parse(text);
+
+            // Extract context
+            var topLevelKeys = new List<string>();
+            var connectionStringNames = new List<string>();
+            var detectedServices = new List<string>();
+            var potentialSecrets = new List<PotentialSecret>();
+
+            ExtractContext(jsonDoc.RootElement, topLevelKeys, connectionStringNames, detectedServices, potentialSecrets);
+
+            var state = new AppSettingsState
+            {
+                Digest = digest,
+                Size = loaded.ByteLength,
+                MediaType = artifact.MediaType ?? AppSettingsType,
+                StoreUri = artifact.RepoUri.ToString(),
+                Environment = environment,
+                TopLevelKeys = topLevelKeys,
+                ConnectionStringNames = connectionStringNames,
+                DetectedServices = detectedServices,
+                PotentialSecrets = potentialSecrets
+            };
+
+            var metadata = new Dictionary<string, object?>
+            {
+                [StateKey] = state
+            };
+
+            return new DocumentModel(artifact.RepoUri, state.MediaType, text, metadata: metadata);
         }
         catch (JsonException)
         {
@@ -94,36 +121,6 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
             return new DocumentModel(artifact.RepoUri, emptyState.MediaType, text,
                 metadata: new Dictionary<string, object?> { [StateKey] = emptyState });
         }
-
-        // Extract context
-        var topLevelKeys = new List<string>();
-        var connectionStringNames = new List<string>();
-        var detectedServices = new List<string>();
-        var potentialSecrets = new List<PotentialSecret>();
-
-        ExtractContext(jsonDoc.RootElement, text, topLevelKeys, connectionStringNames, detectedServices, potentialSecrets);
-
-        var state = new AppSettingsState
-        {
-            Digest = digest,
-            Size = loaded.ByteLength,
-            MediaType = artifact.MediaType ?? AppSettingsType,
-            StoreUri = artifact.RepoUri.ToString(),
-            Environment = environment,
-            TopLevelKeys = topLevelKeys,
-            ConnectionStringNames = connectionStringNames,
-            DetectedServices = detectedServices,
-            PotentialSecrets = potentialSecrets
-        };
-
-        var metadata = new Dictionary<string, object?>
-        {
-            [StateKey] = state
-        };
-
-        jsonDoc.Dispose();
-
-        return new DocumentModel(artifact.RepoUri, state.MediaType, text, metadata: metadata);
     }
 
     /// <inheritdoc />
@@ -196,9 +193,8 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
         };
     }
 
-    private void ExtractContext(
+    private static void ExtractContext(
         JsonElement root,
-        string text,
         List<string> topLevelKeys,
         List<string> connectionStringNames,
         List<string> detectedServices,
@@ -271,48 +267,48 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
         ScanForSecrets(root, "", potentialSecrets);
     }
 
-    private void DetectServices(string connectionString, List<string> services)
+    private static void DetectServices(string connectionString, List<string> services)
     {
-        var lower = connectionString.ToLowerInvariant();
-
-        if ((lower.Contains("data source") || lower.Contains("server=")) &&
-            (lower.Contains("database=") || lower.Contains("initial catalog")))
+        if ((ContainsOrdinalIgnoreCase(connectionString, "data source") || ContainsOrdinalIgnoreCase(connectionString, "server="))
+            && (ContainsOrdinalIgnoreCase(connectionString, "database=") || ContainsOrdinalIgnoreCase(connectionString, "initial catalog")))
         {
             AddServiceIfNotPresent("SqlServer", services);
         }
 
-        if (lower.Contains("redis") || lower.Contains(":6379"))
+        if (ContainsOrdinalIgnoreCase(connectionString, "redis") || ContainsOrdinalIgnoreCase(connectionString, ":6379"))
         {
             AddServiceIfNotPresent("Redis", services);
         }
 
-        if (lower.Contains("mongodb://") || lower.Contains(":27017"))
+        if (ContainsOrdinalIgnoreCase(connectionString, "mongodb://") || ContainsOrdinalIgnoreCase(connectionString, ":27017"))
         {
             AddServiceIfNotPresent("MongoDB", services);
         }
 
-        if (lower.Contains("cosmos") || lower.Contains(".documents.azure.com"))
+        if (ContainsOrdinalIgnoreCase(connectionString, "cosmos") || ContainsOrdinalIgnoreCase(connectionString, ".documents.azure.com"))
         {
             AddServiceIfNotPresent("CosmosDB", services);
         }
 
-        if (lower.Contains("rabbitmq://") || lower.Contains(":5672"))
+        if (ContainsOrdinalIgnoreCase(connectionString, "rabbitmq://") || ContainsOrdinalIgnoreCase(connectionString, ":5672"))
         {
             AddServiceIfNotPresent("RabbitMQ", services);
         }
 
-        if (lower.Contains("azureservicebus") || lower.Contains("servicebus.windows.net"))
+        if (ContainsOrdinalIgnoreCase(connectionString, "azureservicebus")
+            || ContainsOrdinalIgnoreCase(connectionString, "servicebus.windows.net"))
         {
             AddServiceIfNotPresent("ServiceBus", services);
         }
 
-        if (lower.Contains("accountname=") && lower.Contains("accountkey="))
+        if (ContainsOrdinalIgnoreCase(connectionString, "accountname=")
+            && ContainsOrdinalIgnoreCase(connectionString, "accountkey="))
         {
             AddServiceIfNotPresent("AzureStorage", services);
         }
     }
 
-    private void ScanForSecrets(JsonElement element, string path, List<PotentialSecret> secrets)
+    private static void ScanForSecrets(JsonElement element, string path, List<PotentialSecret> secrets)
     {
         switch (element.ValueKind)
         {
@@ -338,7 +334,7 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
                 break;
 
             case JsonValueKind.Array:
-                int index = 0;
+                var index = 0;
                 foreach (var item in element.EnumerateArray())
                 {
                     ScanForSecrets(item, $"{path}[{index}]", secrets);
@@ -348,40 +344,41 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
         }
     }
 
-    private bool IsSecretKeyName(string key)
+    private static bool IsSecretKeyName(string key)
     {
-        var lower = key.ToLowerInvariant();
-        return lower.Contains("password") ||
-               lower.Contains("secret") ||
-               lower.Contains("apikey") ||
-               lower.Contains("api_key") ||
-               lower.Contains("token") ||
-               lower.Contains("privatekey") ||
-               lower.Contains("clientsecret") ||
-               (lower.Contains("key") && !lower.Contains("publickey") && !lower.Contains("keyboard"));
+        return ContainsOrdinalIgnoreCase(key, "password")
+               || ContainsOrdinalIgnoreCase(key, "secret")
+               || ContainsOrdinalIgnoreCase(key, "apikey")
+               || ContainsOrdinalIgnoreCase(key, "api_key")
+               || ContainsOrdinalIgnoreCase(key, "token")
+               || ContainsOrdinalIgnoreCase(key, "privatekey")
+               || ContainsOrdinalIgnoreCase(key, "clientsecret")
+               || (ContainsOrdinalIgnoreCase(key, "key")
+                   && !ContainsOrdinalIgnoreCase(key, "publickey")
+                   && !ContainsOrdinalIgnoreCase(key, "keyboard"));
     }
 
-    private bool IsPlaceholder(string value)
+    private static bool IsPlaceholder(string value)
     {
         // Common placeholders that shouldn't be flagged
         return string.IsNullOrWhiteSpace(value) ||
-               value.StartsWith("$") ||
-               value.StartsWith("${") ||
-               value.StartsWith("%") ||
+               value.StartsWith('$') ||
+               value.StartsWith("${", StringComparison.Ordinal) ||
+               value.StartsWith('%') ||
                value.Equals("***", StringComparison.Ordinal) ||
                value.Equals("placeholder", StringComparison.OrdinalIgnoreCase) ||
                value.StartsWith("your-", StringComparison.OrdinalIgnoreCase) ||
                value.StartsWith("<add-", StringComparison.OrdinalIgnoreCase) ||
-               (value.StartsWith("<") && value.EndsWith(">"));
+               (value.StartsWith('<') && value.EndsWith('>'));
     }
 
-    private void AddServiceIfNotPresent(string service, List<string> services)
+    private static void AddServiceIfNotPresent(string service, List<string> services)
     {
         if (!services.Contains(service, StringComparer.OrdinalIgnoreCase))
             services.Add(service);
     }
 
-    private string? ExtractEnvironment(string fileName)
+    private static string? ExtractEnvironment(string fileName)
     {
         // appsettings.Development.json -> "Development"
         // appsettings.Production.json -> "Production"
@@ -406,4 +403,7 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
         var slash = ap.LastIndexOf('/') >= 0 ? ap[(ap.LastIndexOf('/') + 1)..] : ap;
         return string.IsNullOrEmpty(slash) ? uri.AbsoluteUri : slash;
     }
+
+    private static bool ContainsOrdinalIgnoreCase(string text, string value)
+        => text.Contains(value, StringComparison.OrdinalIgnoreCase);
 }
