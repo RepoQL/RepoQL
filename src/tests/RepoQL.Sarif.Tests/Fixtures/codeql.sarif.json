@@ -1,0 +1,48 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL command-line toolchain",
+          "rules": [
+            {
+              "id": "js/xss",
+              "defaultConfiguration": { "level": "warning" },
+              "messageStrings": {
+                "default": {
+                  "text": "Potential cross-site scripting from untrusted input."
+                }
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "js/xss",
+          "message": { "id": "default" },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/auth.js",
+                  "uriBaseId": "SRCROOT"
+                },
+                "region": {
+                  "startLine": 8
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "linehash-123"
+          },
+          "fingerprints": {
+            "legacy": "legacyhash-456"
+          }
+        }
+      ]
+    }
+  ]
+}

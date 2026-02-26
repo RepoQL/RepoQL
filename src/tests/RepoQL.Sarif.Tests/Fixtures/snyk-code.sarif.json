@@ -1,0 +1,45 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "SnykCode",
+          "rules": [
+            {
+              "id": "javascript/XSS",
+              "name": "Cross-site scripting",
+              "defaultConfiguration": { "level": "error" }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "javascript/XSS",
+          "level": "error",
+          "message": { "text": "Potential XSS sink." },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "routes/index.js",
+                  "uriBaseId": "%SRCROOT%"
+                },
+                "region": {
+                  "startLine": 42,
+                  "startColumn": 5,
+                  "endLine": 42,
+                  "endColumn": 24
+                }
+              }
+            }
+          ],
+          "fingerprints": {
+            "0": "f5323d0f"
+          }
+        }
+      ]
+    }
+  ]
+}

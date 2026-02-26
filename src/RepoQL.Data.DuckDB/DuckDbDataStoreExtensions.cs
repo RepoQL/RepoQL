@@ -1,6 +1,7 @@
 using System.Data;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json.Nodes;
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
@@ -15,6 +16,8 @@ namespace RepoQL.Data.DuckDB;
 /// </summary>
 public static class DuckDbDataStoreExtensions
 {
+    private const int SemanticKeyTempTableThreshold = 1000;
+
     #region URI Normalization
 
     /// <summary>
@@ -261,6 +264,94 @@ public static class DuckDbDataStoreExtensions
             }
 
             return true;
+        });
+    }
+
+    /// <summary>
+    /// Replace all annotations for a source+kind pair in one transaction.
+    /// Deletes stale keys, appends spans, and upserts incoming annotations by semantic key.
+    /// </summary>
+    public static AnnotationReplaceResult ReplaceAnnotationsBySource(
+        this DuckDbDataStore store,
+        string source,
+        string kind,
+        IReadOnlyList<Annotation> annotations,
+        IReadOnlyList<Span> spans)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(kind);
+        ArgumentNullException.ThrowIfNull(annotations);
+        ArgumentNullException.ThrowIfNull(spans);
+
+        var dedupedByKey = new Dictionary<string, Annotation>(StringComparer.Ordinal);
+        foreach (var annotation in annotations)
+        {
+            if (string.IsNullOrWhiteSpace(annotation.SemanticKey))
+            {
+                throw new ArgumentException(
+                    "All annotations must provide a non-empty semantic key.",
+                    nameof(annotations));
+            }
+
+            var key = annotation.SemanticKey!;
+            dedupedByKey[key] = annotation with
+            {
+                SemanticKey = key,
+                Source = source,
+                Kind = kind
+            };
+        }
+
+        var semanticKeys = dedupedByKey.Keys
+            .OrderBy(k => k, StringComparer.Ordinal)
+            .ToArray();
+
+        return store.WriteTransaction((conn, tx) =>
+        {
+            var keyTempTable = semanticKeys.Length > SemanticKeyTempTableThreshold
+                ? CreateSemanticKeyTempTable(conn, tx, semanticKeys)
+                : null;
+
+            try
+            {
+                var expired = DeleteExpiredAnnotationsBySource(conn, tx, source, kind, semanticKeys, keyTempTable);
+
+                if (spans.Count > 0)
+                    AppendSpans(conn, spans);
+
+                var existingByKey = GetExistingAnnotationsBySemanticKey(conn, tx, semanticKeys, keyTempTable);
+
+                var inserted = 0;
+                var updated = 0;
+                foreach (var (key, incoming) in dedupedByKey)
+                {
+                    if (!existingByKey.TryGetValue(key, out var existing))
+                    {
+                        UpsertAnnotation(conn, tx, incoming);
+                        inserted++;
+                        continue;
+                    }
+
+                    if (AnnotationsEquivalent(existing, incoming))
+                        continue;
+
+                    var toUpdate = incoming with
+                    {
+                        Id = existing.Id,
+                        CreatedAt = existing.CreatedAt
+                    };
+                    UpsertAnnotation(conn, tx, toUpdate);
+                    updated++;
+                }
+
+                return new AnnotationReplaceResult(inserted, updated, expired);
+            }
+            finally
+            {
+                if (keyTempTable is not null)
+                    conn.Execute(tx, $"DROP TABLE IF EXISTS {keyTempTable};");
+            }
         });
     }
 
@@ -1144,6 +1235,188 @@ public static class DuckDbDataStoreExtensions
     private static void DeleteAnnotation(DuckDBConnection conn, DuckDBTransaction tx, Guid id)
     {
         conn.Execute(tx, "DELETE FROM annotation WHERE id = ?;", id);
+    }
+
+    private static string CreateSemanticKeyTempTable(
+        DuckDBConnection conn,
+        DuckDBTransaction tx,
+        IReadOnlyCollection<string> semanticKeys)
+    {
+        var tableName = $"tmp_semantic_keys_{Guid.NewGuid():N}";
+        conn.Execute(tx, $"CREATE TEMP TABLE {tableName}(semantic_key TEXT PRIMARY KEY);");
+
+        using var appender = conn.CreateAppender(tableName);
+        foreach (var key in semanticKeys)
+        {
+            var row = appender.CreateRow();
+            row.AppendValue(key);
+            row.EndRow();
+        }
+
+        return tableName;
+    }
+
+    private static int DeleteExpiredAnnotationsBySource(
+        DuckDBConnection conn,
+        DuckDBTransaction tx,
+        string source,
+        string kind,
+        IReadOnlyList<string> semanticKeys,
+        string? keyTempTable)
+    {
+        var expired = CountExpiredAnnotationsBySource(conn, tx, source, kind, semanticKeys, keyTempTable);
+        if (expired == 0)
+            return 0;
+
+        using var deleteCmd = conn.CreateCommand();
+        deleteCmd.Transaction = tx;
+
+        if (semanticKeys.Count == 0)
+        {
+            deleteCmd.CommandText = "DELETE FROM annotation WHERE source = ? AND kind = ?;";
+            deleteCmd.AddParameters(source, kind);
+            deleteCmd.ExecuteNonQuery();
+            return expired;
+        }
+
+        if (keyTempTable is not null)
+        {
+            deleteCmd.CommandText = $"""
+                DELETE FROM annotation
+                WHERE source = ? AND kind = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {keyTempTable} keys WHERE keys.semantic_key = annotation.semantic_key
+                  );
+                """;
+            deleteCmd.AddParameters(source, kind);
+            deleteCmd.ExecuteNonQuery();
+            return expired;
+        }
+
+        var placeholders = string.Join(",", semanticKeys.Select(_ => "?"));
+        deleteCmd.CommandText = $"""
+            DELETE FROM annotation
+            WHERE source = ? AND kind = ?
+              AND (semantic_key IS NULL OR semantic_key NOT IN ({placeholders}));
+            """;
+        deleteCmd.AddParameters(source, kind);
+        foreach (var key in semanticKeys)
+            deleteCmd.Parameters.Add(new DuckDBParameter(key));
+
+        deleteCmd.ExecuteNonQuery();
+        return expired;
+    }
+
+    private static int CountExpiredAnnotationsBySource(
+        DuckDBConnection conn,
+        DuckDBTransaction tx,
+        string source,
+        string kind,
+        IReadOnlyList<string> semanticKeys,
+        string? keyTempTable)
+    {
+        using var countCmd = conn.CreateCommand();
+        countCmd.Transaction = tx;
+
+        if (semanticKeys.Count == 0)
+        {
+            countCmd.CommandText = "SELECT COUNT(*) FROM annotation WHERE source = ? AND kind = ?;";
+            countCmd.AddParameters(source, kind);
+            return Convert.ToInt32(countCmd.ExecuteScalar() ?? 0);
+        }
+
+        if (keyTempTable is not null)
+        {
+            countCmd.CommandText = $"""
+                SELECT COUNT(*)
+                FROM annotation
+                WHERE source = ? AND kind = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {keyTempTable} keys WHERE keys.semantic_key = annotation.semantic_key
+                  );
+                """;
+            countCmd.AddParameters(source, kind);
+            return Convert.ToInt32(countCmd.ExecuteScalar() ?? 0);
+        }
+
+        var placeholders = string.Join(",", semanticKeys.Select(_ => "?"));
+        countCmd.CommandText = $"""
+            SELECT COUNT(*)
+            FROM annotation
+            WHERE source = ? AND kind = ?
+              AND (semantic_key IS NULL OR semantic_key NOT IN ({placeholders}));
+            """;
+        countCmd.AddParameters(source, kind);
+        foreach (var key in semanticKeys)
+            countCmd.Parameters.Add(new DuckDBParameter(key));
+
+        return Convert.ToInt32(countCmd.ExecuteScalar() ?? 0);
+    }
+
+    private static IReadOnlyDictionary<string, Annotation> GetExistingAnnotationsBySemanticKey(
+        DuckDBConnection conn,
+        DuckDBTransaction tx,
+        IReadOnlyList<string> semanticKeys,
+        string? keyTempTable)
+    {
+        if (semanticKeys.Count == 0)
+            return new Dictionary<string, Annotation>(StringComparer.Ordinal);
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        if (keyTempTable is not null)
+        {
+            cmd.CommandText = $"""
+                SELECT id, semantic_key, kind, severity, source, rule_id, message, data,
+                       scope_document_id, target_node_id, target_edge_id, target_span_id, target_uri,
+                       created_at, expires_at
+                FROM annotation
+                WHERE semantic_key IN (SELECT semantic_key FROM {keyTempTable});
+                """;
+        }
+        else
+        {
+            var placeholders = string.Join(",", semanticKeys.Select(_ => "?"));
+            cmd.CommandText = $"""
+                SELECT id, semantic_key, kind, severity, source, rule_id, message, data,
+                       scope_document_id, target_node_id, target_edge_id, target_span_id, target_uri,
+                       created_at, expires_at
+                FROM annotation
+                WHERE semantic_key IN ({placeholders});
+                """;
+            foreach (var key in semanticKeys)
+                cmd.Parameters.Add(new DuckDBParameter(key));
+        }
+
+        using var reader = cmd.ExecuteReader();
+        var existing = new Dictionary<string, Annotation>(StringComparer.Ordinal);
+        while (reader.Read())
+        {
+            var annotation = reader.MapToAnnotation();
+            if (!string.IsNullOrWhiteSpace(annotation.SemanticKey))
+                existing[annotation.SemanticKey!] = annotation;
+        }
+
+        return existing;
+    }
+
+    private static bool AnnotationsEquivalent(Annotation existing, Annotation incoming)
+    {
+        if (!string.Equals(existing.SemanticKey, incoming.SemanticKey, StringComparison.Ordinal))
+            return false;
+
+        return string.Equals(existing.Kind, incoming.Kind, StringComparison.Ordinal)
+               && string.Equals(existing.Severity, incoming.Severity, StringComparison.Ordinal)
+               && string.Equals(existing.Source, incoming.Source, StringComparison.Ordinal)
+               && string.Equals(existing.RuleId, incoming.RuleId, StringComparison.Ordinal)
+               && string.Equals(existing.Message, incoming.Message, StringComparison.Ordinal)
+               && JsonNode.DeepEquals(existing.Data, incoming.Data)
+               && existing.ScopeDocumentId == incoming.ScopeDocumentId
+               && existing.TargetNodeId == incoming.TargetNodeId
+               && existing.TargetEdgeId == incoming.TargetEdgeId
+               && existing.TargetSpanId == incoming.TargetSpanId
+               && string.Equals(existing.TargetUri?.ToString(), incoming.TargetUri?.ToString(), StringComparison.Ordinal)
+               && existing.ExpiresAt == incoming.ExpiresAt;
     }
 
     private static void UpsertAnnotation(DuckDBConnection conn, DuckDBTransaction tx, Annotation a)

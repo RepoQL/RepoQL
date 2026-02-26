@@ -1,0 +1,35 @@
+{
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "ESLint",
+          "rules": [
+            { "id": "no-unused-vars" }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "no-unused-vars",
+          "level": "warning",
+          "message": { "text": "'x' is assigned a value but never used." },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "/home/user/project/src/app.js"
+                },
+                "region": {
+                  "startLine": 3,
+                  "startColumn": 7
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
