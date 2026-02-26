@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
   </ItemGroup>
 
 </Project>

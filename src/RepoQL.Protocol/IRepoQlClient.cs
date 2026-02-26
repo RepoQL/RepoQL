@@ -77,8 +77,8 @@ public interface IRepoQlClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Import an external repository (e.g., github://owner/repo) and wait until all files are indexed
-    /// and have structure embeddings ready for semantic search.
+    /// Import an external source (e.g., github://owner/repo or sarif:///path/to/file.sarif).
+    /// VFS imports may return immediately with an operation identifier for async progress tracking.
     /// </summary>
     /// <param name="uri">Repository URI understood by an importer.</param>
     /// <param name="cancellationToken">Cancellation token.</param>

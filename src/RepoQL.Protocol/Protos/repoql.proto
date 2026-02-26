@@ -308,6 +308,10 @@ message ImportResponse {
   int32 indexed_count = 3;
   int32 embedded_count = 4;
   int32 failed_count = 5;
+  // Human-readable import summary for callers.
+  optional string message = 6;
+  // Tracking operation identifier for async imports.
+  optional string operation_id = 7;
 }
 
 message GetPipelineStatusRequest {}

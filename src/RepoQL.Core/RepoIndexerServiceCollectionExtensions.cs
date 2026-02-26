@@ -59,6 +59,7 @@ using RepoQL.Metrics;
 using RepoQL.Templating;
 using RepoQL.Mcp.Client;
 using RepoQL.Mcp.Client.Configuration;
+using RepoQL.Sarif;
 
 namespace RepoQL.Core;
 
@@ -675,6 +676,12 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetService<ILogger<LocalDirectoryImporter>>()));
         services.AddSingleton<IFileSystemImportService, FileSystemImportService>();
+        services.AddSingleton<ISarifNormalizer, SarifNormalizer>();
+        services.AddSingleton<ISarifImportService>(sp => new SarifImportService(
+            sp.GetRequiredService<ISarifNormalizer>(),
+            sp.GetRequiredService<DuckDbDataStore>(),
+            resolvedRoot,
+            sp.GetService<ILogger<SarifImportService>>()));
 
         // Explicit factory needed: ActivatorUtilities doesn't reliably resolve optional parameters
         // after other optional parameters (ILogger? before IIndexingCoordinator?)

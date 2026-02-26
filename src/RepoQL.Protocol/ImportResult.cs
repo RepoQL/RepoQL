@@ -8,16 +8,20 @@ namespace RepoQL.Protocol;
 /// <param name="IndexedCount">Files that reached indexed state.</param>
 /// <param name="EmbeddedCount">Files that have structure embeddings.</param>
 /// <param name="FailedCount">Files that failed indexing or embedding.</param>
+/// <param name="Message">Human-readable import summary from the host.</param>
+/// <param name="OperationId">Operation identifier when import continues asynchronously.</param>
 public record ImportResult(
     Contracts.PipelineStatus Status,
     int TotalFiles,
     int IndexedCount,
     int EmbeddedCount,
-    int FailedCount)
+    int FailedCount,
+    string? Message = null,
+    string? OperationId = null)
 {
     /// <summary>True if any files failed during import.</summary>
     public bool HasFailures => FailedCount > 0;
 
-    /// <summary>True if operation tracking was used (TotalFiles > 0).</summary>
-    public bool HasOperationProgress => TotalFiles > 0;
+    /// <summary>True when the host returned operation tracking information.</summary>
+    public bool HasOperationProgress => !string.IsNullOrWhiteSpace(OperationId) || TotalFiles > 0;
 }

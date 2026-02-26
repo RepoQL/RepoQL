@@ -17,12 +17,13 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
     private const string ImportInstructions =
         """
-        Import or remove an external data source (e.g., a GitHub repository) from the current repoql datastore.
+        Import or remove an external data source (e.g., GitHub repository, local directory, or SARIF report) from the current repoql datastore.
 
-        To import: Provide a URI such as `github://owner/repo@ref`.
+        To import: Provide a URI such as `github://owner/repo@ref`, `local:///path/to/dir`, or `sarif:///path/to/file.sarif`.
         To remove: Prefix the URI with `-` (e.g., `-github://owner/repo`) to delete the import and all its indexed data.
 
-        Import waits for all files to be indexed and have structure embeddings ready for semantic search.
+        VFS imports (`github://`, `local://`) return immediately with an operation ID for progress tracking.
+        SARIF imports (`sarif://`) complete synchronously and return a summary message.
 
         To see all imports: `SELECT * FROM Filesystems`
         """;
@@ -31,25 +32,28 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<CallToolResult> ImportAsync(
-        [Description("URI to import (e.g., github://owner/repo@ref). Prefix with '-' to remove an import.")] string importUri,
+        [Description("URI to import (e.g., github://owner/repo@ref, local:///path/to/dir, sarif:///path/to/file.sarif). Prefix with '-' to remove an import.")] string importUri,
         [Description("When true, run full analysis (nodes, edges, annotations, type hierarchies). Enables Types/Functions/call-graph queries on the imported repo. Default: false.")] bool analyze = false,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(importUri))
             return ToolResult.Error("importUri is required");
 
+        var trimmedImportUri = importUri.Trim();
         // Check for removal prefix - server handles this
-        var isRemoval = importUri.TrimStart().StartsWith('-');
+        var isRemoval = trimmedImportUri.TrimStart().StartsWith('-');
+        var effectiveImportUri = isRemoval ? trimmedImportUri.TrimStart('-').Trim() : trimmedImportUri;
+        var isSarifImport = !isRemoval && effectiveImportUri.StartsWith("sarif://", StringComparison.OrdinalIgnoreCase);
 
         try
         {
             var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-            var result = await client.ImportRepositoryAsync(importUri.Trim(), analyze, cancellationToken).ConfigureAwait(false);
+            var result = await client.ImportRepositoryAsync(trimmedImportUri, analyze, cancellationToken).ConfigureAwait(false);
 
             if (isRemoval)
             {
                 return ToolResult.Success($"""
-                    Import removed: {importUri.Trim().TrimStart('-')}
+                    Import removed: {trimmedImportUri.TrimStart('-')}
 
                     The import and all its indexed data have been deleted.
 
@@ -57,8 +61,34 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                     """);
             }
 
+            if (isSarifImport)
+            {
+                var sarifMessage = string.IsNullOrWhiteSpace(result.Message)
+                    ? $"SARIF import completed: {effectiveImportUri}"
+                    : result.Message;
+
+                return ToolResult.Success(sarifMessage);
+            }
+
+            if (!string.IsNullOrWhiteSpace(result.OperationId))
+            {
+                var importMessage = string.IsNullOrWhiteSpace(result.Message)
+                    ? $"Import started: {effectiveImportUri}"
+                    : result.Message;
+
+                return ToolResult.Success($"""
+                    {importMessage}
+
+                    Operation ID: {result.OperationId}
+
+                    Check progress with:
+                    - SELECT * FROM _operation('{result.OperationId}')
+                    - SELECT * FROM _operations()
+                    """);
+            }
+
             // Extract repository information for query guidance
-            var uriPattern = GetUriPattern(importUri.Trim());
+            var uriPattern = GetUriPattern(trimmedImportUri);
 
             // Generate tree visualization of imported content
             var treeOutput = await GenerateTreeAsync(uriPattern, cancellationToken).ConfigureAwait(false);
@@ -79,7 +109,7 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                 : "";
 
             return ToolResult.Success($"""
-                Import completed: {importUri.Trim()}
+                Import completed: {trimmedImportUri}
                 {progressSummary}
 
                 {treeOutput}

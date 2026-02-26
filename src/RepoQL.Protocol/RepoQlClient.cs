@@ -926,7 +926,9 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
                 TotalFiles: response.TotalFiles,
                 IndexedCount: response.IndexedCount,
                 EmbeddedCount: response.EmbeddedCount,
-                FailedCount: response.FailedCount);
+                FailedCount: response.FailedCount,
+                Message: response.HasMessage ? response.Message : null,
+                OperationId: response.HasOperationId ? response.OperationId : null);
         }, cancellationToken);
 
     public Task<ProtoPipelineStatus> GetPipelineStatusAsync(CancellationToken cancellationToken = default)

@@ -20,6 +20,7 @@ using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
+using RepoQL.Sarif;
 using RepoQL.Explore;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
@@ -33,6 +34,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly RepositoryConfiguration repoConfig;
     private readonly IIndexingCoordinator coordinator;
     private readonly IFileSystemImportService importService;
+    private readonly ISarifImportService _sarifImportService;
     private readonly ICompositeFileSystemManager _mountManager;
     private readonly DocumentPreviewService _previewService;
     private readonly IHostApplicationLifetime _hostLifetime;
@@ -68,6 +70,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         RepositoryConfiguration repoConfig,
         IIndexingCoordinator coordinator,
         IFileSystemImportService importService,
+        ISarifImportService sarifImportService,
         ICompositeFileSystemManager mountManager,
         DocumentPreviewService previewService,
         IHostApplicationLifetime hostLifetime,
@@ -87,6 +90,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
+        _sarifImportService = sarifImportService ?? throw new ArgumentNullException(nameof(sarifImportService));
         _mountManager = mountManager ?? throw new ArgumentNullException(nameof(mountManager));
         _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
@@ -815,6 +819,12 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             _logger.LogInformation("[Import] Parsed URI: scheme={Scheme}, authority={Authority}, path={Path}",
                 repoUri!.Scheme, repoUri.Authority, repoUri.AbsolutePath);
 
+            if (string.Equals(repoUri.Scheme, "sarif", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogDebug("[Import] Routing to SARIF import service");
+                return await ImportSarifAsync(repoUri, context, sw).ConfigureAwait(false);
+            }
+
             // Clone/sync the repository and get the tracking operation
             _logger.LogDebug("[Import] Starting repository clone/sync...");
             var importStart = sw.ElapsedMilliseconds;
@@ -837,63 +847,14 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 throw new RpcException(new Status(StatusCode.Internal, ex.Message));
             }
 
-            // Wait for operation completion (all files indexed with structure embeddings or marked NotApplicable)
-            OperationProgress? opProgress = null;
-
-            if (operation is not null)
-            {
-                _logger.LogDebug("[Import] Waiting for operation {OpId} to complete...", operation.Id);
-                var opStart = sw.ElapsedMilliseconds;
-                try
-                {
-                    // Wait with cancellation support
-                    opProgress = await operation.Completion.WaitAsync(context.CancellationToken).ConfigureAwait(false);
-                    _logger.LogInformation("[Import] Operation {OpId} completed in {ElapsedMs}ms: {Embedded}/{Total} embedded, {Failed} failed",
-                        operation.Id, sw.ElapsedMilliseconds - opStart, opProgress.EmbeddedCount, opProgress.TotalFiles, opProgress.FailedCount);
-                }
-                catch (OperationCanceledException)
-                {
-                    _logger.LogWarning("[Import] Operation {OpId} cancelled after {ElapsedMs}ms", operation.Id, sw.ElapsedMilliseconds - opStart);
-                    operation.Cancel();
-                    throw;
-                }
-            }
-            else
-            {
-                _logger.LogWarning("[Import] No operation created - UriRegistry may not be configured");
-            }
-
             // Flush WAL so follow-up queries see the imported data immediately
             _db.TryCheckpoint();
-
-            // Schedule background batch embedding refresh (for full/content embeddings beyond structure)
-            if (_embeddingProvider is not null && _embeddingProvider.Enabled)
-            {
-                _logger.LogDebug("[Import] Scheduling background batch embedding refresh");
-                var provider = _embeddingProvider;
-                var db = _db;
-                var logger = _logger;
-                var embeddingMode = _embeddingMode;
-                _ = Task.Run(async () =>
-                {
-                    var bgStart = Stopwatch.StartNew();
-                    try
-                    {
-                        var refresher = new EmbeddingRefresher(db, embeddingMode, logger as ILogger<EmbeddingRefresher>, _embeddingSettings);
-                        await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
-                        logger.LogInformation("[Import] Background batch embedding refresh completed ({ElapsedMs}ms)", bgStart.ElapsedMilliseconds);
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "[Import] Background batch embedding refresh failed after {ElapsedMs}ms", bgStart.ElapsedMilliseconds);
-                    }
-                });
-            }
 
             var snapshot = coordinator.GetPipelineStatus();
             _logger.LogInformation("[Import] Completed successfully for {Uri} in {ElapsedMs}ms", uri, sw.ElapsedMilliseconds);
 
             var response = new ImportResponse { Status = ToProtoStatus(snapshot) };
+            var opProgress = operation?.Progress;
             if (opProgress is not null)
             {
                 response.TotalFiles = opProgress.TotalFiles;
@@ -901,6 +862,46 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 response.EmbeddedCount = opProgress.EmbeddedCount;
                 response.FailedCount = opProgress.FailedCount;
             }
+
+            if (operation is not null)
+            {
+                response.OperationId = operation.Id;
+                var fileCount = opProgress?.TotalFiles ?? 0;
+                response.Message = $"Importing {fileCount} files from {displayUri} - operation {operation.Id}";
+            }
+            else
+            {
+                _logger.LogWarning("[Import] No operation created - UriRegistry may not be configured");
+                response.Message = $"Import started for {displayUri}. Operation tracking is unavailable.";
+            }
+
+            // Preserve existing post-import embedding refresh behavior without blocking the import response.
+            if (operation is not null && _embeddingProvider is { Enabled: true } provider)
+            {
+                var db = _db;
+                var logger = _logger;
+                var embeddingMode = _embeddingMode;
+                var settings = _embeddingSettings;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await operation.Completion.ConfigureAwait(false);
+                        var refresher = new EmbeddingRefresher(db, embeddingMode, logger as ILogger<EmbeddingRefresher>, settings);
+                        await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
+                        logger.LogInformation("[Import] Background batch embedding refresh completed for operation {OpId}", operation.Id);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        logger.LogDebug("[Import] Background embedding refresh canceled for operation {OpId}", operation.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "[Import] Background batch embedding refresh failed for operation {OpId}", operation.Id);
+                    }
+                });
+            }
+
             return response;
         }
         catch (RpcException)
@@ -917,6 +918,90 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             _logger.LogError(ex, "[Import] Unexpected error for {Uri} after {ElapsedMs}ms", displayUri, sw.ElapsedMilliseconds);
             throw new RpcException(new Status(StatusCode.Internal, $"Import failed: {ex.Message}"));
         }
+    }
+
+    private async Task<ImportResponse> ImportSarifAsync(
+        RepoUri repoUri,
+        ServerCallContext context,
+        Stopwatch sw)
+    {
+        var sarifPath = ResolveSarifFilePath(repoUri);
+        _logger.LogInformation("[Import:SARIF] Importing findings from {Path}", sarifPath);
+
+        RepoQL.Sarif.Models.SarifImportResult importResult;
+        try
+        {
+            importResult = await _sarifImportService.ImportAsync(sarifPath, context.CancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "[Import:SARIF] Import rejected for {Path}", sarifPath);
+            throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Import:SARIF] Import failed for {Path}", sarifPath);
+            throw new RpcException(new Status(StatusCode.Internal, ex.Message));
+        }
+
+        _db.TryCheckpoint();
+        var snapshot = coordinator.GetPipelineStatus();
+        var message = FormatSarifImportMessage(importResult);
+        _logger.LogInformation("[Import:SARIF] Completed in {ElapsedMs}ms with {Total} findings", sw.ElapsedMilliseconds, importResult.TotalFindings);
+
+        return new ImportResponse
+        {
+            Status = ToProtoStatus(snapshot),
+            Message = message
+        };
+    }
+
+    private string ResolveSarifFilePath(RepoUri repoUri)
+    {
+        var decodedPath = Uri.UnescapeDataString(repoUri.AbsolutePath ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(decodedPath))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "sarif:// URI must include a file path."));
+
+        var normalized = decodedPath.Replace('\\', '/');
+        if (normalized.StartsWith("/./", StringComparison.Ordinal))
+            normalized = normalized[3..];
+        else if (normalized.StartsWith("./", StringComparison.Ordinal))
+            normalized = normalized[2..];
+
+        // file:///C:/... style path embedded in sarif URI absolute path.
+        if (normalized.Length >= 3 && normalized[0] == '/' && char.IsLetter(normalized[1]) && normalized[2] == ':')
+            normalized = normalized[1..];
+
+        var candidate = normalized.Replace('/', Path.DirectorySeparatorChar);
+        if (Path.IsPathRooted(candidate))
+            return Path.GetFullPath(candidate);
+
+        return Path.GetFullPath(Path.Combine(repoConfig.Path, candidate));
+    }
+
+    private static string FormatSarifImportMessage(RepoQL.Sarif.Models.SarifImportResult result)
+    {
+        var sb = new StringBuilder();
+        if (result.Sources.Count == 1)
+            sb.AppendLine($"Imported {result.TotalFindings} findings from {result.Sources[0].Source}");
+        else
+            sb.AppendLine($"Imported {result.TotalFindings} findings from {result.Sources.Count} sources");
+
+        foreach (var source in result.Sources.OrderBy(s => s.Source, StringComparer.Ordinal))
+        {
+            sb.AppendLine($"{source.Source}: {source.Total} findings");
+            sb.AppendLine($"  {source.Resolved} resolved to indexed files, {source.Unresolved} unresolved");
+            sb.AppendLine($"  {source.New} new, {source.Updated} updated, {source.Unchanged} unchanged, {source.Expired} expired");
+        }
+
+        if (result.Warnings.Count > 0)
+        {
+            sb.AppendLine("Warnings:");
+            foreach (var warning in result.Warnings)
+                sb.AppendLine($"- {warning}");
+        }
+
+        return sb.ToString().TrimEnd();
     }
 
     private Task<ImportResponse> RemoveImportAsync(string uri, ServerCallContext context)
