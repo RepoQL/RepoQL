@@ -25,6 +25,7 @@ dotnet_diagnostic.RQL004.severity = error
 dotnet_diagnostic.RQL005.severity = error
 dotnet_diagnostic.RQL006.severity = error
 dotnet_diagnostic.RQL007.severity = error
+dotnet_diagnostic.RQL008.severity = error
 
 # Style
 csharp_style_var_for_built_in_types = true

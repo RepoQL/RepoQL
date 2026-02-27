@@ -148,38 +148,6 @@ WHERE sn.is_focus;
 
 ---
 
-## Explore
-
-### explore()
-
-Token-budgeted codebase exploration. Returns pre-rendered text fitting the token budget.
-
-```sql
-explore(
-    keywords,                -- Search terms
-    intent := 'Explore',     -- 'Find', 'Explore', 'Understand'
-    tokens := 1000,          -- Token budget for output
-    scope := NULL,           -- URI glob filter
-    boost := NULL,           -- Regex to boost
-    penalize := NULL         -- Regex to de-rank
-)
-```
-
-**Returns**: Text summary with ranked files, symbols, and structure details.
-
-**Example**:
-```sql
-SELECT explore('authentication', intent := 'Find', tokens := 500);
-```
-
-**Depth**
-- `Find`: Locate specific code/symbols
-- `Explore`: Understand structure and relationships
-- `Understand`: Deep analysis of how something works
-- Output scales to token budget - more tokens = more detail
-
----
-
 ## Annotations
 
 ### annotations_for()

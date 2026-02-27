@@ -77,7 +77,6 @@ No additional registration needed. IL Linker config preserves the class automati
 
 | Macro | UDF Class | Purpose |
 |-------|-----------|---------|
-| `_explore_internal(...)` | `ExploreUdf` | Token-budgeted codebase exploration (called by explore tool) |
 | `ask(...)` | `LlmUdf` | Ask questions about query results using LLM |
 | `llm_extract(...)` | `LlmUdf` | LLM-powered code extraction |
 | `embed_status()` | `EmbedUdf` | Embedding provider diagnostics |
@@ -187,7 +186,6 @@ RepoQL.Data.DuckDB/
 │   ├── UdfRegistry.cs          # Discovery, registration, macro generation
 │   └── UdfHelpers.cs           # JSON serialization utilities
 ├── UdfImplementations/
-│   ├── ExploreUdf.cs            # explore search (called by explore tool)
 │   ├── LlmUdf.cs               # ask(), llm_extract()
 │   ├── EmbedUdf.cs             # embed_status(), embed_text()
 │   ├── DiagnosticsUdf.cs       # indexing_diagnostics(), indexing_queue()

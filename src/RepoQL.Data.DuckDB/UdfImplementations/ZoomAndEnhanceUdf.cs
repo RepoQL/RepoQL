@@ -19,11 +19,11 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// </summary>
 [UdfClass]
 public sealed class ZoomAndEnhanceUdf(
-    DuckDbDataStore store,
+    IReentrantReader reader,
     IEmbeddingProvider? embeddingProvider = null,
     ILogger<ZoomAndEnhanceUdf>? logger = null)
 {
-    private readonly DuckDbDataStore _store = store ?? throw new ArgumentNullException(nameof(store));
+    private readonly IReentrantReader _reader = reader ?? throw new ArgumentNullException(nameof(reader));
     private readonly IEmbeddingProvider? _embeddingProvider = embeddingProvider;
     private readonly ILogger<ZoomAndEnhanceUdf> _logger = logger ?? NullLogger<ZoomAndEnhanceUdf>.Instance;
 
@@ -222,7 +222,7 @@ public sealed class ZoomAndEnhanceUdf(
             WHERE n.uri IN ({uriList})
             """;
 
-        var rows = _store.Read(sql, r =>
+        var rows = _reader.Read(sql, r =>
         {
             var uri = r.IsDBNull(0) ? "" : r.GetString(0);
             var text = r.IsDBNull(1) ? "" : r.GetString(1);

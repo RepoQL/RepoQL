@@ -18,7 +18,7 @@ namespace RepoQL.Data.DuckDB;
 /// All database access should go through Read/WriteTransaction methods.
 /// Includes automatic detection and recovery from database corruption.
 /// </summary>
-public sealed class DuckDbDataStore : IDisposable
+public sealed class DuckDbDataStore : IReentrantReader, IDisposable
 {
     private static readonly ActivitySource ActivitySource = new("RepoQL.DuckDB");
 
@@ -40,8 +40,8 @@ public sealed class DuckDbDataStore : IDisposable
     private readonly DuckDbStartupOptions _startupOptions;
     private readonly int _readPoolSize;
     private static readonly AsyncLocal<IServiceScope?> _currentScope = new();
-    [ThreadStatic]
-    private static bool _inQueryContext;
+    private volatile int _exclusiveOwnerThreadId; // 0 = no owner; only the owner thread can match
+    private int _exclusiveSectionDepth;            // only accessed by owner thread, no synchronization needed
     private int _activePooledReads;
     private int _waitingExclusiveOperations;
     private bool _exclusiveOperationActive;
@@ -240,6 +240,15 @@ public sealed class DuckDbDataStore : IDisposable
 
     private void EnterExclusiveSection(CancellationToken cancellationToken = default)
     {
+        // Reentrant: if this thread already owns the exclusive section, just increment depth.
+        // This handles UDF callbacks where DuckDB calls back into managed code on the same thread.
+        var currentThreadId = Environment.CurrentManagedThreadId;
+        if (_exclusiveOwnerThreadId == currentThreadId)
+        {
+            _exclusiveSectionDepth++;
+            return;
+        }
+
         lock (_readGateLock)
         {
             _waitingExclusiveOperations++;
@@ -275,10 +284,28 @@ public sealed class DuckDbDataStore : IDisposable
             }
             throw;
         }
+
+        _exclusiveOwnerThreadId = currentThreadId;
+        _exclusiveSectionDepth = 1;
     }
+
+    /// <summary>
+    /// Whether the current exclusive section entry is reentrant (depth > 1).
+    /// When true, callers should use GetReentrantConnection() instead of _connection,
+    /// because _connection is already executing a query that triggered this reentrant call.
+    /// </summary>
+    private bool IsReentrantExclusiveEntry => _exclusiveSectionDepth > 1;
 
     private void ExitExclusiveSection()
     {
+        if (_exclusiveSectionDepth > 1)
+        {
+            _exclusiveSectionDepth--;
+            return;
+        }
+
+        _exclusiveOwnerThreadId = 0;
+        _exclusiveSectionDepth = 0;
         _lock.Release();
         lock (_readGateLock)
         {
@@ -471,29 +498,22 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
-        // Detect reentrant calls (e.g., from UDFs that query the database)
-        // If already in a query context, use secondary connection to avoid deadlock
-        if (_inQueryContext)
-        {
-            return ExecuteReentrantRead(sql, map, cancellationToken);
-        }
-
         EnterExclusiveSection(cancellationToken);
         try
         {
+            var conn = IsReentrantExclusiveEntry ? GetReentrantConnection() : _connection;
+
             // Set up DI scope for UDFs that need service resolution
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
             _currentScope.Value = scope;
-            _inQueryContext = true;
             try
             {
-                return ExecuteReadOnConnection(_connection, "duckdb.query", sql, map, cancellationToken);
+                return ExecuteReadOnConnection(conn, "duckdb.query", sql, map, cancellationToken);
             }
             finally
             {
                 _currentScope.Value = previousScope;
-                _inQueryContext = false;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
@@ -546,37 +566,27 @@ public sealed class DuckDbDataStore : IDisposable
         }
     }
 
-    private IReadOnlyList<T> ExecuteReentrantRead<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
+    /// <summary>
+    /// Explicit IReentrantReader implementation — bypasses the exclusive section and uses the
+    /// reentrant read-only connection directly. Serialized by _reentrantConnectionLock to prevent
+    /// concurrent commands on the same DuckDB connection (connections are not thread-safe).
+    /// </summary>
+    IReadOnlyList<T> IReentrantReader.Read<T>(string sql, Func<IDataRecord, T> map, CancellationToken cancellationToken)
     {
-        var conn = GetReentrantConnection();
-        return ExecuteReadOnConnection(conn, "duckdb.query.reentrant", sql, map, cancellationToken);
+        lock (_reentrantConnectionLock)
+        {
+            var conn = GetReentrantConnection();
+            return ExecuteReadOnConnection(conn, "duckdb.query.udf", sql, map, cancellationToken);
+        }
     }
 
-    private T? ExecuteReentrantScalar<T>(string sql, CancellationToken cancellationToken)
+    T? IReentrantReader.ReadScalar<T>(string sql, CancellationToken cancellationToken) where T : default
     {
-        using var activity = ActivitySource.StartActivity("duckdb.scalar.reentrant", ActivityKind.Client);
-        activity?.SetTag("db.system", "duckdb");
-        activity?.SetTag("db.statement", sql.Length > 200 ? sql[..200] + "..." : sql);
-
-        var conn = GetReentrantConnection();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        using var cancellationRegistration = RegisterCommandCancellation(cmd, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        object? result;
-        try
+        lock (_reentrantConnectionLock)
         {
-            result = cmd.ExecuteScalar();
+            var conn = GetReentrantConnection();
+            return ExecuteScalarOnConnection<T>(conn, sql, cancellationToken);
         }
-        catch (DuckDBException ex) when (cancellationToken.IsCancellationRequested)
-        {
-            throw new OperationCanceledException("DuckDB reentrant scalar query canceled.", ex, cancellationToken);
-        }
-
-        if (result is null or DBNull) return default;
-        if (result is T typed) return typed;
-        return (T)Convert.ChangeType(result, typeof(T));
     }
 
     /// <summary>
@@ -594,12 +604,6 @@ public sealed class DuckDbDataStore : IDisposable
         if (_databaseInvalidated)
         {
             CheckAndRecoverIfNeeded();
-        }
-
-        // Detect reentrant calls - use secondary connection to avoid deadlock
-        if (_inQueryContext)
-        {
-            return ExecuteReentrantRead(sql, map, cancellationToken);
         }
 
         if (UsePooledClientReads)
@@ -639,32 +643,32 @@ public sealed class DuckDbDataStore : IDisposable
         EnterExclusiveSection(cancellationToken);
         try
         {
+            var conn = IsReentrantExclusiveEntry ? GetReentrantConnection() : _connection;
+
             // Set up DI scope for UDFs that need service resolution
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
             _currentScope.Value = scope;
-            _inQueryContext = true;
             try
             {
                 // Start a read-only transaction - DuckDB will reject any write attempts
-                _connection.Execute("BEGIN TRANSACTION READ ONLY;");
+                conn.Execute("BEGIN TRANSACTION READ ONLY;");
                 try
                 {
-                    var results = ExecuteReadOnConnection(_connection, "duckdb.query.untrusted", sql, map, cancellationToken);
+                    var results = ExecuteReadOnConnection(conn, "duckdb.query.untrusted", sql, map, cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
-                    _connection.Execute("COMMIT;");
+                    conn.Execute("COMMIT;");
                     return results;
                 }
                 catch
                 {
-                    try { _connection.Execute("ROLLBACK;"); } catch { /* ignore rollback errors */ }
+                    try { conn.Execute("ROLLBACK;"); } catch { /* ignore rollback errors */ }
                     throw;
                 }
             }
             finally
             {
                 _currentScope.Value = previousScope;
-                _inQueryContext = false;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
@@ -695,7 +699,6 @@ public sealed class DuckDbDataStore : IDisposable
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
             _currentScope.Value = scope;
-            _inQueryContext = true;
             try
             {
                 pooledConnection.Execute("BEGIN TRANSACTION READ ONLY;");
@@ -715,7 +718,6 @@ public sealed class DuckDbDataStore : IDisposable
             finally
             {
                 _currentScope.Value = previousScope;
-                _inQueryContext = false;
             }
         }
         finally
@@ -740,28 +742,22 @@ public sealed class DuckDbDataStore : IDisposable
             CheckAndRecoverIfNeeded();
         }
 
-        // Detect reentrant calls - use secondary connection to avoid deadlock
-        if (_inQueryContext)
-        {
-            return ExecuteReentrantScalar<T>(sql, cancellationToken);
-        }
-
         EnterExclusiveSection(cancellationToken);
         try
         {
+            var conn = IsReentrantExclusiveEntry ? GetReentrantConnection() : _connection;
+
             // Set up DI scope for UDFs that need service resolution
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
             _currentScope.Value = scope;
-            _inQueryContext = true;
             try
             {
-                return ExecuteScalar<T>(sql, cancellationToken);
+                return ExecuteScalarOnConnection<T>(conn, sql, cancellationToken);
             }
             finally
             {
                 _currentScope.Value = previousScope;
-                _inQueryContext = false;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
@@ -780,9 +776,13 @@ public sealed class DuckDbDataStore : IDisposable
         }
     }
 
-    private T? ExecuteScalar<T>(string sql, CancellationToken cancellationToken)
+    private T? ExecuteScalarOnConnection<T>(DuckDBConnection connection, string sql, CancellationToken cancellationToken)
     {
-        using var cmd = _connection.CreateCommand();
+        using var activity = ActivitySource.StartActivity("duckdb.scalar", ActivityKind.Client);
+        activity?.SetTag("db.system", "duckdb");
+        activity?.SetTag("db.statement", sql.Length > 200 ? sql[..200] + "..." : sql);
+
+        using var cmd = connection.CreateCommand();
         cmd.CommandText = sql;
         using var cancellationRegistration = RegisterCommandCancellation(cmd, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
@@ -1466,8 +1466,6 @@ public sealed class DuckDbDataStore : IDisposable
                 "Macros/search_symbol.sql",
                 "Tables/file_system_mount.sql",
                 "Views/filesystems.sql",
-                "Macros/explore.sql",
-                "Macros/explore_structured.sql",
                 "Macros/parse.sql",
                 // Git history tables, views, and macros
                 "Tables/git_commit.sql",

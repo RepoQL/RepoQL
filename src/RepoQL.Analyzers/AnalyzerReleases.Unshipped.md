@@ -9,3 +9,4 @@ RQL004 | RepoQL.UDF | Warning | UdfParameterAnalyzer — parameterless [ScalarUd
 RQL005 | RepoQL.UDF | Warning | MissingDiscoveryAttributeAnalyzer — UDF methods without [UdfClass] on class
 RQL006 | RepoQL.Commands | Warning | MissingDiscoveryAttributeAnalyzer — [Command] methods without [CommandClass] on class
 RQL007 | RepoQL.Testing | Warning | NoReflectionInTestsAnalyzer — reflection with BindingFlags.NonPublic in tests
+RQL008 | RepoQL.UDF | Warning | UdfDataStoreAnalyzer — [UdfClass] constructors should use IReentrantReader, not DuckDbDataStore

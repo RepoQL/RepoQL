@@ -534,6 +534,7 @@ public static class RepoIndexerServiceCollectionExtensions
 
             return db;
         });
+        services.AddSingleton<IReentrantReader>(sp => sp.GetRequiredService<DuckDbDataStore>());
 
         // MCP client integration - connects to external MCP servers and exposes their tools via SQL
         // Loads from both repo-level configs and global agent configs (Claude Code, Claude Desktop)
