@@ -33,6 +33,7 @@ using RepoQL.Data.DuckDB;
 using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
 using RepoQL.Explore;
+using RepoQL.Read;
 using RepoQL.Explore.Search;
 using Serilog;
 using Spectre.Console;
@@ -79,8 +80,19 @@ internal class HostCommands(IAnsiConsole console)
             serilogLogger.Warning(pidError, "Failed to write host PID file at {Path}.", pidFile.FilePath);
         }
 
+        HostStderrMirrorScope? stderrMirrorScope = null;
         try
         {
+            if (!CrossSessionHostState.TryInstallStderrMirror(repo, out stderrMirrorScope, out var stderrPath, out var stderrError))
+            {
+                serilogLogger.Warning(stderrError, "Failed to initialize host stderr mirror at {Path}.", stderrPath);
+            }
+
+            if (!CrossSessionHostState.TryWriteHostVersionFile(repo, version, out var versionPath, out var versionError))
+            {
+                serilogLogger.Warning(versionError, "Failed to write host version file at {Path}.", versionPath);
+            }
+
             await WaitForRepositoryAvailabilityAsync(repo, TimeSpan.FromSeconds(45), CancellationToken.None).ConfigureAwait(false);
             serilogLogger.Information("Phase: socket bind");
             var builder = WebApplication.CreateSlimBuilder([]);
@@ -330,6 +342,7 @@ internal class HostCommands(IAnsiConsole console)
         }
         finally
         {
+            stderrMirrorScope?.Dispose();
             hostLock.Dispose();
         }
     }

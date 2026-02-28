@@ -7,6 +7,7 @@
   <ItemGroup>
     <PackageReference Include="DuckDB.NET.Data.Full"/>
     <PackageReference Include="Ignore"/>
+    <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Extensions.Caching.Memory" />
     <PackageReference Include="System.IO.Hashing"/>
   </ItemGroup>

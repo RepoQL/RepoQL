@@ -9,6 +9,8 @@ internal sealed class HostMetrics : IDisposable
     private Func<int> _writerPendingProvider = static () => 0;
     private Func<int> _implicitStartProvider = static () => 0;
     private Func<double> _idleSecondsProvider = static () => -1;
+    private Func<long> _duckDbBufferProvider = static () => 0;
+    private Func<long> _uriRegistryEstimateProvider = static () => 0;
 
     public HostMetrics(string meterName = "RepoQL.Host")
     {
@@ -33,12 +35,34 @@ internal sealed class HostMetrics : IDisposable
             () => _idleSecondsProvider(),
             unit: "s",
             description: "Seconds remaining until idle shutdown");
+        _meter.CreateObservableGauge(
+            "repoql.host.memory.working_set",
+            static () => Environment.WorkingSet,
+            unit: "By",
+            description: "Host process working set in bytes");
+        _meter.CreateObservableGauge(
+            "repoql.host.memory.managed_heap",
+            static () => GC.GetTotalMemory(forceFullCollection: false),
+            unit: "By",
+            description: ".NET managed heap size in bytes");
+        _meter.CreateObservableGauge(
+            "repoql.host.memory.duckdb_buffer",
+            () => _duckDbBufferProvider(),
+            unit: "By",
+            description: "DuckDB buffer memory usage in bytes");
+        _meter.CreateObservableGauge(
+            "repoql.host.memory.uri_registry_estimate",
+            () => _uriRegistryEstimateProvider(),
+            unit: "By",
+            description: "Estimated UriRegistry memory usage in bytes");
     }
 
     public void SetLeaseCountProvider(Func<int> provider) => _leaseCountProvider = provider ?? (() => 0);
     public void SetWriterPendingProvider(Func<int> provider) => _writerPendingProvider = provider ?? (() => 0);
     public void SetImplicitStartProvider(Func<int> provider) => _implicitStartProvider = provider ?? (() => 0);
     public void SetIdleSecondsProvider(Func<double> provider) => _idleSecondsProvider = provider ?? (() => -1);
+    public void SetDuckDbBufferProvider(Func<long> provider) => _duckDbBufferProvider = provider ?? (() => 0);
+    public void SetUriRegistryEstimateProvider(Func<long> provider) => _uriRegistryEstimateProvider = provider ?? (() => 0);
 
     public void Dispose() => _meter.Dispose();
 }
