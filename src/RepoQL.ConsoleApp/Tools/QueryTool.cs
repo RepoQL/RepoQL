@@ -27,6 +27,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         <CONCEPT>
         DuckDB SQL for computation on the indexed repository.
         Use query when you need to COMPUTE (aggregate, filter, join, extract) - not just DISCOVER.
+        Use describe and summarize to understand unfamiliar schema
         </CONCEPT>
 
         <DECISION>
@@ -53,6 +54,8 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         **Types** — `name, qualified_name, type_kind, namespace, extends, implements`
         ```sql
         SELECT name, file_uri FROM Types WHERE extends = 'BaseService';
+        note supported languages usually have more tailored view prefixed with thier extension e.g. csharp_types, python_imports
+        Use the explore tool on help://** to discover them
         ```
 
         **Annotations** — `resolved_target_uri, severity, rule_id, message`
@@ -100,7 +103,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         WHERE sn.is_focus;
         ```
 
-        **parse()** — inline CSV/JSON/YAML as ad-hoc lookup tables:
+        **parse()** — inline CSV/JSON/YAML/anything as ad-hoc lookup tables:
         ```sql
         SELECT f.uri, o.team FROM Files f
         JOIN parse('pattern,team\n**/Auth/**,Security\n**/Core/**,Platform') o
@@ -235,8 +238,10 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
                 return ToolResult.Error($"Error: {cleanMessage}\n\n{diagnostics}");
             }
 
-            // For user input errors (SQL syntax, etc.), just return the message
-            return ToolResult.Error(cleanMessage);
+            // User-input errors (SQL syntax, invalid column, etc.) return Success so the
+            // Claude harness doesn't cancel sibling parallel tool calls. The error text
+            // is still clearly an error — the agent sees it and can correct the query.
+            return ToolResult.Success(cleanMessage + orientationFooter);
         }
     }
 
