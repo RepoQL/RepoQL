@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Explore;
+using RepoQL.Read;
 
 namespace RepoQL.Tests;
 

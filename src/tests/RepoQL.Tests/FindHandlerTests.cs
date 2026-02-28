@@ -6,6 +6,7 @@ using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
+using RepoQL.Read;
 
 namespace RepoQL.Tests;
 

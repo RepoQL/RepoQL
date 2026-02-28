@@ -3,7 +3,9 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace RepoQL.Explore;
+using RepoQL.Explore;
+
+namespace RepoQL.Read;
 
 /// <summary>
 /// Purpose: Parses modifier syntax, routes to handlers, and enforces budget confirmation.
@@ -32,7 +34,7 @@ public sealed class ModifierDispatcher
     public async Task<ReadExecutionResult?> TryExecuteAsync(
         string input,
         int tokenBudget,
-        IndexerStatus status,
+        TrustSignal status,
         CancellationToken cancellationToken,
         Stopwatch? stopwatch = null)
     {
@@ -118,11 +120,11 @@ public sealed class ModifierDispatcher
     private static ReadExecutionResult BuildReadExecutionResult(
         ParsedReadRequest request,
         ModifierResult result,
-        IndexerStatus status,
+        TrustSignal status,
         Stopwatch? stopwatch,
         bool budgetOverridden)
     {
-        var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
+        var statusWithTiming = status with { ExecutionTimeMs = stopwatch?.ElapsedMilliseconds ?? 0 };
         var hint = budgetOverridden
             ? $"budget override: {FormatTokenCount(result.TokenCount)} > {FormatTokenCount(request.TokenBudget)}"
             : null;
@@ -312,3 +314,4 @@ public sealed record ResultMetadata(
 internal sealed record ModifierDispatchCacheEntry(
     ModifierResult Result,
     DateTimeOffset ExpiresAt);
+

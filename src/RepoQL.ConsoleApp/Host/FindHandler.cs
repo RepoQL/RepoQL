@@ -4,6 +4,7 @@ using RepoQL.Contracts;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
+using RepoQL.Read;
 
 namespace RepoQL.ConsoleApp.Host;
 

@@ -1,6 +1,8 @@
 using RepoQL.Contracts;
 
-namespace RepoQL.Explore;
+using RepoQL.Explore;
+
+namespace RepoQL.Read;
 
 /// <summary>
 /// Purpose: Renders directory trees with progressive verbosity under a token budget.

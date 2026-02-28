@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Explore;
+using RepoQL.Read;
 
 namespace RepoQL.Tests;
 

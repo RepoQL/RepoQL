@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using RepoQL.Contracts;
 using RepoQL.Explore;
+using RepoQL.Read;
 
 namespace RepoQL.ConsoleApp.Host;
 

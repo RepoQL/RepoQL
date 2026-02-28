@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Explore;
+using RepoQL.Read;
 using RepoQL.Explore.Search;
 
 namespace RepoQL.Tests;
@@ -11,7 +12,15 @@ namespace RepoQL.Tests;
 /// </summary>
 internal sealed class ReadOrchestratorQuestionTests
 {
-    private static readonly IndexerStatus DefaultStatus = new(0, true, true, 0);
+    private static readonly TrustSignal DefaultStatus = new(
+        IndexTotal: 100,
+        IndexPending: 0,
+        IndexFailed: 0,
+        IndexStale: 0,
+        SemanticEnabled: true,
+        SemanticReady: true,
+        SemanticPercent: 100,
+        ExecutionTimeMs: 0);
 
     [Test]
     [Arguments("file:///path => question: How does this work?", "file:///path", "How does this work?")]
@@ -274,7 +283,7 @@ internal sealed class ReadOrchestratorQuestionTests
                 Results: [],
                 TotalDocumentsMatched: 0,
                 TotalObjectsMatched: 0,
-                IndexerStatus: null));
+                TrustSignal: null));
         }
     }
 }

@@ -22,6 +22,7 @@ using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
 using RepoQL.Sarif;
 using RepoQL.Explore;
+using RepoQL.Read;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoStageStatus = RepoQL.Contracts.StageStatus;
@@ -44,6 +45,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly ExploreOrchestrator _exploreOrchestrator;
     private readonly ReadOrchestrator _readOrchestrator;
     private readonly StatusEventAggregator _statusAggregator;
+    private readonly UriRegistry? _uriRegistry;
     private readonly RepoQlConfig.HostSettings _hostSettings;
     private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
     private readonly ILogger<RepoQlServiceImpl> _logger;
@@ -81,6 +83,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
         ILlmProvider? llmProvider = null,
+        UriRegistry? uriRegistry = null,
         ILogger<RepoQlServiceImpl>? logger = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
@@ -97,6 +100,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
         _readOrchestrator = readOrchestrator ?? throw new ArgumentNullException(nameof(readOrchestrator));
         _statusAggregator = statusAggregator ?? throw new ArgumentNullException(nameof(statusAggregator));
+        _uriRegistry = uriRegistry;
         _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
         _embeddingSettings = config.Embedding;
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
@@ -190,18 +194,19 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         {
             throw new RpcException(new Status(StatusCode.Internal, ex.Message));
         }
-        finally
-        {
-            sw.Stop();
-            resp.ExecutionTimeMs = sw.ElapsedMilliseconds;
 
-            // Populate indexer status
-            var status = coordinator.GetPipelineStatus();
-            var pending = status.Stages.Sum(s => s.Queued + s.InProgress);
-            resp.IndexPending = pending;
-            resp.SemanticEnabled = _embeddingMode != EmbeddingMode.None;
-            resp.SemanticReady = resp.SemanticEnabled && pending == 0;
-        }
+        sw.Stop();
+        resp.ExecutionTimeMs = sw.ElapsedMilliseconds;
+
+        var trustSignal = GetTrustSignal(resp.ExecutionTimeMs, context.CancellationToken);
+        resp.IndexPending = trustSignal.IndexPending;
+        resp.IndexTotal = trustSignal.IndexTotal;
+        resp.IndexFailed = trustSignal.IndexFailed;
+        resp.IndexStale = trustSignal.IndexStale;
+        resp.SemanticEnabled = trustSignal.SemanticEnabled;
+        resp.SemanticReady = trustSignal.SemanticReady;
+        resp.SemanticPercent = trustSignal.SemanticPercent;
+
         return resp;
     }
 
@@ -1202,8 +1207,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
         try
         {
-            // Get indexer status via SQL
-            var status = await GetIndexerStatusAsync(0, context.CancellationToken).ConfigureAwait(false);
+            var status = GetTrustSignal(0, context.CancellationToken);
 
             // Map intent
             var intent = request.Intent switch
@@ -1244,7 +1248,11 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     IndexPending = status.IndexPending,
                     SemanticReady = status.SemanticReady,
                     Ready = isReady,
-                    ElapsedMs = sw.ElapsedMilliseconds
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    IndexTotal = status.IndexTotal,
+                    IndexFailed = status.IndexFailed,
+                    IndexStale = status.IndexStale,
+                    SemanticPercent = status.SemanticPercent
                 }
             };
 
@@ -1277,8 +1285,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
         try
         {
-            // Get indexer status
-            var status = await GetIndexerStatusAsync(0, context.CancellationToken).ConfigureAwait(false);
+            var status = GetTrustSignal(0, context.CancellationToken);
 
             // Execute
             var result = await _readOrchestrator.ExecuteAsync(
@@ -1301,7 +1308,11 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     IndexPending = status.IndexPending,
                     SemanticReady = status.SemanticReady,
                     Ready = status.IndexPending == 0,
-                    ElapsedMs = sw.ElapsedMilliseconds
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    IndexTotal = status.IndexTotal,
+                    IndexFailed = status.IndexFailed,
+                    IndexStale = status.IndexStale,
+                    SemanticPercent = status.SemanticPercent
                 }
             };
         }
@@ -1349,8 +1360,21 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         }
     }
 
-    private async Task<IndexerStatus> GetIndexerStatusAsync(long elapsedMs, CancellationToken ct)
+    private TrustSignal GetTrustSignal(long executionTimeMs, CancellationToken ct)
     {
+        if (_uriRegistry is not null)
+        {
+            try
+            {
+                var summary = _uriRegistry.GetSummary();
+                return TrustSignal.FromSummary(summary, executionTimeMs, _embeddingMode != EmbeddingMode.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to compute trust signal from UriRegistry summary. Falling back to diagnostics.");
+            }
+        }
+
         try
         {
             var rows = _db.Query("SELECT indexing_diagnostics() as diag", ct);
@@ -1366,7 +1390,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 var writerPending = values.TryGetValue("writer_pending", out var wp) && int.TryParse(wp, out var wpv) ? wpv : 0;
                 var embedEnabled = values.TryGetValue("query_embed_enabled", out var ee) && bool.TryParse(ee, out var eev) && eev;
 
-                return IndexerStatus.FromDiagnostics(hotPathDepth, idlePending, analysisDepth, writerPending, elapsedMs, embedEnabled);
+                return TrustSignal.FromDiagnostics(hotPathDepth, idlePending, analysisDepth, writerPending, executionTimeMs, embedEnabled);
             }
         }
         catch
@@ -1374,7 +1398,13 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             // Fall back to unknown status on any error
         }
 
-        return new IndexerStatus(0, false, false, elapsedMs);
+        return TrustSignal.FromDiagnostics(
+            hotPathDepth: 0,
+            idlePending: 0,
+            analysisDepth: 0,
+            writerPending: 0,
+            executionTimeMs,
+            embedEnabled: _embeddingMode != EmbeddingMode.None);
     }
 
     private static Dictionary<string, string> ParseKeyValueText(string text)

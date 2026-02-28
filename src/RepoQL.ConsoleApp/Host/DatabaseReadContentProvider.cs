@@ -1,6 +1,7 @@
 using System.Text.Json;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
+using RepoQL.Read;
 
 namespace RepoQL.ConsoleApp.Host;
 

@@ -1,10 +1,21 @@
 using AwesomeAssertions;
 using RepoQL.Explore;
+using RepoQL.Read;
 
 namespace RepoQL.Tests;
 
 internal sealed class ModifierDispatcherTests
 {
+    private static readonly TrustSignal DefaultStatus = new(
+        IndexTotal: 100,
+        IndexPending: 0,
+        IndexFailed: 0,
+        IndexStale: 0,
+        SemanticEnabled: true,
+        SemanticReady: true,
+        SemanticPercent: 100,
+        ExecutionTimeMs: 0);
+
     [Test]
     public async Task ReturnsNullWhenNoModifierSyntax()
     {
@@ -13,7 +24,7 @@ internal sealed class ModifierDispatcherTests
         var result = await dispatcher.TryExecuteAsync(
             "file:///repo/notes.md",
             tokenBudget: 200,
-            status: new IndexerStatus(0, true, true, 0),
+            status: DefaultStatus,
             cancellationToken: CancellationToken.None);
 
         result.Should().BeNull();
@@ -27,7 +38,7 @@ internal sealed class ModifierDispatcherTests
         var result = await dispatcher.TryExecuteAsync(
             "file:///repo/notes.md => unknown",
             tokenBudget: 200,
-            status: new IndexerStatus(0, true, true, 0),
+            status: DefaultStatus,
             cancellationToken: CancellationToken.None);
 
         result.Should().NotBeNull();
@@ -44,7 +55,7 @@ internal sealed class ModifierDispatcherTests
         var result = await dispatcher.TryExecuteAsync(
             "file:///repo/notes.md => question:   What is this?   ",
             tokenBudget: 200,
-            status: new IndexerStatus(0, true, true, 0),
+            status: DefaultStatus,
             cancellationToken: CancellationToken.None);
 
         result.Should().NotBeNull();
@@ -71,7 +82,7 @@ internal sealed class ModifierDispatcherTests
         var first = await dispatcher.TryExecuteAsync(
             input,
             tokenBudget: 50,
-            status: new IndexerStatus(0, true, true, 0),
+            status: DefaultStatus,
             cancellationToken: CancellationToken.None);
 
         first.Should().NotBeNull();
@@ -80,7 +91,7 @@ internal sealed class ModifierDispatcherTests
         var second = await dispatcher.TryExecuteAsync(
             input,
             tokenBudget: 50,
-            status: new IndexerStatus(0, true, true, 0),
+            status: DefaultStatus,
             cancellationToken: CancellationToken.None);
 
         second.Should().NotBeNull();
@@ -108,7 +119,7 @@ internal sealed class ModifierDispatcherTests
         var result = await dispatcher.TryExecuteAsync(
             $"{pattern} => headline",
             tokenBudget: 100,
-            status: new IndexerStatus(0, true, true, 0),
+            status: DefaultStatus,
             cancellationToken: CancellationToken.None);
 
         result.Should().NotBeNull();
@@ -136,7 +147,7 @@ internal sealed class ModifierDispatcherTests
         var result = await dispatcher.TryExecuteAsync(
             $"{pattern} => headline",
             tokenBudget: 100,
-            status: new IndexerStatus(0, true, true, 0),
+            status: DefaultStatus,
             cancellationToken: CancellationToken.None);
 
         result.Should().NotBeNull();

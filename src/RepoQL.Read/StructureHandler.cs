@@ -1,7 +1,9 @@
 using System.Text;
 using CoreTokenEstimator = RepoQL.Contracts.TokenEstimator;
 
-namespace RepoQL.Explore;
+using RepoQL.Explore;
+
+namespace RepoQL.Read;
 
 /// <summary>
 /// Purpose: Renders structure-only read output for matched documents.

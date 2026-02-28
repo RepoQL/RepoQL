@@ -3,7 +3,9 @@ using System.Text;
 using RepoQL.Contracts;
 using CoreTokenEstimator = RepoQL.Contracts.TokenEstimator;
 
-namespace RepoQL.Explore;
+using RepoQL.Explore;
+
+namespace RepoQL.Read;
 
 /// <summary>
 /// Orchestrates read operations with token-budget-aware representation selection.
@@ -54,7 +56,7 @@ public sealed partial class ReadOrchestrator
     public async Task<ReadExecutionResult> ExecuteAsync(
         string uri,
         int tokenBudget,
-        IndexerStatus status,
+        TrustSignal status,
         CancellationToken cancellationToken,
         Stopwatch? stopwatch = null)
     {
@@ -126,7 +128,7 @@ public sealed partial class ReadOrchestrator
     private async Task<ReadExecutionResult> ExecuteTreeAsync(
         string globPattern,
         int tokenBudget,
-        IndexerStatus status,
+        TrustSignal status,
         CancellationToken cancellationToken,
         Stopwatch? stopwatch)
     {
@@ -147,7 +149,7 @@ public sealed partial class ReadOrchestrator
             }
 
             var uris = documents.Select(d => d.Uri).ToList();
-            var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
+            var statusWithTiming = status with { ExecutionTimeMs = stopwatch?.ElapsedMilliseconds ?? 0 };
 
             // Try full tree first
             var fullTree = await _contentProvider.FormatAsTreeAsync(uris, foldersOnly: false, includeHeadlines: true, cancellationToken).ConfigureAwait(false)
@@ -217,7 +219,7 @@ public sealed partial class ReadOrchestrator
     private async Task<ReadExecutionResult> ExecuteDirectAsync(
         string globUri,
         int tokenBudget,
-        IndexerStatus status,
+        TrustSignal status,
         CancellationToken cancellationToken,
         Stopwatch? stopwatch)
     {
@@ -298,7 +300,7 @@ public sealed partial class ReadOrchestrator
 
         var output = sb.ToString();
         var tokens = CoreTokenEstimator.EstimateTokens(output);
-        var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
+        var statusWithTiming = status with { ExecutionTimeMs = stopwatch?.ElapsedMilliseconds ?? 0 };
 
         // For single result, use single-file formatting; for multiple, use glob formatting
         string? hint;
@@ -364,7 +366,7 @@ public sealed partial class ReadOrchestrator
         string uri,
         string question,
         int tokenBudget,
-        IndexerStatus status,
+        TrustSignal status,
         CancellationToken cancellationToken,
         Stopwatch? stopwatch)
     {
@@ -419,7 +421,7 @@ public sealed partial class ReadOrchestrator
         string content,
         string question,
         int tokenBudget,
-        IndexerStatus status,
+        TrustSignal status,
         Stopwatch? stopwatch,
         CancellationToken cancellationToken)
     {
@@ -454,7 +456,7 @@ public sealed partial class ReadOrchestrator
 
             // Build output with status footer
             var tokens = CoreTokenEstimator.EstimateTokens(response);
-            var statusWithTiming = status with { ElapsedMs = stopwatch?.ElapsedMilliseconds ?? 0 };
+            var statusWithTiming = status with { ExecutionTimeMs = stopwatch?.ElapsedMilliseconds ?? 0 };
             var footer = RepresentationFormatter.FormatStatusFooter(statusWithTiming, tokens);
 
             return new ReadExecutionResult(
@@ -479,7 +481,7 @@ public sealed partial class ReadOrchestrator
         string uri,
         string question,
         int tokenBudget,
-        IndexerStatus status,
+        TrustSignal status,
         Stopwatch? stopwatch,
         CancellationToken cancellationToken)
     {
@@ -580,55 +582,4 @@ public sealed record ReadExecutionResult(
     int FilesRead = 0,
     int FilesOmitted = 0);
 
-/// <summary>
-/// Document data for read operations.
-/// </summary>
-public sealed record ReadDocument(
-    string Uri,
-    string? TextContent,
-    string? MediaType,
-    string? Headline,
-    string? Summary,
-    string? Structure);
 
-/// <summary>
-/// Token costs for different representation levels of a document.
-/// Used to inform users what budget is needed for higher-fidelity representations.
-/// </summary>
-public sealed record RepresentationCosts(
-    int? FullTokens,       // Cost for full content (null if not available)
-    int? StructureTokens,  // Cost for headline + structure (null if not available)
-    int? HeadlineTokens    // Cost for headline only (null if not available)
-);
-
-/// <summary>
-/// Interface for fetching document content for read operations.
-/// </summary>
-public interface IReadContentProvider
-{
-    /// <summary>
-    /// Fetch documents matching a URI pattern. Uses matches_glob internally, so handles:
-    /// - Exact URIs: file:///path/file.cs
-    /// - Glob patterns: file:///path/**/*.cs
-    /// - Fragment patterns: file:///path/file.cs#symbol=Method
-    /// </summary>
-    Task<IReadOnlyList<ReadDocument>> FetchGlobAsync(string uriPattern, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Get ASCII tree of repository structure for a scope, fitted to a token budget.
-    /// Uses progressive fallback: headlines → files → folders → null.
-    /// </summary>
-    /// <param name="scope">Optional scope glob pattern (e.g., "file:///src/**"). Null for full repo.</param>
-    /// <param name="tokenBudget">Maximum tokens for the tree output.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    Task<string?> GetRepoTreeAsync(string? scope, int tokenBudget, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
-
-    /// <summary>
-    /// Format a list of URIs as an ASCII tree. Returns null if not supported.
-    /// </summary>
-    /// <param name="uris">List of URIs to format.</param>
-    /// <param name="foldersOnly">If true, shows only folders with file type counts.</param>
-    /// <param name="includeHeadlines">If true, supplies headlines so tree can append them to file nodes.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    Task<string?> FormatAsTreeAsync(IReadOnlyList<string> uris, bool foldersOnly, bool includeHeadlines, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
-}

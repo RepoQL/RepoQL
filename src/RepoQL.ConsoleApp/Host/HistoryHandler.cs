@@ -3,6 +3,7 @@ using System.Text;
 using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
+using RepoQL.Read;
 
 namespace RepoQL.ConsoleApp.Host;
 

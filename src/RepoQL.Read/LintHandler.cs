@@ -1,7 +1,9 @@
 using System.Text;
 using RepoQL.Contracts;
 
-namespace RepoQL.Explore;
+using RepoQL.Explore;
+
+namespace RepoQL.Read;
 
 /// <summary>
 /// Purpose: Supplies lint diagnostics for the read modifier by querying annotations.

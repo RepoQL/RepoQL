@@ -5,6 +5,7 @@ using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
+using RepoQL.Read;
 using RepoQL.FileSystem;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.FileSystem.InMemory;

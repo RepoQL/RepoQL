@@ -2,7 +2,9 @@ using System.Globalization;
 using System.Text;
 using RepoQL.Contracts;
 
-namespace RepoQL.Explore;
+using RepoQL.Explore;
+
+namespace RepoQL.Read;
 
 /// <summary>
 /// Purpose: Renders full document content with line numbers for the content modifier.

@@ -29,6 +29,7 @@
         <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
         <ProjectReference Include="..\..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
         <ProjectReference Include="..\..\RepoQL.ConsoleApp\RepoQL.ConsoleApp.csproj" />
+        <ProjectReference Include="..\..\RepoQL.Read\RepoQL.Read.csproj" />
 </ItemGroup>
 
   <ItemGroup>
