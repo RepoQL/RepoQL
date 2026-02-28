@@ -116,6 +116,7 @@ public static class RepoIndexerServiceCollectionExtensions
         });
         services.AddSingleton(sp => sp.GetRequiredService<ICompositeFileSystemManager>().FileSystem);
         services.AddSingleton<IMultiFileSystem>(sp => sp.GetRequiredService<CompositeFileSystem>());
+        services.AddSingleton<UriContentReader>();
 
         var dbFileFullPath = Path.Combine(resolvedRoot, dbRelPath);
 

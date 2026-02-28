@@ -18,6 +18,7 @@ public static class ProducerMap
             ["QDPHP"] = "qodana-php",
             ["CodeQL command-line toolchain"] = "codeql",
             ["Semgrep"] = "semgrep",
+            ["Semgrep OSS"] = "semgrep",
             ["ESLint"] = "eslint",
             ["Microsoft (R) Visual C# Compiler"] = "roslyn",
             ["Trivy Vulnerability Scanner"] = "trivy",

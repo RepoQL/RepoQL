@@ -14,7 +14,7 @@ public sealed class PathNormalizer
 
     /// <summary>
     /// Normalize a SARIF artifact URI/path into a repo-relative path.
-    /// Unresolvable paths are preserved and surfaced via warnings.
+    /// Unresolvable paths are preserved as-is. Absolute paths outside the repo root generate warnings.
     /// </summary>
     public string Normalize(
         string rawUri,
@@ -103,13 +103,20 @@ public sealed class PathNormalizer
         return !value.StartsWith("file://", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Strip the file:// scheme prefix.
+    /// <c>file:///path</c> → <c>path</c> (local), <c>file://server/share</c> → <c>//server/share</c> (UNC, preserved as absolute).
+    /// </summary>
     private static string StripFileScheme(string value)
     {
         if (value.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
             return value["file:///".Length..];
 
         if (value.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
-            return value["file://".Length..];
+        {
+            // Authority-based file URI (UNC path) — preserve as absolute UNC.
+            return "/" + value["file://".Length..];
+        }
 
         return value;
     }

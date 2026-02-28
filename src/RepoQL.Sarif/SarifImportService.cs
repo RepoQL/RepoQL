@@ -27,6 +27,9 @@ public sealed class SarifImportService : ISarifImportService
     private readonly string _repoRootPath;
     private readonly ILogger<SarifImportService>? _logger;
 
+    /// <summary>
+    /// Create a SARIF import service bound to a specific store and repository root.
+    /// </summary>
     public SarifImportService(
         ISarifNormalizer normalizer,
         DuckDbDataStore store,
@@ -41,6 +44,7 @@ public sealed class SarifImportService : ISarifImportService
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task<SarifImportResult> ImportAsync(
         string sarifFilePath,
         CancellationToken cancellationToken = default)
@@ -145,6 +149,9 @@ public sealed class SarifImportService : ISarifImportService
             Warnings: warnings);
     }
 
+    /// <summary>
+    /// Load and parse a SARIF file from disk, wrapping JSON errors with actionable messages.
+    /// </summary>
     private static async Task<JsonDocument> LoadSarifAsync(string path, CancellationToken cancellationToken)
     {
         try
@@ -158,6 +165,9 @@ public sealed class SarifImportService : ISarifImportService
         }
     }
 
+    /// <summary>
+    /// Process a single normalized finding: resolve its document, create spans, build the annotation, and update counters.
+    /// </summary>
     private void ProcessNormalizedResult(
         SourceAggregation source,
         NormalizedResult result,
@@ -234,6 +244,10 @@ public sealed class SarifImportService : ISarifImportService
         source.SemanticKeys.Add(semanticKey);
     }
 
+    /// <summary>
+    /// Ensure the synthetic "unresolved" document node exists and return its ID.
+    /// Findings that cannot be mapped to an indexed file are scoped to this document.
+    /// </summary>
     private Guid EnsureUnresolvedDocument()
     {
         var existing = _store.GetDocumentByUri(UnresolvedDocumentUri);
@@ -258,6 +272,11 @@ public sealed class SarifImportService : ISarifImportService
         return _store.UpsertDocumentByUri(UnresolvedDocumentUri, unresolved).Id;
     }
 
+    /// <summary>
+    /// Resolve a normalized SARIF path to an indexed document node.
+    /// Attempts exact URI match first, then suffix match for scanners that emit subdirectory-relative paths.
+    /// Results are cached per-import to avoid repeated lookups.
+    /// </summary>
     private Node? ResolveDocument(
         string normalizedPath,
         IDictionary<string, Node?> cache,
@@ -273,10 +292,42 @@ public sealed class SarifImportService : ISarifImportService
             return cached;
 
         var node = _store.GetDocumentByUri(uri);
+
+        // Suffix-matching fallback: if exact lookup fails, try finding a unique
+        // document whose URI ends with this path. Handles scanners (e.g. DevSkim)
+        // that emit paths relative to a subdirectory rather than the repo root.
+        if (node is null)
+            node = TrySuffixMatch(normalizedPath);
+
         cache[cacheKey] = node;
         return node;
     }
 
+    /// <summary>
+    /// Fallback resolution: find a unique indexed document whose URI ends with the given path.
+    /// Returns the match only when exactly one document matches — zero or multiple means unresolved.
+    /// </summary>
+    private Node? TrySuffixMatch(string normalizedPath)
+    {
+        var suffix = "/" + NormalizePath(normalizedPath).TrimStart('/');
+        var escapedSuffix = suffix.Replace("'", "''").ToLowerInvariant();
+
+        var matchUris = _store.RawQuery(
+            $"SELECT uri FROM node WHERE kind = 'document' AND lower(uri) LIKE '%{escapedSuffix}'");
+
+        if (matchUris.Count != 1)
+            return null;
+
+        var matchedUri = matchUris[0]["uri"]?.ToString();
+        if (matchedUri is null || !RepoUri.TryParse(matchedUri, out var repoUri))
+            return null;
+
+        return _store.GetDocumentByUri(repoUri);
+    }
+
+    /// <summary>
+    /// Create a span record for a finding's location within a resolved document.
+    /// </summary>
     private static AnnotationSpan CreateSpan(Guid documentId, NormalizedRegion region)
     {
         return new AnnotationSpan
@@ -290,6 +341,10 @@ public sealed class SarifImportService : ISarifImportService
         };
     }
 
+    /// <summary>
+    /// Build a target URI for an unresolved finding so it can be navigated to even though
+    /// the file isn't indexed. Includes a line fragment only when startLine is positive.
+    /// </summary>
     private static RepoUri? BuildUnresolvedTargetUri(
         string normalizedPath,
         int startLine,
@@ -297,8 +352,10 @@ public sealed class SarifImportService : ISarifImportService
     {
         if (repoRelativeUri is not null)
         {
-            var line = startLine > 0 ? startLine : 0;
-            return RepoUri.FromLines(repoRelativeUri.Container, line, null);
+            if (startLine > 0)
+                return RepoUri.FromLines(repoRelativeUri.Container, startLine, null);
+
+            return repoRelativeUri;
         }
 
         if (RepoUri.TryParse(normalizedPath, out var target))
@@ -308,6 +365,11 @@ public sealed class SarifImportService : ISarifImportService
         return RepoUri.TryParse(externalAsFileUri, out target) ? target : null;
     }
 
+    /// <summary>
+    /// Compute a stable semantic key for deduplication across imports.
+    /// Format: <c>{source}:{ruleId}:{path}:{startLine}:{fingerprint}</c>.
+    /// Fingerprint priority: partialFingerprints > fingerprints > SHA-256 content hash.
+    /// </summary>
     private static string ComputeSemanticKey(
         string source,
         string ruleId,
@@ -324,6 +386,9 @@ public sealed class SarifImportService : ISarifImportService
         return $"{source}:{ruleId}:{normalizedPath}:{startLine}:{fingerprint}";
     }
 
+    /// <summary>
+    /// Select the first non-empty fingerprint value, ordered by key for determinism.
+    /// </summary>
     private static string? SelectFingerprint(IReadOnlyDictionary<string, string>? fingerprints)
     {
         if (fingerprints is null || fingerprints.Count == 0)
@@ -338,6 +403,9 @@ public sealed class SarifImportService : ISarifImportService
         return null;
     }
 
+    /// <summary>
+    /// Compute a SHA-256 fallback fingerprint when no SARIF-provided fingerprint exists.
+    /// </summary>
     private static string ComputeFallbackFingerprint(string ruleId, string path, int startLine, string message)
     {
         var payload = $"{ruleId}:{path}:{startLine}:{message}";
@@ -345,6 +413,9 @@ public sealed class SarifImportService : ISarifImportService
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
+    /// <summary>
+    /// Map SARIF level to RepoQL severity: error, warning, note→info, none→hint.
+    /// </summary>
     private static string MapSeverity(string level)
     {
         return (level ?? string.Empty).Trim().ToLowerInvariant() switch
@@ -357,6 +428,10 @@ public sealed class SarifImportService : ISarifImportService
         };
     }
 
+    /// <summary>
+    /// Build the JSON data payload stored in the annotation's <c>data</c> column.
+    /// Includes rule metadata, fingerprints, tool-specific properties, and original level.
+    /// </summary>
     private static JsonObject BuildPayload(string source, int runIndex, NormalizedResult result)
     {
         var payload = new JsonObject
@@ -423,6 +498,9 @@ public sealed class SarifImportService : ISarifImportService
         return obj;
     }
 
+    /// <summary>
+    /// Normalize path separators to forward slashes and strip leading <c>./</c>.
+    /// </summary>
     private static string NormalizePath(string path)
     {
         var normalized = path.Replace('\\', '/');
@@ -431,6 +509,10 @@ public sealed class SarifImportService : ISarifImportService
         return normalized;
     }
 
+    /// <summary>
+    /// Try to construct a <c>file:///</c> RepoUri from a repo-relative path.
+    /// Rejects absolute paths, drive letters, and URIs with schemes — those cannot be repo-relative.
+    /// </summary>
     private static bool TryCreateRepoRelativeUri(string normalizedPath, out RepoUri uri)
     {
         uri = null!;
@@ -455,6 +537,9 @@ public sealed class SarifImportService : ISarifImportService
         return RepoUri.TryParse(uriText, out uri);
     }
 
+    /// <summary>
+    /// Convert an unresolvable path (absolute or relative) into a <c>file:///</c> URI for use as a target_uri.
+    /// </summary>
     private static string ConvertToFileUri(string normalizedPath)
     {
         var path = NormalizePath(normalizedPath);
@@ -485,6 +570,9 @@ public sealed class SarifImportService : ISarifImportService
         return $"file:///{encodedRelative}";
     }
 
+    /// <summary>
+    /// Resolve the SARIF file path — absolute paths pass through, relative paths resolve against the repo root.
+    /// </summary>
     private string ResolveInputPath(string sarifFilePath)
     {
         var candidate = sarifFilePath.Trim();
@@ -494,6 +582,9 @@ public sealed class SarifImportService : ISarifImportService
         return Path.GetFullPath(Path.Combine(_repoRootPath, candidate));
     }
 
+    /// <summary>
+    /// Load existing span IDs for a source's annotations so re-imports can reuse spans for unchanged findings.
+    /// </summary>
     private IReadOnlyDictionary<string, Guid?> LoadExistingSpansForSource(string source)
     {
         var escapedSource = source.Replace("'", "''", StringComparison.Ordinal);
@@ -517,6 +608,9 @@ public sealed class SarifImportService : ISarifImportService
             StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// Mutable accumulator for one source's findings during import. Tracks annotations, spans, and resolution counters.
+    /// </summary>
     private sealed class SourceAggregation(string source, IReadOnlyDictionary<string, Guid?> existingSpanByKey)
     {
         public string Source { get; } = source;

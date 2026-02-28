@@ -12,6 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" PrivateAssets="all" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="FakeItEasy" />
     <PackageReference Include="AwesomeAssertions" />

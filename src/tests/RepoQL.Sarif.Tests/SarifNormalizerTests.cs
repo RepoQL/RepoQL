@@ -477,6 +477,322 @@ public class SarifNormalizerTests
         normalized.Fingerprints!["legacy"].Should().Be("legacyhash-456");
     }
 
+    [Test]
+    [DisplayName("Normalize maps note level to info and none level to hint")]
+    public void Normalize_SeverityCascade_MapsNoteLevelsCorrectly()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "version": "2.1.0",
+              "runs": [
+                {
+                  "tool": { "driver": { "name": "ESLint" } },
+                  "results": [
+                    {
+                      "ruleId": "note-rule",
+                      "level": "note",
+                      "message": { "text": "Note" },
+                      "locations": [
+                        { "physicalLocation": { "artifactLocation": { "uri": "a.js" }, "region": { "startLine": 1 } } }
+                      ]
+                    },
+                    {
+                      "ruleId": "none-rule",
+                      "level": "none",
+                      "message": { "text": "None" },
+                      "locations": [
+                        { "physicalLocation": { "artifactLocation": { "uri": "b.js" }, "region": { "startLine": 2 } } }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var normalizer = new SarifNormalizer();
+        var result = normalizer.Normalize(document, @"C:/repo");
+        var results = result.Runs[0].Results;
+
+        results.First(r => r.RuleId == "note-rule").Level.Should().Be("note");
+        results.First(r => r.RuleId == "none-rule").Level.Should().Be("none");
+    }
+
+    [Test]
+    [DisplayName("SeverityResolver uses rule default when result level is absent")]
+    public void SeverityResolver_RuleDefaultLevel_UsedAsResolvedLevel()
+    {
+        using var resultDocument = JsonDocument.Parse("""{ }""");
+        var rule = new RuleDescriptor("rule", "note", new Dictionary<string, string>(), null, null);
+        var resolver = new SeverityResolver();
+
+        var level = resolver.ResolveLevel(resultDocument.RootElement, rule);
+
+        level.Should().Be("note");
+    }
+
+    [Test]
+    [DisplayName("Normalize skips result with missing startLine and preserves region as null")]
+    public void Normalize_RegionMissingStartLine_RegionIsNull()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "version": "2.1.0",
+              "runs": [
+                {
+                  "tool": { "driver": { "name": "ESLint" } },
+                  "results": [
+                    {
+                      "ruleId": "test-rule",
+                      "message": { "text": "No region start line" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": { "uri": "src/a.js" },
+                            "region": { "endLine": 10 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var normalizer = new SarifNormalizer();
+        var result = normalizer.Normalize(document, @"C:/repo");
+
+        result.Runs[0].Results.Should().HaveCount(1);
+        result.Runs[0].Results[0].Region.Should().BeNull();
+    }
+
+    [Test]
+    [DisplayName("Normalize handles string-typed line numbers in region")]
+    public void Normalize_RegionStringTypedLineNumbers_Parsed()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "version": "2.1.0",
+              "runs": [
+                {
+                  "tool": { "driver": { "name": "ESLint" } },
+                  "results": [
+                    {
+                      "ruleId": "test-rule",
+                      "message": { "text": "String line" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": { "uri": "src/a.js" },
+                            "region": { "startLine": "42", "endLine": "50" }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var normalizer = new SarifNormalizer();
+        var result = normalizer.Normalize(document, @"C:/repo");
+
+        result.Runs[0].Results[0].Region.Should().NotBeNull();
+        result.Runs[0].Results[0].Region!.StartLine.Should().Be(42);
+        result.Runs[0].Results[0].Region!.EndLine.Should().Be(50);
+    }
+
+    [Test]
+    [DisplayName("SourceIdentifier returns unknown for null and empty producer names")]
+    public void SourceIdentifier_NullAndEmpty_ReturnsUnknown()
+    {
+        var identifier = new SourceIdentifier();
+
+        identifier.Resolve(null).Should().Be("unknown");
+        identifier.Resolve("").Should().Be("unknown");
+        identifier.Resolve("   ").Should().Be("unknown");
+    }
+
+    [Test]
+    [DisplayName("SourceIdentifier handles unicode and punctuation-only producer names")]
+    public void SourceIdentifier_UnicodeAndPunctuation_Slugified()
+    {
+        var identifier = new SourceIdentifier();
+
+        identifier.Resolve("???").Should().Be("unknown");
+        identifier.Resolve("Ünïcödé Linter").Should().Be("n-c-d-linter");
+    }
+
+    [Test]
+    [DisplayName("SourceIdentifier maps Semgrep OSS to semgrep")]
+    public void SourceIdentifier_SemgrepOSS_MappedToSemgrep()
+    {
+        var identifier = new SourceIdentifier();
+
+        identifier.Resolve("Semgrep OSS").Should().Be("semgrep");
+    }
+
+    [Test]
+    [DisplayName("Path normalization preserves UNC file URIs as absolute")]
+    public void Normalize_Path_UncFileUri_PreservedAsAbsolute()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "version": "2.1.0",
+              "runs": [
+                {
+                  "tool": { "driver": { "name": "ESLint" } },
+                  "results": [
+                    {
+                      "ruleId": "test-rule",
+                      "message": { "text": "UNC path" },
+                      "locations": [
+                        {
+                          "physicalLocation": {
+                            "artifactLocation": {
+                              "uri": "file://server/share/src/a.js"
+                            },
+                            "region": { "startLine": 1 }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var normalizer = new SarifNormalizer();
+        var result = normalizer.Normalize(document, @"C:/repo");
+
+        // UNC authority-based file:// URIs are preserved as absolute paths
+        result.Runs[0].Results[0].NormalizedPath.Should().Contain("server/share/src/a.js");
+    }
+
+    [Test]
+    [DisplayName("Normalize resolves message via globalMessageStrings when rule messageStrings miss")]
+    public void Normalize_GlobalMessageStrings_FallbackWorks()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "version": "2.1.0",
+              "runs": [
+                {
+                  "tool": {
+                    "driver": {
+                      "name": "CustomTool",
+                      "globalMessageStrings": {
+                        "globalMsg": { "text": "Resolved via global" }
+                      },
+                      "rules": [
+                        { "id": "rule-1" }
+                      ]
+                    }
+                  },
+                  "results": [
+                    {
+                      "ruleId": "rule-1",
+                      "message": { "id": "globalMsg" },
+                      "locations": [
+                        { "physicalLocation": { "artifactLocation": { "uri": "src/a.js" }, "region": { "startLine": 1 } } }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var normalizer = new SarifNormalizer();
+        var result = normalizer.Normalize(document, @"C:/repo");
+
+        result.Runs[0].Results.Should().HaveCount(1);
+        result.Runs[0].Results[0].Message.Should().Be("Resolved via global");
+    }
+
+    [Test]
+    [DisplayName("Normalize skips run missing tool.driver.name with warning")]
+    public void Normalize_RunMissingDriverName_SkippedWithWarning()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "version": "2.1.0",
+              "runs": [
+                {
+                  "tool": { "driver": { } },
+                  "results": [
+                    {
+                      "ruleId": "rule-1",
+                      "message": { "text": "No driver name" },
+                      "locations": [
+                        { "physicalLocation": { "artifactLocation": { "uri": "a.js" }, "region": { "startLine": 1 } } }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var normalizer = new SarifNormalizer();
+        var result = normalizer.Normalize(document, @"C:/repo");
+
+        result.Runs.Should().BeEmpty();
+        result.Warnings.Should().Contain(w => w.Contains("tool.driver.name", StringComparison.Ordinal));
+    }
+
+    [Test]
+    [DisplayName("Normalize handles non-object SARIF root")]
+    public void Normalize_NonObjectRoot_ReturnsWarning()
+    {
+        using var document = JsonDocument.Parse("""[]""");
+        var normalizer = new SarifNormalizer();
+
+        var result = normalizer.Normalize(document, @"C:/repo");
+
+        result.Runs.Should().BeEmpty();
+        result.Warnings.Should().Contain(w => w.Contains("object", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Test]
+    [DisplayName("Normalize skips result when message.id not found in messageStrings or global")]
+    public void Normalize_UnresolvableMessageId_SkippedWithWarning()
+    {
+        using var document = JsonDocument.Parse("""
+            {
+              "version": "2.1.0",
+              "runs": [
+                {
+                  "tool": {
+                    "driver": {
+                      "name": "CustomTool",
+                      "rules": [{ "id": "r1" }]
+                    }
+                  },
+                  "results": [
+                    {
+                      "ruleId": "r1",
+                      "message": { "id": "nonExistentKey" },
+                      "locations": [
+                        { "physicalLocation": { "artifactLocation": { "uri": "a.js" }, "region": { "startLine": 1 } } }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var normalizer = new SarifNormalizer();
+        var result = normalizer.Normalize(document, @"C:/repo");
+
+        result.SkippedResults.Should().Be(1);
+        result.Warnings.Should().Contain(w => w.Contains("message", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static JsonDocument LoadFixture(string fileName)
     {
         var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);

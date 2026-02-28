@@ -1,0 +1,414 @@
+{
+  "version": "2.1.0",
+  "$schema": "http://json.schemastore.org/sarif-2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Microsoft (R) Visual C# Compiler",
+          "version": "5.0.0-2.26075.103 (c2435c3e)",
+          "dottedQuadFileVersion": "5.0.0.0",
+          "semanticVersion": "5.0.0",
+          "language": "en-US",
+          "rules": [
+            {
+              "id": "CA1308",
+              "shortDescription": {
+                "text": "Normalize strings to uppercase"
+              },
+              "fullDescription": {
+                "text": "Strings should be normalized to uppercase. A small group of characters cannot make a round trip when they are converted to lowercase. To make a round trip means to convert the characters from one locale to another locale that represents character data differently, and then to accurately retrieve the original characters from the converted characters."
+              },
+              "defaultConfiguration": {
+                "enabled": false
+              },
+              "helpUri": "https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1308",
+              "properties": {
+                "category": "Globalization",
+                "executionTimeInSeconds": "0.001",
+                "executionTimeInPercentage": "<1",
+                "tags": [
+                  "PortedFromFxCop",
+                  "Telemetry",
+                  "EnabledRuleInAggressiveMode"
+                ]
+              }
+            },
+            {
+              "id": "CA1822",
+              "shortDescription": {
+                "text": "Mark members as static"
+              },
+              "fullDescription": {
+                "text": "Members that do not access instance data or call instance methods can be marked as static. After you mark the methods as static, the compiler will emit nonvirtual call sites to these members. This can give you a measurable performance gain for performance-sensitive code."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1822",
+              "properties": {
+                "category": "Performance",
+                "executionTimeInSeconds": "<0.001",
+                "executionTimeInPercentage": "<1",
+                "tags": [
+                  "PortedFromFxCop",
+                  "Telemetry",
+                  "EnabledRuleInAggressiveMode"
+                ]
+              }
+            },
+            {
+              "id": "CA1826",
+              "shortDescription": {
+                "text": "Do not use Enumerable methods on indexable collections"
+              },
+              "fullDescription": {
+                "text": "This collection is directly indexable. Going through LINQ here causes unnecessary allocations and CPU work."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1826",
+              "properties": {
+                "category": "Performance",
+                "executionTimeInSeconds": "0.001",
+                "executionTimeInPercentage": "<1",
+                "tags": [
+                  "Telemetry",
+                  "EnabledRuleInAggressiveMode"
+                ]
+              }
+            },
+            {
+              "id": "CA1859",
+              "shortDescription": {
+                "text": "Use concrete types when possible for improved performance"
+              },
+              "fullDescription": {
+                "text": "Using concrete types avoids virtual or interface call overhead and enables inlining."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1859",
+              "properties": {
+                "category": "Performance",
+                "executionTimeInSeconds": "0.004",
+                "executionTimeInPercentage": "<1",
+                "tags": [
+                  "Telemetry",
+                  "EnabledRuleInAggressiveMode"
+                ]
+              }
+            },
+            {
+              "id": "CA1865",
+              "shortDescription": {
+                "text": "Use char overload"
+              },
+              "fullDescription": {
+                "text": "The char overload is a better performing overload than a string with a single char."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca1865",
+              "properties": {
+                "category": "Performance",
+                "executionTimeInSeconds": "<0.001",
+                "executionTimeInPercentage": "<1",
+                "tags": [
+                  "Telemetry",
+                  "EnabledRuleInAggressiveMode"
+                ]
+              }
+            },
+            {
+              "id": "IDE0011",
+              "shortDescription": {
+                "text": "Add braces"
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://learn.microsoft.com/dotnet/fundamentals/code-analysis/style-rules/ide0011",
+              "properties": {
+                "category": "Style",
+                "executionTimeInSeconds": "0.001",
+                "executionTimeInPercentage": "<1",
+                "tags": [
+                  "Telemetry",
+                  "EnforceOnBuild_HighlyRecommended",
+                  "CustomSeverityConfigurable"
+                ]
+              }
+            },
+            {
+              "id": "SYSLIB1045",
+              "shortDescription": {
+                "text": "Convert to 'GeneratedRegexAttribute'."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://learn.microsoft.com/dotnet/fundamentals/syslib-diagnostics/syslib1045",
+              "properties": {
+                "category": "Performance",
+                "executionTimeInSeconds": "<0.001",
+                "executionTimeInPercentage": "<1"
+              }
+            },
+            {
+              "id": "CS8601",
+              "shortDescription": {
+                "text": "Possible null reference assignment."
+              },
+              "helpUri": "https://msdn.microsoft.com/query/roslyn.query?appId=roslyn&k=k(CS8601)",
+              "properties": {
+                "category": "Compiler",
+                "executionTimeInSeconds": "<0.001",
+                "executionTimeInPercentage": "<1",
+                "tags": [
+                  "Compiler",
+                  "Telemetry"
+                ]
+              }
+            },
+            {
+              "id": "IDE0011",
+              "shortDescription": {
+                "text": "Add braces"
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://learn.microsoft.com/dotnet/fundamentals/code-analysis/style-rules/ide0011",
+              "properties": {
+                "category": "Style",
+                "executionTimeInSeconds": "<0.001",
+                "executionTimeInPercentage": "<1",
+                "tags": [
+                  "Telemetry",
+                  "EnforceOnBuild_HighlyRecommended"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "CS8601",
+          "ruleIndex": 529,
+          "level": "warning",
+          "message": {
+            "text": "Possible null reference assignment."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/RepoQL.Sarif/SarifImportService.cs"
+                },
+                "region": {
+                  "startLine": 455,
+                  "startColumn": 46,
+                  "endLine": 455,
+                  "endColumn": 49
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "SYSLIB1045",
+          "ruleIndex": 516,
+          "level": "note",
+          "message": {
+            "text": "Use 'GeneratedRegexAttribute' to generate the regular expression implementation at compile-time."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/RepoQL.Sarif/Normalization/SourceIdentifier.cs"
+                },
+                "region": {
+                  "startLine": 10,
+                  "startColumn": 53,
+                  "endLine": 10,
+                  "endColumn": 93
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "IDE0011",
+          "ruleIndex": 530,
+          "level": "warning",
+          "message": {
+            "text": "Add braces to 'foreach' statement."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/RepoQL.Sarif/Normalization/RuleCollector.cs"
+                },
+                "region": {
+                  "startLine": 42,
+                  "startColumn": 9,
+                  "endLine": 42,
+                  "endColumn": 16
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CA1308",
+          "ruleIndex": 52,
+          "level": "warning",
+          "message": {
+            "text": "In method 'NormalizeLevel', replace the call to 'ToLowerInvariant' with 'ToUpperInvariant'"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/RepoQL.Sarif/Normalization/SeverityResolver.cs"
+                },
+                "region": {
+                  "startLine": 54,
+                  "startColumn": 16,
+                  "endLine": 54,
+                  "endColumn": 47
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CA1865",
+          "ruleIndex": 147,
+          "level": "warning",
+          "message": {
+            "text": "Use 'string.StartsWith(char)' instead of 'string.StartsWith(string)' when you have a string with a single char"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/RepoQL.Sarif/Normalization/PathNormalizer.cs"
+                },
+                "region": {
+                  "startLine": 51,
+                  "startColumn": 54,
+                  "endLine": 51,
+                  "endColumn": 85
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CA1822",
+          "ruleIndex": 104,
+          "level": "warning",
+          "message": {
+            "text": "Member 'ResolveLevel' does not access instance data and can be marked as static"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/RepoQL.Sarif/Normalization/SeverityResolver.cs"
+                },
+                "region": {
+                  "startLine": 14,
+                  "startColumn": 19,
+                  "endLine": 14,
+                  "endColumn": 31
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CA1826",
+          "ruleIndex": 108,
+          "level": "warning",
+          "message": {
+            "text": "Do not use Enumerable methods on indexable collections. Instead use the collection directly."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/RepoQL.Sarif/SarifImportService.cs"
+                },
+                "region": {
+                  "startLine": 58,
+                  "startColumn": 32,
+                  "endLine": 58,
+                  "endColumn": 71
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1,
+            "customProperties": {
+              "method": "FirstOrDefault"
+            }
+          }
+        },
+        {
+          "ruleId": "CA1859",
+          "ruleIndex": 141,
+          "level": "warning",
+          "message": {
+            "text": "Change return type of method 'CollectMessageStrings' from 'System.Collections.Generic.IReadOnlyDictionary<string, string>' to 'System.Collections.Generic.Dictionary<string, string>' for improved performance"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/RepoQL.Sarif/Normalization/RuleCollector.cs"
+                },
+                "region": {
+                  "startLine": 95,
+                  "startColumn": 56,
+                  "endLine": 95,
+                  "endColumn": 77
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        }
+      ]
+    }
+  ]
+}

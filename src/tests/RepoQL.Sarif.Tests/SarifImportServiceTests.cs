@@ -345,6 +345,201 @@ public class SarifImportServiceTests
         secondResult.Sources[0].Expired.Should().Be(0);
     }
 
+    [Test]
+    [DisplayName("ImportAsync resolves via suffix match when exact path misses")]
+    public async Task ImportAsync_SuffixMatch_ResolvesWhenExactMisses()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        store.SeedDocument("file:///src/Formats/MyFile.cs");
+
+        var service = CreateService(store);
+        // DevSkim-style: emits "Formats/MyFile.cs" (missing "src/" prefix)
+        var sarif = CreateSarif(
+            new RunSpec("DevSkim", [
+                new ResultSpec("DS123456", "Potential issue", "Formats/MyFile.cs", StartLine: 10)
+            ]));
+
+        var result = await ImportFromJsonAsync(service, sarif);
+
+        result.Sources.Should().HaveCount(1);
+        result.Sources[0].Resolved.Should().Be(1);
+        result.Sources[0].Unresolved.Should().Be(0);
+    }
+
+    [Test]
+    [DisplayName("ImportAsync suffix match stays unresolved when multiple documents match")]
+    public async Task ImportAsync_SuffixMatch_UnresolvedWhenAmbiguous()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        store.SeedDocument("file:///src/a/MyFile.cs");
+        store.SeedDocument("file:///src/b/MyFile.cs");
+
+        var service = CreateService(store);
+        var sarif = CreateSarif(
+            new RunSpec("DevSkim", [
+                new ResultSpec("DS999", "Ambiguous", "MyFile.cs", StartLine: 1)
+            ]));
+
+        var result = await ImportFromJsonAsync(service, sarif);
+
+        result.Sources.Should().HaveCount(1);
+        result.Sources[0].Resolved.Should().Be(0);
+        result.Sources[0].Unresolved.Should().Be(1);
+    }
+
+    [Test]
+    [DisplayName("ImportAsync suffix match resolves backslash paths")]
+    public async Task ImportAsync_SuffixMatch_BackslashPaths()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        store.SeedDocument("file:///src/Formats/MyFile.cs");
+
+        var service = CreateService(store);
+        var sarif = CreateSarif(
+            new RunSpec("DevSkim", [
+                new ResultSpec("DS100", "Backslash", @"Formats\MyFile.cs", StartLine: 5)
+            ]));
+
+        var result = await ImportFromJsonAsync(service, sarif);
+
+        result.Sources[0].Resolved.Should().Be(1);
+        result.Sources[0].Unresolved.Should().Be(0);
+    }
+
+    [Test]
+    [DisplayName("ImportAsync end-to-end severity cascade maps note to info and none to hint")]
+    public async Task ImportAsync_SeverityCascade_NoteMapsToInfoNoneMapsToHint()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        store.SeedDocument("file:///src/a.js");
+
+        var service = CreateService(store);
+        var sarif = CreateSarif(
+            new RunSpec("ESLint", [
+                new ResultSpec("note-rule", "Note finding", "src/a.js", StartLine: 1, Level: "note"),
+                new ResultSpec("none-rule", "None finding", "src/a.js", StartLine: 2, Level: "none")
+            ]));
+
+        var result = await ImportFromJsonAsync(service, sarif);
+
+        var rows = store.DataStore.Read(
+            "SELECT rule_id, severity FROM annotation WHERE source = 'eslint' ORDER BY rule_id",
+            r => new { RuleId = r.GetString(0), Severity = r.GetString(1) });
+
+        rows.First(r => r.RuleId == "note-rule").Severity.Should().Be("info");
+        rows.First(r => r.RuleId == "none-rule").Severity.Should().Be("hint");
+    }
+
+    [Test]
+    [DisplayName("ImportAsync unresolved finding without startLine produces URI with no line fragment")]
+    public async Task ImportAsync_UnresolvedNoStartLine_NoLineFragment()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+
+        var service = CreateService(store);
+        var sarif = CreateSarif(
+            new RunSpec("ESLint", [
+                new ResultSpec("no-line", "No line info", "src/missing.js", StartLine: null)
+            ]));
+
+        var result = await ImportFromJsonAsync(service, sarif);
+
+        result.Sources[0].Unresolved.Should().Be(1);
+
+        var targetUri = store.DataStore.Read(
+            "SELECT target_uri FROM annotation WHERE rule_id = 'no-line' LIMIT 1",
+            r => r.IsDBNull(0) ? null : r.GetString(0)).Single();
+
+        targetUri.Should().NotBeNull();
+        targetUri.Should().NotContain("#line=");
+    }
+
+    [Test]
+    [DisplayName("ImportAsync handles duplicate semantic keys across multi-run same source")]
+    public async Task ImportAsync_DuplicateSemanticKey_MultiRunSameSource_Deduped()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        store.SeedDocument("file:///src/a.js");
+
+        var service = CreateService(store);
+        // Two runs from same tool, same finding — should deduplicate
+        var sarif = CreateSarif(
+            new RunSpec("ESLint", [
+                new ResultSpec("same-rule", "Same message", "src/a.js", StartLine: 10)
+            ]),
+            new RunSpec("ESLint", [
+                new ResultSpec("same-rule", "Same message", "src/a.js", StartLine: 10)
+            ]));
+
+        var result = await ImportFromJsonAsync(service, sarif);
+
+        result.Sources.Should().HaveCount(1);
+        // Both map to same semantic key, so only one annotation lands
+        var count = store.DataStore.Read(
+            "SELECT COUNT(*) FROM annotation WHERE source = 'eslint' AND rule_id = 'same-rule'",
+            r => r.GetInt64(0)).Single();
+        count.Should().Be(1);
+    }
+
+    [Test]
+    [DisplayName("ImportAsync handles fingerprints with empty and whitespace values")]
+    public async Task ImportAsync_FingerprintsWithEmptyValues_FallsBackCorrectly()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        store.SeedDocument("file:///src/a.js");
+
+        var service = CreateService(store);
+        var emptyFingerprints = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["empty-key"] = "",
+            ["whitespace-key"] = "   ",
+            ["valid-key"] = "actual-fingerprint"
+        };
+
+        var sarif = CreateSarif(
+            new RunSpec("ESLint", [
+                new ResultSpec("fp-rule", "Fingerprint test", "src/a.js", StartLine: 1,
+                    PartialFingerprints: emptyFingerprints)
+            ]));
+
+        await ImportFromJsonAsync(service, sarif);
+
+        var key = store.DataStore.Read(
+            "SELECT semantic_key FROM annotation WHERE rule_id = 'fp-rule' LIMIT 1",
+            r => r.GetString(0)).Single();
+
+        // Should use "actual-fingerprint" (the valid one), not empty/whitespace
+        key.Should().EndWith(":actual-fingerprint");
+    }
+
+    [Test]
+    [DisplayName("ImportAsync imports real Roslyn fixture")]
+    public async Task ImportAsync_RoslynFixture_ImportsAllFindings()
+    {
+        using var store = DuckDbTestStore.CreateInMemory();
+        // Seed documents matching the Roslyn fixture paths
+        store.SeedDocument("file:///src/RepoQL.Sarif/SarifImportService.cs");
+        store.SeedDocument("file:///src/RepoQL.Sarif/Normalization/SourceIdentifier.cs");
+        store.SeedDocument("file:///src/RepoQL.Sarif/Normalization/RuleCollector.cs");
+        store.SeedDocument("file:///src/RepoQL.Sarif/Normalization/SeverityResolver.cs");
+        store.SeedDocument("file:///src/RepoQL.Sarif/Normalization/PathNormalizer.cs");
+
+        var service = CreateService(store);
+        var fixturePath = Path.Combine(AppContext.BaseDirectory, "Fixtures", "roslyn-real.sarif.json");
+        if (!File.Exists(fixturePath))
+        {
+            Assert.Fail($"Fixture not found at {fixturePath}");
+            return;
+        }
+
+        var result = await service.ImportAsync(fixturePath);
+
+        result.TotalFindings.Should().Be(8);
+        result.Sources.Should().HaveCount(1);
+        result.Sources[0].Source.Should().Be("roslyn");
+        result.Sources[0].Total.Should().Be(8);
+    }
+
     private static SarifImportService CreateService(DuckDbTestStore store)
     {
         return new SarifImportService(

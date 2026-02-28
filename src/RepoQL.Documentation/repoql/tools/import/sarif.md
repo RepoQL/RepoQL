@@ -82,6 +82,24 @@ import("sarif:///build/eslint.sarif")
 
 ---
 
+## Capsule: PathResolution
+
+**Invariant**
+SARIF paths resolve to indexed documents in two stages: exact match, then suffix match. Suffix matching handles scanners that emit paths relative to a subdirectory rather than the repo root.
+
+**Example**
+```
+# Scanner scans src/ but emits paths without the src/ prefix:
+#   "Formats/MyFile.cs" → no exact match for file:///Formats/MyFile.cs
+#   Suffix match finds file:///src/Formats/MyFile.cs → resolved
+
+# If multiple documents end with the same suffix → stays unresolved (ambiguous)
+```
+
+//BOUNDARY: Suffix match only applies when exactly one indexed document matches. Zero or multiple matches → unresolved. This prevents silent misresolution.
+
+---
+
 ## Capsule: QueryPatterns
 
 **Invariant**
@@ -141,7 +159,9 @@ Known producers map to stable source slugs. Unknown producers are auto-slugified
 | QDPHP | `qodana-php` |
 | CodeQL command-line toolchain | `codeql` |
 | Semgrep | `semgrep` |
+| Semgrep OSS | `semgrep` |
 | ESLint | `eslint` |
+| DevSkim | `devskim` |
 | Microsoft (R) Visual C# Compiler | `roslyn` |
 | Trivy Vulnerability Scanner | `trivy` |
 | SonarQube | `sonarqube` |

@@ -36,6 +36,7 @@ public sealed class SarifNormalizer : ISarifNormalizer
         _sourceIdentifier = sourceIdentifier;
     }
 
+    /// <inheritdoc />
     public NormalizationResult Normalize(JsonDocument sarif, string repoRootPath)
     {
         var warnings = new List<string>();
@@ -84,6 +85,7 @@ public sealed class SarifNormalizer : ISarifNormalizer
                 var source = _sourceIdentifier.Resolve(driverName);
                 var rules = _ruleCollector.Collect(run);
                 var originalUriBaseIds = ExtractOriginalUriBaseIds(run);
+                var globalMessageStrings = ExtractGlobalMessageStrings(run);
                 var runResults = new List<NormalizedResult>();
 
                 if (run.TryGetProperty("results", out var results) && results.ValueKind == JsonValueKind.Array)
@@ -100,6 +102,7 @@ public sealed class SarifNormalizer : ISarifNormalizer
                                 rootPath,
                                 originalUriBaseIds,
                                 rules,
+                                globalMessageStrings,
                                 warnings);
 
                             if (normalized is null)
@@ -137,6 +140,10 @@ public sealed class SarifNormalizer : ISarifNormalizer
         }
     }
 
+    /// <summary>
+    /// Normalize a single SARIF result: extract ruleId, location, message, path, severity, fingerprints, and metadata.
+    /// Returns null (with a warning) when required fields are missing.
+    /// </summary>
     private NormalizedResult? NormalizeResult(
         JsonElement result,
         int runIndex,
@@ -144,6 +151,7 @@ public sealed class SarifNormalizer : ISarifNormalizer
         string repoRootPath,
         IReadOnlyDictionary<string, string> originalUriBaseIds,
         IReadOnlyDictionary<string, RuleDescriptor> rules,
+        IReadOnlyDictionary<string, string> globalMessageStrings,
         ICollection<string> warnings)
     {
         if (!TryGetString(result, "ruleId", out var ruleId))
@@ -170,7 +178,7 @@ public sealed class SarifNormalizer : ISarifNormalizer
         if (TryGetString(artifactLocation, "uriBaseId", out var parsedUriBaseId))
             uriBaseId = parsedUriBaseId;
 
-        var message = ResolveMessage(result, rule);
+        var message = ResolveMessage(result, rule, globalMessageStrings);
         if (string.IsNullOrWhiteSpace(message))
         {
             warnings.Add($"Run {runIndex} result {resultIndex} skipped: missing message text.");
@@ -209,6 +217,9 @@ public sealed class SarifNormalizer : ISarifNormalizer
             Data: data);
     }
 
+    /// <summary>
+    /// Build the supplementary data payload from SARIF properties (codeFlows, relatedLocations, fixes, tool severity).
+    /// </summary>
     private JsonObject? BuildDataPayload(JsonElement result, RuleDescriptor? rule)
     {
         var payload = new JsonObject();
@@ -235,6 +246,9 @@ public sealed class SarifNormalizer : ISarifNormalizer
         return payload.Count == 0 ? null : payload;
     }
 
+    /// <summary>
+    /// Read a SARIF string-keyed dictionary property (used for fingerprints and partialFingerprints).
+    /// </summary>
     private static IReadOnlyDictionary<string, string>? ReadStringDictionary(JsonElement result, string propertyName)
     {
         if (!result.TryGetProperty(propertyName, out var values) || values.ValueKind != JsonValueKind.Object)
@@ -250,6 +264,9 @@ public sealed class SarifNormalizer : ISarifNormalizer
         return dictionary.Count == 0 ? null : dictionary;
     }
 
+    /// <summary>
+    /// Normalize a SARIF region to a <see cref="NormalizedRegion"/>. Returns null if startLine is absent.
+    /// </summary>
     private static NormalizedRegion? NormalizeRegion(JsonElement region)
     {
         if (region.ValueKind != JsonValueKind.Object)
@@ -266,7 +283,13 @@ public sealed class SarifNormalizer : ISarifNormalizer
         return new NormalizedRegion(startLine, startColumn, endLine, endColumn);
     }
 
-    private static string? ResolveMessage(JsonElement result, RuleDescriptor? rule)
+    /// <summary>
+    /// Resolve message text with cascade: message.text > message.markdown > rule.messageStrings[id] > globalMessageStrings[id].
+    /// </summary>
+    private static string? ResolveMessage(
+        JsonElement result,
+        RuleDescriptor? rule,
+        IReadOnlyDictionary<string, string> globalMessageStrings)
     {
         if (!result.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object)
             return null;
@@ -277,16 +300,54 @@ public sealed class SarifNormalizer : ISarifNormalizer
         if (TryGetString(message, "markdown", out var markdown))
             return markdown;
 
-        if (TryGetString(message, "id", out var messageId)
-            && rule is not null
-            && rule.MessageStrings.TryGetValue(messageId, out var resolved))
+        if (TryGetString(message, "id", out var messageId))
         {
-            return resolved;
+            if (rule is not null && rule.MessageStrings.TryGetValue(messageId, out var resolved))
+                return resolved;
+
+            if (globalMessageStrings.TryGetValue(messageId, out var globalResolved))
+                return globalResolved;
         }
 
         return null;
     }
 
+    /// <summary>
+    /// Extract globalMessageStrings from the tool driver for message.id fallback resolution.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> ExtractGlobalMessageStrings(JsonElement run)
+    {
+        if (!TryGetDriverObject(run, out var driver))
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+
+        if (!driver.TryGetProperty("globalMessageStrings", out var globalMsgs)
+            || globalMsgs.ValueKind != JsonValueKind.Object)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in globalMsgs.EnumerateObject())
+        {
+            if (entry.Value.ValueKind != JsonValueKind.Object)
+                continue;
+
+            if (TryGetString(entry.Value, "text", out var text))
+            {
+                result[entry.Name] = text;
+                continue;
+            }
+
+            if (TryGetString(entry.Value, "markdown", out var markdown))
+                result[entry.Name] = markdown;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Extract the originalUriBaseIds map from a SARIF run for path resolution.
+    /// </summary>
     private static IReadOnlyDictionary<string, string> ExtractOriginalUriBaseIds(JsonElement run)
     {
         if (!run.TryGetProperty("originalUriBaseIds", out var originalUriBaseIds)
@@ -310,6 +371,9 @@ public sealed class SarifNormalizer : ISarifNormalizer
         return values;
     }
 
+    /// <summary>
+    /// Extract the first physical location with a valid artifactLocation.uri from a result's locations array.
+    /// </summary>
     private static bool TryGetPrimaryLocation(
         JsonElement result,
         out JsonElement artifactLocation,
@@ -353,11 +417,17 @@ public sealed class SarifNormalizer : ISarifNormalizer
     private static bool TryGetDriverName(JsonElement run, out string driverName)
     {
         driverName = string.Empty;
+        return TryGetDriverObject(run, out var driver)
+               && TryGetString(driver, "name", out driverName);
+    }
+
+    private static bool TryGetDriverObject(JsonElement run, out JsonElement driver)
+    {
+        driver = default;
         return run.TryGetProperty("tool", out var tool)
                && tool.ValueKind == JsonValueKind.Object
-               && tool.TryGetProperty("driver", out var driver)
-               && driver.ValueKind == JsonValueKind.Object
-               && TryGetString(driver, "name", out driverName);
+               && tool.TryGetProperty("driver", out driver)
+               && driver.ValueKind == JsonValueKind.Object;
     }
 
     private static bool TryGetString(JsonElement owner, string propertyName, out string value)

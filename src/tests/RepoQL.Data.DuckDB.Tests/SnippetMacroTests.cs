@@ -473,4 +473,5 @@ public class SnippetMacroTests : IDisposable
               LIMIT 1");
         resolvedUri.Should().Be("file:///doc.txt#line=1");
     }
+
 }

@@ -43,7 +43,7 @@ public static class DuckDbDataStoreExtensions
         if (node.Uri is null || !string.Equals(node.Kind, "document", StringComparison.OrdinalIgnoreCase))
             return null;
 
-        return NormalizeUri(node.Uri.Container.AbsoluteUri).ToLowerInvariant();
+        return RepoUri.NormalizeContainerKey(node.Uri);
     }
 
     #endregion
@@ -461,9 +461,21 @@ public static class DuckDbDataStoreExtensions
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(uri);
 
-        var lc = NormalizeUri(uri.Container.AbsoluteUri).ToLowerInvariant();
-        return store.Read(
+        var lc = RepoUri.NormalizeContainerKey(uri);
+
+        // Primary path: use the ART index on container_uri_lowercase.
+        var node = store.Read(
             $"SELECT id, kind, uri, artifact_id, span_id, properties, headline, structure, created_at, updated_at FROM node WHERE container_uri_lowercase = '{lc}'",
+            r => r.MapToNode()).FirstOrDefault();
+
+        if (node is not null)
+            return node;
+
+        // Fallback: DuckDB ART indexes can go stale after ON CONFLICT DO UPDATE,
+        // causing equality lookups to miss rows that exist. Bypass the index with
+        // a scan-based lookup on the uri column.
+        return store.Read(
+            $"SELECT id, kind, uri, artifact_id, span_id, properties, headline, structure, created_at, updated_at FROM node WHERE lower(uri) = '{lc}' AND kind = 'document'",
             r => r.MapToNode()).FirstOrDefault();
     }
 
@@ -531,6 +543,9 @@ public static class DuckDbDataStoreExtensions
 
         return store.WriteTransaction((conn, tx) =>
         {
+            if (string.Equals(node.Kind, "document", StringComparison.OrdinalIgnoreCase) && node.Uri is not null)
+                return UpsertDocumentByUri(conn, tx, node.Uri, node, store.Logger);
+
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = """
@@ -701,16 +716,28 @@ public static class DuckDbDataStoreExtensions
 
     private static Node? GetDocumentByUri(DuckDBConnection conn, DuckDBTransaction tx, RepoUri uri)
     {
-        var lc = NormalizeUri(uri.Container.AbsoluteUri).ToLowerInvariant();
+        var lc = RepoUri.NormalizeContainerKey(uri);
+
+        // Primary path: ART index on container_uri_lowercase.
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = "SELECT id, kind, uri, artifact_id, span_id, properties, headline, structure, created_at, updated_at FROM node WHERE container_uri_lowercase = ?;";
         cmd.AddParameters(lc);
         using var reader = cmd.ExecuteReader();
-        if (!reader.Read())
-            return null;
+        if (reader.Read())
+            return reader.MapToNode();
+        reader.Close();
 
-        return reader.MapToNode();
+        // Fallback: bypass potentially stale ART index with scan on uri column.
+        using var fallback = conn.CreateCommand();
+        fallback.Transaction = tx;
+        fallback.CommandText = "SELECT id, kind, uri, artifact_id, span_id, properties, headline, structure, created_at, updated_at FROM node WHERE lower(uri) = ? AND kind = 'document';";
+        fallback.AddParameters(lc);
+        using var fallbackReader = fallback.ExecuteReader();
+        if (fallbackReader.Read())
+            return fallbackReader.MapToNode();
+
+        return null;
     }
 
     private static Artifact UpsertArtifact(DuckDBConnection conn, DuckDBTransaction tx, Artifact artifact)
@@ -747,8 +774,8 @@ public static class DuckDbDataStoreExtensions
         Node document,
         ILogger logger)
     {
-        var uriStr = NormalizeUri(uri.Container.AbsoluteUri);
-        var lc = uriStr.ToLowerInvariant();
+        var uriStr = RepoUri.NormalizeContainer(uri);
+        var lc = RepoUri.NormalizeContainerKey(uri);
         List<(Guid Id, string Kind, string? Uri)>? preDelete = null;
         List<(Guid Id, string Kind, string? Uri)>? postDelete = null;
         List<(Guid Id, string Kind, string? Uri)>? postFailure = null;

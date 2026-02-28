@@ -1,9 +1,12 @@
 using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json.Nodes;
 using RepoQL.Contracts;
 using RepoQL.Data.DuckDB.UdfFramework;
+using RepoQL.FileSystem.Abstractions;
+using RepoQL.FileSystem.Physical;
 
 namespace RepoQL.Data.DuckDB.UdfImplementations;
 
@@ -20,6 +23,54 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 [UdfClass]
 public class SnippetUdf
 {
+    private readonly RepositoryConfiguration? _repoConfig;
+    private readonly UriRegistry? _uriRegistry;
+    private readonly IMultiFileSystem? _fileSystem;
+
+    public SnippetUdf()
+    {
+    }
+
+    public SnippetUdf(
+        RepositoryConfiguration repoConfig,
+        UriRegistry uriRegistry,
+        IMultiFileSystem? fileSystem = null)
+    {
+        _repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
+        _uriRegistry = uriRegistry ?? throw new ArgumentNullException(nameof(uriRegistry));
+        _fileSystem = fileSystem;
+    }
+
+    [StructuredUdf("_snippet_glob_internal",
+        MacroName = "snippet_glob",
+        Description = "Returns uri + snippet text for files matching a glob pattern")]
+    public IEnumerable<SnippetGlobRow> SnippetGlob(
+        string pattern,
+        [UdfDefault("NULL")] int? max_results)
+    {
+        if (string.IsNullOrWhiteSpace(pattern) || _uriRegistry is null)
+            yield break;
+
+        var limit = max_results is > 0 ? max_results.Value : int.MaxValue;
+        var emitted = 0;
+
+        foreach (var repoUri in _uriRegistry.MatchPattern(pattern))
+        {
+            if (emitted >= limit)
+                yield break;
+
+            if (!TryOpenTextReader(repoUri, out var reader))
+                continue;
+
+            using (reader)
+            {
+                var snippet = ExtractSnippet(reader, repoUri);
+                yield return new SnippetGlobRow(repoUri.AbsoluteUri, snippet);
+                emitted++;
+            }
+        }
+    }
+
     /// <summary>
     /// Infers programming language from media type or file URI for syntax highlighting.
     /// Checks media type kind, then subtype, then base type, then file extension.
@@ -355,6 +406,157 @@ public class SnippetUdf
             _ => null
         };
     }
+
+    private bool TryOpenTextReader(RepoUri uri, [NotNullWhen(true)] out TextReader? reader)
+    {
+        if (TryOpenReaderViaMountedFileSystems(uri, out reader))
+            return true;
+
+        if (TryOpenReaderFromLocalFile(uri, out reader))
+            return true;
+
+        reader = null;
+        return false;
+    }
+
+    private bool TryOpenReaderViaMountedFileSystems(RepoUri uri, [NotNullWhen(true)] out TextReader? reader)
+    {
+        reader = null;
+        if (_fileSystem is null)
+            return false;
+
+        Stream? stream = null;
+        try
+        {
+            var fileInfo = _fileSystem.GetFile(uri);
+            if (!fileInfo.Exists || fileInfo.IsDirectory)
+                return false;
+
+            stream = fileInfo.CreateReadStream();
+            reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
+            stream = null;
+            return true;
+        }
+        catch
+        {
+            stream?.Dispose();
+            reader?.Dispose();
+            reader = null;
+            return false;
+        }
+    }
+
+    private bool TryOpenReaderFromLocalFile(RepoUri uri, [NotNullWhen(true)] out TextReader? reader)
+    {
+        reader = null;
+
+        if (_repoConfig?.Path is null ||
+            !string.Equals(uri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        string absolutePath;
+        try
+        {
+            absolutePath = FileUriPathResolver.ToAbsolutePath(_repoConfig.Path, uri);
+            if (!File.Exists(absolutePath))
+                return false;
+        }
+        catch
+        {
+            return false;
+        }
+
+        FileStream? stream = null;
+        try
+        {
+            stream = new FileStream(
+                absolutePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+
+            reader = new StreamReader(stream, detectEncodingFromByteOrderMarks: true);
+            stream = null;
+            return true;
+        }
+        catch
+        {
+            stream?.Dispose();
+            reader?.Dispose();
+            reader = null;
+            return false;
+        }
+    }
+
+    private string ExtractSnippet(TextReader reader, RepoUri uri)
+    {
+        var lineRange = ResolveLineRange(uri);
+        if (lineRange is null)
+            return reader.ReadToEnd();
+
+        var (start, end) = lineRange.Value;
+        return ReadLineRange(reader, start, end);
+    }
+
+    private (int Start, int End)? ResolveLineRange(RepoUri uri)
+    {
+        if (uri.Loc.Line is { Start: var lineStart, End: var lineEnd } && lineStart is not null)
+        {
+            var start = Math.Max(1, lineStart.Value);
+            var end = lineEnd is null ? start : Math.Max(start, lineEnd.Value);
+            return (start, end);
+        }
+
+        if (string.IsNullOrWhiteSpace(uri.Loc.Symbol) || _uriRegistry is null)
+            return null;
+
+        if (!RepoUri.TryParse(uri.Container.AbsoluteUri, out var fileUri))
+            return null;
+
+        if (!_uriRegistry.TryGetValue(fileUri, out var entry))
+            return null;
+
+        foreach (var (symbolUri, symbolEntry) in entry.Symbols)
+        {
+            if (!symbolEntry.HasSpan)
+                continue;
+
+            if (string.Equals(symbolUri.AbsoluteUri, uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
+                return (symbolEntry.StartLine, symbolEntry.EndLine);
+
+            if (!string.IsNullOrWhiteSpace(symbolUri.Loc.Symbol) &&
+                string.Equals(symbolUri.Loc.Symbol, uri.Loc.Symbol, StringComparison.OrdinalIgnoreCase))
+            {
+                return (symbolEntry.StartLine, symbolEntry.EndLine);
+            }
+        }
+
+        return null;
+    }
+
+    private static string ReadLineRange(TextReader reader, int startLine, int endLine)
+    {
+        var lineNumber = 0;
+        var lines = new List<string>(Math.Max(1, endLine - startLine + 1));
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
+        {
+            lineNumber++;
+            if (lineNumber < startLine)
+                continue;
+
+            if (lineNumber > endLine)
+                break;
+
+            lines.Add(line);
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    public record SnippetGlobRow(string Uri, string Snippet);
 
     #endregion
 }
