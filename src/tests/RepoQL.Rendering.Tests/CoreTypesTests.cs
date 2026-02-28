@@ -88,32 +88,6 @@ public class CoreTypesTests
     }
 
     [Test]
-    [DisplayName("RenderingContext can be constructed")]
-    public void RenderingContext_CanBeConstructed()
-    {
-        var context = new RenderingContext(
-            Intent: Intent.Locate,
-            TokenBudget: 2000,
-            Limit: 50,
-            HasSearchCriteria: true
-        );
-
-        context.Intent.Should().Be(Intent.Locate);
-        context.TokenBudget.Should().Be(2000);
-        context.Limit.Should().Be(50);
-        context.HasSearchCriteria.Should().BeTrue();
-    }
-
-    [Test]
-    [DisplayName("RenderingContext limit can be null")]
-    public void RenderingContext_LimitCanBeNull()
-    {
-        var context = new RenderingContext(Intent.Inventory, 1000, null, false);
-
-        context.Limit.Should().BeNull();
-    }
-
-    [Test]
     [DisplayName("RenderingDecision can be constructed")]
     public void RenderingDecision_CanBeConstructed()
     {

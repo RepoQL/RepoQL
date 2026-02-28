@@ -16,3 +16,15 @@ public record RenderingDecision(
     IReadOnlyList<RenderingDecision>? ChildDecisions = null,
     int OmittedChildrenCount = 0
 );
+
+/// <summary>
+/// Result of the decision process.
+/// </summary>
+/// <param name="Decisions">The rendering decisions for included items.</param>
+/// <param name="OmittedCount">Number of results omitted.</param>
+/// <param name="OmittedByType">Omitted items grouped by semantic type (e.g., "markdown.doc" → 25).</param>
+public record DecisionResult(
+    IReadOnlyList<RenderingDecision> Decisions,
+    int OmittedCount,
+    IReadOnlyDictionary<string, int>? OmittedByType
+);
