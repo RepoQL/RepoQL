@@ -166,14 +166,7 @@ internal class HostCommands(IAnsiConsole console)
                 var logger = sp.GetService<ILogger<JitObjectSearchService>>();
                 return new JitObjectSearchService(store, embeddingProvider, logger);
             });
-            builder.Services.AddSingleton<IInspectRefinementService, InspectRefinementService>();
-            builder.Services.AddSingleton(sp => new ExploreOrchestrator(
-                sp.GetRequiredService<IExploreSearchEngine>(),
-                sp.GetService<IJitObjectSearchService>(),
-                sp.GetService<ILlmProvider>(),
-                sp.GetService<IInspectRefinementService>(),
-                new InspectRefinementOptions()
-            ));
+            builder.Services.AddSingleton<ExploreOrchestrator>();
             builder.Services.AddSingleton<IReadContentProvider, DatabaseReadContentProvider>();
             builder.Services.AddSingleton<ILintAnnotationProvider, DatabaseLintAnnotationProvider>();
             builder.Services.AddSingleton<IModifierHandler, HeadlineHandler>();
@@ -202,6 +195,23 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddHostedService<PipelineHealthPublisher>();
 
             var app = builder.Build();
+
+            // Wire memory gauge providers now that services are resolved
+            var hostMetrics = app.Services.GetRequiredService<HostMetrics>();
+            var dataStore = app.Services.GetRequiredService<DuckDbDataStore>();
+            var uriRegistry = app.Services.GetRequiredService<UriRegistry>();
+            hostMetrics.SetDuckDbBufferProvider(() =>
+            {
+                try { return dataStore.ReadScalar<long>("SELECT COALESCE(SUM(memory_usage_bytes), 0)::BIGINT FROM duckdb_memory()"); }
+                catch { return 0; }
+            });
+            hostMetrics.SetUriRegistryEstimateProvider(() =>
+            {
+                var symbolCount = 0;
+                foreach (var (_, entry) in uriRegistry)
+                    symbolCount += entry.Symbols.Count;
+                return (uriRegistry.Count * 960L) + (symbolCount * 184L);
+            });
             HostLogging.RegisterShutdown(app.Lifetime, app.Logger);
             app.Lifetime.ApplicationStopping.Register(() =>
             {
