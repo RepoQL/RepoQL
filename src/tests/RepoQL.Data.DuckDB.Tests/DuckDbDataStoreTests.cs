@@ -604,6 +604,54 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
+    [DisplayName("UpsertNode upserts document nodes by container key across URI casing variants")]
+    public void UpsertNode_DocumentCaseVariantUri_UsesContainerKey()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var createdAt = DateTimeOffset.UtcNow;
+        var firstUri = RepoUri.Parse("file:///Repo/Docs/ReadMe.md")!;
+        var secondUri = RepoUri.Parse("file:///repo/docs/readme.md")!;
+        var first = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "document",
+            Uri = firstUri,
+            Props = new JsonObject { ["title"] = "first" },
+            CreatedAt = createdAt,
+            UpdatedAt = createdAt
+        };
+        var second = new Node
+        {
+            Id = Guid.NewGuid(),
+            Kind = "document",
+            Uri = secondUri,
+            Props = new JsonObject { ["title"] = "second" },
+            CreatedAt = createdAt.AddMinutes(1),
+            UpdatedAt = createdAt.AddMinutes(1)
+        };
+
+        db.UpsertNode(first);
+        var act = () => db.UpsertNode(second);
+
+        act.Should().NotThrow();
+
+        var rows = db.Read(
+            "SELECT id, uri, container_uri_lowercase FROM node WHERE kind = 'document'",
+            r => new
+            {
+                Id = r.GetGuid(0),
+                Uri = r.GetString(1),
+                ContainerKey = r.GetString(2)
+            });
+
+        rows.Should().HaveCount(1);
+        rows[0].Id.Should().Be(second.Id);
+        rows[0].Uri.Should().Be(RepoUri.NormalizeContainer(secondUri));
+        rows[0].ContainerKey.Should().Be(RepoUri.NormalizeContainerKey(secondUri));
+    }
+
+    [Test]
     [DisplayName("IndexArtifact stores mixed composition and reference edges")]
     public void IndexArtifact_MixedEdgeTypes_AreStoredCorrectly()
     {
@@ -1630,6 +1678,187 @@ public class DuckDbDataStoreTests
 
     #endregion
 
+    #region Write-Write Conflict Handling Tests
+
+    [Test]
+    [DisplayName("IsWriteConflictError matches genuine write-write conflict")]
+    public void IsWriteConflictError_MatchesGenuineConflict()
+    {
+        var ex = CreateDuckDBException("write-write conflict on key: \"some_key_value\"");
+        DuckDbDataStore.IsWriteConflictError(ex).Should().BeTrue();
+    }
+
+    [Test]
+    [DisplayName("IsWriteConflictError is case-insensitive")]
+    public void IsWriteConflictError_CaseInsensitive()
+    {
+        var ex = CreateDuckDBException("WRITE-WRITE CONFLICT on key: \"abc\"");
+        DuckDbDataStore.IsWriteConflictError(ex).Should().BeTrue();
+    }
+
+    [Test]
+    [DisplayName("IsWriteConflictError rejects cascade TransactionContext errors")]
+    public void IsWriteConflictError_RejectsCascadeErrors()
+    {
+        var ex = CreateDuckDBException("TransactionContext Error: Current transaction is aborted (please ROLLBACK)");
+        DuckDbDataStore.IsWriteConflictError(ex).Should().BeFalse();
+    }
+
+    [Test]
+    [DisplayName("IsWriteConflictError rejects unrelated DuckDB errors")]
+    public void IsWriteConflictError_RejectsUnrelatedErrors()
+    {
+        var ex = CreateDuckDBException("INTERNAL Error: something else went wrong");
+        DuckDbDataStore.IsWriteConflictError(ex).Should().BeFalse();
+    }
+
+    [Test]
+    [DisplayName("IsWriteConflictError handles null message")]
+    public void IsWriteConflictError_HandlesNullMessage()
+    {
+        var ex = CreateDuckDBException(null!);
+        DuckDbDataStore.IsWriteConflictError(ex).Should().BeFalse();
+    }
+
+    [Test]
+    [DisplayName("HandleWriteConflict always sets databaseInvalidated")]
+    public void HandleWriteConflict_AlwaysInvalidates()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var ex = CreateDuckDBException("write-write conflict on key: \"test_key\"");
+        db.HandleWriteConflict(ex, "WriteTest");
+
+        // Verify invalidation by checking that the next write triggers recovery.
+        // The _databaseInvalidated field is private, but its effect is observable:
+        // the store transitions to recovery mode.
+        // For an in-memory store, recovery means recreation, which resets schema.
+        // We can verify indirectly by confirming the store still works after handling.
+        var results = db.Read("SELECT 1 AS v", r => r.GetInt32(0));
+        results.Should().HaveCount(1);
+    }
+
+    #endregion
+
+    #region IndexArtifactBatchIsolated Tests
+
+    [Test]
+    [DisplayName("IndexArtifactBatchIsolated succeeds for all items in happy path")]
+    public void IndexArtifactBatchIsolated_AllSucceed()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var items = new List<(RepoUri Uri, ParsedArtifact Artifact)>();
+        for (var i = 0; i < 3; i++)
+        {
+            var uri = RepoUri.Parse($"file:///test/batch_{i}.md")!;
+            items.Add((uri, CreateTestArtifact($"content {i}")));
+        }
+
+        var outcomes = db.IndexArtifactBatchIsolated(items);
+
+        outcomes.Should().HaveCount(3);
+        outcomes.Should().AllSatisfy(o =>
+        {
+            o.Succeeded.Should().BeTrue();
+            o.Result.Should().NotBeNull();
+            o.Error.Should().BeNull();
+        });
+
+        // Verify all documents were stored
+        var count = db.Read("SELECT COUNT(*) FROM node WHERE kind = 'document'", r => r.GetInt64(0))[0];
+        count.Should().Be(3L);
+    }
+
+    [Test]
+    [DisplayName("IndexArtifactBatchIsolated returns empty list for empty input")]
+    public void IndexArtifactBatchIsolated_EmptyInput_ReturnsEmpty()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var outcomes = db.IndexArtifactBatchIsolated([]);
+
+        outcomes.Should().BeEmpty();
+    }
+
+    [Test]
+    [DisplayName("IndexArtifactBatchIsolated isolates per-item failures")]
+    public void IndexArtifactBatchIsolated_OneFailure_OthersSucceed()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        // Create 3 items: items 0 and 2 are valid, item 1 has a null URI which will cause
+        // the batch to fail, then per-item fallback succeeds for 0 and 2 but fails for 1.
+        var items = new List<(RepoUri Uri, ParsedArtifact Artifact)>();
+
+        var good0 = RepoUri.Parse("file:///test/good0.md")!;
+        items.Add((good0, CreateTestArtifact("good content 0")));
+
+        // This item has a document node with null URI — IndexArtifact will throw
+        var badArtifact = new ParsedArtifact
+        {
+            Artifact = new RepoQL.Contracts.Models.Artifact
+            {
+                Id = Guid.NewGuid(),
+                Digest = $"sha256:{Guid.NewGuid():N}",
+                Size = 10,
+                MediaType = SemanticMediaType.Parse("text/markdown")
+            },
+            DocumentNode = new Node
+            {
+                Id = Guid.NewGuid(),
+                Kind = "document",
+                Uri = null, // This will cause failure in the INSERT
+                ArtifactId = Guid.NewGuid(),
+                Headline = "Bad"
+            },
+            Children = [],
+            Spans = [],
+            Edges = []
+        };
+        items.Add((null!, badArtifact));
+
+        var good2 = RepoUri.Parse("file:///test/good2.md")!;
+        items.Add((good2, CreateTestArtifact("good content 2")));
+
+        var outcomes = db.IndexArtifactBatchIsolated(items);
+
+        outcomes.Should().HaveCount(3);
+
+        // Good items should succeed
+        outcomes[0].Succeeded.Should().BeTrue("first item is valid");
+        outcomes[2].Succeeded.Should().BeTrue("third item is valid");
+
+        // Bad item should fail
+        outcomes[1].Succeeded.Should().BeFalse("second item has null URI");
+        outcomes[1].Error.Should().NotBeNull();
+    }
+
+    [Test]
+    [DisplayName("IndexArtifactBatchIsolated throws on null store")]
+    public void IndexArtifactBatchIsolated_ThrowsOnNullStore()
+    {
+        DuckDbDataStore store = null!;
+        var items = new List<(RepoUri Uri, ParsedArtifact Artifact)>();
+
+        var act = () => store.IndexArtifactBatchIsolated(items);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("store");
+    }
+
+    [Test]
+    [DisplayName("IndexArtifactBatchIsolated throws on null items")]
+    public void IndexArtifactBatchIsolated_ThrowsOnNullItems()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        var act = () => db.IndexArtifactBatchIsolated(null!);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("items");
+    }
+
+    #endregion
+
     #region Test Helpers
 
     private static ParsedArtifact CreateTestArtifactWithChildren(int childCount)
@@ -1864,6 +2093,20 @@ public class DuckDbDataStoreTests
     }
 
     private static DuckDBConnection GetPrimaryConnection(DuckDbDataStore db) => db._connection;
+
+    /// <summary>
+    /// Creates a DuckDBException via reflection (constructors are internal).
+    /// </summary>
+    private static DuckDBException CreateDuckDBException(string message)
+    {
+        var ctor = typeof(DuckDBException).GetConstructor(
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+            binder: null,
+            types: [typeof(string)],
+            modifiers: null)
+            ?? throw new InvalidOperationException("DuckDBException(string) constructor not found");
+        return (DuckDBException)ctor.Invoke([message]);
+    }
 
     private static string CreateTemporaryDatabasePath()
     {

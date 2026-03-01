@@ -51,7 +51,9 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     private bool _databaseInvalidated;
     private bool _databaseFileExisted;
     private int _consecutiveFailures;
+    private DateTime? _recoveredAtUtc;
     private const int MaxConsecutiveFailuresBeforeRecovery = 3;
+    private static readonly TimeSpan PostRecoveryEscalationWindow = TimeSpan.FromSeconds(30);
     private const int SchemaVersion = 1;
     private const int GateWaitMs = 50;
 
@@ -1110,6 +1112,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
 
             _databaseInvalidated = false;
             _consecutiveFailures = 0;
+            _recoveredAtUtc = DateTime.UtcNow;
             RecoveryOccurred = true;
             _logger.LogInformation("[DuckDB] Database recovery completed successfully in {ElapsedMs}ms", sw.ElapsedMilliseconds);
             _logger.LogWarning("[DuckDB] Data may have been lost during recovery. A full reindex is recommended.");
@@ -1177,6 +1180,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             _schemaInitialized = false;
             _databaseInvalidated = false;
             _consecutiveFailures = 0;
+            _recoveredAtUtc = null;
             _databaseFileExisted = false;
 
             InitializeConnections();
@@ -1270,13 +1274,14 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     }
 
     /// <summary>
-    /// Detects if an exception indicates a write-write conflict.
+    /// Detects if an exception indicates a genuine write-write conflict.
+    /// Does NOT match cascade errors ("Current transaction is aborted") which are
+    /// consequences of earlier failures, not independent write-write conflicts.
     /// </summary>
-    private static bool IsWriteConflictError(DuckDBException ex)
+    internal static bool IsWriteConflictError(DuckDBException ex)
     {
         var message = ex.Message ?? "";
-        return message.Contains("write-write conflict", StringComparison.OrdinalIgnoreCase) ||
-               message.Contains("TransactionContext Error", StringComparison.OrdinalIgnoreCase);
+        return message.Contains("write-write conflict", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1321,9 +1326,11 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     }
 
     /// <summary>
-    /// Handles a write-write conflict error.
+    /// Handles a write-write conflict error. Under the single-writer model
+    /// (EnterExclusiveSection), any write-write conflict indicates database
+    /// corruption — always invalidates for recovery.
     /// </summary>
-    private void HandleWriteConflict(DuckDBException ex, string operation)
+    internal void HandleWriteConflict(DuckDBException ex, string operation)
     {
         var failures = Interlocked.Increment(ref _consecutiveFailures);
 
@@ -1335,21 +1342,41 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         _logger.LogError(ex,
             "[DuckDB] WRITE-WRITE CONFLICT during {Operation} (consecutive failures: {Failures}). " +
             "Conflicting key: {ConflictingKey}. " +
-            "This usually indicates WAL corruption or concurrent access issues. " +
-            "The database will be marked as invalidated for recovery.",
+            "This indicates database corruption (impossible under single-writer model). " +
+            "Database marked for recovery.",
             operation, failures, conflictingKey);
 
-        // Write-write conflicts during reads indicate WAL/database corruption
-        // INTERNAL errors are DuckDB assertion failures that require recovery
-        var isRead = operation.StartsWith("Read", StringComparison.Ordinal);
-        var isInternalError = message.Contains("INTERNAL Error", StringComparison.OrdinalIgnoreCase);
-        var isFatalError = message.Contains("FATAL", StringComparison.OrdinalIgnoreCase);
+        // Single-writer model makes any write-write conflict a corruption signal.
+        // The exclusive section guarantees only one writer at a time.
+        _databaseInvalidated = true;
 
-        if (isRead || isInternalError || isFatalError)
+        // If corruption recurs immediately after WAL recovery, the .duckdb file is corrupt.
+        // Escalate from WAL cleanup (AttemptRecovery) to full database rebuild (RecreateDatabase).
+        if (_recoveredAtUtc is not null &&
+            DateTime.UtcNow - _recoveredAtUtc.Value < PostRecoveryEscalationWindow)
         {
-            _databaseInvalidated = true;
-            _logger.LogWarning("[DuckDB] Database invalidated due to {Reason}. Will attempt recovery on next operation.",
-                isInternalError ? "internal error" : isRead ? "conflict during read" : "fatal error");
+            var elapsed = DateTime.UtcNow - _recoveredAtUtc.Value;
+            _logger.LogError(
+                "[DuckDB] Write-write conflict {Seconds:F1}s after WAL recovery. " +
+                "Database file is corrupted. Escalating to full rebuild.",
+                elapsed.TotalSeconds);
+
+            _recoveredAtUtc = null;
+
+            if (!_isInMemory && _path is not null)
+            {
+                try
+                {
+                    RecreateDatabase();
+                    return; // RecreateDatabase resets _databaseInvalidated
+                }
+                catch (Exception rebuildEx)
+                {
+                    _logger.LogError(rebuildEx,
+                        "[DuckDB] Full database rebuild failed. Manual deletion may be required: {Path}",
+                        _path);
+                }
+            }
         }
     }
 

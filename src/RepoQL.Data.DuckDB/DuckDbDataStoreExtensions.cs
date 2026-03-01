@@ -204,6 +204,70 @@ public static class DuckDbDataStoreExtensions
     }
 
     /// <summary>
+    /// Per-item outcome from <see cref="IndexArtifactBatchIsolated"/>.
+    /// Either Result has a value (success) or Error is set (failure), never both.
+    /// </summary>
+    public readonly record struct ItemIndexOutcome(IndexResult? Result, Exception? Error)
+    {
+        public bool Succeeded => Error is null;
+    }
+
+    /// <summary>
+    /// Purpose: Index multiple artifacts with per-item error isolation.
+    /// Complexity: Tries the fast path (single transaction for the whole batch) first.
+    /// On failure, falls back to per-item transactions so one bad file doesn't
+    /// poison innocent files in the same batch.
+    /// </summary>
+    public static IReadOnlyList<ItemIndexOutcome> IndexArtifactBatchIsolated(
+        this DuckDbDataStore store,
+        IReadOnlyList<(RepoUri Uri, ParsedArtifact Artifact)> items)
+    {
+        ArgumentNullException.ThrowIfNull(store);
+        ArgumentNullException.ThrowIfNull(items);
+
+        if (items.Count == 0)
+            return [];
+
+        // Fast path: try entire batch in one transaction
+        try
+        {
+            var results = IndexArtifactBatch(store, items);
+            return results.Select(r => new ItemIndexOutcome(r, null)).ToList();
+        }
+        catch (Exception batchEx)
+        {
+            store.Logger?.LogWarning(batchEx,
+                "[DuckDB] Batch commit failed for {Count} items. Falling back to per-item commits.",
+                items.Count);
+        }
+
+        // Slow path: per-item transactions isolate failures
+        var outcomes = new List<ItemIndexOutcome>(items.Count);
+        foreach (var (uri, artifact) in items)
+        {
+            try
+            {
+                var result = IndexArtifact(store, uri, artifact);
+                outcomes.Add(new ItemIndexOutcome(result, null));
+            }
+            catch (Exception itemEx)
+            {
+                store.Logger?.LogError(itemEx,
+                    "[DuckDB] Individual commit failed for {Uri}", uri);
+                outcomes.Add(new ItemIndexOutcome(null, itemEx));
+            }
+        }
+
+        var succeeded = outcomes.Count(o => o.Succeeded);
+        var failed = outcomes.Count - succeeded;
+        store.Logger?.LogInformation(
+            "[DuckDB] Per-item fallback completed: {Succeeded} succeeded, {Failed} failed out of {Total}",
+            succeeded, failed, items.Count);
+
+        return outcomes;
+    }
+
+    /// <summary>
     /// Delete an artifact and its entire subtree by URI.
     /// </summary>
     public static bool DeleteArtifact(this DuckDbDataStore store, RepoUri uri)
