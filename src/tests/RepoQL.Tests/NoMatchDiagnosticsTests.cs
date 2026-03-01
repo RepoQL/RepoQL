@@ -1,12 +1,29 @@
 using AwesomeAssertions;
+using RepoQL.Contracts;
 using RepoQL.Explore;
 
 namespace RepoQL.Tests;
 
 internal sealed class NoMatchDiagnosticsTests
 {
-    private static readonly IndexerStatus IdleStatus = new(IndexPending: 0, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 0);
-    private static readonly IndexerStatus PendingStatus = new(IndexPending: 12, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 0);
+    private static readonly TrustSignal IdleStatus = new(
+        IndexTotal: 100,
+        IndexPending: 0,
+        IndexFailed: 0,
+        IndexStale: 0,
+        SemanticEnabled: true,
+        SemanticReady: true,
+        SemanticPercent: 100,
+        ExecutionTimeMs: 0);
+    private static readonly TrustSignal PendingStatus = new(
+        IndexTotal: 100,
+        IndexPending: 12,
+        IndexFailed: 0,
+        IndexStale: 0,
+        SemanticEnabled: true,
+        SemanticReady: false,
+        SemanticPercent: 88,
+        ExecutionTimeMs: 0);
 
     [Test]
     public async Task FileNotFound_NoFragment_NoGlob_ReturnsFileNotFound()

@@ -12,6 +12,7 @@
         </PackageReference>
         <PackageReference Include="TUnit" />
         <PackageReference Include="AwesomeAssertions" />
+        <PackageReference Include="FakeItEasy" />
         <PackageReference Include="DuckDB.NET.Data.Full" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     </ItemGroup>

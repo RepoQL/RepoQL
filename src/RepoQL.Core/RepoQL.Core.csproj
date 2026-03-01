@@ -37,6 +37,7 @@
     <ProjectReference Include="..\Formats\RepoQL.Formats.Csv\RepoQL.Formats.Csv.csproj" />
     <ProjectReference Include="..\Formats\RepoQL.Formats.Json\RepoQL.Formats.Json.csproj" />
     <ProjectReference Include="..\RepoQL.Templating\RepoQL.Templating.csproj" />
+    <ProjectReference Include="..\RepoQL.Embedding.Client\RepoQL.Embedding.Client.csproj" />
     <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
     <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
     <ProjectReference Include="..\RepoQL.Mcp.Client\RepoQL.Mcp.Client.csproj" />

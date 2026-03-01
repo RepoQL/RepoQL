@@ -147,7 +147,7 @@ public sealed class Operation : IOperation
                         if (_indexedLogged.Add(uri))
                             _log.Add(new OperationEntry(DateTimeOffset.UtcNow, OperationEntry.TypeFileIndexed, null, uri));
                     }
-                    else if (entry.Status == UriStatus.Failed)
+                    else if (entry.Status == UriStatus.Failed || entry.Status == UriStatus.Skipped)
                     {
                         if (_fileFailedLogged.Add(uri))
                         {

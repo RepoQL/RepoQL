@@ -45,8 +45,8 @@ public sealed partial class MacroInterferenceDetector
         var source = document.Text;
         var preprocessorStats = new PreprocessorStats(
             source.Contains("extern \"C\"", StringComparison.Ordinal),
-            PreprocIfDirectiveRegex().Matches(source).Count,
-            PreprocEndifRegex().Matches(source).Count);
+            CountMatches(PreprocIfDirectiveRegex(), source),
+            CountMatches(PreprocEndifRegex(), source));
 
         Visit(root);
         if (annotations.Count == 0 && root.HasError)
@@ -335,9 +335,9 @@ public sealed partial class MacroInterferenceDetector
             return null;
         }
 
-        foreach (var token in IdentifierTokenRegex().Matches(window)
-                     .Select(m => m.Value))
+        for (var match = IdentifierTokenRegex().Match(window); match.Success; match = match.NextMatch())
         {
+            var token = match.Value;
             if (TryMatchKnownMacroFamily(token, out _))
             {
                 return token;
@@ -450,6 +450,17 @@ public sealed partial class MacroInterferenceDetector
         var safeStart = Math.Max(0, start);
         var safeEnd = Math.Min(source.Length, safeStart + Math.Max(0, length));
         return source[safeStart..safeEnd];
+    }
+
+    private static int CountMatches(Regex regex, string source)
+    {
+        var count = 0;
+        for (var match = regex.Match(source); match.Success; match = match.NextMatch())
+        {
+            count++;
+        }
+
+        return count;
     }
 
     private static bool IsNullNode(TsNode node)

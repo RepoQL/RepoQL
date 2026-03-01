@@ -52,7 +52,7 @@ internal class McpCommands
 
                                            **Everything is addressable.** URIs pinpoint anything: `file:///path#symbol=Name`, `file:///path#line=10,20`. Globs select many: `src/**/*.cs`. Combine with `;`, exclude with `!`.
 
-                                           **Everything has summaries.** Headline (one line), structure (signatures), content (full text). You choose the level. Don't pay for content when structure answers the question.
+                                           **Everything has summaries.** Headline (one line, the most important aspects), structure (signatures, document outlines), content (full text, or a text representation). You choose the level. Don't pay for content when structure answers the question.
 
                                            **Budget controls detail.** 500 tokens = shape. 2000 = structure. 5000 = depth. Set it based on what you need, not what exists.
 
@@ -70,6 +70,8 @@ internal class McpCommands
                                            **The workflow:** explore → read. Discover the landscape, then commit tokens to what matters. This isn't two tools — it's the pattern.
 
                                            **More than files.** RepoQL queries git history alongside current state — who changed what, when, why. It parses structured data: JSON, CSV, Parquet, Excel. It calls other MCP servers from SQL, parses their results, and protects you from token bombs. One query surface for code, data, history, and external tools.
+                                           
+                                           Remember: You arent stupid, and repoql is an incredibly flexible, composable and powerful tool. Use your imagination - you'll be surprised what you can do.
                                            </MENTAL_MODEL>
 
                                            <TOOLS>
@@ -88,7 +90,7 @@ internal class McpCommands
                                              read("file://** => tree: folders", 5000)
 
                                            Now you can find things without guessing:
-                                             explore(intent="Locate", keywords="authentication", tokenBudget=1500)
+                                             explore(intent="Locate", uriGlob="help://**", keywords="authentication", tokenBudget=1500)
                                            </START>
 
                                            <HELP>
@@ -98,7 +100,7 @@ internal class McpCommands
                                              explain(question="How do I add a new file format?", uriGlob="help://**", tokenBudget=2500)
 
                                            Find relevant docs:
-                                             explore(intent="Locate", uriGlob="help://**", keywords="graph edges", tokenBudget=1500)
+                                             explore(intent="Locate", uriGlob="help://**", keywords="views", tokenBudget=1500)
                                            </HELP>
                                            """;
                 })

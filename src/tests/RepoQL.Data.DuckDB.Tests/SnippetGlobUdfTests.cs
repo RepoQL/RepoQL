@@ -111,7 +111,6 @@ public sealed class SnippetGlobUdfTests : IDisposable
                 [barSymbolUri] = new("csharp.method", 4, 4)
             },
             headline: null,
-            summary: null,
             structure: null);
 
         var rows = _db.Read(

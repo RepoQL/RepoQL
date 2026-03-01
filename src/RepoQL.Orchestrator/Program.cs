@@ -10,8 +10,11 @@ var builder = DistributedApplication.CreateBuilder(args);
 builder.Services.AddHealthChecks()
     .AddCheck<RepoQlHostHealthCheck>("repoql-host");
 
+var embedding = builder.AddProject<RepoQL_Embedding_Service>("embedding");
+
 var host = builder.AddProject<RepoQL_ConsoleApp>("host", options => options.LaunchProfileName = "host")
     .WithHealthCheck("repoql-host")
+    .WithReference(embedding)
     .WithCommand(
         name: "rebuild_and_restart",
         displayName: "Rebuild and restart",
@@ -153,6 +156,7 @@ var host = builder.AddProject<RepoQL_ConsoleApp>("host", options => options.Laun
             IconName = "Delete",
             IsHighlighted = true
         });
+
 builder.AddProject<RepoQL_Web>("web")
     .WaitFor(host);
 

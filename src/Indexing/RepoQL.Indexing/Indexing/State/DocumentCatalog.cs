@@ -222,7 +222,6 @@ public sealed class DocumentCatalog(IDocumentCatalogDataSource dataSource) : IDo
 
     private static string GetKey(RepoUri uri)
     {
-        var normalized = RepoUri.Normalize(uri.Container.AbsoluteUri);
-        return normalized.ToLowerInvariant();
+        return RepoUri.NormalizeContainerKey(uri);
     }
 }

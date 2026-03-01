@@ -60,7 +60,8 @@ public sealed class DuckDbConnectionAnalyzer : DiagnosticAnalyzer
         var filePath = context.Node.SyntaxTree.FilePath;
         var fileName = Path.GetFileName(filePath);
         if (fileName.Equals("DuckDbDataStore.cs", StringComparison.OrdinalIgnoreCase) ||
-            fileName.Equals("DuckDbDataStoreExtensions.cs", StringComparison.OrdinalIgnoreCase))
+            fileName.Equals("DuckDbDataStoreExtensions.cs", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Equals("EmbeddingCache.cs", StringComparison.OrdinalIgnoreCase))
         {
             return;
         }

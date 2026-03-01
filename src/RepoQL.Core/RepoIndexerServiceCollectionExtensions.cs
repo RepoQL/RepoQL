@@ -164,7 +164,33 @@ public static class RepoIndexerServiceCollectionExtensions
                 logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterLlmProvider>>());
         });
 
-        // Embeddings provider: OpenRouter (cloud) if API key present, otherwise local ONNX
+        services.AddSingleton(sp =>
+        {
+            var cache = new EmbeddingCache(
+                settings: sp.GetRequiredService<RepoQlConfig>().Embedding.Cache,
+                logger: sp.GetService<ILogger<EmbeddingCache>>());
+            cache.TriggerStartupCompaction();
+            return cache;
+        });
+
+        // Remote contextual embedding provider: if embedding.remote.url is configured,
+        // register GrpcEmbeddingProvider as IContextualEmbeddingProvider.
+        // This is the primary embedding path — contextual embeddings via Voyage AI.
+        services.AddSingleton<IContextualEmbeddingProvider>(sp =>
+        {
+            var config = sp.GetRequiredService<RepoQlConfig>();
+            var remote = config.Embedding.Remote;
+            if (string.IsNullOrWhiteSpace(remote.Url) || string.IsNullOrWhiteSpace(remote.ApiKey))
+                return new DisabledContextualEmbeddingProvider();
+
+            var logger = sp.GetService<ILogger<RepoQL.Embedding.Client.GrpcEmbeddingProvider>>();
+            var timeout = remote.TimeoutSeconds ?? 30;
+            return new RepoQL.Embedding.Client.GrpcEmbeddingProvider(
+                remote.Url, remote.ApiKey, timeout, logger);
+        });
+
+        // Embeddings provider: local ONNX for flat (non-contextual) embedding.
+        // Used for query embedding when remote is unavailable, and as the search() UDF backing.
         services.AddSingleton<IEmbeddingProvider>(sp =>
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
@@ -175,41 +201,25 @@ public static class RepoIndexerServiceCollectionExtensions
             string? failureMessage = null;
             var onnxLogger = sp.GetService<ILogger<OnnxEmbeddingProvider>>();
             var cache = sp.GetService<IMemoryCache>();
-            var openRouterKey = config.Llm.ApiKey;
-            var useOpenRouter = !string.IsNullOrWhiteSpace(openRouterKey);
+            var embeddingCache = sp.GetRequiredService<EmbeddingCache>();
+            var cacheLogger = sp.GetService<ILogger<CachingEmbeddingProvider>>();
+            IEmbeddingProvider WrapWithCache(IEmbeddingProvider inner) =>
+                new CachingEmbeddingProvider(inner, embeddingCache, cacheLogger);
 
             if (mode == EmbeddingMode.None)
             {
                 log?.LogInformation("Embedding provider: disabled (mode=None)");
-                return new DisabledEmbeddingProvider();
+                return WrapWithCache(new DisabledEmbeddingProvider());
             }
 
-            // Use OpenRouter cloud embeddings if API key is present
-            if (useOpenRouter)
-            {
-                try
-                {
-                    log?.LogInformation("Embedding provider: using OpenRouter (all-MiniLM-L6-v2, 384 dims, mode=Full)");
-                    return new RepoQL.LLM.Client.OpenRouterEmbeddingProvider(
-                        apiKey: openRouterKey,
-                        settings: config.Llm,
-                        logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterEmbeddingProvider>>());
-                }
-                catch (Exception ex)
-                {
-                    failureMessage = $"OpenRouter embeddings failed: {ex.Message}";
-                    log?.LogWarning(ex, "Embedding provider: OpenRouter initialization failed; falling back");
-                }
-            }
-
-            // No API key - use local ONNX embeddings
+            // Local ONNX embeddings
             var onnxPath = GetEmbeddingModelPath(config.Embedding);
             var maxTokens = GetEmbeddingMaxTokens(config.Embedding);
             if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
             {
                 var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, cache, config.Ort, out var error);
                 if (onnx is not null)
-                    return onnx;
+                    return WrapWithCache(onnx);
 
                 if (error is null)
                 {
@@ -246,7 +256,7 @@ public static class RepoIndexerServiceCollectionExtensions
                     log?.LogInformation("Embedding provider: using model at {Path}", shipped);
                     var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, cache, config.Ort, out var error);
                     if (onnx is not null)
-                        return onnx;
+                        return WrapWithCache(onnx);
 
                     if (error is null)
                     {
@@ -279,7 +289,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 degradation?.MarkDegraded(ServiceDegradationKind.Embeddings,
                     $"Embeddings degraded; using hashed fallback. {failureMessage}");
             }
-            return new HashedEmbeddingProvider(dim);
+            return WrapWithCache(new HashedEmbeddingProvider(dim));
         });
 
         // Local ONNX embedding provider for fast interactive search (JIT embeddings)
@@ -293,11 +303,15 @@ public static class RepoIndexerServiceCollectionExtensions
             string? failureMessage = null;
             var onnxLogger = sp.GetService<ILogger<OnnxEmbeddingProvider>>();
             var cache = sp.GetService<IMemoryCache>();
+            var embeddingCache = sp.GetRequiredService<EmbeddingCache>();
+            var cacheLogger = sp.GetService<ILogger<CachingEmbeddingProvider>>();
+            IEmbeddingProvider WrapWithCache(IEmbeddingProvider inner) =>
+                new CachingEmbeddingProvider(inner, embeddingCache, cacheLogger);
 
             if (mode == EmbeddingMode.None)
             {
                 log?.LogDebug("Local embedding provider: disabled (mode=None)");
-                return new DisabledEmbeddingProvider();
+                return WrapWithCache(new DisabledEmbeddingProvider());
             }
 
             // Always use local ONNX for speed
@@ -310,7 +324,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 if (onnx is not null)
                 {
                     log?.LogInformation("Local embedding provider: using ONNX from explicit path");
-                    return onnx;
+                    return WrapWithCache(onnx);
                 }
 
                 if (error is null)
@@ -348,7 +362,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 if (onnx is not null)
                 {
                     log?.LogInformation("Local embedding provider: using shipped ONNX model from {Path}", shipped);
-                    return onnx;
+                    return WrapWithCache(onnx);
                 }
 
                 if (error is null)
@@ -370,7 +384,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 degradation?.MarkDegraded(ServiceDegradationKind.Embeddings,
                     $"Local embeddings disabled. {failureMessage}");
             }
-            return new DisabledEmbeddingProvider();
+            return WrapWithCache(new DisabledEmbeddingProvider());
         });
 
         services.AddSingleton<IAnalysisResultWriter, AnnotationResultWriter>();
@@ -667,7 +681,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<ICompositeFileSystemManager>(),
             sp.GetRequiredService<GitHistoryIndexer>(),
             sp.GetService<IOperationManager>(),
-            sp.GetService<UriRegistry>()));
+            sp.GetService<UriRegistry>(),
+            sp.GetService<RepositoryConfiguration>()));
 
         services.AddSingleton<IVirtualFileSystemImporter>(sp => new GithubRepositoryImporter(
             sp.GetRequiredService<PhysicalFileSystem>(),
@@ -695,7 +710,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<IIndexingCoordinator>(),
             sp.GetService<IServiceDegradationTracker>(),
             sp.GetService<IOperationManager>(),
-            sp.GetService<UriRegistry>()));
+            sp.GetService<UriRegistry>(),
+            sp.GetService<RepositoryConfiguration>()));
         services.AddHostedService(sp => sp.GetRequiredService<RepoqlHost>());
 
         return services;

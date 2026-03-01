@@ -181,6 +181,7 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton<ExploreOrchestrator>();
             builder.Services.AddSingleton<IReadContentProvider, DatabaseReadContentProvider>();
             builder.Services.AddSingleton<ILintAnnotationProvider, DatabaseLintAnnotationProvider>();
+            builder.Services.AddSingleton<QueueCommandService>();
             builder.Services.AddSingleton<IModifierHandler, HeadlineHandler>();
             builder.Services.AddSingleton<IModifierHandler, TreeHandler>();
             builder.Services.AddSingleton<IModifierHandler, StructureHandler>();

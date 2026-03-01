@@ -106,6 +106,29 @@ public class PhysicalFileSystemPathTests
         resolved.RelativePath.Should().Be("docs/My File ~.txt");
     }
 
+    [Test]
+    public void ToRepoUri_CaseVariantAbsolutePaths_ProduceSameUriOnWindows()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        using var temp = new TempRoot();
+        var root = temp.DirectoryPath;
+        var docsPath = Path.Combine(root, "Docs");
+        Directory.CreateDirectory(docsPath);
+        var actualPath = Path.Combine(docsPath, "ReadMe.md");
+        File.WriteAllText(actualPath, "hello");
+
+        var caseVariantPath = Path.Combine(root.ToUpperInvariant(), "DOCS", "README.MD");
+        var store = new PhysicalFileSystem(root);
+
+        var actualUri = store.ToRepoUri(actualPath);
+        var variantUri = store.ToRepoUri(caseVariantPath);
+
+        actualUri.AbsoluteUri.Should().Be(variantUri.AbsoluteUri);
+        actualUri.AbsoluteUri.Should().Be(actualUri.AbsoluteUri.ToLowerInvariant());
+    }
+
     private static void AssertPathEquals(string actual, string expected)
     {
         var comparer = OperatingSystem.IsWindows()

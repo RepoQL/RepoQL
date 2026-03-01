@@ -241,6 +241,31 @@ internal sealed class ConfigurationLoaderTests
     }
 
     [Test]
+    public void Load_Handles_Nested_Embedding_Cache_Settings()
+    {
+        WriteLocalConfig("""
+        {
+          "embedding": {
+            "cache": {
+              "enabled": false,
+              "path": "/tmp/repoql-cache",
+              "compaction_threshold": 42,
+              "max_size_mb": 123
+            }
+          }
+        }
+        """);
+
+        var resolved = Load();
+
+        resolved.Settings.Embedding.Cache.Enabled.Should().BeFalse();
+        resolved.Settings.Embedding.Cache.Path.Should().Be("/tmp/repoql-cache");
+        resolved.Settings.Embedding.Cache.CompactionThreshold.Should().Be(42);
+        resolved.Settings.Embedding.Cache.MaxSizeMb.Should().Be(123);
+        resolved.GetProvenance("embedding.cache.enabled")!.Source.Should().Be(ConfigScope.Local);
+    }
+
+    [Test]
     public void Load_Handles_Json_With_Comments_And_Trailing_Commas()
     {
         WriteLocalConfig("""

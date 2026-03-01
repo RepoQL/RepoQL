@@ -292,7 +292,7 @@ public partial class IndexingEngine : IAsyncDisposable
     }
 
     private static string GetQueueKey(RepoUri uri)
-        => RepoUri.Normalize(uri.Container.AbsoluteUri);
+        => RepoUri.NormalizeContainer(uri);
 
     private static IndexItemOptions MergeOptions(IndexItemOptions existing, IndexItemOptions incoming)
     {
@@ -662,6 +662,15 @@ public partial class IndexingEngine : IAsyncDisposable
                 return;
             }
 
+            // Queue commands can mark a URI as Failed/Skipped while it is waiting.
+            // Respect terminal states before transitioning to Indexing.
+            if (ShouldAbortAtStageBoundary(item.Uri, out _))
+            {
+                status = "filtered";
+                AddEpochTag(item.Epoch, "index.abort_boundary", "before_indexing");
+                return;
+            }
+
             // Update URI registry to track indexing state - only after filtering and up-to-date checks
             UriRegistry?.SetIndexing(item.Uri);
 
@@ -684,6 +693,13 @@ public partial class IndexingEngine : IAsyncDisposable
                 {
                     status = "timed_out_late";
                     AddEpochTag(item.Epoch, "index.late_abort", "after_pipeline");
+                    return;
+                }
+
+                if (ShouldAbortAtStageBoundary(item.Uri, out _))
+                {
+                    status = "filtered";
+                    AddEpochTag(item.Epoch, "index.abort_boundary", "before_commit");
                     return;
                 }
 
@@ -1617,6 +1633,11 @@ public partial class IndexingEngine : IAsyncDisposable
         if (pipelineResult != PipelineResult.Success)
             return pipelineResult;
 
+        // Stage boundary: classification -> parsing.
+        // Queue commands can flip status to Failed/Skipped while classification is running.
+        if (ShouldAbortAtStageBoundary(item.Uri, out _))
+            return PipelineResult.Filtered;
+
         // Lightweight detection: vendor/minified/sourcemap files get plain-text-only parsing
         item.IsLightweight = IndexItem.MatchesLightweightPattern(item.Uri.ToString());
 
@@ -1632,6 +1653,10 @@ public partial class IndexingEngine : IAsyncDisposable
         });
         if (pipelineResult != PipelineResult.Success)
             return pipelineResult;
+
+        // Stage boundary: parsing -> analysis.
+        if (ShouldAbortAtStageBoundary(item.Uri, out _))
+            return PipelineResult.Filtered;
 
         if (item.IsReadOnly)
         {
@@ -1651,6 +1676,22 @@ public partial class IndexingEngine : IAsyncDisposable
         });
 
         return pipelineResult;
+    }
+
+    private bool ShouldAbortAtStageBoundary(RepoUri uri, out UriStatus status)
+    {
+        status = default;
+        if (UriRegistry is null)
+            return false;
+
+        if (!UriRegistry.TryGetValue(uri, out var entry))
+            return false;
+
+        if (entry.Status != UriStatus.Failed && entry.Status != UriStatus.Skipped)
+            return false;
+
+        status = entry.Status;
+        return true;
     }
 
     private async Task<PipelineResult> RunHotPathStageAsync(IndexItem item, StageContext stage, CancellationToken cancellationToken)
@@ -1956,8 +1997,8 @@ public partial class IndexingEngine : IAsyncDisposable
                 return true;
             if (x is null || y is null)
                 return false;
-            var xKey = RepoUri.Normalize(x.Uri.Container.AbsoluteUri);
-            var yKey = RepoUri.Normalize(y.Uri.Container.AbsoluteUri);
+            var xKey = RepoUri.NormalizeContainer(x.Uri);
+            var yKey = RepoUri.NormalizeContainer(y.Uri);
             return StringComparer.OrdinalIgnoreCase.Equals(xKey, yKey);
         }
 
@@ -1965,7 +2006,7 @@ public partial class IndexingEngine : IAsyncDisposable
         {
             if (obj is null)
                 return 0;
-            var key = RepoUri.Normalize(obj.Uri.Container.AbsoluteUri);
+            var key = RepoUri.NormalizeContainer(obj.Uri);
             return StringComparer.OrdinalIgnoreCase.GetHashCode(key);
         }
     }

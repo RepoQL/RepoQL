@@ -82,6 +82,28 @@ public class DocumentCatalogTests
         finalEvaluation.Decision.Should().Be(DocumentCatalogDecision.Unknown);
     }
 
+    [Test]
+    [DisplayName("Evaluate treats document URI casing variants as the same entry")]
+    public async Task Evaluate_CaseVariantUri_ReturnsSkipUpToDate()
+    {
+        var canonical = ParseUri("file:///Repo/Docs/ReadMe.md");
+        var variant = ParseUri("file:///repo/docs/readme.md");
+        var entry = new DocumentCatalogEntry(
+            canonical,
+            "ABC123",
+            SemanticMediaType.Parse("text/markdown;kind=markdown.doc"),
+            null,
+            DateTimeOffset.UtcNow);
+
+        var catalog = new DocumentCatalog(new RecordingDataSource([entry]));
+        await catalog.EnsureInitializedAsync(CancellationToken.None);
+
+        var evaluation = catalog.Evaluate(variant, "ABC123");
+
+        evaluation.Decision.Should().Be(DocumentCatalogDecision.SkipUpToDate);
+        evaluation.Existing.Should().Be(entry);
+    }
+
     private static RepoUri ParseUri(string value)
     {
         return RepoUri.TryParse(value, out var parsed)

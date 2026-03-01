@@ -121,9 +121,18 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
     /// </summary>
     private async Task CloneOrUpdateAsync(RepositorySpec spec, string targetRoot, CancellationToken ct)
     {
+        var canUseGh = true;
         _logger.LogDebug("[GitHub] Checking gh CLI availability...");
-        EnsureGhAvailable();
-        _logger.LogDebug("[GitHub] gh CLI is available");
+        try
+        {
+            EnsureGhAvailable();
+            _logger.LogDebug("[GitHub] gh CLI is available");
+        }
+        catch (InvalidOperationException ex)
+        {
+            canUseGh = false;
+            _logger.LogWarning(ex, "[GitHub] gh CLI unavailable; falling back to git clone.");
+        }
 
         // Check if target is a valid git repository (has .git folder)
         // If directory exists but isn't a valid repo, it's likely a failed previous clone - delete and retry
@@ -150,27 +159,48 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         {
             _logger.LogInformation("[GitHub] Cloning {Owner}/{Repo}",
                 spec.Owner, spec.Repository);
-
-            var args = new List<string>
+            if (canUseGh)
             {
-                "repo",
-                "clone",
-                $"{spec.Owner}/{spec.Repository}",
-                targetRoot,
-                "--"
-            };
+                var args = new List<string>
+                {
+                    "repo",
+                    "clone",
+                    $"{spec.Owner}/{spec.Repository}",
+                    targetRoot,
+                    "--"
+                };
 
-            if (!string.IsNullOrWhiteSpace(spec.Ref))
-            {
-                args.Add("--branch");
-                args.Add(spec.Ref!);
-                _logger.LogDebug("[GitHub] Using branch/ref: {Ref}", spec.Ref);
+                if (!string.IsNullOrWhiteSpace(spec.Ref))
+                {
+                    args.Add("--branch");
+                    args.Add(spec.Ref!);
+                    _logger.LogDebug("[GitHub] Using branch/ref: {Ref}", spec.Ref);
+                }
+
+                args.Add("--shallow-since=1 year ago");
+                _logger.LogDebug("[GitHub] Using shallow clone (since 1 year ago)");
+
+                try
+                {
+                    await RunGhAsync(args, _primary.RootPath, ct).ConfigureAwait(false);
+                    return;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[GitHub] gh clone failed for {Owner}/{Repo}; retrying with git clone.",
+                        spec.Owner, spec.Repository);
+                    if (Directory.Exists(targetRoot))
+                    {
+                        Directory.Delete(targetRoot, recursive: true);
+                    }
+                }
             }
 
-            args.Add("--shallow-since=1 year ago");
-            _logger.LogDebug("[GitHub] Using shallow clone (since 1 year ago)");
-
-            await RunGhAsync(args, _primary.RootPath, ct).ConfigureAwait(false);
+            await RunGitCloneAsync(spec, targetRoot, ct).ConfigureAwait(false);
             return;
         }
 
@@ -300,6 +330,24 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             _logger.LogWarning(ex, "[GitHub] Failed to determine branch state at {Path}", targetRoot);
             return false;
         }
+    }
+
+    /// <summary>Clones a repository using git directly (fallback when gh is unavailable/fails).</summary>
+    private async Task RunGitCloneAsync(RepositorySpec spec, string targetRoot, CancellationToken cancellationToken)
+    {
+        var args = new List<string> { "clone" };
+        if (!string.IsNullOrWhiteSpace(spec.Ref))
+        {
+            args.Add("--branch");
+            args.Add(spec.Ref!);
+            _logger.LogDebug("[GitHub] Using branch/ref for git clone: {Ref}", spec.Ref);
+        }
+
+        args.Add("--shallow-since=1 year ago");
+        args.Add(spec.CloneUrl);
+        args.Add(targetRoot);
+        _logger.LogDebug("[GitHub] Running fallback git clone for {CloneUrl}", spec.CloneUrl);
+        await RunGitAsync(args, _primary.RootPath, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Executes a git command.</summary>

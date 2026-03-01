@@ -249,10 +249,6 @@ public static class ConfigurationLoader
             if (!resolved.TryGetValue(def.Key, out var setting) || setting.Value is null)
                 continue;
 
-            var section = def.SectionProperty.GetValue(config);
-            if (section is null)
-                continue;
-
             var targetType = Nullable.GetUnderlyingType(def.SettingProperty.PropertyType)
                              ?? def.SettingProperty.PropertyType;
 
@@ -263,7 +259,7 @@ public static class ConfigurationLoader
                 catch { continue; }
             }
 
-            def.SettingProperty.SetValue(section, value);
+            def.TrySetValue(config, value);
         }
 
         return config;

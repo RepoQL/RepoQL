@@ -26,7 +26,7 @@ public sealed class PhysicalFileSystem(
         : scheme.Trim().ToLowerInvariant();
     private readonly string? _uriPrefix = string.IsNullOrWhiteSpace(uriPrefix)
         ? null
-        : uriPrefix.Trim('/').Replace('\\', '/');
+        : NormalizeUriPath(uriPrefix.Trim('/'));
     private readonly string? _authority = string.IsNullOrWhiteSpace(authority)
         ? null
         : authority.Trim();
@@ -57,7 +57,7 @@ public sealed class PhysicalFileSystem(
         var full = Path.GetFullPath(absolutePath);
         if (!full.StartsWith(RootPath, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Path not under repo root.");
-        var rel = Path.GetRelativePath(RootPath, full).Replace('\\', '/');
+        var rel = NormalizeUriPath(Path.GetRelativePath(RootPath, full));
         var combined = string.IsNullOrEmpty(_uriPrefix)
             ? rel
             : string.IsNullOrEmpty(rel)
@@ -155,5 +155,13 @@ public sealed class PhysicalFileSystem(
 
         var normalized = RepoUri.Parse($"{Scheme}:///{relativeSegment}");
         return FileUriPathResolver.Resolve(RootPath, normalized, Scheme);
+    }
+
+    private static string NormalizeUriPath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        if (OperatingSystem.IsWindows())
+            return normalized.ToLowerInvariant();
+        return normalized;
     }
 }

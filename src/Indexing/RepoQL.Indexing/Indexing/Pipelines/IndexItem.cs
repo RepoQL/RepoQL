@@ -78,6 +78,12 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     /// </summary>
     public RepoUri Uri => rawArtifact.Uri;
     public bool IsReadOnly => rawArtifact.IsReadOnly;
+
+    /// <summary>
+    /// UTC timestamp captured when this item is created and enqueued for processing.
+    /// Used by diagnostics to calculate queue age.
+    /// </summary>
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
     
     /// <summary>
     ///     Resolved semantic media type (should be populated after classification)

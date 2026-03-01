@@ -22,7 +22,6 @@
   <ItemGroup>
     <EmbeddedResource Include="Templates\**\*.liquid" />
     <EmbeddedResource Include="Schema\**\*.sql" />
-    <None Include="runtimes\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -143,6 +143,40 @@ public sealed class RepoUri : Uri, IEquatable<RepoUri>
         return Normalize(uri.ToString());
     }
 
+    /// <summary>
+    /// Normalizes a URI and strips any fragment component.
+    /// </summary>
+    public static string NormalizeContainer(string? uri)
+    {
+        var normalized = Normalize(uri);
+        var hashIndex = normalized.IndexOf('#', StringComparison.Ordinal);
+        return hashIndex >= 0 ? normalized[..hashIndex] : normalized;
+    }
+
+    /// <summary>
+    /// Normalizes a URI container key for case-insensitive storage and lookup.
+    /// </summary>
+    public static string NormalizeContainerKey(string? uri)
+        => NormalizeContainer(uri).ToLowerInvariant();
+
+    /// <summary>
+    /// Normalizes a <see cref="RepoUri"/> and strips any fragment component.
+    /// </summary>
+    public static string NormalizeContainer(RepoUri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        return NormalizeContainer(uri.Container.AbsoluteUri);
+    }
+
+    /// <summary>
+    /// Normalizes a <see cref="RepoUri"/> container key for case-insensitive storage and lookup.
+    /// </summary>
+    public static string NormalizeContainerKey(RepoUri uri)
+    {
+        ArgumentNullException.ThrowIfNull(uri);
+        return NormalizeContainerKey(uri.Container.AbsoluteUri);
+    }
+
     public string NormalizedContainer => Normalize(Container.AbsoluteUri);
 
     private static string Truncate(string s, int maxLength)

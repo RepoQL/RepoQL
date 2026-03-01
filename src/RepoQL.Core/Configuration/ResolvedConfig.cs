@@ -54,12 +54,8 @@ public sealed class ResolvedConfig
             // so all injected references see the update.
             foreach (var def in _registry.All)
             {
-                var freshSection = def.SectionProperty.GetValue(fresh.Settings);
-                var currentSection = def.SectionProperty.GetValue(Settings);
-                if (freshSection is null || currentSection is null)
-                    continue;
-                var value = def.SettingProperty.GetValue(freshSection);
-                def.SettingProperty.SetValue(currentSection, value);
+                var value = def.GetValue(fresh.Settings);
+                def.TrySetValue(Settings, value);
             }
 
             // Atomic swap of the provenance map

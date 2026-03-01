@@ -8,6 +8,7 @@
   <ItemGroup>
     <PackageReference Include="TUnit" />
     <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="FakeItEasy" />
     <PackageReference Include="AwesomeAssertions.Analyzers">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

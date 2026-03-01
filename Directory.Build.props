@@ -18,6 +18,12 @@
         <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
     </PropertyGroup>
 
+    <ItemGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').EndsWith('.Tests'))">
+        <PackageReference Include="Microsoft.Build.Framework"
+                          ExcludeAssets="runtime"
+                          PrivateAssets="all" />
+    </ItemGroup>
+
     <!-- Repository Areas -->
     <PropertyGroup>
         <!-- Msbuild extensions to apply everywhere -->

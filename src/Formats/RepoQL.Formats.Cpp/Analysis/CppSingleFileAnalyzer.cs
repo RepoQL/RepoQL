@@ -14,7 +14,7 @@ namespace RepoQL.Formats.Cpp.Analysis;
 /// <summary>
 /// Single-file analysis processor for C/C++ parsed records.
 ///
-/// Purpose: Add include reference edges and enrich nodes with comments/attributes/test and exception metadata.
+/// Purpose: Add include reference edges and enrich nodes with comments, attributes, and test metadata.
 ///
 /// Complexity: Multi-step analysis with per-step isolation and partial-result continuation.
 /// </summary>
@@ -108,11 +108,6 @@ public sealed partial class CppSingleFileAnalyzer(
         RunStep("test_framework_detection", () =>
         {
             annotations.AddRange(DetectTestFramework(workingRecords, sourceText, documentNode.Id));
-        });
-
-        RunStep("exception_structure", () =>
-        {
-            annotations.AddRange(DetectExceptionStructure(workingRecords, sourceLines, documentNode.Id));
         });
 
         if (!ReferenceEquals(workingRecords, records))
@@ -344,97 +339,10 @@ public sealed partial class CppSingleFileAnalyzer(
         return annotations;
     }
 
-    private static IReadOnlyList<Annotation> DetectExceptionStructure(Records records, string[] lines, Guid documentId)
-    {
-        var annotations = new List<Annotation>();
-        if (lines.Length == 0)
-        {
-            return annotations;
-        }
-
-        var spanById = records.Spans.ToDictionary(s => s.Id);
-        foreach (var node in records.Nodes.Where(IsCallableNode))
-        {
-            if (!node.SpanId.HasValue || !spanById.TryGetValue(node.SpanId.Value, out var span))
-            {
-                continue;
-            }
-
-            if (!span.StartLine.HasValue || !span.EndLine.HasValue)
-            {
-                continue;
-            }
-
-            var body = GetLineRange(lines, span.StartLine.Value, span.EndLine.Value);
-            if (string.IsNullOrWhiteSpace(body))
-            {
-                continue;
-            }
-
-            var caughtTypes = CatchTypeRegex().Matches(body)
-                .Select(m => m.Groups["type"].Value.Trim())
-                .Where(v => !string.IsNullOrWhiteSpace(v))
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
-            if (caughtTypes.Length > 0 || TryKeywordRegex().IsMatch(body))
-            {
-                var caughtTypesArray = new JsonArray();
-                foreach (var caught in caughtTypes)
-                {
-                    caughtTypesArray.Add(caught);
-                }
-
-                annotations.Add(new Annotation
-                {
-                    Kind = "lint",
-                    Severity = "info",
-                    Source = CppValues.AnalyzerAnnotationSource,
-                    RuleId = CppAnnotationRuleIds.ExceptionHandler,
-                    Message = $"Exception handler detected in '{node.Props[CppPropertyKeys.Name] ?? "callable"}'.",
-                    ScopeDocumentId = documentId,
-                    TargetNodeId = node.Id,
-                    TargetSpanId = span.Id,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    Data = new JsonObject
-                    {
-                        [CppPropertyKeys.CaughtTypes] = caughtTypesArray,
-                        [CppPropertyKeys.StartLine] = span.StartLine.Value,
-                        [CppPropertyKeys.EndLine] = span.EndLine.Value
-                    }
-                });
-            }
-
-            foreach (Match throwMatch in ThrowExprRegex().Matches(body))
-            {
-                var thrownType = InferThrownType(throwMatch.Groups["expr"].Value);
-                annotations.Add(new Annotation
-                {
-                    Kind = "lint",
-                    Severity = "info",
-                    Source = CppValues.AnalyzerAnnotationSource,
-                    RuleId = CppAnnotationRuleIds.ThrowExpression,
-                    Message = $"Throw expression detected in '{node.Props[CppPropertyKeys.Name] ?? "callable"}'.",
-                    ScopeDocumentId = documentId,
-                    TargetNodeId = node.Id,
-                    TargetSpanId = span.Id,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    Data = new JsonObject
-                    {
-                        [CppPropertyKeys.ThrownType] = thrownType,
-                        [CppPropertyKeys.StartLine] = span.StartLine.Value,
-                        [CppPropertyKeys.EndLine] = span.EndLine.Value
-                    }
-                });
-            }
-        }
-
-        return annotations;
-    }
-
     private static JsonArray ExtractStandardAttributes(string text)
     {
         var attributes = new JsonArray();
-        foreach (Match match in DoubleBracketAttributeRegex().Matches(text))
+        for (var match = DoubleBracketAttributeRegex().Match(text); match.Success; match = match.NextMatch())
         {
             foreach (var token in SplitTopLevel(match.Groups["body"].Value, ','))
             {
@@ -471,7 +379,7 @@ public sealed partial class CppSingleFileAnalyzer(
     private static JsonArray ExtractVendorAttributes(string text)
     {
         var attributes = new JsonArray();
-        foreach (Match match in GnuAttributeRegex().Matches(text))
+        for (var match = GnuAttributeRegex().Match(text); match.Success; match = match.NextMatch())
         {
             var value = match.Groups["value"].Value.Trim();
             if (!string.IsNullOrWhiteSpace(value))
@@ -480,7 +388,7 @@ public sealed partial class CppSingleFileAnalyzer(
             }
         }
 
-        foreach (Match match in DeclspecAttributeRegex().Matches(text))
+        for (var match = DeclspecAttributeRegex().Match(text); match.Success; match = match.NextMatch())
         {
             var value = match.Groups["value"].Value.Trim();
             if (!string.IsNullOrWhiteSpace(value))
@@ -590,7 +498,7 @@ public sealed partial class CppSingleFileAnalyzer(
     {
         var hits = new List<TestMacroHit>();
 
-        foreach (Match match in GoogleTestMacroRegex().Matches(source))
+        for (var match = GoogleTestMacroRegex().Match(source); match.Success; match = match.NextMatch())
         {
             hits.Add(new TestMacroHit(
                 Framework: match.Groups["macro"].Value,
@@ -599,7 +507,7 @@ public sealed partial class CppSingleFileAnalyzer(
                 Line: GetLineNumber(source, match.Index)));
         }
 
-        foreach (Match match in Catch2TestCaseRegex().Matches(source))
+        for (var match = Catch2TestCaseRegex().Match(source); match.Success; match = match.NextMatch())
         {
             hits.Add(new TestMacroHit(
                 Framework: "TEST_CASE",
@@ -608,7 +516,7 @@ public sealed partial class CppSingleFileAnalyzer(
                 Line: GetLineNumber(source, match.Index)));
         }
 
-        foreach (Match match in Catch2SectionRegex().Matches(source))
+        for (var match = Catch2SectionRegex().Match(source); match.Success; match = match.NextMatch())
         {
             hits.Add(new TestMacroHit(
                 Framework: "SECTION",
@@ -739,17 +647,6 @@ public sealed partial class CppSingleFileAnalyzer(
         return string.Join('\n', selected);
     }
 
-    private static string GetLineRange(string[] lines, int startLine, int endLine)
-    {
-        if (startLine <= 0 || endLine <= 0 || startLine > lines.Length)
-        {
-            return string.Empty;
-        }
-
-        var safeEnd = Math.Min(lines.Length, Math.Max(startLine, endLine));
-        return string.Join('\n', lines[(startLine - 1)..safeEnd]);
-    }
-
     private static int GetLineNumber(string text, int charIndex)
     {
         var line = 1;
@@ -763,29 +660,6 @@ public sealed partial class CppSingleFileAnalyzer(
         }
 
         return line;
-    }
-
-    private static string InferThrownType(string expression)
-    {
-        var normalized = expression.Trim();
-        if (string.IsNullOrWhiteSpace(normalized))
-        {
-            return "unknown";
-        }
-
-        if (string.Equals(normalized, "throw", StringComparison.Ordinal))
-        {
-            return "rethrow";
-        }
-
-        var directCtor = CtorPatternRegex().Match(normalized);
-        if (directCtor.Success)
-        {
-            return directCtor.Groups["type"].Value;
-        }
-
-        var firstToken = LeadingTypeRegex().Match(normalized);
-        return firstToken.Success ? firstToken.Groups["type"].Value : "unknown";
     }
 
     private static RepoUri? ResolveLocalInclude(RepoUri sourceUri, string target)
@@ -939,15 +813,6 @@ public sealed partial class CppSingleFileAnalyzer(
 
     // ── Source-generated regex declarations ──────────────────────────────
 
-    [GeneratedRegex(@"catch\s*\(\s*(?<type>[^)]+)\)", RegexOptions.CultureInvariant)]
-    private static partial Regex CatchTypeRegex();
-
-    [GeneratedRegex(@"\btry\b", RegexOptions.CultureInvariant)]
-    private static partial Regex TryKeywordRegex();
-
-    [GeneratedRegex(@"throw\s+(?<expr>[^;]+);", RegexOptions.CultureInvariant)]
-    private static partial Regex ThrowExprRegex();
-
     [GeneratedRegex(@"\[\[(?<body>.*?)\]\]", RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex DoubleBracketAttributeRegex();
 
@@ -972,9 +837,4 @@ public sealed partial class CppSingleFileAnalyzer(
     [GeneratedRegex(@"^\s*SECTION\s*\(\s*""(?<name>[^""]+)""", RegexOptions.CultureInvariant | RegexOptions.Multiline)]
     private static partial Regex Catch2SectionRegex();
 
-    [GeneratedRegex(@"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)\s*\(", RegexOptions.CultureInvariant)]
-    private static partial Regex CtorPatternRegex();
-
-    [GeneratedRegex(@"^(?<type>[A-Za-z_][A-Za-z0-9_:]*)", RegexOptions.CultureInvariant)]
-    private static partial Regex LeadingTypeRegex();
 }

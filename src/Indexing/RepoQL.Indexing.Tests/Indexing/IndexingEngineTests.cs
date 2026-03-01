@@ -172,6 +172,25 @@ public class IndexingEngineTests
     }
 
     [Test]
+    [DisplayName("Dedup comparer rejects URI variants that differ only by casing")]
+    public async Task Given_CaseVariantUris_When_EnqueuedTwice_Then_SecondIsDeduped()
+    {
+        var context = IndexingEngineTestFactory.Create();
+        var firstItem = IndexingTestItemFactory.Builder()
+            .WithUri("file:///Repo/Docs/ReadMe.md")
+            .Build();
+        var secondItem = IndexingTestItemFactory.Builder()
+            .WithUri("file:///repo/docs/readme.md")
+            .Build();
+
+        var first = await context.Engine.EnqueueIndexItemAsync(firstItem, CancellationToken.None);
+        first.Should().BeTrue();
+
+        var second = await context.Engine.EnqueueIndexItemAsync(secondItem, CancellationToken.None);
+        second.Should().BeFalse();
+    }
+
+    [Test]
     [DisplayName("Does not leak epochs when duplicate enqueue is rejected")]
     public async Task Given_SameItemEnqueuedTwice_When_SecondIsDeduped_Then_EpochsRemainBalanced()
     {
@@ -362,6 +381,87 @@ public class IndexingEngineTests
         // Assert
         result.Should().Be(PipelineResult.Success);
         context.ShouldMatchPipeline(item, PipelineInvocationPlan.Success);
+    }
+
+    [Test]
+    [DisplayName("Stage boundary check skips remaining stages when URI is marked failed")]
+    public async Task Given_RegistryMarkedFailedDuringParsing_When_IndexItemAsync_Then_ItemIsNotCommitted()
+    {
+        var registry = new UriRegistry();
+        var uri = CreateUri("file:///repo/boundary-failed.md");
+        var committer = A.Fake<IIndexingCommitter>();
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithUriRegistry(registry);
+            builder.WithCommitter(committer);
+        });
+
+        A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                var item = call.GetArgument<IndexItem>(0);
+                registry.SetFailed(item.Uri, "Cancelled by user");
+                return Task.FromResult(PipelineResult.Success);
+            });
+
+        var item = IndexingTestItemFactory.CreateIndexItem(uri: uri.AbsoluteUri);
+        await context.Engine.IndexItemAsync(item, CancellationToken.None);
+
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._)).MustNotHaveHappened();
+        registry[uri].Status.Should().Be(UriStatus.Failed);
+    }
+
+    [Test]
+    [DisplayName("Stage boundary check skips remaining stages when URI is marked skipped")]
+    public async Task Given_RegistryMarkedSkippedDuringParsing_When_IndexItemAsync_Then_ItemIsNotCommitted()
+    {
+        var registry = new UriRegistry();
+        var uri = CreateUri("file:///repo/boundary-skipped.md");
+        var committer = A.Fake<IIndexingCommitter>();
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithUriRegistry(registry);
+            builder.WithCommitter(committer);
+        });
+
+        A.CallTo(() => context.Parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                var item = call.GetArgument<IndexItem>(0);
+                registry.SetSkipped(item.Uri, "Skipped by user");
+                return Task.FromResult(PipelineResult.Success);
+            });
+
+        var item = IndexingTestItemFactory.CreateIndexItem(uri: uri.AbsoluteUri);
+        await context.Engine.IndexItemAsync(item, CancellationToken.None);
+
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._)).MustNotHaveHappened();
+        registry[uri].Status.Should().Be(UriStatus.Skipped);
+    }
+
+    [Test]
+    [DisplayName("Normal indexing still commits when URI remains indexing")]
+    public async Task Given_RegistryStatusIndexing_When_IndexItemAsync_Then_ItemCommitsNormally()
+    {
+        var registry = new UriRegistry();
+        var uri = CreateUri("file:///repo/boundary-normal.md");
+        var committer = A.Fake<IIndexingCommitter>();
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Returns(Task.FromResult(RepoQL.Indexing.Indexing.Commit.CommitOutcome.Committed));
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithUriRegistry(registry);
+            builder.WithCommitter(committer);
+        });
+
+        var item = IndexingTestItemFactory.CreateIndexItem(uri: uri.AbsoluteUri);
+        await context.Engine.IndexItemAsync(item, CancellationToken.None);
+
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._)).MustHaveHappenedOnceExactly();
+        registry[uri].Status.Should().Be(UriStatus.Indexed);
     }
 
     [Test]

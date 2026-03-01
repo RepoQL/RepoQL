@@ -5,6 +5,7 @@ namespace RepoQL.Contracts.Configuration;
 /// Complexity: Nested classes group settings by concern. All properties nullable — null means
 /// "use consumer's default." The class structure defines the key hierarchy.
 /// </summary>
+#pragma warning disable CA1034 // do not nest public classes
 public sealed class RepoQlConfig
 {
     public DuckDbSettings DuckDb { get; set; } = new();
@@ -70,6 +71,56 @@ public sealed class RepoQlConfig
         [Setting("Concurrency for vector indexing",
             LegacyEnvVar = "REPOQL_EMBED_CONCURRENCY")]
         public int? Concurrency { get; set; }
+
+        public RemoteEmbeddingSettings Remote { get; set; } = new();
+
+        public EmbeddingCacheSettings Cache { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Purpose: Configure remote contextual embedding service connection.
+    /// Complexity: URL + API key + timeout. When URL is set, remote provider is active.
+    /// </summary>
+    public sealed class RemoteEmbeddingSettings
+    {
+        [Setting("gRPC endpoint URL for the remote embedding service",
+            RequiresRestart = true)]
+        public string? Url { get; set; }
+
+        [Setting("API key for authenticating with the remote embedding service",
+            Sensitive = true, RequiresRestart = true)]
+        public string? ApiKey { get; set; }
+
+        [Setting("Request timeout in seconds",
+            RequiresRestart = true, DefaultValue = "30")]
+        public int? TimeoutSeconds { get; set; }
+    }
+
+    /// <summary>
+    /// Purpose: Configure local parquet-backed embedding cache behavior.
+    /// Complexity: Holds cache enablement, storage location, and maintenance thresholds.
+    /// </summary>
+    public sealed class EmbeddingCacheSettings
+    {
+        [Setting("Enable embedding cache",
+            DefaultValue = "true")]
+        public bool? Enabled { get; set; }
+
+        [Setting("Local embedding cache directory",
+            DefaultValue = "~/.repoql/embedding-cache/")]
+        public string? Path { get; set; }
+
+        [Setting("Cache directory paths (first is write target, rest are read-only)",
+            DefaultValue = "~/.repoql/embedding-cache/")]
+        public List<string>? Paths { get; set; }
+
+        [Setting("Compact embedding cache when file count exceeds this threshold",
+            DefaultValue = "100")]
+        public int? CompactionThreshold { get; set; }
+
+        [Setting("Maximum embedding cache size in MB (0 = unlimited)",
+            DefaultValue = "500")]
+        public int? MaxSizeMb { get; set; }
     }
 
     public sealed class OrtSettings
@@ -251,3 +302,4 @@ public sealed class RepoQlConfig
         public int? TotalTimeoutMs { get; set; }
     }
 }
+#pragma warning restore CA1034

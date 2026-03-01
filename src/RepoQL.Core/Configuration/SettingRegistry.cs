@@ -40,30 +40,7 @@ public sealed class SettingRegistry
                 continue; // only nested types
 
             var sectionName = sectionProp.Name.ToLowerInvariant();
-
-            foreach (var settingProp in sectionType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-            {
-                var attr = settingProp.GetCustomAttribute<SettingAttribute>();
-                if (attr is null)
-                    continue;
-
-                var settingName = ToSnakeCase(settingProp.Name);
-                var key = $"{sectionName}.{settingName}";
-                var envVar = DeriveEnvVar(key);
-
-                entries[key] = new SettingDefinition(
-                    Key: key,
-                    EnvVar: envVar,
-                    LegacyEnvVar: attr.LegacyEnvVar,
-                    Description: attr.Description,
-                    PropertyType: Nullable.GetUnderlyingType(settingProp.PropertyType) ?? settingProp.PropertyType,
-                    DefaultValue: attr.DefaultValue,
-                    Sensitive: attr.Sensitive,
-                    RequiresRestart: attr.RequiresRestart,
-                    ValidValues: attr.ValidValues,
-                    SectionProperty: sectionProp,
-                    SettingProperty: settingProp);
-            }
+            DiscoverSettings(entries, configType, sectionProp, sectionType, sectionName, []);
         }
 
         return new SettingRegistry(entries);
@@ -114,5 +91,60 @@ public sealed class SettingRegistry
             }
         }
         return sb.ToString();
+    }
+
+    private static void DiscoverSettings(
+        Dictionary<string, SettingDefinition> entries,
+        Type rootConfigType,
+        PropertyInfo sectionProperty,
+        Type currentType,
+        string keyPrefix,
+        IReadOnlyList<PropertyInfo> parentPath)
+    {
+        foreach (var property in currentType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        {
+            var attr = property.GetCustomAttribute<SettingAttribute>();
+            if (attr is not null)
+            {
+                var key = $"{keyPrefix}.{ToSnakeCase(property.Name)}";
+                var envVar = DeriveEnvVar(key);
+                entries[key] = new SettingDefinition(
+                    Key: key,
+                    EnvVar: envVar,
+                    LegacyEnvVar: attr.LegacyEnvVar,
+                    Description: attr.Description,
+                    PropertyType: Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType,
+                    DefaultValue: attr.DefaultValue,
+                    Sensitive: attr.Sensitive,
+                    RequiresRestart: attr.RequiresRestart,
+                    ValidValues: attr.ValidValues,
+                    SectionProperty: sectionProperty,
+                    ParentPath: parentPath,
+                    SettingProperty: property);
+                continue;
+            }
+
+            if (!ShouldRecurse(rootConfigType, property.PropertyType))
+                continue;
+
+            var nestedPrefix = $"{keyPrefix}.{ToSnakeCase(property.Name)}";
+            var nestedPath = new List<PropertyInfo>(parentPath) { property };
+            DiscoverSettings(entries, rootConfigType, sectionProperty, property.PropertyType, nestedPrefix, nestedPath);
+        }
+    }
+
+    private static bool ShouldRecurse(Type rootConfigType, Type propertyType)
+    {
+        if (propertyType == typeof(string))
+            return false;
+
+        if (!propertyType.IsClass)
+            return false;
+
+        if (propertyType.Namespace != rootConfigType.Namespace)
+            return false;
+
+        return propertyType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Any(p => p.GetCustomAttribute<SettingAttribute>() is not null || ShouldRecurse(rootConfigType, p.PropertyType));
     }
 }

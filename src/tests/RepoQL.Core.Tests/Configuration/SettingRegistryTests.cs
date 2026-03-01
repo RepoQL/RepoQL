@@ -18,6 +18,7 @@ internal sealed class SettingRegistryTests
         registry.Settings.Should().ContainKey("host.idle_grace_seconds");
         registry.Settings.Should().ContainKey("cache.size_limit");
         registry.Settings.Should().ContainKey("find.initial_candidate_limit");
+        registry.Settings.Should().ContainKey("embedding.cache.enabled");
     }
 
     [Test]
@@ -30,6 +31,7 @@ internal sealed class SettingRegistryTests
         registry.Settings.Should().ContainKey("ort.intra_threads");
         registry.Settings.Should().ContainKey("mcp.include_globals");
         registry.Settings.Should().ContainKey("find.max_widening_rounds");
+        registry.Settings.Should().ContainKey("embedding.cache.max_size_mb");
     }
 
     [Test]

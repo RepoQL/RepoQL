@@ -23,7 +23,6 @@
     <ItemGroup>
       <Folder Include="repoql\tools\import\" />
       <Folder Include="repoql\tools\query\views\" />
-      <Folder Include="repoql\tools\query\formats\" />
     </ItemGroup>
 
 </Project>

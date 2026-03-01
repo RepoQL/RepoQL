@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.ConsoleApp.Host;
+using RepoQL.Contracts;
 using RepoQL.Explore;
 using RepoQL.Read;
 
