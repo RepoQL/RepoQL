@@ -1,3 +1,5 @@
+using RepoQL.Contracts;
+
 namespace RepoQL.Explore;
 
 /// <summary>
@@ -10,7 +12,7 @@ public static class NoMatchDiagnostics
     public static async Task<string> DiagnoseAsync(
         string uriPattern,
         IReadContentProvider contentProvider,
-        IndexerStatus status,
+        TrustSignal status,
         CancellationToken ct)
     {
         // Multi-pattern URIs (semicolon-separated) — keep generic
@@ -71,7 +73,7 @@ public static class NoMatchDiagnostics
                "Try: read(\"file:///** => tree: folders\", 5000) to see available files.";
     }
 
-    private static string FormatGenericMessage(string uriPattern, IndexerStatus status)
+    private static string FormatGenericMessage(string uriPattern, TrustSignal status)
     {
         var msg = $"No files matched: {uriPattern}";
         if (status.IndexPending > 0)

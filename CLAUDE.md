@@ -220,6 +220,7 @@ dotnet run -- --output Detailed            # Verbose output
 | `Indexing/RepoQL.Indexing` | Pipeline, epoch tracking, processors |
 | `Formats/*` | File parsers — one project per format family |
 | `RepoQL.Explore` | Search orchestration, rendering, budget allocation |
+| `RepoQL.Read` | Read tool orchestration, modifier dispatch, content handlers |
 | `RepoQL.Contracts` | Shared types (RepoUri, SemanticMediaType, UriRegistry, Operations, models) |
 | `RepoQL.Core` | Shared indexing infrastructure — format registry, pipeline snapshots, work queue, EditorConfig, metrics |
 | `RepoQL.Protocol` | gRPC proto, client, transport, diagnostics |

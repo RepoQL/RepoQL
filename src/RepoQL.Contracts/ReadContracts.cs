@@ -1,4 +1,4 @@
-namespace RepoQL.Explore;
+namespace RepoQL.Contracts;
 
 /// <summary>
 /// Document data for read operations.

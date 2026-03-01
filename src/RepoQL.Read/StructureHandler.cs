@@ -1,6 +1,7 @@
 using System.Text;
 using CoreTokenEstimator = RepoQL.Contracts.TokenEstimator;
 
+using RepoQL.Contracts;
 using RepoQL.Explore;
 
 namespace RepoQL.Read;

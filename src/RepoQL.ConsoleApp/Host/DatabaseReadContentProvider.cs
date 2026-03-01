@@ -1,4 +1,5 @@
 using System.Text.Json;
+using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
 using RepoQL.Read;

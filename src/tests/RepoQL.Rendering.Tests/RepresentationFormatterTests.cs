@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using RepoQL.Contracts;
 using RepoQL.Explore;
 
 namespace RepoQL.Rendering.Tests;
@@ -312,10 +313,57 @@ public class RepresentationFormatterTests
     }
 
     [Test]
-    [DisplayName("Status footer shows pending when indexing")]
-    public void Given_PendingFiles_Then_ShowsPending()
+    [DisplayName("Status footer shows healthy compact format")]
+    public void Given_HealthyStatus_Then_ShowsCompactFooter()
     {
-        var status = new IndexerStatus(IndexPending: 5, SemanticReady: false, SemanticEnabled: true, ElapsedMs: 150);
+        var status = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 0,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: true,
+            SemanticPercent: 100,
+            ExecutionTimeMs: 42);
+
+        var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1500);
+
+        output.Should().Be("[1.5k tok | 42 ms | index: ready | semantic: ready]");
+        output.Split(" | ").Length.Should().BeLessThanOrEqualTo(4);
+    }
+
+    [Test]
+    [DisplayName("Status footer shows pending percentage")]
+    public void Given_PendingFiles_Then_ShowsPercentageAndPendingCount()
+    {
+        var status = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 5,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: false,
+            SemanticPercent: 72,
+            ExecutionTimeMs: 150);
+
+        var output = RepresentationFormatter.FormatStatusFooter(status);
+
+        output.Should().Be("[150 ms | index: 95% (5 pending) | semantic: 72%]");
+    }
+
+    [Test]
+    [DisplayName("Status footer falls back to legacy pending format when totals are unknown")]
+    public void Given_UnknownTotals_Then_UsesPendingFallback()
+    {
+        var status = new TrustSignal(
+            IndexTotal: 0,
+            IndexPending: 5,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: false,
+            SemanticPercent: 0,
+            ExecutionTimeMs: 150);
 
         var output = RepresentationFormatter.FormatStatusFooter(status);
 
@@ -323,25 +371,79 @@ public class RepresentationFormatterTests
     }
 
     [Test]
-    [DisplayName("Status footer shows ready when idle")]
-    public void Given_NoPending_Then_ShowsReady()
-    {
-        var status = new IndexerStatus(IndexPending: 0, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 50);
-
-        var output = RepresentationFormatter.FormatStatusFooter(status);
-
-        output.Should().Be("[50 ms | index: ready | semantic: ready]");
-    }
-
-    [Test]
     [DisplayName("Status footer shows disabled when embeddings off")]
     public void Given_EmbeddingsDisabled_Then_ShowsDisabled()
     {
-        var status = new IndexerStatus(IndexPending: 0, SemanticReady: false, SemanticEnabled: false, ElapsedMs: 30);
+        var status = new TrustSignal(
+            IndexTotal: 10,
+            IndexPending: 0,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: false,
+            SemanticReady: false,
+            SemanticPercent: 0,
+            ExecutionTimeMs: 30);
 
         var output = RepresentationFormatter.FormatStatusFooter(status);
 
         output.Should().Be("[30 ms | index: ready | semantic: disabled]");
+    }
+
+    [Test]
+    [DisplayName("Status footer appends failed count only when non-zero")]
+    public void Given_FailedFiles_Then_ShowsFailedCount()
+    {
+        var status = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 0,
+            IndexFailed: 3,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: true,
+            SemanticPercent: 100,
+            ExecutionTimeMs: 35);
+
+        var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1200);
+
+        output.Should().Be("[1.2k tok | 35 ms | index: ready | semantic: ready | 3 failed]");
+    }
+
+    [Test]
+    [DisplayName("Status footer appends stale count only when non-zero")]
+    public void Given_StaleFiles_Then_ShowsStaleCount()
+    {
+        var status = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 0,
+            IndexFailed: 0,
+            IndexStale: 12,
+            SemanticEnabled: true,
+            SemanticReady: true,
+            SemanticPercent: 100,
+            ExecutionTimeMs: 42);
+
+        var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1500);
+
+        output.Should().Be("[1.5k tok | 42 ms | index: ready | semantic: ready | stale: 12]");
+    }
+
+    [Test]
+    [DisplayName("Status footer shows NOT READY during discovery")]
+    public void Given_DiscoveryInProgress_Then_ShowsNotReadyFooter()
+    {
+        var status = new TrustSignal(
+            IndexTotal: 847,
+            IndexPending: 847,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: false,
+            SemanticPercent: 0,
+            ExecutionTimeMs: 12);
+
+        var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1500);
+
+        output.Should().Be("[NOT READY - 847 pending, discovery in progress]");
     }
 
     [Test]
@@ -486,7 +588,15 @@ public class RepresentationFormatterTests
     [DisplayName("Status footer integrates representation hint")]
     public void Given_StatusFooterWithHint_Then_IncludesHintInBrackets()
     {
-        var status = new IndexerStatus(IndexPending: 0, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 50);
+        var status = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 0,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: true,
+            SemanticPercent: 100,
+            ExecutionTimeMs: 50);
         var hint = "showing: structure | full: 5.2k tok";
 
         var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1500, representationHint: hint);
@@ -498,7 +608,15 @@ public class RepresentationFormatterTests
     [DisplayName("Status footer without hint works as before")]
     public void Given_StatusFooterWithoutHint_Then_NoExtraPipe()
     {
-        var status = new IndexerStatus(IndexPending: 0, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 50);
+        var status = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 0,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: true,
+            SemanticPercent: 100,
+            ExecutionTimeMs: 50);
 
         var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1500, representationHint: null);
 

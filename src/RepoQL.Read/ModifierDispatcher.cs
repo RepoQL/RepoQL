@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 
+using RepoQL.Contracts;
 using RepoQL.Explore;
 
 namespace RepoQL.Read;

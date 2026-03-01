@@ -1,4 +1,5 @@
 using System.Text;
+using RepoQL.Contracts;
 
 namespace RepoQL.Explore;
 
@@ -219,37 +220,62 @@ public static class RepresentationFormatter
     /// <summary>
     /// Format the status footer showing indexer state, timing, and token usage.
     /// </summary>
-    /// <param name="status">Current indexer status.</param>
+    /// <param name="status">Current trust signal.</param>
     /// <param name="tokenCount">Optional token count for the output.</param>
     /// <param name="representationHint">Optional representation hint (inner content) to append.</param>
-    public static string FormatStatusFooter(IndexerStatus status, int? tokenCount = null, string? representationHint = null)
+    public static string FormatStatusFooter(TrustSignal status, int? tokenCount = null, string? representationHint = null)
     {
-        // Format: [1.5k tok | 42ms | index: ready | semantic: ready]
-        // Or if busy: [1.2k tok | 42ms | index: 5 pending | semantic: pending]
-        // Or with hint: [1.2k tok | 42ms | index: ready | semantic: ready | showing: structure | full: 5.2k tok]
-        var indexStatus = status.IndexPending > 0
-            ? $"{status.IndexPending} pending"
-            : "ready";
+        if (status.IndexTotal == status.IndexPending && status.IndexPending > 0)
+            return $"[NOT READY - {status.IndexPending} pending, discovery in progress]";
 
-        string semanticStatus;
-        if (!status.SemanticEnabled)
-            semanticStatus = "disabled";
-        else if (status.SemanticReady)
-            semanticStatus = "ready";
+        string indexStatus;
+        if (status.IndexPending == 0 && status.IndexFailed == 0 && status.IndexStale == 0)
+        {
+            indexStatus = "ready";
+        }
+        else if (status.IndexPending > 0)
+        {
+            if (status.IndexTotal > 0)
+            {
+                var indexed = Math.Max(0, status.IndexTotal - status.IndexPending);
+                var percent = (indexed * 100) / status.IndexTotal;
+                indexStatus = $"{percent}% ({status.IndexPending} pending)";
+            }
+            else
+            {
+                // Fallback when total is unavailable (legacy hosts / degraded status computation).
+                indexStatus = $"{status.IndexPending} pending";
+            }
+        }
         else
-            semanticStatus = "pending";
+        {
+            indexStatus = "ready";
+        }
 
-        var tokenPart = tokenCount.HasValue
-            ? $"{FormatTokenCount(tokenCount.Value)} | "
-            : "";
+        var semanticStatus = !status.SemanticEnabled
+            ? "disabled"
+            : status.SemanticReady
+                ? "ready"
+                : status.IndexTotal <= 0
+                    ? "pending"
+                    : $"{Math.Clamp(status.SemanticPercent, 0, 100)}%";
 
-        var duration = FormatDuration(status.ElapsedMs);
+        var parts = new List<string>();
+        if (tokenCount.HasValue)
+            parts.Add(FormatTokenCount(tokenCount.Value));
 
-        var hintPart = !string.IsNullOrEmpty(representationHint)
-            ? $" | {representationHint}"
-            : "";
+        parts.Add(FormatDuration(status.ExecutionTimeMs));
+        parts.Add($"index: {indexStatus}");
+        parts.Add($"semantic: {semanticStatus}");
 
-        return $"[{tokenPart}{duration} | index: {indexStatus} | semantic: {semanticStatus}{hintPart}]";
+        if (status.IndexFailed > 0)
+            parts.Add($"{status.IndexFailed} failed");
+        if (status.IndexStale > 0)
+            parts.Add($"stale: {status.IndexStale}");
+        if (!string.IsNullOrEmpty(representationHint))
+            parts.Add(representationHint);
+
+        return $"[{string.Join(" | ", parts)}]";
     }
 
     /// <summary>
