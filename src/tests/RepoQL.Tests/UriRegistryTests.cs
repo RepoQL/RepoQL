@@ -545,13 +545,80 @@ internal class UriRegistryTests
     [Test]
     public void GetSummary_CountsCorrectly()
     {
-        var registry = CreateTestRegistry();
+        var registry = new UriRegistry();
+        var pendingDiscovered = RepoUri.Parse("file:///pending/discovered.cs");
+        var pendingIndexing = RepoUri.Parse("file:///pending/indexing.cs");
+        var failed = RepoUri.Parse("file:///failed/file.cs");
+        var stale = RepoUri.Parse("file:///stale/file.cs");
+        var indexedPendingEmbed = RepoUri.Parse("file:///indexed/pending-embed.cs");
+        var indexedEmbedded = RepoUri.Parse("file:///indexed/embedded.cs");
+        var indexedNotApplicable = RepoUri.Parse("file:///indexed/not-applicable.bin");
+
+        registry.TryRegisterDiscovered(pendingDiscovered);
+        registry.TryRegisterDiscovered(pendingIndexing);
+        registry.SetIndexing(pendingIndexing);
+        registry.SetFailed(failed, "parse error");
+        registry.SetStale(stale);
+        registry.SetIndexed(indexedPendingEmbed, lineCount: 10, new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+        registry.SetIndexed(indexedEmbedded, lineCount: 20, new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+        registry.SetEmbedded(indexedEmbedded, 3);
+        registry.SetIndexed(indexedNotApplicable, lineCount: 0, new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+        registry.SetEmbeddingNotApplicable(indexedNotApplicable);
 
         var summary = registry.GetSummary();
 
-        summary.TotalFiles.Should().Be(3);
-        summary.TotalSymbols.Should().Be(3); // 2 in App.cs, 1 in Utils.cs
+        summary.TotalFiles.Should().Be(7);
+        summary.IndexPending.Should().Be(2);
+        summary.IndexFailed.Should().Be(1);
+        summary.IndexStale.Should().Be(1);
+        summary.IndexIndexed.Should().Be(3);
+        summary.EmbeddedFiles.Should().Be(1);
+        summary.EmbeddingApplicableFiles.Should().Be(6);
+        summary.SemanticPercent.Should().Be(16);
         summary.ByStatus[UriStatus.Indexed].Should().Be(3);
+        summary.ByEmbeddingStatus[EmbeddingStatus.NotApplicable].Should().Be(1);
+    }
+
+    [Test]
+    public void GetSummary_WhenUnchanged_ReturnsCachedInstance()
+    {
+        var registry = CreateTestRegistry();
+
+        var first = registry.GetSummary();
+        var second = registry.GetSummary();
+
+        second.Should().BeSameAs(first);
+    }
+
+    [Test]
+    public void GetSummary_SkippedFiles_AreExcludedFromPendingCounts()
+    {
+        var registry = new UriRegistry();
+        var skipped = RepoUri.Parse("file:///skipped/file.cs");
+        var discovered = RepoUri.Parse("file:///pending/file.cs");
+
+        registry.SetSkipped(skipped, "Skipped by user");
+        registry.TryRegisterDiscovered(discovered);
+
+        var summary = registry.GetSummary();
+
+        summary.IndexPending.Should().Be(1);
+        summary.ByStatus[UriStatus.Skipped].Should().Be(1);
+    }
+
+    [Test]
+    public void GetSummary_AfterMutation_RecomputesCache()
+    {
+        var registry = CreateTestRegistry();
+        var newUri = RepoUri.Parse("file:///src/NewFile.cs");
+
+        var first = registry.GetSummary();
+        registry.TryRegisterDiscovered(newUri);
+        var second = registry.GetSummary();
+
+        second.Should().NotBeSameAs(first);
+        second.TotalFiles.Should().Be(first.TotalFiles + 1);
+        second.IndexPending.Should().Be(first.IndexPending + 1);
     }
 
     // === Helper ===

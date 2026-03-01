@@ -16,6 +16,10 @@ namespace RepoQL.Contracts;
 [SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix")]
 public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
 {
+    private readonly object _summaryLock = new();
+    private RegistrySummary? _cachedSummary;
+    private int _summaryDirty = 1;
+
     /// <summary>
     /// Creates an empty URI registry.
     /// </summary>
@@ -30,7 +34,10 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     /// <returns>True if the file was newly registered, false if it already existed.</returns>
     public bool TryRegisterDiscovered(RepoUri uri)
     {
-        return TryAdd(uri, FileEntry.Discovered());
+        var added = TryAdd(uri, FileEntry.Discovered());
+        if (added)
+            MarkSummaryDirty();
+        return added;
     }
 
     /// <summary>
@@ -42,6 +49,24 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
             uri,
             _ => FileEntry.Discovered() with { Status = UriStatus.Indexing },
             (_, existing) => existing with { Status = UriStatus.Indexing });
+        MarkSummaryDirty();
+    }
+
+    /// <summary>
+    /// Updates a file's status to Discovered and clears any prior error.
+    /// </summary>
+    public void SetDiscovered(RepoUri uri)
+    {
+        AddOrUpdate(
+            uri,
+            _ => FileEntry.Discovered(),
+            (_, existing) => existing with
+            {
+                Status = UriStatus.Discovered,
+                Error = null,
+                EmbeddingStatus = EmbeddingStatus.Pending
+            });
+        MarkSummaryDirty();
     }
 
     /// <summary>
@@ -78,6 +103,7 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
                 Headline = headline,
                 Structure = structure
             });
+        MarkSummaryDirty();
     }
 
     /// <summary>
@@ -109,6 +135,27 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
                 Status = UriStatus.Failed,
                 Error = error
             });
+        MarkSummaryDirty();
+    }
+
+    /// <summary>
+    /// Updates a file's status to Skipped with an optional reason.
+    /// </summary>
+    public void SetSkipped(RepoUri uri, string reason = "Skipped by user")
+    {
+        AddOrUpdate(
+            uri,
+            _ => FileEntry.Discovered() with
+            {
+                Status = UriStatus.Skipped,
+                Error = reason
+            },
+            (_, existing) => existing with
+            {
+                Status = UriStatus.Skipped,
+                Error = reason
+            });
+        MarkSummaryDirty();
     }
 
     /// <summary>
@@ -124,6 +171,7 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
                 Status = UriStatus.Stale,
                 EmbeddingStatus = EmbeddingStatus.Pending
             });
+        MarkSummaryDirty();
     }
 
     /// <summary>
@@ -133,7 +181,8 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     {
         if (TryGetValue(uri, out var existing))
         {
-            TryUpdate(uri, existing with { EmbeddingStatus = EmbeddingStatus.Embedding }, existing);
+            if (TryUpdate(uri, existing with { EmbeddingStatus = EmbeddingStatus.Embedding }, existing))
+                MarkSummaryDirty();
         }
     }
 
@@ -144,12 +193,15 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     {
         if (TryGetValue(uri, out var existing))
         {
-            TryUpdate(uri, existing with
+            if (TryUpdate(uri, existing with
             {
                 EmbeddingStatus = EmbeddingStatus.Embedded,
                 EmbeddedChunkCount = chunkCount,
                 EmbeddedAt = DateTime.UtcNow
-            }, existing);
+            }, existing))
+            {
+                MarkSummaryDirty();
+            }
         }
     }
 
@@ -160,11 +212,14 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     {
         if (TryGetValue(uri, out var existing))
         {
-            TryUpdate(uri, existing with
+            if (TryUpdate(uri, existing with
             {
                 EmbeddingStatus = EmbeddingStatus.Failed,
                 Error = existing.Error ?? error
-            }, existing);
+            }, existing))
+            {
+                MarkSummaryDirty();
+            }
         }
     }
 
@@ -175,7 +230,8 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     {
         if (TryGetValue(uri, out var existing))
         {
-            TryUpdate(uri, existing with { EmbeddingStatus = EmbeddingStatus.NotApplicable }, existing);
+            if (TryUpdate(uri, existing with { EmbeddingStatus = EmbeddingStatus.NotApplicable }, existing))
+                MarkSummaryDirty();
         }
     }
 
@@ -193,13 +249,16 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
         if (existing.Status == UriStatus.Indexed && existing.EmbeddingStatus != EmbeddingStatus.Pending)
             return;
 
-        TryUpdate(uri, existing with
+        if (TryUpdate(uri, existing with
         {
             Status = UriStatus.Indexed,
             EmbeddingStatus = existing.EmbeddingStatus == EmbeddingStatus.Pending
                 ? EmbeddingStatus.NotApplicable
                 : existing.EmbeddingStatus
-        }, existing);
+        }, existing))
+        {
+            MarkSummaryDirty();
+        }
     }
 
     /// <summary>
@@ -207,7 +266,69 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     /// </summary>
     public FileEntry? RemoveFile(RepoUri uri)
     {
-        return TryRemove(uri, out var entry) ? entry : null;
+        if (TryRemove(uri, out var entry))
+        {
+            MarkSummaryDirty();
+            return entry;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets a cached summary of registry state. Recomputes only after mutations.
+    /// </summary>
+    public RegistrySummary GetSummary()
+    {
+        if (Volatile.Read(ref _summaryDirty) == 0 && _cachedSummary is not null)
+            return _cachedSummary;
+
+        lock (_summaryLock)
+        {
+            if (Volatile.Read(ref _summaryDirty) == 0 && _cachedSummary is not null)
+                return _cachedSummary;
+
+            var totalFiles = 0;
+            var totalSymbols = 0;
+            var byStatus = new Dictionary<UriStatus, int>();
+            var byEmbedding = new Dictionary<EmbeddingStatus, int>();
+
+            foreach (var status in Enum.GetValues<UriStatus>())
+                byStatus[status] = 0;
+            foreach (var status in Enum.GetValues<EmbeddingStatus>())
+                byEmbedding[status] = 0;
+
+            foreach (var (_, entry) in this)
+            {
+                totalFiles++;
+                totalSymbols += entry.Symbols.Count;
+                byStatus[entry.Status]++;
+                byEmbedding[entry.EmbeddingStatus]++;
+            }
+
+            var indexPending = byStatus[UriStatus.Discovered] + byStatus[UriStatus.Indexing];
+            var indexFailed = byStatus[UriStatus.Failed];
+            var indexStale = byStatus[UriStatus.Stale];
+            var indexIndexed = byStatus[UriStatus.Indexed];
+            var embeddedFiles = byEmbedding[EmbeddingStatus.Embedded];
+            var embeddingApplicableFiles = totalFiles - byEmbedding[EmbeddingStatus.NotApplicable];
+
+            var summary = new RegistrySummary(
+                TotalFiles: totalFiles,
+                TotalSymbols: totalSymbols,
+                IndexPending: indexPending,
+                IndexFailed: indexFailed,
+                IndexStale: indexStale,
+                IndexIndexed: indexIndexed,
+                EmbeddedFiles: embeddedFiles,
+                EmbeddingApplicableFiles: embeddingApplicableFiles,
+                ByStatus: byStatus,
+                ByEmbeddingStatus: byEmbedding);
+
+            _cachedSummary = summary;
+            Volatile.Write(ref _summaryDirty, 0);
+            return summary;
+        }
     }
 
     /// <summary>
@@ -254,5 +375,10 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
         {
             return StringComparer.OrdinalIgnoreCase.GetHashCode(obj.AbsoluteUri);
         }
+    }
+
+    private void MarkSummaryDirty()
+    {
+        Volatile.Write(ref _summaryDirty, 1);
     }
 }

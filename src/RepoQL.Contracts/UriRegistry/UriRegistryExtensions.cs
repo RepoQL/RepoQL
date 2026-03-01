@@ -402,7 +402,7 @@ public static class UriRegistryExtensions
             {
                 indexedCount++;
             }
-            else if (entry.Status == UriStatus.Failed)
+            else if (entry.Status == UriStatus.Failed || entry.Status == UriStatus.Skipped)
             {
                 failed.Add(fileUri);
             }
@@ -445,29 +445,7 @@ public static class UriRegistryExtensions
     /// </summary>
     public static RegistrySummary GetSummary(this UriRegistry registry)
     {
-        var totalFiles = 0;
-        var totalSymbols = 0;
-        var byStatus = new Dictionary<UriStatus, int>();
-        var byEmbedding = new Dictionary<EmbeddingStatus, int>();
-
-        foreach (var status in Enum.GetValues<UriStatus>())
-            byStatus[status] = 0;
-        foreach (var status in Enum.GetValues<EmbeddingStatus>())
-            byEmbedding[status] = 0;
-
-        foreach (var (_, entry) in registry)
-        {
-            totalFiles++;
-            totalSymbols += entry.Symbols.Count;
-            byStatus[entry.Status]++;
-            byEmbedding[entry.EmbeddingStatus]++;
-        }
-
-        return new RegistrySummary(
-            TotalFiles: totalFiles,
-            TotalSymbols: totalSymbols,
-            ByStatus: byStatus,
-            ByEmbeddingStatus: byEmbedding);
+        return registry.GetSummary();
     }
 
     private static bool MatchesPatternSet(
@@ -644,5 +622,19 @@ public static class UriRegistryExtensions
 public record RegistrySummary(
     int TotalFiles,
     int TotalSymbols,
+    int IndexPending,
+    int IndexFailed,
+    int IndexStale,
+    int IndexIndexed,
+    int EmbeddedFiles,
+    int EmbeddingApplicableFiles,
     IReadOnlyDictionary<UriStatus, int> ByStatus,
-    IReadOnlyDictionary<EmbeddingStatus, int> ByEmbeddingStatus);
+    IReadOnlyDictionary<EmbeddingStatus, int> ByEmbeddingStatus)
+{
+    /// <summary>
+    /// Percentage of embedding-applicable files that are embedded.
+    /// </summary>
+    public int SemanticPercent => EmbeddingApplicableFiles <= 0
+        ? 100
+        : (EmbeddedFiles * 100) / EmbeddingApplicableFiles;
+}

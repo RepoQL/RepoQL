@@ -17,6 +17,9 @@ public enum UriStatus
     /// <summary>Indexing failed for this file.</summary>
     Failed,
 
+    /// <summary>File is intentionally excluded from indexing.</summary>
+    Skipped,
+
     /// <summary>File was previously indexed but has changed and needs re-indexing.</summary>
     Stale
 }

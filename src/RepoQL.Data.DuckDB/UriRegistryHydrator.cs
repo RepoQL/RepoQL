@@ -78,8 +78,8 @@ public class UriRegistryHydrator
                     // This is a symbol - add to its container's symbol list
                     // Prefer stored container URI for backwards compatibility, but derive from URI when absent.
                     var containerKey = !string.IsNullOrEmpty(containerUri)
-                        ? StripFragment(containerUri).ToLowerInvariant()
-                        : uri.Container.AbsoluteUri.ToLowerInvariant();
+                        ? RepoUri.NormalizeContainerKey(StripFragment(containerUri))
+                        : RepoUri.NormalizeContainerKey(uri);
 
                     if (!symbolsByFile.TryGetValue(containerKey, out var symbols))
                     {
@@ -97,7 +97,7 @@ public class UriRegistryHydrator
             // Create file entries
             foreach (var (docUri, headline, structure) in documents)
             {
-                var containerKey = docUri.AbsoluteUri.ToLowerInvariant();
+                var containerKey = RepoUri.NormalizeContainerKey(docUri);
                 var symbols = symbolsByFile.GetValueOrDefault(containerKey)
                     ?? new Dictionary<RepoUri, SymbolEntry>();
 

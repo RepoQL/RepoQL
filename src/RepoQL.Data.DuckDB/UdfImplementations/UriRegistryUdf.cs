@@ -86,7 +86,9 @@ public class UriRegistryUdf
 
         foreach (var (uri, entry) in files)
         {
-            if (entry.Status != UriStatus.Indexed)
+            if (entry.Status != UriStatus.Indexed &&
+                entry.Status != UriStatus.Failed &&
+                entry.Status != UriStatus.Skipped)
             {
                 yield return new PendingRow(uri.AbsoluteUri, entry.Status.ToString());
             }
@@ -118,7 +120,7 @@ public class UriRegistryUdf
     /// <summary>
     /// Returns failed files with their errors.
     /// </summary>
-    [StructuredUdf("_indexer_errors_internal", Description = "Returns failed files with errors")]
+    [StructuredUdf("_indexer_errors_internal", MacroName = "failed_files", Description = "Returns failed files with errors")]
     public IEnumerable<ErrorRow> IndexerErrors(
         [UdfDefault("NULL")] string? pattern)
     {
@@ -129,6 +131,7 @@ public class UriRegistryUdf
         foreach (var (uri, entry) in files)
         {
             if (entry.Status == UriStatus.Failed ||
+                entry.Status == UriStatus.Skipped ||
                 entry.EmbeddingStatus == EmbeddingStatus.Failed)
             {
                 yield return new ErrorRow(uri.AbsoluteUri, entry.Status.ToString(), entry.Error);
