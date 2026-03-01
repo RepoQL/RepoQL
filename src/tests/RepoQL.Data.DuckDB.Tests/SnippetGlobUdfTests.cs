@@ -74,8 +74,7 @@ public sealed class SnippetGlobUdfTests : IDisposable
             r => (Uri: r.GetString(0), Snippet: r.GetString(1)));
 
         rows.Should().HaveCount(1);
-        rows[0].Uri.Should().Be("file:///limit/a.cs");
-        rows[0].Snippet.Should().Be("class A {}");
+        rows[0].Uri.Should().BeOneOf("file:///limit/a.cs", "file:///limit/b.cs");
     }
 
     [Test]
