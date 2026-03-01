@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.7
+
+- Add SARIF import with producer normalization, annotation replacement, and `help://` docs
+- Add `::memory` command with host-side memory UDFs and GC tuning
+- Add `snippet_glob` UDF for code preview across URI patterns
+- Add TrustSignal status footer with percentage progress, failed/stale counts, and NOT READY guard
+- Split `RepoQL.Explore` into `RepoQL.Explore` + `RepoQL.Read` for cleaner project boundaries
+- Remove ~4,100 lines of dead allocation and refinement code from Explore
+- Add linux-arm64 to native publish workflow
+- Fix DuckDB-managed deadlock via reentrant exclusive section
+- Fix SQL errors returned as success to prevent parallel tool call cancellation
+- Fix phantom ART index constraint violations on container_uri_lowercase
+
 ## 1.4.5
 
 - Add file detail panel to dashboard with headline, metrics, timing, symbols, and error display
