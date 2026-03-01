@@ -436,7 +436,7 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
     private static readonly object _hostDiagnosticsLock = new();
 
     // Enhanced diagnostics: ring buffer and launch info
-    private const int StderrBufferMaxLines = 50;
+    private const int StderrBufferMaxLines = 200;
     private static readonly Queue<string> _stderrBuffer = new(StderrBufferMaxLines);
     private static string? _hostWorkingDirectory;
     private static string? _hostExecutablePath;
@@ -890,6 +890,22 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
             yield return call.ResponseStream.Current;
         }
     }
+
+    public Task<QueueControlResponse> QueueControlAsync(
+        QueueControlAction action,
+        string uri,
+        CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            var request = new QueueControlRequest
+            {
+                Action = action,
+                Uri = uri ?? string.Empty
+            };
+
+            var response = await client.QueueControlAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            return response;
+        }, cancellationToken);
 
     public Task<ProtoPipelineStatus> WaitForPipelineAsync(
         IEnumerable<ProtoPipelineStage>? stages = null,

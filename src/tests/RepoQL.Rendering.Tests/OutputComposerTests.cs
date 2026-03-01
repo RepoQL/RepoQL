@@ -209,11 +209,19 @@ public class OutputComposerTests
         };
         var omittedByType = new Dictionary<string, int> { ["code.csharp"] = 5 };
         var result = new DecisionResult(decisions, 5, omittedByType);
-        var indexerStatus = new IndexerStatus(IndexPending: 5, SemanticReady: false, SemanticEnabled: true, ElapsedMs: 150);
+        var trustSignal = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 5,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: false,
+            SemanticPercent: 72,
+            ExecutionTimeMs: 150);
 
-        var output = OutputComposer.Compose(result, showConfidence: true, indexerStatus);
+        var output = OutputComposer.Compose(result, showConfidence: true, trustSignal);
 
-        output.Should().Contain("150 ms | index: 5 pending | semantic: pending]");
+        output.Should().Contain("150 ms | index: 95% (5 pending) | semantic: 72%]");
     }
 
     [Test]
@@ -227,9 +235,17 @@ public class OutputComposerTests
                 Representation.Compact, 10),
         };
         var result = new DecisionResult(decisions, 0, null);
-        var indexerStatus = new IndexerStatus(IndexPending: 0, SemanticReady: true, SemanticEnabled: true, ElapsedMs: 50);
+        var trustSignal = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 0,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: true,
+            SemanticPercent: 100,
+            ExecutionTimeMs: 50);
 
-        var output = OutputComposer.Compose(result, showConfidence: true, indexerStatus);
+        var output = OutputComposer.Compose(result, showConfidence: true, trustSignal);
 
         output.Should().Contain("50 ms | index: ready | semantic: ready]");
     }

@@ -31,6 +31,9 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
         `diagnostics` | Run system health checks
         `config` | View/change configuration
         `host.restart` | Restart the repoql host
+        `queue.cancel` | Cancel one file at next stage boundary
+        `queue.skip` | Persistently skip one file
+        `queue.retry` | Re-enqueue one failed/skipped file
         `dashboard` | show the user a dashboard of the current state of the database
         </COMMON>
         """;

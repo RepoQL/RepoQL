@@ -46,6 +46,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly ReadOrchestrator _readOrchestrator;
     private readonly StatusEventAggregator _statusAggregator;
     private readonly UriRegistry? _uriRegistry;
+    private readonly QueueCommandService? _queueCommandService;
     private readonly RepoQlConfig.HostSettings _hostSettings;
     private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
     private readonly ILogger<RepoQlServiceImpl> _logger;
@@ -84,6 +85,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         IEmbeddingProvider? embeddingProvider = null,
         ILlmProvider? llmProvider = null,
         UriRegistry? uriRegistry = null,
+        QueueCommandService? queueCommandService = null,
         ILogger<RepoQlServiceImpl>? logger = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
@@ -101,6 +103,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _readOrchestrator = readOrchestrator ?? throw new ArgumentNullException(nameof(readOrchestrator));
         _statusAggregator = statusAggregator ?? throw new ArgumentNullException(nameof(statusAggregator));
         _uriRegistry = uriRegistry;
+        _queueCommandService = queueCommandService;
         _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
         _embeddingSettings = config.Embedding;
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
@@ -778,6 +781,25 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         {
             await responseStream.WriteAsync(ToProtoProgress(progress)).ConfigureAwait(false);
         }
+    }
+
+    public override Task<QueueControlResponse> QueueControl(QueueControlRequest request, ServerCallContext context)
+    {
+        if (_queueCommandService is null)
+        {
+            return Task.FromResult(new QueueControlResponse
+            {
+                Success = false,
+                Message = "Queue control is not available in this host configuration."
+            });
+        }
+
+        var outcome = _queueCommandService.Execute(request.Action, request.Uri);
+        return Task.FromResult(new QueueControlResponse
+        {
+            Success = outcome.Success,
+            Message = outcome.Message
+        });
     }
 
     public override async Task<WaitForPipelineResponse> WaitForPipeline(WaitForPipelineRequest request, ServerCallContext context)

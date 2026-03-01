@@ -212,10 +212,14 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
             }
 
             // Append status footer with timing and token count
-            var status = new IndexerStatus(
+            var status = new TrustSignal(
+                result.IndexTotal,
                 result.IndexPending,
-                result.SemanticReady,
+                result.IndexFailed,
+                result.IndexStale,
                 result.SemanticEnabled,
+                result.SemanticReady,
+                result.SemanticPercent,
                 result.ExecutionTimeMs);
             var tokens = TokenEstimator.EstimateTokens(output);
             var footer = RepresentationFormatter.FormatStatusFooter(status, tokens);

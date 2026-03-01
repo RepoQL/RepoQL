@@ -160,7 +160,7 @@ internal static class DashboardEndpoints
         if (entry.EmbeddedChunkCount > 0) dto["chunks"] = entry.EmbeddedChunkCount;
         if (entry.IndexedAt.HasValue) dto["indexedAt"] = entry.IndexedAt.Value.ToString("O");
         if (entry.EmbeddedAt.HasValue) dto["embeddedAt"] = entry.EmbeddedAt.Value.ToString("O");
-        if (entry.Status == UriStatus.Failed && entry.Error is not null) dto["error"] = entry.Error;
+        if ((entry.Status == UriStatus.Failed || entry.Status == UriStatus.Skipped) && entry.Error is not null) dto["error"] = entry.Error;
         if (entry.Headline is not null) dto["headline"] = entry.Headline;
         if (entry.Structure is not null) dto["structure"] = entry.Structure;
         if (entry.Symbols.Count > 0) dto["tree"] = BuildSymbolTree(entry.Symbols);
@@ -269,7 +269,7 @@ internal static class DashboardEndpoints
 
     private static (string state, bool processing) MapFileState(FileEntry entry)
     {
-        if (entry.Status == UriStatus.Failed)
+        if (entry.Status == UriStatus.Failed || entry.Status == UriStatus.Skipped)
             return ("failed", false);
 
         return entry.Status switch

@@ -102,7 +102,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             results,
             TotalDocumentsMatched: jitResult.SelectedDocuments.Count,
             TotalObjectsMatched: jitResult.ScoredObjects.Count,
-            IndexerStatus: null
+            TrustSignal: null
         );
     }
 
@@ -167,7 +167,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             results,
             TotalDocumentsMatched: docResult.Documents.Count,
             TotalObjectsMatched: objects.Count,
-            IndexerStatus: null
+            TrustSignal: null
         );
     }
 

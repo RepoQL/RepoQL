@@ -87,5 +87,5 @@ public record SearchEngineResult(
     IReadOnlyList<SearchResult> Results,
     int TotalDocumentsMatched,
     int TotalObjectsMatched,
-    IndexerStatus? IndexerStatus
+    TrustSignal? TrustSignal
 );

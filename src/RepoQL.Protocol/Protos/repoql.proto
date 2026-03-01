@@ -31,6 +31,9 @@ service RepoQL {
   // and re-queues them for indexing. Progress is streamed as phases with counts.
   rpc ReindexAll(ReindexRequest) returns (stream ReindexProgress);
 
+  // Control a single queued or failed URI (cancel, skip, retry).
+  rpc QueueControl(QueueControlRequest) returns (QueueControlResponse);
+
   // Wait for selected pipeline stages to become idle. Returns once the condition is met.
   rpc WaitForPipeline(WaitForPipelineRequest) returns (WaitForPipelineResponse);
 
@@ -103,6 +106,14 @@ message RawQueryResponse {
   bool summarized = 9;
   // Original row count before summarization (only set when summarized=true).
   int64 original_row_count = 10;
+  // Total discovered files in the index registry.
+  int32 index_total = 11;
+  // Number of files that failed indexing.
+  int32 index_failed = 12;
+  // Number of files marked stale since indexing.
+  int32 index_stale = 13;
+  // Percentage of embedding-applicable files that are embedded.
+  int32 semantic_percent = 14;
 }
 
 message RawQueryRow {
@@ -244,6 +255,23 @@ message ReindexProgress {
   repeated string failure_details = 6;
   // Populated on COMPLETED phase: operation milestone entries.
   repeated string milestones = 7;
+}
+
+message QueueControlRequest {
+  QueueControlAction action = 1;
+  string uri = 2;
+}
+
+enum QueueControlAction {
+  QUEUE_CONTROL_ACTION_UNSPECIFIED = 0;
+  QUEUE_CONTROL_ACTION_CANCEL = 1;
+  QUEUE_CONTROL_ACTION_SKIP = 2;
+  QUEUE_CONTROL_ACTION_RETRY = 3;
+}
+
+message QueueControlResponse {
+  bool success = 1;
+  string message = 2;
 }
 
 enum ReindexPhase {
@@ -522,6 +550,14 @@ message ExploreIndexerStatus {
   bool ready = 3;
   // Query elapsed time in milliseconds.
   int64 elapsed_ms = 4;
+  // Total discovered files in the index registry.
+  int32 index_total = 5;
+  // Number of files that failed indexing.
+  int32 index_failed = 6;
+  // Number of files marked stale since indexing.
+  int32 index_stale = 7;
+  // Percentage of embedding-applicable files that are embedded.
+  int32 semantic_percent = 8;
 }
 
 // ----- Read: token-budget-aware content retrieval -----

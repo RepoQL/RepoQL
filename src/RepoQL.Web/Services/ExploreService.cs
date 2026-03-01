@@ -60,8 +60,12 @@ internal sealed class ExploreService
             Results: results,
             Truncated: response.Truncated,
             Status: new ExploreStatusInfo(
+                IndexTotal: response.Status?.IndexTotal ?? 0,
                 IndexPending: response.Status?.IndexPending ?? 0,
+                IndexFailed: response.Status?.IndexFailed ?? 0,
+                IndexStale: response.Status?.IndexStale ?? 0,
                 SemanticReady: response.Status?.SemanticReady ?? false,
+                SemanticPercent: response.Status?.SemanticPercent ?? 0,
                 Ready: response.Status?.Ready ?? false,
                 ElapsedMs: response.Status?.ElapsedMs ?? 0));
     }
@@ -104,9 +108,13 @@ internal sealed record ExploreResultDto(
     string? SemanticType,
     IReadOnlyList<ExploreResultDto>? Children);
 
-/// <summary>Indexer status information.</summary>
+/// <summary>Trust signal information from explore/read responses.</summary>
 internal sealed record ExploreStatusInfo(
+    int IndexTotal,
     int IndexPending,
+    int IndexFailed,
+    int IndexStale,
     bool SemanticReady,
+    int SemanticPercent,
     bool Ready,
     long ElapsedMs);

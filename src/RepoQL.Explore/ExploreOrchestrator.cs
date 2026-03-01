@@ -40,7 +40,7 @@ public sealed class ExploreOrchestrator
     /// <returns>Execution result with rendered output and structured results.</returns>
     public async Task<ExploreExecutionResult> ExecuteAsync(
         ExploreQuery query,
-        IndexerStatus status,
+        TrustSignal status,
         CancellationToken cancellationToken,
         Stopwatch? stopwatch = null)
     {
@@ -125,7 +125,7 @@ public sealed class ExploreOrchestrator
         if (stopwatch is not null)
         {
             stopwatch.Stop();
-            status = status with { ElapsedMs = stopwatch.ElapsedMilliseconds };
+            status = status with { ExecutionTimeMs = stopwatch.ElapsedMilliseconds };
         }
 
         if (searchResult.Results.Count == 0)
@@ -199,7 +199,7 @@ public sealed class ExploreOrchestrator
     private async Task<string> SynthesizeUnderstandingAsync(
         string exploreOutput,
         string question,
-        IndexerStatus status,
+        TrustSignal status,
         CancellationToken ct)
     {
         // The explore output becomes the context, the keywords become the question

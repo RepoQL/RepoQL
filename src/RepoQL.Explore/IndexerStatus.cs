@@ -1,32 +1,71 @@
+using RepoQL.Contracts;
+
 namespace RepoQL.Explore;
 
 /// <summary>
-/// Status of the indexer and query timing for context about data completeness.
+/// Trust signal describing indexing/semantic readiness and execution timing.
 /// </summary>
-/// <param name="IndexPending">Number of files pending indexing, 0 if ready.</param>
-/// <param name="SemanticReady">True if semantic index is ready (embeddings enabled and indexing complete).</param>
+/// <param name="IndexTotal">Total number of discovered files.</param>
+/// <param name="IndexPending">Number of files pending indexing.</param>
+/// <param name="IndexFailed">Number of files that failed indexing.</param>
+/// <param name="IndexStale">Number of files marked stale since indexing.</param>
 /// <param name="SemanticEnabled">True if semantic embeddings are enabled.</param>
-/// <param name="ElapsedMs">Query execution time in milliseconds.</param>
-public record IndexerStatus(
+/// <param name="SemanticReady">True when semantic indexing is complete for all applicable files.</param>
+/// <param name="SemanticPercent">Percent of embedding-applicable files that are embedded.</param>
+/// <param name="ExecutionTimeMs">Query execution time in milliseconds.</param>
+public record TrustSignal(
+    int IndexTotal,
     int IndexPending,
-    bool SemanticReady,
+    int IndexFailed,
+    int IndexStale,
     bool SemanticEnabled,
-    long ElapsedMs
+    bool SemanticReady,
+    int SemanticPercent,
+    long ExecutionTimeMs
 )
 {
     /// <summary>
-    /// Create status from diagnostics snapshot.
+    /// Create trust signal from cached URI registry summary.
     /// </summary>
-    public static IndexerStatus FromDiagnostics(
+    public static TrustSignal FromSummary(RegistrySummary summary, long executionTimeMs, bool semanticEnabled)
+    {
+        var semanticPercent = semanticEnabled ? summary.SemanticPercent : 0;
+        var semanticReady = semanticEnabled && semanticPercent == 100;
+
+        return new TrustSignal(
+            IndexTotal: summary.TotalFiles,
+            IndexPending: summary.IndexPending,
+            IndexFailed: summary.IndexFailed,
+            IndexStale: summary.IndexStale,
+            SemanticEnabled: semanticEnabled,
+            SemanticReady: semanticReady,
+            SemanticPercent: semanticPercent,
+            ExecutionTimeMs: executionTimeMs);
+    }
+
+    /// <summary>
+    /// Create trust signal from diagnostics snapshot (fallback path when summary is unavailable).
+    /// </summary>
+    public static TrustSignal FromDiagnostics(
         int hotPathDepth,
         int idlePending,
         int analysisDepth,
         int writerPending,
-        long elapsedMs,
+        long executionTimeMs,
         bool embedEnabled)
     {
         var indexPending = hotPathDepth + idlePending + analysisDepth + writerPending;
         var semanticReady = embedEnabled && indexPending == 0;
-        return new IndexerStatus(indexPending, semanticReady, embedEnabled, elapsedMs);
+        var semanticPercent = semanticReady ? 100 : 0;
+
+        return new TrustSignal(
+            IndexTotal: 0,
+            IndexPending: indexPending,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: embedEnabled,
+            SemanticReady: semanticReady,
+            SemanticPercent: semanticPercent,
+            ExecutionTimeMs: executionTimeMs);
     }
 }

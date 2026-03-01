@@ -46,8 +46,12 @@ internal sealed class QueryExecutor
             total ?? result.RowCount,
             result.ExecutionTimeMs,
             result.IndexPending,
+            result.IndexTotal,
+            result.IndexFailed,
+            result.IndexStale,
             result.SemanticEnabled,
             result.SemanticReady,
+            result.SemanticPercent,
             result.Summarized,
             result.OriginalRowCount);
     }

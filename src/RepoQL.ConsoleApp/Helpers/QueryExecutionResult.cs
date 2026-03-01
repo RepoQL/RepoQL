@@ -5,7 +5,11 @@ internal readonly record struct QueryExecutionResult(
     long TotalRowCount,
     long ExecutionTimeMs,
     int IndexPending,
+    int IndexTotal,
+    int IndexFailed,
+    int IndexStale,
     bool SemanticEnabled,
     bool SemanticReady,
+    int SemanticPercent,
     bool Summarized = false,
     long OriginalRowCount = 0);

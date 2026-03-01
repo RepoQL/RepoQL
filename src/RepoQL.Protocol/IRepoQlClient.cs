@@ -113,6 +113,17 @@ public interface IRepoQlClient : IAsyncDisposable
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Control one URI in the indexing queue/lifecycle (cancel, skip, retry).
+    /// </summary>
+    /// <param name="action">Queue control action.</param>
+    /// <param name="uri">Target file URI (file:///...)</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<QueueControlResponse> QueueControlAsync(
+        QueueControlAction action,
+        string uri,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Execute an explore query and return both structured results and pre-rendered output.
     /// </summary>
     /// <param name="tokenBudget">Maximum tokens to invest in the response.</param>

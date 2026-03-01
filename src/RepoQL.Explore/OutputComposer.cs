@@ -12,13 +12,13 @@ public static class OutputComposer
     /// </summary>
     /// <param name="decisionResult">The decision result containing decisions and omitted info.</param>
     /// <param name="showConfidence">Whether to show confidence scores.</param>
-    /// <param name="indexerStatus">Optional indexer status for footer.</param>
+    /// <param name="trustSignal">Optional trust signal for footer.</param>
     /// <param name="intent">Optional intent — Inspect uses short headlines.</param>
     /// <returns>The composed output string.</returns>
     public static string Compose(
         DecisionResult decisionResult,
         bool showConfidence,
-        IndexerStatus? indexerStatus = null,
+        TrustSignal? trustSignal = null,
         Intent? intent = null)
     {
         if (decisionResult.Decisions.Count == 0)
@@ -57,14 +57,14 @@ public static class OutputComposer
         }
 
         // Always add status footer if available
-        if (indexerStatus is not null)
+        if (trustSignal is not null)
         {
             sb.Append('\n');
             if (previousWasMultiline || decisionResult.OmittedCount > 0)
                 sb.Append('\n');
 
             var totalTokens = CalculateTotalTokens(decisionResult.Decisions);
-            sb.Append(RepresentationFormatter.FormatStatusFooter(indexerStatus, totalTokens));
+            sb.Append(RepresentationFormatter.FormatStatusFooter(trustSignal, totalTokens));
         }
 
         return sb.ToString();

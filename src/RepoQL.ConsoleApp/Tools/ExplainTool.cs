@@ -76,7 +76,7 @@ internal sealed class ExplainTool(
         </DISTINCTION_FROM_READ_QUESTION>
         """;
 
-    [McpServerTool(Name = "explain", Title = "Explain Code", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(ToolInstructions)]
+    [McpServerTool(Name = "explain", Title = "Explain", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(ToolInstructions)]
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<CallToolResult> ExplainAsync(

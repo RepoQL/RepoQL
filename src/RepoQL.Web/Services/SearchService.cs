@@ -148,8 +148,12 @@ internal sealed class SearchService
                 Results: results,
                 Truncated: response.Truncated,
                 Status: response.Status is not null ? new ExploreStatusInfo(
+                    IndexTotal: response.Status.IndexTotal,
                     IndexPending: response.Status.IndexPending,
+                    IndexFailed: response.Status.IndexFailed,
+                    IndexStale: response.Status.IndexStale,
                     SemanticReady: response.Status.SemanticReady,
+                    SemanticPercent: response.Status.SemanticPercent,
                     Ready: response.Status.Ready,
                     ElapsedMs: response.Status.ElapsedMs) : null);
         }
