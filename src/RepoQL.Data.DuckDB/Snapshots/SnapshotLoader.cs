@@ -222,17 +222,18 @@ public static class SnapshotLoader
         // The column has a UNIQUE index — child nodes with fragment URIs (e.g., #symbol=Foo)
         // share the same container as their document and would violate the constraint.
         var containerLc = string.Equals(n.Kind, "document", StringComparison.OrdinalIgnoreCase) && n.Uri != null
-            ? RepoUri.Normalize(n.Uri.Container.AbsoluteUri).ToLowerInvariant()
+            ? RepoUri.NormalizeContainerKey(n.Uri)
             : null;
 
+        // Plain INSERT — no ON CONFLICT. DeleteByUriPrefix already cleaned up existing
+        // data. ON CONFLICT (id) DO UPDATE SET container_uri_lowercase causes ART index
+        // staleness on the container_uri_lowercase column, leading to phantom constraint
+        // violations during live indexing.
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = @"
             INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (id) DO UPDATE SET
-                kind = $2, uri = $3, container_uri_lowercase = $4, artifact_id = $5, span_id = $6, properties = $7,
-                headline = $8, structure = $9, updated_at = $11";
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)";
         cmd.Parameters.Add(new DuckDBParameter { Value = n.Id });
         cmd.Parameters.Add(new DuckDBParameter { Value = n.Kind });
         cmd.Parameters.Add(new DuckDBParameter { Value = n.Uri?.AbsoluteUri });

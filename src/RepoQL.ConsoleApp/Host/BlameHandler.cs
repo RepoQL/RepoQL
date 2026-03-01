@@ -257,7 +257,7 @@ internal sealed class BlameHandler(DuckDbDataStore db, RepositoryConfiguration r
                 SELECT a.text_content
                 FROM node n
                 JOIN artifact a ON n.artifact_id = a.id
-                WHERE n.container_uri_lowercase = '{escapedUri}'
+                WHERE (n.container_uri_lowercase = '{escapedUri}' OR lower(n.uri) = '{escapedUri}')
                   AND n.kind = 'document'
                 LIMIT 1
                 """;

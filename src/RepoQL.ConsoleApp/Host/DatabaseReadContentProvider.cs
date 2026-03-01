@@ -60,8 +60,12 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
             LEFT JOIN node doc_by_container
                 ON doc_by_container.kind = 'document'
                AND doc_by_container.container_uri_lowercase = lower(repository_uri_container(g.uri))
-            JOIN artifact a ON a.id = COALESCE(n.artifact_id, doc_by_span.artifact_id, doc_by_container.artifact_id)
-            {(hasFragment ? "" : "WHERE COALESCE(n.kind, doc_by_container.kind) = 'document'")}
+            LEFT JOIN node doc_by_container_scan
+                ON doc_by_container.id IS NULL
+               AND doc_by_container_scan.kind = 'document'
+               AND lower(doc_by_container_scan.uri) = lower(repository_uri_container(g.uri))
+            JOIN artifact a ON a.id = COALESCE(n.artifact_id, doc_by_span.artifact_id, doc_by_container.artifact_id, doc_by_container_scan.artifact_id)
+            {(hasFragment ? "" : "WHERE COALESCE(n.kind, doc_by_container.kind, doc_by_container_scan.kind) = 'document'")}
             ORDER BY g.uri
             """;
 

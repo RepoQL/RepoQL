@@ -17,7 +17,8 @@ WITH base AS (
      doc AS (
          SELECT n.id AS doc_id, n.uri AS uri, a.text_content, a.media_type, a.storage_uri
          FROM base b
-                  JOIN node n ON n.container_uri_lowercase = lower(b.base)
+                  JOIN node n ON (n.container_uri_lowercase = lower(b.base) OR lower(n.uri) = lower(b.base))
+                      AND n.kind = 'document'
                   LEFT JOIN artifact a ON a.id = n.artifact_id
      ),
      edge_focus AS (

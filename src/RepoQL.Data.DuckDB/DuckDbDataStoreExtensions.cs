@@ -546,6 +546,9 @@ public static class DuckDbDataStoreExtensions
             if (string.Equals(node.Kind, "document", StringComparison.OrdinalIgnoreCase) && node.Uri is not null)
                 return UpsertDocumentByUri(conn, tx, node.Uri, node, store.Logger);
 
+            // Non-document node upsert. Excludes container_uri_lowercase from the UPDATE
+            // SET to avoid touching the ART index on that column (always null for non-documents,
+            // but DuckDB ART indexes can go stale from ON CONFLICT DO UPDATE).
             using var cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = """
@@ -554,7 +557,6 @@ public static class DuckDbDataStoreExtensions
                 ON CONFLICT (id) DO UPDATE SET
                     kind = excluded.kind,
                     uri = excluded.uri,
-                    container_uri_lowercase = excluded.container_uri_lowercase,
                     artifact_id = excluded.artifact_id,
                     span_id = excluded.span_id,
                     properties = excluded.properties,
@@ -780,11 +782,14 @@ public static class DuckDbDataStoreExtensions
         List<(Guid Id, string Kind, string? Uri)>? postDelete = null;
         List<(Guid Id, string Kind, string? Uri)>? postFailure = null;
 
-        List<(Guid Id, string Kind, string? Uri)> ReadConflicts()
+        List<(Guid Id, string Kind, string? Uri)> ReadConflicts(bool scan = false)
         {
             using var probe = conn.CreateCommand();
             probe.Transaction = tx;
-            probe.CommandText = "SELECT id, kind, uri FROM node WHERE container_uri_lowercase = ?;";
+            // scan=true bypasses the potentially stale ART index on container_uri_lowercase
+            probe.CommandText = scan
+                ? "SELECT id, kind, uri FROM node WHERE lower(uri) = ? AND kind = 'document';"
+                : "SELECT id, kind, uri FROM node WHERE container_uri_lowercase = ?;";
             probe.AddParameters(lc);
 
             using var reader = probe.ExecuteReader();
@@ -882,27 +887,25 @@ public static class DuckDbDataStoreExtensions
         // Clean up any existing row with the same URI (unconditional delete).
         // This handles cases where document IDs change between indexing runs.
         // The unique index on container_uri_lowercase requires this cleanup before insert.
-        preDelete = ReadConflicts();
+        preDelete = ReadConflicts(scan: true);
         conn.Execute(tx, "DELETE FROM node WHERE container_uri_lowercase = ?;", lc);
-        postDelete = ReadConflicts();
 
-        // Insert the document. ON CONFLICT (container_uri_lowercase) handles any remaining
-        // conflicts (e.g., from index corruption or race conditions).
+        // Fallback: DuckDB ART indexes can go stale after ON CONFLICT DO UPDATE,
+        // causing the DELETE above to miss rows that actually exist. Bypass the
+        // index with a scan-based delete on the uri column (same pattern as the
+        // GetDocumentByUri fallback).
+        conn.Execute(tx, "DELETE FROM node WHERE lower(uri) = ? AND kind = 'document';", lc);
+        postDelete = ReadConflicts(scan: true);
+
+        // Plain INSERT — no ON CONFLICT. ON CONFLICT DO UPDATE on container_uri_lowercase
+        // causes ART index staleness (see GetDocumentByUri fallback comment), creating a
+        // self-reinforcing cycle: stale index → missed DELETE → ON CONFLICT fires → more
+        // staleness. The DELETE above (with scan fallback) is the correct cleanup path.
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (container_uri_lowercase) DO UPDATE SET
-                id = excluded.id,
-                kind = excluded.kind,
-                uri = excluded.uri,
-                artifact_id = excluded.artifact_id,
-                span_id = excluded.span_id,
-                properties = excluded.properties,
-                headline = excluded.headline,
-                structure = excluded.structure,
-                updated_at = excluded.updated_at
             RETURNING id;
             """;
         cmd.AddParameters(document.Id, document.Kind, uriStr, lc, document.ArtifactId, document.SpanId,
@@ -918,9 +921,54 @@ public static class DuckDbDataStoreExtensions
                 return document with { Id = id };
             }
         }
+        catch (DuckDBException ex) when (
+            ex.Message.Contains("container_uri_lowercase", StringComparison.OrdinalIgnoreCase) &&
+            ex.Message.Contains("Duplicate key", StringComparison.OrdinalIgnoreCase))
+        {
+            // Ghost ART index entry: both DELETEs found nothing (scan-based), but the
+            // constraint still fires. The ART index has a phantom entry with no backing row.
+            // Recovery: drop and recreate the unique index to purge stale entries, then retry.
+            // Note: DuckDB indexes don't have full MVCC, so DDL inside a transaction is
+            // best-effort. If recovery fails, we fall through to the standard error path.
+            postFailure = ReadConflicts(scan: true);
+            LogConflict("ghost-entry-recovery", postFailure ?? [], ex);
+
+            try
+            {
+                logger.LogWarning("[DuckDB] Rebuilding container_uri_lowercase index to purge ghost entry for {Uri}", uriStr);
+                conn.Execute(tx, "DROP INDEX IF EXISTS node_container_uri_lowercase_unique;");
+                conn.Execute(tx, "CREATE UNIQUE INDEX node_container_uri_lowercase_unique ON node(container_uri_lowercase);");
+
+                // Retry the INSERT after index rebuild
+                using var retry = conn.CreateCommand();
+                retry.Transaction = tx;
+                retry.CommandText = """
+                    INSERT INTO node (id, kind, uri, container_uri_lowercase, artifact_id, span_id, properties, headline, structure, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id;
+                    """;
+                retry.AddParameters(document.Id, document.Kind, uriStr, lc, document.ArtifactId, document.SpanId,
+                    document.Props.ToJsonString(), document.Headline, document.Structure,
+                    document.CreatedAt.UtcDateTime, document.UpdatedAt.UtcDateTime);
+
+                using var retryReader = retry.ExecuteReader();
+                if (retryReader.Read())
+                {
+                    logger.LogInformation("[DuckDB] Ghost entry recovery succeeded for {Uri}", uriStr);
+                    return document with { Id = retryReader.GetGuid(0) };
+                }
+            }
+            catch (Exception recoveryEx)
+            {
+                logger.LogError(recoveryEx, "[DuckDB] Ghost entry recovery failed for {Uri}, propagating original error", uriStr);
+            }
+
+            // Recovery didn't work — propagate the original constraint error
+            throw;
+        }
         catch (DuckDBException ex)
         {
-            var rows = postDelete ?? preDelete ?? new List<(Guid, string, string?)>();
+            var rows = postDelete ?? preDelete ?? [];
             postFailure = ReadConflictsOutside();
             LogConflict("insert-failed", rows, ex);
             throw;
