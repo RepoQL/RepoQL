@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package repoql.embedding.v1;
+
+option csharp_namespace = "RepoQL.Embedding";
+
+// Contextual embedding service for RepoQL.
+// Proxies to Voyage AI voyage-context-3 — every call uses the contextual endpoint.
+// Chunks grouped by document are embedded with mutual awareness.
+service EmbeddingService {
+  // Embed grouped chunks with document context.
+  // Each group is chunks from one document, ordered by position.
+  rpc EmbedChunks(EmbedChunksRequest) returns (EmbedChunksResponse);
+
+  // Embed a single query string for search.
+  // Uses the same model and vector space as EmbedChunks.
+  rpc EmbedQuery(EmbedQueryRequest) returns (EmbedQueryResponse);
+
+  // Returns model name and dimension for compatibility checking.
+  // Host validates before embedding — mismatched models corrupt search.
+  rpc GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse);
+}
+
+message EmbedChunksRequest {
+  // Groups of chunks, each from one document.
+  // Order within a group matters — chunks should be in document order.
+  repeated ChunkGroup groups = 1;
+}
+
+message ChunkGroup {
+  // Document URI (for logging/metering, not used by Voyage).
+  string document_uri = 1;
+
+  // Document-level context (x-ray headline, summary, structure).
+  // Sent to Voyage as the first element in the group so all content chunks
+  // benefit from document-level awareness. The service does NOT return a
+  // vector for this element — only content chunks get vectors.
+  string context = 2;
+
+  // Ordered content chunks from this document.
+  // These are the elements that receive embedding vectors.
+  repeated string chunks = 3;
+}
+
+message EmbedChunksResponse {
+  // One embedding per input chunk, in input order (groups flattened sequentially).
+  repeated ChunkEmbedding embeddings = 1;
+  // Total tokens consumed by Voyage for this request.
+  int32 total_tokens = 2;
+}
+
+message ChunkEmbedding {
+  // Index into the flattened chunk list (group 0 chunks, then group 1, etc.).
+  int32 index = 1;
+  // The embedding vector (1024 floats for voyage-context-3).
+  repeated float vector = 2;
+  // Non-empty if this chunk failed. Other chunks still succeed.
+  string error = 3;
+}
+
+message EmbedQueryRequest {
+  string text = 1;
+}
+
+message EmbedQueryResponse {
+  repeated float vector = 1;
+  int32 tokens = 2;
+}
+
+message GetModelInfoRequest {}
+
+message GetModelInfoResponse {
+  string model = 1;
+  int32 dimension = 2;
+}
