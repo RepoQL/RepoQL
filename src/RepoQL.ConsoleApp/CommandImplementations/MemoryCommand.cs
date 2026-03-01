@@ -33,8 +33,8 @@ internal sealed class MemoryCommand(RepoQlClientProvider clientProvider)
             (SELECT COUNT(*) FROM annotation) AS annotations,
             (SELECT COALESCE(SUM(lines), 0) FROM Files) AS total_lines,
             (SELECT COUNT(DISTINCT lang) FROM Files) AS languages,
-            (SELECT COUNT(*) FROM document_embedding) AS embedded,
-            (SELECT COUNT(*) FROM node WHERE kind = 'document') - (SELECT COUNT(*) FROM document_embedding) AS unembedded
+            (SELECT COUNT(DISTINCT uri) FROM document_embedding) AS embedded,
+            (SELECT COUNT(*) FROM node WHERE kind = 'document') - (SELECT COUNT(DISTINCT uri) FROM document_embedding) AS unembedded
         """;
 
     private const string EmbeddingDetailSql = """
