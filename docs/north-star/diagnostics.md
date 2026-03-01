@@ -1,217 +1,263 @@
 # Diagnostics: What Great Looks Like
 
-> An agent should be able to answer "can I trust this?" and "what's wrong?" without human help.
+> An agent should be able to see what the system is doing, understand when something is wrong, and fix it.
 
-Diagnostics serve two purposes: **confidence** (before acting) and **debugging** (after failure). Great diagnostics make agents self-sufficient—they diagnose, recover, and proceed without escalation.
+Claude is exploring a codebase. Every query returns a small footer — trust confirmed, coverage noted, move on. Then a query fails. Claude doesn't see a stack trace. It sees: "Host exited (OOM during embedding). Restart: `::host.restart`. Reduce memory pressure: `::config.set[embed.batch_size, 50]`." Claude restarts the host, waits for the health check to pass, re-runs the query. The user sees a result.
 
----
+But that's only half the story. Earlier in the session, Claude noticed the footer said `semantic: 72%` and three files were stuck in the processing queue for over a minute. It ran `SELECT * FROM processing_queue() WHERE age_seconds > 60` and found a malformed C++ file causing the parser to hang. It cancelled the stuck item, skipped the file, and continued — before the hang could cascade into a host OOM. The crash never happened.
 
-## The Two Questions
-
-Every diagnostic capability exists to answer one of these:
-
-| Question | When Asked | What "Great" Provides |
-|----------|------------|----------------------|
-| **"Can I trust this?"** | Before search, before acting on results | Clear yes/no with reason if no |
-| **"What's wrong?"** | After error, unexpected results | Actionable diagnosis with recovery path |
-
-If the agent can't answer these questions autonomously, diagnostics have failed.
+That's diagnostics. Not a command. A property of the system. Every component is observable, every queue is inspectable, every stuck operation is cancellable, every failure is recoverable. The `::diagnostics` command is one access point. The footer is another. Error messages are another. The SQL surface is another. When any one fails, the others compensate.
 
 ---
 
-## Capsule: ConfidenceCheck
+## Trust
 
-**Invariant**
-Before acting on query results, the agent must be able to confirm: data is complete, nothing failed silently, the answer reflects reality.
+- An agent should be able to confirm result trustworthiness without a separate query
+- An agent should be able to see how deeply the system understands each part of the codebase
+- An agent should be able to tell whether the index reflects the current state of the working tree
+- An agent should be able to see trust status in under 20 tokens, on every response
 
-**Example**
+```
+# Healthy — move on:
+[ready | semantic: ready | parsed: 94% | 0 pending]
+
+# Trust is qualified — results are partial:
+[ready | semantic: 72% | parsed: 87% | 3 pending | 1 failed]
+
+# Trust is broken — results will be incomplete:
+[NOT READY — 847 pending, discovery in progress]
+
+# Stale — the index may not reflect reality:
+[ready | last scan: 3h ago — working tree may have diverged]
+```
+
+The footer is the foundation. Trust has layers: structural readiness, semantic readiness, format coverage (how deeply files are parsed, not just whether they exist), and freshness. A "ready" index built from files that have since changed is not trustworthy, and the footer should say so.
+
+---
+
+## Observability
+
+- An agent should be able to see what the system is doing right now — what's queued, what's in progress, what's blocked
+- An agent should be able to identify specific files that are stuck, hanging, or repeatedly failing
+- An agent should be able to see how long each in-progress item has been running
+- An agent should be able to see resource consumption without leaving the query surface
+- An agent should be able to see which other clients are connected and what they're doing
+
 ```sql
--- Great: Single query, clear answer
-SELECT ready, semantic_ready, pending, failed
-FROM indexing_confidence();
--- ready: true, semantic_ready: true, pending: 0, failed: 0
+-- What's happening right now?
+SELECT uri, stage, started_at, age_seconds
+FROM processing_queue()
+ORDER BY age_seconds DESC;
+-- file:///src/generated/huge.g.cs | parsing | 14:02:01 | 97s ← stuck
 
--- Current: Requires interpretation
-SELECT indexing_diagnostics();
--- status: idle, epoch: 4082, embed_last_epoch: 3407...
--- Agent must infer: "is 3407 vs 4082 a problem?"
+-- What keeps failing?
+SELECT uri, attempt_count, last_error
+FROM failed_files()
+WHERE attempt_count > 1;
+
+-- How are resources looking?
+SELECT host_memory_mb, db_size_mb, disk_free_mb
+FROM system_resources();
 ```
-//BOUNDARY: If the agent must interpret or calculate, confidence is uncertain.
 
-**Depth**
-- `ready` = structural queries are trustworthy (discovery complete, no pending hot-path)
-- `semantic_ready` = search() will work correctly (embeddings caught up)
-- `pending` = files still being processed (non-zero means results may be incomplete)
-- `failed` = files that couldn't be indexed (non-zero means gaps exist)
-- One query, boolean answers, no interpretation required
+Without observability into the queue, the agent's only signal that something is stuck is silence — and silence looks identical to "still working."
 
 ---
 
-## Capsule: FailureDiagnosis
+## Signals
 
-**Invariant**
-After any failure, the agent can determine: what failed, why, and what to do about it.
+- An agent should be able to understand what went wrong from the error message alone
+- An agent should be able to see a recovery action in every infrastructure error
+- An agent should be able to distinguish infrastructure failures from user errors
+- An agent should be able to recognize version incompatibility between client and host before it causes confusing failures
 
-**Example**
 ```
-Great:
-  Error: Connection lost to host
-  Diagnosis: Host process exited (code 1) - out of memory during embedding
-  Recovery: Restart with REPOQL_EMBED_BATCH_SIZE=100, or disable embeddings
+# Great error:
+Connection lost: host exited (code 137, OOM).
+→ Restart: ::host.restart
+→ Reduce memory: ::config.set[embed.batch_size, 50]
+→ Full context: ::diagnostics
 
-Current:
-  Error: Connection lost to host
-  [50 lines of stack trace and stderr]
-  Agent must: parse output, identify cause, guess recovery
+# Great error:
+Query failed: database locked by DBeaver (pid 14209).
+→ Close DBeaver or run: ::host.restart
+
+# Great error:
+Protocol mismatch: client v1.4.1, host v1.3.2.
+→ Redeploy client: deploy.ps1, or rebuild host.
+
+# Bad error:
+Grpc.Core.RpcException: Status(StatusCode="Unavailable",
+  Detail="Error connecting to subchannel")
 ```
-//BOUNDARY: Diagnosis without recovery suggestion is incomplete.
 
-**Depth**
-- Error classification: infrastructure vs user-input (already exists)
-- Root cause extraction: parse stderr/logs to identify actual cause
-- Recovery mapping: known causes → specific recovery actions
-- Escalation threshold: "if cause unknown, suggest human review"
+If an agent needs to run a second command to understand the first error, the first error failed at its job.
 
 ---
 
-## Capsule: ProgressiveDepth
+## Investigation
 
-**Invariant**
-Quick check for confidence; deep dive only when needed.
+- An agent should be able to check system health at any depth, paying only for the depth it needs
+- An agent should be able to query diagnostic data with SQL — filter it, join it, aggregate it
+- An agent should be able to diagnose problems even when the host is unreachable
 
-**Example**
-```
-Level 1 - Status (10 tokens):
-  ready: true, semantic: true, pending: 0
+| Depth | Cost | What you learn | How |
+|-------|------|----------------|-----|
+| **Glance** | 10 tok | Trust, coverage, freshness | Footer on every response |
+| **Check** | 50 tok | Host health, queue depth, resource usage | `SELECT * FROM system_health` |
+| **Inspect** | 200 tok | Failed files, stuck items, error details | `SELECT * FROM failed_files()` |
+| **Deep dive** | 500+ tok | Environment, connections, logs, config | `::diagnostics` |
+| **Offline** | 200 tok | Socket state, PID files, log tail | `::diagnostics` when host is down |
 
-Level 2 - Summary (100 tokens):
-  status: idle, epoch: 4082, embed_epoch: 4082
-  queues: hot=0, idle=0, analysis=0
-  health: connected, serving
+An agent's most common diagnostic need is a boolean. Its second most common is a table it can filter. Full text dumps are the last resort, not the default.
 
-Level 3 - Full diagnostics (500+ tokens):
-  [Everything: env, paths, host output, connection details...]
-```
-//BOUNDARY: Don't pay 500 tokens to learn "everything is fine."
-
-**Depth**
-- Level 1: Boolean confidence check — most common need
-- Level 2: Numeric status — "how far behind?" "how much pending?"
-- Level 3: Full diagnostic dump — debugging connection issues, crashes
-- Current `:diagnostics:` is Level 3 only; missing quick checks
+Diagnostic commands may travel through the same infrastructure that is failing. The client needs a local diagnostic path — inspecting sockets, PID files, log tails, and host process state — that never depends on the host being reachable.
 
 ---
 
-## Capsule: StructuredOverText
+## Control
 
-**Invariant**
-Diagnostic data should be queryable, not just printable.
+- An agent should be able to reliably restart a dead host to a known-good state
+- An agent should be able to cancel stuck or hanging operations in the processing queue
+- An agent should be able to retry specific failed files without reindexing everything
+- An agent should be able to skip known-bad files so they stop poisoning the queue
+- An agent should be able to adjust resource configuration at runtime
 
-**Example**
-```sql
--- Great: Join diagnostics with other data
-SELECT f.uri, f.error_count, d.parse_error
-FROM Files f
-LEFT JOIN failed_files() d ON f.uri = d.uri
-WHERE d.uri IS NOT NULL;
-
--- Current: Text blob, can't join or filter
-SELECT indexing_diagnostics();
--- "status: idle\nepoch: 4082\n..."
 ```
-//BOUNDARY: If you can't WHERE/JOIN/GROUP on it, it's not truly queryable.
+# Reliable restart — the most important recovery primitive:
+::host.restart
+# Must work when: host crashed, host hanging, socket stale,
+# host partially started, previous restart in progress.
+# Cannot depend on the host being reachable.
 
-**Depth**
-- `indexing_status` view: columns not key-value text
-- `failed_files()` table function: what failed and why
-- `pending_files()` table function: what's still in queue
-- Text format for human debugging; structured for agent automation
+# Queue manipulation:
+::queue.cancel[file:///src/generated/huge.g.cs]
+::queue.retry[file:///vendor/broken.min.js]
+::queue.skip[file:///data/binary.dat]
+
+# Runtime tuning:
+::config.set[embed.batch_size, 50]
+::config.set[indexing.parallelism, 2]
+```
+
+Host restart is the single most critical recovery primitive. If restart is unreliable, all downstream recovery is unreliable. Restart must work from any state without depending on the host being reachable.
+
+Without the ability to cancel a stuck item, the only option is to restart the entire host — killing all in-progress work to unstick one file. Without the ability to skip a known-bad file, it will be retried on every restart, potentially causing the same crash. Surgical control, not just a power switch.
 
 ---
 
-## Capsule: ProactiveSurfacing
+## Recovery
 
-**Invariant**
-Problems should surface before they cause harm, not after.
+- An agent should be able to fix the most common failures without human help
+- An agent should be able to verify that a fix worked by re-running the original operation
+- An agent should be able to detect when a fix caused a new problem
+- An agent should be able to see whether the host is mid-operation before deciding to restart it
 
-**Example**
 ```
-Great:
-  Query result footer: "⚠ 3 files failed to index (run failed_files() to see)"
-  Search result: "Note: embeddings 12% behind current epoch"
-
-Current:
-  Results return normally
-  Agent discovers problem later when results seem wrong
+# The recovery loop:
+#   1. Error with embedded diagnosis + suggestion
+#   2. Agent checks what the host is doing (mid-embedding? mid-import?)
+#   3. Agent runs the suggested recovery
+#   4. Agent verifies: ::diagnostics[fast] → "OK" + retry original operation
+#   5. Agent continues, mentioning the fix in passing
+#
+# Verification is the original operation succeeding, not just health returning.
+# "I restarted the host" is hope, not evidence.
 ```
-//BOUNDARY: Silent incomplete results violate reliability principles.
 
-**Depth**
-- Query footer already shows `index: N pending` — good start
-- Missing: failed file count, embedding lag warning
-- Threshold-based: warn when pending > 0, failed > 0, embed lag > 10%
-- Don't spam: only warn when it affects result trustworthiness
+Recovery has a risk spectrum. The agent should know what the host is currently doing before deciding.
+
+| Risk | Agent behavior | Examples |
+|------|---------------|----------|
+| **None** | Act silently | Read diagnostics, check health, read logs |
+| **Low** | Act, then inform | Restart idle host, clean stale socket |
+| **Medium** | Inform, then act | Adjust config, reindex failed files, restart busy host |
+| **High** | Escalate with evidence | Delete database, kill external processes |
 
 ---
 
-## The Diagnostic Hierarchy
+## Escalation
 
-| Level | Purpose | Trigger | Output |
-|-------|---------|---------|--------|
-| **Passive** | Confidence footer on every query | Automatic | `[ready: ✓ | semantic: ✓ | 0 pending]` |
-| **Quick check** | "Am I good to proceed?" | `SELECT * FROM indexing_status` | Single row, boolean columns |
-| **Status query** | "What's the current state?" | `indexing_diagnostics()` | Key-value summary |
-| **Deep dive** | "What's wrong and why?" | `:diagnostics:` | Full environment, connection, host output |
-| **Failure analysis** | "What files have problems?" | `SELECT * FROM failed_files()` | Table of URIs with error messages |
+- An agent should be able to recognize when a problem exceeds its ability to fix
+- An agent should be able to provide what it tried, what it observed, and what it recommends
+- An agent should be able to include reproduction steps, environment details, and log locations
+
+```
+# Great escalation:
+"RepoQL host won't start after two restart attempts.
+ Environment: Windows 11, dotnet 9.0.1, RepoQL v1.4.1
+ Diagnostics: SocketBindError='permission denied' on /tmp/repoql-abc123
+ Tried: ::host.restart (twice), cleaned stale socket, checked port conflicts (none)
+ Recommendation: check filesystem permissions on the socket directory.
+ Logs: .repoql/host.log
+ Note: structural queries are unavailable, but I can still read files directly."
+
+# Bad escalation:
+"RepoQL isn't working. Here's the error: [47 lines of stack trace]"
+```
 
 ---
 
-## What "Great" Looks Like
+## Knowledge
 
-| Capability | Great | Current | Gap |
-|------------|-------|---------|-----|
-| **Confidence check** | `SELECT ready FROM indexing_status` → `true` | Parse `indexing_diagnostics()` text | Need structured view |
-| **Semantic readiness** | `semantic_ready` boolean | Compare `embed_last_epoch` vs `epoch` | Need derived boolean |
-| **Failed files** | `SELECT * FROM failed_files()` | `last_error` shows most recent only | Need table function |
-| **Pending files** | `SELECT * FROM pending_files()` | `indexing_queue()` JSON array | Exists, could be cleaner |
-| **Auto-diagnostics** | Appended on infrastructure error | ✓ Already works | — |
-| **Recovery suggestions** | "Try: restart host with X flag" | Stack traces only | Need cause→recovery mapping |
+- An agent should be able to find troubleshooting guidance through `help://`
+- An agent should be able to match symptoms to documented failure modes by searching
+- An agent should be able to access core troubleshooting knowledge even when the host is down
+
+```
+# Agent encounters unfamiliar error:
+explore(keywords="database locked recovery", uriGlob="help://**")
+→ help:///troubleshooting/database-lock.md
+→ Recovery steps the agent can follow autonomously
+
+# But: help:// is served by the host.
+# If the host is down, help:// is unreachable.
+# The most critical troubleshooting knowledge — how to recover
+# a dead host — must be accessible without a running host.
+```
+
+Every failure mode documented in `help://` is a failure mode agents can recover from autonomously going forward. But the most important entries — recovering the host itself — can't live exclusively behind the host.
+
+---
+
+## What Great Looks Like
+
+| Declaration | Why It Matters |
+|-------------|----------------|
+| An agent should be able to confirm trust in under 20 tokens, on every response | The most frequent question should be the cheapest |
+| An agent should be able to see the processing queue and identify stuck items | Silence is indistinguishable from "still working" without observability |
+| An agent should be able to understand an error from the error message alone | A second command to understand the first is a tax on every failure |
+| An agent should be able to reliably restart the host from any state | Every recovery path that includes "restart" depends on this |
+| An agent should be able to cancel, retry, or skip individual items in the queue | A power switch is not surgical control |
+| An agent should be able to diagnose problems even when the host is unreachable | The diagnostic system can't depend on the thing it's diagnosing |
+| An agent should be able to verify recovery by re-running the original operation | Hope is not a diagnostic strategy |
+| An agent should be able to find troubleshooting knowledge without a running host | Can't look up how to fix the host through the host |
 
 ---
 
 ## Anti-Patterns
 
-| Anti-Pattern | Why It's Bad | What To Do Instead |
-|--------------|--------------|-------------------|
-| Text-only diagnostics | Can't query, filter, join | Provide structured views |
-| All-or-nothing depth | 500 tokens for "yes it's fine" | Progressive disclosure levels |
-| Raw stderr dumps | Agent must parse stack traces | Extract cause, suggest recovery |
-| Implicit confidence | Agent assumes results are complete | Explicit ready/not-ready signal |
-| Reactive only | Problems found after bad decisions | Proactive warnings in footers |
+| Don't | Declaration Form |
+|-------|------------------|
+| Dump raw diagnostics to the user | An agent should interpret and summarize |
+| Require a diagnostic command to understand an error | The error message should be the diagnosis |
+| Return 500 tokens to say "everything is fine" | Trust confirmation belongs in the footer |
+| Make diagnostic data text-only | An agent should query diagnostics with SQL |
+| Treat "ready" as binary | An agent should see coverage, freshness, and format depth |
+| Provide only a kill switch for a stuck queue | An agent should have surgical control over individual items |
+| Route all diagnostics through the host | An agent should diagnose locally when the host is down |
+| Silently fix things repeatedly without surfacing the pattern | Three OOM restarts per session means the human should know |
 
 ---
 
-## Key Additions Needed
+## Relationship to Other North Stars
 
-| Addition | Purpose | Effort |
-|----------|---------|--------|
-| `indexing_status` view | Structured confidence check | Low |
-| `semantic_ready` boolean | Clear search trustworthiness | Low |
-| `failed_files()` function | What couldn't be indexed | Medium |
-| Recovery suggestions | Map known errors to fixes | Medium |
-| Footer warnings | Proactive problem surfacing | Low |
+| North Star | This document's relationship |
+|------------|------------------------------|
+| **Reliability** | Reliability declares what should never go wrong. This declares what happens when it does. |
+| **Commands** | Commands provide the mechanisms for control and recovery. This declares what those mechanisms must be able to do. |
+| **Configuration** | Configuration enables runtime adjustment. This declares when and why an agent would adjust it as a recovery strategy. |
 
 ---
 
-## Measurement
-
-| Metric | Target |
-|--------|--------|
-| Confidence check cost | <20 tokens |
-| Time to "can I trust this?" | One query, instant |
-| Recovery suggestion rate | >80% of known failure modes |
-| Human escalation rate | <5% of diagnostic sessions |
-
----
-
-*Great diagnostics answer "can I trust this?" in 10 tokens and "what's wrong?" with a fix.*
+*The best diagnostic session is the one the user never sees. The second best ends with the agent saying "fixed it, here's what happened." The worst is a stack trace and a shrug.*

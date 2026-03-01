@@ -18,6 +18,7 @@ public record QueuedItemInfo
     public required string Name { get; init; }
     public required string Stage { get; init; }
     public required string Status { get; init; }
+    public required DateTimeOffset EnqueuedAt { get; init; }
     public required long Epoch { get; init; }
     public required string? MimeType { get; init; }
     public required long Size { get; init; }

@@ -63,4 +63,23 @@ internal sealed class DiagnosticReportToStringTests
         output.Should().Contain("hanging=1");
         output.Should().Contain("oldest_method=/repoql.v1.RepoQL/ExecuteRawQuery");
     }
+
+    [Test]
+    public void ToString_UsesHostStderrFileFallback_WhenInMemoryStderrIsEmpty()
+    {
+        var report = new DiagnosticReport
+        {
+            TimestampUtc = new DateTimeOffset(2026, 2, 20, 12, 0, 0, TimeSpan.Zero),
+            SocketConnectable = true,
+            HealthOverall = "SERVING",
+            HostStderrTail = Array.Empty<string>(),
+            HostStderrFromFile = "stderr line 1\nstderr line 2"
+        };
+
+        var output = report.ToString();
+
+        output.Should().Contain("host stderr:");
+        output.Should().Contain("- stderr line 1");
+        output.Should().Contain("- stderr line 2");
+    }
 }

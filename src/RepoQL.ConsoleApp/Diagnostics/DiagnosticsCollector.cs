@@ -29,6 +29,13 @@ internal enum DiagnosticCollectionMode
 /// </summary>
 internal sealed class DiagnosticsCollector
 {
+    private readonly Func<HostDiagnostics> _hostDiagnosticsProvider;
+
+    public DiagnosticsCollector(Func<HostDiagnostics>? hostDiagnosticsProvider = null)
+    {
+        _hostDiagnosticsProvider = hostDiagnosticsProvider ?? RepoQlClient.GetHostDiagnostics;
+    }
+
     private static readonly string[] HealthServiceNames =
     [
         "repoql.v1.RepoQL",
@@ -87,12 +94,16 @@ internal sealed class DiagnosticsCollector
         bool? dbLocked = null;
         int? dbLockHolderPid = null;
         string? dbLockHolderName = null;
+        int? diskFreeMb = null;
+        bool? repoQlDirectoryExists = null;
 
         long? nodeCount = null;
         string? indexingDiagnostics = null;
 
         IReadOnlyList<string> hostLogTail = Array.Empty<string>();
         IReadOnlyList<string> hostStderrTail = Array.Empty<string>();
+        string? hostStderrFromFile = null;
+        string? hostVersionFile = null;
 
         int? hostPid = null;
         bool? hostRunning = null;
@@ -103,6 +114,10 @@ internal sealed class DiagnosticsCollector
 
         if (repoRoot is not null)
         {
+            var repoqlDirectoryPath = RepoqlPaths.GetRepoqlDirectoryPath(repoRoot);
+            repoQlDirectoryExists = ProbeRepoqlDirectoryExists(repoqlDirectoryPath, probeFailures);
+            diskFreeMb = ProbeDiskFreeMb(repoqlDirectoryPath, probeFailures);
+
             using var repoRootProvider = new PhysicalFileProvider(repoRoot);
             var mappingFile = repoRootProvider.GetRepoqlFileInfo(RepoqlPaths.SocketMapFileName);
             if (mappingFile.Exists)
@@ -144,7 +159,7 @@ internal sealed class DiagnosticsCollector
 
             hostLogTail = ReadHostLogTail(repoRoot, probeFailures);
 
-            var dbPath = Path.Combine(RepoqlPaths.GetRepoqlDirectoryPath(repoRoot), "index.duckdb");
+            var dbPath = Path.Combine(repoqlDirectoryPath, "index.duckdb");
             dbExists = File.Exists(dbPath);
             if (dbExists == true)
             {
@@ -210,7 +225,7 @@ internal sealed class DiagnosticsCollector
             }
         }
 
-        var hostDiag = RepoQlClient.GetHostDiagnostics();
+        var hostDiag = _hostDiagnosticsProvider();
         hostStderrTail = hostDiag.StderrTail;
         hostExitCode = hostDiag.ExitCode;
         hostExe = hostDiag.ExecutablePath;
@@ -219,6 +234,13 @@ internal sealed class DiagnosticsCollector
         hostRunning = hostDiag.HasExited.HasValue ? !hostDiag.HasExited.Value : null;
         if (hostDiag.LaunchTime.HasValue)
             hostStartedAt = new DateTimeOffset(hostDiag.LaunchTime.Value, TimeSpan.Zero);
+
+        if (repoRoot is not null)
+        {
+            hostVersionFile = ReadHostVersionFile(repoRoot, probeFailures);
+            if (hostStderrTail.Count == 0)
+                hostStderrFromFile = ReadHostStderrFallback(repoRoot, probeFailures);
+        }
 
         return new DiagnosticReport
         {
@@ -257,10 +279,14 @@ internal sealed class DiagnosticsCollector
             DbLocked = dbLocked,
             DbLockHolderPid = dbLockHolderPid,
             DbLockHolderName = dbLockHolderName,
+            DiskFreeMb = diskFreeMb,
+            RepoQlDirectoryExists = repoQlDirectoryExists,
             NodeCount = nodeCount,
             IndexingDiagnosticsText = indexingDiagnostics,
             HostLogTail = hostLogTail,
             HostStderrTail = hostStderrTail,
+            HostStderrFromFile = hostStderrFromFile,
+            HostVersionFile = hostVersionFile,
             HostProcessId = hostPid,
             HostRunning = hostRunning,
             HostExitCode = hostExitCode,
@@ -458,6 +484,86 @@ internal sealed class DiagnosticsCollector
         {
             probeFailures.Add($"host_log: {ex.GetType().Name} - {ex.Message}");
             return Array.Empty<string>();
+        }
+    }
+
+    private static string? ReadHostStderrFallback(string repoRoot, List<string> probeFailures)
+    {
+        try
+        {
+            var stderrPath = CrossSessionHostState.GetHostStderrPath(repoRoot);
+            if (!File.Exists(stderrPath))
+            {
+                probeFailures.Add($"host_stderr_file: FileNotFoundException - File '{stderrPath}' was not found.");
+                return null;
+            }
+
+            var buffer = new Queue<string>();
+            foreach (var line in File.ReadLines(stderrPath))
+            {
+                if (buffer.Count >= 50)
+                    buffer.Dequeue();
+                buffer.Enqueue(line);
+            }
+
+            return buffer.Count == 0
+                ? null
+                : string.Join(Environment.NewLine, buffer);
+        }
+        catch (Exception ex)
+        {
+            probeFailures.Add($"host_stderr_file: {ex.GetType().Name} - {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string? ReadHostVersionFile(string repoRoot, List<string> probeFailures)
+    {
+        try
+        {
+            var versionPath = CrossSessionHostState.GetHostVersionPath(repoRoot);
+            if (!File.Exists(versionPath))
+                return null;
+
+            var version = File.ReadAllText(versionPath).Trim();
+            return string.IsNullOrWhiteSpace(version) ? null : version;
+        }
+        catch (Exception ex)
+        {
+            probeFailures.Add($"host_version_file: {ex.GetType().Name} - {ex.Message}");
+            return null;
+        }
+    }
+
+    private static int? ProbeDiskFreeMb(string repoqlDirectoryPath, List<string> probeFailures)
+    {
+        try
+        {
+            var volumeRoot = Path.GetPathRoot(repoqlDirectoryPath);
+            if (string.IsNullOrWhiteSpace(volumeRoot))
+                throw new InvalidOperationException($"Could not resolve volume root for '{repoqlDirectoryPath}'.");
+
+            var driveInfo = new DriveInfo(volumeRoot);
+            var freeMb = driveInfo.AvailableFreeSpace / (1024L * 1024L);
+            return freeMb > int.MaxValue ? int.MaxValue : (int)freeMb;
+        }
+        catch (Exception ex)
+        {
+            probeFailures.Add($"disk_space: {ex.GetType().Name} - {ex.Message}");
+            return null;
+        }
+    }
+
+    private static bool? ProbeRepoqlDirectoryExists(string repoqlDirectoryPath, List<string> probeFailures)
+    {
+        try
+        {
+            return Directory.Exists(repoqlDirectoryPath);
+        }
+        catch (Exception ex)
+        {
+            probeFailures.Add($"repoql_directory: {ex.GetType().Name} - {ex.Message}");
+            return null;
         }
     }
 

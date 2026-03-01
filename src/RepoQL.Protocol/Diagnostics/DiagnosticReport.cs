@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace RepoQL.Protocol;
 
@@ -33,6 +34,8 @@ public sealed record DiagnosticReport
     public int? SocketPlatformLimit { get; init; }
     public bool? SocketBindSucceeded { get; init; }
     public string? SocketBindError { get; init; }
+    public int? DiskFreeMb { get; init; }
+    public bool? RepoQlDirectoryExists { get; init; }
 
     public int? HostProcessId { get; init; }
     public bool? HostRunning { get; init; }
@@ -42,6 +45,8 @@ public sealed record DiagnosticReport
     public DateTimeOffset? HostStartedAtUtc { get; init; }
     public IReadOnlyList<string> HostLogTail { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> HostStderrTail { get; init; } = Array.Empty<string>();
+    public string? HostStderrFromFile { get; init; }
+    public string? HostVersionFile { get; init; }
 
     public string? HealthOverall { get; init; }
     public string? HealthRepoQl { get; init; }
@@ -144,6 +149,15 @@ public sealed record DiagnosticReport
             builder.AppendLine();
             builder.AppendLine("recent errors:");
             builder.AppendLine($"- {recentError}");
+        }
+
+        var hostStderrLines = GetHostStderrLines();
+        if (hostStderrLines.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("host stderr:");
+            foreach (var line in hostStderrLines)
+                builder.AppendLine($"- {line}");
         }
 
         // Host log (only if crashed or has errors)
@@ -254,6 +268,19 @@ public sealed record DiagnosticReport
         return error;
     }
 
+    private IReadOnlyList<string> GetHostStderrLines()
+    {
+        if (HostStderrTail.Count > 0)
+            return HostStderrTail;
+
+        if (string.IsNullOrWhiteSpace(HostStderrFromFile))
+            return Array.Empty<string>();
+
+        return HostStderrFromFile
+            .Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToArray();
+    }
+
 }
 
 /// <summary>
@@ -262,6 +289,11 @@ public sealed record DiagnosticReport
 /// </summary>
 internal static class DiagnosticReportProblems
 {
+    private const int LowDiskSpaceThresholdMb = 100;
+    private static readonly Regex HostErrorLineRegex = new(
+        @"\bERR(OR)?\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     public static IReadOnlyList<DiagnosticProblem> Build(DiagnosticReport report)
     {
         var problems = new List<DiagnosticProblem>();
@@ -288,6 +320,20 @@ internal static class DiagnosticReportProblems
                 "Remove the socket file or restart the host."));
         }
 
+        if (report.SocketBindSucceeded == false)
+        {
+            var bindError = string.IsNullOrWhiteSpace(report.SocketBindError)
+                ? "unknown"
+                : report.SocketBindError;
+            problems.Add(new DiagnosticProblem(
+                "Socket bind failed",
+                [
+                    "socket_bind_succeeded=false",
+                    $"socket_bind_error={bindError}"
+                ],
+                $"Check permissions on the socket directory: {bindError}"));
+        }
+
         if (IsNotServing(report.HealthOverall))
         {
             var facts = new List<string> { "overall=NOT_SERVING" };
@@ -297,6 +343,24 @@ internal static class DiagnosticReportProblems
                 "Host not ready",
                 facts,
                 "Wait for readiness or inspect health services for blockers."));
+        }
+
+        if (!string.IsNullOrWhiteSpace(report.HostVersionFile)
+            && !string.IsNullOrWhiteSpace(report.RepoqlVersion)
+            && !string.Equals(
+                report.HostVersionFile.Trim(),
+                report.RepoqlVersion.Trim(),
+                StringComparison.Ordinal))
+        {
+            var hostVersion = report.HostVersionFile.Trim();
+            var clientVersion = report.RepoqlVersion.Trim();
+            problems.Add(new DiagnosticProblem(
+                "Version mismatch",
+                [
+                    $"client_version={clientVersion}",
+                    $"host_version={hostVersion}"
+                ],
+                $"Client v{clientVersion}, host was v{hostVersion}. Restart may resolve."));
         }
 
         if (string.Equals(report.ChannelState, "TransientFailure", StringComparison.OrdinalIgnoreCase))
@@ -316,6 +380,25 @@ internal static class DiagnosticReportProblems
                 "Database locked by external process",
                 [$"holder={holder}"],
                 "Close the process holding the lock or restart the host."));
+        }
+
+        if (report.DiskFreeMb is < LowDiskSpaceThresholdMb)
+        {
+            problems.Add(new DiagnosticProblem(
+                "Low disk space",
+                [
+                    $"disk_free_mb={report.DiskFreeMb.Value}",
+                    $"threshold_mb={LowDiskSpaceThresholdMb}"
+                ],
+                $"Free disk space on the volume containing .repoql/ ({report.DiskFreeMb.Value} MB remaining)"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(report.RepoRoot) && report.RepoQlDirectoryExists == false)
+        {
+            problems.Add(new DiagnosticProblem(
+                "No .repoql directory",
+                ["repoql_directory_exists=false"],
+                "Run a RepoQL command to initialize the repository"));
         }
 
         if (report.RpcHangingRequests is > 0)
@@ -339,11 +422,18 @@ internal static class DiagnosticReportProblems
                 "Inspect the reported RPC method and restart the host if it does not recover."));
         }
 
-        if (report.HostRunning == false && report.HostLogTail.Any(line => line.Contains("ERROR", StringComparison.OrdinalIgnoreCase)))
+        if (report.HostRunning == false)
         {
+            var crashReason = TryGetLastHostErrorLine(report.HostLogTail);
+            var facts = new List<string> { "host_running=false" };
+            if (!string.IsNullOrWhiteSpace(crashReason))
+                facts.Add($"crash_reason={crashReason}");
+            else
+                facts.Add("host_log=error");
+
             problems.Add(new DiagnosticProblem(
                 "Previous host crashed",
-                ["host_running=false", "host_log=error"],
+                facts,
                 "Inspect host log for the crash root cause."));
         }
 
@@ -353,4 +443,18 @@ internal static class DiagnosticReportProblems
     private static bool IsNotServing(string? status)
         => string.Equals(status, "NOT_SERVING", StringComparison.OrdinalIgnoreCase)
            || string.Equals(status, "NotServing", StringComparison.OrdinalIgnoreCase);
+
+    private static string? TryGetLastHostErrorLine(IReadOnlyList<string> logTail)
+    {
+        for (var i = logTail.Count - 1; i >= 0; i--)
+        {
+            var line = logTail[i];
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            if (HostErrorLineRegex.IsMatch(line))
+                return line.Trim();
+        }
+
+        return null;
+    }
 }
