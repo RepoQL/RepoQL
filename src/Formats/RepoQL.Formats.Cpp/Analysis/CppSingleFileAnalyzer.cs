@@ -64,14 +64,20 @@ public sealed partial class CppSingleFileAnalyzer(
 
         // Read source text once and normalize lines once — avoids re-allocating the
         // line array in every analysis step that needs it.
-        string sourceText;
-        using (var stream = item.CreateReadStream())
-        using (var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false))
+        string? sourceText = null;
+        string[]? sourceLines = null;
+        try
         {
+            using var stream = item.CreateReadStream();
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
             sourceText = reader.ReadToEnd();
+            sourceLines = NormalizeLines(sourceText);
         }
-
-        var sourceLines = NormalizeLines(sourceText);
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "C++ single-file analysis: failed to read source for {Uri}", item.Uri);
+            annotations.Add(CreateAnalysisFailure("read_source", ex.Message, documentNode.Id));
+        }
 
         void RunStep(string stepName, Action action)
         {
@@ -95,20 +101,26 @@ public sealed partial class CppSingleFileAnalyzer(
             workingRecords = AddIncludeEdges(item, workingRecords, documentNode);
         });
 
-        RunStep("doc_comments", () =>
+        if (sourceLines is not null)
         {
-            ApplyDocComments(workingRecords, sourceLines);
-        });
+            RunStep("doc_comments", () =>
+            {
+                ApplyDocComments(workingRecords, sourceLines);
+            });
 
-        RunStep("attributes", () =>
-        {
-            ApplyAttributes(workingRecords, sourceLines);
-        });
+            RunStep("attributes", () =>
+            {
+                ApplyAttributes(workingRecords, sourceLines);
+            });
+        }
 
-        RunStep("test_framework_detection", () =>
+        if (sourceText is not null)
         {
-            annotations.AddRange(DetectTestFramework(workingRecords, sourceText, documentNode.Id));
-        });
+            RunStep("test_framework_detection", () =>
+            {
+                annotations.AddRange(DetectTestFramework(workingRecords, sourceText, documentNode.Id));
+            });
+        }
 
         if (!ReferenceEquals(workingRecords, records))
         {

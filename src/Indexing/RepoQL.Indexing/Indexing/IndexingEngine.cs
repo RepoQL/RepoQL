@@ -802,8 +802,13 @@ public partial class IndexingEngine : IAsyncDisposable
             if (item.TryMarkEpochComplete())
             {
                 var epochBecameIdle = _epochTracker.Decrement(item.Epoch);
-                if (epochBecameIdle && State == IndexingState.AllIdle)
-                    HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
+                if (epochBecameIdle)
+                {
+                    if (State == IndexingState.AllIdle)
+                        HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
+                    else
+                        EnqueueIdleEpoch(item.Epoch); // Don't lose the epoch when other stages are still active
+                }
             }
             TryRequeue(item);
         }
@@ -1780,15 +1785,22 @@ public partial class IndexingEngine : IAsyncDisposable
         if (item.TryMarkEpochComplete())
         {
             var epochBecameIdle = _epochTracker.Decrement(item.Epoch);
-            if (epochBecameIdle && State == IndexingState.AllIdle)
+            if (epochBecameIdle)
             {
-                try
+                if (State == IndexingState.AllIdle)
                 {
-                    HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
+                    try
+                    {
+                        HotPathIdle?.Invoke(this, new HotPathIdleEventArgs(item.Epoch));
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex, "HotPathIdle handler failed for epoch {Epoch} during timeout handling", item.Epoch);
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    Logger.LogError(ex, "HotPathIdle handler failed for epoch {Epoch} during timeout handling", item.Epoch);
+                    EnqueueIdleEpoch(item.Epoch);
                 }
             }
         }
