@@ -27,6 +27,7 @@ public sealed class RepoqlHost : BackgroundService
     private readonly IServiceDegradationTracker? _degradation;
     private readonly IUriFilter? _filter;
     private readonly UriRegistry? _uriRegistry;
+    private readonly string? _repoRoot;
     private readonly IOperationManager? _operationManager;
     private readonly IndexingEngine? _engine;
     private readonly RepoqlHostOptions _options;
@@ -55,7 +56,8 @@ public sealed class RepoqlHost : BackgroundService
         IIndexingCoordinator? coordinator = null,
         IServiceDegradationTracker? degradation = null,
         IOperationManager? operationManager = null,
-        UriRegistry? uriRegistry = null)
+        UriRegistry? uriRegistry = null,
+        RepositoryConfiguration? repoConfig = null)
         : this(
             fileSystem,
             (artifact, enqueueOptions, token) => engine.EnqueueItemAsync(artifact, enqueueOptions, token),
@@ -65,7 +67,8 @@ public sealed class RepoqlHost : BackgroundService
             degradation,
             engine.Filter,
             operationManager,
-            uriRegistry)
+            uriRegistry,
+            repoConfig)
     {
         _engineLifetime = engine;
         _engine = engine;
@@ -80,7 +83,8 @@ public sealed class RepoqlHost : BackgroundService
         IServiceDegradationTracker? degradation = null,
         IUriFilter? filter = null,
         IOperationManager? operationManager = null,
-        UriRegistry? uriRegistry = null)
+        UriRegistry? uriRegistry = null,
+        RepositoryConfiguration? repoConfig = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _enqueue = enqueue ?? throw new ArgumentNullException(nameof(enqueue));
@@ -91,6 +95,7 @@ public sealed class RepoqlHost : BackgroundService
         _filter = filter;
         _operationManager = operationManager;
         _uriRegistry = uriRegistry;
+        _repoRoot = repoConfig?.Path;
         _watchingEnabled = _options.EnableWatching;
     }
 
@@ -213,6 +218,7 @@ public sealed class RepoqlHost : BackgroundService
         _logger.LogInformation("RepoqlHost starting full scan across mounted file systems.");
         var scanTimer = Stopwatch.StartNew();
         var fileCount = 0;
+        var skippedFromList = LoadPersistedSkippedUris();
         var shouldTrack = _operationManager is not null && _uriRegistry is not null;
         var scope = shouldTrack ? new List<RepoUri>() : null;
         var shouldFilter = _options.DefaultIndexItemOptions.HasFlag(IndexItemOptions.OnlyIfNotExcluded);
@@ -227,6 +233,12 @@ public sealed class RepoqlHost : BackgroundService
 
             if (!resource.File.Exists)
                 continue;
+
+            if (IsPersistedSkipped(resource.Uri, skippedFromList))
+            {
+                _uriRegistry?.SetSkipped(resource.Uri);
+                continue;
+            }
 
             if (shouldTrack)
             {
@@ -401,6 +413,9 @@ public sealed class RepoqlHost : BackgroundService
                 return;
             }
 
+            if (_host.IsRegistrySkipped(value.CurrentUri))
+                return;
+
             var artifact = new RawArtifact(value.File, store);
             _host.EnqueueWatcherArtifact(artifact, value.CurrentUri);
             _host.UpdateLastWrite(value.CurrentUri, value.File.LastModified);
@@ -457,6 +472,7 @@ public sealed class RepoqlHost : BackgroundService
     private async Task RunDirtyScanAsync(CancellationToken cancellationToken)
     {
         var enqueued = 0;
+        var skippedFromList = LoadPersistedSkippedUris();
         await foreach (var resource in _fileSystem.EnumerateAsync(cancellationToken).ConfigureAwait(false))
         {
             if (!resource.File.Exists)
@@ -470,6 +486,12 @@ public sealed class RepoqlHost : BackgroundService
 
             if (_lastWriteByUri.TryGetValue(key, out var previous) && lastModified <= previous)
             {
+                continue;
+            }
+
+            if (IsPersistedSkipped(resource.Uri, skippedFromList))
+            {
+                _uriRegistry?.SetSkipped(resource.Uri);
                 continue;
             }
 
@@ -494,4 +516,24 @@ public sealed class RepoqlHost : BackgroundService
             Interlocked.Decrement(ref _activeEnqueue);
         }
     }
+
+    private HashSet<string> LoadPersistedSkippedUris()
+    {
+        if (string.IsNullOrWhiteSpace(_repoRoot))
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (SkipListFile.TryLoadEntries(_repoRoot, out var entries, out var error))
+            return entries;
+
+        _logger.LogWarning("Failed to read skip list at {Path}: {Error}", SkipListFile.GetPath(_repoRoot), error);
+        return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPersistedSkipped(RepoUri uri, IReadOnlySet<string> skippedUris)
+        => SkipListFile.Contains(skippedUris, uri);
+
+    private bool IsRegistrySkipped(RepoUri uri)
+        => _uriRegistry is not null &&
+           _uriRegistry.TryGetValue(uri, out var entry) &&
+           entry.Status == UriStatus.Skipped;
 }

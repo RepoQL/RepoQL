@@ -72,6 +72,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     private readonly DuckDbDataStore _db;
     private readonly GitHistoryIndexer? _gitIndexer;
     private readonly UriRegistry? _uriRegistry;
+    private readonly string? _repoRoot;
     private readonly IOperationManager? _operationManager;
     private readonly ILogger<IndexingCoordinator> _logger;
     private int _reindexScopes;
@@ -85,7 +86,8 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         ICompositeFileSystemManager? mountManager = null,
         GitHistoryIndexer? gitIndexer = null,
         IOperationManager? operationManager = null,
-        UriRegistry? uriRegistry = null)
+        UriRegistry? uriRegistry = null,
+        RepositoryConfiguration? repoConfig = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
@@ -95,6 +97,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         _gitIndexer = gitIndexer;
         _operationManager = operationManager;
         _uriRegistry = uriRegistry;
+        _repoRoot = repoConfig?.Path;
 
         // Subscribe to mount changes for automatic indexing of new mounts
         if (_mountManager is not null)
@@ -382,6 +385,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
 
         var artifacts = new List<EnumeratedArtifact>();
+        var persistedSkips = LoadPersistedSkippedUris();
         var trackOperation = _operationManager is not null && _uriRegistry is not null;
         var operationScope = trackOperation ? new List<RepoUri>() : null;
         IOperation? operationInstance = null;
@@ -408,6 +412,12 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 if (!_fileSystem.TryResolve(resource.Uri, out var store))
                 {
                     _logger.LogWarning("No mount resolved URI {Uri} during reindex enumeration.", resource.Uri);
+                    continue;
+                }
+
+                if (SkipListFile.Contains(persistedSkips, resource.Uri))
+                {
+                    _uriRegistry?.SetSkipped(resource.Uri);
                     continue;
                 }
 
@@ -932,6 +942,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         var sw = Stopwatch.StartNew();
         var enqueued = 0;
         var skipped = 0;
+        var persistedSkips = LoadPersistedSkippedUris();
 
         try
         {
@@ -953,6 +964,13 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 // Check if the file should be indexed (respects filters like .gitignore)
                 if (!_engine.Filter.IncludeFile(uri))
                 {
+                    skipped++;
+                    continue;
+                }
+
+                if (SkipListFile.Contains(persistedSkips, uri))
+                {
+                    _uriRegistry?.SetSkipped(uri);
                     skipped++;
                     continue;
                 }
@@ -1021,6 +1039,18 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         {
             _logger.LogError(ex, "Failed to index mount {MountId} after {Duration:F1}s", mount.Id, sw.Elapsed.TotalSeconds);
         }
+    }
+
+    private HashSet<string> LoadPersistedSkippedUris()
+    {
+        if (string.IsNullOrWhiteSpace(_repoRoot))
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (SkipListFile.TryLoadEntries(_repoRoot, out var entries, out var error))
+            return entries;
+
+        _logger.LogWarning("Failed to read skip list at {Path}: {Error}", SkipListFile.GetPath(_repoRoot), error);
+        return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
 
     private IReadOnlyList<GitRepositoryScope> GetGitRepositoryScopes()
