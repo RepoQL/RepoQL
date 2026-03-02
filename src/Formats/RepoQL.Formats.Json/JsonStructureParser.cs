@@ -16,6 +16,11 @@ public sealed class JsonStructureParser
 {
     private const int ScalarValueLimit = 100;
 
+    private static readonly JsonReaderOptions PermissiveReaderOptions = new()
+    {
+        AllowTrailingCommas = true
+    };
+
     private readonly record struct PathSegment(string? Name, bool IsArray, int ArrayIndex);
     private readonly record struct RootArrayParseResult(int? ArrayLength, bool WasSampled);
 
@@ -57,7 +62,7 @@ public sealed class JsonStructureParser
     {
         var accumulator = new ParseAccumulator(lineStarts, options);
         var pathSegments = new List<PathSegment>(8);
-        var reader = new Utf8JsonReader(utf8Bytes, isFinalBlock: true, state: default);
+        var reader = new Utf8JsonReader(utf8Bytes, PermissiveReaderOptions);
 
         if (!reader.Read())
         {
@@ -182,7 +187,7 @@ public sealed class JsonStructureParser
         int arrayIndex,
         ParseAccumulator accumulator)
     {
-        var reader = new Utf8JsonReader(lineBytes, isFinalBlock: true, state: default);
+        var reader = new Utf8JsonReader(lineBytes, PermissiveReaderOptions);
         var pathSegments = new List<PathSegment>(4)
         {
             new(Name: null, IsArray: true, ArrayIndex: arrayIndex)
