@@ -84,8 +84,9 @@ public sealed class RepoQlConfig
     public sealed class RemoteEmbeddingSettings
     {
         [Setting("gRPC endpoint URL for the remote embedding service",
-            RequiresRestart = true)]
-        public string? Url { get; set; }
+            RequiresRestart = true,
+            DefaultValue = "https://repoql-embedding-s3lststjqa-uc.a.run.app")]
+        public string? Url { get; set; } = "https://repoql-embedding-s3lststjqa-uc.a.run.app";
 
         [Setting("API key for authenticating with the remote embedding service",
             Sensitive = true, RequiresRestart = true)]
