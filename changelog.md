@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.8
+
+- Migrate PHP format from ANTLR to tree-sitter with zero-dependency native parsing
+- Wire single-pass combined query for Go format (1 tree walk instead of 14)
+- Fix generic receiver type stripping so methods on `Set[T]` associate with struct `Set`
+- Add Cloud Run deployment for embedding service
+- Default remote embedding URL to Cloud Run endpoint
+- Fix container base image and Cloud Run startup binding
+
 ## 1.4.7
 
 - Add SARIF import with producer normalization, annotation replacement, and `help://` docs
