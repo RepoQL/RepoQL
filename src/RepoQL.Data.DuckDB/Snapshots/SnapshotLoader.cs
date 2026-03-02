@@ -164,11 +164,11 @@ public static class SnapshotLoader
     private static void IndexSingleArtifact(DuckDBConnection conn, DuckDBTransaction tx,
         RepoUri uri, ParsedArtifact artifact, ILogger? logger)
     {
-        // 1. Insert artifact
-        InsertArtifact(conn, tx, artifact.Artifact);
+        // 1. Insert artifact (may return a different ID if digest already exists)
+        var actualArtifactId = InsertArtifact(conn, tx, artifact.Artifact);
 
         // 2. Insert document node with artifact ID
-        var docNode = artifact.DocumentNode with { ArtifactId = artifact.Artifact.Id };
+        var docNode = artifact.DocumentNode with { ArtifactId = actualArtifactId };
         InsertNode(conn, tx, docNode);
 
         // 3. Insert child nodes
@@ -192,8 +192,30 @@ public static class SnapshotLoader
         }
     }
 
-    private static void InsertArtifact(DuckDBConnection conn, DuckDBTransaction tx, Artifact a)
+    /// <summary>
+    /// Insert an artifact, handling digest conflicts.
+    /// The pipeline may have already indexed the same content from VFS with a different
+    /// artifact ID. When that happens, reuse the existing artifact.
+    /// Returns the actual artifact ID to use (may differ from <paramref name="a"/>.Id).
+    /// </summary>
+    /// <remarks>
+    /// DuckDB aborts the entire transaction on constraint violations — we can't catch
+    /// and continue. Check for existing digest BEFORE attempting the insert.
+    /// </remarks>
+    private static Guid InsertArtifact(DuckDBConnection conn, DuckDBTransaction tx, Artifact a)
     {
+        // Check if an artifact with this digest already exists (pipeline may have indexed it)
+        if (a.Digest is not null)
+        {
+            using var lookup = conn.CreateCommand();
+            lookup.Transaction = tx;
+            lookup.CommandText = "SELECT id FROM artifact WHERE digest = $1";
+            lookup.Parameters.Add(new DuckDBParameter { Value = a.Digest });
+            var existing = lookup.ExecuteScalar();
+            if (existing is Guid existingId)
+                return existingId;
+        }
+
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = @"
@@ -214,6 +236,7 @@ public static class SnapshotLoader
         cmd.Parameters.Add(new DuckDBParameter { Value = a.Structure });
         cmd.Parameters.Add(new DuckDBParameter { Value = (object?)a.TokenCount ?? DBNull.Value });
         cmd.ExecuteNonQuery();
+        return a.Id;
     }
 
     private static void InsertNode(DuckDBConnection conn, DuckDBTransaction tx, Node n)

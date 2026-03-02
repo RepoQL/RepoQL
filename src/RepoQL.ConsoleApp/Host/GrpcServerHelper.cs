@@ -9,7 +9,11 @@ namespace RepoQL.ConsoleApp.Host;
 
 public static class GrpcServerHelper
 {
-    public static void ConfigureUnixSocket(KestrelServerOptions options, string? repositoryPath = null)
+    /// <summary>
+    /// Configure Kestrel to listen on a Unix domain socket. Returns the socket path
+    /// so callers can call <see cref="SetSocketFilePermissions"/> after the server starts.
+    /// </summary>
+    public static string ConfigureUnixSocket(KestrelServerOptions options, string? repositoryPath = null)
     {
         var repoPath = Path.GetFullPath(repositoryPath ?? Directory.GetCurrentDirectory());
         var overridePath = Environment.GetEnvironmentVariable("REPOQL_SOCKET");
@@ -21,7 +25,7 @@ public static class GrpcServerHelper
             var transport = new UnixSocketTransport(socketPath);
             transport.EnsureCleanForBinding();
             options.ListenUnixSocket(socketPath, listenOptions => { listenOptions.Protocols = HttpProtocols.Http2; });
-            SetSocketPermissions(socketPath);
+            SetDirectoryPermissions(socketPath);
             report.BindSucceeded = true;
         }
         catch (Exception ex)
@@ -33,6 +37,7 @@ public static class GrpcServerHelper
         }
 
         HostDiagnosticsStore.TryWriteReport(repoPath, "socket-bind.json", report);
+        return socketPath;
     }
 
     private static SocketBindReport BuildBindReport(string repoPath, string socketPath)
@@ -68,34 +73,33 @@ public static class GrpcServerHelper
         return RuntimeInformation.RuntimeIdentifier;
     }
 
-    private static void SetSocketPermissions(string socketPath)
+    /// <summary>
+    /// Set socket file permissions (666) after the server has started and the socket file exists.
+    /// Call this after <c>app.StartAsync()</c>, not during Kestrel configuration.
+    /// </summary>
+    public static void SetSocketFilePermissions(string socketPath)
     {
         if (OperatingSystem.IsWindows()) return;
 
-        // Set directory permissions (755 = rwxr-xr-x)
+        if (File.Exists(socketPath))
+        {
+            RunChmod("666", socketPath, "socket");
+        }
+        else
+        {
+            Console.Error.WriteLine($"[GrpcServerHelper] Warning: Socket file '{socketPath}' does not exist after server start, skipping chmod.");
+        }
+    }
+
+    private static void SetDirectoryPermissions(string socketPath)
+    {
+        if (OperatingSystem.IsWindows()) return;
+
         var directory = Path.GetDirectoryName(socketPath);
         if (!string.IsNullOrEmpty(directory))
         {
             RunChmod("755", directory, "directory");
         }
-
-        // Set socket file permissions (666 = rw-rw-rw-) to allow all users to connect
-        // The socket file may not exist yet at this point (Kestrel creates it),
-        // so we defer socket chmod to after binding via a background task
-        _ = Task.Run(async () =>
-        {
-            // Wait briefly for Kestrel to create the socket file
-            for (int i = 0; i < 50; i++) // Up to 5 seconds
-            {
-                await Task.Delay(100);
-                if (File.Exists(socketPath))
-                {
-                    RunChmod("666", socketPath, "socket");
-                    return;
-                }
-            }
-            Console.Error.WriteLine($"[GrpcServerHelper] Warning: Socket file '{socketPath}' was not created within timeout, skipping chmod.");
-        });
     }
 
     private static void RunChmod(string mode, string path, string description)

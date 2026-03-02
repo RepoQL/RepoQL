@@ -6,5 +6,15 @@
   <assembly fullname="RepoQL.Contracts">
     <type fullname="RepoQL.Contracts.Configuration.RepoQlConfig" preserve="all" />
     <type fullname="RepoQL.Contracts.Configuration.RepoQlConfig/*" preserve="all" />
+    <!-- Snapshot DTOs are deserialized via System.Text.Json reflection.
+         Without this, the trimmer strips setter metadata and 'required' properties
+         fail with "does not specify a setter" at runtime. -->
+    <type fullname="RepoQL.Contracts.Snapshots.SnapshotManifest" preserve="all" />
+    <type fullname="RepoQL.Contracts.Snapshots.SnapshotDocumentDto" preserve="all" />
+    <type fullname="RepoQL.Contracts.Snapshots.ArtifactDto" preserve="all" />
+    <type fullname="RepoQL.Contracts.Snapshots.NodeDto" preserve="all" />
+    <type fullname="RepoQL.Contracts.Snapshots.SpanDto" preserve="all" />
+    <type fullname="RepoQL.Contracts.Snapshots.EdgeDto" preserve="all" />
+    <type fullname="RepoQL.Contracts.Snapshots.AnnotationDto" preserve="all" />
   </assembly>
 </linker>

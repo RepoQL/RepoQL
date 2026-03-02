@@ -150,9 +150,10 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton(hostState);
             builder.Services.AddSingleton<ServiceDegradationTracker>(_ => new ServiceDegradationTracker(hostState, repo));
             builder.Services.AddSingleton<IServiceDegradationTracker>(sp => sp.GetRequiredService<ServiceDegradationTracker>());
+            string? socketPath = null;
             builder.WebHost.ConfigureKestrel(options =>
             {
-                GrpcServerHelper.ConfigureUnixSocket(options, repo);
+                socketPath = GrpcServerHelper.ConfigureUnixSocket(options, repo);
                 options.Listen(IPAddress.Loopback, 0, listenOptions =>
                 {
                     listenOptions.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http1;
@@ -324,6 +325,10 @@ internal class HostCommands(IAnsiConsole console)
             app.Logger.LogInformation("Phase: ready");
             app.Logger.LogInformation("Host ready");
             await app.StartAsync().ConfigureAwait(false);
+
+            // Socket file now exists — set permissions so other users can connect
+            if (socketPath is not null)
+                GrpcServerHelper.SetSocketFilePermissions(socketPath);
 
             // Discover and publish dashboard URL
             var serverAddresses = app.Services.GetRequiredService<IServer>()
