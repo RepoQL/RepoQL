@@ -9,9 +9,7 @@ public static class PHPServiceCollectionExtensions
 {
     public static IServiceCollection AddPHPFormat(this IServiceCollection services)
     {
-        // Keep constructor shape stable; renderer is intentionally unused by PHPLoader.
         services.AddSingleton<PHPLoader>(sp => new PHPLoader(
-            renderer: null,
             logger: sp.GetService<ILogger<PHPLoader>>()));
         services.AddSingleton<IFormatSchemaProvider>(sp => sp.GetRequiredService<PHPLoader>());
 

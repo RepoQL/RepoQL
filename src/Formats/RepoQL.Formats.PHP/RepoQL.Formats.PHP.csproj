@@ -8,20 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Antlr4.Runtime.Standard" />
-    <PackageReference Include="Antlr4BuildTasks" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Antlr4 Include="Grammar\PhpLexer.g4">
-      <Listener>false</Listener>
-      <Visitor>true</Visitor>
-    </Antlr4>
-    <Antlr4 Include="Grammar\PhpParser.g4">
-      <Listener>false</Listener>
-      <Visitor>true</Visitor>
-    </Antlr4>
+    <PackageReference Include="TreeSitter.DotNet" />
   </ItemGroup>
 
   <ItemGroup>

@@ -12,7 +12,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Recognizes .php and .phtml extensions")]
     public async Task CanLoadAsync_RecognizesPhpExtensions()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
 
         using var php = CreateArtifact("sample.php", "<?php class Foo {}");
         using var phtml = CreateArtifact("sample.phtml", "<?php echo 'hello'; ?>");
@@ -32,7 +32,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses class with methods and properties")]
     public async Task LoadAndMaterialize_EmitsClassWithMembers()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         namespace App\Services;
@@ -76,7 +76,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses interface with methods")]
     public async Task LoadAndMaterialize_EmitsInterface()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         namespace App\Contracts;
@@ -103,7 +103,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses trait with methods")]
     public async Task LoadAndMaterialize_EmitsTrait()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         trait Loggable {
@@ -130,7 +130,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses PHP 8.1 enum with cases")]
     public async Task LoadAndMaterialize_EmitsEnum()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         enum Status: string {
@@ -157,7 +157,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Parses standalone functions")]
     public async Task LoadAndMaterialize_EmitsFunctions()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         function calculateTotal(array $items): float {
@@ -182,7 +182,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates HAS_PART edges for composition")]
     public async Task Materialize_CreatesCompositionEdges()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         class Service {
@@ -203,7 +203,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates EXTENDS edge for class inheritance")]
     public async Task Materialize_CreatesExtendsEdge()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         class BaseService {}
@@ -224,7 +224,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates IMPLEMENTS edges for interfaces")]
     public async Task Materialize_CreatesImplementsEdges()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         interface Countable {}
@@ -245,7 +245,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates USES_TRAIT edges")]
     public async Task Materialize_CreatesUsesTraitEdges()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         trait Loggable {}
@@ -267,7 +267,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Generates X-ray headline with method names")]
     public async Task Materialize_GeneratesExploreHeadline()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         namespace App;
@@ -296,7 +296,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Generates X-ray structure without truncation")]
     public async Task Materialize_GeneratesExploreStructure()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         namespace App\Services;
@@ -315,9 +315,9 @@ public sealed class PHPLoaderTests
         artifact.Structure.Should().NotBeNullOrEmpty();
         artifact.Structure.Should().NotContain("namespace ");
         artifact.Structure.Should().Contain("+ class UserService");
-        artifact.Structure.Should().Contain("+User findById(int $id)");
-        artifact.Structure.Should().Contain("+create(array $data)");
-        artifact.Structure.Should().Contain("-validate(array $data)");
+        artifact.Structure.Should().Contain("+?User findById(int $id)");
+        artifact.Structure.Should().Contain("+User create(array $data)");
+        artifact.Structure.Should().Contain("-void validate(array $data)");
         artifact.Structure.Should().Contain("#symbol=findById");
         artifact.Structure.Should().Contain("#symbol=create");
         artifact.Structure.Should().Contain("#symbol=validate");
@@ -327,7 +327,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Includes class and interface constants in X-ray structure")]
     public async Task Materialize_GeneratesExploreStructure_WithConstants()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         interface Flags {
@@ -352,7 +352,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Handles abstract and final class modifiers")]
     public async Task LoadAndMaterialize_HandlesClassModifiers()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         abstract class BaseHandler {
@@ -381,7 +381,7 @@ public sealed class PHPLoaderTests
     [DisplayName("Creates spans with correct line numbers")]
     public async Task Materialize_CreatesSpansWithLineNumbers()
     {
-        var scope = CreateLoader();
+        using var scope = CreateLoader();
         const string source = """
         <?php
         class Service {
@@ -400,16 +400,175 @@ public sealed class PHPLoaderTests
     }
 
     [Test]
-    [DisplayName("ANTLR client parses namespace correctly")]
-    public void AntlrClient_ParsesNamespace()
+    [DisplayName("Tree-sitter client parses namespace correctly")]
+    public void TreeSitterClient_ParsesNamespace()
     {
-        var client = new PHPAntlrClient();
+        using var client = new TreeSitter.PhpTreeSitterClient();
         var result = client.Parse("<?php\nnamespace App\\Services;\nclass Foo {}");
 
         result.Namespace.Should().NotBeNull();
         result.Namespace.Should().Be(@"App\Services");
         result.Classes.Should().HaveCount(1);
         result.Classes[0].Namespace.Should().Be(@"App\Services");
+    }
+
+    [Test]
+    [DisplayName("Parses enum with methods")]
+    public async Task LoadAndMaterialize_EmitsEnumWithMethods()
+    {
+        using var scope = CreateLoader();
+        const string source = """
+        <?php
+        enum Color: string {
+            case Red = 'red';
+            case Blue = 'blue';
+
+            public function label(): string {
+                return ucfirst($this->value);
+            }
+        }
+        """;
+
+        using var art = CreateArtifact("Color.php", source);
+        var document = await scope.Loader.LoadAsync(art.Artifact);
+        var records = scope.Loader.Materialize(document);
+
+        var enumNodes = records.Nodes.Where(n => n.Kind == "php.type" && n.Props["kind"]?.ToString() == "enum").ToList();
+        enumNodes.Should().HaveCount(1);
+        enumNodes[0].Props["name"]!.ToString().Should().Be("Color");
+
+        var caseNodes = records.Nodes.Where(n => n.Kind == "php.enum_case").ToList();
+        caseNodes.Should().HaveCount(2);
+
+        var methodNodes = records.Nodes.Where(n => n.Kind == "php.member").ToList();
+        methodNodes.Should().HaveCount(1);
+        methodNodes[0].Props["name"]!.ToString().Should().Be("label");
+    }
+
+    [Test]
+    [DisplayName("Parses interface extending multiple interfaces")]
+    public async Task LoadAndMaterialize_EmitsInterfaceMultipleExtends()
+    {
+        using var scope = CreateLoader();
+        const string source = """
+        <?php
+        interface Readable {}
+        interface Writable {}
+        interface Stream extends Readable, Writable {
+            public function close(): void;
+        }
+        """;
+
+        using var art = CreateArtifact("Stream.php", source);
+        var document = await scope.Loader.LoadAsync(art.Artifact);
+        var records = scope.Loader.Materialize(document);
+
+        var streamNode = records.Nodes.First(n => n.Kind == "php.type" && n.Props["name"]?.ToString() == "Stream");
+        streamNode.Props["extends"]!.AsArray().Should().HaveCount(2);
+
+        var extendsEdges = records.Edges.Where(e => e.Type == "EXTENDS").ToList();
+        extendsEdges.Should().HaveCount(2);
+    }
+
+    [Test]
+    [DisplayName("Handles PHP mixed with HTML")]
+    public async Task LoadAndMaterialize_HandlesMixedHtmlPhp()
+    {
+        using var scope = CreateLoader();
+        const string source = """
+        <html>
+        <body>
+        <?php
+        class Widget {
+            public function render(): string { return ''; }
+        }
+        ?>
+        <div>content</div>
+        </body>
+        </html>
+        """;
+
+        using var art = CreateArtifact("widget.phtml", source);
+        var document = await scope.Loader.LoadAsync(art.Artifact);
+        var records = scope.Loader.Materialize(document);
+
+        var classNodes = records.Nodes.Where(n => n.Kind == "php.type" && n.Props["kind"]?.ToString() == "class").ToList();
+        classNodes.Should().HaveCount(1);
+        classNodes[0].Props["name"]!.ToString().Should().Be("Widget");
+
+        var methodNodes = records.Nodes.Where(n => n.Kind == "php.member").ToList();
+        methodNodes.Should().HaveCount(1);
+    }
+
+    [Test]
+    [DisplayName("Handles files with parse errors gracefully")]
+    public async Task LoadAndMaterialize_HandlesParseErrors()
+    {
+        using var scope = CreateLoader();
+        const string source = """
+        <?php
+        class Valid {
+            public function ok(): void {}
+        }
+
+        class Broken {
+            public function missing_brace(): void {
+        """;
+
+        using var art = CreateArtifact("broken.php", source);
+        var document = await scope.Loader.LoadAsync(art.Artifact);
+        var records = scope.Loader.Materialize(document);
+
+        // Should still produce partial results — one bad declaration doesn't break the rest
+        records.Nodes.Should().NotBeEmpty();
+        var classNodes = records.Nodes.Where(n => n.Kind == "php.type").ToList();
+        classNodes.Should().NotBeEmpty("valid declarations should still be extracted");
+    }
+
+    [Test]
+    [DisplayName("Handles empty PHP file")]
+    public async Task LoadAndMaterialize_HandlesEmptyFile()
+    {
+        using var scope = CreateLoader();
+        const string source = "<?php\n";
+
+        using var art = CreateArtifact("empty.php", source);
+        var document = await scope.Loader.LoadAsync(art.Artifact);
+        var records = scope.Loader.Materialize(document);
+
+        records.Artifacts.Should().HaveCount(1);
+        var docNode = records.Nodes.FirstOrDefault(n => n.Kind == "document");
+        docNode.Should().NotBeNull();
+        records.Nodes.Where(n => n.Kind == "php.type").Should().BeEmpty();
+    }
+
+    [Test]
+    [DisplayName("Handles abstract class with mixed abstract and concrete methods")]
+    public async Task LoadAndMaterialize_HandlesAbstractClassMixedMethods()
+    {
+        using var scope = CreateLoader();
+        const string source = """
+        <?php
+        abstract class Repository {
+            abstract public function find(int $id): ?object;
+            abstract protected function query(): string;
+            public function findAll(): array { return []; }
+        }
+        """;
+
+        using var art = CreateArtifact("Repository.php", source);
+        var document = await scope.Loader.LoadAsync(art.Artifact);
+        var records = scope.Loader.Materialize(document);
+
+        var classNode = records.Nodes.First(n => n.Kind == "php.type");
+        classNode.Props["is_abstract"]?.GetValue<bool>().Should().BeTrue();
+
+        var methods = records.Nodes.Where(n => n.Kind == "php.member").ToList();
+        methods.Should().HaveCount(3);
+
+        var abstractMethods = methods.Where(m => m.Props["is_abstract"]?.GetValue<bool>() == true).ToList();
+        abstractMethods.Should().HaveCount(2);
+        abstractMethods.Select(m => m.Props["name"]!.ToString()).Should().BeEquivalentTo(["find", "query"]);
     }
 
     private static LoaderScope CreateLoader()
@@ -436,7 +595,7 @@ public sealed class PHPLoaderTests
         return new ArtifactScope(artifact, tempDir, provider);
     }
 
-    private sealed class LoaderScope
+    private sealed class LoaderScope : IDisposable
     {
         public LoaderScope(PHPLoader loader)
         {
@@ -444,6 +603,8 @@ public sealed class PHPLoaderTests
         }
 
         public PHPLoader Loader { get; }
+
+        public void Dispose() => Loader.Dispose();
     }
 
     private sealed class ArtifactScope : IDisposable

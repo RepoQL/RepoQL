@@ -4,24 +4,24 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
-using RepoQL.Templating;
+using RepoQL.Formats.PHP.Surface;
+using RepoQL.Formats.PHP.TreeSitter;
 
 namespace RepoQL.Formats.PHP;
 
-public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFormatSchemaProvider
+public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFormatSchemaProvider, IDisposable
 {
     private ILogger<PHPLoader> Logger { get; }
-    private readonly PHPAntlrClient _client;
+    private readonly PhpTreeSitterClient _client;
     private static readonly Lazy<string> PhpViewsSql = new(
         () => ReadEmbeddedResource("RepoQL.Formats.PHP.Schema.php_views.sql"));
 
     private const string StateMetadataKey = "php.state";
 
-    public PHPLoader(ITemplateRenderer? renderer = null, ILogger<PHPLoader>? logger = null)
+    public PHPLoader(ILogger<PHPLoader>? logger = null)
     {
         Logger = logger ?? NullLogger<PHPLoader>.Instance;
-        _ = renderer;
-        _client = new PHPAntlrClient();
+        _client = new PhpTreeSitterClient();
     }
 
     public bool Supports(SemanticMediaType mediaType)
@@ -63,12 +63,12 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         var text = loaded.Text;
         var digest = loaded.Digest;
 
-        var parseResult = _client.Parse(text);
+        var surface = _client.Parse(text);
 
         var state = new PHPDocumentState
         {
             DocumentId = Guid.NewGuid(),
-            ParseResult = parseResult,
+            Surface = surface,
             Digest = digest,
             Size = loaded.ByteLength,
             MediaType = artifact.MediaType ?? PHPMediaTypes.PHP,
@@ -80,7 +80,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             [StateMetadataKey] = state
         };
 
-        return new DocumentModel(artifact.RepoUri, state.MediaType, text, parseResult, metadata);
+        return new DocumentModel(artifact.RepoUri, state.MediaType, text, surface, metadata);
     }
 
     public Records Materialize(DocumentModel document)
@@ -88,21 +88,19 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         var state = document.GetMetadataOrDefault<PHPDocumentState>(StateMetadataKey)
             ?? throw new InvalidOperationException("PHP document missing state metadata.");
 
-        var parseResult = state.ParseResult;
+        var surface = state.Surface;
 
-        // Generate X-ray summaries
         string? headline = null;
         string? summary = null;
         string? structure = null;
 
-        // Calculate token count for the text content
         var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
 
         try
         {
             headline = BuildHeadline(document, state, tokenCount);
             summary = null;
-            structure = BuildStructure(document, state);
+            structure = BuildStructure(state);
         }
         catch (Exception ex)
         {
@@ -145,8 +143,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         var now = DateTimeOffset.UtcNow;
         var ordinal = 0;
 
-        // Materialize classes
-        foreach (var classInfo in parseResult.Classes)
+        foreach (var classInfo in surface.Classes)
         {
             var classSpanId = Guid.NewGuid();
             var classSpan = CreateSpan(classInfo.Span, state.DocumentId, classSpanId, document);
@@ -155,7 +152,6 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             edges.Add(CreateComposition(docNode.Id, classNode.Id, ordinal++, state.DocumentId, now));
             spans.Add(classSpan);
 
-            // Add method nodes
             var memberOrdinal = 0;
             foreach (var method in classInfo.Methods)
             {
@@ -167,7 +163,6 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
                 spans.Add(methodSpan);
             }
 
-            // Add property nodes
             foreach (var prop in classInfo.Properties)
             {
                 var propertySpanId = Guid.NewGuid();
@@ -178,7 +173,6 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
                 spans.Add(propertySpan);
             }
 
-            // Add constant nodes
             foreach (var constant in classInfo.Constants)
             {
                 var constantSpanId = Guid.NewGuid();
@@ -189,27 +183,17 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
                 spans.Add(constantSpan);
             }
 
-            // Add EXTENDS edge
             if (!string.IsNullOrEmpty(classInfo.Extends))
-            {
                 edges.Add(CreateReferenceEdge(classNode.Id, PHPEdgeTypes.Extends, classInfo.Extends, state.DocumentId, now));
-            }
 
-            // Add IMPLEMENTS edges
             foreach (var iface in classInfo.Implements)
-            {
                 edges.Add(CreateReferenceEdge(classNode.Id, PHPEdgeTypes.Implements, iface, state.DocumentId, now));
-            }
 
-            // Add USES_TRAIT edges
             foreach (var trait in classInfo.UsesTraits)
-            {
                 edges.Add(CreateReferenceEdge(classNode.Id, PHPEdgeTypes.UsesTrait, trait, state.DocumentId, now));
-            }
         }
 
-        // Materialize interfaces
-        foreach (var ifaceInfo in parseResult.Interfaces)
+        foreach (var ifaceInfo in surface.Interfaces)
         {
             var interfaceSpanId = Guid.NewGuid();
             var interfaceSpan = CreateSpan(ifaceInfo.Span, state.DocumentId, interfaceSpanId, document);
@@ -240,13 +224,10 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             }
 
             foreach (var baseIface in ifaceInfo.Extends)
-            {
                 edges.Add(CreateReferenceEdge(ifaceNode.Id, PHPEdgeTypes.Extends, baseIface, state.DocumentId, now));
-            }
         }
 
-        // Materialize traits
-        foreach (var traitInfo in parseResult.Traits)
+        foreach (var traitInfo in surface.Traits)
         {
             var traitSpanId = Guid.NewGuid();
             var traitSpan = CreateSpan(traitInfo.Span, state.DocumentId, traitSpanId, document);
@@ -277,8 +258,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             }
         }
 
-        // Materialize enums
-        foreach (var enumInfo in parseResult.Enums)
+        foreach (var enumInfo in surface.Enums)
         {
             var enumSpanId = Guid.NewGuid();
             var enumSpan = CreateSpan(enumInfo.Span, state.DocumentId, enumSpanId, document);
@@ -297,10 +277,22 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
                 edges.Add(CreateComposition(enumNode.Id, caseNode.Id, memberOrdinal++, state.DocumentId, now));
                 spans.Add(caseSpan);
             }
+
+            foreach (var method in enumInfo.Methods)
+            {
+                var methodSpanId = Guid.NewGuid();
+                var methodSpan = CreateSpan(method.Span, state.DocumentId, methodSpanId, document);
+                var methodNode = CreateMethodNode(method, artifact.Id, document.Uri, enumInfo.Name, methodSpan.StartLine, methodSpan.EndLine, methodSpanId, now);
+                nodes.Add(methodNode);
+                edges.Add(CreateComposition(enumNode.Id, methodNode.Id, memberOrdinal++, state.DocumentId, now));
+                spans.Add(methodSpan);
+            }
+
+            foreach (var iface in enumInfo.Implements)
+                edges.Add(CreateReferenceEdge(enumNode.Id, PHPEdgeTypes.Implements, iface, state.DocumentId, now));
         }
 
-        // Materialize standalone functions
-        foreach (var funcInfo in parseResult.Functions)
+        foreach (var funcInfo in surface.Functions)
         {
             var functionSpanId = Guid.NewGuid();
             var functionSpan = CreateSpan(funcInfo.Span, state.DocumentId, functionSpanId, document);
@@ -324,50 +316,57 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         yield return new FormatSqlScript("php_views", PhpViewsSql.Value);
     }
 
+    public void Dispose()
+    {
+        _client.Dispose();
+    }
+
+    #region X-ray Builders
+
     private static string BuildHeadline(DocumentModel document, PHPDocumentState state, int? tokenCount)
     {
-        var parse = state.ParseResult;
+        var surface = state.Surface;
         var fileName = GetFileName(document.Uri);
         var sizePart = $"{document.LineMap.LineCount} ln";
         if (tokenCount.HasValue)
             sizePart = $"{sizePart}, {FormatTokenCount(tokenCount.Value)}";
 
-        var namespacePart = $"ns:{parse.Namespace ?? "(global)"}";
+        var namespacePart = $"ns:{surface.Namespace ?? "(global)"}";
         var keyNames = new List<string>();
         string? primaryDeclaration = null;
 
-        if (parse.Classes.Count > 0)
+        if (surface.Classes.Count > 0)
         {
-            var primary = parse.Classes[0];
+            var primary = surface.Classes[0];
             primaryDeclaration = BuildDeclHeadline(primary);
             keyNames.AddRange(primary.Methods.Select(m => m.Name));
             keyNames.AddRange(primary.Constants.Select(c => c.Name));
             keyNames.AddRange(primary.Properties.Select(p => NormalizeSymbolName(p.Name)));
         }
-        else if (parse.Interfaces.Count > 0)
+        else if (surface.Interfaces.Count > 0)
         {
-            var primary = parse.Interfaces[0];
+            var primary = surface.Interfaces[0];
             primaryDeclaration = BuildDeclHeadline(primary);
             keyNames.AddRange(primary.Methods.Select(m => m.Name));
             keyNames.AddRange(primary.Constants.Select(c => c.Name));
         }
-        else if (parse.Traits.Count > 0)
+        else if (surface.Traits.Count > 0)
         {
-            var primary = parse.Traits[0];
+            var primary = surface.Traits[0];
             primaryDeclaration = BuildDeclHeadline(primary);
             keyNames.AddRange(primary.Methods.Select(m => m.Name));
             keyNames.AddRange(primary.Properties.Select(p => NormalizeSymbolName(p.Name)));
         }
-        else if (parse.Enums.Count > 0)
+        else if (surface.Enums.Count > 0)
         {
-            var primary = parse.Enums[0];
+            var primary = surface.Enums[0];
             primaryDeclaration = BuildDeclHeadline(primary);
             keyNames.AddRange(primary.Cases.Select(c => c.Name));
             keyNames.AddRange(primary.Methods.Select(m => m.Name));
         }
         else
         {
-            keyNames.AddRange(parse.Functions.Select(f => f.Name));
+            keyNames.AddRange(surface.Functions.Select(f => f.Name));
         }
 
         var namesPart = FormatNameList(keyNames, maxNames: 8);
@@ -375,10 +374,9 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             .Where(part => !string.IsNullOrWhiteSpace(part)));
     }
 
-    private static string BuildStructure(DocumentModel document, PHPDocumentState state)
+    private static string BuildStructure(PHPDocumentState state)
     {
-        _ = document;
-        var parse = state.ParseResult;
+        var surface = state.Surface;
         var sb = new StringBuilder();
 
         var hasWrittenDeclaration = false;
@@ -389,19 +387,16 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
                 hasWrittenDeclaration = true;
                 return;
             }
-
             sb.AppendLine();
         }
 
-        foreach (var classInfo in parse.Classes)
+        foreach (var classInfo in surface.Classes)
         {
             SeparateDeclarations();
-            sb.AppendLine($"{AccessibilitySymbol(classInfo.Accessibility)} {BuildDeclHeadline(classInfo)}");
+            sb.AppendLine($"+ {BuildDeclHeadline(classInfo)}");
 
             foreach (var constant in classInfo.Constants)
-            {
                 sb.AppendLine($"  {FormatConstantStructureLine(constant)}");
-            }
 
             foreach (var property in classInfo.Properties)
             {
@@ -411,28 +406,22 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             }
 
             foreach (var method in classInfo.Methods)
-            {
                 sb.AppendLine($"  {FormatMethodStructureLine(method)}");
-            }
         }
 
-        foreach (var interfaceInfo in parse.Interfaces)
+        foreach (var interfaceInfo in surface.Interfaces)
         {
             SeparateDeclarations();
             sb.AppendLine($"+ {BuildDeclHeadline(interfaceInfo)}");
 
             foreach (var constant in interfaceInfo.Constants)
-            {
                 sb.AppendLine($"  {FormatConstantStructureLine(constant)}");
-            }
 
             foreach (var method in interfaceInfo.Methods)
-            {
                 sb.AppendLine($"  {FormatMethodStructureLine(method)}");
-            }
         }
 
-        foreach (var traitInfo in parse.Traits)
+        foreach (var traitInfo in surface.Traits)
         {
             SeparateDeclarations();
             sb.AppendLine($"+ {BuildDeclHeadline(traitInfo)}");
@@ -445,31 +434,25 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             }
 
             foreach (var method in traitInfo.Methods)
-            {
                 sb.AppendLine($"  {FormatMethodStructureLine(method)}");
-            }
         }
 
-        foreach (var enumInfo in parse.Enums)
+        foreach (var enumInfo in surface.Enums)
         {
             SeparateDeclarations();
             sb.AppendLine($"+ {BuildDeclHeadline(enumInfo)}");
 
             foreach (var caseInfo in enumInfo.Cases)
-            {
                 sb.AppendLine($"  +case {caseInfo.Name}    #symbol={NormalizeSymbolName(caseInfo.Name)}");
-            }
 
             foreach (var method in enumInfo.Methods)
-            {
                 sb.AppendLine($"  {FormatMethodStructureLine(method)}");
-            }
         }
 
-        if (parse.Functions.Count > 0)
+        if (surface.Functions.Count > 0)
         {
             SeparateDeclarations();
-            foreach (var functionInfo in parse.Functions)
+            foreach (var functionInfo in surface.Functions)
             {
                 var returnTypePart = string.IsNullOrWhiteSpace(functionInfo.ReturnType) ? string.Empty : $"{functionInfo.ReturnType} ";
                 var parameters = FormatParameters(functionInfo.Parameters, includeNames: true);
@@ -480,26 +463,25 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return sb.ToString().TrimEnd();
     }
 
-    private static string BuildDeclHeadline(PHPClassInfo classInfo)
+    #endregion
+
+    #region Declaration Headlines
+
+    private static string BuildDeclHeadline(PhpClassInfo classInfo)
     {
         var sb = new StringBuilder();
-        if (classInfo.IsAbstract)
-            sb.Append("abstract ");
-        if (classInfo.IsFinal)
-            sb.Append("final ");
-        if (classInfo.IsReadonly)
-            sb.Append("readonly ");
+        if (classInfo.IsAbstract) sb.Append("abstract ");
+        if (classInfo.IsFinal) sb.Append("final ");
+        if (classInfo.IsReadonly) sb.Append("readonly ");
         sb.Append("class ").Append(classInfo.Name);
-
         if (!string.IsNullOrWhiteSpace(classInfo.Extends))
             sb.Append(" extends ").Append(classInfo.Extends);
         if (classInfo.Implements.Count > 0)
             sb.Append(" implements ").Append(string.Join(", ", classInfo.Implements));
-
         return sb.ToString();
     }
 
-    private static string BuildDeclHeadline(PHPInterfaceInfo interfaceInfo)
+    private static string BuildDeclHeadline(PhpInterfaceInfo interfaceInfo)
     {
         var sb = new StringBuilder();
         sb.Append("interface ").Append(interfaceInfo.Name);
@@ -508,10 +490,10 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return sb.ToString();
     }
 
-    private static string BuildDeclHeadline(PHPTraitInfo traitInfo)
+    private static string BuildDeclHeadline(PhpTraitInfo traitInfo)
         => $"trait {traitInfo.Name}";
 
-    private static string BuildDeclHeadline(PHPEnumInfo enumInfo)
+    private static string BuildDeclHeadline(PhpEnumInfo enumInfo)
     {
         var sb = new StringBuilder();
         sb.Append("enum ").Append(enumInfo.Name);
@@ -522,7 +504,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return sb.ToString();
     }
 
-    private static string BuildDeclHeadline(PHPFunctionInfo functionInfo)
+    private static string BuildDeclHeadline(PhpFunctionInfo functionInfo)
     {
         var parameters = FormatParameters(functionInfo.Parameters, includeNames: true);
         var signature = $"function {functionInfo.Name}({parameters})";
@@ -531,17 +513,13 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return signature;
     }
 
-    private static string BuildDeclHeadline(PHPMethodInfo methodInfo)
+    private static string BuildDeclHeadline(PhpMethodInfo methodInfo)
     {
-        var parts = new List<string>
-        {
-            methodInfo.Accessibility ?? "public"
-        };
+        var parts = new List<string> { methodInfo.Accessibility ?? "public" };
         if (methodInfo.IsStatic) parts.Add("static");
         if (methodInfo.IsAbstract) parts.Add("abstract");
         if (methodInfo.IsFinal) parts.Add("final");
         parts.Add("function");
-
         var parameters = FormatParameters(methodInfo.Parameters, includeNames: true);
         var signature = $"{string.Join(" ", parts)} {methodInfo.Name}({parameters})";
         if (!string.IsNullOrWhiteSpace(methodInfo.ReturnType))
@@ -549,7 +527,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return signature;
     }
 
-    private static string BuildDeclHeadline(PHPPropertyInfo propertyInfo)
+    private static string BuildDeclHeadline(PhpPropertyInfo propertyInfo)
     {
         var parts = new List<string> { propertyInfo.Accessibility ?? "public" };
         if (propertyInfo.IsStatic) parts.Add("static");
@@ -559,13 +537,17 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return string.Join(" ", parts);
     }
 
-    private static string BuildDeclHeadline(PHPConstantInfo constantInfo)
+    private static string BuildDeclHeadline(PhpConstantInfo constantInfo)
         => $"{constantInfo.Accessibility ?? "public"} const {constantInfo.Name}";
 
-    private static string BuildDeclHeadline(PHPEnumCaseInfo enumCaseInfo)
+    private static string BuildDeclHeadline(PhpEnumCaseInfo enumCaseInfo)
         => $"case {enumCaseInfo.Name}";
 
-    private static string? BuildDeclStructure(PHPClassInfo classInfo)
+    #endregion
+
+    #region Declaration Structures
+
+    private static string? BuildDeclStructure(PhpClassInfo classInfo)
     {
         var lines = new List<string>();
         lines.AddRange(classInfo.Constants.Select(FormatCompactConstant));
@@ -574,7 +556,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return lines.Count == 0 ? null : string.Join(Environment.NewLine, lines);
     }
 
-    private static string? BuildDeclStructure(PHPInterfaceInfo interfaceInfo)
+    private static string? BuildDeclStructure(PhpInterfaceInfo interfaceInfo)
     {
         var lines = new List<string>();
         lines.AddRange(interfaceInfo.Constants.Select(FormatCompactConstant));
@@ -582,7 +564,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return lines.Count == 0 ? null : string.Join(Environment.NewLine, lines);
     }
 
-    private static string? BuildDeclStructure(PHPTraitInfo traitInfo)
+    private static string? BuildDeclStructure(PhpTraitInfo traitInfo)
     {
         var lines = new List<string>();
         lines.AddRange(traitInfo.Properties.Select(FormatCompactProperty));
@@ -590,7 +572,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return lines.Count == 0 ? null : string.Join(Environment.NewLine, lines);
     }
 
-    private static string? BuildDeclStructure(PHPEnumInfo enumInfo)
+    private static string? BuildDeclStructure(PhpEnumInfo enumInfo)
     {
         var lines = new List<string>();
         lines.AddRange(enumInfo.Cases.Select(c => $"+case {c.Name}"));
@@ -598,7 +580,11 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return lines.Count == 0 ? null : string.Join(Environment.NewLine, lines);
     }
 
-    private static Node CreateClassNode(PHPClassInfo classInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
+    #endregion
+
+    #region Node Builders
+
+    private static Node CreateClassNode(PhpClassInfo classInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
     {
         var props = new JsonObject
         {
@@ -611,12 +597,8 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             props[PHPPropertyKeys.QualifiedName] = $"{classInfo.Namespace}\\{classInfo.Name}";
             props[PHPPropertyKeys.Namespace] = classInfo.Namespace;
         }
-        if (!string.IsNullOrEmpty(classInfo.Accessibility))
-            props[PHPPropertyKeys.Accessibility] = classInfo.Accessibility;
-        if (classInfo.IsAbstract)
-            props[PHPPropertyKeys.IsAbstract] = true;
-        if (classInfo.IsFinal)
-            props[PHPPropertyKeys.IsFinal] = true;
+        if (classInfo.IsAbstract) props[PHPPropertyKeys.IsAbstract] = true;
+        if (classInfo.IsFinal) props[PHPPropertyKeys.IsFinal] = true;
         if (!string.IsNullOrEmpty(classInfo.Extends))
             props[PHPPropertyKeys.Extends] = classInfo.Extends;
         if (classInfo.Implements.Count > 0)
@@ -637,7 +619,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         };
     }
 
-    private static Node CreateInterfaceNode(PHPInterfaceInfo ifaceInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
+    private static Node CreateInterfaceNode(PhpInterfaceInfo ifaceInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
     {
         var props = new JsonObject
         {
@@ -651,7 +633,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             props[PHPPropertyKeys.Namespace] = ifaceInfo.Namespace;
         }
         if (ifaceInfo.Extends.Count > 0)
-            props[PHPPropertyKeys.Extends] = string.Join(", ", ifaceInfo.Extends);
+            props[PHPPropertyKeys.Extends] = new JsonArray(ifaceInfo.Extends.Select(e => JsonValue.Create(e)).ToArray());
 
         return new Node
         {
@@ -668,7 +650,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         };
     }
 
-    private static Node CreateTraitNode(PHPTraitInfo traitInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
+    private static Node CreateTraitNode(PhpTraitInfo traitInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
     {
         var props = new JsonObject
         {
@@ -697,7 +679,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         };
     }
 
-    private static Node CreateEnumNode(PHPEnumInfo enumInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
+    private static Node CreateEnumNode(PhpEnumInfo enumInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
     {
         var props = new JsonObject
         {
@@ -728,7 +710,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         };
     }
 
-    private static Node CreateEnumCaseNode(PHPEnumCaseInfo caseInfo, Guid artifactId, RepoUri documentUri, string parentName, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
+    private static Node CreateEnumCaseNode(PhpEnumCaseInfo caseInfo, Guid artifactId, RepoUri documentUri, string parentName, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
     {
         var props = new JsonObject
         {
@@ -750,7 +732,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         };
     }
 
-    private static Node CreateFunctionNode(PHPFunctionInfo funcInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
+    private static Node CreateFunctionNode(PhpFunctionInfo funcInfo, Guid artifactId, RepoUri documentUri, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
     {
         var props = new JsonObject
         {
@@ -778,7 +760,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         };
     }
 
-    private static Node CreateMethodNode(PHPMethodInfo method, Guid artifactId, RepoUri documentUri, string parentName, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
+    private static Node CreateMethodNode(PhpMethodInfo method, Guid artifactId, RepoUri documentUri, string parentName, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
     {
         var props = new JsonObject
         {
@@ -789,10 +771,8 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
 
         if (!string.IsNullOrEmpty(method.Accessibility))
             props[PHPPropertyKeys.Accessibility] = method.Accessibility;
-        if (method.IsStatic)
-            props[PHPPropertyKeys.IsStatic] = true;
-        if (method.IsAbstract)
-            props[PHPPropertyKeys.IsAbstract] = true;
+        if (method.IsStatic) props[PHPPropertyKeys.IsStatic] = true;
+        if (method.IsAbstract) props[PHPPropertyKeys.IsAbstract] = true;
         if (!string.IsNullOrEmpty(method.ReturnType))
             props[PHPPropertyKeys.ReturnType] = method.ReturnType;
         if (method.Parameters.Count > 0)
@@ -813,7 +793,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         };
     }
 
-    private static Node CreatePropertyNode(PHPPropertyInfo prop, Guid artifactId, RepoUri documentUri, string parentName, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
+    private static Node CreatePropertyNode(PhpPropertyInfo prop, Guid artifactId, RepoUri documentUri, string parentName, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
     {
         var props = new JsonObject
         {
@@ -822,8 +802,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
 
         if (!string.IsNullOrEmpty(prop.Accessibility))
             props[PHPPropertyKeys.Accessibility] = prop.Accessibility;
-        if (prop.IsStatic)
-            props[PHPPropertyKeys.IsStatic] = true;
+        if (prop.IsStatic) props[PHPPropertyKeys.IsStatic] = true;
         if (!string.IsNullOrEmpty(prop.Type))
             props[PHPPropertyKeys.Type] = prop.Type;
         if (prop.HasDefault)
@@ -844,7 +823,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         };
     }
 
-    private static Node CreateConstantNode(PHPConstantInfo constant, Guid artifactId, RepoUri documentUri, string parentName, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
+    private static Node CreateConstantNode(PhpConstantInfo constant, Guid artifactId, RepoUri documentUri, string parentName, int? startLine, int? endLine, Guid spanId, DateTimeOffset now)
     {
         var props = new JsonObject
         {
@@ -869,7 +848,11 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         };
     }
 
-    private static string FormatMethodStructureLine(PHPMethodInfo method)
+    #endregion
+
+    #region Formatting Helpers
+
+    private static string FormatMethodStructureLine(PhpMethodInfo method)
     {
         var visibility = AccessibilitySymbol(method.Accessibility);
         var staticModifier = method.IsStatic ? "static " : string.Empty;
@@ -879,7 +862,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return $"{visibility}{staticModifier}{abstractModifier}{returnTypePart}{method.Name}({parameters})    #symbol={NormalizeSymbolName(method.Name)}";
     }
 
-    private static string FormatCompactMethod(PHPMethodInfo method)
+    private static string FormatCompactMethod(PhpMethodInfo method)
     {
         var visibility = AccessibilitySymbol(method.Accessibility);
         var staticModifier = method.IsStatic ? "static " : string.Empty;
@@ -889,7 +872,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return $"{visibility}{staticModifier}{abstractModifier}{returnTypePart}{method.Name}({parameterTypes})";
     }
 
-    private static string FormatCompactProperty(PHPPropertyInfo property)
+    private static string FormatCompactProperty(PhpPropertyInfo property)
     {
         var visibility = AccessibilitySymbol(property.Accessibility);
         var staticModifier = property.IsStatic ? "static " : string.Empty;
@@ -897,7 +880,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return $"{visibility}{staticModifier}{typePart}{property.Name}";
     }
 
-    private static string FormatCompactConstant(PHPConstantInfo constant)
+    private static string FormatCompactConstant(PhpConstantInfo constant)
     {
         var declaration = BuildDeclHeadline(constant);
         var constIndex = declaration.IndexOf("const ", StringComparison.Ordinal);
@@ -905,10 +888,10 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         return $"{AccessibilitySymbol(constant.Accessibility)}{constPart}";
     }
 
-    private static string FormatConstantStructureLine(PHPConstantInfo constant)
+    private static string FormatConstantStructureLine(PhpConstantInfo constant)
         => $"{FormatCompactConstant(constant)}    #symbol={NormalizeSymbolName(constant.Name)}";
 
-    private static string FormatParameters(List<string> parameters, bool includeNames)
+    private static string FormatParameters(IReadOnlyList<string> parameters, bool includeNames)
     {
         if (parameters.Count == 0)
             return string.Empty;
@@ -934,14 +917,11 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             normalized = normalized[3..].Trim();
 
         var parts = normalized.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0)
-            return "mixed";
+        if (parts.Length == 0) return "mixed";
 
         var variableIndex = Array.FindIndex(parts, part => part.IndexOf("$", StringComparison.Ordinal) >= 0);
-        if (variableIndex < 0)
-            return parts[0];
-        if (variableIndex == 0)
-            return "mixed";
+        if (variableIndex < 0) return parts[0];
+        if (variableIndex == 0) return "mixed";
 
         var typeParts = parts
             .Take(variableIndex)
@@ -956,8 +936,7 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Distinct(StringComparer.Ordinal)
             .ToList();
-        if (uniqueNames.Count == 0)
-            return null;
+        if (uniqueNames.Count == 0) return null;
         if (uniqueNames.Count <= maxNames)
             return string.Join(", ", uniqueNames);
         return $"{string.Join(", ", uniqueNames.Take(maxNames))}, ...";
@@ -977,10 +956,14 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
     private static string FormatTokenCount(int tokens)
         => $"~{tokens / 1000.0:0.0}k tok";
 
-    private static Span CreateSpan(PHPSpan phpSpan, Guid docId, Guid spanId, DocumentModel document)
+    #endregion
+
+    #region Span and Edge Builders
+
+    private static Span CreateSpan(PhpByteRange byteRange, Guid docId, Guid spanId, DocumentModel document)
     {
-        var start = Math.Clamp(phpSpan.Start, 0, document.Text.Length);
-        var end = Math.Clamp(phpSpan.End, start, document.Text.Length);
+        var start = Math.Clamp(byteRange.StartByte, 0, document.Text.Length);
+        var end = Math.Clamp(byteRange.EndByte, start, document.Text.Length);
         var mapped = document.LineMap.GetSpan(start, end);
 
         return new Span
@@ -1025,6 +1008,10 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
             CreatedAt = now
         };
 
+    #endregion
+
+    #region Utilities
+
     private static string ReadEmbeddedResource(string resourceName)
     {
         using var stream = typeof(PHPLoader).Assembly.GetManifestResourceStream(resourceName)
@@ -1055,4 +1042,6 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
 
     [LoggerMessage(LogLevel.Warning, "Failed to build PHP X-ray summaries")]
     static partial void LogXrayBuildError(ILogger<PHPLoader> logger, Exception ex);
+
+    #endregion
 }
