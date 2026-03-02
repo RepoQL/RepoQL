@@ -56,19 +56,19 @@ internal static class GoQueries
             (_
                 name: (field_identifier) @interface_method_name
                 parameters: (parameter_list) @interface_method_parameters
-                result: (_) @interface_method_result) @interface_method)
+                result: (_) @interface_method_result) @interface_method) @interface_type_ctx
 
         (interface_type
             (_
                 name: (field_identifier) @interface_method_name
                 parameters: (parameter_list) @interface_method_parameters
-                !result) @interface_method)
+                !result) @interface_method) @interface_type_ctx
         """;
 
     public const string EmbeddedInterfaces = """
         ;; embedded interfaces / type terms
         (interface_type
-            (type_elem (_) @embedded_interface_type) @embedded_interface)
+            (type_elem (_) @embedded_interface_type) @embedded_interface) @interface_type_ctx
         """;
 
     public const string FunctionDeclarations = """
@@ -177,4 +177,49 @@ internal static class GoQueries
         ;; select { ... }
         (select_statement) @select_stmt
         """;
+
+    /// <summary>
+    /// All 27 patterns concatenated in canonical order.
+    /// Compiled once into a static <see cref="TreeSitter.Query"/> for single-pass extraction.
+    /// Pattern indices are positional — see <see cref="ClassifyPattern"/>.
+    /// </summary>
+    public static readonly string CombinedQuery = string.Join("\n\n",
+        PackageClause,          // pattern  0        (1 pattern)
+        ImportSpecs,            // patterns 1-2      (2 patterns)
+        StructDeclarations,     // pattern  3        (1 pattern)
+        StructFields,           // pattern  4        (1 pattern)
+        InterfaceDeclarations,  // pattern  5        (1 pattern)
+        InterfaceMethods,       // patterns 6-7      (2 patterns)
+        EmbeddedInterfaces,     // pattern  8        (1 pattern)
+        FunctionDeclarations,   // patterns 9-10     (2 patterns)
+        MethodDeclarations,     // patterns 11-12    (2 patterns)
+        TypeDefinitions,        // patterns 13-14    (2 patterns)
+        ConstantSpecs,          // patterns 15-18    (4 patterns)
+        VariableSpecs,          // patterns 19-22    (4 patterns)
+        Comments,               // pattern  23       (1 pattern)
+        GoStatements,           // pattern  24       (1 pattern)
+        ChannelTypes,           // pattern  25       (1 pattern)
+        SelectStatements);      // pattern  26       (1 pattern)
+
+    public static GoPatternGroup ClassifyPattern(int patternIndex) => patternIndex switch
+    {
+        0 => GoPatternGroup.PackageClause,
+        1 or 2 => GoPatternGroup.ImportSpecs,
+        3 => GoPatternGroup.StructDeclarations,
+        4 => GoPatternGroup.StructFields,
+        5 => GoPatternGroup.InterfaceDeclarations,
+        6 or 7 => GoPatternGroup.InterfaceMethods,
+        8 => GoPatternGroup.EmbeddedInterfaces,
+        9 or 10 => GoPatternGroup.FunctionDeclarations,
+        11 or 12 => GoPatternGroup.MethodDeclarations,
+        13 or 14 => GoPatternGroup.TypeDefinitions,
+        >= 15 and <= 18 => GoPatternGroup.ConstantSpecs,
+        >= 19 and <= 22 => GoPatternGroup.VariableSpecs,
+        23 => GoPatternGroup.Comments,
+        24 => GoPatternGroup.GoStatements,
+        25 => GoPatternGroup.ChannelTypes,
+        26 => GoPatternGroup.SelectStatements,
+        _ => throw new ArgumentOutOfRangeException(nameof(patternIndex), patternIndex,
+            $"Unknown Go query pattern index {patternIndex}. Combined query has 27 patterns (0-26).")
+    };
 }

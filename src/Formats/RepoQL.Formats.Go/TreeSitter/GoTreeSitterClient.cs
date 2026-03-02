@@ -7,6 +7,7 @@ namespace RepoQL.Formats.Go.TreeSitter;
 public sealed class GoTreeSitterClient : IDisposable
 {
     private static readonly Language SharedLanguage = CreateLanguage();
+    private static readonly Query SharedCombinedQuery = SharedLanguage.CreateQuery(GoQueries.CombinedQuery);
     private static readonly Regex SentinelFactoryRegex = new(
         @"^(?:errors\.New|fmt\.Errorf)\s*\(",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -1411,5 +1412,77 @@ public sealed class GoTreeSitterClient : IDisposable
                 Methods: Methods.OrderBy(m => m.ByteRange.StartByte).ToList(),
                 EmbeddedInterfaces: EmbeddedInterfaces,
                 ByteRange: ByteRange);
+    }
+
+    /// <summary>
+    /// Executes <see cref="SharedCombinedQuery"/> once against <paramref name="root"/> and dispatches
+    /// each match into the appropriate group bucket based on <see cref="GoQueries.ClassifyPattern"/>.
+    /// </summary>
+    private static DispatchedMatches ExecuteCombinedQuery(Node root)
+    {
+        var result = new DispatchedMatches();
+        using var cursor = SharedCombinedQuery.Execute(root);
+
+        foreach (var match in cursor.Matches)
+        {
+            var captures = match.Captures
+                .Where(c => !c.Node.IsError)
+                .Select(c => new CaptureWithNode(c.Name, c.Node))
+                .ToList();
+
+            if (captures.Count == 0)
+            {
+                continue;
+            }
+
+            var group = GoQueries.ClassifyPattern(match.PatternIndex);
+            var bucket = group switch
+            {
+                GoPatternGroup.PackageClause => result.PackageClause,
+                GoPatternGroup.ImportSpecs => result.ImportSpecs,
+                GoPatternGroup.StructDeclarations => result.StructDeclarations,
+                GoPatternGroup.StructFields => result.StructFields,
+                GoPatternGroup.InterfaceDeclarations => result.InterfaceDeclarations,
+                GoPatternGroup.InterfaceMethods => result.InterfaceMethods,
+                GoPatternGroup.EmbeddedInterfaces => result.EmbeddedInterfaces,
+                GoPatternGroup.FunctionDeclarations => result.FunctionDeclarations,
+                GoPatternGroup.MethodDeclarations => result.MethodDeclarations,
+                GoPatternGroup.TypeDefinitions => result.TypeDefinitions,
+                GoPatternGroup.ConstantSpecs => result.ConstantSpecs,
+                GoPatternGroup.VariableSpecs => result.VariableSpecs,
+                GoPatternGroup.Comments => result.Comments,
+                GoPatternGroup.GoStatements => result.GoStatements,
+                GoPatternGroup.ChannelTypes => result.ChannelTypes,
+                GoPatternGroup.SelectStatements => result.SelectStatements,
+                _ => throw new InvalidOperationException($"Unknown pattern group {group}")
+            };
+            bucket.Add(captures);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Holds pre-dispatched match lists from a single combined query execution.
+    /// One list per <see cref="GoPatternGroup"/> — each element is a match (list of captures).
+    /// </summary>
+    private sealed class DispatchedMatches
+    {
+        public List<List<CaptureWithNode>> PackageClause { get; } = [];
+        public List<List<CaptureWithNode>> ImportSpecs { get; } = [];
+        public List<List<CaptureWithNode>> StructDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> StructFields { get; } = [];
+        public List<List<CaptureWithNode>> InterfaceDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> InterfaceMethods { get; } = [];
+        public List<List<CaptureWithNode>> EmbeddedInterfaces { get; } = [];
+        public List<List<CaptureWithNode>> FunctionDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> MethodDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> TypeDefinitions { get; } = [];
+        public List<List<CaptureWithNode>> ConstantSpecs { get; } = [];
+        public List<List<CaptureWithNode>> VariableSpecs { get; } = [];
+        public List<List<CaptureWithNode>> Comments { get; } = [];
+        public List<List<CaptureWithNode>> GoStatements { get; } = [];
+        public List<List<CaptureWithNode>> ChannelTypes { get; } = [];
+        public List<List<CaptureWithNode>> SelectStatements { get; } = [];
     }
 }

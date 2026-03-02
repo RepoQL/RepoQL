@@ -315,6 +315,65 @@ public sealed class GoTreeSitterClientTests
         results[7].Structs.Should().ContainSingle(s => s.Name == "Inline");
     }
 
+    [Test]
+    public void CombinedQuery_CompilesSuccessfully()
+    {
+        // Validates that all 27 patterns in the combined query form a valid tree-sitter query.
+        // The 53 extraction tests above validate correctness of the dispatch.
+        using var language = new global::TreeSitter.Language("tree-sitter-go", "tree_sitter_go");
+        using var query = language.CreateQuery(GoQueries.CombinedQuery);
+
+        // If we get here without exception, the combined query compiles.
+        // Verify it can execute against trivial input.
+        using var parser = new global::TreeSitter.Parser(language);
+        using var tree = parser.Parse("package main");
+        using var cursor = query.Execute(tree.RootNode);
+        cursor.Matches.Should().NotBeEmpty();
+    }
+
+    [Test]
+    [Arguments(0, GoPatternGroup.PackageClause)]
+    [Arguments(1, GoPatternGroup.ImportSpecs)]
+    [Arguments(2, GoPatternGroup.ImportSpecs)]
+    [Arguments(3, GoPatternGroup.StructDeclarations)]
+    [Arguments(4, GoPatternGroup.StructFields)]
+    [Arguments(5, GoPatternGroup.InterfaceDeclarations)]
+    [Arguments(6, GoPatternGroup.InterfaceMethods)]
+    [Arguments(7, GoPatternGroup.InterfaceMethods)]
+    [Arguments(8, GoPatternGroup.EmbeddedInterfaces)]
+    [Arguments(9, GoPatternGroup.FunctionDeclarations)]
+    [Arguments(10, GoPatternGroup.FunctionDeclarations)]
+    [Arguments(11, GoPatternGroup.MethodDeclarations)]
+    [Arguments(12, GoPatternGroup.MethodDeclarations)]
+    [Arguments(13, GoPatternGroup.TypeDefinitions)]
+    [Arguments(14, GoPatternGroup.TypeDefinitions)]
+    [Arguments(15, GoPatternGroup.ConstantSpecs)]
+    [Arguments(16, GoPatternGroup.ConstantSpecs)]
+    [Arguments(17, GoPatternGroup.ConstantSpecs)]
+    [Arguments(18, GoPatternGroup.ConstantSpecs)]
+    [Arguments(19, GoPatternGroup.VariableSpecs)]
+    [Arguments(20, GoPatternGroup.VariableSpecs)]
+    [Arguments(21, GoPatternGroup.VariableSpecs)]
+    [Arguments(22, GoPatternGroup.VariableSpecs)]
+    [Arguments(23, GoPatternGroup.Comments)]
+    [Arguments(24, GoPatternGroup.GoStatements)]
+    [Arguments(25, GoPatternGroup.ChannelTypes)]
+    [Arguments(26, GoPatternGroup.SelectStatements)]
+    public void ClassifyPattern_MapsCorrectly(int patternIndex, GoPatternGroup expected)
+    {
+        GoQueries.ClassifyPattern(patternIndex).Should().Be(expected);
+    }
+
+    [Test]
+    [Arguments(-1)]
+    [Arguments(27)]
+    [Arguments(100)]
+    public void ClassifyPattern_OutOfRange_Throws(int patternIndex)
+    {
+        var action = () => GoQueries.ClassifyPattern(patternIndex);
+        action.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
     private static string ReadFixture(string fileName)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);
