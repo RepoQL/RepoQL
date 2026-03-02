@@ -374,6 +374,30 @@ public sealed class GoTreeSitterClientTests
         action.Should().Throw<ArgumentOutOfRangeException>();
     }
 
+    [Test]
+    public void Parse_Generics_StripsTypeParametersFromReceiverType()
+    {
+        using var client = new GoTreeSitterClient();
+        var source = ReadFixture("generics.go");
+
+        var result = client.Parse(source);
+
+        result.Structs.Select(s => s.Name).Should().BeEquivalentTo(["Set", "Pair"]);
+
+        var setMethods = result.Methods.Where(m => m.ReceiverType == "Set").ToList();
+        setMethods.Select(m => m.Name).Should().BeEquivalentTo(["Add", "Contains", "Len"]);
+
+        var add = setMethods.Single(m => m.Name == "Add");
+        add.ReceiverType.Should().Be("Set");
+        add.IsPointerReceiver.Should().BeTrue();
+
+        var len = setMethods.Single(m => m.Name == "Len");
+        len.ReceiverType.Should().Be("Set");
+        len.IsPointerReceiver.Should().BeFalse();
+
+        result.Functions.Select(f => f.Name).Should().Contain(["NewSet", "MakePair", "Min"]);
+    }
+
     private static string ReadFixture(string fileName)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Fixtures", fileName);

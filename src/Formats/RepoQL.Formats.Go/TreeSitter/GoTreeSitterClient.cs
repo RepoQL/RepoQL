@@ -54,20 +54,22 @@ public sealed class GoTreeSitterClient : IDisposable
             var root = tree.RootNode;
 
             var errorNodeCount = CountErrorNodes(root);
-            var packageName = ExtractPackageName(root);
-            var imports = ExtractImports(root);
-            var structs = ExtractStructs(root);
-            var interfaces = ExtractInterfaces(root);
-            var typeDefinitions = ExtractTypeDefinitions(root);
-            var constants = ExtractConstants(root, out var constantBlocks);
-            var variables = ExtractVariables(root);
-            var functions = ExtractFunctions(root);
+            var dispatched = ExecuteCombinedQuery(root);
+
+            var packageName = ExtractPackageName(dispatched.PackageClause);
+            var imports = ExtractImports(dispatched.ImportSpecs);
+            var structs = ExtractStructs(dispatched.StructDeclarations, dispatched.StructFields);
+            var interfaces = ExtractInterfaces(dispatched.InterfaceDeclarations, dispatched.InterfaceMethods, dispatched.EmbeddedInterfaces);
+            var typeDefinitions = ExtractTypeDefinitions(dispatched.TypeDefinitions);
+            var constants = ExtractConstants(dispatched.ConstantSpecs, out var constantBlocks);
+            var variables = ExtractVariables(dispatched.VariableSpecs);
+            var functions = ExtractFunctions(dispatched.FunctionDeclarations);
             var initFunctions = functions
                 .Where(f => string.Equals(f.Name, "init", StringComparison.Ordinal))
                 .ToList();
-            var methods = ExtractMethods(root);
-            var directives = ExtractDirectives(root);
-            directives.AddRange(ExtractConcurrencyDirectives(root));
+            var methods = ExtractMethods(dispatched.MethodDeclarations);
+            var directives = ExtractDirectives(dispatched.Comments);
+            directives.AddRange(ExtractConcurrencyDirectives(dispatched.GoStatements, dispatched.ChannelTypes, dispatched.SelectStatements));
             directives = directives
                 .OrderBy(d => d.ByteRange.StartByte)
                 .ToList();
@@ -170,19 +172,19 @@ public sealed class GoTreeSitterClient : IDisposable
         return groups;
     }
 
-    private static string? ExtractPackageName(Node root)
+    private static string? ExtractPackageName(List<List<CaptureWithNode>> matches)
     {
-        var captures = ExecuteCaptures(GoQueries.PackageClause, root);
+        var captures = matches.FirstOrDefault() ?? [];
         var packageNode = GetCaptureNode(captures, "package_name");
         return IsNullNode(packageNode) ? null : NormalizeName(packageNode!.Text);
     }
 
-    private static List<GoImportInfo> ExtractImports(Node root)
+    private static List<GoImportInfo> ExtractImports(List<List<CaptureWithNode>> matches)
     {
         var imports = new List<GoImportInfo>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(GoQueries.ImportSpecs, root))
+        foreach (var match in matches)
         {
             var specNode = GetCaptureNode(match, "import_spec");
             var pathNode = GetCaptureNode(match, "import_path");
@@ -218,11 +220,13 @@ public sealed class GoTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static List<GoStructInfo> ExtractStructs(Node root)
+    private static List<GoStructInfo> ExtractStructs(
+        List<List<CaptureWithNode>> structDeclarations,
+        List<List<CaptureWithNode>> structFields)
     {
         var builders = new Dictionary<string, StructBuilder>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(GoQueries.StructDeclarations, root))
+        foreach (var match in structDeclarations)
         {
             var structDeclNode = GetCaptureNode(match, "struct_decl");
             var structTypeNode = GetCaptureNode(match, "struct_type");
@@ -245,7 +249,7 @@ public sealed class GoTreeSitterClient : IDisposable
                 new GoByteRange(structDeclNode!.StartIndex, structDeclNode.EndIndex));
         }
 
-        foreach (var match in ExecuteMatches(GoQueries.StructFields, root))
+        foreach (var match in structFields)
         {
             var structTypeNode = GetCaptureNode(match, "struct_type");
             var fieldNode = GetCaptureNode(match, "struct_field");
@@ -318,11 +322,14 @@ public sealed class GoTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static List<GoInterfaceInfo> ExtractInterfaces(Node root)
+    private static List<GoInterfaceInfo> ExtractInterfaces(
+        List<List<CaptureWithNode>> interfaceDeclarations,
+        List<List<CaptureWithNode>> interfaceMethods,
+        List<List<CaptureWithNode>> embeddedInterfaces)
     {
         var builders = new Dictionary<string, InterfaceBuilder>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(GoQueries.InterfaceDeclarations, root))
+        foreach (var match in interfaceDeclarations)
         {
             var interfaceDeclNode = GetCaptureNode(match, "interface_decl");
             var interfaceTypeNode = GetCaptureNode(match, "interface_type");
@@ -345,7 +352,7 @@ public sealed class GoTreeSitterClient : IDisposable
                 new GoByteRange(interfaceDeclNode!.StartIndex, interfaceDeclNode.EndIndex));
         }
 
-        foreach (var match in ExecuteMatches(GoQueries.InterfaceMethods, root))
+        foreach (var match in interfaceMethods)
         {
             var methodNode = GetCaptureNode(match, "interface_method");
             var nameNode = GetCaptureNode(match, "interface_method_name");
@@ -383,7 +390,7 @@ public sealed class GoTreeSitterClient : IDisposable
                 ByteRange: new GoByteRange(methodNode.StartIndex, methodNode.EndIndex)));
         }
 
-        foreach (var match in ExecuteMatches(GoQueries.EmbeddedInterfaces, root))
+        foreach (var match in embeddedInterfaces)
         {
             var embeddedTypeNode = GetCaptureNode(match, "embedded_interface_type");
             var embeddedContainerNode = GetCaptureNode(match, "embedded_interface");
@@ -425,12 +432,12 @@ public sealed class GoTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static List<GoTypeDefinitionInfo> ExtractTypeDefinitions(Node root)
+    private static List<GoTypeDefinitionInfo> ExtractTypeDefinitions(List<List<CaptureWithNode>> matches)
     {
         var types = new List<GoTypeDefinitionInfo>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(GoQueries.TypeDefinitions, root))
+        foreach (var match in matches)
         {
             var nameNode = GetCaptureNode(match, "type_name");
             var underlyingNode = GetCaptureNode(match, "type_underlying");
@@ -480,11 +487,11 @@ public sealed class GoTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static List<GoConstantInfo> ExtractConstants(Node root, out List<GoConstantBlockInfo> constantBlocks)
+    private static List<GoConstantInfo> ExtractConstants(List<List<CaptureWithNode>> matches, out List<GoConstantBlockInfo> constantBlocks)
     {
         var specBuilders = new Dictionary<string, ConstantSpecBuilder>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(GoQueries.ConstantSpecs, root))
+        foreach (var match in matches)
         {
             var specNode = GetCaptureNode(match, "const_spec");
             if (IsNullNode(specNode))
@@ -603,11 +610,11 @@ public sealed class GoTreeSitterClient : IDisposable
         return constants;
     }
 
-    private static List<GoVariableInfo> ExtractVariables(Node root)
+    private static List<GoVariableInfo> ExtractVariables(List<List<CaptureWithNode>> matches)
     {
         var specBuilders = new Dictionary<string, VariableSpecBuilder>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(GoQueries.VariableSpecs, root))
+        foreach (var match in matches)
         {
             var specNode = GetCaptureNode(match, "var_spec");
             if (IsNullNode(specNode))
@@ -683,12 +690,12 @@ public sealed class GoTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static List<GoDirectiveInfo> ExtractDirectives(Node root)
+    private static List<GoDirectiveInfo> ExtractDirectives(List<List<CaptureWithNode>> matches)
     {
         var directives = new List<GoDirectiveInfo>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(GoQueries.Comments, root))
+        foreach (var match in matches)
         {
             var commentNode = GetCaptureNode(match, "comment");
             if (IsNullNode(commentNode))
@@ -718,11 +725,14 @@ public sealed class GoTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static List<GoDirectiveInfo> ExtractConcurrencyDirectives(Node root)
+    private static List<GoDirectiveInfo> ExtractConcurrencyDirectives(
+        List<List<CaptureWithNode>> goStatements,
+        List<List<CaptureWithNode>> channelTypes,
+        List<List<CaptureWithNode>> selectStatements)
     {
         var directives = new List<GoDirectiveInfo>();
 
-        foreach (var match in ExecuteMatches(GoQueries.GoStatements, root))
+        foreach (var match in goStatements)
         {
             var statementNode = GetCaptureNode(match, "goroutine_stmt");
             if (IsNullNode(statementNode))
@@ -741,7 +751,7 @@ public sealed class GoTreeSitterClient : IDisposable
                 ByteRange: new GoByteRange(statementNode!.StartIndex, statementNode.EndIndex)));
         }
 
-        foreach (var match in ExecuteMatches(GoQueries.ChannelTypes, root))
+        foreach (var match in channelTypes)
         {
             var channelNode = GetCaptureNode(match, "channel_type");
             if (IsNullNode(channelNode))
@@ -755,7 +765,7 @@ public sealed class GoTreeSitterClient : IDisposable
                 ByteRange: new GoByteRange(channelNode.StartIndex, channelNode.EndIndex)));
         }
 
-        foreach (var match in ExecuteMatches(GoQueries.SelectStatements, root))
+        foreach (var match in selectStatements)
         {
             var selectNode = GetCaptureNode(match, "select_stmt");
             if (IsNullNode(selectNode))
@@ -774,12 +784,12 @@ public sealed class GoTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static List<GoFunctionInfo> ExtractFunctions(Node root)
+    private static List<GoFunctionInfo> ExtractFunctions(List<List<CaptureWithNode>> matches)
     {
         var functions = new List<GoFunctionInfo>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(GoQueries.FunctionDeclarations, root))
+        foreach (var match in matches)
         {
             var functionNode = GetCaptureNode(match, "function_decl");
             var nameNode = GetCaptureNode(match, "function_name");
@@ -817,12 +827,12 @@ public sealed class GoTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static List<GoMethodInfo> ExtractMethods(Node root)
+    private static List<GoMethodInfo> ExtractMethods(List<List<CaptureWithNode>> matches)
     {
         var methods = new List<GoMethodInfo>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(GoQueries.MethodDeclarations, root))
+        foreach (var match in matches)
         {
             var methodNode = GetCaptureNode(match, "method_decl");
             var nameNode = GetCaptureNode(match, "method_name");
@@ -883,6 +893,12 @@ public sealed class GoTreeSitterClient : IDisposable
         var isPointer = rawType.StartsWith('*');
         var receiverType = isPointer ? NormalizeWhitespace(rawType[1..]) : rawType;
 
+        var genericStart = receiverType.IndexOf('[', StringComparison.Ordinal);
+        if (genericStart >= 0)
+        {
+            receiverType = receiverType[..genericStart].TrimEnd();
+        }
+
         if (string.IsNullOrWhiteSpace(receiverType))
         {
             receiverType = DeriveEmbeddedFieldName(rawType);
@@ -896,28 +912,6 @@ public sealed class GoTreeSitterClient : IDisposable
         return new ReceiverInfo(receiverName, receiverType, isPointer);
     }
 
-    private static List<CaptureWithNode> ExecuteCaptures(string query, Node rootNode)
-    {
-        using var treeSitterQuery = SharedLanguage.CreateQuery(query);
-        using var cursor = treeSitterQuery.Execute(rootNode);
-        return cursor.Captures
-            .Where(c => !c.Node.IsError)
-            .Select(c => new CaptureWithNode(c.Name, c.Node))
-            .ToList();
-    }
-
-    private static List<List<CaptureWithNode>> ExecuteMatches(string query, Node rootNode)
-    {
-        using var treeSitterQuery = SharedLanguage.CreateQuery(query);
-        using var cursor = treeSitterQuery.Execute(rootNode);
-        return cursor.Matches
-            .Select(m => m.Captures
-                .Where(c => !c.Node.IsError)
-                .Select(c => new CaptureWithNode(c.Name, c.Node))
-                .ToList())
-            .Where(m => m.Count > 0)
-            .ToList();
-    }
 
     private static bool ContainsIota(string? value)
         => !string.IsNullOrWhiteSpace(value)
