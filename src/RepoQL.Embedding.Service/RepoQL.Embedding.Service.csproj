@@ -7,7 +7,8 @@
     <!-- dotnet publish produces a container image by default -->
     <PublishProfile>DefaultContainer</PublishProfile>
     <ContainerRepository>repoql-embedding</ContainerRepository>
-    <ContainerFamily>alpine</ContainerFamily>
+    <ContainerFamily>noble</ContainerFamily>
+    <UserSecretsId>dbcf7209-9611-44dd-924e-b35e955f586a</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
