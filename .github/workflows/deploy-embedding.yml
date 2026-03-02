@@ -1,0 +1,106 @@
+name: deploy-embedding-service
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'GCP region'
+        default: 'us-central1'
+        type: string
+      image_tag:
+        description: 'Container image tag (default: git SHA)'
+        default: ''
+        type: string
+
+concurrency:
+  group: deploy-embedding
+  cancel-in-progress: false
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  SERVICE_NAME: repoql-embedding
+  AR_HOSTNAME: ${{ inputs.region || 'us-central1' }}-docker.pkg.dev
+
+permissions:
+  contents: read
+  id-token: write  # Required for Workload Identity Federation
+
+jobs:
+  deploy:
+    name: Build and deploy to Cloud Run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          include-prerelease: true
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: 'access_token'
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.AR_HOSTNAME }}
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Determine image tag
+        id: tag
+        shell: bash
+        run: |
+          tag="${{ inputs.image_tag }}"
+          if [[ -z "$tag" ]]; then
+            tag="${GITHUB_SHA:0:12}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push container image
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.tag.outputs.tag }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          REGION: ${{ inputs.region || 'us-central1' }}
+        run: |
+          set -euo pipefail
+
+          registry="${REGION}-docker.pkg.dev"
+          repository="${GCP_PROJECT_ID}/repoql/${SERVICE_NAME}"
+          full_image="${registry}/${repository}:${IMAGE_TAG}"
+
+          echo "Publishing container image: ${full_image}"
+
+          dotnet publish src/RepoQL.Embedding.Service/RepoQL.Embedding.Service.csproj \
+            -c Release \
+            /t:PublishContainer \
+            -p:ContainerRegistry="${registry}" \
+            -p:ContainerRepository="${repository}" \
+            -p:ContainerImageTag="${IMAGE_TAG}" \
+            --nologo
+
+          echo "image=${full_image}" >> "$GITHUB_ENV"
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE_NAME }}
+          region: ${{ inputs.region || 'us-central1' }}
+          image: ${{ env.image }}
+          flags: >-
+            --use-http2
+            --port=8080
+            --min-instances=0
+            --max-instances=1
+            --memory=512Mi
+            --cpu=1
+            --timeout=300
+            --allow-unauthenticated
+            --set-secrets=Embedding__VoyageApiKey=repoql-embedding-voyage-api-key:latest,Auth__ApiKeyHashes__0=repoql-embedding-auth-key-hash-0:latest
