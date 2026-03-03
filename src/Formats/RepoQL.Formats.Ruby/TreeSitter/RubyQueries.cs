@@ -153,4 +153,72 @@ internal static class RubyQueries
               arguments: (argument_list (_) @new_name (_) @original_name)
          (#eq? @call_name "alias_method")) @alias_call
         """;
+
+    /// <summary>
+    /// All 17 patterns concatenated for single-pass extraction.
+    /// Pattern indices: 0=ClassDeclarations, 1=ModuleDeclarations, 2=VisibilityBare,
+    /// 3=VisibilityTargeted, 4=MethodDeclarations, 5=YieldSites, 6=BlockParameters,
+    /// 7=SingletonMethods, 8=Mixins, 9=Constants, 10=AttributeAccessors,
+    /// 11=RequireStatements, 12=AliasStatements, 13=AliasMethodCalls,
+    /// 14-15=MetaprogrammingCalls (2 patterns), 16=MethodMissingDefinitions.
+    /// </summary>
+    public static readonly string CombinedQuery = string.Join("\n\n",
+        ClassDeclarations,          // 0
+        ModuleDeclarations,         // 1
+        VisibilityBare,             // 2
+        VisibilityTargeted,         // 3
+        MethodDeclarations,         // 4
+        YieldSites,                 // 5
+        BlockParameters,            // 6
+        SingletonMethods,           // 7
+        Mixins,                     // 8
+        Constants,                  // 9
+        AttributeAccessors,         // 10
+        RequireStatements,          // 11
+        AliasStatements,            // 12
+        AliasMethodCalls,           // 13
+        MetaprogrammingCalls,       // 14-15
+        MethodMissingDefinitions);  // 16
+
+    public static RubyPatternGroup ClassifyPattern(int patternIndex) => patternIndex switch
+    {
+        0 => RubyPatternGroup.ClassDeclarations,
+        1 => RubyPatternGroup.ModuleDeclarations,
+        2 => RubyPatternGroup.VisibilityBare,
+        3 => RubyPatternGroup.VisibilityTargeted,
+        4 => RubyPatternGroup.MethodDeclarations,
+        5 => RubyPatternGroup.YieldSites,
+        6 => RubyPatternGroup.BlockParameters,
+        7 => RubyPatternGroup.SingletonMethods,
+        8 => RubyPatternGroup.Mixins,
+        9 => RubyPatternGroup.Constants,
+        10 => RubyPatternGroup.AttributeAccessors,
+        11 => RubyPatternGroup.RequireStatements,
+        12 => RubyPatternGroup.AliasStatements,
+        13 => RubyPatternGroup.AliasMethodCalls,
+        14 or 15 => RubyPatternGroup.MetaprogrammingCalls,
+        16 => RubyPatternGroup.MethodMissingDefinitions,
+        _ => throw new ArgumentOutOfRangeException(nameof(patternIndex), patternIndex,
+            "Ruby combined query has 17 patterns (0-16).")
+    };
+}
+
+internal enum RubyPatternGroup
+{
+    ClassDeclarations,
+    ModuleDeclarations,
+    VisibilityBare,
+    VisibilityTargeted,
+    MethodDeclarations,
+    YieldSites,
+    BlockParameters,
+    SingletonMethods,
+    Mixins,
+    Constants,
+    AttributeAccessors,
+    RequireStatements,
+    AliasStatements,
+    AliasMethodCalls,
+    MetaprogrammingCalls,
+    MethodMissingDefinitions
 }

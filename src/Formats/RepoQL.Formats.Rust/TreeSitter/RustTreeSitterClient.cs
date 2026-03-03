@@ -8,6 +8,7 @@ namespace RepoQL.Formats.Rust.TreeSitter;
 internal sealed partial class RustTreeSitterClient : IDisposable
 {
     private static readonly Language SharedLanguage = CreateLanguage();
+    private static readonly Query SharedCombinedQuery = SharedLanguage.CreateQuery(RustQueries.CombinedQuery);
     private readonly ThreadLocal<Parser> _parsers = new(() => new Parser(SharedLanguage), trackAllValues: true);
     private bool _disposed;
 
@@ -46,23 +47,24 @@ internal sealed partial class RustTreeSitterClient : IDisposable
             var source = new SourceContext(sourceCode);
 
             var errorNodeCount = CountErrorNodes(root);
-            var visibilityByNode = BuildVisibilityLookup(root, source);
-            var (attributes, attributesByNode) = ExtractAttributes(root, source);
+            var dispatched = ExecuteCombinedQuery(root);
+            var visibilityByNode = BuildVisibilityLookup(dispatched.VisibilityModifiers, source);
+            var (attributes, attributesByNode) = ExtractAttributes(dispatched.Attributes, source);
 
-            var structs = ExtractStructs(root, source, visibilityByNode, attributesByNode);
-            var enums = ExtractEnums(root, source, visibilityByNode, attributesByNode);
-            var traits = ExtractTraits(root, source, visibilityByNode);
-            var implBlocks = ExtractImplBlocks(root, source, visibilityByNode);
-            var functions = ExtractFunctions(root, source, visibilityByNode, attributesByNode);
-            var modules = ExtractModules(root, source, visibilityByNode);
-            var constants = ExtractConstants(root, source, visibilityByNode);
-            var statics = ExtractStatics(root, source, visibilityByNode);
-            var typeAliases = ExtractTypeAliases(root, source, visibilityByNode);
-            var unions = ExtractUnions(root, source, visibilityByNode, attributesByNode);
-            var macroDefs = ExtractMacroDefs(root, source, visibilityByNode);
-            var macroInvocations = ExtractMacroInvocations(root, source);
-            var useDeclarations = ExtractUseDeclarations(root, source, visibilityByNode);
-            var externBlocks = ExtractExternBlocks(root, source);
+            var structs = ExtractStructs(dispatched.StructDeclarations, source, visibilityByNode, attributesByNode);
+            var enums = ExtractEnums(dispatched.EnumDeclarations, source, visibilityByNode, attributesByNode);
+            var traits = ExtractTraits(dispatched.TraitDeclarations, source, visibilityByNode);
+            var implBlocks = ExtractImplBlocks(dispatched.ImplBlocks, source, visibilityByNode);
+            var functions = ExtractFunctions(dispatched.FunctionDeclarations, source, visibilityByNode, attributesByNode);
+            var modules = ExtractModules(dispatched.ModuleDeclarations, source, visibilityByNode);
+            var constants = ExtractConstants(dispatched.Constants, source, visibilityByNode);
+            var statics = ExtractStatics(dispatched.Statics, source, visibilityByNode);
+            var typeAliases = ExtractTypeAliases(dispatched.TypeAliases, source, visibilityByNode);
+            var unions = ExtractUnions(dispatched.UnionDefinitions, source, visibilityByNode, attributesByNode);
+            var macroDefs = ExtractMacroDefs(dispatched.MacroDefinitions, source, visibilityByNode);
+            var macroInvocations = ExtractMacroInvocations(dispatched.MacroInvocations, source);
+            var useDeclarations = ExtractUseDeclarations(dispatched.UseDeclarations, source, visibilityByNode);
+            var externBlocks = ExtractExternBlocks(dispatched.ExternBlocks, source);
 
             return new RustDocumentSurface(
                 Structs: structs,
@@ -159,13 +161,13 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustStructInfo> ExtractStructs(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode,
         IReadOnlyDictionary<string, IReadOnlyList<RustAttributeInfo>> attributesByNode)
     {
         var results = new List<RustStructInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.StructDeclarations, root))
+        foreach (var match in matches)
         {
             var structNode = GetCapture(match, "struct");
             var nameNode = GetCapture(match, "name");
@@ -200,13 +202,13 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustEnumInfo> ExtractEnums(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode,
         IReadOnlyDictionary<string, IReadOnlyList<RustAttributeInfo>> attributesByNode)
     {
         var results = new List<RustEnumInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.EnumDeclarations, root))
+        foreach (var match in matches)
         {
             var enumNode = GetCapture(match, "enum");
             var nameNode = GetCapture(match, "name");
@@ -241,12 +243,12 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustTraitInfo> ExtractTraits(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode)
     {
         var results = new List<RustTraitInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.TraitDeclarations, root))
+        foreach (var match in matches)
         {
             var traitNode = GetCapture(match, "trait");
             var nameNode = GetCapture(match, "name");
@@ -289,12 +291,12 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustImplBlockInfo> ExtractImplBlocks(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode)
     {
         var results = new List<RustImplBlockInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.ImplBlocks, root))
+        foreach (var match in matches)
         {
             var implNode = GetCapture(match, "impl");
             var targetTypeNode = GetCapture(match, "target_type");
@@ -330,13 +332,13 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustFunctionInfo> ExtractFunctions(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode,
         IReadOnlyDictionary<string, IReadOnlyList<RustAttributeInfo>> attributesByNode)
     {
         var results = new List<RustFunctionInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.FunctionDeclarations, root))
+        foreach (var match in matches)
         {
             var functionNode = GetCapture(match, "function");
             var nameNode = GetCapture(match, "name");
@@ -386,12 +388,12 @@ internal sealed partial class RustTreeSitterClient : IDisposable
             .ToList();
     }
     private static IReadOnlyList<RustModuleInfo> ExtractModules(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode)
     {
         var results = new List<RustModuleInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.ModuleDeclarations, root))
+        foreach (var match in matches)
         {
             var moduleNode = GetCapture(match, "module");
             var nameNode = GetCapture(match, "name");
@@ -418,12 +420,12 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustConstantInfo> ExtractConstants(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode)
     {
         var results = new List<RustConstantInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.Constants, root))
+        foreach (var match in matches)
         {
             var constNode = GetCapture(match, "const");
             var nameNode = GetCapture(match, "name");
@@ -452,12 +454,12 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustStaticInfo> ExtractStatics(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode)
     {
         var results = new List<RustStaticInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.Statics, root))
+        foreach (var match in matches)
         {
             var staticNode = GetCapture(match, "static");
             var nameNode = GetCapture(match, "name");
@@ -484,12 +486,12 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustTypeAliasInfo> ExtractTypeAliases(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode)
     {
         var results = new List<RustTypeAliasInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.TypeAliases, root))
+        foreach (var match in matches)
         {
             var aliasNode = GetCapture(match, "type_alias");
             var nameNode = GetCapture(match, "name");
@@ -521,13 +523,13 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustUnionInfo> ExtractUnions(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode,
         IReadOnlyDictionary<string, IReadOnlyList<RustAttributeInfo>> attributesByNode)
     {
         var results = new List<RustUnionInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.UnionDefinitions, root))
+        foreach (var match in matches)
         {
             var unionNode = GetCapture(match, "union");
             var nameNode = GetCapture(match, "name");
@@ -560,12 +562,12 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustMacroDefInfo> ExtractMacroDefs(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode)
     {
         var results = new List<RustMacroDefInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.MacroDefinitions, root))
+        foreach (var match in matches)
         {
             var macroNode = GetCapture(match, "macro_def");
             var nameNode = GetCapture(match, "name");
@@ -585,10 +587,10 @@ internal sealed partial class RustTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static IReadOnlyList<RustMacroInvocationInfo> ExtractMacroInvocations(Node root, SourceContext source)
+    private static IReadOnlyList<RustMacroInvocationInfo> ExtractMacroInvocations(List<List<CaptureWithNode>> matches, SourceContext source)
     {
         var results = new List<RustMacroInvocationInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.MacroInvocations, root))
+        foreach (var match in matches)
         {
             var callNode = GetCapture(match, "macro_call");
             var macroNameNode = GetCapture(match, "macro_name");
@@ -608,12 +610,12 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<RustUseDeclarationInfo> ExtractUseDeclarations(
-        Node root,
+        List<List<CaptureWithNode>> matches,
         SourceContext source,
         IReadOnlyDictionary<string, string> visibilityByNode)
     {
         var results = new List<RustUseDeclarationInfo>();
-        foreach (var match in ExecuteMatchesSafe(RustQueries.UseDeclarations, root))
+        foreach (var match in matches)
         {
             var useNode = GetCapture(match, "use");
             var pathNode = GetCapture(match, "path");
@@ -638,10 +640,10 @@ internal sealed partial class RustTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static IReadOnlyList<RustExternBlockInfo> ExtractExternBlocks(Node root, SourceContext source)
+    private static IReadOnlyList<RustExternBlockInfo> ExtractExternBlocks(List<List<CaptureWithNode>> matches, SourceContext source)
     {
         var results = new List<RustExternBlockInfo>();
-        foreach (var capture in ExecuteCapturesSafe(RustQueries.ExternBlocks, root).Where(c => c.Name == "extern_block"))
+        foreach (var capture in matches.SelectMany(m => m).Where(c => c.Name == "extern_block"))
         {
             var externNode = capture.Node;
             if (IsNullNode(externNode))
@@ -1009,12 +1011,12 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     }
 
     private static (IReadOnlyList<RustAttributeInfo> Attributes, IReadOnlyDictionary<string, IReadOnlyList<RustAttributeInfo>> ByNode)
-        ExtractAttributes(Node root, SourceContext source)
+        ExtractAttributes(List<List<CaptureWithNode>> matches, SourceContext source)
     {
         var allAttributes = new List<RustAttributeInfo>();
         var byNode = new Dictionary<string, List<RustAttributeInfo>>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatchesSafe(RustQueries.Attributes, root))
+        foreach (var match in matches)
         {
             var attributeNode = GetCapture(match, "attribute");
             var nameNode = GetCapture(match, "attr_name");
@@ -1124,10 +1126,10 @@ internal sealed partial class RustTreeSitterClient : IDisposable
         return current;
     }
 
-    private static IReadOnlyDictionary<string, string> BuildVisibilityLookup(Node root, SourceContext source)
+    private static IReadOnlyDictionary<string, string> BuildVisibilityLookup(List<List<CaptureWithNode>> matches, SourceContext source)
     {
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var capture in ExecuteCapturesSafe(RustQueries.VisibilityModifiers, root))
+        foreach (var capture in matches.SelectMany(m => m))
         {
             if (capture.Name != "visibility")
             {
@@ -1656,28 +1658,6 @@ internal sealed partial class RustTreeSitterClient : IDisposable
     private static Node GetCapture(IReadOnlyList<CaptureWithNode> captures, string name)
         => captures.FirstOrDefault(c => c.Name == name).Node;
 
-    private static List<CaptureWithNode> ExecuteCapturesSafe(string query, Node rootNode)
-    {
-        try
-        {
-            return ExecuteCaptures(query, rootNode);
-        }
-        catch (Exception)
-        {
-            return [];
-        }
-    }
-
-    private static List<CaptureWithNode> ExecuteCaptures(string query, Node rootNode)
-    {
-        using var treeSitterQuery = SharedLanguage.CreateQuery(query);
-        using var cursor = treeSitterQuery.Execute(rootNode);
-        return cursor.Captures
-            .Where(c => !c.Node.IsError)
-            .Select(c => new CaptureWithNode(c.Name, c.Node))
-            .ToList();
-    }
-
     private static List<List<CaptureWithNode>> ExecuteMatchesSafe(string query, Node rootNode)
     {
         try
@@ -1701,6 +1681,76 @@ internal sealed partial class RustTreeSitterClient : IDisposable
                 .ToList())
             .Where(m => m.Count > 0)
             .ToList();
+    }
+
+    private static DispatchedMatches ExecuteCombinedQuery(Node root)
+    {
+        var result = new DispatchedMatches();
+        using var cursor = SharedCombinedQuery.Execute(root);
+
+        foreach (var match in cursor.Matches)
+        {
+            var captures = match.Captures
+                .Where(c => !c.Node.IsError)
+                .Select(c => new CaptureWithNode(c.Name, c.Node))
+                .ToList();
+
+            if (captures.Count == 0)
+            {
+                continue;
+            }
+
+            var group = RustQueries.ClassifyPattern(match.PatternIndex);
+            var bucket = group switch
+            {
+                RustPatternGroup.StructDeclarations => result.StructDeclarations,
+                RustPatternGroup.EnumDeclarations => result.EnumDeclarations,
+                RustPatternGroup.TraitDeclarations => result.TraitDeclarations,
+                RustPatternGroup.ImplBlocks => result.ImplBlocks,
+                RustPatternGroup.FunctionDeclarations => result.FunctionDeclarations,
+                RustPatternGroup.FunctionSignatures => result.FunctionSignatures,
+                RustPatternGroup.ModuleDeclarations => result.ModuleDeclarations,
+                RustPatternGroup.UseDeclarations => result.UseDeclarations,
+                RustPatternGroup.Constants => result.Constants,
+                RustPatternGroup.Statics => result.Statics,
+                RustPatternGroup.TypeAliases => result.TypeAliases,
+                RustPatternGroup.UnionDefinitions => result.UnionDefinitions,
+                RustPatternGroup.MacroDefinitions => result.MacroDefinitions,
+                RustPatternGroup.MacroInvocations => result.MacroInvocations,
+                RustPatternGroup.Attributes => result.Attributes,
+                RustPatternGroup.VisibilityModifiers => result.VisibilityModifiers,
+                RustPatternGroup.ExternBlocks => result.ExternBlocks,
+                _ => throw new InvalidOperationException($"Unknown pattern group {group}")
+            };
+            bucket.Add(captures);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Holds pre-dispatched match lists from a single combined query execution.
+    /// One list per <see cref="RustPatternGroup"/> — each element is a match (list of captures).
+    /// </summary>
+    private sealed class DispatchedMatches
+    {
+        public List<List<CaptureWithNode>> StructDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> EnumDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> TraitDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> ImplBlocks { get; } = [];
+        public List<List<CaptureWithNode>> FunctionDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> FunctionSignatures { get; } = [];
+        public List<List<CaptureWithNode>> ModuleDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> UseDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> Constants { get; } = [];
+        public List<List<CaptureWithNode>> Statics { get; } = [];
+        public List<List<CaptureWithNode>> TypeAliases { get; } = [];
+        public List<List<CaptureWithNode>> UnionDefinitions { get; } = [];
+        public List<List<CaptureWithNode>> MacroDefinitions { get; } = [];
+        public List<List<CaptureWithNode>> MacroInvocations { get; } = [];
+        public List<List<CaptureWithNode>> Attributes { get; } = [];
+        public List<List<CaptureWithNode>> VisibilityModifiers { get; } = [];
+        public List<List<CaptureWithNode>> ExternBlocks { get; } = [];
     }
 
     private static int CountErrorNodes(Node root)

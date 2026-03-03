@@ -137,4 +137,51 @@ internal static class RustQueries
           (block_comment)
         ] @doc_comment
         """;
+
+    /// <summary>
+    /// All 17 patterns concatenated in canonical order.
+    /// Compiled once into a static <see cref="TreeSitter.Query"/> for single-pass extraction.
+    /// Pattern indices are positional — see <see cref="ClassifyPattern"/>.
+    /// </summary>
+    public static readonly string CombinedQuery = string.Join("\n\n",
+        StructDeclarations,     // pattern  0        (1 pattern)
+        EnumDeclarations,       // pattern  1        (1 pattern)
+        TraitDeclarations,      // pattern  2        (1 pattern)
+        ImplBlocks,             // pattern  3        (1 pattern)
+        FunctionDeclarations,   // pattern  4        (1 pattern)
+        FunctionSignatures,     // pattern  5        (1 pattern)
+        ModuleDeclarations,     // pattern  6        (1 pattern)
+        UseDeclarations,        // pattern  7        (1 pattern)
+        Constants,              // pattern  8        (1 pattern)
+        Statics,                // pattern  9        (1 pattern)
+        TypeAliases,            // pattern 10        (1 pattern)
+        UnionDefinitions,       // pattern 11        (1 pattern)
+        MacroDefinitions,       // pattern 12        (1 pattern)
+        MacroInvocations,       // pattern 13        (1 pattern)
+        Attributes,             // pattern 14        (1 pattern)
+        VisibilityModifiers,    // pattern 15        (1 pattern)
+        ExternBlocks);          // pattern 16        (1 pattern)
+
+    public static RustPatternGroup ClassifyPattern(int patternIndex) => patternIndex switch
+    {
+        0 => RustPatternGroup.StructDeclarations,
+        1 => RustPatternGroup.EnumDeclarations,
+        2 => RustPatternGroup.TraitDeclarations,
+        3 => RustPatternGroup.ImplBlocks,
+        4 => RustPatternGroup.FunctionDeclarations,
+        5 => RustPatternGroup.FunctionSignatures,
+        6 => RustPatternGroup.ModuleDeclarations,
+        7 => RustPatternGroup.UseDeclarations,
+        8 => RustPatternGroup.Constants,
+        9 => RustPatternGroup.Statics,
+        10 => RustPatternGroup.TypeAliases,
+        11 => RustPatternGroup.UnionDefinitions,
+        12 => RustPatternGroup.MacroDefinitions,
+        13 => RustPatternGroup.MacroInvocations,
+        14 => RustPatternGroup.Attributes,
+        15 => RustPatternGroup.VisibilityModifiers,
+        16 => RustPatternGroup.ExternBlocks,
+        _ => throw new ArgumentOutOfRangeException(nameof(patternIndex), patternIndex,
+            $"Unknown Rust query pattern index {patternIndex}. Combined query has 17 patterns (0-16).")
+    };
 }

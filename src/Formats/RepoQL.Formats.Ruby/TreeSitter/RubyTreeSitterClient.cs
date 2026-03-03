@@ -6,6 +6,7 @@ namespace RepoQL.Formats.Ruby.TreeSitter;
 public sealed class RubyTreeSitterClient : IDisposable
 {
     private static readonly Language SharedLanguage = CreateLanguage();
+    private static readonly Query SharedCombinedQuery = SharedLanguage.CreateQuery(RubyQueries.CombinedQuery);
     private readonly ThreadLocal<Parser> _parsers = new(() => new Parser(SharedLanguage), trackAllValues: true);
     private bool _disposed;
 
@@ -34,23 +35,24 @@ public sealed class RubyTreeSitterClient : IDisposable
             var root = tree.RootNode;
 
             var errorNodeCount = CountErrorNodes(root);
+            var dispatched = ExecuteCombinedQuery(root);
 
-            var classBuilders = BuildClasses(root);
-            var moduleBuilders = BuildModules(root);
+            var classBuilders = BuildClasses(dispatched.ClassDeclarations);
+            var moduleBuilders = BuildModules(dispatched.ModuleDeclarations);
 
             var ownerLookup = BuildOwnerLookup(classBuilders, moduleBuilders);
 
-            ApplyVisibilities(root, ownerLookup);
-            AttachMethods(root, ownerLookup);
-            AttachSingletonMethods(root, ownerLookup);
-            AttachMixins(root, ownerLookup);
-            AttachConstants(root, ownerLookup);
-            AttachAttributes(root, ownerLookup);
+            ApplyVisibilities(dispatched.VisibilityBare, dispatched.VisibilityTargeted, ownerLookup);
+            AttachMethods(dispatched.MethodDeclarations, dispatched.YieldSites, dispatched.BlockParameters, ownerLookup);
+            AttachSingletonMethods(dispatched.SingletonMethods, ownerLookup);
+            AttachMixins(dispatched.Mixins, ownerLookup);
+            AttachConstants(dispatched.Constants, ownerLookup);
+            AttachAttributes(dispatched.AttributeAccessors, ownerLookup);
 
-            var (functions, totalMethodCount) = ExtractTopLevelFunctions(root, ownerLookup);
-            var requires = ExtractRequires(root);
-            var aliases = ExtractAliases(root);
-            var metaprogrammingHints = ExtractMetaprogrammingHints(root);
+            var (functions, totalMethodCount) = ExtractTopLevelFunctions(dispatched.MethodDeclarations, ownerLookup);
+            var requires = ExtractRequires(dispatched.RequireStatements);
+            var aliases = ExtractAliases(dispatched.AliasStatements, dispatched.AliasMethodCalls);
+            var metaprogrammingHints = ExtractMetaprogrammingHints(dispatched.MetaprogrammingCalls, dispatched.MethodMissingDefinitions);
 
             var classes = classBuilders
                 .OrderBy(b => b.ByteRange.StartByte)
@@ -140,9 +142,9 @@ public sealed class RubyTreeSitterClient : IDisposable
         return groups;
     }
 
-    private static List<ClassBuilder> BuildClasses(Node root)
+    private static List<ClassBuilder> BuildClasses(List<List<CaptureWithNode>> matches)
     {
-        var captures = ExecuteCaptures(RubyQueries.ClassDeclarations, root);
+        var captures = matches.SelectMany(m => m).ToList();
         var byClassNode = captures
             .Where(c => c.Name == "class_name")
             .GroupBy(c => GetOwnerNode(c.Node, "class"))
@@ -178,9 +180,9 @@ public sealed class RubyTreeSitterClient : IDisposable
         return classes;
     }
 
-    private static List<ModuleBuilder> BuildModules(Node root)
+    private static List<ModuleBuilder> BuildModules(List<List<CaptureWithNode>> matches)
     {
-        var captures = ExecuteCaptures(RubyQueries.ModuleDeclarations, root);
+        var captures = matches.SelectMany(m => m).ToList();
         var byModuleNode = captures
             .Where(c => c.Name == "module_name")
             .GroupBy(c => GetOwnerNode(c.Node, "module"))
@@ -224,7 +226,10 @@ public sealed class RubyTreeSitterClient : IDisposable
         return map;
     }
 
-    private static void ApplyVisibilities(Node root, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
+    private static void ApplyVisibilities(
+        List<List<CaptureWithNode>> visibilityBare,
+        List<List<CaptureWithNode>> visibilityTargeted,
+        IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
     {
         foreach (var owner in ownerLookup.Values)
         {
@@ -232,7 +237,7 @@ public sealed class RubyTreeSitterClient : IDisposable
             owner.TargetedVisibilities.Clear();
         }
 
-        var bareVisibilityCaptures = ExecuteCaptures(RubyQueries.VisibilityBare, root)
+        var bareVisibilityCaptures = visibilityBare.SelectMany(m => m)
             .Where(c => c.Name == "vis")
             .Where(c => IsVisibility(c.Node.Text))
             .Where(c => c.Node.Parent?.Type == "body_statement")
@@ -249,7 +254,7 @@ public sealed class RubyTreeSitterClient : IDisposable
             owner.VisibilityTransitions.Add((capture.Node.StartIndex, NormalizeName(capture.Node.Text)));
         }
 
-        var targetedVisibilityCaptures = ExecuteMatches(RubyQueries.VisibilityTargeted, root);
+        var targetedVisibilityCaptures = visibilityTargeted;
         foreach (var match in targetedVisibilityCaptures)
         {
             var visCapture = match.FirstOrDefault(c => c.Name == "vis");
@@ -271,11 +276,15 @@ public sealed class RubyTreeSitterClient : IDisposable
         }
     }
 
-    private static void AttachMethods(Node root, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
+    private static void AttachMethods(
+        List<List<CaptureWithNode>> methodDeclarations,
+        List<List<CaptureWithNode>> yieldSites,
+        List<List<CaptureWithNode>> blockParameters,
+        IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
     {
-        var methodCaptures = ExecuteMatches(RubyQueries.MethodDeclarations, root);
-        var yields = ExecuteCaptures(RubyQueries.YieldSites, root).Select(c => c.Node).ToList();
-        var blockParams = ExecuteCaptures(RubyQueries.BlockParameters, root).Select(c => c.Node).ToList();
+        var methodCaptures = methodDeclarations;
+        var yields = yieldSites.SelectMany(m => m).Select(c => c.Node).ToList();
+        var blockParams = blockParameters.SelectMany(m => m).Select(c => c.Node).ToList();
 
         foreach (var match in methodCaptures)
         {
@@ -326,9 +335,8 @@ public sealed class RubyTreeSitterClient : IDisposable
         }
     }
 
-    private static void AttachSingletonMethods(Node root, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
+    private static void AttachSingletonMethods(List<List<CaptureWithNode>> matches, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
     {
-        var matches = ExecuteMatches(RubyQueries.SingletonMethods, root);
         foreach (var match in matches)
         {
             var singletonMethodNode = match.FirstOrDefault(c => c.Name == "singleton_method").Node;
@@ -359,9 +367,9 @@ public sealed class RubyTreeSitterClient : IDisposable
         }
     }
 
-    private static void AttachMixins(Node root, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
+    private static void AttachMixins(List<List<CaptureWithNode>> mixinMatches, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
     {
-        var matches = ExecuteMatches(RubyQueries.Mixins, root)
+        var matches = mixinMatches
             .OrderBy(m =>
             {
                 var node = m.FirstOrDefault(c => c.Name == "mixin_call").Node;
@@ -403,9 +411,8 @@ public sealed class RubyTreeSitterClient : IDisposable
         }
     }
 
-    private static void AttachConstants(Node root, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
+    private static void AttachConstants(List<List<CaptureWithNode>> matches, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
     {
-        var matches = ExecuteMatches(RubyQueries.Constants, root);
         foreach (var match in matches)
         {
             var constNode = match.FirstOrDefault(c => c.Name == "const_name").Node;
@@ -426,9 +433,8 @@ public sealed class RubyTreeSitterClient : IDisposable
         }
     }
 
-    private static void AttachAttributes(Node root, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
+    private static void AttachAttributes(List<List<CaptureWithNode>> matches, IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
     {
-        var matches = ExecuteMatches(RubyQueries.AttributeAccessors, root);
         foreach (var match in matches)
         {
             var callNode = match.FirstOrDefault(c => c.Name == "attribute_call").Node;
@@ -464,12 +470,12 @@ public sealed class RubyTreeSitterClient : IDisposable
     }
 
     private static (IReadOnlyList<RubyMethodInfo> Functions, int MethodCountInOwners) ExtractTopLevelFunctions(
-        Node root,
+        List<List<CaptureWithNode>> methodDeclarations,
         IReadOnlyDictionary<string, OwnerBuilder> ownerLookup)
     {
         var methodsInOwners = ownerLookup.Values.Sum(o => o.Methods.Count + (o is ClassBuilder c ? c.SingletonMethods.Count : 0));
         var functions = new List<RubyMethodInfo>();
-        var methodMatches = ExecuteMatches(RubyQueries.MethodDeclarations, root);
+        var methodMatches = methodDeclarations;
         foreach (var match in methodMatches)
         {
             var methodNode = match.FirstOrDefault(c => c.Name == "method_node").Node;
@@ -498,10 +504,9 @@ public sealed class RubyTreeSitterClient : IDisposable
         return (functions, methodsInOwners);
     }
 
-    private static IReadOnlyList<RubyRequireInfo> ExtractRequires(Node root)
+    private static IReadOnlyList<RubyRequireInfo> ExtractRequires(List<List<CaptureWithNode>> matches)
     {
         var requires = new List<RubyRequireInfo>();
-        var matches = ExecuteMatches(RubyQueries.RequireStatements, root);
         foreach (var match in matches)
         {
             var reqMethodNode = match.FirstOrDefault(c => c.Name == "req_method").Node;
@@ -522,11 +527,13 @@ public sealed class RubyTreeSitterClient : IDisposable
         return requires;
     }
 
-    private static IReadOnlyList<RubyAliasInfo> ExtractAliases(Node root)
+    private static IReadOnlyList<RubyAliasInfo> ExtractAliases(
+        List<List<CaptureWithNode>> aliasStatements,
+        List<List<CaptureWithNode>> aliasMethodCalls)
     {
         var aliases = new List<RubyAliasInfo>();
 
-        foreach (var match in ExecuteMatches(RubyQueries.AliasStatements, root))
+        foreach (var match in aliasStatements)
         {
             var aliasNode = match.FirstOrDefault(c => c.Name == "alias_node").Node;
             var newNameNode = match.FirstOrDefault(c => c.Name == "new_name").Node;
@@ -543,7 +550,7 @@ public sealed class RubyTreeSitterClient : IDisposable
                 new RubyByteRange(aliasNode.StartIndex, aliasNode.EndIndex)));
         }
 
-        foreach (var match in ExecuteMatches(RubyQueries.AliasMethodCalls, root))
+        foreach (var match in aliasMethodCalls)
         {
             var aliasCallNode = match.FirstOrDefault(c => c.Name == "alias_call").Node;
             var newNameNode = match.FirstOrDefault(c => c.Name == "new_name").Node;
@@ -563,10 +570,12 @@ public sealed class RubyTreeSitterClient : IDisposable
         return aliases;
     }
 
-    private static IReadOnlyList<RubyMetaprogrammingHint> ExtractMetaprogrammingHints(Node root)
+    private static IReadOnlyList<RubyMetaprogrammingHint> ExtractMetaprogrammingHints(
+        List<List<CaptureWithNode>> metaprogrammingCalls,
+        List<List<CaptureWithNode>> methodMissingDefinitions)
     {
         var hints = new List<RubyMetaprogrammingHint>();
-        var matches = ExecuteMatches(RubyQueries.MetaprogrammingCalls, root);
+        var matches = metaprogrammingCalls;
         foreach (var match in matches)
         {
             var metaMethodNode = match.FirstOrDefault(c => c.Name == "meta_method").Node;
@@ -586,7 +595,7 @@ public sealed class RubyTreeSitterClient : IDisposable
                 extractable));
         }
 
-        foreach (var match in ExecuteMatches(RubyQueries.MethodMissingDefinitions, root))
+        foreach (var match in methodMissingDefinitions)
         {
             var methodNode = match.FirstOrDefault(c => c.Name == "method_missing_def").Node;
             if (IsNullNode(methodNode))
@@ -603,27 +612,68 @@ public sealed class RubyTreeSitterClient : IDisposable
         return hints;
     }
 
-    private static List<CaptureWithNode> ExecuteCaptures(string query, Node rootNode)
+    private static DispatchedMatches ExecuteCombinedQuery(Node root)
     {
-        using var treeSitterQuery = SharedLanguage.CreateQuery(query);
-        using var cursor = treeSitterQuery.Execute(rootNode);
-        return cursor.Captures
-            .Where(c => !c.Node.IsError)
-            .Select(c => new CaptureWithNode(c.Name, c.Node))
-            .ToList();
-    }
+        var result = new DispatchedMatches();
+        using var cursor = SharedCombinedQuery.Execute(root);
 
-    private static List<List<CaptureWithNode>> ExecuteMatches(string query, Node rootNode)
-    {
-        using var treeSitterQuery = SharedLanguage.CreateQuery(query);
-        using var cursor = treeSitterQuery.Execute(rootNode);
-        return cursor.Matches
-            .Select(m => m.Captures
+        foreach (var match in cursor.Matches)
+        {
+            var captures = match.Captures
                 .Where(c => !c.Node.IsError)
                 .Select(c => new CaptureWithNode(c.Name, c.Node))
-                .ToList())
-            .Where(m => m.Count > 0)
-            .ToList();
+                .ToList();
+
+            if (captures.Count == 0)
+            {
+                continue;
+            }
+
+            var group = RubyQueries.ClassifyPattern(match.PatternIndex);
+            var bucket = group switch
+            {
+                RubyPatternGroup.ClassDeclarations => result.ClassDeclarations,
+                RubyPatternGroup.ModuleDeclarations => result.ModuleDeclarations,
+                RubyPatternGroup.VisibilityBare => result.VisibilityBare,
+                RubyPatternGroup.VisibilityTargeted => result.VisibilityTargeted,
+                RubyPatternGroup.MethodDeclarations => result.MethodDeclarations,
+                RubyPatternGroup.YieldSites => result.YieldSites,
+                RubyPatternGroup.BlockParameters => result.BlockParameters,
+                RubyPatternGroup.SingletonMethods => result.SingletonMethods,
+                RubyPatternGroup.Mixins => result.Mixins,
+                RubyPatternGroup.Constants => result.Constants,
+                RubyPatternGroup.AttributeAccessors => result.AttributeAccessors,
+                RubyPatternGroup.RequireStatements => result.RequireStatements,
+                RubyPatternGroup.AliasStatements => result.AliasStatements,
+                RubyPatternGroup.AliasMethodCalls => result.AliasMethodCalls,
+                RubyPatternGroup.MetaprogrammingCalls => result.MetaprogrammingCalls,
+                RubyPatternGroup.MethodMissingDefinitions => result.MethodMissingDefinitions,
+                _ => throw new InvalidOperationException($"Unknown pattern group {group}")
+            };
+            bucket.Add(captures);
+        }
+
+        return result;
+    }
+
+    private sealed class DispatchedMatches
+    {
+        public List<List<CaptureWithNode>> ClassDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> ModuleDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> VisibilityBare { get; } = [];
+        public List<List<CaptureWithNode>> VisibilityTargeted { get; } = [];
+        public List<List<CaptureWithNode>> MethodDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> YieldSites { get; } = [];
+        public List<List<CaptureWithNode>> BlockParameters { get; } = [];
+        public List<List<CaptureWithNode>> SingletonMethods { get; } = [];
+        public List<List<CaptureWithNode>> Mixins { get; } = [];
+        public List<List<CaptureWithNode>> Constants { get; } = [];
+        public List<List<CaptureWithNode>> AttributeAccessors { get; } = [];
+        public List<List<CaptureWithNode>> RequireStatements { get; } = [];
+        public List<List<CaptureWithNode>> AliasStatements { get; } = [];
+        public List<List<CaptureWithNode>> AliasMethodCalls { get; } = [];
+        public List<List<CaptureWithNode>> MetaprogrammingCalls { get; } = [];
+        public List<List<CaptureWithNode>> MethodMissingDefinitions { get; } = [];
     }
 
     private static int CountErrorNodes(Node root)

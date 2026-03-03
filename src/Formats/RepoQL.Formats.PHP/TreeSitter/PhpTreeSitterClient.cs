@@ -15,6 +15,7 @@ namespace RepoQL.Formats.PHP.TreeSitter;
 public sealed class PhpTreeSitterClient : IDisposable
 {
     private static readonly Language SharedLanguage = CreateLanguage();
+    private static readonly Query SharedCombinedQuery = SharedLanguage.CreateQuery(PhpQueries.CombinedQuery);
     private readonly ThreadLocal<Parser> _parsers = new(() => new Parser(SharedLanguage), trackAllValues: true);
     private bool _disposed;
 
@@ -47,14 +48,15 @@ public sealed class PhpTreeSitterClient : IDisposable
             var root = tree.RootNode;
 
             var errorNodeCount = CountErrorNodes(root);
+            var dispatched = ExecuteCombinedQuery(root);
 
-            var (ns, nsSpan) = ExtractNamespace(root);
-            var useStatements = ExtractUseStatements(root);
-            var classes = ExtractClasses(root, ns);
-            var interfaces = ExtractInterfaces(root, ns);
-            var traits = ExtractTraits(root, ns);
-            var enums = ExtractEnums(root, ns);
-            var functions = ExtractFunctions(root, ns);
+            var (ns, nsSpan) = ExtractNamespace(dispatched.Namespace);
+            var useStatements = ExtractUseStatements(dispatched.UseDeclarations);
+            var classes = ExtractClasses(dispatched.Classes, ns);
+            var interfaces = ExtractInterfaces(dispatched.Interfaces, ns);
+            var traits = ExtractTraits(dispatched.Traits, ns);
+            var enums = ExtractEnums(dispatched.Enums, ns);
+            var functions = ExtractFunctions(dispatched.Functions, ns);
 
             var methodCount = classes.Sum(c => c.Methods.Count)
                               + interfaces.Sum(i => i.Methods.Count)
@@ -93,9 +95,8 @@ public sealed class PhpTreeSitterClient : IDisposable
 
     #region Namespace
 
-    private static (string? Namespace, PhpByteRange? Span) ExtractNamespace(Node root)
+    private static (string? Namespace, PhpByteRange? Span) ExtractNamespace(List<List<CaptureWithNode>> matches)
     {
-        var matches = ExecuteMatches(PhpQueries.NamespaceDefinitions, root);
         if (matches.Count == 0)
             return (null, null);
 
@@ -113,9 +114,8 @@ public sealed class PhpTreeSitterClient : IDisposable
 
     #region Use Statements
 
-    private static List<PhpUseInfo> ExtractUseStatements(Node root)
+    private static List<PhpUseInfo> ExtractUseStatements(List<List<CaptureWithNode>> matches)
     {
-        var matches = ExecuteMatches(PhpQueries.UseDeclarations, root);
         var results = new List<PhpUseInfo>();
 
         foreach (var match in matches)
@@ -160,9 +160,8 @@ public sealed class PhpTreeSitterClient : IDisposable
 
     #region Classes
 
-    private static List<PhpClassInfo> ExtractClasses(Node root, string? currentNamespace)
+    private static List<PhpClassInfo> ExtractClasses(List<List<CaptureWithNode>> matches, string? currentNamespace)
     {
-        var matches = ExecuteMatches(PhpQueries.ClassDeclarations, root);
         var results = new List<PhpClassInfo>();
 
         foreach (var match in matches)
@@ -215,9 +214,8 @@ public sealed class PhpTreeSitterClient : IDisposable
 
     #region Interfaces
 
-    private static List<PhpInterfaceInfo> ExtractInterfaces(Node root, string? currentNamespace)
+    private static List<PhpInterfaceInfo> ExtractInterfaces(List<List<CaptureWithNode>> matches, string? currentNamespace)
     {
-        var matches = ExecuteMatches(PhpQueries.InterfaceDeclarations, root);
         var results = new List<PhpInterfaceInfo>();
 
         foreach (var match in matches)
@@ -250,9 +248,8 @@ public sealed class PhpTreeSitterClient : IDisposable
 
     #region Traits
 
-    private static List<PhpTraitInfo> ExtractTraits(Node root, string? currentNamespace)
+    private static List<PhpTraitInfo> ExtractTraits(List<List<CaptureWithNode>> matches, string? currentNamespace)
     {
-        var matches = ExecuteMatches(PhpQueries.TraitDeclarations, root);
         var results = new List<PhpTraitInfo>();
 
         foreach (var match in matches)
@@ -283,9 +280,8 @@ public sealed class PhpTreeSitterClient : IDisposable
 
     #region Enums
 
-    private static List<PhpEnumInfo> ExtractEnums(Node root, string? currentNamespace)
+    private static List<PhpEnumInfo> ExtractEnums(List<List<CaptureWithNode>> matches, string? currentNamespace)
     {
-        var matches = ExecuteMatches(PhpQueries.EnumDeclarations, root);
         var results = new List<PhpEnumInfo>();
 
         foreach (var match in matches)
@@ -361,9 +357,8 @@ public sealed class PhpTreeSitterClient : IDisposable
 
     #region Functions
 
-    private static List<PhpFunctionInfo> ExtractFunctions(Node root, string? currentNamespace)
+    private static List<PhpFunctionInfo> ExtractFunctions(List<List<CaptureWithNode>> matches, string? currentNamespace)
     {
-        var matches = ExecuteMatches(PhpQueries.FunctionDefinitions, root);
         var results = new List<PhpFunctionInfo>();
 
         foreach (var match in matches)
@@ -712,18 +707,48 @@ public sealed class PhpTreeSitterClient : IDisposable
         return null;
     }
 
-    private static List<List<CaptureWithNode>> ExecuteMatches(string queryText, Node rootNode)
+    private static DispatchedMatches ExecuteCombinedQuery(Node root)
     {
-        using var query = SharedLanguage.CreateQuery(queryText);
-        using var cursor = query.Execute(rootNode);
+        var result = new DispatchedMatches();
+        using var cursor = SharedCombinedQuery.Execute(root);
 
-        return cursor.Matches
-            .Select(m => m.Captures
+        foreach (var match in cursor.Matches)
+        {
+            var captures = match.Captures
                 .Where(c => !c.Node.IsError)
                 .Select(c => new CaptureWithNode(c.Name, c.Node))
-                .ToList())
-            .Where(m => m.Count > 0)
-            .ToList();
+                .ToList();
+
+            if (captures.Count == 0)
+                continue;
+
+            var group = PhpQueries.ClassifyPattern(match.PatternIndex);
+            var bucket = group switch
+            {
+                PhpPatternGroup.Namespace => result.Namespace,
+                PhpPatternGroup.UseDeclarations => result.UseDeclarations,
+                PhpPatternGroup.Classes => result.Classes,
+                PhpPatternGroup.Interfaces => result.Interfaces,
+                PhpPatternGroup.Traits => result.Traits,
+                PhpPatternGroup.Enums => result.Enums,
+                PhpPatternGroup.Functions => result.Functions,
+                _ => throw new InvalidOperationException($"Unknown pattern group {group}")
+            };
+            bucket.Add(captures);
+        }
+
+        return result;
+    }
+
+    private sealed class DispatchedMatches
+    {
+        public List<List<CaptureWithNode>> Namespace { get; } = [];
+        public List<List<CaptureWithNode>> UseDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> Classes { get; } = [];
+        public List<List<CaptureWithNode>> Interfaces { get; } = [];
+        public List<List<CaptureWithNode>> Traits { get; } = [];
+        public List<List<CaptureWithNode>> Enums { get; } = [];
+        public List<List<CaptureWithNode>> Functions { get; } = [];
     }
 
     #endregion

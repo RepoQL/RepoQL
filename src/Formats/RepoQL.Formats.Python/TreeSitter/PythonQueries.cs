@@ -131,4 +131,43 @@ internal static class PythonQueries
                 function: (_) @function_expr
                 arguments: (_) @call_arguments) @call_node) @assignment_node
         """;
+
+    /// <summary>
+    /// All 16 patterns concatenated in canonical order.
+    /// Compiled once into a static <see cref="TreeSitter.Query"/> for single-pass extraction.
+    /// Pattern indices are positional — see <see cref="ClassifyPattern"/>.
+    /// </summary>
+    public static readonly string CombinedQuery = string.Join("\n\n",
+        DecoratedDefinitions,     // pattern  0        (1 pattern)
+        ClassDeclarations,        // pattern  1        (1 pattern)
+        FunctionDeclarations,     // pattern  2        (1 pattern)
+        SelfAttributeAssignments, // pattern  3        (1 pattern)
+        YieldSites,               // pattern  4        (1 pattern)
+        AsyncWithSites,           // pattern  5        (1 pattern)
+        AsyncForSites,            // pattern  6        (1 pattern)
+        ImportStatements,         // patterns 7-8      (2 patterns)
+        ImportFromStatements,     // patterns 9-11     (3 patterns)
+        TypeAliasStatements,      // pattern  12       (1 pattern)
+        MetaprogrammingCalls,     // pattern  13       (1 pattern)
+        DunderDefinitions,        // pattern  14       (1 pattern)
+        FrameworkFieldPatterns);  // pattern  15       (1 pattern)
+
+    public static PythonPatternGroup ClassifyPattern(int patternIndex) => patternIndex switch
+    {
+        0 => PythonPatternGroup.DecoratedDefinitions,
+        1 => PythonPatternGroup.ClassDeclarations,
+        2 => PythonPatternGroup.FunctionDeclarations,
+        3 => PythonPatternGroup.SelfAttributeAssignments,
+        4 => PythonPatternGroup.YieldSites,
+        5 => PythonPatternGroup.AsyncWithSites,
+        6 => PythonPatternGroup.AsyncForSites,
+        7 or 8 => PythonPatternGroup.ImportStatements,
+        >= 9 and <= 11 => PythonPatternGroup.ImportFromStatements,
+        12 => PythonPatternGroup.TypeAliasStatements,
+        13 => PythonPatternGroup.MetaprogrammingCalls,
+        14 => PythonPatternGroup.DunderDefinitions,
+        15 => PythonPatternGroup.FrameworkFieldPatterns,
+        _ => throw new ArgumentOutOfRangeException(nameof(patternIndex), patternIndex,
+            $"Unknown Python query pattern index {patternIndex}. Combined query has 16 patterns (0-15).")
+    };
 }

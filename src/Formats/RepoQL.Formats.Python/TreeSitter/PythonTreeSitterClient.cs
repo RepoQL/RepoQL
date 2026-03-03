@@ -6,6 +6,7 @@ namespace RepoQL.Formats.Python.TreeSitter;
 public sealed class PythonTreeSitterClient : IDisposable
 {
     private static readonly Language SharedLanguage = CreateLanguage();
+    private static readonly Query SharedCombinedQuery = SharedLanguage.CreateQuery(PythonQueries.CombinedQuery);
     private readonly ThreadLocal<Parser> _parsers = new(() => new Parser(SharedLanguage), trackAllValues: true);
     private bool _disposed;
 
@@ -37,25 +38,27 @@ public sealed class PythonTreeSitterClient : IDisposable
             var root = tree.RootNode;
 
             var errorNodeCount = CountErrorNodes(root);
-            var decoratorLookup = BuildDecoratorLookup(root);
-            var classBuilders = BuildClasses(root, decoratorLookup);
+            var dispatched = ExecuteCombinedQuery(root);
+
+            var decoratorLookup = BuildDecoratorLookup(dispatched.DecoratedDefinitions);
+            var classBuilders = BuildClasses(dispatched.ClassDeclarations, decoratorLookup);
             var classLookup = classBuilders.ToDictionary(c => GetNodeKey(c.Node), c => c, StringComparer.Ordinal);
 
-            var functionMatches = ExecuteMatches(PythonQueries.FunctionDeclarations, root);
-            var selfAssignments = ExecuteMatches(PythonQueries.SelfAttributeAssignments, root);
-            var yieldNodes = ExecuteCaptures(PythonQueries.YieldSites, root).Select(c => c.Node).ToList();
-            var asyncWithNodes = ExecuteCaptures(PythonQueries.AsyncWithSites, root).Select(c => c.Node).ToList();
-            var asyncForNodes = ExecuteCaptures(PythonQueries.AsyncForSites, root).Select(c => c.Node).ToList();
+            var functionMatches = dispatched.FunctionDeclarations;
+            var selfAssignments = dispatched.SelfAttributeAssignments;
+            var yieldNodes = dispatched.YieldSites.SelectMany(m => m).Select(c => c.Node).ToList();
+            var asyncWithNodes = dispatched.AsyncWithSites.SelectMany(m => m).Select(c => c.Node).ToList();
+            var asyncForNodes = dispatched.AsyncForSites.SelectMany(m => m).Select(c => c.Node).ToList();
 
             AttachMethods(functionMatches, classLookup, decoratorLookup, yieldNodes, asyncWithNodes, asyncForNodes);
             AttachClassVariablesAndSlots(classLookup.Values);
             AttachInstanceVariables(functionMatches, selfAssignments, classLookup);
 
             var functions = ExtractTopLevelFunctions(functionMatches, decoratorLookup, yieldNodes, asyncWithNodes, asyncForNodes);
-            var imports = ExtractImports(root);
-            var (constants, typeAliases, allExports, moduleDocstring) = ExtractModuleData(root);
-            var metaprogrammingHints = ExtractMetaprogrammingHints(root, functionMatches);
-            var frameworkHints = ExtractFrameworkHints(root);
+            var imports = ExtractImports(dispatched.ImportStatements, dispatched.ImportFromStatements);
+            var (constants, typeAliases, allExports, moduleDocstring) = ExtractModuleData(root, dispatched.TypeAliasStatements);
+            var metaprogrammingHints = ExtractMetaprogrammingHints(dispatched.MetaprogrammingCalls, dispatched.DunderDefinitions, functionMatches);
+            var frameworkHints = ExtractFrameworkHints(dispatched.FrameworkFieldPatterns);
 
             var classes = classBuilders
                 .OrderBy(c => c.ByteRange.StartByte)
@@ -150,11 +153,12 @@ public sealed class PythonTreeSitterClient : IDisposable
         return groups;
     }
 
-    private static Dictionary<string, IReadOnlyList<PythonDecoratorInfo>> BuildDecoratorLookup(Node root)
+    private static Dictionary<string, IReadOnlyList<PythonDecoratorInfo>> BuildDecoratorLookup(
+        List<List<CaptureWithNode>> decoratedDefinitionMatches)
     {
         var byDefinition = new Dictionary<string, List<(int Start, PythonDecoratorInfo Decorator)>>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(PythonQueries.DecoratedDefinitions, root))
+        foreach (var match in decoratedDefinitionMatches)
         {
             var definitionNode = match.FirstOrDefault(c => c.Name == "definition").Node;
             var decoratorNode = match.FirstOrDefault(c => c.Name == "decorator").Node;
@@ -185,11 +189,11 @@ public sealed class PythonTreeSitterClient : IDisposable
     }
 
     private static List<ClassBuilder> BuildClasses(
-        Node root,
+        List<List<CaptureWithNode>> classDeclarationMatches,
         IReadOnlyDictionary<string, IReadOnlyList<PythonDecoratorInfo>> decoratorLookup)
     {
         var classes = new List<ClassBuilder>();
-        foreach (var match in ExecuteMatches(PythonQueries.ClassDeclarations, root))
+        foreach (var match in classDeclarationMatches)
         {
             var classNode = match.FirstOrDefault(c => c.Name == "class_node").Node;
             var classNameNode = match.FirstOrDefault(c => c.Name == "class_name").Node;
@@ -453,11 +457,13 @@ public sealed class PythonTreeSitterClient : IDisposable
             .OrderBy(f => f.ByteRange.StartByte)
             .ToList();
     }
-    private static IReadOnlyList<PythonImportInfo> ExtractImports(Node root)
+    private static IReadOnlyList<PythonImportInfo> ExtractImports(
+        List<List<CaptureWithNode>> importStatementMatches,
+        List<List<CaptureWithNode>> importFromStatementMatches)
     {
         var imports = new List<PythonImportInfo>();
 
-        foreach (var match in ExecuteMatches(PythonQueries.ImportStatements, root))
+        foreach (var match in importStatementMatches)
         {
             var importNode = match.FirstOrDefault(c => c.Name == "import_statement").Node;
             var moduleNameNode = match.FirstOrDefault(c => c.Name == "module_name").Node;
@@ -483,7 +489,7 @@ public sealed class PythonTreeSitterClient : IDisposable
         }
 
         var fromImportBuilders = new Dictionary<string, ImportFromBuilder>(StringComparer.Ordinal);
-        foreach (var match in ExecuteMatches(PythonQueries.ImportFromStatements, root))
+        foreach (var match in importFromStatementMatches)
         {
             var importNode = match.FirstOrDefault(c => c.Name == "import_from_statement").Node;
             var moduleNameNode = match.FirstOrDefault(c => c.Name == "module_name").Node;
@@ -547,7 +553,7 @@ public sealed class PythonTreeSitterClient : IDisposable
     }
 
     private static (IReadOnlyList<PythonConstantInfo> Constants, IReadOnlyList<PythonTypeAliasInfo> TypeAliases, string[]? AllExports, string? ModuleDocstring)
-        ExtractModuleData(Node root)
+        ExtractModuleData(Node root, List<List<CaptureWithNode>> typeAliasMatches)
     {
         var constants = new List<PythonConstantInfo>();
         var typeAliases = new List<PythonTypeAliasInfo>();
@@ -596,7 +602,7 @@ public sealed class PythonTreeSitterClient : IDisposable
                 ByteRange: new PythonByteRange(assignmentNode.StartIndex, assignmentNode.EndIndex)));
         }
 
-        foreach (var match in ExecuteMatches(PythonQueries.TypeAliasStatements, root))
+        foreach (var match in typeAliasMatches)
         {
             var aliasNode = match.FirstOrDefault(c => c.Name == "type_alias_statement").Node;
             var leftNode = match.FirstOrDefault(c => c.Name == "alias_left").Node;
@@ -626,13 +632,14 @@ public sealed class PythonTreeSitterClient : IDisposable
     }
 
     private static IReadOnlyList<PythonMetaprogrammingHint> ExtractMetaprogrammingHints(
-        Node root,
+        List<List<CaptureWithNode>> metaprogrammingCallMatches,
+        List<List<CaptureWithNode>> dunderDefinitionMatches,
         IReadOnlyList<List<CaptureWithNode>> functionMatches)
     {
         var hints = new List<PythonMetaprogrammingHint>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var match in ExecuteMatches(PythonQueries.MetaprogrammingCalls, root))
+        foreach (var match in metaprogrammingCallMatches)
         {
             var callNode = match.FirstOrDefault(c => c.Name == "meta_call").Node;
             var methodNode = match.FirstOrDefault(c => c.Name == "meta_function").Node;
@@ -658,7 +665,7 @@ public sealed class PythonTreeSitterClient : IDisposable
             AddMetaprogrammingHint(hints, seen, pattern, callNode, extractable: false);
         }
 
-        foreach (var match in ExecuteMatches(PythonQueries.DunderDefinitions, root))
+        foreach (var match in dunderDefinitionMatches)
         {
             var methodNode = match.FirstOrDefault(c => c.Name == "method_node").Node;
             var nameNode = match.FirstOrDefault(c => c.Name == "method_name").Node;
@@ -705,11 +712,12 @@ public sealed class PythonTreeSitterClient : IDisposable
             .ToList();
     }
 
-    private static IReadOnlyList<PythonFrameworkHint> ExtractFrameworkHints(Node root)
+    private static IReadOnlyList<PythonFrameworkHint> ExtractFrameworkHints(
+        List<List<CaptureWithNode>> frameworkFieldMatches)
     {
         var hints = new List<PythonFrameworkHint>();
 
-        foreach (var match in ExecuteMatches(PythonQueries.FrameworkFieldPatterns, root))
+        foreach (var match in frameworkFieldMatches)
         {
             var assignmentNode = match.FirstOrDefault(c => c.Name == "assignment_node").Node;
             var functionNode = match.FirstOrDefault(c => c.Name == "function_expr").Node;
@@ -1350,27 +1358,45 @@ public sealed class PythonTreeSitterClient : IDisposable
     private static bool Contains(Node outer, Node inner)
         => outer.StartIndex <= inner.StartIndex && outer.EndIndex >= inner.EndIndex;
 
-    private static List<CaptureWithNode> ExecuteCaptures(string query, Node rootNode)
+    private static DispatchedMatches ExecuteCombinedQuery(Node root)
     {
-        using var treeSitterQuery = SharedLanguage.CreateQuery(query);
-        using var cursor = treeSitterQuery.Execute(rootNode);
-        return cursor.Captures
-            .Where(c => !c.Node.IsError)
-            .Select(c => new CaptureWithNode(c.Name, c.Node))
-            .ToList();
-    }
+        var result = new DispatchedMatches();
+        using var cursor = SharedCombinedQuery.Execute(root);
 
-    private static List<List<CaptureWithNode>> ExecuteMatches(string query, Node rootNode)
-    {
-        using var treeSitterQuery = SharedLanguage.CreateQuery(query);
-        using var cursor = treeSitterQuery.Execute(rootNode);
-        return cursor.Matches
-            .Select(m => m.Captures
+        foreach (var match in cursor.Matches)
+        {
+            var captures = match.Captures
                 .Where(c => !c.Node.IsError)
                 .Select(c => new CaptureWithNode(c.Name, c.Node))
-                .ToList())
-            .Where(m => m.Count > 0)
-            .ToList();
+                .ToList();
+
+            if (captures.Count == 0)
+            {
+                continue;
+            }
+
+            var group = PythonQueries.ClassifyPattern(match.PatternIndex);
+            var bucket = group switch
+            {
+                PythonPatternGroup.DecoratedDefinitions => result.DecoratedDefinitions,
+                PythonPatternGroup.ClassDeclarations => result.ClassDeclarations,
+                PythonPatternGroup.FunctionDeclarations => result.FunctionDeclarations,
+                PythonPatternGroup.SelfAttributeAssignments => result.SelfAttributeAssignments,
+                PythonPatternGroup.YieldSites => result.YieldSites,
+                PythonPatternGroup.AsyncWithSites => result.AsyncWithSites,
+                PythonPatternGroup.AsyncForSites => result.AsyncForSites,
+                PythonPatternGroup.ImportStatements => result.ImportStatements,
+                PythonPatternGroup.ImportFromStatements => result.ImportFromStatements,
+                PythonPatternGroup.TypeAliasStatements => result.TypeAliasStatements,
+                PythonPatternGroup.MetaprogrammingCalls => result.MetaprogrammingCalls,
+                PythonPatternGroup.DunderDefinitions => result.DunderDefinitions,
+                PythonPatternGroup.FrameworkFieldPatterns => result.FrameworkFieldPatterns,
+                _ => throw new InvalidOperationException($"Unknown pattern group {group}")
+            };
+            bucket.Add(captures);
+        }
+
+        return result;
     }
 
     private static int CountErrorNodes(Node root)
@@ -1491,5 +1517,26 @@ public sealed class PythonTreeSitterClient : IDisposable
                 Slots: Slots,
                 Docstring: Docstring,
                 ByteRange: ByteRange);
+    }
+
+    /// <summary>
+    /// Holds pre-dispatched match lists from a single combined query execution.
+    /// One list per <see cref="PythonPatternGroup"/> — each element is a match (list of captures).
+    /// </summary>
+    private sealed class DispatchedMatches
+    {
+        public List<List<CaptureWithNode>> DecoratedDefinitions { get; } = [];
+        public List<List<CaptureWithNode>> ClassDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> FunctionDeclarations { get; } = [];
+        public List<List<CaptureWithNode>> SelfAttributeAssignments { get; } = [];
+        public List<List<CaptureWithNode>> YieldSites { get; } = [];
+        public List<List<CaptureWithNode>> AsyncWithSites { get; } = [];
+        public List<List<CaptureWithNode>> AsyncForSites { get; } = [];
+        public List<List<CaptureWithNode>> ImportStatements { get; } = [];
+        public List<List<CaptureWithNode>> ImportFromStatements { get; } = [];
+        public List<List<CaptureWithNode>> TypeAliasStatements { get; } = [];
+        public List<List<CaptureWithNode>> MetaprogrammingCalls { get; } = [];
+        public List<List<CaptureWithNode>> DunderDefinitions { get; } = [];
+        public List<List<CaptureWithNode>> FrameworkFieldPatterns { get; } = [];
     }
 }

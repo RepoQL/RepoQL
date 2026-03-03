@@ -7,6 +7,7 @@ namespace RepoQL.Formats.PHP.TreeSitter;
 ///
 /// Complexity: One constant per construct — classes, interfaces, traits, enums, functions,
 /// methods, namespaces, use statements, properties, constants, and enum cases.
+/// Combined query concatenates the 7 top-level patterns for single-pass extraction.
 /// </summary>
 internal static class PhpQueries
 {
@@ -67,4 +68,42 @@ internal static class PhpQueries
         (enum_case
             name: (name) @case_name) @case_node
         """;
+
+    /// <summary>
+    /// All 7 top-level patterns concatenated for single-pass extraction.
+    /// Pattern indices: 0=Namespace, 1=UseDeclarations, 2=Classes, 3=Interfaces,
+    /// 4=Traits, 5=Enums, 6=Functions.
+    /// </summary>
+    public static readonly string CombinedQuery = string.Join("\n\n",
+        NamespaceDefinitions,   // 0
+        UseDeclarations,        // 1
+        ClassDeclarations,      // 2
+        InterfaceDeclarations,  // 3
+        TraitDeclarations,      // 4
+        EnumDeclarations,       // 5
+        FunctionDefinitions);   // 6
+
+    public static PhpPatternGroup ClassifyPattern(int patternIndex) => patternIndex switch
+    {
+        0 => PhpPatternGroup.Namespace,
+        1 => PhpPatternGroup.UseDeclarations,
+        2 => PhpPatternGroup.Classes,
+        3 => PhpPatternGroup.Interfaces,
+        4 => PhpPatternGroup.Traits,
+        5 => PhpPatternGroup.Enums,
+        6 => PhpPatternGroup.Functions,
+        _ => throw new ArgumentOutOfRangeException(nameof(patternIndex), patternIndex,
+            "PHP combined query has 7 patterns (0-6).")
+    };
+}
+
+internal enum PhpPatternGroup
+{
+    Namespace,
+    UseDeclarations,
+    Classes,
+    Interfaces,
+    Traits,
+    Enums,
+    Functions
 }
