@@ -12,12 +12,12 @@ namespace RepoQL.Explore;
 public static class ExploreTokenEstimator
 {
     /// <summary>
-    /// Estimate tokens for Minimal representation (headline only).
+    /// Estimate tokens for Minimal representation (uri + headline).
     /// </summary>
     public static int EstimateMinimal(ExploreResult result)
     {
-        // Just headline (single line) + minimal overhead
-        return CoreTokenEstimator.EstimateTokens(result.Headline) + 1;
+        // Headline + minimal overhead + approximate URI cost
+        return CoreTokenEstimator.EstimateTokens(result.Headline) + 1 + 15;
     }
 
     /// <summary>
@@ -52,6 +52,8 @@ public static class ExploreTokenEstimator
         tokens += CoreTokenEstimator.EstimateTokens(result.Uri);
         tokens += 1; // newline
         tokens += CoreTokenEstimator.EstimateTokens(result.Headline);
+        if (!string.IsNullOrWhiteSpace(result.Provenance))
+            tokens += 12; // " (semantic)"-style provenance tag
         tokens += 2; // overhead
         tokens += 1; // newline before structure
         tokens += CoreTokenEstimator.EstimateTokens(result.Structure);
@@ -70,6 +72,8 @@ public static class ExploreTokenEstimator
         if (result.Kind != null)
             tokens += CoreTokenEstimator.EstimateTokens($"[{result.Kind}] ");
         tokens += CoreTokenEstimator.EstimateTokens(result.Uri);
+        if (!string.IsNullOrWhiteSpace(result.Provenance))
+            tokens += 12; // " (semantic)"-style provenance tag
         tokens += 2; // newline + code fence opener
         tokens += CoreTokenEstimator.EstimateTokens(result.Lang); // language hint
         tokens += 1; // newline

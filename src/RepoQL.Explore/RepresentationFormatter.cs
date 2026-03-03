@@ -9,31 +9,30 @@ namespace RepoQL.Explore;
 public static class RepresentationFormatter
 {
     /// <summary>
-    /// Format a result at Minimal level (headline only, no URI).
+    /// Format a result at Minimal level (uri + headline).
     /// Used for wide Explore results without search criteria.
     /// </summary>
-    public static string FormatMinimal(ExploreResult result, bool useShortHeadlines = false)
+    public static string FormatMinimal(ExploreResult result, Intent? intent = null)
     {
-        // Just the headline (first line only), or filename as fallback
-        var headline = GetHeadline(result, useShortHeadlines);
-        return headline ?? ExtractFileName(result.Uri);
+        var headline = GetHeadline(result, intent) ?? ExtractFileName(result.Uri);
+        return $"{result.Uri}  {headline}";
     }
 
     /// <summary>
     /// Format a result at Compact level (uri + headline on same line).
     /// Note: Children are now handled separately via nested decisions in OutputComposer.
     /// </summary>
-    public static string FormatCompact(ExploreResult result, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
+    public static string FormatCompact(ExploreResult result, bool showConfidence, string? parentUri = null, Intent? intent = null)
     {
         var sb = new StringBuilder();
-        AppendHeader(sb, result, showConfidence, parentUri, useShortHeadlines);
+        AppendHeader(sb, result, showConfidence, parentUri, intent, includeProvenance: false);
 
         // For files (non-children), append headline on same line after URI
         // Children already have headline in header
         var (_, isChild) = GetDisplayUri(result.Uri, parentUri);
         if (!isChild)
         {
-            var headline = GetHeadline(result, useShortHeadlines);
+            var headline = GetHeadline(result, intent);
             if (headline != null)
             {
                 sb.Append("  ");
@@ -48,10 +47,10 @@ public static class RepresentationFormatter
     /// Format a result at Standard level (uri + headline + structure).
     /// Note: Children are now handled separately via nested decisions in OutputComposer.
     /// </summary>
-    public static string FormatStandard(ExploreResult result, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
+    public static string FormatStandard(ExploreResult result, bool showConfidence, string? parentUri = null, Intent? intent = null)
     {
         var sb = new StringBuilder();
-        AppendHeader(sb, result, showConfidence, parentUri, useShortHeadlines);
+        AppendHeader(sb, result, showConfidence, parentUri, intent, includeProvenance: true);
 
         // Alignment prefix for continuation lines when confidence is shown
         var alignPrefix = showConfidence ? "  " : "";
@@ -60,11 +59,12 @@ public static class RepresentationFormatter
         var (_, isChild) = GetDisplayUri(result.Uri, parentUri);
         if (!isChild)
         {
-            var headline = GetHeadline(result, useShortHeadlines);
+            var headline = GetHeadline(result, intent);
             if (headline != null)
             {
                 sb.Append("  ");
                 sb.Append(headline);
+                AppendProvenance(sb, result.Provenance);
             }
         }
 
@@ -89,10 +89,14 @@ public static class RepresentationFormatter
     /// Format a result at Rich level (uri + snippet).
     /// Note: Children are now handled separately via nested decisions in OutputComposer.
     /// </summary>
-    public static string FormatRich(ExploreResult result, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
+    public static string FormatRich(ExploreResult result, bool showConfidence, string? parentUri = null, Intent? intent = null)
     {
         var sb = new StringBuilder();
-        AppendHeader(sb, result, showConfidence, parentUri, useShortHeadlines);
+        AppendHeader(sb, result, showConfidence, parentUri, intent, includeProvenance: true);
+
+        var (_, isChild) = GetDisplayUri(result.Uri, parentUri);
+        if (!isChild)
+            AppendProvenance(sb, result.Provenance);
 
         if (!string.IsNullOrEmpty(result.Snippet))
         {
@@ -116,15 +120,15 @@ public static class RepresentationFormatter
     /// <param name="decision">The rendering decision to format.</param>
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="parentUri">If provided, child URIs will display only the fragment portion.</param>
-    /// <param name="useShortHeadlines">When true, strips metadata from headlines (for Inspect intent).</param>
-    public static string Format(RenderingDecision decision, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
+    /// <param name="intent">Optional intent to control headline density.</param>
+    public static string Format(RenderingDecision decision, bool showConfidence, string? parentUri = null, Intent? intent = null)
     {
         return decision.Level switch
         {
-            Representation.Minimal => FormatMinimal(decision.Result, useShortHeadlines),
-            Representation.Compact => FormatCompact(decision.Result, showConfidence, parentUri, useShortHeadlines),
-            Representation.Standard => FormatStandard(decision.Result, showConfidence, parentUri, useShortHeadlines),
-            Representation.Rich => FormatRich(decision.Result, showConfidence, parentUri, useShortHeadlines),
+            Representation.Minimal => FormatMinimal(decision.Result, intent),
+            Representation.Compact => FormatCompact(decision.Result, showConfidence, parentUri, intent),
+            Representation.Standard => FormatStandard(decision.Result, showConfidence, parentUri, intent),
+            Representation.Rich => FormatRich(decision.Result, showConfidence, parentUri, intent),
             _ => throw new ArgumentOutOfRangeException(nameof(decision))
         };
     }
@@ -261,6 +265,19 @@ public static class RepresentationFormatter
                     : $"{Math.Clamp(status.SemanticPercent, 0, 100)}%";
 
         var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(status.SearchQualityTier))
+            parts.Add($"quality: {status.SearchQualityTier}");
+
+        if (status.CoverageAboveThreshold.HasValue && status.CoverageTotalDocuments.HasValue)
+        {
+            var above = Math.Max(0, status.CoverageAboveThreshold.Value);
+            var total = Math.Max(0, status.CoverageTotalDocuments.Value);
+            if (status.CoverageAllInScope)
+                parts.Add($"{above} matches (all in scope)");
+            else
+                parts.Add($"{above} of {total} above threshold");
+        }
+
         if (tokenCount.HasValue)
             parts.Add(FormatTokenCount(tokenCount.Value));
 
@@ -357,7 +374,13 @@ public static class RepresentationFormatter
     /// Append the header line: [confidence] [kind] uri
     /// When parentUri is provided and result is a child, shows headline before the fragment (no kind badge).
     /// </summary>
-    private static void AppendHeader(StringBuilder sb, ExploreResult result, bool showConfidence, string? parentUri = null, bool useShortHeadlines = false)
+    private static void AppendHeader(
+        StringBuilder sb,
+        ExploreResult result,
+        bool showConfidence,
+        string? parentUri = null,
+        Intent? intent = null,
+        bool includeProvenance = false)
     {
         if (showConfidence)
             sb.Append($"{result.Confidence,3}% ");
@@ -367,10 +390,12 @@ public static class RepresentationFormatter
         if (isChild)
         {
             // For children: show headline first, then fragment
-            var headline = GetHeadline(result, useShortHeadlines);
+            var headline = GetHeadline(result, intent);
             if (!string.IsNullOrEmpty(headline))
             {
                 sb.Append(headline);
+                if (includeProvenance)
+                    AppendProvenance(sb, result.Provenance);
                 sb.Append(' ');
             }
         }
@@ -402,19 +427,24 @@ public static class RepresentationFormatter
         if (baseUri.Equals(parentBaseUri, StringComparison.OrdinalIgnoreCase))
         {
             // Same file - show only the fragment
-            return (uri[hashIndex..], true);
+            return (CompactChildFragment(uri[hashIndex..]), true);
         }
 
         return (uri, false);
     }
 
     /// <summary>
-    /// Get headline, optionally stripped to just the description (no metadata).
+    /// Get headline with optional intent-aware density trimming.
     /// </summary>
-    private static string? GetHeadline(ExploreResult result, bool useShort)
+    private static string? GetHeadline(ExploreResult result, Intent? intent)
     {
         var full = GetSingleLineHeadline(result);
-        return useShort ? ShortHeadline(full) : full;
+        return intent switch
+        {
+            Intent.Inventory => InventoryHeadline(full),
+            Intent.Locate => LocateHeadline(full),
+            _ => full
+        };
     }
 
     /// <summary>
@@ -429,6 +459,62 @@ public static class RepresentationFormatter
         return newlineIndex >= 0
             ? result.Headline[..newlineIndex].TrimEnd()
             : result.Headline;
+    }
+
+    /// <summary>
+    /// Compact inventory view headline: "Description | ~Nk tok".
+    /// </summary>
+    public static string? InventoryHeadline(string? headline)
+    {
+        if (string.IsNullOrWhiteSpace(headline))
+            return null;
+
+        var segments = headline.Split(" | ", StringSplitOptions.None);
+        if (segments.Length < 2)
+            return headline;
+
+        var tokenSegment = segments.FirstOrDefault(s => s.Contains("tok", StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(tokenSegment))
+            return headline;
+
+        return $"{segments[0].TrimEnd()} | {tokenSegment.Trim()}";
+    }
+
+    /// <summary>
+    /// Compact locate view headline: "Description | type | ~Nk tok | first 3 sections".
+    /// </summary>
+    public static string? LocateHeadline(string? headline)
+    {
+        if (string.IsNullOrWhiteSpace(headline))
+            return null;
+
+        var segments = headline.Split(" | ", StringSplitOptions.None);
+        if (segments.Length < 2)
+            return headline;
+
+        var tokenIndex = Array.FindIndex(segments, s => s.Contains("tok", StringComparison.OrdinalIgnoreCase));
+        if (tokenIndex < 0)
+            return headline;
+
+        var parts = new List<string>
+        {
+            segments[0].Trim(),
+            segments[1].Trim(),
+            segments[tokenIndex].Trim()
+        };
+
+        if (tokenIndex + 1 < segments.Length)
+        {
+            var sectionSegment = segments[tokenIndex + 1];
+            var sectionParts = sectionSegment
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Take(3);
+            var truncatedSections = string.Join(", ", sectionParts);
+            if (!string.IsNullOrWhiteSpace(truncatedSections))
+                parts.Add(truncatedSections);
+        }
+
+        return string.Join(" | ", parts.Take(4));
     }
 
     /// <summary>
@@ -460,5 +546,51 @@ public static class RepresentationFormatter
         return slashIndex >= 0 && slashIndex < trimmed.Length - 1
             ? trimmed[(slashIndex + 1)..]
             : trimmed;
+    }
+
+    private static void AppendProvenance(StringBuilder sb, string? provenance)
+    {
+        if (string.IsNullOrWhiteSpace(provenance))
+            return;
+
+        sb.Append(" (");
+        sb.Append(provenance);
+        sb.Append(')');
+    }
+
+    private static string CompactChildFragment(string fragment)
+    {
+        if (!fragment.Contains("symbol=", StringComparison.Ordinal))
+            return fragment;
+
+        var symbolValue = ExtractFragmentParameter(fragment, "symbol");
+        if (string.IsNullOrWhiteSpace(symbolValue))
+            return fragment;
+
+        var simpleNameIndex = symbolValue.LastIndexOf('.');
+        var simpleName = simpleNameIndex >= 0 && simpleNameIndex < symbolValue.Length - 1
+            ? symbolValue[(simpleNameIndex + 1)..]
+            : symbolValue;
+
+        return $"#symbol={simpleName}";
+    }
+
+    private static string? ExtractFragmentParameter(string fragment, string key)
+    {
+        var query = fragment.StartsWith('#') ? fragment[1..] : fragment;
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var equalsIndex = pair.IndexOf('=', StringComparison.Ordinal);
+            if (equalsIndex < 0)
+                continue;
+
+            var pairKey = pair[..equalsIndex];
+            if (!pairKey.Equals(key, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            return pair[(equalsIndex + 1)..];
+        }
+
+        return null;
     }
 }

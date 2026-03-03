@@ -22,11 +22,24 @@ public static class ValueBasedAllocator
         if (results.Count == 0)
             return [];
 
+        const int AdaptiveThreshold = 3;
+        var effectiveIntent = intent;
+        if (results.Count <= AdaptiveThreshold)
+        {
+            effectiveIntent = intent switch
+            {
+                Intent.Inventory => Intent.Locate,
+                Intent.Locate => Intent.Inspect,
+                Intent.Explain => Intent.Inspect,
+                _ => intent
+            };
+        }
+
         // Level 1: Calculate file-level EV and allocate budget to files
         var files = results.Select(r => new FileAllocation
         {
             Result = r,
-            ExpectedValue = CalculateFileEV(r, intent),
+            ExpectedValue = CalculateFileEV(r, effectiveIntent),
             Budget = 0,
             MinCost = ExploreTokenEstimator.EstimateMinimal(r)
         }).ToList();
@@ -60,7 +73,7 @@ public static class ValueBasedAllocator
         }
 
         // Level 2: Allocate within each file
-        return files.Select(f => AllocateWithinFile(f.Result, f.Budget, intent)).ToList();
+        return files.Select(f => AllocateWithinFile(f.Result, f.Budget, effectiveIntent)).ToList();
     }
 
     /// <summary>

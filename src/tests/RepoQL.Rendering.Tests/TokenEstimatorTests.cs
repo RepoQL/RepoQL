@@ -48,8 +48,8 @@ public class TokenEstimatorTests
     }
 
     [Test]
-    [DisplayName("Minimal representation estimates headline plus overhead")]
-    public void Given_Result_When_EstimateMinimal_Then_IncludesHeadlineAndOverhead()
+    [DisplayName("Minimal representation estimates headline plus overhead and uri allowance")]
+    public void Given_Result_When_EstimateMinimal_Then_IncludesHeadlineOverheadAndUriAllowance()
     {
         var smallHeadline = ResultBuilder.Create(80, headlineLength: 20);
         var largeHeadline = ResultBuilder.Create(80, headlineLength: 100);
@@ -60,6 +60,18 @@ public class TokenEstimatorTests
         // Both should produce positive token counts
         smallTokens.Should().BeGreaterThan(0);
         largeTokens.Should().BeGreaterThan(smallTokens, "larger headline produces more tokens");
+    }
+
+    [Test]
+    [DisplayName("Minimal representation adds fixed uri token allowance")]
+    public void Given_Result_When_EstimateMinimal_Then_AddsFifteenTokenUriAllowance()
+    {
+        var result = ResultBuilder.Document(80, headlineLength: 40);
+
+        var tokens = ExploreTokenEstimator.EstimateMinimal(result);
+        var expected = TokenEstimator.EstimateTokens(result.Headline) + 1 + 15;
+
+        tokens.Should().Be(expected);
     }
 
     [Test]
@@ -101,6 +113,19 @@ public class TokenEstimatorTests
     }
 
     [Test]
+    [DisplayName("Standard representation adds provenance token allowance")]
+    public void Given_StandardWithProvenance_When_EstimateStandard_Then_AddsTwelveTokens()
+    {
+        var withoutProvenance = ResultBuilder.Document(80, headlineLength: 40, structureLength: 120);
+        var withProvenance = withoutProvenance with { Provenance = "semantic" };
+
+        var withoutTokens = ExploreTokenEstimator.EstimateStandard(withoutProvenance);
+        var withTokens = ExploreTokenEstimator.EstimateStandard(withProvenance);
+
+        withTokens.Should().Be(withoutTokens + 12);
+    }
+
+    [Test]
     [DisplayName("Rich representation estimates snippet")]
     public void Given_ObjectWithSnippet_When_EstimateRich_Then_IncludesSnippet()
     {
@@ -112,6 +137,19 @@ public class TokenEstimatorTests
 
         // Larger snippets should produce more tokens
         largeTokens.Should().BeGreaterThan(smallTokens, "larger snippet produces more tokens");
+    }
+
+    [Test]
+    [DisplayName("Rich representation adds provenance token allowance")]
+    public void Given_RichWithProvenance_When_EstimateRich_Then_AddsTwelveTokens()
+    {
+        var withoutProvenance = ResultBuilder.ObjectResult(90, snippetLength: 120);
+        var withProvenance = withoutProvenance with { Provenance = "content" };
+
+        var withoutTokens = ExploreTokenEstimator.EstimateRich(withoutProvenance);
+        var withTokens = ExploreTokenEstimator.EstimateRich(withProvenance);
+
+        withTokens.Should().Be(withoutTokens + 12);
     }
 
     [Test]
@@ -130,8 +168,8 @@ public class TokenEstimatorTests
     }
 
     [Test]
-    [DisplayName("Representations increase in token cost: Minimal < Compact < Standard")]
-    public void Given_ResultWithAllFields_When_EstimateAllLevels_Then_CostIncreases()
+    [DisplayName("Standard representation remains more expensive than Minimal and Compact")]
+    public void Given_ResultWithAllFields_When_EstimateAllLevels_Then_StandardIsMostExpensive()
     {
         var result = ResultBuilder.Create(80, headlineLength: 50, structureLength: 200, snippetLength: 400);
 
@@ -139,8 +177,10 @@ public class TokenEstimatorTests
         var compact = ExploreTokenEstimator.EstimateCompact(result);
         var standard = ExploreTokenEstimator.EstimateStandard(result);
 
-        minimal.Should().BeLessThan(compact, "Minimal has no URI");
+        minimal.Should().BeGreaterThan(0);
+        compact.Should().BeGreaterThan(0);
         compact.Should().BeLessThan(standard, "Compact has no structure");
+        minimal.Should().BeLessThan(standard, "Minimal has no structure");
     }
 
     [Test]

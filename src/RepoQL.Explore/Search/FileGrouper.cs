@@ -15,22 +15,29 @@ public record FileGroup(
 /// Groups search results by file.
 /// Key rules:
 /// - If a file has object matches, show the document WITH nested child objects
-/// - Limit to 3 snippets per file, show rest as headlines
+/// - Show top snippets per file up to the configured limit, show rest as headlines
 /// </summary>
 public static class FileGrouper
 {
     /// <summary>
-    /// Maximum number of objects to show with snippets per file.
+    /// Minimum snippets to show per file when calculating dynamic limits.
     /// </summary>
-    public const int MaxSnippetsPerFile = 3;
+    public const int MinSnippetsPerFile = 2;
+
+    private const int InspectIntentMaxSnippetsPerFile = 15;
+
+    private const int AverageSnippetCost = 150;
 
     /// <summary>
     /// Group documents and objects by file.
     /// </summary>
     public static IReadOnlyList<FileGroup> Group(
         IReadOnlyList<DocumentMatch> documents,
-        IReadOnlyList<ObjectMatch> objects)
+        IReadOnlyList<ObjectMatch> objects,
+        int maxSnippetsPerFile = 3)
     {
+        var snippetLimit = Math.Max(0, maxSnippetsPerFile);
+
         // Group objects by their parent document
         var objectsByDoc = objects
             .GroupBy(o => o.DocumentUri)
@@ -51,8 +58,8 @@ public static class FileGrouper
                     doc.Uri,
                     doc.Score,
                     Document: doc,  // Show document with child objects
-                    SnippetObjects: docObjects.Take(MaxSnippetsPerFile).ToList(),
-                    HeadlineObjects: docObjects.Skip(MaxSnippetsPerFile).ToList()
+                    SnippetObjects: docObjects.Take(snippetLimit).ToList(),
+                    HeadlineObjects: docObjects.Skip(snippetLimit).ToList()
                 ));
             }
             else
@@ -79,13 +86,35 @@ public static class FileGrouper
                 docUri,
                 maxScore,
                 Document: null,
-                SnippetObjects: docObjects.Take(MaxSnippetsPerFile).ToList(),
-                HeadlineObjects: docObjects.Skip(MaxSnippetsPerFile).ToList()
+                SnippetObjects: docObjects.Take(snippetLimit).ToList(),
+                HeadlineObjects: docObjects.Skip(snippetLimit).ToList()
             ));
         }
 
         // Sort groups by file score descending
         return groups.OrderByDescending(g => g.FileScore).ToList();
+    }
+
+    /// <summary>
+    /// Calculate dynamic snippet limit from intent and token budget.
+    /// </summary>
+    public static int CalculateSnippetLimit(Intent intent, int tokenBudget, int resultCount)
+    {
+        var maxForIntent = intent switch
+        {
+            Intent.Inventory => 3,
+            Intent.Locate => 5,
+            Intent.Inspect => InspectIntentMaxSnippetsPerFile,
+            Intent.Explain => 8,
+            _ => 3
+        };
+
+        var boundedResultCount = Math.Max(1, Math.Min(resultCount, 10));
+        var perFileBudget = Math.Max(0, tokenBudget) / boundedResultCount;
+        var snippetsFromBudget = perFileBudget / AverageSnippetCost;
+        var dynamicLimit = Math.Max(MinSnippetsPerFile, snippetsFromBudget);
+
+        return Math.Min(maxForIntent, dynamicLimit);
     }
 
     /// <summary>
@@ -102,7 +131,7 @@ public static class FileGrouper
                 // Convert snippet objects to SearchResult children
                 var childObjects = new List<SearchResult>();
 
-                // Add snippet objects (top 3) as children
+                // Add snippet objects as children
                 foreach (var obj in group.SnippetObjects)
                 {
                     childObjects.Add(new SearchResult(
@@ -119,7 +148,8 @@ public static class FileGrouper
                         SemanticType: obj.SemanticType,
                         RawScore: obj.RawScore,
                         Confidence: 0,
-                        ChildObjects: null
+                        ChildObjects: null,
+                        Provenance: null
                     ));
                 }
 
@@ -140,7 +170,8 @@ public static class FileGrouper
                         SemanticType: obj.SemanticType,
                         RawScore: obj.RawScore,
                         Confidence: 0,
-                        ChildObjects: null
+                        ChildObjects: null,
+                        Provenance: null
                     ));
                 }
 
@@ -159,7 +190,8 @@ public static class FileGrouper
                     SemanticType: group.Document.SemanticType,
                     RawScore: group.Document.Score,
                     Confidence: 0,  // Will be normalized later
-                    ChildObjects: childObjects.Count > 0 ? childObjects : null
+                    ChildObjects: childObjects.Count > 0 ? childObjects : null,
+                    Provenance: null
                 ));
             }
             else
@@ -167,7 +199,7 @@ public static class FileGrouper
                 // Document not in results, but objects are - show objects without parent
                 // (This handles orphaned objects whose documents weren't matched)
 
-                // Show snippet objects (top 3)
+                // Show snippet objects
                 foreach (var obj in group.SnippetObjects)
                 {
                     results.Add(new SearchResult(
@@ -184,7 +216,8 @@ public static class FileGrouper
                         SemanticType: obj.SemanticType,
                         RawScore: obj.RawScore,
                         Confidence: 0,
-                        ChildObjects: null
+                        ChildObjects: null,
+                        Provenance: null
                     ));
                 }
 
@@ -205,7 +238,8 @@ public static class FileGrouper
                         SemanticType: obj.SemanticType,
                         RawScore: obj.RawScore,
                         Confidence: 0,
-                        ChildObjects: null
+                        ChildObjects: null,
+                        Provenance: null
                     ));
                 }
             }

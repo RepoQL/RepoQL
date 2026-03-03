@@ -6,11 +6,11 @@ namespace RepoQL.Rendering.Tests;
 
 public class RepresentationFormatterTests
 {
-    // Minimal format tests (headline only, no URI)
+    // Minimal format tests (uri + headline)
 
     [Test]
-    [DisplayName("Minimal shows headline only")]
-    public void Given_Minimal_Then_ShowsHeadlineOnly()
+    [DisplayName("Minimal shows uri and headline")]
+    public void Given_Minimal_Then_ShowsUriAndHeadline()
     {
         var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
@@ -23,8 +23,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatMinimal(result);
 
-        output.Should().Be("Auth service - handles authentication");
-        output.Should().NotContain("file:///");
+        output.Should().Be("file:///src/Auth.cs  Auth service - handles authentication");
         output.Should().NotContain("85%");
     }
 
@@ -43,7 +42,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatMinimal(result);
 
-        output.Should().Be("First line");
+        output.Should().Be("file:///src/Auth.cs  First line");
     }
 
     [Test]
@@ -61,7 +60,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatMinimal(result);
 
-        output.Should().Be("JwtService.cs");
+        output.Should().Be("file:///src/Auth/JwtService.cs  JwtService.cs");
     }
 
     [Test]
@@ -79,7 +78,87 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatMinimal(result);
 
-        output.Should().Be("Auth.cs");
+        output.Should().Be("file:///src/Auth.cs#line=42,58  Auth.cs");
+    }
+
+    [Test]
+    [DisplayName("Minimal does not show provenance")]
+    public void Given_MinimalWithProvenance_Then_OmitsProvenance()
+    {
+        var result = new ExploreResult(
+            Uri: "file:///src/Auth.cs",
+            Confidence: 85,
+            Kind: null,
+            Headline: "Auth service",
+            Structure: null,
+            Snippet: null,
+            Lang: null,
+            Provenance: "semantic");
+
+        var output = RepresentationFormatter.FormatMinimal(result);
+
+        output.Should().Be("file:///src/Auth.cs  Auth service");
+        output.Should().NotContain("(semantic)");
+    }
+
+    // Intent-aware headline density tests
+
+    [Test]
+    [DisplayName("Inventory headline keeps description and token estimate")]
+    public void Given_InventoryHeadline_Then_KeepDescriptionAndTokens()
+    {
+        var headline = "Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale";
+
+        var output = RepresentationFormatter.InventoryHeadline(headline);
+
+        output.Should().Be("Confidence normalizer | ~1.2k tok");
+    }
+
+    [Test]
+    [DisplayName("Locate headline keeps type and first three sections")]
+    public void Given_LocateHeadline_Then_KeepTypeTokensAndFirstThreeSections()
+    {
+        var headline = "Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale";
+
+        var output = RepresentationFormatter.LocateHeadline(headline);
+
+        output.Should().Be("Confidence normalizer | code.csharp.class | ~1.2k tok | Normalize, Clamp, Weight");
+    }
+
+    [Test]
+    [DisplayName("Compact applies inventory intent headline trimming")]
+    public void Given_CompactInventoryIntent_Then_UsesInventoryHeadlineDensity()
+    {
+        var result = new ExploreResult(
+            Uri: "file:///src/Search/ConfidenceNormalizer.cs",
+            Confidence: 85,
+            Kind: null,
+            Headline: "Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale",
+            Structure: null,
+            Snippet: null,
+            Lang: null);
+
+        var output = RepresentationFormatter.FormatCompact(result, showConfidence: true, intent: Intent.Inventory);
+
+        output.Should().Be(" 85% file:///src/Search/ConfidenceNormalizer.cs  Confidence normalizer | ~1.2k tok");
+    }
+
+    [Test]
+    [DisplayName("Compact inspect intent keeps full headline")]
+    public void Given_CompactInspectIntent_Then_KeepsFullHeadline()
+    {
+        var result = new ExploreResult(
+            Uri: "file:///src/Search/ConfidenceNormalizer.cs",
+            Confidence: 85,
+            Kind: null,
+            Headline: "Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale",
+            Structure: null,
+            Snippet: null,
+            Lang: null);
+
+        var output = RepresentationFormatter.FormatCompact(result, showConfidence: true, intent: Intent.Inspect);
+
+        output.Should().Be(" 85% file:///src/Search/ConfidenceNormalizer.cs  Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale");
     }
 
     // Compact format tests
@@ -174,6 +253,49 @@ public class RepresentationFormatterTests
         output.Should().Be(" 50% file:///src/Auth.cs");
     }
 
+    [Test]
+    [DisplayName("Compact does not show provenance")]
+    public void Given_CompactWithProvenance_Then_OmitsProvenance()
+    {
+        var result = new ExploreResult(
+            Uri: "file:///src/Auth.cs",
+            Confidence: 85,
+            Kind: null,
+            Headline: "Auth service",
+            Structure: null,
+            Snippet: null,
+            Lang: null,
+            Provenance: "semantic");
+
+        var output = RepresentationFormatter.FormatCompact(result, showConfidence: true);
+
+        output.Should().Be(" 85% file:///src/Auth.cs  Auth service");
+        output.Should().NotContain("(semantic)");
+    }
+
+    [Test]
+    [DisplayName("Compact child fragment with symbol uses simple symbol only")]
+    public void Given_CompactChildWithLineAndSymbol_Then_ShowsSimpleSymbolFragment()
+    {
+        var result = new ExploreResult(
+            Uri: "file:///src/RepoQL.Explore/Search/ConfidenceNormalizer.cs#line=50,71&symbol=RepoQL.Explore.Search.ConfidenceNormalizer.NormalizeResult",
+            Confidence: 92,
+            Kind: null,
+            Headline: "Normalize result",
+            Structure: null,
+            Snippet: null,
+            Lang: null);
+
+        var output = RepresentationFormatter.FormatCompact(
+            result,
+            showConfidence: true,
+            parentUri: "file:///src/RepoQL.Explore/Search/ConfidenceNormalizer.cs");
+
+        output.Should().Be(" 92% Normalize result #symbol=NormalizeResult");
+        output.Should().NotContain("#line=");
+        output.Should().NotContain("RepoQL.Explore.Search.ConfidenceNormalizer.");
+    }
+
     // Standard format tests
 
     [Test]
@@ -210,6 +332,25 @@ public class RepresentationFormatterTests
         var output = RepresentationFormatter.FormatStandard(result, showConfidence: true);
 
         output.Should().Be(" 70% file:///src/Auth.cs  Auth module");
+    }
+
+    [Test]
+    [DisplayName("Standard appends provenance after headline")]
+    public void Given_StandardWithProvenance_Then_ShowsProvenanceTag()
+    {
+        var result = new ExploreResult(
+            Uri: "file:///src/Auth.cs",
+            Confidence: 70,
+            Kind: null,
+            Headline: "Auth module",
+            Structure: null,
+            Snippet: null,
+            Lang: null,
+            Provenance: "semantic");
+
+        var output = RepresentationFormatter.FormatStandard(result, showConfidence: true);
+
+        output.Should().Be(" 70% file:///src/Auth.cs  Auth module (semantic)");
     }
 
     // Rich format tests
@@ -266,6 +407,25 @@ public class RepresentationFormatterTests
         var output = RepresentationFormatter.FormatRich(result, showConfidence: true);
 
         output.Should().Be(" 80% file:///src/Auth.cs\n```txt\nline1\nline2\n```");
+    }
+
+    [Test]
+    [DisplayName("Rich appends provenance to header line")]
+    public void Given_RichWithProvenance_Then_ShowsProvenanceTag()
+    {
+        var result = new ExploreResult(
+            Uri: "file:///src/Auth.cs#line=42",
+            Confidence: 98,
+            Kind: "method",
+            Headline: "ValidateToken",
+            Structure: null,
+            Snippet: "public bool Validate() { return true; }",
+            Lang: "csharp",
+            Provenance: "name");
+
+        var output = RepresentationFormatter.FormatRich(result, showConfidence: true);
+
+        output.Should().Be(" 98% file:///src/Auth.cs#line=42 (name)\n```csharp\npublic bool Validate() { return true; }\n```");
     }
 
     // Confidence formatting tests
@@ -330,6 +490,55 @@ public class RepresentationFormatterTests
 
         output.Should().Be("[1.5k tok | 42 ms | index: ready | semantic: ready]");
         output.Split(" | ").Length.Should().BeLessThanOrEqualTo(4);
+    }
+
+    [Test]
+    [DisplayName("Status footer shows quality and coverage first when provided")]
+    public void Given_QualityAndCoverage_Then_FooterFrontLoadsSignals()
+    {
+        var status = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 0,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: true,
+            SemanticPercent: 100,
+            ExecutionTimeMs: 42)
+        {
+            SearchQualityTier = "strong",
+            CoverageAboveThreshold = 12,
+            CoverageTotalDocuments = 40
+        };
+
+        var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1500);
+
+        output.Should().Be("[quality: strong | 12 of 40 above threshold | 1.5k tok | 42 ms | index: ready | semantic: ready]");
+    }
+
+    [Test]
+    [DisplayName("Status footer shows all-in-scope coverage format")]
+    public void Given_AllDocumentsAboveThreshold_Then_ShowsAllInScopeCoverage()
+    {
+        var status = new TrustSignal(
+            IndexTotal: 100,
+            IndexPending: 0,
+            IndexFailed: 0,
+            IndexStale: 0,
+            SemanticEnabled: true,
+            SemanticReady: true,
+            SemanticPercent: 100,
+            ExecutionTimeMs: 42)
+        {
+            SearchQualityTier = "moderate",
+            CoverageAboveThreshold = 40,
+            CoverageTotalDocuments = 40,
+            CoverageAllInScope = true
+        };
+
+        var output = RepresentationFormatter.FormatStatusFooter(status, tokenCount: 1500);
+
+        output.Should().Be("[quality: moderate | 40 matches (all in scope) | 1.5k tok | 42 ms | index: ready | semantic: ready]");
     }
 
     [Test]
@@ -491,8 +700,7 @@ public class RepresentationFormatterTests
         var minimal = RepresentationFormatter.Format(minimalDecision, showConfidence: true);
         var standard = RepresentationFormatter.Format(standardDecision, showConfidence: true);
 
-        minimal.Should().Be("Test");  // Minimal is just headline
-        minimal.Should().NotContain("file:///");  // No URI
+        minimal.Should().Be("file:///test.cs  Test");  // Minimal is uri + headline
         standard.Should().Contain("- Item");  // Standard shows structure
         standard.Should().Contain("file:///test.cs");  // Has URI
     }

@@ -53,6 +53,10 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                         substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
                         ri.lang,
                         ri.mime as semantic_type,
+                        hs.sem_score,
+                        hs.bm25_score,
+                        hs.struct_mentions,
+                        hs.body_mentions,
                         hs.score,
                         ri.doc_id
                     FROM search('{escapedQuestion}', scope := '{escapedScopeLike}', k := {limit * 3}) hs
@@ -72,6 +76,10 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                         substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
                         ri.lang,
                         ri.mime as semantic_type,
+                        hs.sem_score,
+                        hs.bm25_score,
+                        hs.struct_mentions,
+                        hs.body_mentions,
                         hs.score,
                         ri.doc_id
                     FROM search('{escapedQuestion}', k := {limit * 3}) hs
@@ -101,6 +109,10 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                     substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
                     ri.lang,
                     ri.mime as semantic_type,
+                    0.0 as sem_score,
+                    0.0 as bm25_score,
+                    0 as struct_mentions,
+                    0 as body_mentions,
                     0.5 as score,
                     ri.doc_id
                 FROM repo_index ri
@@ -135,6 +147,10 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                     substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
                     ri.lang,
                     ri.mime as semantic_type,
+                    0.0 as sem_score,
+                    0.0 as bm25_score,
+                    0 as struct_mentions,
+                    0 as body_mentions,
                     0.5 as score,
                     ri.doc_id
                 FROM repo_index ri
@@ -169,7 +185,12 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                 Snippet: row.GetValueOrDefault("snippet")?.ToString(),
                 Lang: row.GetValueOrDefault("lang")?.ToString(),
                 SemanticType: row.GetValueOrDefault("semantic_type")?.ToString(),
-                Score: Convert.ToDouble(row.GetValueOrDefault("score") ?? 0.5)
+                Score: Convert.ToDouble(row.GetValueOrDefault("score") ?? 0.5),
+                SemanticScore: Convert.ToDouble(row.GetValueOrDefault("sem_score") ?? 0.0),
+                NameHitScore: 0.0,
+                RegexHitScore: (Convert.ToDouble(row.GetValueOrDefault("struct_mentions") ?? 0) +
+                    Convert.ToDouble(row.GetValueOrDefault("body_mentions") ?? 0)) * 0.1,
+                ChunkOverlapScore: Convert.ToDouble(row.GetValueOrDefault("bm25_score") ?? 0.0)
             ));
 
             // Collect doc_id for chunk query

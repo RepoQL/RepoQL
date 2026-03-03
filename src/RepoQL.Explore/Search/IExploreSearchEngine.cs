@@ -144,8 +144,12 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             objects = [];
         }
 
-        // 5. Group by file (3 snippets + rest as headlines)
-        var groups = FileGrouper.Group(documents, objects);
+        // 5. Group by file (dynamic snippet limit + rest as headlines)
+        var snippetLimit = FileGrouper.CalculateSnippetLimit(
+            parameters.Intent,
+            parameters.TokenBudget,
+            documents.Count);
+        var groups = FileGrouper.Group(documents, objects, snippetLimit);
 
         // 6. Flatten to results
         var results = FileGrouper.Flatten(groups).ToList();
@@ -160,7 +164,11 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             PatternBooster.ApplyPenalties(results, penalizePatterns);
         }
 
-        // 8. Normalize confidence
+        // 8. Compute provenance from available score components
+        var provenanceByUri = BuildStandardProvenanceMap(documents, objects);
+        results = ApplyProvenance(results, provenanceByUri).ToList();
+
+        // 9. Normalize confidence
         ConfidenceNormalizer.NormalizeInPlace(results);
 
         return new SearchEngineResult(
@@ -183,6 +191,10 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         var objectsByDoc = jitResult.ScoredObjects
             .GroupBy(o => o.DocumentUri)
             .ToDictionary(g => g.Key, g => g.ToList());
+        var snippetLimit = FileGrouper.CalculateSnippetLimit(
+            parameters.Intent,
+            parameters.TokenBudget,
+            Math.Max(jitResult.SelectedDocuments.Count, objectsByDoc.Count));
 
         var processedDocs = new HashSet<string>();
         foreach (var doc in jitResult.SelectedDocuments)
@@ -192,8 +204,8 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             if (objectsByDoc.TryGetValue(doc.DocumentUri, out var docObjects) && docObjects.Count > 0)
             {
                 var childObjects = new List<SearchResult>();
-                var snippetObjects = docObjects.Take(FileGrouper.MaxSnippetsPerFile).ToList();
-                var headlineObjects = docObjects.Skip(FileGrouper.MaxSnippetsPerFile).ToList();
+                var snippetObjects = docObjects.Take(snippetLimit).ToList();
+                var headlineObjects = docObjects.Skip(snippetLimit).ToList();
 
                 foreach (var obj in snippetObjects)
                 {
@@ -211,7 +223,12 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
                         SemanticType: obj.SemanticType,
                         RawScore: obj.FinalScore,
                         Confidence: obj.Confidence,
-                        ChildObjects: null
+                        ChildObjects: null,
+                        Provenance: ComputeProvenance(
+                            semantic: obj.SemanticScore,
+                            name: obj.NameHitScore,
+                            regex: obj.RegexHitScore,
+                            chunk: obj.ChunkOverlapScore)
                     ));
                 }
 
@@ -231,7 +248,12 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
                         SemanticType: obj.SemanticType,
                         RawScore: obj.FinalScore,
                         Confidence: obj.Confidence,
-                        ChildObjects: null
+                        ChildObjects: null,
+                        Provenance: ComputeProvenance(
+                            semantic: obj.SemanticScore,
+                            name: obj.NameHitScore,
+                            regex: obj.RegexHitScore,
+                            chunk: obj.ChunkOverlapScore)
                     ));
                 }
 
@@ -249,7 +271,8 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
                     SemanticType: doc.SemanticType,
                     RawScore: doc.DocumentScore,
                     Confidence: CalculateDocumentConfidence(doc, jitResult.SelectedDocuments),
-                    ChildObjects: childObjects
+                    ChildObjects: childObjects,
+                    Provenance: ComputeDocumentProvenance(doc)
                 ));
             }
             else
@@ -268,7 +291,8 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
                     SemanticType: doc.SemanticType,
                     RawScore: doc.DocumentScore,
                     Confidence: CalculateDocumentConfidence(doc, jitResult.SelectedDocuments),
-                    ChildObjects: null
+                    ChildObjects: null,
+                    Provenance: ComputeDocumentProvenance(doc)
                 ));
             }
         }
@@ -279,8 +303,8 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             if (processedDocs.Contains(docUri))
                 continue;
 
-            var snippetObjects = docObjects.Take(FileGrouper.MaxSnippetsPerFile).ToList();
-            var headlineObjects = docObjects.Skip(FileGrouper.MaxSnippetsPerFile).ToList();
+            var snippetObjects = docObjects.Take(snippetLimit).ToList();
+            var headlineObjects = docObjects.Skip(snippetLimit).ToList();
 
             foreach (var obj in snippetObjects)
             {
@@ -298,7 +322,12 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
                     SemanticType: obj.SemanticType,
                     RawScore: obj.FinalScore,
                     Confidence: obj.Confidence,
-                    ChildObjects: null
+                    ChildObjects: null,
+                    Provenance: ComputeProvenance(
+                        semantic: obj.SemanticScore,
+                        name: obj.NameHitScore,
+                        regex: obj.RegexHitScore,
+                        chunk: obj.ChunkOverlapScore)
                 ));
             }
 
@@ -318,7 +347,12 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
                     SemanticType: obj.SemanticType,
                     RawScore: obj.FinalScore,
                     Confidence: obj.Confidence,
-                    ChildObjects: null
+                    ChildObjects: null,
+                    Provenance: ComputeProvenance(
+                        semantic: obj.SemanticScore,
+                        name: obj.NameHitScore,
+                        regex: obj.RegexHitScore,
+                        chunk: obj.ChunkOverlapScore)
                 ));
             }
         }
@@ -336,6 +370,95 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         }
 
         return results;
+    }
+
+    private static string? ComputeDocumentProvenance(DocumentExpansionCandidate doc)
+    {
+        var lexical = (doc.StructMentions + doc.BodyMentions) * 0.1;
+        return ComputeProvenance(
+            semantic: doc.SemanticScore,
+            name: 0.0,
+            regex: lexical,
+            chunk: doc.Bm25Score);
+    }
+
+    private static Dictionary<string, string?> BuildStandardProvenanceMap(
+        IReadOnlyList<DocumentMatch> documents,
+        IReadOnlyList<ObjectMatch> objects)
+    {
+        var provenanceByUri = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var doc in documents)
+        {
+            provenanceByUri[doc.Uri] = ComputeProvenance(
+                semantic: doc.SemanticScore,
+                name: doc.NameHitScore,
+                regex: doc.RegexHitScore,
+                chunk: doc.ChunkOverlapScore);
+        }
+
+        foreach (var obj in objects)
+        {
+            provenanceByUri[obj.Uri] = ComputeProvenance(
+                semantic: obj.SemanticScore,
+                name: obj.NameHitScore,
+                regex: obj.RegexHitScore,
+                chunk: obj.ChunkOverlapScore);
+        }
+
+        return provenanceByUri;
+    }
+
+    private static IReadOnlyList<SearchResult> ApplyProvenance(
+        IReadOnlyList<SearchResult> results,
+        IReadOnlyDictionary<string, string?> provenanceByUri)
+    {
+        var withProvenance = new List<SearchResult>(results.Count);
+        foreach (var result in results)
+        {
+            var childObjects = result.ChildObjects is { Count: > 0 }
+                ? ApplyProvenance(result.ChildObjects, provenanceByUri)
+                : result.ChildObjects;
+
+            withProvenance.Add(result with
+            {
+                Provenance = provenanceByUri.GetValueOrDefault(result.Uri),
+                ChildObjects = childObjects
+            });
+        }
+
+        return withProvenance;
+    }
+
+    public static string? ComputeProvenance(double semantic, double name, double regex, double chunk)
+    {
+        var signals = new List<(string Label, double Score)>
+        {
+            ("semantic", Math.Max(0.0, semantic)),
+            ("name", Math.Max(0.0, name)),
+            ("lexical", Math.Max(0.0, regex)),
+            ("content", Math.Max(0.0, chunk))
+        };
+
+        var total = signals.Sum(s => s.Score);
+        if (total <= 0.0)
+            return null;
+
+        var normalized = signals
+            .Select(s => (s.Label, Contribution: s.Score / total))
+            .OrderByDescending(s => s.Contribution)
+            .ToList();
+
+        var top = normalized[0];
+        var second = normalized[1];
+        if (top.Contribution <= 0.0)
+            return null;
+
+        // If the second-best signal is within 20% of the top signal, label as mixed.
+        if (second.Contribution > 0.0 && second.Contribution >= top.Contribution * 0.8)
+            return "mixed";
+
+        return top.Label;
     }
 
     private static int CalculateDocumentConfidence(

@@ -15,7 +15,7 @@ public record RenderingDecision(
     int EstimatedTokens,
     IReadOnlyList<RenderingDecision>? ChildDecisions = null,
     int OmittedChildrenCount = 0
-);
+) : OutputItem;
 
 /// <summary>
 /// Result of the decision process.

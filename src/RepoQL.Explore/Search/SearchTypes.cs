@@ -33,7 +33,11 @@ public record DocumentMatch(
     string? Snippet,
     string? Lang,
     string? SemanticType,
-    double Score
+    double Score,
+    double SemanticScore = 0.0,
+    double NameHitScore = 0.0,
+    double RegexHitScore = 0.0,
+    double ChunkOverlapScore = 0.0
 );
 
 /// <summary>
@@ -51,7 +55,11 @@ public record ObjectMatch(
     int LineEnd,
     string? Lang,
     string? SemanticType,
-    double Score
+    double Score,
+    double SemanticScore = 0.0,
+    double NameHitScore = 0.0,
+    double RegexHitScore = 0.0,
+    double ChunkOverlapScore = 0.0
 )
 {
     /// <summary>
@@ -77,7 +85,8 @@ public record SearchResult(
     string? SemanticType,
     double RawScore,
     int Confidence,
-    IReadOnlyList<SearchResult>? ChildObjects = null
+    IReadOnlyList<SearchResult>? ChildObjects = null,
+    string? Provenance = null
 );
 
 /// <summary>

@@ -13,7 +13,7 @@ public static class OutputComposer
     /// <param name="decisionResult">The decision result containing decisions and omitted info.</param>
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="trustSignal">Optional trust signal for footer.</param>
-    /// <param name="intent">Optional intent — Inspect uses short headlines.</param>
+    /// <param name="intent">Optional intent that controls headline density.</param>
     /// <returns>The composed output string.</returns>
     public static string Compose(
         DecisionResult decisionResult,
@@ -24,25 +24,60 @@ public static class OutputComposer
         if (decisionResult.Decisions.Count == 0)
             return string.Empty;
 
-        var useShortHeadlines = intent == Intent.Inspect;
+        var clusteredOutput = ResultClusterer.Cluster([.. decisionResult.Decisions]);
         var sb = new StringBuilder();
         var previousWasMultiline = false;
+        var previousWasHeader = false;
+        int? previousConfidence = null;
+        var insertedConfidenceSeparator = false;
+        var hasOutput = false;
 
-        for (var i = 0; i < decisionResult.Decisions.Count; i++)
+        foreach (var item in clusteredOutput.Items)
         {
-            var decision = decisionResult.Decisions[i];
-            var formatted = FormatWithChildren(decision, showConfidence, indent: 0, parentUri: null, useShortHeadlines);
+            if (item is ClusterHeader header)
+            {
+                if (hasOutput)
+                {
+                    sb.Append('\n');
+                    if (previousWasMultiline)
+                        sb.Append('\n');
+                }
+
+                sb.Append(FormatClusterHeader(header));
+                previousWasMultiline = false;
+                previousWasHeader = true;
+                hasOutput = true;
+                continue;
+            }
+
+            var decision = (RenderingDecision)item;
+            var formatted = FormatWithChildren(decision, showConfidence, indent: 0, parentUri: null, intent);
             var isMultiline = IsMultiline(decision) || decision.ChildDecisions is { Count: > 0 };
+            var needsConfidenceSeparator =
+                showConfidence
+                && !insertedConfidenceSeparator
+                && previousConfidence.HasValue
+                && previousConfidence.Value - decision.Result.Confidence > 30;
 
-            // Add blank line before multi-line items (except first)
-            if (i > 0 && (previousWasMultiline || isMultiline))
-                sb.Append('\n');
+            if (hasOutput)
+            {
+                // Keep header -> member transitions tight, but preserve multiline spacing elsewhere.
+                if (!previousWasHeader && (previousWasMultiline || isMultiline))
+                    sb.Append('\n');
 
-            if (i > 0)
+                if (needsConfidenceSeparator)
+                    sb.Append('\n');
+
                 sb.Append('\n');
+            }
 
             sb.Append(formatted);
             previousWasMultiline = isMultiline;
+            previousWasHeader = false;
+            previousConfidence = decision.Result.Confidence;
+            if (needsConfidenceSeparator)
+                insertedConfidenceSeparator = true;
+            hasOutput = true;
         }
 
         // Add truncation summary if items were omitted
@@ -63,7 +98,7 @@ public static class OutputComposer
             if (previousWasMultiline || decisionResult.OmittedCount > 0)
                 sb.Append('\n');
 
-            var totalTokens = CalculateTotalTokens(decisionResult.Decisions);
+            var totalTokens = CalculateTotalTokens(clusteredOutput.Items);
             sb.Append(RepresentationFormatter.FormatStatusFooter(trustSignal, totalTokens));
         }
 
@@ -71,17 +106,35 @@ public static class OutputComposer
     }
 
     /// <summary>
-    /// Calculate total tokens for all decisions including children.
+    /// Calculate total tokens for all output items.
     /// </summary>
-    private static int CalculateTotalTokens(IReadOnlyList<RenderingDecision> decisions)
+    private static int CalculateTotalTokens(IReadOnlyList<OutputItem> items)
     {
         var total = 0;
-        foreach (var decision in decisions)
+        foreach (var item in items)
         {
-            total += decision.EstimatedTokens;
-            if (decision.ChildDecisions is { Count: > 0 })
-                total += CalculateTotalTokens(decision.ChildDecisions);
+            switch (item)
+            {
+                case ClusterHeader:
+                    total += ResultClusterer.ClusterHeaderTokenCost;
+                    break;
+                case RenderingDecision decision:
+                    total += CalculateDecisionTokens(decision);
+                    break;
+            }
         }
+        return total;
+    }
+
+    private static int CalculateDecisionTokens(RenderingDecision decision)
+    {
+        var total = decision.EstimatedTokens;
+        if (decision.ChildDecisions is not { Count: > 0 })
+            return total;
+
+        foreach (var child in decision.ChildDecisions)
+            total += CalculateDecisionTokens(child);
+
         return total;
     }
 
@@ -106,14 +159,14 @@ public static class OutputComposer
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="indent">Current indentation level.</param>
     /// <param name="parentUri">Parent URI for fragment-only display of children.</param>
-    /// <param name="useShortHeadlines">When true, strips metadata from headlines for nested formatting.</param>
-    private static string FormatWithChildren(RenderingDecision decision, bool showConfidence, int indent, string? parentUri, bool useShortHeadlines = false)
+    /// <param name="intent">Optional intent that controls headline density.</param>
+    private static string FormatWithChildren(RenderingDecision decision, bool showConfidence, int indent, string? parentUri, Intent? intent = null)
     {
         var sb = new StringBuilder();
         var indentStr = new string(' ', indent * 2);
 
         // Format this decision at its assigned level
-        var formatted = RepresentationFormatter.Format(decision, showConfidence, parentUri, useShortHeadlines);
+        var formatted = RepresentationFormatter.Format(decision, showConfidence, parentUri, intent);
 
         // Apply indentation to each line
         var lines = formatted.Split('\n');
@@ -134,7 +187,7 @@ public static class OutputComposer
             foreach (var child in decision.ChildDecisions)
             {
                 sb.Append('\n');
-                sb.Append(FormatWithChildren(child, showConfidence, indent + 1, thisUri, useShortHeadlines));
+                sb.Append(FormatWithChildren(child, showConfidence, indent + 1, thisUri, intent));
             }
         }
 
@@ -148,5 +201,11 @@ public static class OutputComposer
         }
 
         return sb.ToString();
+    }
+
+    private static string FormatClusterHeader(ClusterHeader header)
+    {
+        var noun = header.MemberCount == 1 ? "result" : "results";
+        return $"── {header.SharedPath} ({header.MemberCount} {noun}) ──";
     }
 }

@@ -25,6 +25,29 @@ public record TrustSignal(
 )
 {
     /// <summary>
+    /// Absolute search quality tier derived from top raw score ("strong", "moderate", "weak", "exhaustive").
+    /// Null when no quality tier is available.
+    /// </summary>
+    public string? SearchQualityTier { get; init; }
+
+    /// <summary>
+    /// Number of documents scored above the coverage threshold.
+    /// Null when coverage should not be shown.
+    /// </summary>
+    public int? CoverageAboveThreshold { get; init; }
+
+    /// <summary>
+    /// Total number of documents considered for coverage.
+    /// Null when coverage should not be shown.
+    /// </summary>
+    public int? CoverageTotalDocuments { get; init; }
+
+    /// <summary>
+    /// True when every document in scope scored above threshold.
+    /// </summary>
+    public bool CoverageAllInScope { get; init; }
+
+    /// <summary>
     /// Create trust signal from cached URI registry summary.
     /// </summary>
     public static TrustSignal FromSummary(RegistrySummary summary, long executionTimeMs, bool semanticEnabled)

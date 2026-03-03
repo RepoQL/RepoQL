@@ -50,9 +50,9 @@ public sealed partial class RepoGitIgnoreFilter : IUriFilter
             // The path should already be relative in most cases
             rel = rel.Replace('\\', '/');
 
-            // Check if path contains .repoql or .git directories
-            if (rel.Contains("/.repoql/") || rel.Contains("/.git/") ||
-                rel.EndsWith("/.repoql") || rel.EndsWith("/.git"))
+            // Check if path contains .repoql, .git, or .claude/worktrees directories
+            if (rel.Contains("/.repoql/") || rel.Contains("/.git/") || rel.Contains("/.claude/worktrees/") ||
+                rel.EndsWith("/.repoql") || rel.EndsWith("/.git") || rel.EndsWith("/.claude/worktrees"))
             {
                 return false;
             }
@@ -96,6 +96,6 @@ public sealed partial class RepoGitIgnoreFilter : IUriFilter
         return false;
     }
 
-    [GeneratedRegex(@"(\.git|\.repoql)[\\/]", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    [GeneratedRegex(@"(\.git|\.repoql|\.claude[\\/]worktrees)[\\/]", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
     private static partial Regex DefaultExcludesRegex();
 }

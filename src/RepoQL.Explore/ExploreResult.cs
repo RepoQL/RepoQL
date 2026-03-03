@@ -13,6 +13,7 @@ namespace RepoQL.Explore;
 /// <param name="Lang">Language hint for snippet code fence (e.g., "csharp").</param>
 /// <param name="SemanticType">Semantic type for grouping (e.g., "markdown.doc", "code.csharp").</param>
 /// <param name="ChildObjects">Nested child objects beneath this result (e.g., methods within a file).</param>
+/// <param name="Provenance">Dominant ranking signal (e.g. semantic, name, lexical, content, mixed).</param>
 public record ExploreResult(
     string Uri,
     int Confidence,
@@ -22,5 +23,6 @@ public record ExploreResult(
     string? Snippet,
     string? Lang,
     string? SemanticType = null,
-    IReadOnlyList<ExploreResult>? ChildObjects = null
+    IReadOnlyList<ExploreResult>? ChildObjects = null,
+    string? Provenance = null
 );

@@ -113,6 +113,9 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     s.lang,
                     s.mime as semantic_type,
                     s.score,
+                    s.doc_semn as semantic_score,
+                    s.fuzzy_score as name_hit_score,
+                    s.bm25_score as chunk_overlap_score,
                     split_part(s.uri, '#', 1) as document_uri
                 FROM _search_candidates(
                     '{escapedQuestion}',
@@ -126,7 +129,9 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     ROW_NUMBER() OVER (PARTITION BY document_uri ORDER BY score DESC) as rn
                 FROM search_results
             )
-            SELECT uri, symbol, kind, headline, structure, snippet, line_start, line_end, lang, semantic_type, score, document_uri
+            SELECT
+                uri, symbol, kind, headline, structure, snippet, line_start, line_end, lang, semantic_type, score,
+                semantic_score, name_hit_score, chunk_overlap_score, document_uri
             FROM ranked
             WHERE rn <= {objectsPerDocument}
             ORDER BY score DESC
@@ -159,7 +164,11 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     LineEnd: Convert.ToInt32(row.GetValueOrDefault("line_end") ?? 1),
                     Lang: row.GetValueOrDefault("lang")?.ToString(),
                     SemanticType: row.GetValueOrDefault("semantic_type")?.ToString(),
-                    Score: Convert.ToDouble(row.GetValueOrDefault("score") ?? 0.5)
+                    Score: Convert.ToDouble(row.GetValueOrDefault("score") ?? 0.5),
+                    SemanticScore: Convert.ToDouble(row.GetValueOrDefault("semantic_score") ?? 0.0),
+                    NameHitScore: Convert.ToDouble(row.GetValueOrDefault("name_hit_score") ?? 0.0),
+                    RegexHitScore: 0.0,
+                    ChunkOverlapScore: Convert.ToDouble(row.GetValueOrDefault("chunk_overlap_score") ?? 0.0)
                 ));
             }
 
@@ -212,6 +221,9 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     ri.lang,
                     ri.mime as semantic_type,
                     0.5 as score,
+                    0.0 as semantic_score,
+                    0.0 as name_hit_score,
+                    0.0 as chunk_overlap_score,
                     ROW_NUMBER() OVER (
                         PARTITION BY td.document_uri
                         ORDER BY ri.line_start
@@ -222,7 +234,8 @@ internal sealed class ObjectSearchService : IObjectSearchService
             )
             SELECT
                 uri, document_uri, kind, symbol, headline, structure, snippet,
-                line_start, line_end, lang, semantic_type, score
+                line_start, line_end, lang, semantic_type, score,
+                semantic_score, name_hit_score, chunk_overlap_score
             FROM objects
             WHERE rn <= {objectsPerDocument}
             ORDER BY document_uri, line_start
@@ -253,7 +266,11 @@ internal sealed class ObjectSearchService : IObjectSearchService
                 LineEnd: Convert.ToInt32(row.GetValueOrDefault("line_end") ?? 1),
                 Lang: row.GetValueOrDefault("lang")?.ToString(),
                 SemanticType: row.GetValueOrDefault("semantic_type")?.ToString(),
-                Score: Convert.ToDouble(row.GetValueOrDefault("score") ?? 0.5)
+                Score: Convert.ToDouble(row.GetValueOrDefault("score") ?? 0.5),
+                SemanticScore: Convert.ToDouble(row.GetValueOrDefault("semantic_score") ?? 0.0),
+                NameHitScore: Convert.ToDouble(row.GetValueOrDefault("name_hit_score") ?? 0.0),
+                RegexHitScore: 0.0,
+                ChunkOverlapScore: Convert.ToDouble(row.GetValueOrDefault("chunk_overlap_score") ?? 0.0)
             ));
         }
 

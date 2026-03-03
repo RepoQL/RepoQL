@@ -19,6 +19,11 @@ public sealed class ExploreOrchestrator
     /// Minimum token budget for Understand intent to ensure sufficient context for LLM synthesis.
     /// </summary>
     private const int UnderstandMinBudget = 3000;
+    private const double StrongQualityThresholdRawScore = 0.70;
+    private const double ModerateQualityThresholdRawScore = 0.40;
+    private const double WeakQualityThresholdRawScore = 0.0;
+    private const double CoverageThresholdRawScore = 0.40;
+    private const int CoverageMinDocumentScope = 20;
 
     public ExploreOrchestrator(
         IExploreSearchEngine searchEngine,
@@ -137,6 +142,8 @@ public sealed class ExploreOrchestrator
             return new ExploreExecutionResult(emptyOutput, [], Truncated: false);
         }
 
+        status = EnrichTrustSignal(status, query, boostPatterns, searchResult);
+
         // Convert SearchResult → ExploreResult
         var exploreResults = searchResult.Results.Select(ToExploreResult).ToList();
 
@@ -179,6 +186,63 @@ public sealed class ExploreOrchestrator
         }
 
         return new ExploreExecutionResult(renderedOutput, exploreResults, truncated);
+    }
+
+    private static TrustSignal EnrichTrustSignal(
+        TrustSignal status,
+        ExploreQuery query,
+        IReadOnlyList<string> boostPatterns,
+        SearchEngineResult searchResult)
+    {
+        var isPureInventory = string.IsNullOrWhiteSpace(query.Keywords) && boostPatterns.Count == 0;
+        string? qualityTier = null;
+
+        if (isPureInventory)
+        {
+            qualityTier = "exhaustive";
+        }
+        else if (searchResult.Results.Count > 0)
+        {
+            var topRawScore = searchResult.Results[0].RawScore;
+            qualityTier = topRawScore switch
+            {
+                > StrongQualityThresholdRawScore => "strong",
+                > ModerateQualityThresholdRawScore => "moderate",
+                > WeakQualityThresholdRawScore => "weak",
+                _ => null
+            };
+        }
+
+        int? coverageAboveThreshold = null;
+        int? coverageTotalDocuments = null;
+        var coverageAllInScope = false;
+
+        if (!string.IsNullOrWhiteSpace(query.Keywords) && searchResult.TotalDocumentsMatched >= CoverageMinDocumentScope)
+        {
+            var bestScoreByDocument = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var result in searchResult.Results)
+            {
+                var documentUri = ToDocumentUri(result.Uri);
+                if (bestScoreByDocument.TryGetValue(documentUri, out var existing) && existing >= result.RawScore)
+                    continue;
+
+                bestScoreByDocument[documentUri] = result.RawScore;
+            }
+
+            var scoredDocumentCount = bestScoreByDocument.Count;
+            var aboveCount = bestScoreByDocument.Count(kvp => kvp.Value > CoverageThresholdRawScore);
+            coverageTotalDocuments = searchResult.TotalDocumentsMatched;
+            coverageAboveThreshold = Math.Min(aboveCount, coverageTotalDocuments.Value);
+            coverageAllInScope = scoredDocumentCount > 0 && aboveCount == scoredDocumentCount;
+        }
+
+        return status with
+        {
+            SearchQualityTier = qualityTier,
+            CoverageAboveThreshold = coverageAboveThreshold,
+            CoverageTotalDocuments = coverageTotalDocuments,
+            CoverageAllInScope = coverageAllInScope
+        };
     }
 
     private static string ToDocumentUri(string uri)
@@ -288,7 +352,8 @@ public sealed class ExploreOrchestrator
             Snippet: result.Snippet,
             Lang: result.Lang,
             SemanticType: result.SemanticType,
-            ChildObjects: childObjects
+            ChildObjects: childObjects,
+            Provenance: result.Provenance
         );
     }
 
