@@ -37,7 +37,7 @@ internal sealed class HostRestartCommandTests
         A.CallTo(() => ops.CleanupSocket("/tmp/repoql.sock"))
             .Returns(HostRestartCommand.CleanupResult.Success("/tmp/repoql.sock"));
         A.CallTo(() => ops.CleanupPidFile("/repo"))
-            .Returns(HostRestartCommand.CleanupResult.Success("/repo/.repoql/host.pid"));
+            .Returns(HostRestartCommand.CleanupResult.Success(null));
         A.CallTo(() => ops.ResetClientStateAsync()).Returns(Task.CompletedTask);
         A.CallTo(() => ops.TriggerLaunchAsync(A<CancellationToken>._)).Returns(Task.CompletedTask);
 
@@ -81,7 +81,7 @@ internal sealed class HostRestartCommandTests
         A.CallTo(() => ops.CleanupSocket("/tmp/repoql.sock"))
             .Returns(HostRestartCommand.CleanupResult.Success("/tmp/repoql.sock"));
         A.CallTo(() => ops.CleanupPidFile("/repo"))
-            .Returns(HostRestartCommand.CleanupResult.Success("/repo/.repoql/host.pid"));
+            .Returns(HostRestartCommand.CleanupResult.Success(null));
         A.CallTo(() => ops.ResetClientStateAsync()).Returns(Task.CompletedTask);
         A.CallTo(() => ops.TriggerLaunchAsync(A<CancellationToken>._))
             .ThrowsAsync(new TimeoutException("launch timeout"));
@@ -117,7 +117,7 @@ internal sealed class HostRestartCommandTests
         A.CallTo(() => ops.CleanupSocket("/tmp/stale.sock"))
             .Returns(HostRestartCommand.CleanupResult.Failure("/tmp/stale.sock", "permission denied"));
         A.CallTo(() => ops.CleanupPidFile("/repo"))
-            .Returns(HostRestartCommand.CleanupResult.Success("/repo/.repoql/host.pid"));
+            .Returns(HostRestartCommand.CleanupResult.Success(null));
         A.CallTo(() => ops.ResetClientStateAsync()).Returns(Task.CompletedTask);
         A.CallTo(() => ops.TriggerLaunchAsync(A<CancellationToken>._))
             .ThrowsAsync(new TimeoutException("launch timeout"));
@@ -154,7 +154,7 @@ internal sealed class HostRestartCommandTests
         A.CallTo(() => ops.CleanupSocket("/tmp/repoql.sock"))
             .Returns(HostRestartCommand.CleanupResult.Success("/tmp/repoql.sock"));
         A.CallTo(() => ops.CleanupPidFile("/repo"))
-            .Returns(HostRestartCommand.CleanupResult.Success("/repo/.repoql/host.pid"));
+            .Returns(HostRestartCommand.CleanupResult.Success(null));
         A.CallTo(() => ops.ResetClientStateAsync()).Returns(Task.CompletedTask);
         A.CallTo(() => ops.TriggerLaunchAsync(A<CancellationToken>._)).Returns(Task.CompletedTask);
 
@@ -185,7 +185,7 @@ internal sealed class HostRestartCommandTests
         A.CallTo(() => ops.CleanupSocket("/tmp/repoql.sock"))
             .Returns(HostRestartCommand.CleanupResult.Success("/tmp/repoql.sock"));
         A.CallTo(() => ops.CleanupPidFile("/repo"))
-            .Returns(HostRestartCommand.CleanupResult.Success("/repo/.repoql/host.pid"));
+            .Returns(HostRestartCommand.CleanupResult.Success(null));
 
         var command = new HostRestartCommand(ops);
         var result = await command.Execute(CancellationToken.None);
@@ -218,7 +218,7 @@ internal sealed class HostRestartCommandTests
         A.CallTo(() => ops.CleanupSocket("/tmp/repoql.sock"))
             .Returns(HostRestartCommand.CleanupResult.Success("/tmp/repoql.sock"));
         A.CallTo(() => ops.CleanupPidFile("/repo"))
-            .Returns(HostRestartCommand.CleanupResult.Success("/repo/.repoql/host.pid"));
+            .Returns(HostRestartCommand.CleanupResult.Success(null));
         A.CallTo(() => ops.ResetClientStateAsync()).Returns(Task.CompletedTask);
         A.CallTo(() => ops.TriggerLaunchAsync(A<CancellationToken>._))
             .ThrowsAsync(new TimeoutException("host launch timeout"));

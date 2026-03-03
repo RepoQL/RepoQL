@@ -4,11 +4,12 @@ using RepoQL.ConsoleApp.Host;
 namespace RepoQL.Tests.Host;
 
 /// <summary>
-/// Purpose: Verify host lock acquisition enforces single-host startup semantics.
-/// Complexity: Uses filesystem-level locking to confirm sharing violations are detected.
+/// Purpose: Verify host lock acquisition enforces single-host startup semantics and PID embedding.
+/// Complexity: Uses filesystem-level locking to confirm sharing violations, PID readability, and stale-file recovery.
 /// </summary>
 internal sealed class HostLockTests
 {
+    /// <summary>Only one process can hold the lock; second attempt gets Locked failure.</summary>
     [Test]
     public void HostLock_PreventsConcurrentAcquisition()
     {
@@ -30,14 +31,80 @@ internal sealed class HostLockTests
         finally
         {
             if (Directory.Exists(repoRoot))
-            {
                 Directory.Delete(repoRoot, recursive: true);
-            }
         }
     }
 
+    /// <summary>Lock file contains the current process PID in "PID:nnn" format after acquisition.</summary>
     [Test]
-    public void StaleLockFile_WithNoPid_CanBeReacquired()
+    public void TryAcquire_WritesPidToLockFile()
+    {
+        var repoRoot = Path.Combine(Path.GetTempPath(), $"repoql-hostlock-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(repoRoot);
+
+        try
+        {
+            using var hostLock = HostLock.TryAcquire(repoRoot, out _, out _);
+            hostLock.Should().NotBeNull();
+
+            var found = HostLock.TryReadHolderPid(repoRoot, out var pid);
+            found.Should().BeTrue();
+            pid.Should().Be(Environment.ProcessId);
+        }
+        finally
+        {
+            if (Directory.Exists(repoRoot))
+                Directory.Delete(repoRoot, recursive: true);
+        }
+    }
+
+    /// <summary>FileShare.Read allows competing processes to read the PID while lock is held.</summary>
+    [Test]
+    public void TryReadHolderPid_ReadableWhileLockHeld()
+    {
+        var repoRoot = Path.Combine(Path.GetTempPath(), $"repoql-hostlock-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(repoRoot);
+
+        try
+        {
+            using var hostLock = HostLock.TryAcquire(repoRoot, out _, out _);
+            hostLock.Should().NotBeNull();
+
+            // Simulate concurrent process reading the PID while lock is held
+            var found = HostLock.TryReadHolderPid(repoRoot, out var pid);
+            found.Should().BeTrue("PID should be readable by concurrent processes while lock is held");
+            pid.Should().BeGreaterThan(0);
+        }
+        finally
+        {
+            if (Directory.Exists(repoRoot))
+                Directory.Delete(repoRoot, recursive: true);
+        }
+    }
+
+    /// <summary>Missing lock file returns false, not an exception.</summary>
+    [Test]
+    public void TryReadHolderPid_ReturnsFalse_WhenNoLockFile()
+    {
+        var repoRoot = Path.Combine(Path.GetTempPath(), $"repoql-hostlock-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(Path.Combine(repoRoot, ".repoql"));
+
+        try
+        {
+            var found = HostLock.TryReadHolderPid(repoRoot, out var pid);
+            found.Should().BeFalse();
+            pid.Should().Be(0);
+        }
+        finally
+        {
+            if (Directory.Exists(repoRoot))
+                Directory.Delete(repoRoot, recursive: true);
+        }
+    }
+
+    /// <summary>Corrupt or non-PID content in lock file returns false, not a crash.</summary>
+    [Test]
+    public void TryReadHolderPid_ReturnsFalse_WhenContentMalformed()
     {
         var repoRoot = Path.Combine(Path.GetTempPath(), $"repoql-hostlock-{Guid.NewGuid():N}");
         var repoqlDir = Path.Combine(repoRoot, ".repoql");
@@ -45,57 +112,47 @@ internal sealed class HostLockTests
 
         try
         {
-            // Simulate crash aftermath: lock file exists on disk but no process holds it
-            var lockPath = Path.Combine(repoqlDir, "host.lock");
-            File.WriteAllText(lockPath, string.Empty);
+            // Write garbage to the lock file
+            File.WriteAllText(Path.Combine(repoqlDir, "host.lock"), "not a valid pid format");
 
-            // No host.pid file exists (crash before PID write, or PID deleted during shutdown)
+            var found = HostLock.TryReadHolderPid(repoRoot, out var pid);
+            found.Should().BeFalse("malformed content should not parse as a PID");
+            pid.Should().Be(0);
+        }
+        finally
+        {
+            if (Directory.Exists(repoRoot))
+                Directory.Delete(repoRoot, recursive: true);
+        }
+    }
 
-            // A new host should be able to acquire the lock despite the stale file
+    /// <summary>After a crash, the stale lock file (no handle held) can be overwritten by a new acquirer.</summary>
+    [Test]
+    public void StaleLockFile_CanBeReacquired()
+    {
+        var repoRoot = Path.Combine(Path.GetTempPath(), $"repoql-hostlock-{Guid.NewGuid():N}");
+        var repoqlDir = Path.Combine(repoRoot, ".repoql");
+        Directory.CreateDirectory(repoqlDir);
+
+        try
+        {
+            // Simulate crash aftermath: lock file with stale PID, no process holds the handle
+            File.WriteAllText(Path.Combine(repoqlDir, "host.lock"), "PID:99999\n");
+
             using var acquired = HostLock.TryAcquire(repoRoot, out var failure, out var error);
             acquired.Should().NotBeNull("stale lock file with no holder should be acquirable");
             failure.Should().Be(HostLockFailure.None);
             error.Should().BeNull();
+
+            // Verify PID was overwritten with current process
+            var found = HostLock.TryReadHolderPid(repoRoot, out var pid);
+            found.Should().BeTrue();
+            pid.Should().Be(Environment.ProcessId);
         }
         finally
         {
             if (Directory.Exists(repoRoot))
-            {
                 Directory.Delete(repoRoot, recursive: true);
-            }
-        }
-    }
-
-    [Test]
-    public void StaleLockFile_IsDeletedWhenNoPidExists()
-    {
-        var repoRoot = Path.Combine(Path.GetTempPath(), $"repoql-hostlock-{Guid.NewGuid():N}");
-        var repoqlDir = Path.Combine(repoRoot, ".repoql");
-        Directory.CreateDirectory(repoqlDir);
-
-        try
-        {
-            // Simulate crash aftermath: empty lock file, no PID
-            var lockPath = Path.Combine(repoqlDir, "host.lock");
-            File.WriteAllText(lockPath, string.Empty);
-
-            // The recovery path in TryWaitThenEvictZombieAsync deletes the lock file.
-            // Verify the file can be deleted and a fresh lock acquired afterward.
-            File.Exists(lockPath).Should().BeTrue();
-            File.Delete(lockPath);
-            File.Exists(lockPath).Should().BeFalse();
-
-            // Fresh acquisition should work on the now-clean directory
-            using var acquired = HostLock.TryAcquire(repoRoot, out var failure, out _);
-            acquired.Should().NotBeNull();
-            failure.Should().Be(HostLockFailure.None);
-        }
-        finally
-        {
-            if (Directory.Exists(repoRoot))
-            {
-                Directory.Delete(repoRoot, recursive: true);
-            }
         }
     }
 }

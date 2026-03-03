@@ -71,14 +71,7 @@ internal class HostCommands(IAnsiConsole console)
             return;
         }
 
-        // Write PID immediately so zombie detection can identify the lock holder.
-        // Previously this was deferred to ApplicationStarted, leaving a window where the lock
-        // holder was unidentifiable if startup failed partway through.
-        var pidFile = new HostPidFile(repo);
-        if (!pidFile.TryWrite(Environment.ProcessId, out var pidError))
-        {
-            serilogLogger.Warning(pidError, "Failed to write host PID file at {Path}.", pidFile.FilePath);
-        }
+        // PID is now embedded in the lock file by HostLock.TryAcquire — no separate PID file needed.
 
         HostStderrMirrorScope? stderrMirrorScope = null;
         try
@@ -227,13 +220,6 @@ internal class HostCommands(IAnsiConsole console)
                 return (uriRegistry.Count * 960L) + (symbolCount * 184L);
             });
             HostLogging.RegisterShutdown(app.Lifetime, app.Logger);
-            app.Lifetime.ApplicationStopping.Register(() =>
-            {
-                if (!pidFile.TryDelete(out var error))
-                {
-                    app.Logger.LogWarning(error, "Failed to remove host PID file at {Path}.", pidFile.FilePath);
-                }
-            });
 
             await DatabaseInitCoordinator.InitializeAsync(app.Services, repo, dbInit.Report, serilogLogger, CancellationToken.None)
                 .ConfigureAwait(false);
@@ -440,13 +426,15 @@ internal class HostCommands(IAnsiConsole console)
                 logger.Warning("Shutdown RPC failed ({Error}).", shutdownResult.Error);
             }
 
-            var pidFile = new HostPidFile(repo);
-            var pidFileFound = pidFile.TryRead(out var filePid);
-            report.PidFileFound = pidFileFound;
-            report.PidFileValue = pidFileFound ? filePid : null;
+            // Determine the existing host's PID: prefer the shutdown RPC response (authoritative if
+            // the host was healthy enough to respond), fall back to the lock file PID (covers crash
+            // scenarios where the host never responded but the lock file still contains its PID).
+            var lockPidFound = HostLock.TryReadHolderPid(repo, out var lockPid);
+            report.PidFileFound = lockPidFound;
+            report.PidFileValue = lockPidFound ? lockPid : null;
             var pid = shutdownResult.ProcessId > 0
                 ? shutdownResult.ProcessId
-                : (pidFileFound ? filePid : 0);
+                : (lockPidFound ? lockPid : 0);
 
             if (shutdownResult.Success && pid > 0)
             {
@@ -456,7 +444,6 @@ internal class HostCommands(IAnsiConsole console)
                 if (exited)
                 {
                     report.ProcessRunning = false;
-                    pidFile.TryDelete(out _);
                     UnixSocketTransport.TryCleanupStaleSocket(socketPath, out _);
                     return;
                 }
@@ -478,22 +465,19 @@ internal class HostCommands(IAnsiConsole console)
                     }
                     else
                     {
-                        pidFile.TryDelete(out _);
                         report.ProcessRunning = false;
                     }
                 }
                 else
                 {
                     report.ProcessRunning = false;
-                    logger.Warning("PID file found but process {Pid} is not RepoQL; skipping force kill.", pid);
-                    pidFile.TryDelete(out _);
+                    logger.Warning("Lock file PID {Pid} is not a RepoQL process; skipping force kill.", pid);
                 }
             }
             else
             {
                 report.ProcessRunning = false;
-                logger.Warning("Shutdown failed and no RepoQL PID file found; skipping force kill.");
-                pidFile.TryDelete(out _);
+                logger.Warning("Shutdown failed and no PID in lock file; skipping force kill.");
             }
 
             report.SocketCleanupAttempted = true;
@@ -657,10 +641,27 @@ internal class HostCommands(IAnsiConsole console)
 
     /// <summary>
     /// Wait for the lock holder to become healthy. If it doesn't within the grace period,
-    /// read host.pid, verify the process is a zombie, and kill it.
+    /// read the PID from the lock file, verify the process is a zombie, and kill it.
     /// Returns true if the zombie was evicted (caller should retry lock acquisition).
     /// Returns false if the host became healthy or eviction failed.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// After the grace period expires, there are three outcomes based on the lock file PID:
+    /// </para>
+    /// <list type="bullet">
+    /// <item><b>PID unreadable</b> — lock file may have been released between the failed acquire and now,
+    /// or content is corrupt/partial. Return true to retry acquisition (the lock may now be free).</item>
+    /// <item><b>PID readable but dead</b> (not a live RepoQL process) — the OS will release the file handle
+    /// shortly after process exit. Wait 1s for handle release, then return true to retry.</item>
+    /// <item><b>PID readable and alive but not serving</b> — wedged zombie. Kill it, clean up the socket,
+    /// wait for handle release, and return true to retry.</item>
+    /// </list>
+    /// <para>
+    /// The lock file is never deleted directly. Lock lifecycle is managed by the <see cref="HostLock"/>
+    /// FileStream — disposing it releases the OS lock, and the next acquirer overwrites the file content.
+    /// </para>
+    /// </remarks>
     private static async Task<bool> TryWaitThenEvictZombieAsync(
         string repo,
         string socketPath,
@@ -681,56 +682,34 @@ internal class HostCommands(IAnsiConsole console)
             await Task.Delay(500, ct).ConfigureAwait(false);
         }
 
-        // Grace period expired, no healthy socket. Try to identify and kill the zombie.
-        var pidFile = new HostPidFile(repo);
-        if (!pidFile.TryRead(out var zombiePid) || zombiePid <= 0)
+        // Grace period expired, no healthy socket. Read PID from the lock file itself.
+        if (!HostLock.TryReadHolderPid(repo, out var zombiePid) || zombiePid <= 0)
         {
-            // No PID file → can't identify or kill the lock holder.
-            // Best-effort: delete the lock file so a new host can take over.
-            // On Unix, this removes the directory entry; any old process retains its lock
-            // on the now-unlinked inode, harmless since it's not serving.
-            // On Windows, File.Delete will fail if a live process holds the file handle.
-            var lockPath = HostLock.GetLockPath(repo);
-            try
-            {
-                File.Delete(lockPath);
-                pidFile.TryDelete(out _);
-                UnixSocketTransport.TryCleanupStaleSocket(socketPath, out _);
-                logger.Warning(
-                    "Zombie detected (lock held, no socket after {Grace}s, no PID). Deleted stale lock file at {LockPath}.",
-                    grace.TotalSeconds, lockPath);
-                await Task.Delay(500, ct).ConfigureAwait(false);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                logger.Warning(ex,
-                    "Zombie detected (lock held, no socket after {Grace}s, no PID). " +
-                    "Could not remove stale lock file at {LockPath}; manual deletion may be required.",
-                    grace.TotalSeconds, lockPath);
-                return false;
-            }
+            // Can't read PID — lock file may have been released between the failed acquire
+            // and now, or content is corrupt/partial. Retry acquisition.
+            logger.Information(
+                "Lock held but PID unreadable after {Grace}s grace; retrying acquisition.",
+                grace.TotalSeconds);
+            await Task.Delay(500, ct).ConfigureAwait(false);
+            return true;
         }
 
         if (!RepoQlProcessInspector.TryGetRepoQlProcess(zombiePid, out var process))
         {
-            // PID in host.pid is dead or not repoql — the lock should release soon
-            logger.Information("host.pid points to PID {Pid} which is not a live RepoQL process; cleaning up.", zombiePid);
-            pidFile.TryDelete(out _);
-            // Wait briefly for the OS to release the lock file
+            // PID is dead or not repoql — the OS will release the file handle shortly.
+            logger.Information("Lock file PID {Pid} is not a live RepoQL process; waiting for OS handle release.", zombiePid);
             await Task.Delay(1000, ct).ConfigureAwait(false);
             return true;
         }
 
+        // PID is alive but not serving after grace period — wedged zombie. Kill it.
         logger.Warning(
             "Evicting zombie host (pid={Pid}): lock held for >{Grace}s with no healthy socket.",
             zombiePid, grace.TotalSeconds);
         var killed = await ProcessTermination.TryTerminateAsync(process, ct).ConfigureAwait(false);
         if (killed)
         {
-            pidFile.TryDelete(out _);
             UnixSocketTransport.TryCleanupStaleSocket(socketPath, out _);
-            // Wait for the OS to release the lock file
             await Task.Delay(1000, ct).ConfigureAwait(false);
             return true;
         }
@@ -739,6 +718,21 @@ internal class HostCommands(IAnsiConsole console)
         return false;
     }
 
+    /// <summary>
+    /// Retry lock acquisition with zombie detection until success or timeout.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// For implicit starts (client-triggered), this method handles three scenarios:
+    /// (1) Lock acquired → return the lock.
+    /// (2) Lock held and socket healthy → another host is running, return null (back off).
+    /// (3) Lock held and socket not healthy → zombie detection via <see cref="TryWaitThenEvictZombieAsync"/>.
+    /// </para>
+    /// <para>
+    /// For explicit starts (CLI <c>serve</c>), only (1) and simple wait-retry apply.
+    /// </para>
+    /// </remarks>
+    /// <returns>The acquired lock, or null if an implicit start should back off.</returns>
     private static async Task<HostLock?> WaitForHostLockAsync(
         string repo,
         TimeSpan timeout,

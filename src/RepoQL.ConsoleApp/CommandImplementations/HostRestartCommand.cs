@@ -422,14 +422,9 @@ internal sealed class HostRestartCommand
 
         public CleanupResult CleanupPidFile(string? repoRoot)
         {
-            if (string.IsNullOrWhiteSpace(repoRoot))
-                return CleanupResult.Success(null);
-
-            var pidFile = new HostPidFile(repoRoot);
-            if (pidFile.TryDelete(out var error))
-                return CleanupResult.Success(pidFile.FilePath);
-
-            return CleanupResult.Failure(pidFile.FilePath, error?.Message);
+            // PID is now embedded in the lock file — no separate file to clean up.
+            // Lock file lifetime is managed by the FileStream in HostLock.
+            return CleanupResult.Success(null);
         }
 
         public async Task ResetClientStateAsync()

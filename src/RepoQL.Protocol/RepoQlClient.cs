@@ -242,6 +242,22 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
         }
         else
         {
+            // Thundering herd mitigation: when multiple MCP clients detect "no healthy host"
+            // simultaneously (e.g. after taskkill /F), they all race to spawn a new host process.
+            // Random jitter (0-1500ms) staggers launch attempts so typically one client wins the
+            // host lock cleanly while others discover the new host via the re-check below.
+            // This prevents N simultaneous process spawns that all contend on the lock file.
+            var jitterMs = Random.Shared.Next(0, 1500);
+            _logger.LogDebug("RepoQlClient: jittering {JitterMs}ms before launch.", jitterMs);
+            await Task.Delay(jitterMs, cancellationToken).ConfigureAwait(false);
+
+            // Re-check health: another client's host may have started during our jitter window.
+            if (await TryHealthCheckAsync(initialSocketPath, cancellationToken).ConfigureAwait(false))
+            {
+                _logger.LogInformation("RepoQlClient: host became healthy during jitter on '{Socket}'.", initialSocketPath);
+                return initialSocketPath;
+            }
+
             _logger.LogInformation("RepoQlClient: launching host for repoRoot='{RepoRoot}'.", repoDirectory.RepoRoot);
         }
 
