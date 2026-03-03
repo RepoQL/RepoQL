@@ -255,40 +255,42 @@
       <Exec Command="npm run build" WorkingDirectory="$(RepositoryRoot)dashboard" />
     </Target>
 
-    <!-- Dashboard dist files must be in EmbeddedResource BEFORE CreateManifestResourceNames
-         runs, so they get proper ManifestResourceName metadata. _GenerateEmbeddedFilesManifest
-         (AfterTargets="PrepareResourceNames") rebuilds _FilesForManifest from @(EmbeddedResource)
-         and uses ManifestResourceName for the manifest's ResourcePath.
+    <!-- ⚠ WARNING — DO NOT CHANGE BeforeTargets="AssignTargetPaths" ⚠
 
-         Why BeforeTargets="CreateManifestResourceNames" and not alternatives:
-         - PrepareResourceNamesDependsOn: SDK's Microsoft.Common.targets overwrites the csproj
-           value with a direct assignment, so our addition is lost.
-         - BeforeTargets="PrepareResourceNames": runs AFTER DependsOnTargets (which includes
-           CreateManifestResourceNames), so dashboard files miss resource name computation.
-         - BeforeTargets="_CalculateEmbeddedFilesManifestInputs": NuGet-defined target that
-           MSBuild can't resolve by name from the csproj (import ordering). -->
+         This target hook is the ONLY correct injection point for dynamically-generated
+         EmbeddedResource items in SDK-style projects. It was found after 4 failed attempts.
+         Every "obvious" alternative silently breaks the manifest and the dashboard disappears
+         from published binaries with no build error.
+
+         Approaches that DO NOT work and why:
+         1. BeforeTargets="PrepareResourceNames"
+            → Runs AFTER DependsOnTargets (CreateManifestResourceNames already ran).
+              Dashboard files get empty ResourcePath in the manifest.
+         2. PrepareResourceNamesDependsOn injection from csproj
+            → SDK's Microsoft.Common.targets does a direct assignment that overwrites
+              the csproj value. Your addition is silently lost.
+         3. BeforeTargets="CreateManifestResourceNames"
+            → Target runs, files are added to @(EmbeddedResource), BUT CreateManifestResourceNames
+              does a Remove-all/Replace cycle via CreateCSharpManifestResourceName task. Items that
+              didn't go through AssignTargetPaths are missing internal metadata and get SILENTLY
+              DROPPED. The manifest generates without them. No error, no warning.
+         4. BeforeTargets="_CalculateEmbeddedFilesManifestInputs"
+            → NuGet-defined target that MSBuild can't resolve by name from the csproj.
+
+         BeforeTargets="AssignTargetPaths" works because dashboard files enter the pipeline
+         at the earliest point and flow through the full SDK chain:
+         AssignTargetPaths → CreateManifestResourceNames → _CalculateEmbeddedFilesManifestInputs
+         → _GenerateEmbeddedFilesManifest (AfterTargets="PrepareResourceNames"). -->
     <Target Name="RegisterDashboardEmbeddedResources"
             DependsOnTargets="BuildDashboard"
-            BeforeTargets="CreateManifestResourceNames">
+            BeforeTargets="AssignTargetPaths">
       <ItemGroup>
         <EmbeddedResource Remove="$(RepositoryRoot)dashboard/dist/**" />
         <DashboardDistFile Include="$(RepositoryRoot)dashboard/dist/**"
                            Condition="Exists('$(RepositoryRoot)dashboard/dist/index.html')" />
         <EmbeddedResource Include="@(DashboardDistFile)"
-                          Link="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)"
-                          TargetPath="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)" />
-        <!-- Also add to _FilesForManifest so the manifest cache hash includes
-             dashboard files. Without this, _GenerateEmbeddedFilesManifest skips
-             via incrementality because the hash from _CalculateEmbeddedFilesManifestInputs
-             (which ran before dashboard files were added) hasn't changed. -->
-        <_FilesForManifest Include="@(DashboardDistFile)"
-                           Link="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)"
-                           TargetPath="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)" />
+                          Link="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)" />
       </ItemGroup>
-    </Target>
-
-    <Target Name="_DiagAfterCreateManifestResourceNames" AfterTargets="CreateManifestResourceNames">
-      <Message Text="[DIAG-AFTER-CMRN] EmbeddedResource: %(EmbeddedResource.Identity) MRN=%(EmbeddedResource.ManifestResourceName)" Importance="High" />
     </Target>
 
     <!-- Generate help:// snapshot for Release builds so documentation is queryable on first request -->
