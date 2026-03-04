@@ -55,9 +55,9 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
     }
 
     /// <summary>
-    /// Search and explore the repository with intent-based discovery.
+    /// Search and explore the repository with breadth-controlled discovery.
     /// </summary>
-    /// <param name="intent">Inventory, Locate, or Inspect.</param>
+    /// <param name="breadth">Breadth 1-10 (1=depth, 10=coverage). Examples: inventory=8, locate=5, inspect=2.</param>
     /// <param name="keywords">Search terms — code words and synonyms (e.g., "login authentication", "cache").</param>
     /// <param name="budget">Token budget for response size.</param>
     /// <param name="uri">URI glob to filter scope (e.g., file:///src/**). Omit to search everywhere.</param>
@@ -66,7 +66,7 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
     /// <param name="limit">Max results to show.</param>
     /// <param name="cancel">Cancellation token.</param>
     public async Task Explore(
-        [Argument] string intent,
+        [Argument] string breadth,
         string? keywords = null,
         int budget = 2000,
         string? uri = null,
@@ -75,7 +75,13 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         int? limit = null,
         CancellationToken cancel = default)
     {
-        var protoIntent = ParseIntent(intent);
+        if (!int.TryParse(breadth, out var breadthValue) || breadthValue < 1 || breadthValue > 10)
+        {
+            throw new ArgumentException(
+                $"Invalid breadth '{breadth}'. Usage: explore <breadth 1-10> [keywords] [--budget N] [--uri GLOB] [--boost REGEX] [--penalize REGEX] [--limit N]. " +
+                "Suggested mapping: inventory=8, locate=5, inspect=2.");
+        }
+
         var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
         // For keyword searches, wait for scope readiness with a spinner
@@ -85,7 +91,7 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         }
 
         var response = await client.ExploreAsync(
-            budget, protoIntent, uri, keywords, boost, penalize, limit, cancel)
+            budget, breadthValue, uri, keywords, boost, penalize, limit, cancel)
             .ConfigureAwait(false);
 
         if (!response.Success)
@@ -114,7 +120,7 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         await WaitForScopeReadyAsync(client, uri, cancel).ConfigureAwait(false);
 
         var response = await client.ExploreAsync(
-            budget, ExploreIntent.Explain, uri, question, null, null, null, cancel)
+            budget, 5, uri, question, null, null, null, cancel)
             .ConfigureAwait(false);
 
         if (!response.Success)
@@ -186,18 +192,6 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         {
             console.MarkupLine($"[green]Imported:[/] {Markup.Escape(uri.Trim())}");
         }
-    }
-
-    private static ExploreIntent ParseIntent(string intent)
-    {
-        return intent.ToLowerInvariant() switch
-        {
-            "inventory" or "inv" => ExploreIntent.Inventory,
-            "locate" or "loc" => ExploreIntent.Locate,
-            "inspect" or "ins" => ExploreIntent.Inspect,
-            _ => throw new ArgumentException(
-                $"Unknown intent '{intent}'. Valid: inventory, locate, inspect (or inv, loc, ins). For explain, use the 'explain' command.")
-        };
     }
 
     private async Task WaitForScopeReadyAsync(IRepoQlClient client, string? scope, CancellationToken cancel)

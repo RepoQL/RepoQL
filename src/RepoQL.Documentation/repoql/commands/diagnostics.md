@@ -14,11 +14,11 @@ Run system health diagnostics. Reports host connectivity, database status, pipel
 ## Capsule: BasicUsage
 
 **Invariant**
-`::diagnostics` runs a full diagnostic report. `::diagnostics[fast]` runs quick checks only.
+`::diagnostics` runs a full diagnostic report. `::diagnostics.fast` runs quick checks only.
 
 **Example**
 ```
-::diagnostics[fast]
+::diagnostics.fast
 → Host: healthy (PID 12345, uptime 2h)
   Pipeline: idle
   Database: 1234 files indexed
@@ -29,8 +29,8 @@ Run system health diagnostics. Reports host connectivity, database status, pipel
 //BOUNDARY: Full diagnostics may take several seconds. Fast mode skips expensive checks.
 
 **Depth**
-- `fast` mode: connectivity, pipeline status, basic counts
-- Full mode: all fast checks plus embedding health, search validation, detailed metrics
+- `diagnostics.fast`: connectivity, pipeline status, basic counts
+- `diagnostics`: all fast checks plus embedding health, search validation, detailed metrics
 - Useful after `::host.restart` to verify the new host is healthy
 
 ---
@@ -39,7 +39,10 @@ Run system health diagnostics. Reports host connectivity, database status, pipel
 
 ```
 ::diagnostics --help
-→ ::diagnostics — Run system health diagnostics
-  Usage: ::diagnostics[depth?]
-    depth  'fast' for quick checks, omit for full
+→ ::diagnostics — Run full system health diagnostics
+  Usage: ::diagnostics
+
+::diagnostics.fast --help
+→ ::diagnostics.fast — Run quick system health checks
+  Usage: ::diagnostics.fast
 ```

@@ -166,7 +166,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         {
             var cmdName = trimmedSql.StartsWith("::")
                 ? trimmedSql[2..].Trim().ToString().Split(' ', '[')[0]
-                : "diagnostics";
+                : "diagnostics";  // legacy :diagnostics: redirect
             return ToolResult.Error($"Commands have moved to the 'command' tool. Use command(command=\"{cmdName}\") instead.");
         }
 

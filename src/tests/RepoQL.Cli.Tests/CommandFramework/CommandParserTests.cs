@@ -115,9 +115,9 @@ internal sealed class CommandParserTests
     [Test]
     public void HelpFlag_Detected()
     {
-        var result = CommandParser.TryParse("::diagnostics --help");
+        var result = CommandParser.TryParse("::diagnostics.fast --help");
         result.Should().NotBeNull();
-        result!.Name.Should().Be("diagnostics");
+        result!.Name.Should().Be("diagnostics.fast");
         result.Parameters.Should().BeEmpty();
         result.IsHelp.Should().BeTrue();
     }
@@ -147,13 +147,21 @@ internal sealed class CommandParserTests
     }
 
     [Test]
-    public void CommandWithFastParam_Parses()
+    public void DiagnosticsFast_Parses()
     {
-        var result = CommandParser.TryParse("::diagnostics[fast]");
+        var result = CommandParser.TryParse("::diagnostics.fast");
         result.Should().NotBeNull();
-        result!.Name.Should().Be("diagnostics");
-        result.Parameters.Should().HaveCount(1);
-        result.Parameters[0].Should().Be("fast");
+        result!.Name.Should().Be("diagnostics.fast");
+        result.Parameters.Should().BeEmpty();
+    }
+
+    [Test]
+    public void DiagnosticsMemory_Parses()
+    {
+        var result = CommandParser.TryParse("::diagnostics.memory");
+        result.Should().NotBeNull();
+        result!.Name.Should().Be("diagnostics.memory");
+        result.Parameters.Should().BeEmpty();
     }
 
     [Test]

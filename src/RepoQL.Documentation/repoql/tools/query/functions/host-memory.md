@@ -101,4 +101,4 @@ SELECT
 ```
 
 The `native_other_mb` value captures ONNX runtime, tree-sitter parsers, and other native allocations.
-For a formatted summary, use `::memory` instead.
+For a formatted summary, use `::diagnostics.memory` instead.

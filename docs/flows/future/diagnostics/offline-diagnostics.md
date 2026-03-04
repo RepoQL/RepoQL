@@ -66,7 +66,7 @@ When the host is unreachable, step 2 is entirely skipped. The report still conta
 
 `::diagnostics` runs and the host is unreachable. This happens:
 - Agent runs `::diagnostics` after a tool call fails with connection error
-- Agent runs `::diagnostics[fast]` as a verification step after `::host.restart`
+- Agent runs `::diagnostics.fast` as a verification step after `::host.restart`
 - Tool call fails, `ErrorClassifier.IsInfrastructureError` returns true, `SelfTestRunner.RunAsync(Fast)` is called automatically and attached to the error response
 
 ## Actors
@@ -239,7 +239,7 @@ flowchart TD
     Agent -->|Socket bind error| EscalatePerms["Tell user: check permissions"]:::warning
     Agent -->|Unknown| DeepDive["Read host log manually"]
 
-    Restart --> Verify["::diagnostics[fast] → OK?"]
+    Restart --> Verify["::diagnostics.fast → OK?"]
     RestartConfig --> Verify
     Verify -->|Yes| Done([Resume work]):::success
     Verify -->|No| EscalateFull["Escalate with full report"]:::warning

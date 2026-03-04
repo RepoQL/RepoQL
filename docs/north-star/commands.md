@@ -53,10 +53,12 @@ An agent is debugging a search that returns stale results. It doesn't switch too
 
 ```
 ::diagnostics --help
-→ ::diagnostics — Run system health diagnostics
+→ ::diagnostics — Run full system health diagnostics
+  Usage: ::diagnostics
 
-  Usage: ::diagnostics[depth?]
-    depth  'fast' for quick checks, omit for full
+::diagnostics.fast --help
+→ ::diagnostics.fast — Run quick system health checks
+  Usage: ::diagnostics.fast
 
 ::mcp --help
 → Available subcommands:
@@ -82,7 +84,7 @@ An agent is debugging a search that returns stale results. It doesn't switch too
   To set a provider: ::config[embedding_provider, ollama]
 
 -- explore returns partial results
-→ 12 of 45 files pending indexing. To check progress: ::diagnostics[fast]
+→ 12 of 45 files pending indexing. To check progress: ::diagnostics.fast
 ```
 
 ---
@@ -96,7 +98,7 @@ An agent is debugging a search that returns stale results. It doesn't switch too
 
 ```
 ::diagnostics                    -- full health report
-::diagnostics[fast]              -- quick check, minimal overhead
+::diagnostics.fast               -- quick check, minimal overhead
 ```
 
 ---

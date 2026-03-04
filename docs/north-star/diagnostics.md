@@ -158,7 +158,7 @@ Without the ability to cancel a stuck item, the only option is to restart the en
 #   1. Error with embedded diagnosis + suggestion
 #   2. Agent checks what the host is doing (mid-embedding? mid-import?)
 #   3. Agent runs the suggested recovery
-#   4. Agent verifies: ::diagnostics[fast] → "OK" + retry original operation
+#   4. Agent verifies: ::diagnostics.fast → "OK" + retry original operation
 #   5. Agent continues, mentioning the fix in passing
 #
 # Verification is the original operation succeeding, not just health returning.

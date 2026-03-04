@@ -4,21 +4,21 @@ using RepoQL.ConsoleApp.Diagnostics;
 namespace RepoQL.ConsoleApp.CommandImplementations;
 
 /// <summary>
-/// Purpose: Expose system health diagnostics as a ::diagnostics command.
-/// Complexity: Thin wrapper over SelfTestRunner, mapping depth parameter to collection mode.
+/// Purpose: Expose system health diagnostics as ::diagnostics and ::diagnostics.fast commands.
+/// Complexity: Thin wrapper over SelfTestRunner. Two commands — full and fast — no parameters needed.
 /// </summary>
 [CommandClass]
 internal sealed class DiagnosticsCommand(SelfTestRunner runner)
 {
-    [Command("diagnostics", Description = "Run system health diagnostics")]
-    public async Task<CommandResult> Execute(
-        [CommandParam("'fast' for quick checks, omit for full")] string? depth,
-        CancellationToken cancel)
+    [Command("diagnostics", Description = "Run full system health diagnostics")]
+    public async Task<CommandResult> Execute(CancellationToken cancel)
     {
-        var mode = string.Equals(depth, "fast", StringComparison.OrdinalIgnoreCase)
-            ? DiagnosticCollectionMode.Fast
-            : DiagnosticCollectionMode.Full;
+        return CommandResult.Success(await runner.RunAsync(DiagnosticCollectionMode.Full, cancel));
+    }
 
-        return CommandResult.Success(await runner.RunAsync(mode, cancel));
+    [Command("diagnostics.fast", Description = "Run quick system health checks")]
+    public async Task<CommandResult> ExecuteFast(CancellationToken cancel)
+    {
+        return CommandResult.Success(await runner.RunAsync(DiagnosticCollectionMode.Fast, cancel));
     }
 }

@@ -7,7 +7,7 @@ using RepoQL.Contracts;
 namespace RepoQL.ConsoleApp.CommandImplementations;
 
 /// <summary>
-/// Purpose: Expose host memory and graph stats as a ::memory command.
+/// Purpose: Expose host memory and graph stats as a ::diagnostics.memory command.
 /// Complexity: Client-side command that queries the host via gRPC for DuckDB memory,
 /// graph stats, and reads host PID for process working set. Follows the
 /// ReindexCommand/HostRestartCommand pattern.
@@ -49,7 +49,7 @@ internal sealed class MemoryCommand(RepoQlClientProvider clientProvider)
         ORDER BY model, embedding_type
         """;
 
-    [Command("memory", Description = "Show host memory breakdown by pool")]
+    [Command("diagnostics.memory", Description = "Show host memory breakdown by pool")]
     public async Task<CommandResult> Execute(CancellationToken cancel)
     {
         long indexSizeBytes = 0;

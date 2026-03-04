@@ -28,7 +28,9 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
         </DISCOVERY>
 
         <COMMON>
-        `diagnostics` | Run system health checks
+        `diagnostics` | Run full system health diagnostics
+        `diagnostics.fast` | Quick health checks
+        `diagnostics.memory` | Host memory breakdown
         `config` | View/change configuration
         `host.restart` | Restart the repoql host
         `queue.cancel` | Cancel one file at next stage boundary

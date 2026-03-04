@@ -5,7 +5,7 @@ audience: ["LLMs"]
 categories: ["Reference[100%]", "Commands[100%]"]
 ---
 
-# ::memory
+# ::diagnostics.memory
 
 Show a point-in-time host memory breakdown by pool.
 
@@ -14,11 +14,11 @@ Show a point-in-time host memory breakdown by pool.
 ## Capsule: BasicUsage
 
 **Invariant**
-`::memory` reports process working set, managed heap, DuckDB buffer usage, ONNX load state, and UriRegistry estimates.
+`::diagnostics.memory` reports process working set, managed heap, DuckDB buffer usage, ONNX load state, and UriRegistry estimates.
 
 **Example**
 ```
-::memory
+::diagnostics.memory
 → Memory Breakdown
   ────────────────
   Process working set:   1,234 MB
@@ -43,7 +43,7 @@ Show a point-in-time host memory breakdown by pool.
 ## Help
 
 ```
-::memory --help
-→ ::memory — Show host memory breakdown by pool
-  Usage: ::memory
+::diagnostics.memory --help
+→ ::diagnostics.memory — Show host memory breakdown by pool
+  Usage: ::diagnostics.memory
 ```

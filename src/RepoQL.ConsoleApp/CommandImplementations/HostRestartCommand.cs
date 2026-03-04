@@ -212,7 +212,7 @@ internal sealed class HostRestartCommand
         var sb = new StringBuilder();
         sb.AppendLine("::host.restart failed: local state discovery failed.");
         sb.AppendLine($"  error: {ex.Message}");
-        sb.Append("  manual: Run ::diagnostics[fast] and retry.");
+        sb.Append("  manual: Run ::diagnostics.fast and retry.");
         return sb.ToString();
     }
 

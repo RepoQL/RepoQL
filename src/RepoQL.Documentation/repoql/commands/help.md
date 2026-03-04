@@ -21,7 +21,9 @@ List all registered commands. Quick way to discover what's available.
 ::?
 → Available commands:
     ::?                List all commands
-    ::diagnostics      Run system health diagnostics
+    ::diagnostics      Run full system health diagnostics
+    ::diagnostics.fast Run quick health checks
+    ::diagnostics.memory Show host memory breakdown
     ::host.restart     Restart the repository host
     ::reindex          Reindex files, optionally scoped to a URI pattern
     ::repo             Switch to a different repository
