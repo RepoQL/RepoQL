@@ -12,6 +12,7 @@
         </PackageReference>
         <PackageReference Include="TUnit" />
         <PackageReference Include="AwesomeAssertions" />
+        <PackageReference Include="TreeSitter.DotNet" />
     </ItemGroup>
 
     <ItemGroup>

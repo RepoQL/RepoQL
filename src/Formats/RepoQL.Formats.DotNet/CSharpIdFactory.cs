@@ -25,22 +25,28 @@ internal static class CSharpIdFactory
     }
 
     public static Guid CreateNodeId(Guid documentId, string category, TextSpan span)
+        => CreateNodeId(documentId, category, span.Start, span.Length);
+
+    public static Guid CreateNodeId(Guid documentId, string category, int start, int length)
     {
         return DeterministicGuid.Create(
             "csharp.node",
             documentId.ToString("N"),
             category,
-            span.Start.ToString(),
-            span.Length.ToString());
+            start.ToString(),
+            length.ToString());
     }
 
     public static Guid CreateSpanId(Guid documentId, string category, TextSpan span)
+        => CreateSpanId(documentId, category, span.Start, span.Length);
+
+    public static Guid CreateSpanId(Guid documentId, string category, int start, int length)
     {
         return DeterministicGuid.Create(
             "csharp.span",
             documentId.ToString("N"),
             category,
-            span.Start.ToString(),
-            span.Length.ToString());
+            start.ToString(),
+            length.ToString());
     }
 }
