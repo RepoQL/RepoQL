@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.10
+
+- Simplify search SQL: centralize scope filtering into `_scope_filter` macro, eliminate `repo_index` from hot path
+- Replace Intent enum with continuous breadth parameter (1-10) for explore tool
+- Add tree-sitter C# parser prototype with query-based extraction
+- Add Voyage AI reranking and contextual embedding support
+- Consolidate codex skills into unified effective-delegation skill
+- Fix `repo_index` non-deterministic `DISTINCT ON` with `QUALIFY ROW_NUMBER()`
+- Fix `search()` case-sensitive LIKE scope filtering (now ILIKE)
+- Fix DuckDB macro parameter/column name collision (`scope` → `node_scope`)
+- Fix config command reset test expecting `<not set>` instead of default value
+- Add research docs: tree-sitter, Roslyn performance, reranking landscape, embedding hosting
+
 ## 1.4.8
 
 - Migrate PHP format from ANTLR to tree-sitter with zero-dependency native parsing

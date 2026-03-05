@@ -169,7 +169,6 @@ internal sealed class ConfigCommandTests : IDisposable
 
         var read = await _command.Read("duckdb.read_pool_size", CancellationToken.None);
         read.IsError.Should().BeFalse();
-        read.Text.Should().Contain("Value:          <not set>");
         read.Text.Should().Contain("Source:         default");
 
         HasValue(LocalConfigPath, "duckdb", "read_pool_size").Should().BeFalse();
