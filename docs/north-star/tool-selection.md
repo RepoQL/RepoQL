@@ -17,7 +17,7 @@ What do you need?
 │  └─ query
 │
 ├─ Understand how something works
-│  └─ explore (Explain) or read + query combination
+│  └─ explain (synthesized answer) or read + query combination
 │
 ├─ Find relationships (what calls X, what depends on Y)
 │  └─ query (edge table)
@@ -42,11 +42,13 @@ What do you need?
 
 | Need | Tool | Example |
 |------|------|---------|
-| Semantic search | `explore` | `explore(intent="Locate", keywords="authentication")` |
+| Semantic search | `explore` | `explore(keywords="authentication", tokenBudget=2000)` |
+| Wide inventory | `explore` | `explore(uriGlob="src/**", breadth=9, tokenBudget=1500)` |
+| Deep inspection | `explore` | `explore(keywords="auth", breadth=2, tokenBudget=3000)` |
 | Specific file | `read` | `read("file:///src/Auth.cs", 2000)` |
 | List all X | `query` | `SELECT * FROM Functions WHERE kind = 'endpoint'` |
 | What depends on X | `query` | `SELECT source_uri FROM edge WHERE target_uri = '...'` |
-| How does X work | `explore` | `explore(intent="Explain", keywords="How does auth work?")` |
+| How does X work | `explain` | `explain(question="How does auth work?", tokenBudget=2500)` |
 | Git history | `query` | `SELECT * FROM git_hotspots(since := '3 months')` |
 | Parse data | `query` | `SELECT * FROM parse(read_text('file:///data.csv'))` |
 | External docs | `query` | `SELECT * FROM mcp__context7__query_docs(...)` |
@@ -58,10 +60,11 @@ What do you need?
 | Don't | Do Instead |
 |-------|------------|
 | `explore` for "list all X" | `query` with aggregation |
-| `query` for "how does X work" | `explore` with Explain |
+| `query` for "how does X work" | `explain` with question |
 | `read` entire large file | `read` with symbol or line fragment |
 | `Bash("grep ...")` | `query` with search() or Grep tool |
 | Multiple `explore` for same area | One `explore` with appropriate budget |
+| `explore(breadth=1)` for overview | `explore(breadth=8)` — match breadth to intent |
 
 ## Composition
 

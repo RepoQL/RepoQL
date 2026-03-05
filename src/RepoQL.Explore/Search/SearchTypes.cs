@@ -7,7 +7,7 @@ public record SearchParameters(
     string? Scope,
     string? Question,
     IReadOnlyList<string> Patterns,
-    Intent Intent,
+    int Breadth = 5,
     int TokenBudget = 2000,
     IReadOnlyList<string>? PenalizePatterns = null
 );

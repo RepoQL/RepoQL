@@ -127,7 +127,7 @@ public interface IRepoQlClient : IAsyncDisposable
     /// Execute an explore query and return both structured results and pre-rendered output.
     /// </summary>
     /// <param name="tokenBudget">Maximum tokens to invest in the response.</param>
-    /// <param name="intent">Search intent (zoom level).</param>
+    /// <param name="breadth">How widely to distribute tokens (1=depth, 10=coverage, default 5).</param>
     /// <param name="scope">Optional scope filter (glob pattern or URI).</param>
     /// <param name="keywords">Optional search keywords for semantic search.</param>
     /// <param name="boost">Optional comma-separated regex patterns to boost matches.</param>
@@ -136,7 +136,7 @@ public interface IRepoQlClient : IAsyncDisposable
     /// <param name="cancellationToken">Cancellation token.</param>
     Task<ExploreResponse> ExploreAsync(
         int tokenBudget,
-        ExploreIntent intent,
+        int breadth = 5,
         string? scope = null,
         string? keywords = null,
         string? boost = null,

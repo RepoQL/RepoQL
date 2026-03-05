@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using RepoQL.Explore;
 using RepoQL.Explore.Search;
 
 namespace RepoQL.Rendering.Tests;
@@ -7,25 +6,25 @@ namespace RepoQL.Rendering.Tests;
 public class DynamicSnippetLimitTests
 {
     [Test]
-    [Arguments(Intent.Inventory, 2000, 1, 3)]
-    [Arguments(Intent.Locate, 2000, 1, 5)]
-    [Arguments(Intent.Inspect, 2000, 1, 13)]
-    [Arguments(Intent.Explain, 2000, 1, 8)]
-    [DisplayName("CalculateSnippetLimit caps by intent")]
-    public void Given_Intent_When_CalculatingSnippetLimit_Then_IntentCapIsApplied(
-        Intent intent,
+    [Arguments(8, 2000, 1, 3)]
+    [Arguments(5, 2000, 1, 5)]
+    [Arguments(2, 2000, 1, 13)]
+    [Arguments(5, 2000, 1, 5)]
+    [DisplayName("CalculateSnippetLimit caps by breadth")]
+    public void Given_Breadth_When_CalculatingSnippetLimit_Then_BreadthCapIsApplied(
+        int breadth,
         int tokenBudget,
         int resultCount,
         int expected)
     {
-        FileGrouper.CalculateSnippetLimit(intent, tokenBudget, resultCount).Should().Be(expected);
+        FileGrouper.CalculateSnippetLimit(breadth, tokenBudget, resultCount).Should().Be(expected);
     }
 
     [Test]
     [DisplayName("CalculateSnippetLimit enforces minimum of 2")]
     public void Given_LowBudget_When_CalculatingSnippetLimit_Then_MinimumIsTwo()
     {
-        FileGrouper.CalculateSnippetLimit(Intent.Locate, tokenBudget: 100, resultCount: 10)
+        FileGrouper.CalculateSnippetLimit(5, tokenBudget: 100, resultCount: 10)
             .Should().Be(2);
     }
 
@@ -33,7 +32,7 @@ public class DynamicSnippetLimitTests
     [DisplayName("CalculateSnippetLimit uses min(resultCount, 10) denominator")]
     public void Given_HighResultCount_When_CalculatingSnippetLimit_Then_ResultCountIsBoundedToTen()
     {
-        FileGrouper.CalculateSnippetLimit(Intent.Inspect, tokenBudget: 9000, resultCount: 50)
+        FileGrouper.CalculateSnippetLimit(2, tokenBudget: 9000, resultCount: 50)
             .Should().Be(6);
     }
 
@@ -75,7 +74,7 @@ public class DynamicSnippetLimitTests
 
     [Test]
     [DisplayName("Standard search path uses dynamic snippet limit")]
-    public async Task Given_StandardSearch_When_IntentLocate_Then_UsesDynamicSnippetLimit()
+    public async Task Given_StandardSearch_When_BreadthIsBalanced_Then_UsesDynamicSnippetLimit()
     {
         var documentUri = "file:///repo/sample.cs";
         var documents = new List<DocumentMatch>
@@ -94,7 +93,7 @@ public class DynamicSnippetLimitTests
                 Scope: null,
                 Question: "find symbol",
                 Patterns: [],
-                Intent: Intent.Locate,
+                Breadth: 5,
                 TokenBudget: 2000),
             jitService: null,
             jitCache: null,
@@ -109,7 +108,7 @@ public class DynamicSnippetLimitTests
 
     [Test]
     [DisplayName("JIT search path uses dynamic snippet limit")]
-    public async Task Given_JitSearch_When_IntentLocate_Then_UsesDynamicSnippetLimit()
+    public async Task Given_JitSearch_When_BreadthIsBalanced_Then_UsesDynamicSnippetLimit()
     {
         var documentUri = "file:///repo/sample.cs";
         var jitResult = new JitObjectSearchResult(
@@ -153,7 +152,7 @@ public class DynamicSnippetLimitTests
                 Scope: null,
                 Question: "find symbol",
                 Patterns: [],
-                Intent: Intent.Locate,
+                Breadth: 5,
                 TokenBudget: 2000),
             jitService: new StubJitObjectSearchService(jitResult),
             jitCache: new JitEmbeddingCache(),

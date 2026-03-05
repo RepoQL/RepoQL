@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using RepoQL.Contracts;
 using RepoQL.Explore;
 
 namespace RepoQL.Rendering.Tests;
@@ -60,8 +61,8 @@ public class OutputComposerTests
     }
 
     [Test]
-    [DisplayName("Compose forwards inventory intent to headline formatter")]
-    public void Given_InventoryIntent_Then_ComposeUsesInventoryHeadlineDensity()
+    [DisplayName("Compose preserves compact headline token detail")]
+    public void Given_CompactHeadlineWithTokens_Then_ComposeKeepsTokenEstimate()
     {
         var decisions = new[]
         {
@@ -79,14 +80,14 @@ public class OutputComposerTests
         };
         var result = new DecisionResult(decisions, 0, null);
 
-        var output = OutputComposer.Compose(result, showConfidence: true, intent: Intent.Inventory);
+        var output = OutputComposer.Compose(result, showConfidence: true);
 
-        output.Should().Be(" 90% file:///src/ConfidenceNormalizer.cs  Confidence normalizer | ~1.2k tok");
+        output.Should().Be(" 90% file:///src/ConfidenceNormalizer.cs  Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale");
     }
 
     [Test]
-    [DisplayName("Compose forwards locate intent through nested children")]
-    public void Given_LocateIntentWithChildren_Then_ComposeAppliesLocateHeadlineAndChildFragmentCompaction()
+    [DisplayName("Compose preserves child fragment compaction for nested children")]
+    public void Given_NestedChildren_Then_ComposeAppliesChildFragmentCompaction()
     {
         var parent = new RenderingDecision(
             new ExploreResult(
@@ -116,10 +117,10 @@ public class OutputComposerTests
 
         var result = new DecisionResult([parent], 0, null);
 
-        var output = OutputComposer.Compose(result, showConfidence: true, intent: Intent.Locate);
+        var output = OutputComposer.Compose(result, showConfidence: true);
 
-        output.Should().Contain("Confidence normalizer | code.csharp.class | ~1.2k tok | Normalize, Clamp, Weight");
-        output.Should().Contain("Normalize result | csharp.method | ~60 tok | guard, score, clamp #symbol=NormalizeResult");
+        output.Should().Contain("Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale");
+        output.Should().Contain("Normalize result | csharp.method | 300 B, 12 lines | ~60 tok | guard, score, clamp, return #symbol=NormalizeResult");
     }
 
     [Test]
@@ -356,7 +357,7 @@ public class OutputComposerTests
     }
 
     [Test]
-    [DisplayName("Status footer front-loads quality and coverage when available")]
+    [DisplayName("Status footer front-loads quality and coverage with actual body token count")]
     public void Given_QualityCoverageSignals_Then_ComposeIncludesSignalsFirst()
     {
         var decisions = new[]
@@ -381,9 +382,12 @@ public class OutputComposerTests
             CoverageTotalDocuments = 20
         };
 
+        var body = OutputComposer.Compose(result, showConfidence: true);
+        var expectedTokens = TokenEstimator.EstimateTokens($"{body}\n");
+        var expectedFooter = RepresentationFormatter.FormatStatusFooter(trustSignal, expectedTokens);
         var output = OutputComposer.Compose(result, showConfidence: true, trustSignal);
 
-        output.Should().Contain("[quality: weak | 3 of 20 above threshold | 10 tok | 50 ms | index: ready | semantic: ready]");
+        output.Should().EndWith(expectedFooter);
     }
 
     [Test]
@@ -407,8 +411,8 @@ public class OutputComposerTests
     }
 
     [Test]
-    [DisplayName("Cluster header token overhead is included in footer token accounting")]
-    public void Given_ClusterHeader_Then_FooterIncludesHeaderTokenCost()
+    [DisplayName("Footer token accounting uses actual rendered body text")]
+    public void Given_ClusterHeader_Then_FooterUsesMeasuredBodyTokens()
     {
         var decisions = new[]
         {
@@ -430,8 +434,118 @@ public class OutputComposerTests
             SemanticPercent: 100,
             ExecutionTimeMs: 25);
 
+        var body = OutputComposer.Compose(result, showConfidence: true);
+        var expectedTokens = TokenEstimator.EstimateTokens($"{body}\n");
+        var expectedFooter = RepresentationFormatter.FormatStatusFooter(trustSignal, expectedTokens);
         var output = OutputComposer.Compose(result, showConfidence: true, trustSignal);
 
-        output.Should().Contain("75 tok");
+        output.Should().EndWith(expectedFooter);
+    }
+
+    [Test]
+    [DisplayName("Estimated versus actual body tokens stay within tolerance for realistic explore output")]
+    public void Given_RealisticExploreOutput_When_ComparingEstimatedVsActual_Then_DriftWithinTolerance()
+    {
+        var results = CreateRealisticExploreResults();
+        var decisions = ValueBasedAllocator.Allocate(results, tokenBudget: 2200, breadth: 5);
+        var decisionResult = new DecisionResult(decisions, 0, null);
+
+        var renderedBody = OutputComposer.Compose(decisionResult, showConfidence: true);
+        var actualTokens = TokenEstimator.EstimateTokens(renderedBody);
+        var estimatedTokens = EstimateDecisionResultTokens(decisionResult);
+        var drift = Math.Abs(estimatedTokens - actualTokens);
+        var tolerance = Math.Max(100, (int)Math.Round(actualTokens * 0.20, MidpointRounding.AwayFromZero));
+
+        drift.Should().BeLessThanOrEqualTo(
+            tolerance,
+            $"estimated {estimatedTokens} tokens, actual {actualTokens} tokens, tolerance {tolerance} tokens");
+    }
+
+    private static int EstimateDecisionResultTokens(DecisionResult decisionResult)
+    {
+        var total = 0;
+        var clustered = ResultClusterer.Cluster([.. decisionResult.Decisions]);
+
+        foreach (var item in clustered.Items)
+        {
+            switch (item)
+            {
+                case ClusterHeader:
+                    total += ResultClusterer.ClusterHeaderTokenCost;
+                    break;
+                case RenderingDecision decision:
+                    total += EstimateDecisionTokens(decision);
+                    break;
+            }
+        }
+
+        return total;
+    }
+
+    private static int EstimateDecisionTokens(RenderingDecision decision)
+    {
+        var total = decision.EstimatedTokens;
+        if (decision.ChildDecisions is not { Count: > 0 })
+            return total;
+
+        foreach (var child in decision.ChildDecisions)
+            total += EstimateDecisionTokens(child);
+
+        return total;
+    }
+
+    private static List<ExploreResult> CreateRealisticExploreResults()
+    {
+        return
+        [
+            new ExploreResult(
+                Uri: "file:///src/RepoQL.Explore/ExploreOrchestrator.cs",
+                Confidence: 98,
+                Kind: null,
+                Headline: "exploreorchestrator.cs | ExploreOrchestrator | ExecuteAsync | 273 ln, ~2.3k tok",
+                Structure: "SearchAsync()\\nDeduplicateResults()\\nOutputComposer.Compose()",
+                Snippet: null,
+                Lang: "csharp"),
+            new ExploreResult(
+                Uri: "file:///src/RepoQL.Explore/ValueBasedAllocator.cs",
+                Confidence: 95,
+                Kind: null,
+                Headline: "valuebasedallocator.cs | ValueBasedAllocator | Allocate | 273 ln, ~2.4k tok",
+                Structure: "Allocate()\\nAllocateWithinFile()\\nPickBestFit()",
+                Snippet: null,
+                Lang: "csharp"),
+            new ExploreResult(
+                Uri: "file:///src/RepoQL.Explore/RepresentationFormatter.cs",
+                Confidence: 91,
+                Kind: null,
+                Headline: "representationformatter.cs | RepresentationFormatter | formatting for Minimal/Compact/Standard/Rich",
+                Structure: "FormatMinimal()\\nFormatCompact()\\nFormatStandard()\\nFormatRich()",
+                Snippet: null,
+                Lang: "csharp"),
+            new ExploreResult(
+                Uri: "file:///src/RepoQL.Explore/OutputComposer.cs",
+                Confidence: 87,
+                Kind: null,
+                Headline: "outputcomposer.cs | OutputComposer | Compose | 206 ln, ~1.6k tok",
+                Structure: "Compose()\\nFormatWithChildren()\\nFormatClusterHeader()",
+                Snippet: null,
+                Lang: "csharp"),
+            new ExploreResult(
+                Uri: "file:///src/RepoQL.Explore/ExploreTokenEstimator.cs",
+                Confidence: 84,
+                Kind: null,
+                Headline: "exploretokenestimator.cs | ExploreTokenEstimator | representation-level token estimates",
+                Structure: "EstimateMinimal()\\nEstimateCompact()\\nEstimateStandard()\\nEstimateRich()",
+                Snippet: null,
+                Lang: "csharp"),
+            new ExploreResult(
+                Uri: "file:///src/RepoQL.Explore/Search/QueryStrategy.cs",
+                Confidence: 81,
+                Kind: null,
+                Headline: "querystrategy.cs | QueryStrategy | breadth-driven query plan",
+                Structure: "Plan()\\nObjectFetchMode\\nQueryPlan",
+                Snippet: null,
+                Lang: "csharp")
+        ];
     }
 }

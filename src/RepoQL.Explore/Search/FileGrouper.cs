@@ -96,17 +96,19 @@ public static class FileGrouper
     }
 
     /// <summary>
-    /// Calculate dynamic snippet limit from intent and token budget.
+    /// Calculate dynamic snippet limit from breadth and token budget.
+    /// Low breadth = more snippets per file (depth). High breadth = fewer snippets (coverage).
     /// </summary>
-    public static int CalculateSnippetLimit(Intent intent, int tokenBudget, int resultCount)
+    public static int CalculateSnippetLimit(int breadth, int tokenBudget, int resultCount)
     {
-        var maxForIntent = intent switch
+        var clampedBreadth = Math.Clamp(breadth, 1, 10);
+        var maxForBreadth = clampedBreadth switch
         {
-            Intent.Inventory => 3,
-            Intent.Locate => 5,
-            Intent.Inspect => InspectIntentMaxSnippetsPerFile,
-            Intent.Explain => 8,
-            _ => 3
+            <= 2 => InspectIntentMaxSnippetsPerFile,
+            <= 4 => 8,
+            <= 6 => 5,
+            <= 8 => 3,
+            _ => 2
         };
 
         var boundedResultCount = Math.Max(1, Math.Min(resultCount, 10));
@@ -114,7 +116,7 @@ public static class FileGrouper
         var snippetsFromBudget = perFileBudget / AverageSnippetCost;
         var dynamicLimit = Math.Max(MinSnippetsPerFile, snippetsFromBudget);
 
-        return Math.Min(maxForIntent, dynamicLimit);
+        return Math.Min(maxForBreadth, dynamicLimit);
     }
 
     /// <summary>

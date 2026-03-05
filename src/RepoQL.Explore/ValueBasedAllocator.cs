@@ -4,6 +4,12 @@ namespace RepoQL.Explore;
 /// Allocates token budget using a two-level hierarchical algorithm.
 /// Level 1: Files compete for budget based on file-level EV (considers best child).
 /// Level 2: Within each file's budget, file and children compete for representation.
+///
+/// Breadth (1-10) controls allocation curve steepness via an exponent
+/// applied to confidence scores before proportional allocation:
+/// - Low breadth (1-3): exponent > 1 → steeper curve, concentrates tokens on top results
+/// - Medium breadth (5): exponent = 1 → identity, linear proportional allocation
+/// - High breadth (7-10): exponent &lt; 1 → flatter curve, spreads tokens more evenly
 /// </summary>
 public static class ValueBasedAllocator
 {
@@ -12,34 +18,24 @@ public static class ValueBasedAllocator
     /// </summary>
     /// <param name="results">Top-level files with ChildObjects.</param>
     /// <param name="tokenBudget">Total token budget to allocate.</param>
-    /// <param name="intent">Search intent (affects allocation curve).</param>
+    /// <param name="breadth">Breadth 1-10 controlling allocation curve steepness.</param>
     /// <returns>Rendering decisions with allocated representation levels.</returns>
     public static List<RenderingDecision> Allocate(
         IReadOnlyList<ExploreResult> results,
         int tokenBudget,
-        Intent intent)
+        int breadth)
     {
         if (results.Count == 0)
             return [];
 
-        const int AdaptiveThreshold = 3;
-        var effectiveIntent = intent;
-        if (results.Count <= AdaptiveThreshold)
-        {
-            effectiveIntent = intent switch
-            {
-                Intent.Inventory => Intent.Locate,
-                Intent.Locate => Intent.Inspect,
-                Intent.Explain => Intent.Inspect,
-                _ => intent
-            };
-        }
+        var clampedBreadth = Math.Clamp(breadth, 1, 10);
 
         // Level 1: Calculate file-level EV and allocate budget to files
+        var modifier = GetBreadthModifier(clampedBreadth);
         var files = results.Select(r => new FileAllocation
         {
             Result = r,
-            ExpectedValue = CalculateFileEV(r, effectiveIntent),
+            ExpectedValue = CalculateFileEV(r, modifier),
             Budget = 0,
             MinCost = ExploreTokenEstimator.EstimateMinimal(r)
         }).ToList();
@@ -73,49 +69,48 @@ public static class ValueBasedAllocator
         }
 
         // Level 2: Allocate within each file
-        return files.Select(f => AllocateWithinFile(f.Result, f.Budget, effectiveIntent)).ToList();
+        return files.Select(f => AllocateWithinFile(f.Result, f.Budget, clampedBreadth, modifier)).ToList();
     }
+
+    /// <summary>
+    /// Breadth curve exponent used in proportional allocation.
+    /// 1-3 steeper (focus), 4-6 balanced, 7-10 flatter (coverage).
+    /// breadth=5 is identity (exponent=1.0) so default behavior is preserved.
+    /// </summary>
+    internal static double GetBreadthModifier(int breadth)
+    {
+        var clamped = Math.Clamp(breadth, 1, 10);
+        if (clamped <= 5)
+            return 1.0 + ((5 - clamped) * 0.05); // 1 → 1.20, 5 → 1.00
+        return 1.0 - ((clamped - 5) * 0.04);     // 5 → 1.00, 10 → 0.80
+    }
+
+    /// <summary>
+    /// Maximum children to show per file, derived from breadth.
+    /// Low breadth = more children (depth), high breadth = fewer children (breadth).
+    /// </summary>
+    private static int GetMaxChildren(int breadth)
+        => breadth switch
+        {
+            <= 2 => 8,
+            <= 4 => 6,
+            <= 6 => 5,
+            <= 8 => 3,
+            _ => 2
+        };
 
     /// <summary>
     /// Calculate file-level expected value.
     /// Uses max of file confidence and best child confidence.
     /// </summary>
-    private static double CalculateFileEV(ExploreResult file, Intent intent)
+    private static double CalculateFileEV(ExploreResult file, double modifier)
     {
         var bestChildConf = file.ChildObjects?.Count > 0
             ? file.ChildObjects.Max(c => c.Confidence)
             : 0;
         var baseEV = Math.Max(file.Confidence, bestChildConf);
-        return baseEV * GetIntentModifier(intent);
+        return Math.Pow(Math.Max(baseEV, 0), modifier);
     }
-
-    /// <summary>
-    /// Get intent modifier for EV calculation.
-    /// </summary>
-    private static double GetIntentModifier(Intent intent) => intent switch
-    {
-        Intent.Inspect => 1.2,       // Concentrate on top results
-        Intent.Locate => 1.0,          // Balanced
-        Intent.Inventory => 0.8,       // Flatten distribution
-        Intent.Explain => 1.1,    // Balanced but focused - LLM needs context not noise
-        _ => 1.0
-    };
-
-    /// <summary>
-    /// Maximum children to show per file by intent.
-    /// Explore: fewer children (breadth over depth)
-    /// Find: moderate children
-    /// Examine: more children (depth over breadth)
-    /// Understand: moderate depth - LLM needs context not noise
-    /// </summary>
-    private static int GetMaxChildrenForIntent(Intent intent) => intent switch
-    {
-        Intent.Inventory => 3,
-        Intent.Locate => 5,
-        Intent.Inspect => 8,
-        Intent.Explain => 6,
-        _ => 5
-    };
 
     /// <summary>
     /// Allocate budget within a single file among the file and its children.
@@ -123,7 +118,8 @@ public static class ValueBasedAllocator
     private static RenderingDecision AllocateWithinFile(
         ExploreResult file,
         int fileBudget,
-        Intent intent)
+        int breadth,
+        double modifier)
     {
         // Build candidate list: file (without children) + all children
         var items = new List<AllocationItem>
@@ -131,7 +127,7 @@ public static class ValueBasedAllocator
             new()
             {
                 Result = file with { ChildObjects = null },
-                ExpectedValue = file.Confidence * GetIntentModifier(intent),
+                ExpectedValue = Math.Pow(Math.Max(file.Confidence, 0), modifier),
                 Level = Representation.Minimal,
                 Tokens = ExploreTokenEstimator.EstimateMinimal(file)
             }
@@ -141,14 +137,14 @@ public static class ValueBasedAllocator
 
         if (file.ChildObjects != null && file.ChildObjects.Count > 0)
         {
-            var maxChildren = GetMaxChildrenForIntent(intent);
+            var maxChildren = GetMaxChildren(breadth);
 
             // Score and sort children by EV, take top N
             var scoredChildren = file.ChildObjects
                 .Select(c => new AllocationItem
                 {
                     Result = c,
-                    ExpectedValue = c.Confidence * GetIntentModifier(intent),
+                    ExpectedValue = Math.Pow(Math.Max(c.Confidence, 0), modifier),
                     Level = Representation.Minimal,
                     Tokens = ExploreTokenEstimator.EstimateMinimal(c)
                 })
@@ -169,7 +165,7 @@ public static class ValueBasedAllocator
             foreach (var item in items)
             {
                 var allocation = (int)(fileBudget * item.ExpectedValue / totalEV);
-                item.Level = PickBestFit(item.Result, allocation, intent);
+                item.Level = PickBestFit(item.Result, allocation, breadth);
                 item.Tokens = ExploreTokenEstimator.Estimate(item.Result, item.Level);
             }
         }
@@ -226,9 +222,9 @@ public static class ValueBasedAllocator
 
     /// <summary>
     /// Pick the richest representation that fits within the token allocation.
-    /// Minimal (no URI) is only used for Explore; Find/Examine/Understand use Compact as floor.
+    /// Minimal (no URI) is only used at high breadth (≥8); lower breadth uses Compact as floor.
     /// </summary>
-    private static Representation PickBestFit(ExploreResult result, int allocation, Intent intent)
+    private static Representation PickBestFit(ExploreResult result, int allocation, int breadth)
     {
         if (ExploreTokenEstimator.EstimateRich(result) <= allocation)
             return Representation.Rich;
@@ -237,8 +233,8 @@ public static class ValueBasedAllocator
         if (ExploreTokenEstimator.EstimateCompact(result) <= allocation)
             return Representation.Compact;
 
-        // Minimal (no URI) only for Explore - URI is high-value for Find/Examine/Understand
-        return intent == Intent.Inventory ? Representation.Minimal : Representation.Compact;
+        // Minimal (headline-only) only for high breadth — URI is high-value at lower breadth
+        return breadth >= 8 ? Representation.Minimal : Representation.Compact;
     }
 
     /// <summary>

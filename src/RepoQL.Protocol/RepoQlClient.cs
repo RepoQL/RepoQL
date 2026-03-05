@@ -999,7 +999,7 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
 
     public Task<ExploreResponse> ExploreAsync(
         int tokenBudget,
-        ExploreIntent intent,
+        int breadth = 5,
         string? scope = null,
         string? keywords = null,
         string? boost = null,
@@ -1011,7 +1011,7 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
             var request = new Contracts.ExploreRequest
             {
                 TokenBudget = tokenBudget,
-                Intent = intent
+                Breadth = breadth
             };
 
             if (!string.IsNullOrWhiteSpace(scope))

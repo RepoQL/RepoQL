@@ -483,8 +483,8 @@ message PreviewDocumentResponse {
 message ExploreRequest {
   // Maximum tokens to invest in the response.
   int32 token_budget = 1;
-  // Search intent (zoom level).
-  ExploreIntent intent = 2;
+  // Breadth 1-10 (default 5). 1 = maximum depth, 10 = maximum breadth.
+  int32 breadth = 2;
   // Scope filter (glob pattern or URI).
   string scope = 3;
   // Search keywords for semantic search.
@@ -495,14 +495,6 @@ message ExploreRequest {
   string penalize = 6;
   // Max results to show (0 = auto-calculate).
   int32 limit = 7;
-}
-
-enum ExploreIntent {
-  EXPLORE_INTENT_UNSPECIFIED = 0;
-  EXPLORE_INTENT_INVENTORY = 1;
-  EXPLORE_INTENT_LOCATE = 2;
-  EXPLORE_INTENT_INSPECT = 3;
-  EXPLORE_INTENT_EXPLAIN = 4;
 }
 
 message ExploreResponse {

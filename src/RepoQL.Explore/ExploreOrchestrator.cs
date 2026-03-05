@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text.RegularExpressions;
 using RepoQL.Contracts;
 using RepoQL.Explore.Search;
-using CoreTokenEstimator = RepoQL.Contracts.TokenEstimator;
 
 namespace RepoQL.Explore;
 
@@ -15,10 +14,6 @@ public sealed class ExploreOrchestrator
     private readonly IJitObjectSearchService? _jitService;
     private readonly ILlmProvider? _llmProvider;
 
-    /// <summary>
-    /// Minimum token budget for Understand intent to ensure sufficient context for LLM synthesis.
-    /// </summary>
-    private const int UnderstandMinBudget = 3000;
     private const double StrongQualityThresholdRawScore = 0.70;
     private const double ModerateQualityThresholdRawScore = 0.40;
     private const double WeakQualityThresholdRawScore = 0.0;
@@ -52,67 +47,17 @@ public sealed class ExploreOrchestrator
         if (query.TokenBudget <= 0)
             throw new ArgumentException("tokenBudget must be a positive integer.", nameof(query));
 
-        // Handle Understand intent: check LLM provider and auto-scale budget
-        var isUnderstand = query.Intent == Intent.Explain;
-        if (isUnderstand)
-        {
-            if (_llmProvider is null || !_llmProvider.Enabled)
-            {
-                // LLM not configured - return error with guidance
-                var errorMsg = """
-                    LLM not configured. The 'understand' intent requires an LLM provider.
-
-                    Set OPENROUTER_API_KEY environment variable to enable LLM synthesis.
-
-                    Alternatively, use intent=examine for detailed structured results.
-                    """;
-                return new ExploreExecutionResult(errorMsg, [], Truncated: false);
-            }
-
-            if (string.IsNullOrWhiteSpace(query.Keywords))
-            {
-                var errorMsg = """
-                    Keywords required for 'understand' intent. The keywords become the question for LLM synthesis.
-
-                    Example: explore(tokenBudget=2000, intent=understand, keywords="How does authentication work?")
-                    """;
-                return new ExploreExecutionResult(errorMsg, [], Truncated: false);
-            }
-        }
-
-        // Auto-scale budget for Understand intent
-        var effectiveBudget = isUnderstand
-            ? Math.Max(query.TokenBudget, UnderstandMinBudget)
-            : query.TokenBudget;
-
-        // For Understand, we use Find behavior internally for search/allocation
-        var searchIntent = isUnderstand ? Intent.Locate : query.Intent;
-
         // Parse patterns
         var boostPatterns = ParsePatterns(query.Boost);
         var penalizePatterns = ParsePatterns(query.Penalize);
 
-        // For Understand intent, extract optimized search keywords from the question
-        var searchKeywords = query.Keywords;
-        if (isUnderstand && _llmProvider is not null && !string.IsNullOrWhiteSpace(query.Keywords))
-        {
-            try
-            {
-                searchKeywords = await _llmProvider.ExtractKeywordsAsync(query.Keywords, cancellationToken);
-            }
-            catch
-            {
-                // Fallback to original keywords on failure
-            }
-        }
-
         // Build search parameters
         var searchParams = new SearchParameters(
             Scope: query.Scope,
-            Question: searchKeywords,
+            Question: query.Keywords,
             Patterns: boostPatterns,
-            Intent: searchIntent,
-            TokenBudget: effectiveBudget,
+            Breadth: query.Breadth,
+            TokenBudget: query.TokenBudget,
             PenalizePatterns: penalizePatterns.Count > 0 ? penalizePatterns : null
         );
 
@@ -153,7 +98,7 @@ public sealed class ExploreOrchestrator
         var hasSearchCriteria = !string.IsNullOrWhiteSpace(query.Keywords) || boostPatterns.Count > 0;
 
         // Hierarchical token allocation (files compete first, then children within each file)
-        var decisions = ValueBasedAllocator.Allocate(exploreResults, effectiveBudget, searchIntent);
+        var decisions = ValueBasedAllocator.Allocate(exploreResults, query.TokenBudget, query.Breadth);
 
         // Apply limit if specified
         var limitedDecisions = query.Limit.HasValue && query.Limit.Value > 0
@@ -165,25 +110,8 @@ public sealed class ExploreOrchestrator
         var decisionResult = new DecisionResult(limitedDecisions, omittedCount, null);
 
         // Compose output
-        var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status, searchIntent);
+        var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status);
         var truncated = omittedCount > 0;
-
-        // If Understand intent, synthesize via LLM
-        if (isUnderstand && _llmProvider is not null)
-        {
-            // Re-render with LLM-friendly token budget (50k tokens ~= 200k chars for context)
-            const int llmTokenBudget = 50_000;
-            var llmDecisions = ValueBasedAllocator.Allocate(exploreResults, llmTokenBudget, Intent.Inspect);
-            var llmDecisionResult = new DecisionResult(llmDecisions, 0, null);
-            var llmOutput = OutputComposer.Compose(llmDecisionResult, hasSearchCriteria, status, Intent.Inspect);
-
-            var synthesized = await SynthesizeUnderstandingAsync(
-                llmOutput,
-                query.Keywords!,
-                status,
-                cancellationToken).ConfigureAwait(false);
-            return new ExploreExecutionResult(synthesized, exploreResults, truncated);
-        }
 
         return new ExploreExecutionResult(renderedOutput, exploreResults, truncated);
     }
@@ -255,56 +183,6 @@ public sealed class ExploreOrchestrator
 
         var hash = uri.IndexOf('#', StringComparison.Ordinal);
         return hash >= 0 ? uri[..hash] : uri;
-    }
-
-    /// <summary>
-    /// Synthesize understanding from explore output using LLM.
-    /// </summary>
-    private async Task<string> SynthesizeUnderstandingAsync(
-        string exploreOutput,
-        string question,
-        TrustSignal status,
-        CancellationToken ct)
-    {
-        // The explore output becomes the context, the keywords become the question
-        // System prompt (CoreSystemPrompt with capsules) handles format and wisdom
-        var intent = question;
-
-        try
-        {
-            var result = await _llmProvider!.SummarizeAsync(
-                exploreOutput,
-                intent,
-                maxTokens: 1000,
-                repoTree: null,
-                ct: ct).ConfigureAwait(false);
-
-            // Calculate token count for the response content (excluding footer)
-            var responseContent = $"## Understanding: {question}\n\n{result}";
-            var tokenCount = CoreTokenEstimator.EstimateTokens(responseContent);
-            var footer = RepresentationFormatter.FormatStatusFooter(status, tokenCount);
-
-            return $"""
-                ## Understanding: {question}
-
-                {result}
-
-                ---
-
-                {footer}
-                """;
-        }
-        catch (Exception ex)
-        {
-            // Fall back to structured output on LLM failure
-            return $"""
-                LLM synthesis failed: {ex.Message}
-
-                Falling back to structured results:
-
-                {exploreOutput}
-                """;
-        }
     }
 
     /// <summary>

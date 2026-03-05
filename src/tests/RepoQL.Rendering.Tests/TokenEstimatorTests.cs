@@ -87,16 +87,34 @@ public class TokenEstimatorTests
     }
 
     [Test]
-    [DisplayName("Compact representation includes kind badge for objects")]
-    public void Given_Object_When_EstimateCompact_Then_IncludesKindBadge()
+    [DisplayName("Compact representation ignores kind because kind badge is not rendered")]
+    public void Given_ObjectKind_When_EstimateCompact_Then_DoesNotChangeCost()
     {
         var doc = ResultBuilder.Document(80, headlineLength: 40);
-        var obj = ResultBuilder.Create(80, headlineLength: 40, kind: "method");
+        var obj = doc with { Kind = "method" };
 
         var docTokens = ExploreTokenEstimator.EstimateCompact(doc);
         var objTokens = ExploreTokenEstimator.EstimateCompact(obj);
 
-        objTokens.Should().BeGreaterThan(docTokens, "object includes [kind] badge");
+        objTokens.Should().Be(docTokens, "kind badge is not rendered");
+    }
+
+    [Test]
+    [DisplayName("Confidence token cost is only charged when confidence is shown")]
+    public void Given_ShowConfidenceFlag_When_Estimating_Then_ConfidenceCostIsConditional()
+    {
+        var result = ResultBuilder.Create(80, headlineLength: 40, structureLength: 120, snippetLength: 160);
+
+        var compactWithout = ExploreTokenEstimator.EstimateCompact(result, showConfidence: false);
+        var compactWith = ExploreTokenEstimator.EstimateCompact(result, showConfidence: true);
+        var standardWithout = ExploreTokenEstimator.EstimateStandard(result, showConfidence: false);
+        var standardWith = ExploreTokenEstimator.EstimateStandard(result, showConfidence: true);
+        var richWithout = ExploreTokenEstimator.EstimateRich(result, showConfidence: false);
+        var richWith = ExploreTokenEstimator.EstimateRich(result, showConfidence: true);
+
+        compactWith.Should().Be(compactWithout + 2);
+        standardWith.Should().Be(standardWithout + 2);
+        richWith.Should().Be(richWithout + 2);
     }
 
     [Test]
@@ -165,6 +183,24 @@ public class TokenEstimatorTests
         compact.Should().Be(ExploreTokenEstimator.EstimateCompact(result));
         standard.Should().Be(ExploreTokenEstimator.EstimateStandard(result));
         rich.Should().Be(ExploreTokenEstimator.EstimateRich(result));
+    }
+
+    [Test]
+    [DisplayName("Estimate dispatch honors showConfidence flag")]
+    public void Given_ShowConfidenceFlag_When_UsingEstimateDispatch_Then_UsesConditionalConfidenceCost()
+    {
+        var result = ResultBuilder.Create(80, headlineLength: 40, structureLength: 100, snippetLength: 200);
+
+        var compactWithout = ExploreTokenEstimator.Estimate(result, Representation.Compact, showConfidence: false);
+        var compactWith = ExploreTokenEstimator.Estimate(result, Representation.Compact, showConfidence: true);
+        var standardWithout = ExploreTokenEstimator.Estimate(result, Representation.Standard, showConfidence: false);
+        var standardWith = ExploreTokenEstimator.Estimate(result, Representation.Standard, showConfidence: true);
+        var richWithout = ExploreTokenEstimator.Estimate(result, Representation.Rich, showConfidence: false);
+        var richWith = ExploreTokenEstimator.Estimate(result, Representation.Rich, showConfidence: true);
+
+        compactWith.Should().Be(compactWithout + 2);
+        standardWith.Should().Be(standardWithout + 2);
+        richWith.Should().Be(richWithout + 2);
     }
 
     [Test]

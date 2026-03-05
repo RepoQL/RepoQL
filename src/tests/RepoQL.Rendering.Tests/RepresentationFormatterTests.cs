@@ -101,33 +101,33 @@ public class RepresentationFormatterTests
         output.Should().NotContain("(semantic)");
     }
 
-    // Intent-aware headline density tests
+    // Headline utility tests
 
     [Test]
-    [DisplayName("Inventory headline keeps description and token estimate")]
-    public void Given_InventoryHeadline_Then_KeepDescriptionAndTokens()
+    [DisplayName("ShortHeadline returns description segment for x-ray headline")]
+    public void Given_XrayHeadline_When_UsingShortHeadline_Then_ReturnsDescriptionSegment()
     {
         var headline = "Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale";
 
-        var output = RepresentationFormatter.InventoryHeadline(headline);
+        var output = RepresentationFormatter.ShortHeadline(headline);
 
-        output.Should().Be("Confidence normalizer | ~1.2k tok");
+        output.Should().Be("Confidence normalizer");
     }
 
     [Test]
-    [DisplayName("Locate headline keeps type and first three sections")]
-    public void Given_LocateHeadline_Then_KeepTypeTokensAndFirstThreeSections()
+    [DisplayName("ShortHeadline returns original text when no delimiter exists")]
+    public void Given_PlainHeadline_When_UsingShortHeadline_Then_ReturnsOriginal()
     {
-        var headline = "Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale";
+        var headline = "Auth service";
 
-        var output = RepresentationFormatter.LocateHeadline(headline);
+        var output = RepresentationFormatter.ShortHeadline(headline);
 
-        output.Should().Be("Confidence normalizer | code.csharp.class | ~1.2k tok | Normalize, Clamp, Weight");
+        output.Should().Be("Auth service");
     }
 
     [Test]
-    [DisplayName("Compact applies inventory intent headline trimming")]
-    public void Given_CompactInventoryIntent_Then_UsesInventoryHeadlineDensity()
+    [DisplayName("Compact preserves x-ray headline content")]
+    public void Given_CompactXrayHeadline_Then_PreservesHeadlineContent()
     {
         var result = new ExploreResult(
             Uri: "file:///src/Search/ConfidenceNormalizer.cs",
@@ -138,14 +138,14 @@ public class RepresentationFormatterTests
             Snippet: null,
             Lang: null);
 
-        var output = RepresentationFormatter.FormatCompact(result, showConfidence: true, intent: Intent.Inventory);
+        var output = RepresentationFormatter.FormatCompact(result, showConfidence: true);
 
-        output.Should().Be(" 85% file:///src/Search/ConfidenceNormalizer.cs  Confidence normalizer | ~1.2k tok");
+        output.Should().Be(" 85% file:///src/Search/ConfidenceNormalizer.cs  Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale");
     }
 
     [Test]
-    [DisplayName("Compact inspect intent keeps full headline")]
-    public void Given_CompactInspectIntent_Then_KeepsFullHeadline()
+    [DisplayName("Compact keeps full headline")]
+    public void Given_CompactHeadline_Then_KeepsFullHeadline()
     {
         var result = new ExploreResult(
             Uri: "file:///src/Search/ConfidenceNormalizer.cs",
@@ -156,7 +156,7 @@ public class RepresentationFormatterTests
             Snippet: null,
             Lang: null);
 
-        var output = RepresentationFormatter.FormatCompact(result, showConfidence: true, intent: Intent.Inspect);
+        var output = RepresentationFormatter.FormatCompact(result, showConfidence: true);
 
         output.Should().Be(" 85% file:///src/Search/ConfidenceNormalizer.cs  Confidence normalizer | code.csharp.class | 4.0 KB, 120 lines | ~1.2k tok | Normalize, Clamp, Weight, Scale");
     }

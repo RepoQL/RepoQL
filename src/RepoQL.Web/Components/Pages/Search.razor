@@ -24,11 +24,11 @@
             </div>
 
             <div class="form-group">
-                <label for="intent">Intent</label>
-                <select id="intent" @bind="_intent">
-                    <option value="@ExploreIntent.Inventory">Inventory - What's here?</option>
-                    <option value="@ExploreIntent.Locate">Locate - Where is it?</option>
-                    <option value="@ExploreIntent.Inspect">Inspect - Show details</option>
+                <label for="breadth">Breadth</label>
+                <select id="breadth" @bind="_breadth">
+                    <option value="8">Inventory - What's here?</option>
+                    <option value="5">Locate - Where is it?</option>
+                    <option value="2">Inspect - Show details</option>
                 </select>
             </div>
 
@@ -561,7 +561,7 @@
 
 @code {
     private string _keywords = "";
-    private ExploreIntent _intent = ExploreIntent.Locate;
+    private int _breadth = 5;
     private int _tokenBudget = 2000;
     private string? _scope;
     private string? _boost;
@@ -579,7 +579,7 @@
         (RequiresKeywords && string.IsNullOrWhiteSpace(_keywords));
 
     private bool RequiresKeywords =>
-        _intent is ExploreIntent.Locate or ExploreIntent.Inspect;
+        _breadth <= 5;
 
     private async Task HandleKeyDown(KeyboardEventArgs e)
     {
@@ -598,7 +598,7 @@
         _validationError = null;
         if (RequiresKeywords && string.IsNullOrWhiteSpace(_keywords))
         {
-            _validationError = "Keywords are required for this intent.";
+            _validationError = "Keywords are required for this breadth setting.";
             return;
         }
 
@@ -615,7 +615,7 @@
         {
             var @params = new SearchParams(
                 Keywords: _keywords,
-                Intent: _intent,
+                Breadth: _breadth,
                 TokenBudget: _tokenBudget,
                 Scope: string.IsNullOrWhiteSpace(_scope) ? null : _scope,
                 Boost: string.IsNullOrWhiteSpace(_boost) ? null : _boost,

@@ -23,62 +23,55 @@ public record QueryPlan(
 );
 
 /// <summary>
-/// Determines query strategy based on intent and parameters.
-/// Fetch limits are fixed per intent - display limits are handled separately by rendering.
+/// Determines query strategy based on breadth and parameters.
+/// Fetch limits scale with breadth — high breadth fetches more documents, low breadth fetches more objects.
 /// </summary>
 public static class QueryStrategy
 {
-    // Fixed fetch limits - we always fetch enough to have good coverage
-    private const int ExploreFetchLimit = 50;
-    private const int FindFetchLimit = 20;
-    private const int ReadFetchLimit = 15;
-
     /// <summary>
     /// Plan the query execution based on search parameters.
     /// </summary>
     public static QueryPlan Plan(SearchParameters parameters)
     {
         var hasQuestion = !string.IsNullOrWhiteSpace(parameters.Question);
+        var breadth = Math.Clamp(parameters.Breadth, 1, 10);
 
-        return parameters.Intent switch
+        // Scale document fetch limit with breadth: low breadth = fewer docs, high breadth = more
+        var documentLimit = breadth switch
         {
-            // Explore: Fast overview, documents only (unless question provided)
-            Intent.Inventory when !hasQuestion => new QueryPlan(
-                FetchDocuments: true,
-                FetchObjects: false,
-                DocumentLimit: ExploreFetchLimit,
-                ObjectsPerDocument: 0,
-                ObjectMode: ObjectFetchMode.None),
-
-            Intent.Inventory when hasQuestion => new QueryPlan(
-                FetchDocuments: true,
-                FetchObjects: true,
-                DocumentLimit: 10,
-                ObjectsPerDocument: 3,
-                ObjectMode: ObjectFetchMode.TopDocumentsOnly),
-
-            // Find: Documents + objects from top docs
-            Intent.Locate => new QueryPlan(
-                FetchDocuments: true,
-                FetchObjects: hasQuestion,
-                DocumentLimit: FindFetchLimit,
-                ObjectsPerDocument: hasQuestion ? 5 : 0,
-                ObjectMode: hasQuestion ? ObjectFetchMode.TopDocumentsOnly : ObjectFetchMode.None),
-
-            // Read: Focus on objects when question provided
-            Intent.Inspect => new QueryPlan(
-                FetchDocuments: true,
-                FetchObjects: hasQuestion,
-                DocumentLimit: ReadFetchLimit,
-                ObjectsPerDocument: hasQuestion ? 8 : 0,
-                ObjectMode: hasQuestion ? ObjectFetchMode.TopDocumentsOnly : ObjectFetchMode.None),
-
-            _ => new QueryPlan(
-                FetchDocuments: true,
-                FetchObjects: false,
-                DocumentLimit: ExploreFetchLimit,
-                ObjectsPerDocument: 0,
-                ObjectMode: ObjectFetchMode.None)
+            <= 2 => 15,
+            <= 4 => 20,
+            <= 6 => 25,
+            <= 8 => 35,
+            _ => 50
         };
+
+        // Scale objects per document inversely with breadth
+        var objectsPerDocument = breadth switch
+        {
+            <= 2 => 8,
+            <= 4 => 6,
+            <= 6 => 5,
+            <= 8 => 3,
+            _ => 0
+        };
+
+        // High breadth without a question: documents only (inventory scan)
+        if (breadth >= 8 && !hasQuestion)
+        {
+            return new QueryPlan(
+                FetchDocuments: true,
+                FetchObjects: false,
+                DocumentLimit: documentLimit,
+                ObjectsPerDocument: 0,
+                ObjectMode: ObjectFetchMode.None);
+        }
+
+        return new QueryPlan(
+            FetchDocuments: true,
+            FetchObjects: hasQuestion && objectsPerDocument > 0,
+            DocumentLimit: documentLimit,
+            ObjectsPerDocument: hasQuestion ? objectsPerDocument : 0,
+            ObjectMode: hasQuestion && objectsPerDocument > 0 ? ObjectFetchMode.TopDocumentsOnly : ObjectFetchMode.None);
     }
 }

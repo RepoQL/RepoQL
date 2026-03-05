@@ -30,7 +30,7 @@ public class ExploreOrchestratorSearchQualitySignalComputationTests
             TotalObjectsMatched: 0,
             TrustSignal: null);
 
-        var output = await ExecuteAsync(searchResult, keywords: null, intent: Intent.Inventory);
+        var output = await ExecuteAsync(searchResult, keywords: null, breadth: 8);
 
         output.Should().Contain("quality: exhaustive");
     }
@@ -156,7 +156,7 @@ public class ExploreOrchestratorSearchQualitySignalComputationTests
         var execution = await orchestrator.ExecuteAsync(
             new ExploreQuery(
                 TokenBudget: 1200,
-                Intent: Intent.Locate,
+                Breadth: 5,
                 Scope: null,
                 Keywords: "auth",
                 Boost: null,
@@ -172,7 +172,7 @@ public class ExploreOrchestratorSearchQualitySignalComputationTests
     private static async Task<string> ExecuteAsync(
         SearchEngineResult searchResult,
         string? keywords,
-        Intent intent = Intent.Locate)
+        int breadth = 5)
     {
         var searchEngine = A.Fake<IExploreSearchEngine>();
         A.CallTo(() => searchEngine.SearchAsync(
@@ -185,7 +185,7 @@ public class ExploreOrchestratorSearchQualitySignalComputationTests
         var orchestrator = new ExploreOrchestrator(searchEngine);
         var query = new ExploreQuery(
             TokenBudget: 1200,
-            Intent: intent,
+            Breadth: breadth,
             Scope: null,
             Keywords: keywords,
             Boost: null,

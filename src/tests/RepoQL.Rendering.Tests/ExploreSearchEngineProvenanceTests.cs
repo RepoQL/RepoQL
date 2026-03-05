@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using RepoQL.Explore;
 using RepoQL.Explore.Search;
 
 namespace RepoQL.Rendering.Tests;
@@ -81,7 +80,7 @@ public class ExploreSearchEngineProvenanceTests
                 Scope: null,
                 Question: "validate token",
                 Patterns: [],
-                Intent: Intent.Locate,
+                Breadth: 5,
                 TokenBudget: 2000),
             jitService: null,
             jitCache: null,
@@ -166,7 +165,7 @@ public class ExploreSearchEngineProvenanceTests
                 Scope: null,
                 Question: "validate token",
                 Patterns: [],
-                Intent: Intent.Locate,
+                Breadth: 5,
                 TokenBudget: 2000),
             jitService: new StubJitObjectSearchService(jitResult),
             jitCache: new JitEmbeddingCache(),

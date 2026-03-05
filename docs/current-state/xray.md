@@ -7,87 +7,63 @@
 ## Capsule: ExploreCore
 
 **Invariant**
-Given query + budget, explore searches → allocates tokens across results → renders at appropriate detail levels. Intent determines behavior.
+Given keywords + budget + breadth, explore searches, allocates tokens across results using a breadth-controlled curve, and renders at appropriate detail levels.
 
 **Example**
-```sql
--- Explore: inventory what exists
-SELECT * FROM explore('file:///src/**', 'Explore', 1500);
+```
+-- Wide inventory (breadth 9)
+explore(uriGlob="src/**", tokenBudget=1500, breadth=9)
 
--- Find: locate specific code
-SELECT * FROM explore('authentication', 'Find', 2000);
+-- Balanced search (default breadth 5)
+explore(keywords="authentication", tokenBudget=2000)
 
--- Examine: deep structure
-SELECT * FROM explore('file:///src/Auth.cs', 'Examine', 3000, keywords := 'validate');
-
--- Understand: LLM synthesis
-SELECT * FROM explore('How does JWT validation work?', 'Understand', 2500);
+-- Deep inspection (breadth 2)
+explore(keywords="authentication", tokenBudget=2000, breadth=2)
 ```
 
 **Depth**
-- Explore: Breadth-first inventory, no keywords required
-- Find: Ranked results with snippets, keywords required
-- Examine: Deep structure with line numbers, scope recommended
-- Understand: LLM-synthesized answer with citations, requires LLM provider
+- Breadth 1-2: Deep inspection — few results, full structure + addressable children
+- Breadth 5: Balanced — moderate results with selective structure
+- Breadth 9-10: Wide inventory — many results, URI + headline
 
 ---
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    Entry["explore(intent, keywords, scope, budget)"] --> Orchestrator["XrayOrchestrator"]
-
-    Orchestrator --> Search["XraySearchEngine"]
-    Orchestrator --> Allocator["ValueBasedAllocator"]
-    Orchestrator --> Composer["OutputComposer"]
-
-    Search --> Results["SearchResults"]
-    Results --> Allocator
-    Allocator --> Decisions["RenderingDecisions"]
-    Decisions --> Composer
-    Composer --> Output["Rendered Output"]
-
-    Orchestrator -->|Understand| LLM["LLM Synthesis"]
-    LLM --> Output
-
-    classDef entry fill:#81D4FA,stroke:#0277BD,color:#000
-    classDef core fill:#90EE90,stroke:#2E7D32,color:#000
-    classDef data fill:#FFE082,stroke:#F57C00,color:#000
-    classDef output fill:#E0E0E0,stroke:#616161,color:#000
-
-    class Entry entry
-    class Orchestrator,Search,Allocator,Composer,LLM core
-    class Results,Decisions data
-    class Output output
-
-    %% MEANING: Explore orchestration flow
-    %% COLOR: Blue=entry, Green=components, Yellow=data, Gray=output
-    %% BRANCH: Understand intent adds LLM synthesis step
+```
+explore(breadth, keywords, scope, budget)
+    │
+    ▼
+ExploreOrchestrator
+    ├── SearchEngine (hybrid: BM25 + fuzzy + semantic)
+    │   ├── QueryStrategy (breadth → document/object fetch limits)
+    │   └── FileGrouper (breadth → snippet limits per file)
+    ├── ValueBasedAllocator (breadth → allocation curve → per-result budget)
+    └── OutputComposer
+        └── RepresentationFormatter (per-result budget → representation level)
 ```
 
 ---
 
-## Intents
+## Breadth Parameter
 
-### Capsule: IntentBehavior
+### Capsule: BreadthBehavior
 
 **Invariant**
-Intent determines: keywords requirement, max children per file, allocation modifier, and whether LLM synthesis runs.
+Breadth (1-10, default 5) controls the allocation curve steepness. Everything else derives: result count, per-result depth, search aggressiveness, children shown.
 
 **Example**
-| Intent | Keywords | MaxChildren | Modifier | LLM |
-|--------|----------|-------------|----------|-----|
-| Explore | Optional | 3 | 0.8 | No |
-| Find | Required | 5 | 1.0 | No |
-| Examine | Optional | 8 | 1.2 | No |
-| Understand | Required | 6 | 1.1 | Yes |
+| Breadth | Modifier | Max Children | Doc Limit | Objects/Doc |
+|---------|----------|-------------|-----------|-------------|
+| 1 | 0.60 | 8 | 15 | 8 |
+| 5 | 0.92 | 5 | 25 | 5 |
+| 10 | 1.32 | 2 | 50 | 0 |
 
 **Depth**
-- Explore flattens distribution (modifier 0.8) for breadth
-- Examine concentrates on top results (modifier 1.2) for depth
-- Find/Understand balance breadth and depth
-- Minimal representation only allowed for Explore
+- `modifier = 0.6 + (breadth - 1) * 0.08`
+- Lower modifier = steeper curve = more concentration on top results
+- High breadth (>=8) without keywords: documents only (inventory scan)
+- Minimal representation (no URI) only allowed at breadth >= 8
 
 ---
 
@@ -100,7 +76,7 @@ Level 1: Files compete for budget based on expected value. Level 2: Items within
 
 **Example**
 ```
-Budget: 2000 tokens
+Budget: 2000 tokens, Breadth: 5
 ├─ File A (EV=0.9): 900 tokens
 │   ├─ Document: Standard (150 tok)
 │   ├─ Method1: Rich (300 tok)
@@ -113,12 +89,13 @@ Budget: 2000 tokens
 ```
 
 **Depth**
-- File EV = max(fileConfidence, bestChildConfidence) × intentModifier
-- Proportional allocation: `fileBudget = totalBudget × (fileEV / sumEV)`
+- File EV = max(fileConfidence, bestChildConfidence) x breadthModifier
+- Proportional allocation: `fileBudget = totalBudget x (fileEV / sumEV)`
 - Drop lowest-EV files if minimum costs exceed budget
 - Upgrade pass uses remaining budget to improve representations
+- Children fill available budget progressively (not all-or-nothing)
 
-**Location**: `src/RepoQL.Xray/ValueBasedAllocator.cs`
+**Location**: `src/RepoQL.Explore/ValueBasedAllocator.cs`
 
 ### Allocation Flow
 
@@ -126,7 +103,7 @@ Budget: 2000 tokens
 2. Allocate budget proportionally to files
 3. Drop lowest-EV files if over budget
 4. For each file: allocate among file + children
-5. Pick representation level that fits allocation
+5. Pick richest representation that fits allocation
 6. Upgrade pass: improve stragglers with remaining budget
 
 ---
@@ -136,7 +113,7 @@ Budget: 2000 tokens
 ### Capsule: RepresentationLevels
 
 **Invariant**
-Four levels with increasing token cost: Minimal (headline) → Compact (+URI) → Standard (+structure) → Rich (+snippet).
+Four levels with increasing token cost: Minimal (headline) -> Compact (+URI) -> Standard (+structure) -> Rich (+snippet).
 
 **Example**
 ```
@@ -152,7 +129,7 @@ Standard (~150 tok):
     AuthService.cs | class | 450 LOC
     namespace RepoQL.Auth
       public class AuthService : IAuthService
-        +ValidateCredentials(string, string) → Task<AuthResult>
+        +ValidateCredentials(string, string) -> Task<AuthResult>
 
 Rich (~300 tok):
   93% [csharp.method] file:///src/Auth.cs#line=42,60&symbol=ValidateCredentials
@@ -165,11 +142,11 @@ Rich (~300 tok):
 ```
 
 **Depth**
-- Token estimates via `XrayTokenEstimator` (heuristic, not actual tokenization)
+- Token estimates via `ExploreTokenEstimator` (heuristic, not actual tokenization)
 - Rich requires snippet content; falls back to Standard if missing
-- Minimal only allowed for Explore intent (URI is high-value for other intents)
+- Minimal only allowed at breadth >= 8 (URI is high-value at lower breadth)
 
-**Location**: `src/RepoQL.Xray/RepresentationFormatter.cs`
+**Location**: `src/RepoQL.Explore/RepresentationFormatter.cs`
 
 ---
 
@@ -185,7 +162,7 @@ Render decisions with proper spacing, add truncation summary for omitted items, 
  95% file:///src/Auth/AuthService.cs
   AuthService.cs | class AuthService | 1250 tokens
    78% [csharp.method] file:///src/Auth/AuthService.cs#line=42,80
-    ValidateCredentials(string, string) → Task<AuthResult>
+    ValidateCredentials(string, string) -> Task<AuthResult>
 
  82% file:///src/Auth/TokenService.cs
   TokenService.cs | class TokenService | 890 tokens
@@ -201,80 +178,47 @@ Render decisions with proper spacing, add truncation summary for omitted items, 
 - Status footer shows tokens used, latency, index status
 - Indentation reflects parent-child hierarchy
 
-**Location**: `src/RepoQL.Xray/OutputComposer.cs`
-
----
-
-## Understand Intent
-
-### Capsule: UnderstandFlow
-
-**Invariant**
-Extract keywords → search → expand to 50k tokens → LLM synthesizes answer with citations.
-
-**Example**
-```markdown
-## Understanding: How does authentication work?
-
-The authentication system uses JWT tokens:
-
-1. User submits credentials to `/api/auth/login`
-   (file:///src/Auth/AuthController.cs#line=42,60)
-
-2. `AuthService.ValidateCredentials()` checks the user store
-   (file:///src/Auth/AuthService.cs#line=85,120)
-
-3. On success, `TokenService.GenerateToken()` creates a JWT
-   (file:///src/Auth/TokenService.cs#line=30,55)
-
-[2.1k tok | 1.2s | index: ready | semantic: ready]
-```
-
-**Depth**
-- Requires LLM provider (OPENROUTER_API_KEY)
-- Minimum budget auto-scaled to 3000 tokens
-- Keywords extracted via LLM before search
-- Citations as `file:///path#line=N,M` for verification
-- Falls back to Examine if LLM unavailable
+**Location**: `src/RepoQL.Explore/OutputComposer.cs`
 
 ---
 
 ## Data Types
 
-### XrayQuery
+### ExploreQuery
 
 ```csharp
-public record XrayQuery(
+public sealed record ExploreQuery(
     int TokenBudget,
-    Intent Intent,
-    string? Scope,       // Glob pattern
-    string? Keywords,    // Search query
-    string? Boost,       // Regex patterns to boost
-    string? Penalize,    // Regex patterns to penalize
-    int? Limit);
+    int Breadth = 5,
+    string? Scope = null,
+    string? Keywords = null,
+    string? Boost = null,
+    string? Penalize = null,
+    int? Limit = null);
 ```
 
-### XrayResult
+### ExploreResult
 
 ```csharp
-public record XrayResult(
+public record ExploreResult(
     string Uri,
-    int Confidence,                              // 1-100
-    string? Kind,                                // null for docs, "class"/"method" for objects
+    int Confidence,
+    string? Kind,
     string? Headline,
     string? Structure,
     string? Snippet,
     string? Lang,
     string? SemanticType,
-    IReadOnlyList<XrayResult>? ChildObjects);
+    IReadOnlyList<ExploreResult>? ChildObjects,
+    string? Provenance);
 ```
 
 ### RenderingDecision
 
 ```csharp
 public record RenderingDecision(
-    XrayResult Result,
-    Representation Level,                        // Minimal/Compact/Standard/Rich
+    ExploreResult Result,
+    Representation Level,
     int EstimatedTokens,
     IReadOnlyList<RenderingDecision>? ChildDecisions,
     int OmittedChildrenCount);
@@ -286,12 +230,15 @@ public record RenderingDecision(
 
 | Component | File |
 |-----------|------|
-| Orchestrator | `src/RepoQL.Xray/XrayOrchestrator.cs` |
-| Allocator | `src/RepoQL.Xray/ValueBasedAllocator.cs` |
-| Composer | `src/RepoQL.Xray/OutputComposer.cs` |
-| Formatter | `src/RepoQL.Xray/RepresentationFormatter.cs` |
-| Estimator | `src/RepoQL.Xray/XrayTokenEstimator.cs` |
-| UDF | `src/RepoQL.Data.DuckDB/UdfImplementations/XrayUdf.cs` |
+| Orchestrator | `src/RepoQL.Explore/ExploreOrchestrator.cs` |
+| Allocator | `src/RepoQL.Explore/ValueBasedAllocator.cs` |
+| Composer | `src/RepoQL.Explore/OutputComposer.cs` |
+| Formatter | `src/RepoQL.Explore/RepresentationFormatter.cs` |
+| Estimator | `src/RepoQL.Explore/ExploreTokenEstimator.cs` |
+| Search Engine | `src/RepoQL.Explore/Search/IExploreSearchEngine.cs` |
+| Query Strategy | `src/RepoQL.Explore/Search/QueryStrategy.cs` |
+| File Grouper | `src/RepoQL.Explore/Search/FileGrouper.cs` |
+| Types | `src/RepoQL.Explore/Search/SearchTypes.cs` |
 
 ---
 

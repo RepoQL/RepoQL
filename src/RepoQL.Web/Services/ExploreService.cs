@@ -18,7 +18,7 @@ internal sealed class ExploreService
 
     public async Task<ExploreQueryResult> ExecuteAsync(
         int tokenBudget,
-        ExploreIntent intent,
+        int breadth,
         string? scope,
         string? keywords,
         string? boost,
@@ -28,11 +28,11 @@ internal sealed class ExploreService
     {
         var client = await _connectionManager.GetClientAsync(cancellationToken).ConfigureAwait(false);
 
-        _logger.LogDebug("Executing explore query (budget={Budget}, intent={Intent})", tokenBudget, intent);
+        _logger.LogDebug("Executing explore query (budget={Budget}, breadth={Breadth})", tokenBudget, breadth);
 
         var response = await client.ExploreAsync(
             tokenBudget,
-            intent,
+            breadth,
             scope,
             keywords,
             boost,

@@ -7,10 +7,11 @@ namespace RepoQL.Rendering.Tests;
 public class CoreTypesTests
 {
     [Test]
-    [DisplayName("Intent enum has expected values")]
-    public void Intent_HasExpectedValues()
+    [DisplayName("ExploreQuery defaults breadth to 5")]
+    public void ExploreQuery_DefaultBreadth_IsFive()
     {
-        Enum.GetValues<Intent>().Should().BeEquivalentTo([Intent.Inventory, Intent.Locate, Intent.Inspect, Intent.Explain]);
+        var query = new ExploreQuery(TokenBudget: 1000);
+        query.Breadth.Should().Be(5);
     }
 
     [Test]

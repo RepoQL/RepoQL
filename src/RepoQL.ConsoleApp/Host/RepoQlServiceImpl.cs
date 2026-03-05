@@ -914,7 +914,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     try
                     {
                         await operation.Completion.ConfigureAwait(false);
-                        var refresher = new EmbeddingRefresher(db, embeddingMode, logger as ILogger<EmbeddingRefresher>, settings);
+                        var refresher = new EmbeddingRefresher(db, embeddingMode, logger, settings);
                         await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
                         logger.LogInformation("[Import] Background batch embedding refresh completed for operation {OpId}", operation.Id);
                     }
@@ -1231,20 +1231,10 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         {
             var status = GetTrustSignal(0, context.CancellationToken);
 
-            // Map intent
-            var intent = request.Intent switch
-            {
-                ExploreIntent.Inventory => Intent.Inventory,
-                ExploreIntent.Locate => Intent.Locate,
-                ExploreIntent.Inspect => Intent.Inspect,
-                ExploreIntent.Explain => Intent.Explain,
-                _ => Intent.Inventory
-            };
-
             // Build query
             var query = new ExploreQuery(
                 TokenBudget: request.TokenBudget,
-                Intent: intent,
+                Breadth: Math.Clamp(request.Breadth > 0 ? request.Breadth : 5, 1, 10),
                 Scope: string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope,
                 Keywords: string.IsNullOrWhiteSpace(request.Keywords) ? null : request.Keywords,
                 Boost: string.IsNullOrWhiteSpace(request.Boost) ? null : request.Boost,

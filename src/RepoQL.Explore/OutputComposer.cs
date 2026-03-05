@@ -1,4 +1,5 @@
 using System.Text;
+using RepoQL.Contracts;
 
 namespace RepoQL.Explore;
 
@@ -13,13 +14,11 @@ public static class OutputComposer
     /// <param name="decisionResult">The decision result containing decisions and omitted info.</param>
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="trustSignal">Optional trust signal for footer.</param>
-    /// <param name="intent">Optional intent that controls headline density.</param>
     /// <returns>The composed output string.</returns>
     public static string Compose(
         DecisionResult decisionResult,
         bool showConfidence,
-        TrustSignal? trustSignal = null,
-        Intent? intent = null)
+        TrustSignal? trustSignal = null)
     {
         if (decisionResult.Decisions.Count == 0)
             return string.Empty;
@@ -51,7 +50,7 @@ public static class OutputComposer
             }
 
             var decision = (RenderingDecision)item;
-            var formatted = FormatWithChildren(decision, showConfidence, indent: 0, parentUri: null, intent);
+            var formatted = FormatWithChildren(decision, showConfidence, indent: 0, parentUri: null);
             var isMultiline = IsMultiline(decision) || decision.ChildDecisions is { Count: > 0 };
             var needsConfidenceSeparator =
                 showConfidence
@@ -98,44 +97,11 @@ public static class OutputComposer
             if (previousWasMultiline || decisionResult.OmittedCount > 0)
                 sb.Append('\n');
 
-            var totalTokens = CalculateTotalTokens(clusteredOutput.Items);
+            var totalTokens = TokenEstimator.EstimateTokens(sb.ToString());
             sb.Append(RepresentationFormatter.FormatStatusFooter(trustSignal, totalTokens));
         }
 
         return sb.ToString();
-    }
-
-    /// <summary>
-    /// Calculate total tokens for all output items.
-    /// </summary>
-    private static int CalculateTotalTokens(IReadOnlyList<OutputItem> items)
-    {
-        var total = 0;
-        foreach (var item in items)
-        {
-            switch (item)
-            {
-                case ClusterHeader:
-                    total += ResultClusterer.ClusterHeaderTokenCost;
-                    break;
-                case RenderingDecision decision:
-                    total += CalculateDecisionTokens(decision);
-                    break;
-            }
-        }
-        return total;
-    }
-
-    private static int CalculateDecisionTokens(RenderingDecision decision)
-    {
-        var total = decision.EstimatedTokens;
-        if (decision.ChildDecisions is not { Count: > 0 })
-            return total;
-
-        foreach (var child in decision.ChildDecisions)
-            total += CalculateDecisionTokens(child);
-
-        return total;
     }
 
     /// <summary>
@@ -159,14 +125,13 @@ public static class OutputComposer
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="indent">Current indentation level.</param>
     /// <param name="parentUri">Parent URI for fragment-only display of children.</param>
-    /// <param name="intent">Optional intent that controls headline density.</param>
-    private static string FormatWithChildren(RenderingDecision decision, bool showConfidence, int indent, string? parentUri, Intent? intent = null)
+    private static string FormatWithChildren(RenderingDecision decision, bool showConfidence, int indent, string? parentUri)
     {
         var sb = new StringBuilder();
         var indentStr = new string(' ', indent * 2);
 
         // Format this decision at its assigned level
-        var formatted = RepresentationFormatter.Format(decision, showConfidence, parentUri, intent);
+        var formatted = RepresentationFormatter.Format(decision, showConfidence, parentUri);
 
         // Apply indentation to each line
         var lines = formatted.Split('\n');
@@ -187,7 +152,7 @@ public static class OutputComposer
             foreach (var child in decision.ChildDecisions)
             {
                 sb.Append('\n');
-                sb.Append(FormatWithChildren(child, showConfidence, indent + 1, thisUri, intent));
+                sb.Append(FormatWithChildren(child, showConfidence, indent + 1, thisUri));
             }
         }
 

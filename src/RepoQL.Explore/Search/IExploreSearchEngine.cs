@@ -55,7 +55,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
 
     /// <summary>
     /// Determine whether to use JIT object search based on parameters and availability.
-    /// JIT search is used when: service is available, question is provided, and intent is Find/Examine/Understand.
+    /// JIT search is used when: service is available, question is provided, and breadth is ≤7 (not pure inventory).
     /// </summary>
     private static bool ShouldUseJitSearch(SearchParameters parameters, IJitObjectSearchService? jitService)
     {
@@ -65,8 +65,8 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         if (string.IsNullOrWhiteSpace(parameters.Question))
             return false;
 
-        // JIT search is most beneficial for Find/Examine/Understand intents
-        return parameters.Intent is Intent.Locate or Intent.Inspect or Intent.Explain;
+        // JIT search is most beneficial at lower breadth where depth matters
+        return parameters.Breadth <= 7;
     }
 
     /// <summary>
@@ -78,7 +78,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         JitEmbeddingCache jitCache,
         CancellationToken cancellationToken)
     {
-        var config = GetJitSearchConfig(parameters.Intent, parameters.TokenBudget);
+        var config = GetJitSearchConfig(parameters.Breadth, parameters.TokenBudget);
 
         var boostPattern = parameters.Patterns.Count > 0
             ? string.Join(",", parameters.Patterns)
@@ -146,7 +146,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
 
         // 5. Group by file (dynamic snippet limit + rest as headlines)
         var snippetLimit = FileGrouper.CalculateSnippetLimit(
-            parameters.Intent,
+            parameters.Breadth,
             parameters.TokenBudget,
             documents.Count);
         var groups = FileGrouper.Group(documents, objects, snippetLimit);
@@ -192,7 +192,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             .GroupBy(o => o.DocumentUri)
             .ToDictionary(g => g.Key, g => g.ToList());
         var snippetLimit = FileGrouper.CalculateSnippetLimit(
-            parameters.Intent,
+            parameters.Breadth,
             parameters.TokenBudget,
             Math.Max(jitResult.SelectedDocuments.Count, objectsByDoc.Count));
 
@@ -475,25 +475,16 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         return range <= 0 ? 50 : (int)(10 + 90 * (doc.DocumentScore - minScore) / range);
     }
 
-    private static ObjectSearchConfig GetJitSearchConfig(Intent intent, int tokenBudget)
+    private static ObjectSearchConfig GetJitSearchConfig(int breadth, int tokenBudget)
     {
         // Scale JIT embeddings based on token budget
         // Rough heuristic: ~50 tokens per object displayed, so budget/50 gives approximate object count
         // But we also want to search a bit more than we display for ranking quality
         var budgetScale = Math.Clamp(tokenBudget / 1500.0, 0.2, 1.5);
 
-        return intent switch
+        if (breadth <= 2)
         {
-            Intent.Locate => new ObjectSearchConfig
-            {
-                MinProbabilityMass = 0.85,
-                MaxDocumentsToExpand = Math.Max(3, (int)(15 * budgetScale)),
-                MinDocumentsToExpand = 3,
-                MaxJitEmbeddings = Math.Max(5, (int)(30 * budgetScale)),
-                JitEmbeddingThreshold = 0.15,
-                MaxObjectsPerDocument = 50
-            },
-            Intent.Inspect => new ObjectSearchConfig
+            return new ObjectSearchConfig
             {
                 MinProbabilityMass = 0.90,
                 MaxDocumentsToExpand = Math.Max(2, (int)(10 * budgetScale)),
@@ -501,27 +492,43 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
                 MaxJitEmbeddings = Math.Max(5, (int)(40 * budgetScale)),
                 JitEmbeddingThreshold = 0.12,
                 MaxObjectsPerDocument = 60
-            },
-            Intent.Inventory => new ObjectSearchConfig
-            {
-                MinProbabilityMass = 0.75,
-                MaxDocumentsToExpand = 0,
-                MinDocumentsToExpand = 0,
-                MaxJitEmbeddings = 0,
-                JitEmbeddingThreshold = 1.0,
-                MaxObjectsPerDocument = 0
-            },
-            // Understand uses Find-like behavior but with broader coverage for LLM synthesis
-            Intent.Explain => new ObjectSearchConfig
+            };
+        }
+
+        if (breadth <= 6)
+        {
+            return new ObjectSearchConfig
             {
                 MinProbabilityMass = 0.85,
-                MaxDocumentsToExpand = Math.Max(3, (int)(12 * budgetScale)),
+                MaxDocumentsToExpand = Math.Max(3, (int)(15 * budgetScale)),
                 MinDocumentsToExpand = 3,
-                MaxJitEmbeddings = Math.Max(5, (int)(35 * budgetScale)),
+                MaxJitEmbeddings = Math.Max(5, (int)(30 * budgetScale)),
                 JitEmbeddingThreshold = 0.15,
                 MaxObjectsPerDocument = 50
-            },
-            _ => new ObjectSearchConfig()
+            };
+        }
+
+        if (breadth <= 8)
+        {
+            return new ObjectSearchConfig
+            {
+                MinProbabilityMass = 0.80,
+                MaxDocumentsToExpand = Math.Max(2, (int)(8 * budgetScale)),
+                MinDocumentsToExpand = 2,
+                MaxJitEmbeddings = Math.Max(3, (int)(15 * budgetScale)),
+                JitEmbeddingThreshold = 0.20,
+                MaxObjectsPerDocument = 30
+            };
+        }
+
+        return new ObjectSearchConfig
+        {
+            MinProbabilityMass = 0.75,
+            MaxDocumentsToExpand = 0,
+            MinDocumentsToExpand = 0,
+            MaxJitEmbeddings = 0,
+            JitEmbeddingThreshold = 1.0,
+            MaxObjectsPerDocument = 0
         };
     }
 }

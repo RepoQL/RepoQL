@@ -18,11 +18,11 @@
             </div>
 
             <div class="form-group">
-                <label for="intent">Intent</label>
-                <select id="intent" @bind="_intent">
-                    <option value="@ExploreIntent.Inventory">Explore - What's here? (headlines)</option>
-                    <option value="@ExploreIntent.Locate">Find - Where is it? (broad context)</option>
-                    <option value="@ExploreIntent.Inspect">Examine - Show me the code (detailed snippets)</option>
+                <label for="breadth">Breadth</label>
+                <select id="breadth" @bind="_breadth">
+                    <option value="8">Survey - What's here? (headlines)</option>
+                    <option value="5">Locate - Where is it? (balanced)</option>
+                    <option value="2">Inspect - Show detailed snippets</option>
                 </select>
             </div>
 
@@ -435,7 +435,7 @@
 
 @code {
     private int _tokenBudget = 1500;
-    private ExploreIntent _intent = ExploreIntent.Inventory;
+    private int _breadth = 8;
     private string? _keywords;
     private string? _scope;
     private string? _boost;
@@ -464,7 +464,7 @@
         {
             _result = await ExploreService.ExecuteAsync(
                 _tokenBudget,
-                _intent,
+                _breadth,
                 string.IsNullOrWhiteSpace(_scope) ? null : _scope,
                 string.IsNullOrWhiteSpace(_keywords) ? null : _keywords,
                 string.IsNullOrWhiteSpace(_boost) ? null : _boost,

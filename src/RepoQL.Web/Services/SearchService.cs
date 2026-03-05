@@ -111,7 +111,7 @@ internal sealed class SearchService
         {
             var response = await client.ExploreAsync(
                 @params.TokenBudget,
-                @params.Intent,
+                @params.Breadth,
                 @params.Scope,
                 @params.Keywords,
                 @params.Boost,
@@ -317,7 +317,7 @@ internal sealed class SearchService
 /// <summary>Parameters for a search operation.</summary>
 internal sealed record SearchParams(
     string Keywords,
-    ExploreIntent Intent,
+    int Breadth,
     int TokenBudget,
     string? Scope = null,
     string? Boost = null,

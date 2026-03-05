@@ -13,7 +13,7 @@ namespace RepoQL.Read;
 /// Purpose: Provides a server-side implementation for reading repository content
 /// that automatically selects the most appropriate representation level (full content,
 /// structure, or headline) based on available token budget. Supports both direct content
-/// fetch and LLM-powered synthesis via ExploreOrchestrator's Understand intent.
+/// fetch and LLM-powered synthesis via ExploreOrchestrator's balanced breadth mode.
 ///
 /// Complexity: Integrates with IReadContentProvider for content fetching, TokenEstimator
 /// for budget decisions, ExploreOrchestrator for large content question synthesis, and
@@ -487,7 +487,7 @@ public sealed partial class ReadOrchestrator
     {
         var query = new ExploreQuery(
             TokenBudget: tokenBudget,
-            Intent: Intent.Explain,
+            Breadth: 5,
             Scope: uri,
             Keywords: question,
             Boost: null,

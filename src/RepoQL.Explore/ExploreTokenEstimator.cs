@@ -24,13 +24,12 @@ public static class ExploreTokenEstimator
     /// Estimate tokens for Compact representation (uri + headline).
     /// Note: Children are estimated separately via value-based allocation.
     /// </summary>
-    public static int EstimateCompact(ExploreResult result)
+    public static int EstimateCompact(ExploreResult result, bool showConfidence = true)
     {
-        // confidence (if shown) + kind badge + uri + newline + headline + overhead
+        // confidence (if shown) + uri + newline + headline + overhead
         var tokens = 0;
-        tokens += 2; // confidence "XX% "
-        if (result.Kind != null)
-            tokens += CoreTokenEstimator.EstimateTokens($"[{result.Kind}] ");
+        if (showConfidence)
+            tokens += 2; // confidence "XX% "
         tokens += CoreTokenEstimator.EstimateTokens(result.Uri);
         tokens += 1; // newline
         tokens += CoreTokenEstimator.EstimateTokens(result.Headline);
@@ -42,13 +41,12 @@ public static class ExploreTokenEstimator
     /// Estimate tokens for Standard representation (uri + headline + structure).
     /// Note: Children are estimated separately via value-based allocation.
     /// </summary>
-    public static int EstimateStandard(ExploreResult result)
+    public static int EstimateStandard(ExploreResult result, bool showConfidence = true)
     {
-        // Base: confidence + kind badge + uri + headline + overhead
+        // Base: confidence + uri + headline + overhead
         var tokens = 0;
-        tokens += 2; // confidence "XX% "
-        if (result.Kind != null)
-            tokens += CoreTokenEstimator.EstimateTokens($"[{result.Kind}] ");
+        if (showConfidence)
+            tokens += 2; // confidence "XX% "
         tokens += CoreTokenEstimator.EstimateTokens(result.Uri);
         tokens += 1; // newline
         tokens += CoreTokenEstimator.EstimateTokens(result.Headline);
@@ -64,13 +62,12 @@ public static class ExploreTokenEstimator
     /// Estimate tokens for Rich representation (uri + snippet).
     /// Note: Children are estimated separately via value-based allocation.
     /// </summary>
-    public static int EstimateRich(ExploreResult result)
+    public static int EstimateRich(ExploreResult result, bool showConfidence = true)
     {
-        // confidence + kind badge + uri + code fence + snippet + code fence + overhead
+        // confidence + uri + code fence + snippet + code fence + overhead
         var tokens = 0;
-        tokens += 2; // confidence "XX% "
-        if (result.Kind != null)
-            tokens += CoreTokenEstimator.EstimateTokens($"[{result.Kind}] ");
+        if (showConfidence)
+            tokens += 2; // confidence "XX% "
         tokens += CoreTokenEstimator.EstimateTokens(result.Uri);
         if (!string.IsNullOrWhiteSpace(result.Provenance))
             tokens += 12; // " (semantic)"-style provenance tag
@@ -85,14 +82,14 @@ public static class ExploreTokenEstimator
     /// <summary>
     /// Estimate tokens for a result at a given representation level.
     /// </summary>
-    public static int Estimate(ExploreResult result, Representation level)
+    public static int Estimate(ExploreResult result, Representation level, bool showConfidence = true)
     {
         return level switch
         {
             Representation.Minimal => EstimateMinimal(result),
-            Representation.Compact => EstimateCompact(result),
-            Representation.Standard => EstimateStandard(result),
-            Representation.Rich => EstimateRich(result),
+            Representation.Compact => EstimateCompact(result, showConfidence),
+            Representation.Standard => EstimateStandard(result, showConfidence),
+            Representation.Rich => EstimateRich(result, showConfidence),
             _ => throw new ArgumentOutOfRangeException(nameof(level), level, "Unknown representation level")
         };
     }

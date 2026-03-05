@@ -34,7 +34,8 @@ internal sealed class ReadTool(
         <WHY>
         Explore finds URIs. Read fetches content. This is the second half of the workflow.
 
-        The power: you don't read whole files. Explore gives you symbol URIs like `file:///src/Auth.cs#symbol=ValidateToken`. Read fetches just that function body. Three symbols across three files? One read call, just the bodies, no waste.
+        The power: you don't read whole files. Explore gives you symbol URIs like `file:///src/Auth.cs#symbol=ValidateToken`. 
+        Read fetches just that function body. Three symbols across three files? One read call, just the bodies, no waste.
         </WHY>
 
         <CORE>
@@ -61,7 +62,7 @@ internal sealed class ReadTool(
 
         **structure**: Signatures without bodies—see the shape without reading code.
         → `file:///src/Auth/**/*.cs => structure` — shape of an entire subsystem in one call
-        → Combines with symbol wildcards: `file:///src/**/*Service.cs#symbol=*Service.* => structure`
+        → Combines with symbol wildcards: `file:///src/**/*.cs#symbol=*Controller => structure` - signature of all controllers
 
         **content**: Full file with line numbers (explicit default).
 
