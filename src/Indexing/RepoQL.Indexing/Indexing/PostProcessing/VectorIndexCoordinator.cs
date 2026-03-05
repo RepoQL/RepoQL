@@ -47,6 +47,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     private int _vssInitialBuildCompleted;
     private int _vssRefreshRequested;
     private int _vssStructureReadyState = -1;
+    private int _startupContentRefreshChecked;
 
     private static int ResolveRefreshConcurrency(RepoQlConfig.EmbeddingSettings? settings)
         => settings?.Concurrency is > 0 and var configured ? configured : 2;
@@ -57,13 +58,16 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
         ILogger<VectorIndexCoordinator>? logger = null,
         UriRegistry? uriRegistry = null,
-        RepoQlConfig.EmbeddingSettings? embeddingSettings = null)
+        RepoQlConfig.EmbeddingSettings? embeddingSettings = null,
+        IContextualEmbeddingProvider? contextualProvider = null)
         : this(
             new DuckDbVectorIndexRefresher(
                 database,
                 embeddingProvider,
                 embeddingMode,
-                embeddingSettings: embeddingSettings),
+                logger: logger,
+                embeddingSettings: embeddingSettings,
+                contextualProvider: contextualProvider),
             database,
             embeddingProvider,
             embeddingMode,
@@ -721,6 +725,15 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
                     await _vssIndexManager.RefreshIndexesAsync(forceRefresh: true, cancellationToken: _vssRefreshShutdown.Token).ConfigureAwait(false);
                     Volatile.Write(ref _vssInitialBuildCompleted, 1);
                     SetVssStructureReadyMetadata(isReady: true);
+
+                    // One-time startup check: if content embeddings are missing but documents
+                    // are indexed, trigger a full content embedding refresh. This covers the case
+                    // where a contextual provider is newly deployed to an already-indexed repo
+                    // (no new items flow through the hot path, so ApplyAsync is never called).
+                    if (Interlocked.Exchange(ref _startupContentRefreshChecked, 1) == 0)
+                    {
+                        _ = Task.Run(() => TriggerStartupContentRefreshAsync(_vssRefreshShutdown.Token));
+                    }
                 }
                 catch (OperationCanceledException) when (_vssRefreshShutdown.IsCancellationRequested)
                 {
@@ -735,6 +748,63 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         }
         catch (OperationCanceledException) when (_vssRefreshShutdown.IsCancellationRequested)
         {
+        }
+    }
+
+    /// <summary>
+    /// Checks whether content embeddings are missing for an already-indexed repo and triggers
+    /// a full refresh if needed. Runs once after the first VSS build on a background task
+    /// so the VSS loop isn't blocked during potentially long-running content embedding generation.
+    /// </summary>
+    private async Task TriggerStartupContentRefreshAsync(CancellationToken cancellationToken)
+    {
+        if (_db is null)
+            return;
+
+        try
+        {
+            var hasContentEmbeddings = (_db.ReadScalar<long?>(
+                "SELECT 1 FROM document_embedding WHERE embedding_type = 'full' LIMIT 1") ?? 0) > 0;
+
+            if (hasContentEmbeddings)
+            {
+                _logger.LogDebug("Startup content embedding check: content embeddings exist, skipping");
+                return;
+            }
+
+            var documentCount = _db.ReadScalar<long?>(
+                "SELECT COUNT(*) FROM node WHERE kind = 'document'") ?? 0;
+
+            if (documentCount == 0)
+            {
+                _logger.LogDebug("Startup content embedding check: no documents indexed yet, skipping");
+                return;
+            }
+
+            _logger.LogInformation(
+                "Startup content embedding check: {DocumentCount} documents indexed but no content embeddings. Triggering full refresh.",
+                documentCount);
+
+            await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var embeddingsChanged = await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
+                if (embeddingsChanged)
+                {
+                    RequestVssRefresh();
+                }
+            }
+            finally
+            {
+                _refreshGate.Release();
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Startup content embedding refresh failed");
         }
     }
 

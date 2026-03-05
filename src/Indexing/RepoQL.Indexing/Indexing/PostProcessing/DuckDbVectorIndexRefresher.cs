@@ -15,21 +15,24 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
 {
     private readonly EmbeddingRefresher _refresher;
     private readonly IEmbeddingProvider _embeddingProvider;
+    private readonly IContextualEmbeddingProvider? _contextualProvider;
     private readonly EmbeddingMode _embeddingMode;
-    private readonly ILogger<DuckDbVectorIndexRefresher> _logger;
+    private readonly ILogger _logger;
 
     public DuckDbVectorIndexRefresher(
         DuckDbDataStore dataStore,
         IEmbeddingProvider embeddingProvider,
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
-        ILogger<DuckDbVectorIndexRefresher>? logger = null,
-        RepoQlConfig.EmbeddingSettings? embeddingSettings = null)
+        ILogger? logger = null,
+        RepoQlConfig.EmbeddingSettings? embeddingSettings = null,
+        IContextualEmbeddingProvider? contextualProvider = null)
     {
         if (dataStore is null) throw new ArgumentNullException(nameof(dataStore));
         _embeddingProvider = embeddingProvider ?? throw new ArgumentNullException(nameof(embeddingProvider));
+        _contextualProvider = contextualProvider;
         _embeddingMode = embeddingMode;
         _logger = logger ?? NullLogger<DuckDbVectorIndexRefresher>.Instance;
-        _refresher = new EmbeddingRefresher(dataStore, embeddingMode, logger as ILogger<EmbeddingRefresher>, embeddingSettings);
+        _refresher = new EmbeddingRefresher(dataStore, embeddingMode, logger, embeddingSettings, contextualProvider);
     }
 
     public async Task<bool> RefreshAsync(CancellationToken cancellationToken)
@@ -83,10 +86,15 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
             return false;
         }
 
+        // Either provider being available is sufficient
+        if (_contextualProvider is { Enabled: true })
+            return true;
+
         if (_embeddingProvider.Enabled)
             return true;
 
-        _logger.LogInformation("Embedding refresh skipped - provider disabled (model={Model}).", _embeddingProvider.Model);
+        _logger.LogInformation("Embedding refresh skipped - no provider available (flat={Model}, contextual={Contextual}).",
+            _embeddingProvider.Model, _contextualProvider?.Model ?? "none");
         return false;
     }
 }

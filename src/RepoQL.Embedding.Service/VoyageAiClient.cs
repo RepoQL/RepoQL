@@ -20,7 +20,7 @@ internal sealed class VoyageAiClient : IDisposable
 {
     private static readonly ActivitySource ActivitySource = new("RepoQL.Embedding.Voyage");
 
-    private static readonly Uri ContextualizedEndpoint = new("/contextualizedembeddings", UriKind.Relative);
+    private static readonly Uri ContextualizedEndpoint = new("contextualizedembeddings", UriKind.Relative);
     private const int MaxGroupsPerRequest = 1000;
     private const int MaxChunksPerRequest = 16_000;
     private const int MaxTokensPerRequest = 120_000;
@@ -41,9 +41,10 @@ internal sealed class VoyageAiClient : IDisposable
     {
         _options = options.Value;
         _logger = logger;
+        var baseUrl = _options.VoyageBaseUrl.TrimEnd('/') + "/";
         _httpClient = new HttpClient
         {
-            BaseAddress = new Uri(_options.VoyageBaseUrl),
+            BaseAddress = new Uri(baseUrl),
             Timeout = TimeSpan.FromSeconds(_options.TimeoutSeconds)
         };
         _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_options.VoyageApiKey}");
