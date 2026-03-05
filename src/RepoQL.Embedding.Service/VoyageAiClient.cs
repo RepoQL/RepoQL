@@ -21,6 +21,7 @@ internal sealed class VoyageAiClient : IDisposable
     private static readonly ActivitySource ActivitySource = new("RepoQL.Embedding.Voyage");
 
     private static readonly Uri ContextualizedEndpoint = new("contextualizedembeddings", UriKind.Relative);
+    private static readonly Uri RerankEndpoint = new("rerank", UriKind.Relative);
     private const int MaxGroupsPerRequest = 1000;
     private const int MaxChunksPerRequest = 16_000;
     private const int MaxTokensPerRequest = 120_000;
@@ -52,6 +53,7 @@ internal sealed class VoyageAiClient : IDisposable
 
     public string Model => _options.Model;
     public int Dimension => _options.Dimension;
+    public string RerankModel => _options.RerankModel;
 
     /// <summary>
     /// Embed grouped chunks with contextual awareness.
@@ -143,6 +145,107 @@ internal sealed class VoyageAiClient : IDisposable
         return (vectors.Count > 0 ? vectors[0] : [], tokens);
     }
 
+    /// <summary>
+    /// Rerank documents by relevance to a query using Voyage's rerank endpoint.
+    /// </summary>
+    public async Task<VoyageRerankResult> RerankAsync(
+        string query,
+        IReadOnlyList<string> documents,
+        string? instruction,
+        string? model,
+        int topK,
+        CancellationToken ct)
+    {
+        ThrowIfCircuitOpen();
+
+        var effectiveModel = string.IsNullOrWhiteSpace(model) ? _options.RerankModel : model;
+
+        using var activity = ActivitySource.StartActivity("voyage.rerank", ActivityKind.Client);
+        activity?.SetTag("rerank.model", effectiveModel);
+        activity?.SetTag("rerank.documents", documents.Count);
+
+        var request = new JsonObject
+        {
+            ["query"] = query,
+            ["documents"] = new JsonArray(documents.Select(d => JsonValue.Create(d)).ToArray<JsonNode>()),
+            ["model"] = effectiveModel,
+            ["return_documents"] = false
+        };
+
+        if (topK > 0)
+            request["top_k"] = topK;
+
+        if (!string.IsNullOrWhiteSpace(instruction))
+            request["instruction"] = instruction;
+
+        for (var attempt = 0; attempt <= MaxRetries; attempt++)
+        {
+            try
+            {
+                using var content = new StringContent(
+                    request.ToJsonString(),
+                    System.Text.Encoding.UTF8,
+                    "application/json");
+
+                var response = await _httpClient.PostAsync(RerankEndpoint, content, ct);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync(ct);
+                    _logger.LogError("Voyage rerank API error {StatusCode}: {Body}", response.StatusCode, errorBody);
+                    throw new HttpRequestException(
+                        $"Voyage rerank API error {(int)response.StatusCode}: {errorBody}",
+                        null,
+                        response.StatusCode);
+                }
+
+                var responseBody = await response.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(responseBody);
+                var root = doc.RootElement;
+
+                var totalTokens = root.TryGetProperty("usage", out var usage)
+                    && usage.TryGetProperty("total_tokens", out var tokensProp)
+                        ? tokensProp.GetInt32()
+                        : 0;
+
+                activity?.SetTag("rerank.tokens", totalTokens);
+
+                var results = new List<VoyageRerankScore>();
+                if (root.TryGetProperty("data", out var data))
+                {
+                    foreach (var item in data.EnumerateArray())
+                    {
+                        var index = item.GetProperty("index").GetInt32();
+                        var score = item.GetProperty("relevance_score").GetSingle();
+                        results.Add(new VoyageRerankScore(index, score));
+                    }
+                }
+
+                Interlocked.Exchange(ref _consecutiveFailures, 0);
+                return new VoyageRerankResult(results, totalTokens);
+            }
+            catch (HttpRequestException ex) when (attempt < MaxRetries && IsRetryable(ex))
+            {
+                var delay = TimeSpan.FromSeconds(Math.Pow(2, attempt));
+                _logger.LogWarning(ex, "Voyage rerank failed (attempt {Attempt}/{Max}), retrying in {Delay}s",
+                    attempt + 1, MaxRetries + 1, delay.TotalSeconds);
+                await Task.Delay(delay, ct);
+            }
+            catch (Exception)
+            {
+                var failures = Interlocked.Increment(ref _consecutiveFailures);
+                if (failures >= CircuitBreakThreshold)
+                {
+                    _circuitOpenUntil = DateTime.UtcNow + CircuitOpenDuration;
+                    _logger.LogError("Circuit breaker opened after {Failures} consecutive failures", failures);
+                }
+                throw;
+            }
+        }
+
+        throw new InvalidOperationException("Unreachable");
+    }
+
     private async Task<(List<float[]> Vectors, int Tokens)> CallVoyageWithRetryAsync(
         List<List<string>> groups,
         string inputType,
@@ -193,7 +296,8 @@ internal sealed class VoyageAiClient : IDisposable
             ).ToArray<JsonNode>()),
             ["model"] = _options.Model,
             ["input_type"] = inputType,
-            ["output_dimension"] = _options.Dimension
+            ["output_dimension"] = _options.Dimension,
+            ["output_dtype"] = _options.OutputDtype
         };
 
         using var content = new StringContent(
@@ -305,3 +409,5 @@ internal sealed class VoyageAiClient : IDisposable
 internal record ChunkGroupInput(int GroupIndex, string? Context, IReadOnlyList<string> Chunks);
 internal record ChunkVector(int GroupIndex, int ChunkIndex, float[] Vector, string? Error);
 internal record VoyageEmbeddingResult(IReadOnlyList<ChunkVector> Vectors, int TotalTokens);
+internal record VoyageRerankScore(int Index, float RelevanceScore);
+internal record VoyageRerankResult(IReadOnlyList<VoyageRerankScore> Results, int TotalTokens);

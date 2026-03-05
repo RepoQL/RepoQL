@@ -185,8 +185,12 @@ public static class RepoIndexerServiceCollectionExtensions
 
             var logger = sp.GetService<ILogger<RepoQL.Embedding.Client.GrpcEmbeddingProvider>>();
             var timeout = remote.TimeoutSeconds ?? 30;
-            return new RepoQL.Embedding.Client.GrpcEmbeddingProvider(
+            IContextualEmbeddingProvider provider = new RepoQL.Embedding.Client.GrpcEmbeddingProvider(
                 remote.Url, remote.ApiKey, timeout, logger);
+
+            var embeddingCache = sp.GetRequiredService<EmbeddingCache>();
+            var cacheLogger = sp.GetService<ILogger<CachingContextualEmbeddingProvider>>();
+            return new CachingContextualEmbeddingProvider(provider, embeddingCache, cacheLogger);
         });
 
         // Embeddings provider: local ONNX for flat (non-contextual) embedding.
@@ -603,7 +607,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetRequiredService<EmbeddingModeOptions>().Mode,
             sp.GetService<ILogger<VectorIndexCoordinator>>(),
             sp.GetService<UriRegistry>(),
-            sp.GetRequiredService<RepoQlConfig>().Embedding));
+            sp.GetRequiredService<RepoQlConfig>().Embedding,
+            sp.GetService<IContextualEmbeddingProvider>()));
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IDocumentCatalog>(),

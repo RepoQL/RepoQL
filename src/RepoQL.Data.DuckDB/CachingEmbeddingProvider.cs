@@ -90,7 +90,7 @@ public sealed class CachingEmbeddingProvider : IEmbeddingProvider
             progress: progress,
             cancellationToken);
 
-    internal static string ComputeContentHash(string model, string type, string text)
+    public static string ComputeContentHash(string model, string type, string text)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(model);
         ArgumentException.ThrowIfNullOrWhiteSpace(type);

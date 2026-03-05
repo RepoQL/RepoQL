@@ -135,4 +135,75 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
             Dimension = _voyage.Dimension
         });
     }
+
+    public override async Task<RerankResponse> Rerank(
+        RerankRequest request,
+        ServerCallContext context)
+    {
+        if (string.IsNullOrWhiteSpace(request.Query))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "Query is required"));
+        if (request.Documents.Count == 0)
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "At least one document is required"));
+
+        _logger.LogDebug("Rerank: {Documents} documents, model={Model}, instruction={HasInstruction}",
+            request.Documents.Count,
+            string.IsNullOrEmpty(request.Model) ? _voyage.RerankModel : request.Model,
+            !string.IsNullOrEmpty(request.Instruction));
+
+        try
+        {
+            // Build ordered document list; preserve caller indices for mapping back.
+            var documents = new List<string>(request.Documents.Count);
+            var indexMap = new List<int>(request.Documents.Count); // voyage position → caller index
+            foreach (var doc in request.Documents)
+            {
+                indexMap.Add(doc.Index);
+                documents.Add(doc.Text);
+            }
+
+            var result = await _voyage.RerankAsync(
+                request.Query,
+                documents,
+                request.Instruction,
+                request.Model,
+                request.TopK,
+                context.CancellationToken);
+
+            var response = new RerankResponse { TotalTokens = result.TotalTokens };
+            foreach (var score in result.Results)
+            {
+                response.Results.Add(new RerankResult
+                {
+                    Index = score.Index < indexMap.Count ? indexMap[score.Index] : score.Index,
+                    RelevanceScore = score.RelevanceScore
+                });
+            }
+
+            return response;
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("circuit breaker", StringComparison.Ordinal))
+        {
+            throw new RpcException(new Status(StatusCode.Unavailable,
+                "Voyage API unavailable — retry shortly"));
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            throw new RpcException(new Status(StatusCode.ResourceExhausted,
+                "Rerank provider rate limited — retry shortly"));
+        }
+        catch (TaskCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            throw new RpcException(new Status(StatusCode.Cancelled, "Request cancelled"));
+        }
+        catch (TaskCanceledException)
+        {
+            throw new RpcException(new Status(StatusCode.DeadlineExceeded,
+                "Voyage API timed out"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Rerank failed");
+            throw new RpcException(new Status(StatusCode.Internal, ex.Message));
+        }
+    }
 }

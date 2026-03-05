@@ -19,6 +19,10 @@ service EmbeddingService {
   // Returns model name and dimension for compatibility checking.
   // Host validates before embedding — mismatched models corrupt search.
   rpc GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse);
+
+  // Rerank documents by relevance to a query.
+  // Returns documents in descending relevance order with scores.
+  rpc Rerank(RerankRequest) returns (RerankResponse);
 }
 
 message EmbedChunksRequest {
@@ -72,4 +76,41 @@ message GetModelInfoRequest {}
 message GetModelInfoResponse {
   string model = 1;
   int32 dimension = 2;
+}
+
+// ----- Reranking -----
+
+message RerankRequest {
+  // The search query.
+  string query = 1;
+  // Documents to rerank. Index is preserved in the response.
+  repeated RerankDocument documents = 2;
+  // Optional instruction for instruction-following rerankers (rerank-2.5).
+  // Empty = no instruction. Example: "rank by relevance to themes: auth middleware"
+  string instruction = 3;
+  // Model override. Empty = server default (rerank-2.5-lite).
+  string model = 4;
+  // Return only top_k results. 0 = return all.
+  int32 top_k = 5;
+}
+
+message RerankDocument {
+  // Caller-assigned index (returned unchanged in response for stable mapping).
+  int32 index = 1;
+  // Document text to score against the query.
+  string text = 2;
+}
+
+message RerankResponse {
+  // Documents in descending relevance order.
+  repeated RerankResult results = 1;
+  // Total tokens consumed.
+  int32 total_tokens = 2;
+}
+
+message RerankResult {
+  // Original index from the request.
+  int32 index = 1;
+  // Relevance score (0.0-1.0).
+  float relevance_score = 2;
 }

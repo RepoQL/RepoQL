@@ -15,6 +15,9 @@ internal sealed class EmbeddingServiceOptions
     /// <summary>Output dimension for embeddings.</summary>
     public int Dimension { get; set; } = 1024;
 
+    /// <summary>Output data type: "float", "int8", "uint8", "binary", "ubinary".</summary>
+    public string OutputDtype { get; set; } = "int8";
+
     /// <summary>Voyage API base URL.</summary>
     public string VoyageBaseUrl { get; set; } = "https://api.voyageai.com/v1";
 
@@ -23,6 +26,9 @@ internal sealed class EmbeddingServiceOptions
 
     /// <summary>Max concurrent Voyage API calls for batch splitting.</summary>
     public int Concurrency { get; set; } = 4;
+
+    /// <summary>Voyage reranking model. Used when Rerank RPC model field is empty.</summary>
+    public string RerankModel { get; set; } = "rerank-2.5-lite";
 }
 
 /// <summary>
