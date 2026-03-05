@@ -9,7 +9,6 @@ CREATE OR REPLACE MACRO _search_candidates(
     mode := 'auto',
     k := 50,
     uri_glob := NULL,
-    mime_glob := NULL,
     max_cand := 5000,
     bm25_weight := 0.15,
     fuzzy_weight := 0.15,
@@ -30,8 +29,7 @@ base_params AS (
         COALESCE(fuzzy_weight, 0.15) AS fuzzy_w,
         COALESCE(semantic_weight, 0.70) AS base_sem_w,
         NULLIF(TRIM(uri_glob), '') AS uri_glob_filter,
-        NULLIF(TRIM(uri_like), '') AS uri_like_filter,
-        NULLIF(TRIM(mime_glob), '') AS mime_glob_filter
+        NULLIF(TRIM(uri_like), '') AS uri_like_filter
 ),
 
 -- Query classification for routing and weight adjustment
@@ -65,7 +63,6 @@ lex AS (
     SELECT * FROM _search_lexical(
         q := (SELECT raw_query FROM base_params),
         uri_glob := (SELECT uri_glob_filter FROM base_params),
-        mime_glob := (SELECT mime_glob_filter FROM base_params),
         max_cand := (SELECT max_candidates FROM base_params),
         uri_like := (SELECT uri_like_filter FROM base_params)
     )
@@ -76,7 +73,6 @@ sem AS (
     SELECT * FROM _search_semantic(
         q := (SELECT raw_query FROM base_params),
         uri_glob := (SELECT uri_glob_filter FROM base_params),
-        mime_glob := (SELECT mime_glob_filter FROM base_params),
         max_cand := (SELECT max_candidates FROM base_params),
         uri_like := (SELECT uri_like_filter FROM base_params)
     )
@@ -93,53 +89,20 @@ union_nodes AS (
     SELECT node_id FROM sem
 ),
 
--- Fallback to recency if both scorers return nothing
-filtered_source AS (
-    SELECT
-        ri.*,
-        split_part(ri.uri, '#', 1) AS uri_container,
-        CASE
-            WHEN ri.uri IS NULL THEN NULL
-            ELSE regexp_replace(LOWER(ri.uri), '^[^:]+://+', '')
-        END AS uri_local
-    FROM repo_index ri
+-- Scope filter for fallback (recency-based when both scorers return nothing)
+_sc_scope AS (
+    SELECT * FROM _scope_filter(
+        uri_glob := (SELECT uri_glob_filter FROM base_params),
+        uri_like := (SELECT uri_like_filter FROM base_params)
+    )
 ),
-scope_uris AS (
-    SELECT DISTINCT
-        gf.uri AS scoped_uri,
-        split_part(gf.uri, '#', 1) AS scoped_container_uri
-    FROM base_params bp_scope
-    CROSS JOIN glob_files(pattern_spec := bp_scope.uri_glob_filter) gf
-    WHERE bp_scope.uri_glob_filter IS NOT NULL
-),
-filtered AS (
-    SELECT fs.*
-    FROM filtered_source fs
-    JOIN base_params bp ON TRUE
-    WHERE (
-            bp.uri_glob_filter IS NULL
-            OR EXISTS (
-                SELECT 1
-                FROM scope_uris su
-                WHERE su.scoped_uri = fs.uri
-                   OR su.scoped_container_uri = fs.uri_container
-            )
-            OR matches_glob(fs.uri, bp.uri_glob_filter, TRUE, 'file:///') IS TRUE
-            OR matches_glob(fs.uri_local, bp.uri_glob_filter, TRUE, NULL) IS TRUE
-        )
-      AND (
-            bp.uri_like_filter IS NULL
-            OR fs.uri LIKE bp.uri_like_filter
-        )
-      AND (
-            bp.mime_glob_filter IS NULL
-            OR repoql_glob_match(COALESCE(fs.mime, ''), bp.mime_glob_filter, 'true',NULL) IS TRUE
-        )
-),
+
 fallback_nodes AS (
-    SELECT node_id
-    FROM filtered
-    QUALIFY ROW_NUMBER() OVER (ORDER BY mtime DESC, node_id) <= (SELECT result_k FROM base_params)
+    SELECT sf.node_id
+    FROM _sc_scope sf
+    JOIN node n ON n.id = sf.node_id
+    QUALIFY ROW_NUMBER() OVER (ORDER BY n.updated_at DESC, sf.node_id)
+        <= (SELECT result_k FROM base_params)
 ),
 combined_nodes AS (
     SELECT node_id FROM union_nodes
@@ -156,57 +119,110 @@ lex_stats AS (SELECT COUNT(*) AS cnt FROM lex),
 sem_stats AS (SELECT COUNT(*) AS cnt FROM sem),
 
 -- ============================================================================
--- ENRICH AND SCORE
+-- ENRICH: compute metadata only for final scored/fallback nodes
+-- ============================================================================
+
+enriched AS (
+    SELECT
+        sf.doc_id,
+        fn.fn_node_id AS node_id,
+        sf.node_scope,
+        n.kind,
+        -- URI: documents use node URI, objects reconstruct if needed
+        COALESCE(
+            n.uri,
+            repository_uri_join(
+                COALESCE(doc.uri, 'repoql://document/' || CAST(sf.doc_id AS VARCHAR)),
+                COALESCE(
+                    fragment_from_line_range(CAST(sp.start_line AS VARCHAR), CAST(sp.end_line AS VARCHAR)),
+                    concat('node/', n.kind, '/', REPLACE(CAST(n.id AS VARCHAR), '-', ''))
+                )
+            )
+        ) AS uri,
+        REPLACE(repository_uri_container(COALESCE(doc.uri, n.uri, 'repoql://unknown')), '\\', '/') AS path,
+        COALESCE(
+            repository_uri_symbol(n.uri),
+            json_extract_string(n.properties, '$.symbol'),
+            json_extract_string(n.properties, '$.name')
+        ) AS symbol,
+        media_type_kind(a.media_type) AS lang,
+        media_type_base(a.media_type) AS mime,
+        CASE WHEN n.kind = 'document'
+            THEN COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, ''))
+            ELSE COALESCE(
+                NULLIF(n.headline, ''),
+                json_extract_string(n.properties, '$.name'),
+                repository_uri_file_name(doc.uri)
+            )
+        END AS headline,
+        CASE WHEN n.kind = 'document'
+            THEN COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, ''))
+            ELSE NULLIF(n.structure, '')
+        END AS structure,
+        COALESCE(sp.start_line, TRY_CAST(repository_uri_line_start(n.uri) AS INTEGER)) AS line_start,
+        COALESCE(sp.end_line, TRY_CAST(repository_uri_line_end(n.uri) AS INTEGER)) AS line_end,
+        a.digest,
+        a.text_content
+    FROM final_nodes fn
+    JOIN _sc_scope sf ON sf.node_id = fn.fn_node_id
+    JOIN node n ON n.id = fn.fn_node_id
+    LEFT JOIN span sp ON sp.id = n.span_id AND n.kind <> 'document'
+    LEFT JOIN node doc ON doc.id = sf.doc_id AND n.kind <> 'document'
+    LEFT JOIN artifact a ON a.id = COALESCE(
+        CASE WHEN n.kind = 'document' THEN n.artifact_id END,
+        doc.artifact_id
+    )
+),
+
+-- ============================================================================
+-- SCORE
 -- ============================================================================
 
 scored AS (
     SELECT
-        ri.doc_id,
-        ri.node_id,
-        ri.uri,
-        ri.path,
-        ri.scope,
-        ri.kind,
-        ri.symbol,
-        ri.lang,
-        ri.mime,
-        ri.headline,
-        ri.structure,
+        e.doc_id,
+        e.node_id,
+        e.uri,
+        e.path,
+        e.node_scope,
+        e.kind,
+        e.symbol,
+        e.lang,
+        e.mime,
+        e.headline,
+        e.structure,
         -- Use semantic chunk location for snippet when available
         CASE
             WHEN s.best_chunk_start IS NOT NULL
                  AND s.best_chunk_end IS NOT NULL
-                 AND art.text_content IS NOT NULL
-                 AND LENGTH(art.text_content) > 0
+                 AND e.text_content IS NOT NULL
+                 AND LENGTH(e.text_content) > 0
             THEN array_to_string(
                 list_slice(
-                    string_split(art.text_content, chr(10)),
-                    GREATEST(1, TRY_CAST(line_for_byte_offset(art.text_content, CAST(s.best_chunk_start AS VARCHAR)) AS INTEGER) - 2),
+                    string_split(e.text_content, chr(10)),
+                    GREATEST(1, TRY_CAST(line_for_byte_offset(e.text_content, CAST(s.best_chunk_start AS VARCHAR)) AS INTEGER) - 2),
                     LEAST(
-                        len(string_split(art.text_content, chr(10))),
-                        TRY_CAST(line_for_byte_offset(art.text_content, CAST(s.best_chunk_end AS VARCHAR)) AS INTEGER) + 2
+                        len(string_split(e.text_content, chr(10))),
+                        TRY_CAST(line_for_byte_offset(e.text_content, CAST(s.best_chunk_end AS VARCHAR)) AS INTEGER) + 2
                     )
                 ),
                 chr(10)
             )
-            -- Fallback: for documents use text_content, for objects use metadata (avoid expensive line extraction)
-            WHEN ri.scope = 'document'
-            THEN substr(COALESCE(art.text_content, ''), 1, 640)
-            ELSE substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640)
+            -- Fallback: for documents use text_content, for objects use metadata
+            WHEN e.node_scope = 'document'
+            THEN substr(COALESCE(e.text_content, ''), 1, 640)
+            ELSE substr(COALESCE(e.headline || E'\n\n' || e.structure, e.headline, e.structure, ''), 1, 640)
         END AS snippet,
-        ri.line_start,
-        ri.line_end,
-        ri.digest,
+        e.line_start,
+        e.line_end,
+        e.digest,
         COALESCE(l.bm25_norm, 0) AS bm25_score,
         COALESCE(l.fuzz_norm, 0) AS fuzzy_score,
         COALESCE(s.sem_norm, 0) AS dense_score,
         COALESCE(l.rrf_lex, 0) + COALESCE(s.rrf_sem, 0) AS rrf
-    FROM final_nodes fn
-    JOIN filtered ri ON ri.node_id = fn.fn_node_id
-    LEFT JOIN lex l ON l.node_id = fn.fn_node_id
-    LEFT JOIN sem s ON s.doc_id = ri.doc_id
-    LEFT JOIN node doc_node ON doc_node.id = ri.doc_id
-    LEFT JOIN artifact art ON art.id = doc_node.artifact_id
+    FROM enriched e
+    LEFT JOIN lex l ON l.node_id = e.node_id
+    LEFT JOIN sem s ON s.doc_id = e.doc_id
 ),
 
 -- Propagate semantic score from document to its objects
@@ -235,14 +251,12 @@ final_with_conf AS (
             ) AS score,
             cls.route_mode,
             cls.uri_glob_filter,
-            cls.mime_glob_filter,
             cls.keywords_empty,
             cls.keywords_lc,
             cls.requested_mode,
             json_object(
                 'route', cls.route_mode,
                 'uri_glob_applied', cls.uri_glob_filter IS NOT NULL,
-                'mime_glob_applied', cls.mime_glob_filter IS NOT NULL,
                 'keywords_empty', cls.keywords_empty
             ) AS boosts_json,
             json_object(
@@ -265,7 +279,7 @@ SELECT *
 FROM final_with_conf
 ORDER BY
     CASE
-        WHEN uri_glob_filter IS NOT NULL AND scope = 'document' THEN 0
+        WHEN uri_glob_filter IS NOT NULL AND node_scope = 'document' THEN 0
         WHEN uri_glob_filter IS NOT NULL THEN 1
         WHEN uri_glob_filter IS NULL
              AND COALESCE(symbol, '') = COALESCE(keywords_lc, '')
@@ -280,69 +294,67 @@ LIMIT (SELECT result_k FROM base_params)
 -- ============================================================================
 -- RELATED DOCUMENTS HELPER
 -- ============================================================================
--- Lightweight "find related documents" helper that uses the same filtering approach.
+-- Lightweight "find related documents" helper.
+-- Scores by cosine similarity (embedding) + BM25 (search_key).
+-- Enriches only top-K results with full metadata.
 CREATE OR REPLACE MACRO related(
     seed_uri,
     k := 20,
     mode := 'mixed',
-    uri_glob := NULL,
-    mime_glob := NULL
+    uri_glob := NULL
 ) AS TABLE (
 WITH base_params AS (
     SELECT
         COALESCE(TRIM(seed_uri), '') AS seed,
         CAST(COALESCE(k, 20) AS BIGINT) AS result_k,
         LOWER(COALESCE(mode, 'mixed')) AS requested_mode,
-        NULLIF(TRIM(uri_glob), '') AS uri_glob_filter,
-        NULLIF(TRIM(mime_glob), '') AS mime_glob_filter
+        NULLIF(TRIM(uri_glob), '') AS uri_glob_filter
 ),
+
+-- Seed: direct node + embedding lookup (no repo_index)
 seed AS (
-    SELECT *
-    FROM repo_index
-    JOIN base_params bp_seed ON TRUE
-    WHERE uri = bp_seed.seed
+    SELECT
+        n.id AS node_id,
+        n.uri,
+        de.embedding,
+        LOWER(REPLACE(repository_uri_container(n.uri), '\\', '/')) AS search_key,
+        LOWER(COALESCE(
+            repository_uri_symbol(n.uri),
+            json_extract_string(n.properties, '$.symbol'),
+            json_extract_string(n.properties, '$.name'),
+            ''
+        )) AS symbol_key
+    FROM node n
+    LEFT JOIN document_embedding de
+        ON de.node_id = n.id AND de.embedding_type = 'full' AND de.chunk_index = 0
+    WHERE n.uri = (SELECT seed FROM base_params)
     LIMIT 1
 ),
-related_source AS (
+
+-- Scope-filtered candidates (excluding seed document)
+_rel_scope AS (
+    SELECT * FROM _scope_filter(
+        uri_glob := (SELECT uri_glob_filter FROM base_params),
+        exclude_uri := (SELECT seed FROM base_params)
+    )
+),
+
+-- Slim candidates for scoring: embedding + search_key only
+scoring_candidates AS (
     SELECT
-        ri.*,
-        split_part(ri.uri, '#', 1) AS uri_container,
-        CASE
-            WHEN ri.uri IS NULL THEN NULL
-            ELSE regexp_replace(LOWER(ri.uri), '^[^:]+://+', '')
-        END AS uri_local
-    FROM repo_index ri
-    JOIN base_params bp_rs ON TRUE
-    WHERE ri.uri <> bp_rs.seed
+        sf.node_id,
+        sf.doc_id,
+        sf.node_scope,
+        de.embedding,
+        LOWER(REPLACE(repository_uri_container(COALESCE(n.uri, doc.uri, 'unknown')), '\\', '/')) AS search_key
+    FROM _rel_scope sf
+    JOIN node n ON n.id = sf.node_id
+    LEFT JOIN node doc ON doc.id = sf.doc_id AND n.kind <> 'document'
+    LEFT JOIN document_embedding de ON de.node_id = sf.node_id
+        AND de.embedding_type = 'full' AND de.chunk_index = 0
 ),
-related_scope_uris AS (
-    SELECT DISTINCT
-        gf.uri AS scoped_uri,
-        split_part(gf.uri, '#', 1) AS scoped_container_uri
-    FROM base_params bp_scope
-    CROSS JOIN glob_files(pattern_spec := bp_scope.uri_glob_filter) gf
-    WHERE bp_scope.uri_glob_filter IS NOT NULL
-),
-filtered AS (
-    SELECT rs.*
-    FROM related_source rs
-    JOIN base_params bp_filter ON TRUE
-    WHERE (
-            bp_filter.uri_glob_filter IS NULL
-            OR EXISTS (
-                SELECT 1
-                FROM related_scope_uris su
-                WHERE su.scoped_uri = rs.uri
-                   OR su.scoped_container_uri = rs.uri_container
-            )
-            OR matches_glob(rs.uri, bp_filter.uri_glob_filter, TRUE, 'file:///') IS TRUE
-            OR matches_glob(rs.uri_local, bp_filter.uri_glob_filter, TRUE, NULL) IS TRUE
-        )
-      AND (
-            bp_filter.mime_glob_filter IS NULL
-            OR repoql_glob_match(COALESCE(rs.mime, ''), bp_filter.mime_glob_filter, 'true',NULL) IS TRUE
-        )
-),
+
+-- Score all candidates
 scored AS (
     SELECT
         f.*,
@@ -353,10 +365,11 @@ scored AS (
         END AS sim_score,
         TRY_CAST(match_score(LOWER(COALESCE(seed.symbol_key, seed.search_key, '')), f.search_key) AS DOUBLE) AS bm25_score,
         0.0 AS xref_score
-    FROM filtered f
+    FROM scoring_candidates f
     JOIN seed ON TRUE
 ),
--- Apply limit via QUALIFY for optimizer early-termination
+
+-- Top-K via QUALIFY
 final AS (
     SELECT
         *,
@@ -364,37 +377,118 @@ final AS (
         ROW_NUMBER() OVER (
             ORDER BY
                 COALESCE(sim_score, 0) * 0.7 + COALESCE(bm25_score, 0) * 0.3 DESC,
-                LENGTH(uri),
-                uri
+                LENGTH(COALESCE(
+                    (SELECT uri FROM node WHERE id = node_id),
+                    ''
+                )),
+                node_id
         ) AS rel_row,
-        rrf_score(ROW_NUMBER() OVER (ORDER BY COALESCE(sim_score, 0) DESC, COALESCE(bm25_score, 0) DESC, uri), 10) AS rrf
+        rrf_score(ROW_NUMBER() OVER (ORDER BY COALESCE(sim_score, 0) DESC, COALESCE(bm25_score, 0) DESC, node_id), 10) AS rrf
     FROM scored
     QUALIFY rel_row <= (SELECT result_k FROM base_params)
+),
+
+-- Enrich only top-K with full metadata
+enriched_final AS (
+    SELECT
+        f.doc_id,
+        f.node_id,
+        COALESCE(
+            n.uri,
+            repository_uri_join(
+                COALESCE(doc.uri, 'repoql://document/' || CAST(f.doc_id AS VARCHAR)),
+                COALESCE(
+                    fragment_from_line_range(CAST(sp.start_line AS VARCHAR), CAST(sp.end_line AS VARCHAR)),
+                    concat('node/', n.kind, '/', REPLACE(CAST(n.id AS VARCHAR), '-', ''))
+                )
+            )
+        ) AS uri,
+        REPLACE(repository_uri_container(COALESCE(doc.uri, n.uri, 'repoql://unknown')), '\\', '/') AS path,
+        f.node_scope,
+        n.kind,
+        COALESCE(
+            repository_uri_symbol(n.uri),
+            json_extract_string(n.properties, '$.symbol'),
+            json_extract_string(n.properties, '$.name')
+        ) AS symbol,
+        media_type_kind(a.media_type) AS lang,
+        media_type_base(a.media_type) AS mime,
+        CASE WHEN n.kind = 'document'
+            THEN COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, ''))
+            ELSE COALESCE(
+                NULLIF(n.headline, ''),
+                json_extract_string(n.properties, '$.name'),
+                repository_uri_file_name(doc.uri)
+            )
+        END AS headline,
+        CASE WHEN n.kind = 'document'
+            THEN COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, ''))
+            ELSE NULLIF(n.structure, '')
+        END AS structure,
+        substr(COALESCE(
+            CASE WHEN n.kind = 'document'
+                THEN COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, ''))
+                ELSE COALESCE(NULLIF(n.headline, ''), json_extract_string(n.properties, '$.name'), repository_uri_file_name(doc.uri))
+            END
+            || E'\n\n' ||
+            CASE WHEN n.kind = 'document'
+                THEN COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, ''))
+                ELSE NULLIF(n.structure, '')
+            END,
+            CASE WHEN n.kind = 'document'
+                THEN COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, ''))
+                ELSE COALESCE(NULLIF(n.headline, ''), json_extract_string(n.properties, '$.name'), repository_uri_file_name(doc.uri))
+            END,
+            CASE WHEN n.kind = 'document'
+                THEN COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, ''))
+                ELSE NULLIF(n.structure, '')
+            END,
+            ''
+        ), 1, 640) AS snippet,
+        COALESCE(sp.start_line, TRY_CAST(repository_uri_line_start(n.uri) AS INTEGER)) AS line_start,
+        COALESCE(sp.end_line, TRY_CAST(repository_uri_line_end(n.uri) AS INTEGER)) AS line_end,
+        a.digest,
+        f.bm25_score,
+        f.sim_score AS dense_score,
+        f.xref_score,
+        f.score,
+        f.rrf,
+        score_confidence(f.score) AS confidence,
+        json_object('mode', bp_out.requested_mode, 'seed_uri', bp_out.seed) AS explain_json
+    FROM final f
+    JOIN node n ON n.id = f.node_id
+    LEFT JOIN span sp ON sp.id = n.span_id AND n.kind <> 'document'
+    LEFT JOIN node doc ON doc.id = f.doc_id AND n.kind <> 'document'
+    LEFT JOIN artifact a ON a.id = COALESCE(
+        CASE WHEN n.kind = 'document' THEN n.artifact_id END,
+        doc.artifact_id
+    )
+    JOIN base_params bp_out ON TRUE
 )
+
 SELECT
     doc_id,
     node_id,
     uri,
     path,
-    scope,
+    node_scope,
     kind,
     symbol,
     lang,
     mime,
     headline,
     structure,
-    substr(COALESCE(headline || E'\n\n' || structure, headline, structure, ''), 1, 640) AS snippet,
+    snippet,
     line_start,
     line_end,
     digest,
     bm25_score,
-    sim_score AS dense_score,
+    dense_score,
     xref_score,
     score,
     rrf,
-    score_confidence(score) AS confidence,
-    json_object('mode', bp_out.requested_mode, 'seed_uri', bp_out.seed) AS explain_json
-FROM final
-JOIN base_params bp_out ON TRUE
+    confidence,
+    explain_json
+FROM enriched_final
 ORDER BY score DESC, LENGTH(uri)
 );

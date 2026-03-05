@@ -50,18 +50,23 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                         hs.uri,
                         hs.headline,
                         hs.structure,
-                        substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
-                        ri.lang,
-                        ri.mime as semantic_type,
+                        substr(COALESCE(
+                            COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')) || E'\n\n' || COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')),
+                            COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')),
+                            COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')),
+                            ''), 1, 640) as snippet,
+                        media_type_kind(a.media_type) as lang,
+                        media_type_base(a.media_type) as semantic_type,
                         hs.sem_score,
                         hs.bm25_score,
                         hs.struct_mentions,
                         hs.body_mentions,
                         hs.score,
-                        ri.doc_id
+                        n.id as doc_id
                     FROM search('{escapedQuestion}', scope := '{escapedScopeLike}', k := {limit * 3}) hs
-                    LEFT JOIN repo_index ri ON ri.uri = hs.uri AND ri.scope = 'document'
-                    JOIN scope_doc_ids sd ON sd.doc_id = ri.doc_id
+                    LEFT JOIN node n ON n.uri = hs.uri AND n.kind = 'document'
+                    LEFT JOIN artifact a ON a.id = n.artifact_id
+                    JOIN scope_doc_ids sd ON sd.doc_id = n.id
                     ORDER BY hs.score DESC
                     LIMIT {limit}
                     """;
@@ -73,17 +78,22 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                         hs.uri,
                         hs.headline,
                         hs.structure,
-                        substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
-                        ri.lang,
-                        ri.mime as semantic_type,
+                        substr(COALESCE(
+                            COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')) || E'\n\n' || COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')),
+                            COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')),
+                            COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')),
+                            ''), 1, 640) as snippet,
+                        media_type_kind(a.media_type) as lang,
+                        media_type_base(a.media_type) as semantic_type,
                         hs.sem_score,
                         hs.bm25_score,
                         hs.struct_mentions,
                         hs.body_mentions,
                         hs.score,
-                        ri.doc_id
+                        n.id as doc_id
                     FROM search('{escapedQuestion}', k := {limit * 3}) hs
-                    LEFT JOIN repo_index ri ON ri.uri = hs.uri AND ri.scope = 'document'
+                    LEFT JOIN node n ON n.uri = hs.uri AND n.kind = 'document'
+                    LEFT JOIN artifact a ON a.id = n.artifact_id
                     ORDER BY hs.score DESC
                     LIMIT {limit}
                     """;
@@ -103,36 +113,41 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                         AND d.uri = split_part(sd.uri, '#', 1)
                 )
                 SELECT
-                    ri.uri,
-                    ri.headline,
-                    ri.structure,
-                    substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
-                    ri.lang,
-                    ri.mime as semantic_type,
+                    n.uri,
+                    COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')) AS headline,
+                    COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')) AS structure,
+                    substr(COALESCE(
+                        COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')) || E'\n\n' || COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')),
+                        COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')),
+                        COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')),
+                        ''), 1, 640) as snippet,
+                    media_type_kind(a.media_type) as lang,
+                    media_type_base(a.media_type) as semantic_type,
                     0.0 as sem_score,
                     0.0 as bm25_score,
                     0 as struct_mentions,
                     0 as body_mentions,
                     0.5 as score,
-                    ri.doc_id
-                FROM repo_index ri
-                JOIN scope_doc_ids sd ON sd.doc_id = ri.doc_id
-                WHERE ri.scope = 'document'
+                    n.id as doc_id
+                FROM node n
+                JOIN scope_doc_ids sd ON sd.doc_id = n.id
+                LEFT JOIN artifact a ON a.id = n.artifact_id
+                WHERE n.kind = 'document'
                 ORDER BY
                     CASE
-                        WHEN lower(ri.uri) LIKE '%/node_modules/%'
-                             OR lower(ri.uri) LIKE '%/wwwroot/lib/%'
-                             OR lower(ri.uri) LIKE '%.map'
-                             OR lower(ri.uri) LIKE '%.min.js'
-                             OR lower(ri.uri) LIKE '%.min.css' THEN 4
-                        WHEN lower(COALESCE(ri.lang, '')) LIKE 'code.%' THEN 0
-                        WHEN lower(COALESCE(ri.lang, '')) LIKE 'query.%' THEN 1
-                        WHEN lower(COALESCE(ri.lang, '')) LIKE 'markdown.%'
-                             OR lower(COALESCE(ri.mime, '')) = 'text/markdown' THEN 3
+                        WHEN lower(n.uri) LIKE '%/node_modules/%'
+                             OR lower(n.uri) LIKE '%/wwwroot/lib/%'
+                             OR lower(n.uri) LIKE '%.map'
+                             OR lower(n.uri) LIKE '%.min.js'
+                             OR lower(n.uri) LIKE '%.min.css' THEN 4
+                        WHEN lower(COALESCE(media_type_kind(a.media_type), '')) LIKE 'code.%' THEN 0
+                        WHEN lower(COALESCE(media_type_kind(a.media_type), '')) LIKE 'query.%' THEN 1
+                        WHEN lower(COALESCE(media_type_kind(a.media_type), '')) LIKE 'markdown.%'
+                             OR lower(COALESCE(media_type_base(a.media_type), '')) = 'text/markdown' THEN 3
                         ELSE 2
                     END,
-                    ri.mtime DESC,
-                    ri.uri
+                    n.updated_at DESC,
+                    n.uri
                 LIMIT {limit}
                 """;
         }
@@ -141,28 +156,33 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             // No question, no scope - show important/recent files
             sql = $"""
                 SELECT
-                    ri.uri,
-                    ri.headline,
-                    ri.structure,
-                    substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
-                    ri.lang,
-                    ri.mime as semantic_type,
+                    n.uri,
+                    COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')) AS headline,
+                    COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')) AS structure,
+                    substr(COALESCE(
+                        COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')) || E'\n\n' || COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')),
+                        COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')),
+                        COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')),
+                        ''), 1, 640) as snippet,
+                    media_type_kind(a.media_type) as lang,
+                    media_type_base(a.media_type) as semantic_type,
                     0.0 as sem_score,
                     0.0 as bm25_score,
                     0 as struct_mentions,
                     0 as body_mentions,
                     0.5 as score,
-                    ri.doc_id
-                FROM repo_index ri
-                WHERE ri.scope = 'document'
+                    n.id as doc_id
+                FROM node n
+                LEFT JOIN artifact a ON a.id = n.artifact_id
+                WHERE n.kind = 'document'
                 ORDER BY
                     CASE
-                        WHEN ri.uri LIKE 'help://%' THEN 0
-                        WHEN ri.uri LIKE '%README%' THEN 1
-                        WHEN ri.uri LIKE '%/docs/%' THEN 2
+                        WHEN n.uri LIKE 'help://%' THEN 0
+                        WHEN n.uri LIKE '%README%' THEN 1
+                        WHEN n.uri LIKE '%/docs/%' THEN 2
                         ELSE 3
                     END,
-                    ri.mtime DESC
+                    n.updated_at DESC
                 LIMIT {limit}
                 """;
         }

@@ -336,7 +336,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
                 SELECT
                     bp.uri,
                     bp.similarity,
-                    ri.headline,
+                    COALESCE(NULLIF(ri.headline, ''), NULLIF(ria.headline, '')) AS headline,
                     (SELECT string_agg(s.text, E'\n' ORDER BY s.line_number)
                      FROM snippet(bp.uri || CASE WHEN bp.start_byte IS NOT NULL
                          THEN '#char=' || bp.start_byte || ',' || bp.end_byte
@@ -353,7 +353,8 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
                          ELSE '' END, {DefaultContextLines}) s
                     ) AS line_end
                 FROM best_per_doc bp
-                LEFT JOIN repo_index ri ON ri.node_id = bp.node_id AND ri.scope = 'document'
+                LEFT JOIN node ri ON ri.id = bp.node_id
+                LEFT JOIN artifact ria ON ria.id = ri.artifact_id
                 ORDER BY bp.similarity DESC NULLS LAST
                 """;
 

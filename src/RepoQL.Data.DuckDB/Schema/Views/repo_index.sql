@@ -84,7 +84,7 @@ object_rows AS (
              LEFT JOIN document_embedding de ON de.node_id = child.id AND de.embedding_type = 'full'
     WHERE child.kind <> 'document'
 )
-SELECT DISTINCT ON (uri)
+SELECT
     doc_id,
     node_id,
     uri,
@@ -107,8 +107,9 @@ SELECT DISTINCT ON (uri)
     mtime,
     digest
 FROM document_rows
+QUALIFY ROW_NUMBER() OVER (PARTITION BY uri ORDER BY node_id) = 1
 UNION ALL
-SELECT DISTINCT ON (uri)
+SELECT
     doc_id,
     node_id,
     uri,
@@ -130,4 +131,5 @@ SELECT DISTINCT ON (uri)
     embedding,
     mtime,
     digest
-FROM object_rows;
+FROM object_rows
+QUALIFY ROW_NUMBER() OVER (PARTITION BY uri ORDER BY node_id) = 1;

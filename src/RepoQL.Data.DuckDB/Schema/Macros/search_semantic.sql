@@ -1,11 +1,10 @@
-﻿-- Semantic search module: embedding-based similarity with HNSW acceleration.
+-- Semantic search module: embedding-based similarity with HNSW acceleration.
 -- Uses VSS HNSW indexes when available (384-dim), falls back to linear scan otherwise.
 -- Combines structure embeddings (fast, always available) with full-text embeddings (detailed).
 
 CREATE OR REPLACE MACRO _search_semantic(
     q,
     uri_glob := NULL,
-    mime_glob := NULL,
     max_cand := 5000,
     uri_like := NULL
 ) AS TABLE (
@@ -15,54 +14,15 @@ params AS (
     SELECT
         COALESCE(TRIM(q), '') AS raw_query,
         CASE WHEN COALESCE(TRIM(q), '') = '' THEN TRUE ELSE FALSE END AS keywords_empty,
-        NULLIF(TRIM(uri_glob), '') AS uri_filter,
-        NULLIF(TRIM(uri_like), '') AS uri_like_filter,
-        NULLIF(TRIM(mime_glob), '') AS mime_filter,
         CAST(COALESCE(max_cand, 5000) AS BIGINT) AS limit_cand
 ),
 
--- Pre-filter repo_index with URI/MIME filters
-filtered_source AS (
-    SELECT
-        ri.*,
-        split_part(ri.uri, '#', 1) AS uri_container,
-        CASE
-            WHEN ri.uri IS NULL THEN NULL
-            ELSE regexp_replace(LOWER(ri.uri), '^[^:]+://+', '')
-        END AS uri_local
-    FROM repo_index ri
-),
-scope_uris AS (
-    SELECT DISTINCT
-        gf.uri AS scoped_uri,
-        split_part(gf.uri, '#', 1) AS scoped_container_uri
-    FROM params p
-    CROSS JOIN glob_files(pattern_spec := p.uri_filter) gf
-    WHERE p.uri_filter IS NOT NULL
-),
-filtered AS (
-    SELECT fs.*
-    FROM filtered_source fs
-    JOIN params p ON TRUE
-    WHERE (
-            p.uri_filter IS NULL
-            OR EXISTS (
-                SELECT 1
-                FROM scope_uris su
-                WHERE su.scoped_uri = fs.uri
-                   OR su.scoped_container_uri = fs.uri_container
-            )
-            OR matches_glob(fs.uri, p.uri_filter, TRUE, 'file:///') IS TRUE
-            OR matches_glob(fs.uri_local, p.uri_filter, TRUE, NULL) IS TRUE
-        )
-      AND (
-            p.uri_like_filter IS NULL
-            OR fs.uri LIKE p.uri_like_filter
-        )
-      AND (
-            p.mime_filter IS NULL
-            OR repoql_glob_match(COALESCE(fs.mime, ''), p.mime_filter, 'true',NULL) IS TRUE
-        )
+-- Scope-filtered nodes — only need node_id as join key to embedding tables
+_sem_scope AS (
+    SELECT * FROM _scope_filter(
+        uri_glob := uri_glob,
+        uri_like := uri_like
+    )
 ),
 
 -- Generate query embedding (only if query is non-empty)
@@ -94,7 +54,7 @@ vss_ready AS (
         (SELECT COUNT(*) FROM _vss_index_1024 LIMIT 1) > 0 AS has_1024,
         (SELECT array_length(vec::FLOAT[]) FROM query_vec WHERE vec IS NOT NULL) AS query_dim,
         (SELECT structure_ready FROM vss_rebuild_state) AS structure_ready
-), 
+),
 
 -- ============================================================================
 -- HNSW FAST PATH: Use VSS index for 384-dim embeddings
@@ -106,7 +66,7 @@ hnsw_structure AS (
         1.0 - array_cosine_distance(v.vec, qv.vec::FLOAT[384]) AS struct_sem,
         'hnsw' AS source
     FROM query_vec qv, _vss_index_384 v
-    JOIN filtered ri ON ri.node_id = v.node_id
+    JOIN _sem_scope sf ON sf.node_id = v.node_id
     WHERE qv.vec IS NOT NULL
       AND v.embedding_type = 'structure'
       AND (SELECT query_dim FROM vss_ready) = 384
@@ -127,7 +87,7 @@ linear_structure AS (
         'linear' AS source
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
-    JOIN filtered ri ON ri.node_id = de.node_id
+    JOIN _sem_scope sf ON sf.node_id = de.node_id
     WHERE qv.vec IS NOT NULL
       AND de.scope = 'document'
       AND de.embedding_type = 'structure'
@@ -160,7 +120,7 @@ full_text_chunks AS (
         list_cosine_similarity(qv.vec::FLOAT[], de.embedding) AS chunk_sem
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
-    JOIN filtered ri ON ri.node_id = de.node_id
+    JOIN _sem_scope sf ON sf.node_id = de.node_id
     WHERE qv.vec IS NOT NULL
       AND de.scope = 'document'
       AND de.embedding_type = 'full'

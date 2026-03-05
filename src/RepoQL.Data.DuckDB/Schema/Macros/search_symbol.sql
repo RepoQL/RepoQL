@@ -73,7 +73,7 @@ candidates AS (
     SELECT
         sc.doc_id,
         sc.uri,
-        sc.scope AS result_scope,
+        sc.node_scope AS result_scope,
         sc.symbol,
         sc.kind,
         sc.headline,
@@ -87,7 +87,7 @@ candidates AS (
         k := k * 2,  -- Fetch extra since we filter to objects
         uri_glob := (SELECT scope_pushdown_glob FROM pushdown_params)
     ) sc
-    WHERE sc.scope = 'object'
+    WHERE sc.node_scope = 'object'
 ),
 
 -- Apply scope filter if provided

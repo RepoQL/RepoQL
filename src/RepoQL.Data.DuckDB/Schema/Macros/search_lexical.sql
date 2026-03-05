@@ -1,10 +1,9 @@
-﻿-- Lexical search module: BM25 heuristics + fuzzy subsequence scoring.
+-- Lexical search module: BM25 heuristics + fuzzy subsequence scoring.
 -- This is the "lexical" half of hybrid search, focusing on keyword/pattern matching.
 
 CREATE OR REPLACE MACRO _search_lexical(
     q,
     uri_glob := NULL,
-    mime_glob := NULL,
     max_cand := 5000,
     uri_like := NULL
 ) AS TABLE (
@@ -15,54 +14,62 @@ params AS (
         COALESCE(TRIM(q), '') AS raw_query,
         LOWER(COALESCE(TRIM(q), '')) AS keywords_lc,
         CASE WHEN COALESCE(TRIM(q), '') = '' THEN TRUE ELSE FALSE END AS keywords_empty,
-        NULLIF(TRIM(uri_glob), '') AS uri_filter,
-        NULLIF(TRIM(uri_like), '') AS uri_like_filter,
-        NULLIF(TRIM(mime_glob), '') AS mime_filter,
         CAST(COALESCE(max_cand, 5000) AS BIGINT) AS limit_cand
 ),
 
--- Pre-filter repo_index with URI/MIME filters
-filtered_source AS (
-    SELECT
-        ri.*,
-        split_part(ri.uri, '#', 1) AS uri_container,
-        CASE
-            WHEN ri.uri IS NULL THEN NULL
-            ELSE regexp_replace(LOWER(ri.uri), '^[^:]+://+', '')
-        END AS uri_local
-    FROM repo_index ri
+-- Scope-filtered nodes via centralized scope filter
+_lex_scope AS (
+    SELECT * FROM _scope_filter(
+        uri_glob := uri_glob,
+        uri_like := uri_like
+    )
 ),
-scope_uris AS (
-    SELECT DISTINCT
-        gf.uri AS scoped_uri,
-        split_part(gf.uri, '#', 1) AS scoped_container_uri
-    FROM params p
-    CROSS JOIN glob_files(pattern_spec := p.uri_filter) gf
-    WHERE p.uri_filter IS NOT NULL
-),
+
+-- Enrich scope results with columns needed for lexical scoring
 filtered AS (
-    SELECT fs.*
-    FROM filtered_source fs
-    JOIN params p ON TRUE
-    WHERE (
-            p.uri_filter IS NULL
-            OR EXISTS (
-                SELECT 1
-                FROM scope_uris su
-                WHERE su.scoped_uri = fs.uri
-                   OR su.scoped_container_uri = fs.uri_container
+    SELECT
+        sf.node_id,
+        sf.doc_id,
+        -- search_key: lowercase document path
+        LOWER(REPLACE(repository_uri_container(
+            COALESCE(n.uri, doc.uri, 'repoql://unknown')
+        ), '\\', '/')) AS search_key,
+        -- basename: document filename
+        repository_uri_file_name(COALESCE(doc.uri, n.uri)) AS basename,
+        -- headline: node-specific computation
+        CASE WHEN n.kind = 'document'
+            THEN COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, ''))
+            ELSE COALESCE(
+                NULLIF(n.headline, ''),
+                json_extract_string(n.properties, '$.name'),
+                repository_uri_file_name(doc.uri)
             )
-            OR matches_glob(fs.uri, p.uri_filter, TRUE, 'file:///') IS TRUE
-            OR matches_glob(fs.uri_local, p.uri_filter, TRUE, NULL) IS TRUE
-        )
-      AND (
-            p.uri_like_filter IS NULL
-            OR fs.uri LIKE p.uri_like_filter
-        )
-      AND (
-            p.mime_filter IS NULL
-            OR repoql_glob_match(COALESCE(fs.mime, ''), p.mime_filter, 'true',NULL) IS TRUE
-        )
+        END AS headline,
+        -- structure: node-specific
+        CASE WHEN n.kind = 'document'
+            THEN COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, ''))
+            ELSE NULLIF(n.structure, '')
+        END AS structure,
+        -- symbol: from URI or properties
+        COALESCE(
+            repository_uri_symbol(n.uri),
+            json_extract_string(n.properties, '$.symbol'),
+            json_extract_string(n.properties, '$.name')
+        ) AS symbol,
+        -- symbol_key: lowercase symbol
+        LOWER(COALESCE(
+            repository_uri_symbol(n.uri),
+            json_extract_string(n.properties, '$.symbol'),
+            json_extract_string(n.properties, '$.name'),
+            ''
+        )) AS symbol_key
+    FROM _lex_scope sf
+    JOIN node n ON n.id = sf.node_id
+    LEFT JOIN node doc ON doc.id = sf.doc_id AND n.kind <> 'document'
+    LEFT JOIN artifact a ON a.id = COALESCE(
+        CASE WHEN n.kind = 'document' THEN n.artifact_id END,
+        doc.artifact_id
+    )
 ),
 
 -- Score each document/object against the query

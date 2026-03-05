@@ -151,7 +151,7 @@ public sealed class FindCandidatesMacroTests : IDisposable
                 k := 50,
                 uri_glob := 'file:///src/a.cs;file:///src/b.cs'
             )
-            WHERE scope = 'document'
+            WHERE node_scope = 'document'
             ORDER BY uri
             """);
 

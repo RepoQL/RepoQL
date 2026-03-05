@@ -1484,6 +1484,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
                 "Macros/snippet.sql",
                 "Macros/node_primary_fragment.sql",
                 "Macros/search_helpers.sql",
+                "Macros/scope_filter.sql",
                 "Macros/search_lexical.sql",
                 "Macros/find_candidates.sql",
                 "Macros/search_semantic.sql",

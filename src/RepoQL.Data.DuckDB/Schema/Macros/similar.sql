@@ -173,13 +173,14 @@ best_per_doc AS (
 
 repo_headlines AS (
     SELECT
-        ri.uri,
-        ri.headline,
+        n.uri,
+        COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')) AS headline,
         ROW_NUMBER() OVER (
-            PARTITION BY ri.uri
-            ORDER BY CASE WHEN ri.scope = 'document' THEN 0 ELSE 1 END, ri.node_id
+            PARTITION BY n.uri
+            ORDER BY CASE WHEN n.kind = 'document' THEN 0 ELSE 1 END, n.id
         ) AS rn
-    FROM repo_index ri
+    FROM node n
+    LEFT JOIN artifact a ON a.id = n.artifact_id
 )
 
 SELECT

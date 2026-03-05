@@ -3,7 +3,7 @@
 --
 -- Parameters:
 --   keywords          - literal keywords for searching (required)
---   scope             - SQL LIKE pattern for doc URIs; NULL/'' => all docs
+--   scope             - SQL LIKE pattern for doc URIs; NULL/'' => all docs (case-insensitive)
 --   boost_pattern     - regex used for boosting + rescue (optional, derived from keywords if not provided)
 --   negative_pattern  - regex used for de-ranking (optional)
 --   k                 - max candidates
@@ -32,7 +32,7 @@ WITH
 params AS (
     SELECT
         trim(coalesce(keywords, '')) AS kw,
-        COALESCE(NULLIF(scope, ''), '%') AS scope_like,
+        NULLIF(TRIM(COALESCE(scope, '')), '') AS scope_like,
         NULLIF(trim(coalesce(boost_pattern, '')), '') AS boost_in,
         CAST(negative_pattern AS VARCHAR) AS neg_re
 ),
@@ -67,7 +67,7 @@ docs_outline AS (
     JOIN artifact a ON n.artifact_id = a.id
     CROSS JOIN cfg c
     WHERE n.kind = 'document'
-      AND n.uri LIKE c.scope_like
+      AND (c.scope_like IS NULL OR n.uri ILIKE c.scope_like)
 ),
 
 -- Search results aggregated to doc level (fixes "bm25 under-count in tier1" issue)
@@ -213,7 +213,7 @@ LIMIT CAST(COALESCE(k, 200) AS BIGINT);
 
 -- Fetch raw object candidates from selected documents for second-pass object search.
 -- Does NOT compute final scores - just retrieves object metadata with cheap features.
--- The C# JitObjectSearchService handles scoring, JIT embedding planning, and final ranking.
+-- Uses base-table joins instead of repo_index for efficiency.
 --
 -- Parameters:
 --   doc_uris          - Array of document URIs to fetch objects from
@@ -266,42 +266,78 @@ target_docs AS (
         AND d.uri = i.document_uri
 ),
 
--- Get objects from documents and apply per-doc limit via QUALIFY
+-- Get objects from documents using base-table joins (no repo_index)
 candidates AS (
     SELECT
-        ri.doc_id,
-        ri.node_id,
-        ri.uri,
+        doc.id AS doc_id,
+        child.id AS node_id,
+        COALESCE(
+            child.uri,
+            repository_uri_join(
+                doc.uri,
+                COALESCE(
+                    fragment_from_line_range(CAST(sp.start_line AS VARCHAR), CAST(sp.end_line AS VARCHAR)),
+                    concat('node/', child.kind, '/', REPLACE(CAST(child.id AS VARCHAR), '-', ''))
+                )
+            )
+        ) AS uri,
         td.document_uri,
-        ri.kind,
-        ri.symbol,
-        ri.headline,
-        ri.structure,
-        ri.line_start,
-        ri.line_end,
-        ri.lang,
-        ri.mime AS semantic_type,
+        child.kind,
+        COALESCE(
+            repository_uri_symbol(child.uri),
+            json_extract_string(child.properties, '$.symbol'),
+            json_extract_string(child.properties, '$.name')
+        ) AS symbol,
+        LOWER(COALESCE(
+            repository_uri_symbol(child.uri),
+            json_extract_string(child.properties, '$.symbol'),
+            json_extract_string(child.properties, '$.name'),
+            ''
+        )) AS symbol_key,
+        COALESCE(
+            NULLIF(child.headline, ''),
+            json_extract_string(child.properties, '$.name'),
+            repository_uri_file_name(doc.uri)
+        ) AS headline,
+        NULLIF(child.structure, '') AS structure,
+        COALESCE(sp.start_line, TRY_CAST(repository_uri_line_start(child.uri) AS INTEGER)) AS line_start,
+        COALESCE(sp.end_line, TRY_CAST(repository_uri_line_end(child.uri) AS INTEGER)) AS line_end,
+        media_type_kind(a.media_type) AS lang,
+        media_type_base(a.media_type) AS semantic_type,
         -- Name hit score: exact match = 1.0, substring = 0.5-0.8
         CASE
-            WHEN cfg.kw_lower <> '' AND ri.symbol_key = cfg.kw_lower THEN 1.0
-            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN ri.symbol_key) > 0 THEN 0.8
-            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN lower(coalesce(ri.headline, ''))) > 0 THEN 0.5
+            WHEN cfg.kw_lower <> '' AND LOWER(COALESCE(
+                repository_uri_symbol(child.uri),
+                json_extract_string(child.properties, '$.symbol'),
+                json_extract_string(child.properties, '$.name'),
+                ''
+            )) = cfg.kw_lower THEN 1.0
+            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN LOWER(COALESCE(
+                repository_uri_symbol(child.uri),
+                json_extract_string(child.properties, '$.symbol'),
+                json_extract_string(child.properties, '$.name'),
+                ''
+            ))) > 0 THEN 0.8
+            WHEN cfg.kw_lower <> '' AND position(cfg.kw_lower IN lower(coalesce(child.headline, ''))) > 0 THEN 0.5
             ELSE 0.0
         END AS name_hit_score,
         -- Regex mentions in outline (headline + structure)
         CASE
             WHEN length(cfg.boost_re) > 0
             THEN COALESCE(array_length(regexp_extract_all(
-                coalesce(ri.headline, '') || ' ' || coalesce(ri.structure, ''),
+                coalesce(child.headline, '') || ' ' || coalesce(child.structure, ''),
                 '(?i)' || cfg.boost_re
             )), 0)
             ELSE 0
         END AS regex_mentions
-    FROM repo_index ri
-    JOIN target_docs td ON td.doc_id = ri.doc_id
+    FROM node child
+    JOIN span sp ON sp.id = child.span_id
+    JOIN node doc ON doc.id = sp.document_id
+    JOIN target_docs td ON td.doc_id = doc.id
+    LEFT JOIN artifact a ON a.id = doc.artifact_id
     CROSS JOIN cfg
-    WHERE ri.scope = 'object'
-    QUALIFY ROW_NUMBER() OVER (PARTITION BY ri.doc_id ORDER BY ri.line_start NULLS LAST, ri.node_id) <= max_per_doc
+    WHERE child.kind <> 'document'
+    QUALIFY ROW_NUMBER() OVER (PARTITION BY doc.id ORDER BY sp.start_line NULLS LAST, child.id) <= max_per_doc
 )
 
 SELECT

@@ -122,7 +122,7 @@ internal sealed class ObjectSearchService : IObjectSearchService
                     k := {Math.Max(50, totalLimit)},
                     uri_glob := '{escapedUriGlob}'
                 ) s
-                WHERE s.scope = 'object'
+                WHERE s.node_scope = 'object'
             ),
             ranked AS (
                 SELECT *,
@@ -209,28 +209,53 @@ internal sealed class ObjectSearchService : IObjectSearchService
             ),
             objects AS (
                 SELECT
-                    ri.uri,
+                    COALESCE(
+                        child.uri,
+                        repository_uri_join(
+                            doc.uri,
+                            COALESCE(
+                                fragment_from_line_range(CAST(sp.start_line AS VARCHAR), CAST(sp.end_line AS VARCHAR)),
+                                concat('node/', child.kind, '/', REPLACE(CAST(child.id AS VARCHAR), '-', ''))
+                            )
+                        )
+                    ) AS uri,
                     td.document_uri,
-                    ri.kind,
-                    ri.symbol,
-                    ri.headline,
-                    ri.structure,
-                    substr(COALESCE(ri.headline || E'\n\n' || ri.structure, ri.headline, ri.structure, ''), 1, 640) as snippet,
-                    ri.line_start,
-                    ri.line_end,
-                    ri.lang,
-                    ri.mime as semantic_type,
+                    child.kind,
+                    COALESCE(
+                        repository_uri_symbol(child.uri),
+                        json_extract_string(child.properties, '$.symbol'),
+                        json_extract_string(child.properties, '$.name')
+                    ) AS symbol,
+                    COALESCE(
+                        NULLIF(child.headline, ''),
+                        json_extract_string(child.properties, '$.name'),
+                        repository_uri_file_name(doc.uri)
+                    ) AS headline,
+                    NULLIF(child.structure, '') AS structure,
+                    substr(COALESCE(
+                        COALESCE(NULLIF(child.headline, ''), json_extract_string(child.properties, '$.name'), repository_uri_file_name(doc.uri))
+                            || E'\n\n' || NULLIF(child.structure, ''),
+                        COALESCE(NULLIF(child.headline, ''), json_extract_string(child.properties, '$.name'), repository_uri_file_name(doc.uri)),
+                        NULLIF(child.structure, ''),
+                        ''), 1, 640) as snippet,
+                    COALESCE(sp.start_line, TRY_CAST(repository_uri_line_start(child.uri) AS INTEGER)) AS line_start,
+                    COALESCE(sp.end_line, TRY_CAST(repository_uri_line_end(child.uri) AS INTEGER)) AS line_end,
+                    media_type_kind(a.media_type) as lang,
+                    media_type_base(a.media_type) as semantic_type,
                     0.5 as score,
                     0.0 as semantic_score,
                     0.0 as name_hit_score,
                     0.0 as chunk_overlap_score,
                     ROW_NUMBER() OVER (
                         PARTITION BY td.document_uri
-                        ORDER BY ri.line_start
+                        ORDER BY sp.start_line NULLS LAST
                     ) as rn
-                FROM repo_index ri
-                JOIN target_docs td ON td.doc_id = ri.doc_id
-                WHERE ri.scope = 'object'
+                FROM node child
+                JOIN span sp ON sp.id = child.span_id
+                JOIN node doc ON doc.id = sp.document_id
+                JOIN target_docs td ON td.doc_id = doc.id
+                LEFT JOIN artifact a ON a.id = doc.artifact_id
+                WHERE child.kind <> 'document'
             )
             SELECT
                 uri, document_uri, kind, symbol, headline, structure, snippet,
