@@ -255,23 +255,18 @@ RepoQL's own docs live at `help://` — queryable with the same tools you use on
 
 ## Working with Codex
 
-Codex (GPT-5.3-codex) is available as MCP. Use as a partner:
-
-- **You:** Translate vague intent → clear goals
-- **Codex:** Execute systematically, surface what you'd miss
-- **Always review** output before committing
-- **Always set `approval_policy: never`** — otherwise the call hangs waiting for approval that never comes
+Codex is available as MCP. An excellent engineer — often better than you at execution given clear design parameters. Use as a partner, not a subordinate.
 
 ```
 mcp__codex__codex(prompt: "...", cwd: "C:\\Source\\RepoQL", approval_policy: "never")
 mcp__codex__codex-reply(threadId: "...", prompt: "follow-up")
 ```
 
-**When to delegate:** Investigation, race conditions, implementation with clear spec, code review.
+**Always set `approval_policy: "never"`** — otherwise the call hangs forever.
 
-**Key insight:** Codex won't intuit what you didn't say. State steps, not just outcomes.
+**Key insight:** Codex is a paperclip maximizer — it will optimize relentlessly toward exactly what you stated. Shape the handoff well and this is a superpower. Shape it poorly and it'll solve the letter, not the spirit.
 
-See `.claude/Skills/codex/SKILL.md` for templates.
+See `/effective-delegation` skill for the full partnership model.
 
 ---
 

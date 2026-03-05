@@ -56,10 +56,10 @@ internal class McpCommands
 
                                            **Budget controls detail.** 500 tokens = shape. 2000 = structure. 5000 = depth. Set it based on what you need, not what exists.
 
-                                           **Intent matches your knowledge state.**
-                                           - Inventory: You don't know what's there yet. Breadth over depth — survey with or without search criteria. Keywords optional; when provided, they rank by relevance. Returns an index, not content.
-                                           - Locate: You know the concept, not the location. Balanced — detail on matches, awareness of the rest. Enough context to decide what to read next.
-                                           - Inspect: You know the target. Depth with context — concentrates tokens on relevant content and its surroundings.
+                                           **Breadth controls depth vs coverage.**
+                                           - High breadth (8-10): You don't know what's there yet. Survey with or without keywords. Returns an index, not content.
+                                           - Medium breadth (4-6, default): You know the concept, not the location. Balanced — detail on matches, awareness of the rest.
+                                           - Low breadth (1-3): You know the target. Depth with context — concentrates tokens on relevant content and its surroundings.
 
                                            **Why this matters:** Traditional search finds *most* results and you answer confidently — but gaps erode trust. Users run subagents to verify, wasting tokens and time. Explore searches wide first, so you see what exists before answering. No blind spots, no verification tax. You can say "I found everything related to X" — not "I found some things."
 
@@ -111,9 +111,6 @@ internal class McpCommands
                 .WithTools<ReadTool>()
                 .WithTools<ImportTool>()
                 .WithTools<CommandTool>()
-#if DEBUG
-                .WithTools<SelfTestTool>()
-#endif
                 .WithListResourceTemplatesHandler((ctx, ct) =>
                 {
                     ArgumentNullException.ThrowIfNull(ctx.Services);

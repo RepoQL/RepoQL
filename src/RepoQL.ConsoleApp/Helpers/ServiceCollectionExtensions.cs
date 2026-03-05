@@ -1,10 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using RepoQL.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Tools;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Configuration;
 using RepoQL.Templating;
 using Spectre.Console;
@@ -43,6 +45,20 @@ internal static class ServiceCollectionExtensions
         // Configuration + settings metadata for ::config commands
         services.AddResolvedConfig(startupRepoRoot);
         services.AddScoped<EnvironmentContext>();
+
+        // LLM provider for explain tool synthesis
+        services.AddSingleton<ILlmProvider>(sp =>
+        {
+            var config = sp.GetRequiredService<RepoQlConfig>();
+            var apiKey = config.Llm.ApiKey;
+            if (string.IsNullOrWhiteSpace(apiKey))
+                return new DisabledLlmProvider();
+
+            return new LLM.Client.OpenRouterLlmProvider(
+                apiKey: apiKey,
+                settings: config.Llm,
+                logger: sp.GetService<ILogger<LLM.Client.OpenRouterLlmProvider>>());
+        });
 
         // Command framework
         services.AddSingleton<CommandRegistry>();

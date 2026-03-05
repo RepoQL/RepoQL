@@ -9,7 +9,7 @@ namespace RepoQL.SnapshotGenerator;
 /// Complexity: Enumerates files, runs each through <see cref="MarkdownLoader"/>,
 /// collects <see cref="SnapshotDocumentDto"/> records, wraps in a manifest.
 /// </summary>
-public static class SnapshotGeneratorCore
+internal static class SnapshotGeneratorCore
 {
     /// <summary>
     /// Generate a snapshot manifest from all markdown files in <paramref name="docsDirectory"/>.

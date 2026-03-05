@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Aspire.Hosting.ApplicationModel;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using Projects;
 using RepoQL.Orchestrator;
@@ -10,7 +11,44 @@ var builder = DistributedApplication.CreateBuilder(args);
 builder.Services.AddHealthChecks()
     .AddCheck<RepoQlHostHealthCheck>("repoql-host");
 
-var embedding = builder.AddProject<RepoQL_Embedding_Service>("embedding");
+var embedding = builder.AddProject<RepoQL_Embedding_Service>("embedding")
+    .WithHttpEndpoint(name: "grpc", targetPort: 8080)
+    .WithCommand(
+        name: "smoke_test",
+        displayName: "Smoke test (GetModelInfo)",
+        executeCommand: async context =>
+        {
+            try
+            {
+                var ct = context.CancellationToken;
+                var model = context.ServiceProvider.GetRequiredService<DistributedApplicationModel>();
+                var resource = model.Resources.OfType<ProjectResource>().First(r => r.Name == "embedding");
+                var endpoint = resource.GetEndpoint("grpc");
+                var url = endpoint.Url;
+
+                using var channel = Grpc.Net.Client.GrpcChannel.ForAddress(url, new Grpc.Net.Client.GrpcChannelOptions
+                {
+                    HttpHandler = new SocketsHttpHandler { EnableMultipleHttp2Connections = true }
+                });
+                var client = new RepoQL.Embedding.EmbeddingService.EmbeddingServiceClient(channel);
+                var info = await client.GetModelInfoAsync(new RepoQL.Embedding.GetModelInfoRequest(), cancellationToken: ct);
+
+                context.ServiceProvider.GetRequiredService<ILoggerFactory>()
+                    .CreateLogger("EmbeddingSmokeTest")
+                    .LogInformation("GetModelInfo succeeded: model={Model}, dimension={Dimension}", info.Model, info.Dimension);
+                return CommandResults.Success();
+            }
+            catch (Exception ex)
+            {
+                return CommandResults.Failure(ex);
+            }
+        },
+        commandOptions: new CommandOptions
+        {
+            Description = "Calls GetModelInfo to verify the embedding service is responding.",
+            IconName = "Checkmark",
+            IsHighlighted = true
+        });
 
 var host = builder.AddProject<RepoQL_ConsoleApp>("host", options => options.LaunchProfileName = "host")
     .WithHealthCheck("repoql-host")

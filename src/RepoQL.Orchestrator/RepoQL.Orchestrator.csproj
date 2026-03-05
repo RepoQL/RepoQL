@@ -12,6 +12,7 @@
   <ItemGroup>
     <ProjectReference Include="..\RepoQL.ConsoleApp\RepoQL.ConsoleApp.csproj" />
     <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\RepoQL.Protocol\RepoQL.Protocol.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\RepoQL.Embedding.Service\RepoQL.Embedding.Service.csproj" />
     <ProjectReference Include="..\RepoQL.Web\RepoQL.Web.csproj" />

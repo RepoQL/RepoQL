@@ -8,7 +8,7 @@
     <!-- Constants for this repository -->
     <PropertyGroup>
         <RepositoryRoot>$(MSBuildThisFileDirectory)</RepositoryRoot>
-        <NoWarn>$(NoWarn);CA1056;CA1054</NoWarn>
+        <NoWarn>$(NoWarn);CA1056;CA1054;CA1034</NoWarn>
     </PropertyGroup>
 
     <!-- Apply test-project warning policy consistently across all *.Tests projects -->

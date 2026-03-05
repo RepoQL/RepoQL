@@ -57,9 +57,14 @@ internal sealed class ConfigCommand(SettingRegistry registry, ResolvedConfig con
                 .Select(def =>
                 {
                     var resolved = config.GetProvenance(def.Key) ?? new ResolvedSetting(def.Key, null, ConfigScope.Default);
+                    var displayValue = resolved.Value is not null
+                        ? RenderValue(resolved.Value, def.Sensitive)
+                        : def.DefaultValue is not null
+                            ? RenderValue(def.DefaultValue, def.Sensitive)
+                            : "<not set>";
                     return new Row(
                         SettingName(def.Key),
-                        RenderValue(resolved.Value, def.Sensitive),
+                        displayValue,
                         SourceLabel(resolved.Source),
                         def.Description);
                 })
@@ -96,9 +101,15 @@ internal sealed class ConfigCommand(SettingRegistry registry, ResolvedConfig con
         Reload();
         var resolved = config.GetProvenance(def.Key) ?? new ResolvedSetting(def.Key, null, ConfigScope.Default);
 
+        var effectiveValue = resolved.Value is not null
+            ? RenderValue(resolved.Value, def.Sensitive)
+            : def.DefaultValue is not null
+                ? RenderValue(def.DefaultValue, def.Sensitive)
+                : "<not set>";
+
         var sb = new StringBuilder();
         sb.AppendLine(def.Key);
-        sb.AppendLine($"  Value:          {RenderValue(resolved.Value, def.Sensitive)}");
+        sb.AppendLine($"  Value:          {effectiveValue}");
         sb.AppendLine($"  Source:         {SourceLabel(resolved.Source)}");
         sb.AppendLine($"  Default:        {def.DefaultValue ?? "(none)"}");
         sb.AppendLine($"  Env var:        {def.EnvVar}");
