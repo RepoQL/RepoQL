@@ -144,6 +144,8 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
             throw new RpcException(new Status(StatusCode.InvalidArgument, "Query is required"));
         if (request.Documents.Count == 0)
             throw new RpcException(new Status(StatusCode.InvalidArgument, "At least one document is required"));
+        if (request.TopK < 0)
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "top_k must be >= 0 (0 = return all)"));
 
         _logger.LogDebug("Rerank: {Documents} documents, model={Model}, instruction={HasInstruction}",
             request.Documents.Count,
@@ -172,9 +174,16 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
             var response = new RerankResponse { TotalTokens = result.TotalTokens };
             foreach (var score in result.Results)
             {
+                if (score.Index < 0 || score.Index >= indexMap.Count)
+                {
+                    _logger.LogWarning("Voyage returned out-of-range index {Index} (expected 0-{Max}), skipping",
+                        score.Index, indexMap.Count - 1);
+                    continue;
+                }
+
                 response.Results.Add(new RerankResult
                 {
-                    Index = score.Index < indexMap.Count ? indexMap[score.Index] : score.Index,
+                    Index = indexMap[score.Index],
                     RelevanceScore = score.RelevanceScore
                 });
             }

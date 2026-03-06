@@ -210,15 +210,15 @@ internal sealed class VoyageAiClient : IDisposable
 
                 activity?.SetTag("rerank.tokens", totalTokens);
 
+                if (!root.TryGetProperty("data", out var data))
+                    throw new HttpRequestException("Voyage rerank response missing 'data' field — possible API contract change");
+
                 var results = new List<VoyageRerankScore>();
-                if (root.TryGetProperty("data", out var data))
+                foreach (var item in data.EnumerateArray())
                 {
-                    foreach (var item in data.EnumerateArray())
-                    {
-                        var index = item.GetProperty("index").GetInt32();
-                        var score = item.GetProperty("relevance_score").GetSingle();
-                        results.Add(new VoyageRerankScore(index, score));
-                    }
+                    var index = item.GetProperty("index").GetInt32();
+                    var score = item.GetProperty("relevance_score").GetSingle();
+                    results.Add(new VoyageRerankScore(index, score));
                 }
 
                 Interlocked.Exchange(ref _consecutiveFailures, 0);
