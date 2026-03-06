@@ -87,6 +87,7 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     private int _depth;
     private int _busy;
     private int _timeoutCount;
+    private int _orphanedTasks;
     private readonly int _readerCount;
 
     public int Depth => Volatile.Read(ref _depth);
@@ -162,6 +163,11 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             () => Volatile.Read(ref _timeoutCount),
             unit: "items",
             description: "Number of items that timed out during processing");
+        OrphanedTasks = meter.CreateObservableGauge(
+            $"repoql.queue.{name}.orphaned",
+            () => Volatile.Read(ref _orphanedTasks),
+            unit: "tasks",
+            description: "Number of timed-out tasks still holding thread pool threads");
 
         MaxDepth = capacity;
         _readerCount = Math.Max(1, readers);
@@ -205,7 +211,15 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     }
 
     /// <summary>
+    /// Maximum orphaned tasks (timed-out but still holding thread pool threads) before
+    /// workers switch to inline processing. Prevents uncapped thread pool growth.
+    /// </summary>
+    private int MaxOrphanedTasks => _readerCount * 2;
+
+    /// <summary>
     /// Processes an item with optional timeout.
+    /// When orphaned tasks accumulate (thread pool starvation risk), falls back to
+    /// inline processing on the worker's own thread — slower but doesn't leak threads.
     /// </summary>
     private async Task ProcessItemWithTimeoutAsync(
         T item,
@@ -220,8 +234,39 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             return;
         }
 
-        // Create linked token that combines shutdown + per-item timeout.
-        // Processing runs on a separate task so a non-cooperative processor cannot block the worker forever.
+        // If too many orphaned tasks are holding thread pool threads, fall back to
+        // inline processing. This means a stuck item blocks the worker, but at least
+        // we don't keep spawning Task.Run threads that accumulate indefinitely.
+        if (Volatile.Read(ref _orphanedTasks) >= MaxOrphanedTasks)
+        {
+            _logger.LogWarning(
+                "WorkQueue {QueueName} has {OrphanCount} orphaned tasks (limit {Limit}), processing inline to prevent thread pool starvation",
+                _name, Volatile.Read(ref _orphanedTasks), MaxOrphanedTasks);
+
+            using var inlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            inlineCts.CancelAfter(_itemTimeout.Value);
+            try
+            {
+                await processItem(item, inlineCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // processItem threw OCE from our timeout CTS — treat as timeout.
+                HandleItemTimeout(item, startTimestamp);
+                return;
+            }
+
+            // Some delegates catch OperationCanceledException internally and return normally.
+            // Detect this via wall-clock: if we exceeded the timeout, it was a timeout regardless.
+            var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+            if (elapsed >= _itemTimeout.Value)
+            {
+                HandleItemTimeout(item, startTimestamp);
+            }
+            return;
+        }
+
+        // Normal path: process on a separate Task.Run so the worker can move on after timeout.
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var processingTask = Task.Run(() => processItem(item, timeoutCts.Token), CancellationToken.None);
 
@@ -233,12 +278,12 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         {
             timeoutCts.Cancel();
             HandleItemTimeout(item, startTimestamp);
-            ObserveFaultedBackgroundTask(processingTask, item);
+            TrackOrphanedTask(processingTask, item);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             timeoutCts.Cancel();
-            ObserveFaultedBackgroundTask(processingTask, item);
+            TrackOrphanedTask(processingTask, item);
             throw;
         }
     }
@@ -269,12 +314,22 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         Interlocked.Increment(ref _timeoutCount);
     }
 
-    private void ObserveFaultedBackgroundTask(Task processingTask, T item)
+    /// <summary>
+    /// Tracks an orphaned task (timed out but still running, holding a thread pool thread).
+    /// When the task eventually completes, decrements the orphan counter.
+    /// </summary>
+    private void TrackOrphanedTask(Task processingTask, T item)
     {
+        Interlocked.Increment(ref _orphanedTasks);
         _ = processingTask.ContinueWith(
-            t => _logger.LogDebug(t.Exception, "WorkQueue {QueueName} timed-out item later faulted. Item: {Item}", _name, item),
+            t =>
+            {
+                Interlocked.Decrement(ref _orphanedTasks);
+                if (t.IsFaulted)
+                    _logger.LogDebug(t.Exception, "WorkQueue {QueueName} orphaned task faulted. Item: {Item}", _name, item);
+            },
             CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
     }
 
@@ -282,6 +337,7 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     public ObservableGauge<int> QueueCapacity { get; }
     public ObservableGauge<int> QueueDepth { get; }
     public ObservableGauge<int> ItemTimeouts { get; }
+    public ObservableGauge<int> OrphanedTasks { get; }
 
     /// <summary>Enqueue an item if not already pending. Removes on failure to allow retries.</summary>
     public async ValueTask<bool> EnqueueAsync(T item, CancellationToken ct)

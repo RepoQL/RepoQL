@@ -145,7 +145,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 resp.Rows.Add(rd);
             }
             resp.RowCount = resp.Rows.Count;
-            resp.Truncated = limited && (first is not null) && (_db.Query(sql, context.CancellationToken).Skip(resp.Rows.Count).Any());
+            // Detect truncation from the already-fetched results: the full result set was
+            // materialized by _db.Query, so if we took fewer rows than exist, it's truncated.
+            resp.Truncated = limited && rows.Count > request.Limit;
 
             // Check token budget and potentially summarize
             if (request.TokenBudget > 0 && resp.Rows.Count > 0)

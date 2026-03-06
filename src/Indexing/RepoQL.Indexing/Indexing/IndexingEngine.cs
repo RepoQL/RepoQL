@@ -30,7 +30,7 @@ public class IndexingEngineOptions
 {
     /// <summary>
     /// Number of concurrent workers for hot-path processing (Classification → Parsing → Analysis → Commit).
-    /// Default: <see cref="Environment.ProcessorCount"/>.
+    /// Default: <see cref="Environment.ProcessorCount"/> × 2.
     /// </summary>
     public int IndexingWorkers { get; init; } = Environment.ProcessorCount * 2;
 
@@ -91,7 +91,7 @@ public class IndexingEngineOptions
 ///
 /// <para><strong>Threading Model</strong></para>
 /// <list type="bullet">
-/// <item><description>Hot path: Concurrent (ProcessorCount workers)</description></item>
+/// <item><description>Hot path: Concurrent (ProcessorCount × 2 workers)</description></item>
 /// <item><description>Database writer: Serial (1 worker - DuckDB write safety)</description></item>
 /// <item><description>Idle processing: Concurrent (ProcessorCount workers)</description></item>
 /// </list>
