@@ -141,15 +141,6 @@ internal sealed class BlameHandlerTests
     }
 
     [Test]
-    [Skip("Requires real git repository with commits - run manually for integration testing")]
-    public async Task BlameHandler_RealRepo_ReturnsBlameData()
-    {
-        // This test would need a real git repo with committed files
-        // to verify the full blame flow works end-to-end
-        await Task.CompletedTask;
-    }
-
-    [Test]
     public async Task BlameHandler_ParsesLineRangeFromFragment()
     {
         using var context = new BlameTestContext(gitRepo: true);

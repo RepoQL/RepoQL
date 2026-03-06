@@ -263,7 +263,7 @@ internal sealed class RepoCommandTests : IDisposable
     {
         var provider = new RepoQlClientProvider(new RepoQL.Contracts.Configuration.RepoQlConfig());
         var command = new RepoCommand(provider);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
         return await command.Execute(path, cts.Token);
     }
 

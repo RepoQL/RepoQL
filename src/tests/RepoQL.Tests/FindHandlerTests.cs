@@ -166,38 +166,6 @@ internal sealed class FindHandlerTests
         result.Metadata.Warning.Should().Contain("file limit");
     }
 
-    [Test]
-    [Skip("Requires full schema with _search_candidates macro - run integration tests instead")]
-    public async Task FindHandler_NoMatches_ReturnsNoMatchesMessage()
-    {
-        // This test requires the full search infrastructure
-        await Task.CompletedTask;
-    }
-
-    [Test]
-    [Skip("Requires full schema with _search_candidates macro - run integration tests instead")]
-    public async Task FindHandler_ExtractsContainerUriFromFragment()
-    {
-        // This test requires the full search infrastructure
-        await Task.CompletedTask;
-    }
-
-    [Test]
-    [Skip("Requires full schema with _search_candidates macro - run integration tests instead")]
-    public async Task FindHandler_MultipleFiles_ConsultsAll()
-    {
-        // This test requires the full search infrastructure
-        await Task.CompletedTask;
-    }
-
-    [Test]
-    [Skip("Requires indexed database with embeddings - run manually for integration testing")]
-    public async Task FindHandler_RealSearch_ReturnsResults()
-    {
-        // This test would need a real indexed database with embeddings
-        await Task.CompletedTask;
-    }
-
     private sealed class FindTestContext : IDisposable
     {
         public FindTestContext(RepoQlConfig? config = null)
