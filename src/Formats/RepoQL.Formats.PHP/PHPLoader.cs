@@ -602,7 +602,10 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         if (!string.IsNullOrEmpty(classInfo.Extends))
             props[PHPPropertyKeys.Extends] = classInfo.Extends;
         if (classInfo.Implements.Count > 0)
+        {
             props[PHPPropertyKeys.Interfaces] = new JsonArray(classInfo.Implements.Select(i => JsonValue.Create(i)).ToArray());
+            props[PHPPropertyKeys.Implements] = string.Join(", ", classInfo.Implements);
+        }
 
         return new Node
         {
@@ -694,6 +697,11 @@ public sealed partial class PHPLoader : IFormatLoader, IFormatMaterializer, IFor
         }
         if (!string.IsNullOrEmpty(enumInfo.BackedType))
             props[PHPPropertyKeys.BackedType] = enumInfo.BackedType;
+        if (enumInfo.Implements.Count > 0)
+        {
+            props[PHPPropertyKeys.Interfaces] = new JsonArray(enumInfo.Implements.Select(i => JsonValue.Create(i)).ToArray());
+            props[PHPPropertyKeys.Implements] = string.Join(", ", enumInfo.Implements);
+        }
 
         return new Node
         {

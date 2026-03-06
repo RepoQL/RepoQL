@@ -65,6 +65,7 @@ internal static class PHPPropertyKeys
     public const string IsFinal = "is_final";
     public const string IsReadonly = "is_readonly";
     public const string Extends = "extends";
+    public const string Implements = "implements";
     public const string Interfaces = "interfaces";
     public const string Traits = "traits";
 

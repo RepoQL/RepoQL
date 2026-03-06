@@ -10,6 +10,7 @@ SELECT
     COALESCE(json_extract_string(t.properties, '$.is_abstract'), 'false') = 'true' AS is_abstract,
     COALESCE(json_extract_string(t.properties, '$.is_final'), 'false') = 'true' AS is_final,
     json_extract_string(t.properties, '$.extends') AS extends,
+    json_extract_string(t.properties, '$.implements') AS implements,
     json_extract_string(t.properties, '$.backed_type') AS backed_type,
     t.structure
 FROM node AS t
