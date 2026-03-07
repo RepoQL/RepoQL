@@ -69,12 +69,32 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IDispo
             request.Groups.Add(protoGroup);
         }
 
-        var response = await _client.EmbedChunksAsync(
-            request,
-            headers: AuthHeaders(),
-            cancellationToken: cancellationToken);
+        var totalChunks = request.Groups.Sum(g => g.Chunks.Count);
+        _logger?.LogInformation(
+            "gRPC EmbedChunks request: {GroupCount} groups, {ChunkCount} chunks, request size ~{SizeKb:F1}KB",
+            request.Groups.Count, totalChunks, request.CalculateSize() / 1024.0);
+
+        EmbedChunksResponse response;
+        try
+        {
+            response = await _client.EmbedChunksAsync(
+                request,
+                headers: AuthHeaders(),
+                cancellationToken: cancellationToken);
+        }
+        catch (RpcException rpcEx)
+        {
+            _logger?.LogError(rpcEx,
+                "gRPC EmbedChunks failed: status={Status}, detail={Detail}",
+                rpcEx.StatusCode, rpcEx.Status.Detail);
+            throw;
+        }
 
         var vectors = new List<ContextualChunkVector>(response.Embeddings.Count);
+
+        _logger?.LogInformation(
+            "gRPC EmbedChunks response: {EmbeddingCount} embeddings, {Tokens} tokens, response size ~{SizeKb:F1}KB",
+            response.Embeddings.Count, response.TotalTokens, response.CalculateSize() / 1024.0);
 
         // Build group offset map to convert flat index back to (group, chunk).
         var groupOffsets = new int[groups.Count];
@@ -85,15 +105,22 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IDispo
             offset += groups[i].Chunks.Count;
         }
 
+        var nullVectorCount = 0;
         foreach (var embedding in response.Embeddings)
         {
             var (groupIdx, chunkIdx) = FlatIndexToGroupChunk(embedding.Index, groupOffsets);
             var vector = embedding.Vector.Count > 0
                 ? embedding.Vector.ToArray()
                 : null;
+            if (vector is null) nullVectorCount++;
             var error = string.IsNullOrEmpty(embedding.Error) ? null : embedding.Error;
             vectors.Add(new ContextualChunkVector(groupIdx, chunkIdx, vector, error));
         }
+
+        if (nullVectorCount > 0)
+            _logger?.LogWarning(
+                "gRPC EmbedChunks: {NullCount}/{Total} embeddings had empty vectors",
+                nullVectorCount, response.Embeddings.Count);
 
         return new ContextualEmbeddingResult(vectors, response.TotalTokens);
     }

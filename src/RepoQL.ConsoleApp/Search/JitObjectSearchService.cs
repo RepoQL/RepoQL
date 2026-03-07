@@ -363,10 +363,10 @@ internal sealed class JitObjectSearchService : IJitObjectSearchService
         // Query chunks with their semantic scores against the query
         // Note: Chunks have byte ranges but no spans with line numbers,
         // so we estimate line numbers from byte positions using document stats
-        // Use embed_text() UDF to ensure query embedding matches document embedding dimension
+        // Use embed_query() UDF to ensure query embedding matches document embedding dimension
         var sql = $"""
             WITH query_vec AS (
-                SELECT embed_text('{escapedQuery}')::FLOAT[] AS vec
+                SELECT embed_query('{escapedQuery}')::FLOAT[] AS vec
             ),
             doc_info AS (
                 SELECT

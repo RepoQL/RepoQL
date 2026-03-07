@@ -9,11 +9,14 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// UDF class for embedding operations.
 /// Provides functions to embed text and check embedding provider status.
 /// Includes query-level caching to avoid redundant embedding calls for the same text.
+/// When a contextual embedding provider is available, query embeddings use it
+/// to match the dimension of contextual document embeddings.
 /// </summary>
 [UdfClass]
-public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
+public class EmbedUdf(IEmbeddingProvider? embeddingProvider, IContextualEmbeddingProvider? contextualProvider = null)
 {
     private readonly IEmbeddingProvider? _embeddingProvider = embeddingProvider;
+    private readonly IContextualEmbeddingProvider? _contextualProvider = contextualProvider is { Enabled: true } ? contextualProvider : null;
     /// <summary>
     /// Cache for embeddings to avoid redundant API calls.
     /// Key is (text, model), value is (embedding result, timestamp).
@@ -32,12 +35,30 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
     [ScalarUdf("_embed_status_internal", MacroName = "embed_status", Description = "Returns status information about the embedding provider", IsPure = true)]
     public string EmbedStatus([UdfDefault("''")] string? _dummy)
     {
-        var providerType = _embeddingProvider?.GetType().Name ?? "null";
-        var enabled = _embeddingProvider?.Enabled ?? false;
-        var model = _embeddingProvider?.Model ?? "null";
-        var dimension = _embeddingProvider?.Dimension ?? 0;
+        var flatType = _embeddingProvider?.GetType().Name ?? "null";
+        var flatEnabled = _embeddingProvider?.Enabled ?? false;
+        var flatModel = _embeddingProvider?.Model ?? "null";
+        var flatDim = _embeddingProvider?.Dimension ?? 0;
 
-        return $"provider_type: {providerType}\nenabled: {enabled}\nmodel: {model}\ndimension: {dimension}";
+        var sb = new StringBuilder();
+        sb.AppendLine($"flat_provider: {flatType}");
+        sb.AppendLine($"flat_enabled: {flatEnabled}");
+        sb.AppendLine($"flat_model: {flatModel}");
+        sb.AppendLine($"flat_dimension: {flatDim}");
+
+        if (_contextualProvider is not null)
+        {
+            sb.AppendLine($"contextual_provider: {_contextualProvider.GetType().Name}");
+            sb.AppendLine($"contextual_model: {_contextualProvider.Model}");
+            sb.AppendLine($"contextual_dimension: {_contextualProvider.Dimension}");
+            sb.AppendLine("active_query_provider: contextual");
+        }
+        else
+        {
+            sb.AppendLine("active_query_provider: flat");
+        }
+
+        return sb.ToString().TrimEnd();
     }
 
     /// <summary>
@@ -50,6 +71,15 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
     [ScalarUdf("embed_query", Description = "Embed search query text and return JSON array of floats (use ::FLOAT[] to cast)")]
     public string? EmbedQuery(string text)
     {
+        // Prefer contextual provider so query vectors match contextual document vectors.
+        // Fall back to flat provider if contextual call fails (e.g., service not running).
+        if (_contextualProvider is not null)
+        {
+            var result = EmbedCoreContextual(text, "query", ct => _contextualProvider.EmbedQueryAsync(text, ct));
+            if (result is not null)
+                return result;
+        }
+
         return EmbedCore(text, "query", provider => provider.EmbedQueryAsync(text, CancellationToken.None));
     }
 
@@ -67,40 +97,45 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
     }
 
     /// <summary>
-    /// Core embedding implementation with caching.
+    /// Core embedding via contextual provider (for query vectors that must match contextual document vectors).
+    /// </summary>
+    private string? EmbedCoreContextual(string text, string cacheType, Func<CancellationToken, Task<float[]?>> embedFunc)
+    {
+        if (string.IsNullOrEmpty(text))
+            return null;
+
+        var cacheKey = $"{_contextualProvider!.Model}:{cacheType}:{text}";
+        return EmbedWithCache(cacheKey, () => embedFunc(CancellationToken.None));
+    }
+
+    /// <summary>
+    /// Core embedding via flat provider.
     /// </summary>
     private string? EmbedCore(string text, string cacheType, Func<IEmbeddingProvider, Task<float[]?>> embedFunc)
     {
         if (_embeddingProvider is null || !_embeddingProvider.Enabled)
-        {
             return null;
-        }
 
         if (string.IsNullOrEmpty(text))
-        {
             return null;
-        }
 
-        // Create cache key including model and type to handle provider changes
         var cacheKey = $"{_embeddingProvider.Model}:{cacheType}:{text}";
+        return EmbedWithCache(cacheKey, () => embedFunc(_embeddingProvider));
+    }
 
-        // Check cache first
+    private static string? EmbedWithCache(string cacheKey, Func<Task<float[]?>> embedFunc)
+    {
         if (EmbeddingCache.TryGetValue(cacheKey, out var cached))
         {
             if (DateTime.UtcNow - cached.Timestamp < CacheExpiry)
-            {
                 return cached.Result;
-            }
-            // Expired - remove it
             EmbeddingCache.TryRemove(cacheKey, out _);
         }
 
         float[]? vector;
         try
         {
-            // Use single-item API instead of batch - avoids padding overhead
-            // (batch pads to 256 tokens, single uses actual token count)
-            vector = embedFunc(_embeddingProvider).GetAwaiter().GetResult();
+            vector = embedFunc().GetAwaiter().GetResult();
         }
         catch
         {
@@ -108,23 +143,17 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider)
         }
 
         if (vector is null)
-        {
             return null;
-        }
 
         var result = SerializeFloatArray(vector);
 
-        // Cache the result (with basic size limit)
         if (EmbeddingCache.Count >= MaxCacheSize)
         {
-            // Simple eviction: clear oldest entries
             var cutoff = DateTime.UtcNow - CacheExpiry;
             foreach (var key in EmbeddingCache.Keys)
             {
                 if (EmbeddingCache.TryGetValue(key, out var entry) && entry.Timestamp < cutoff)
-                {
                     EmbeddingCache.TryRemove(key, out _);
-                }
             }
         }
 

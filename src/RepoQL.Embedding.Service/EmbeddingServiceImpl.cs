@@ -36,7 +36,7 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
             totalChunks += group.Chunks.Count;
         }
 
-        _logger.LogDebug("EmbedChunks: {Groups} groups, {Chunks} chunks", groups.Count, totalChunks);
+        _logger.LogInformation("EmbedChunks: {Groups} groups, {Chunks} chunks", groups.Count, totalChunks);
 
         try
         {
@@ -53,6 +53,9 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
                 offset += request.Groups[i].Chunks.Count;
             }
 
+            _logger.LogInformation("EmbedChunks: Voyage returned {VectorCount} vectors, {Tokens} tokens",
+                result.Vectors.Count, result.TotalTokens);
+
             foreach (var vec in result.Vectors)
             {
                 var globalIndex = groupChunkOffset.GetValueOrDefault(vec.GroupIndex) + vec.ChunkIndex;
@@ -63,6 +66,12 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
                     Error = vec.Error ?? ""
                 });
             }
+
+            // Verify proto serialization
+            var emptyProtoVecs = response.Embeddings.Count(e => e.Vector.Count == 0);
+            if (emptyProtoVecs > 0)
+                _logger.LogWarning("EmbedChunks: {Empty}/{Total} proto embeddings have empty Vector field",
+                    emptyProtoVecs, response.Embeddings.Count);
 
             return response;
         }

@@ -321,21 +321,34 @@ internal sealed class VoyageAiClient : IDisposable
         using var doc = JsonDocument.Parse(responseBody);
         var root = doc.RootElement;
 
-        var totalTokens = root.TryGetProperty("total_tokens", out var tokensProp) ? tokensProp.GetInt32() : 0;
+        // Voyage contextualizedembeddings response format:
+        // { "data": [{ "data": [{ "embedding": [...], "index": 0 }, ...], "index": 0 }, ...],
+        //   "usage": { "total_tokens": N } }
+        var totalTokens = 0;
+        if (root.TryGetProperty("usage", out var usage) &&
+            usage.TryGetProperty("total_tokens", out var tokensProp))
+            totalTokens = tokensProp.GetInt32();
+        // Fallback for older format
+        else if (root.TryGetProperty("total_tokens", out var topLevelTokens))
+            totalTokens = topLevelTokens.GetInt32();
+
         activity?.SetTag("embed.tokens", totalTokens);
 
         var vectors = new List<float[]>();
 
-        if (root.TryGetProperty("results", out var results))
+        if (root.TryGetProperty("data", out var outerData))
         {
-            // Contextual endpoint returns: { results: [{ embeddings: [[...], [...]], index: 0 }, ...] }
-            foreach (var result in results.EnumerateArray())
+            // Each outer element is a group: { "data": [{ "embedding": [...] }, ...], "index": N }
+            foreach (var groupResult in outerData.EnumerateArray())
             {
-                if (!result.TryGetProperty("embeddings", out var embeddings))
+                if (!groupResult.TryGetProperty("data", out var innerData))
                     continue;
 
-                foreach (var embedding in embeddings.EnumerateArray())
+                foreach (var item in innerData.EnumerateArray())
                 {
+                    if (!item.TryGetProperty("embedding", out var embedding))
+                        continue;
+
                     var vec = new float[embedding.GetArrayLength()];
                     var i = 0;
                     foreach (var val in embedding.EnumerateArray())
@@ -345,7 +358,8 @@ internal sealed class VoyageAiClient : IDisposable
             }
         }
 
-        _logger.LogDebug("Voyage returned {VectorCount} vectors, {Tokens} tokens", vectors.Count, totalTokens);
+        _logger.LogInformation("Voyage returned {VectorCount} vectors (dim={Dim}), {Tokens} tokens",
+            vectors.Count, vectors.Count > 0 ? vectors[0].Length : 0, totalTokens);
         return (vectors, totalTokens);
     }
 

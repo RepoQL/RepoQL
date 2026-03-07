@@ -27,7 +27,10 @@ public sealed class EmbeddingRefresher
     private const int SmallFileThresholdChars = 2000; // Files under this size = single embedding
     private const int LargeFileThresholdBytes = 150 * 1024; // 150KB - files above this use structure-only embedding
 
-    private const int MaxDocumentPayloadChars = int.MaxValue;
+    // Voyage API context window is 32k tokens. Code tokenizes at ~2-4 chars/token
+    // (dense code with braces/operators is worst case ~2 chars/token).
+    // 32k chars guarantees we stay under the token limit regardless of content.
+    private const int MaxEmbeddingPayloadChars = 32_000;
     private const string DocumentEmbeddingScope = "document";
     private const string FullEmbeddingType = "full";
 
@@ -90,14 +93,26 @@ public sealed class EmbeddingRefresher
         return await RefreshInternalAsync(embeddingProvider, DistinctDocumentIds(documentIds), cancellationToken).ConfigureAwait(false);
     }
 
+    // Tracks whether the contextual provider has been disabled at runtime due to failures.
+    private bool _contextualDisabled;
+
     /// <summary>
     /// Returns the model name and dimension of the active embedding provider.
-    /// Contextual provider takes priority when available.
+    /// Contextual provider takes priority when available, initialized, and not runtime-disabled.
+    /// Falls back to flat provider if contextual model info hasn't been fetched yet
+    /// (model="unknown", dim=0) — prevents pruning all existing embeddings on startup.
     /// </summary>
     private (string Model, int Dimension) ActiveModelInfo(IEmbeddingProvider flatProvider)
-        => _contextualProvider is not null
-            ? (_contextualProvider.Model, _contextualProvider.Dimension)
-            : (flatProvider.Model, flatProvider.Dimension);
+    {
+        if (_contextualProvider is not null && !_contextualDisabled)
+        {
+            var model = _contextualProvider.Model;
+            var dim = _contextualProvider.Dimension;
+            if (model is not (null or "unknown") && dim > 0)
+                return (model, dim);
+        }
+        return (flatProvider.Model, flatProvider.Dimension);
+    }
 
     private async Task<bool> RefreshInternalAsync(
         IEmbeddingProvider embeddingProvider,
@@ -162,10 +177,25 @@ public sealed class EmbeddingRefresher
         var producerTask = ProduceEmbeddingsAsync(refreshPlan, batchSize, embeddingProvider, channel.Writer, totalExpectedItems, cancellationToken);
 
         // Consumer: writes to DB on current thread (single-writer architecture)
-        var stats = await ConsumeAndWriteEmbeddingsAsync(channel.Reader, activeModel, activeDimension, totalExpectedItems, cancellationToken).ConfigureAwait(false);
+        var stats = await ConsumeAndWriteEmbeddingsAsync(channel.Reader, totalExpectedItems, cancellationToken).ConfigureAwait(false);
 
         // Wait for producer to complete (handles exceptions)
         await producerTask.ConfigureAwait(false);
+
+        // If contextual provider failed mid-run and we fell back to flat,
+        // the written embeddings use flat model/dim. Re-prune to clean up
+        // any stale entries from the now-inactive contextual model.
+        if (_contextualDisabled)
+        {
+            var (fallbackModel, fallbackDim) = ActiveModelInfo(embeddingProvider);
+            if (fallbackModel != activeModel || fallbackDim != activeDimension)
+            {
+                _logger.LogInformation("Re-pruning embeddings after contextual fallback: keeping {Model}:{Dim}",
+                    fallbackModel, fallbackDim);
+                PruneEmbeddingsForCurrentModel(fallbackModel, fallbackDim);
+                activeModel = fallbackModel;
+            }
+        }
 
         sw.Stop();
         LogEmbeddingCompletionStats(sw.Elapsed, stats, activeModel);
@@ -314,47 +344,25 @@ public sealed class EmbeddingRefresher
             var batchTimer = Stopwatch.StartNew();
             try
             {
-                if (_contextualProvider is not null)
+                if (_contextualProvider is not null && !_contextualDisabled)
                 {
-                    // Contextual path: send grouped chunks with document context.
-                    var groups = new List<DocumentChunkGroup>(pendingDocs.Count);
-                    foreach (var doc in pendingDocs)
-                        groups.Add(new DocumentChunkGroup(doc.Uri, doc.Context, doc.Chunks));
-
-                    var result = await _contextualProvider.EmbedChunksAsync(groups, ct).ConfigureAwait(false);
-
-                    // Map contextual results back to flat vector array aligned with allItems.
-                    vectors = new float[]?[allItems.Length];
-                    var itemOffset = 0;
-                    for (var g = 0; g < pendingDocs.Count; g++)
+                    try
                     {
-                        var doc = pendingDocs[g];
-                        // Fill from contextual results for this group.
-                        foreach (var cv in result.Vectors)
-                        {
-                            if (cv.GroupIndex != g) continue;
-                            var flatIdx = itemOffset + cv.ChunkIndex;
-                            if (flatIdx < vectors.Length)
-                                vectors[flatIdx] = cv.Vector;
-                        }
-                        itemOffset += doc.Items.Count;
+                        vectors = await EmbedContextualAsync(pendingDocs, allItems.Length, ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Contextual provider failed (service not running, API error, etc.).
+                        // Disable for remainder of this run and fall back to flat provider.
+                        _contextualDisabled = true;
+                        _logger.LogWarning(ex,
+                            "Contextual embedding failed, falling back to local embedding for this run");
+                        vectors = await EmbedFlatAsync(pendingDocs, allItems.Length, provider, progress, ct).ConfigureAwait(false);
                     }
                 }
                 else
                 {
-                    // Flat path: prepend context to each chunk, embed as flat batch.
-                    var payloads = new List<string>(allItems.Length);
-                    foreach (var doc in pendingDocs)
-                    {
-                        foreach (var chunk in doc.Chunks)
-                        {
-                            payloads.Add(string.IsNullOrWhiteSpace(doc.Context)
-                                ? chunk
-                                : $"{doc.Context}\n\n{chunk}");
-                        }
-                    }
-
-                    vectors = await provider.EmbedPassageBatchAsync(payloads, progress, ct).ConfigureAwait(false);
+                    vectors = await EmbedFlatAsync(pendingDocs, allItems.Length, provider, progress, ct).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
@@ -369,7 +377,8 @@ public sealed class EmbeddingRefresher
             pendingDocs.Clear();
             pendingChunkCount = 0;
 
-            await writer.WriteAsync(new EmbeddingBatchResult(allItems, vectors, batchTimer.Elapsed), ct).ConfigureAwait(false);
+            var (batchModel, batchDim) = ActiveModelInfo(provider);
+            await writer.WriteAsync(new EmbeddingBatchResult(allItems, vectors, batchModel, batchDim, batchTimer.Elapsed), ct).ConfigureAwait(false);
         }
 
         try
@@ -493,8 +502,6 @@ public sealed class EmbeddingRefresher
 
     private async Task<EmbeddingStats> ConsumeAndWriteEmbeddingsAsync(
         ChannelReader<EmbeddingBatchResult> reader,
-        string model,
-        int dimension,
         int totalExpectedItems,
         CancellationToken ct)
     {
@@ -536,7 +543,7 @@ public sealed class EmbeddingRefresher
             // Bulk insert all valid items
             if (validItems.Count > 0)
             {
-                WriteBatchBulk(validItems, model, dimension);
+                WriteBatchBulk(validItems, batch.Model, batch.Dimension);
                 foreach (var (item, _) in validItems)
                 {
                     if (item.Scope == DocumentEmbeddingScope) docSuccess++;
@@ -833,15 +840,155 @@ public sealed class EmbeddingRefresher
         return distinct;
     }
 
+    // Voyage API context window is 32k tokens per group (context + all chunks).
+    // Conservative estimate: ~3 chars/token for code → 90k chars ≈ 30k tokens.
+    // Documents with many chunks must be split across multiple groups.
+    internal const int MaxContextualGroupChars = 90_000;
+
+    private async Task<float[]?[]> EmbedContextualAsync(
+        List<PendingDocument> pendingDocs, int totalItems, CancellationToken ct)
+    {
+        var (groups, groupMeta) = BuildContextualGroups(pendingDocs, MaxContextualGroupChars);
+
+        _logger.LogInformation(
+            "Contextual embedding: {Docs} docs, {Groups} groups (after splitting), {TotalItems} items, {TotalChunks} total chunks",
+            pendingDocs.Count, groups.Count, totalItems,
+            groups.Sum(g => g.Chunks.Count));
+
+        var result = await _contextualProvider!.EmbedChunksAsync(groups, ct).ConfigureAwait(false);
+
+        var nonNullVectors = result.Vectors.Count(v => v.Vector is { Length: > 0 });
+        _logger.LogInformation(
+            "Contextual embedding result: {VectorCount} vectors returned ({NonNull} non-null), {Tokens} tokens",
+            result.Vectors.Count, nonNullVectors, result.TotalTokens);
+
+        if (result.Vectors.Count > 0 && nonNullVectors == 0)
+        {
+            // Log first few vectors for diagnosis
+            foreach (var v in result.Vectors.Take(3))
+                _logger.LogWarning(
+                    "  Vector[group={G}, chunk={C}]: vec={HasVec}, vecLen={Len}, error={Error}",
+                    v.GroupIndex, v.ChunkIndex, v.Vector is not null, v.Vector?.Length ?? 0, v.Error);
+        }
+
+        var mapped = MapContextualResults(result, pendingDocs, groupMeta, totalItems);
+        var mappedNonNull = mapped.Count(v => v is not null);
+        _logger.LogInformation(
+            "Contextual embedding mapped: {NonNull}/{Total} items have vectors",
+            mappedNonNull, mapped.Length);
+
+        return mapped;
+    }
+
+    /// <summary>
+    /// Builds contextual embedding groups from pending documents, splitting oversized groups.
+    /// Each group's total chars (context + all chunks) must stay under maxGroupChars
+    /// to fit within the Voyage API's per-group context window.
+    /// </summary>
+    internal static (List<DocumentChunkGroup> Groups, List<(int DocIndex, int ChunkOffset)> GroupMeta)
+        BuildContextualGroups(IReadOnlyList<PendingDocument> pendingDocs, int maxGroupChars)
+    {
+        var groups = new List<DocumentChunkGroup>();
+        var groupMeta = new List<(int DocIndex, int ChunkOffset)>();
+
+        for (var d = 0; d < pendingDocs.Count; d++)
+        {
+            var doc = pendingDocs[d];
+            var contextLen = doc.Context?.Length ?? 0;
+            var totalChars = contextLen;
+            foreach (var chunk in doc.Chunks)
+                totalChars += chunk.Length;
+
+            if (totalChars <= maxGroupChars)
+            {
+                groupMeta.Add((d, 0));
+                groups.Add(new DocumentChunkGroup(doc.Uri, doc.Context, doc.Chunks));
+            }
+            else
+            {
+                // Split chunks across multiple groups, each sharing the same context.
+                var maxChunkCharsPerGroup = maxGroupChars - contextLen;
+                if (maxChunkCharsPerGroup < 1) maxChunkCharsPerGroup = 1;
+
+                var chunkStart = 0;
+                while (chunkStart < doc.Chunks.Count)
+                {
+                    var subChunks = new List<string>();
+                    var subCharsUsed = 0;
+                    for (var i = chunkStart; i < doc.Chunks.Count; i++)
+                    {
+                        // Always include at least one chunk per group.
+                        if (subChunks.Count > 0 && subCharsUsed + doc.Chunks[i].Length > maxChunkCharsPerGroup)
+                            break;
+                        subChunks.Add(doc.Chunks[i]);
+                        subCharsUsed += doc.Chunks[i].Length;
+                    }
+
+                    groupMeta.Add((d, chunkStart));
+                    groups.Add(new DocumentChunkGroup(doc.Uri, doc.Context, subChunks));
+                    chunkStart += subChunks.Count;
+                }
+            }
+        }
+
+        return (groups, groupMeta);
+    }
+
+    /// <summary>
+    /// Maps contextual embedding results back to the flat item array.
+    /// Handles split groups by using groupMeta to find the original doc and chunk offset.
+    /// </summary>
+    internal static float[]?[] MapContextualResults(
+        ContextualEmbeddingResult result,
+        IReadOnlyList<PendingDocument> pendingDocs,
+        List<(int DocIndex, int ChunkOffset)> groupMeta,
+        int totalItems)
+    {
+        // Compute flat item offset for each pendingDoc.
+        var docItemOffset = new int[pendingDocs.Count];
+        var offset = 0;
+        for (var d = 0; d < pendingDocs.Count; d++)
+        {
+            docItemOffset[d] = offset;
+            offset += pendingDocs[d].Items.Count;
+        }
+
+        var vectors = new float[]?[totalItems];
+        foreach (var cv in result.Vectors)
+        {
+            if (cv.GroupIndex < 0 || cv.GroupIndex >= groupMeta.Count) continue;
+            var (docIndex, chunkOffset) = groupMeta[cv.GroupIndex];
+            var flatIdx = docItemOffset[docIndex] + chunkOffset + cv.ChunkIndex;
+            if (flatIdx >= 0 && flatIdx < vectors.Length)
+                vectors[flatIdx] = cv.Vector;
+        }
+
+        return vectors;
+    }
+
+    private static async Task<float[]?[]> EmbedFlatAsync(
+        List<PendingDocument> pendingDocs, int totalItems, IEmbeddingProvider provider,
+        BatchEmbeddingProgress progress, CancellationToken ct)
+    {
+        var payloads = new List<string>(totalItems);
+        foreach (var doc in pendingDocs)
+        {
+            foreach (var chunk in doc.Chunks)
+            {
+                payloads.Add(string.IsNullOrWhiteSpace(doc.Context)
+                    ? chunk
+                    : $"{doc.Context}\n\n{chunk}");
+            }
+        }
+
+        return await provider.EmbedPassageBatchAsync(payloads, progress, ct).ConfigureAwait(false);
+    }
+
     private static string BuildStructureOnlyEmbeddingText(string? headline, string? structure)
     {
         // For large files, use headline + structure (they contain different data).
-        var parts = new List<string>(2);
-        if (!string.IsNullOrWhiteSpace(headline))
-            parts.Add(headline);
-        if (!string.IsNullOrWhiteSpace(structure))
-            parts.Add(structure);
-        return string.Join("\n\n", parts);
+        // Truncate to fit within embedding model context window.
+        return CombineSegments(new[] { headline, structure }, MaxEmbeddingPayloadChars);
     }
 
     private static string BuildPreamble(TextDocumentEmbeddingRow doc)
@@ -921,7 +1068,7 @@ public sealed class EmbeddingRefresher
     {
         return CombineSegments(
             new[] { doc.Headline, doc.Summary, doc.Structure, doc.Text },
-            MaxDocumentPayloadChars);
+            MaxEmbeddingPayloadChars);
     }
 
     private static string CombineSegments(IEnumerable<string?> segments, int maxChars)
@@ -978,13 +1125,13 @@ public sealed class EmbeddingRefresher
     /// A document with its chunks ready for embedding. The producer accumulates these;
     /// FlushAsync decides whether to use contextual or flat embedding.
     /// </summary>
-    private sealed record PendingDocument(
+    internal sealed record PendingDocument(
         string Uri,
         string? Context,
         IReadOnlyList<string> Chunks,
         IReadOnlyList<EmbeddingWorkItem> Items);
 
-    private readonly record struct EmbeddingWorkItem(
+    internal readonly record struct EmbeddingWorkItem(
         Guid DocId,
         Guid NodeId,
         int ChunkIndex,
@@ -997,6 +1144,8 @@ public sealed class EmbeddingRefresher
     private readonly record struct EmbeddingBatchResult(
         EmbeddingWorkItem[] Items,
         float[]?[] Vectors,
+        string Model,
+        int Dimension,
         TimeSpan EmbedTime);
 
     private readonly record struct EmbeddingStats(
