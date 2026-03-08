@@ -859,23 +859,10 @@ public sealed class EmbeddingRefresher
 
         var nonNullVectors = result.Vectors.Count(v => v.Vector is { Length: > 0 });
         _logger.LogInformation(
-            "Contextual embedding result: {VectorCount} vectors returned ({NonNull} non-null), {Tokens} tokens",
+            "Contextual embedding result: {VectorCount} vectors ({NonNull} non-null), {Tokens} tokens",
             result.Vectors.Count, nonNullVectors, result.TotalTokens);
 
-        if (result.Vectors.Count > 0 && nonNullVectors == 0)
-        {
-            // Log first few vectors for diagnosis
-            foreach (var v in result.Vectors.Take(3))
-                _logger.LogWarning(
-                    "  Vector[group={G}, chunk={C}]: vec={HasVec}, vecLen={Len}, error={Error}",
-                    v.GroupIndex, v.ChunkIndex, v.Vector is not null, v.Vector?.Length ?? 0, v.Error);
-        }
-
         var mapped = MapContextualResults(result, pendingDocs, groupMeta, totalItems);
-        var mappedNonNull = mapped.Count(v => v is not null);
-        _logger.LogInformation(
-            "Contextual embedding mapped: {NonNull}/{Total} items have vectors",
-            mappedNonNull, mapped.Length);
 
         return mapped;
     }

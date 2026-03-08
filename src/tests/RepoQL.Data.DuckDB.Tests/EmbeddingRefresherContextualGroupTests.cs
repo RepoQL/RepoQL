@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.Contracts.Embeddings;
-using static RepoQL.Data.DuckDB.EmbeddingRefresher;
+using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Data.DuckDB.Tests;
 
@@ -16,7 +16,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
             MakeDoc("file:///a.cs", "context", ["chunk1", "chunk2", "chunk3"])
         };
 
-        var (groups, meta) = BuildContextualGroups(docs, MaxContextualGroupChars);
+        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, EmbeddingRefresher.MaxContextualGroupChars);
 
         groups.Should().HaveCount(1);
         groups[0].Chunks.Should().HaveCount(3);
@@ -34,7 +34,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         var chunks = Enumerable.Range(0, 10).Select(i => new string((char)('A' + i), 500)).ToList();
         var docs = new[] { MakeDoc("file:///big.cs", context, chunks) };
 
-        var (groups, meta) = BuildContextualGroups(docs, 1600);
+        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, 1600);
 
         // 10 chunks at 500 chars each, 3 per group → ceil(10/3) = 4 groups
         groups.Should().HaveCount(4);
@@ -68,7 +68,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         var docs = new[] { smallDoc, bigDoc, tinyDoc };
 
         // maxGroupChars = 1600 → big doc splits: context(100) + 3*500 = 1600 per group → 2 groups
-        var (groups, meta) = BuildContextualGroups(docs, 1600);
+        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, 1600);
 
         // small(1) + big(2 split groups) + tiny(1) = 4 groups
         groups.Should().HaveCount(4);
@@ -96,7 +96,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
     {
         var docs = new[] { MakeDoc("file:///a.cs", null, ["chunk1", "chunk2"]) };
 
-        var (groups, meta) = BuildContextualGroups(docs, MaxContextualGroupChars);
+        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, EmbeddingRefresher.MaxContextualGroupChars);
 
         groups.Should().HaveCount(1);
         groups[0].Context.Should().BeNull();
@@ -110,7 +110,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         // Should still be included (at least one chunk per group guarantee).
         var docs = new[] { MakeDoc("file:///a.cs", "ctx", [new string('X', 5000)]) };
 
-        var (groups, meta) = BuildContextualGroups(docs, 1000);
+        var (groups, _) = EmbeddingRefresher.BuildContextualGroups(docs, 1000);
 
         groups.Should().HaveCount(1);
         groups[0].Chunks.Should().HaveCount(1);
@@ -134,7 +134,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         };
         var result = new ContextualEmbeddingResult(vectors, 100);
 
-        var mapped = MapContextualResults(result, docs, groupMeta, totalItems: 3);
+        var mapped = EmbeddingRefresher.MapContextualResults(result, docs, groupMeta, totalItems: 3);
 
         mapped.Should().HaveCount(3);
         mapped[0].Should().Equal(1f, 2f);
@@ -162,7 +162,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         };
         var result = new ContextualEmbeddingResult(vectors, 200);
 
-        var mapped = MapContextualResults(result, docs, groupMeta, totalItems: 6);
+        var mapped = EmbeddingRefresher.MapContextualResults(result, docs, groupMeta, totalItems: 6);
 
         mapped.Should().HaveCount(6);
         mapped[0].Should().Equal(1f);
@@ -203,7 +203,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         };
         var result = new ContextualEmbeddingResult(vectors, 300);
 
-        var mapped = MapContextualResults(result, docs, groupMeta, totalItems: 7);
+        var mapped = EmbeddingRefresher.MapContextualResults(result, docs, groupMeta, totalItems: 7);
 
         mapped.Should().HaveCount(7);
         // Doc 0: items 0-1
@@ -231,7 +231,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         };
         var result = new ContextualEmbeddingResult(vectors, 50);
 
-        var mapped = MapContextualResults(result, docs, groupMeta, totalItems: 2);
+        var mapped = EmbeddingRefresher.MapContextualResults(result, docs, groupMeta, totalItems: 2);
 
         mapped.Should().HaveCount(2);
         mapped[0].Should().Equal(1f, 2f);
@@ -251,7 +251,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         };
         var result = new ContextualEmbeddingResult(vectors, 50);
 
-        var mapped = MapContextualResults(result, docs, groupMeta, totalItems: 1);
+        var mapped = EmbeddingRefresher.MapContextualResults(result, docs, groupMeta, totalItems: 1);
 
         mapped.Should().HaveCount(1);
         mapped[0].Should().Equal(1f);
@@ -264,7 +264,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         var groupMeta = new List<(int DocIndex, int ChunkOffset)> { (0, 0) };
         var result = new ContextualEmbeddingResult([], 0);
 
-        var mapped = MapContextualResults(result, docs, groupMeta, totalItems: 2);
+        var mapped = EmbeddingRefresher.MapContextualResults(result, docs, groupMeta, totalItems: 2);
 
         mapped.Should().HaveCount(2);
         mapped[0].Should().BeNull();
@@ -284,7 +284,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         var doc = MakeDoc("file:///big.cs", context, chunks);
         var docs = new[] { doc };
 
-        var (groups, groupMeta) = BuildContextualGroups(docs, 1600);
+        var (groups, groupMeta) = EmbeddingRefresher.BuildContextualGroups(docs, 1600);
         // 8 chunks at 500 chars, context 100, max 1600 → 3 chunks per group → 3 groups (3+3+2)
 
         groups.Should().HaveCount(3);
@@ -301,7 +301,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         }
         var result = new ContextualEmbeddingResult(vectors, 500);
 
-        var mapped = MapContextualResults(result, docs, groupMeta, totalItems: 8);
+        var mapped = EmbeddingRefresher.MapContextualResults(result, docs, groupMeta, totalItems: 8);
 
         mapped.Should().HaveCount(8);
         for (var i = 0; i < 8; i++)
@@ -315,11 +315,11 @@ public sealed class EmbeddingRefresherContextualGroupTests
 
     #region Helpers
 
-    private static PendingDocument MakeDoc(string uri, string? context, IReadOnlyList<string> chunks)
+    private static EmbeddingRefresher.PendingDocument MakeDoc(string uri, string? context, IReadOnlyList<string> chunks)
     {
-        var items = chunks.Select((_, i) => new EmbeddingWorkItem(
+        var items = chunks.Select((_, i) => new EmbeddingRefresher.EmbeddingWorkItem(
             Guid.NewGuid(), Guid.NewGuid(), i, "full", uri, "document", null, null)).ToList();
-        return new PendingDocument(uri, context, chunks, items);
+        return new EmbeddingRefresher.PendingDocument(uri, context, chunks, items);
     }
 
     #endregion
