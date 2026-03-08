@@ -146,7 +146,7 @@ Beyond the schema, these subsystems are what you'll encounter building RepoQL.
 | Component | What to know |
 |-----------|-------------|
 | **UriRegistry** | In-memory source of truth for what exists and its state (`Discovered → Indexing → Indexed`, parallel embedding track). Operations poll it. Scope readiness checks query it. `src/RepoQL.Contracts/UriRegistry/` |
-| **Operations** | Track batches of indexing work to completion. Awaitable, queryable via SQL. How "are my files ready?" gets answered. `docs/designs/current/operations.md` |
+| **Operations** | Track batches of indexing work to completion. Awaitable, queryable via SQL. How "are my files ready?" gets answered. `docs/designs/current/operations.md` today, with internal design doctrine moving under `design/` (see `design/documentation-structure.md`) |
 | **Format system** | Pluggable parsers per file type. Classifier → parser → analyzer → x-ray templates. `IFormatLoader` via DI discovery. `src/Indexing/RepoQL.Indexing/PROCESSOR_GUIDE.md` |
 | **File system abstraction** | VFS per URI scheme (`file://`, `help://`, `github://`). `IMultiFileSystem` routes. Not all imports need VFS — SARIF annotates existing nodes. `src/RepoQL.FileSystem/` |
 | **Explore/read engine** | Search with hybrid scoring (BM25 + fuzzy + semantic) → budget allocation per result → intent shapes curve. `src/RepoQL.Explore/` |
@@ -192,7 +192,7 @@ dotnet run -- --output Detailed            # Verbose output
 |--------|--------|
 | Don't read files for structure | X-ray summaries (`headline`, `summary`, `structure`) are pre-computed on artifacts |
 | Spans: 1-based lines, 0-based chars | `#line=42` = line 42. `#char=100,150` = bytes [100,150) |
-| Current vs Future docs | `docs/*/current/` = built and working. `docs/*/future/` = designed but not yet built. New designs and flows go in `future/` and move to `current/` when implemented. Don't update future/ to match limitations. Don't update current/ with aspirations. The gap = work to do |
+| Current vs Future docs | Today the durable docs mostly live under `docs/*/current/` and `docs/*/future/`. The target structure is `design/flows` and `design/designs` (see `design/documentation-structure.md`). Current = built and working. Future = designed but not yet built. Don't update future to match limitations. Don't update current with aspirations. The gap = work to do |
 | Class docs required | Purpose (why it exists) + Complexity (what's contained). The "and" test: rarely need "and" in a class's purpose |
 | Version lives in ConsoleApp | `src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj` → `<Version>` element. Nowhere else. |
 | Version bumps are patch only | Bump the revision number (e.g. 1.4.0 → 1.4.1). Minor/major bumps only when explicitly requested. |
@@ -207,7 +207,7 @@ dotnet run -- --output Detailed            # Verbose output
 | Add SQL function | `[UdfClass]` + `[ScalarUdf]` in `UdfImplementations/`, auto-discovered |
 | Add command | `[CommandClass]` + `[Command("name")]` in `CommandImplementations/`, auto-discovered |
 | Add lint rule | Emit `annotation` with `kind='lint'`, `severity`, `rule_id`, `message` |
-| Propose architecture | Read `docs/RepoqlDesign.md` first. Extend via SQL surface |
+| Propose architecture | Read `docs/RepoqlDesign.md` first, then `design/documentation-structure.md` for the target internal doctrine layout. Extend via SQL surface |
 | Find docs | `explore(uriGlob="help://**", keywords="topic")` or `read("help://** => tree: headlines", 3000)` |
 
 ### Project Map
@@ -225,29 +225,36 @@ dotnet run -- --output Detailed            # Verbose output
 | `RepoQL.Core` | Shared indexing infrastructure — format registry, pipeline snapshots, work queue, EditorConfig, metrics |
 | `RepoQL.Protocol` | gRPC proto, client, transport, diagnostics |
 | `RepoQL.FileSystem` | VFS abstraction (file://, help://, github://, memory) |
-| `RepoQL.Embeddings` | ONNX embedding model, tokenizer |
+| `RepoQL.Embeddings` | Local ONNX embedding model, tokenizer |
+| `RepoQL.Embedding.Proto` | gRPC contracts for the embedding service stack |
+| `RepoQL.Embedding.Service` | Out-of-process embedding generation service |
+| `RepoQL.Embedding.Client` | Client for talking to the embedding service |
+| `RepoQL.Embedding.Writer` | Persistence pipeline for embedding writes |
+| `RepoQL.Embedding.Storage` | Local storage and caching for embedding artifacts |
 | `RepoQL.Mcp.Client` | External MCP server discovery and SQL macro generation |
 | `RepoQL.Grammar` | Language parsing framework (ANTLR/Pidgin), syntax trees |
 | `RepoQL.LLM.Client` | LLM provider abstraction for LLM-powered features |
 | `RepoQL.Templating` | Liquid templates for x-ray generation |
+| `RepoQL.Analyzers` | Roslyn analyzers that enforce RepoQL architectural rules |
+| `RepoQL.Sarif` | SARIF import and annotation integration |
 | `RepoQL.Documentation` | Embedded `help://` docs — where help content lives physically |
 | `RepoQL.Orchestrator` | Aspire host for development telemetry |
 | `integrations/` | Claude Code plugin, clawdbot/openclaw — skills and desire paths |
-
 ---
 
 ## Finding Documentation
 
-RepoQL's own docs live at `help://` — queryable with the same tools you use on code. When you write docs for RepoQL, they become part of `help://` and are immediately queryable by all agents.
+RepoQL has two documentation surfaces. Public consumption docs live at `help://` and are queryable with the same tools you use on code. Internal build/design doctrine lives in `docs/` and `design/`. Only docs that live in `RepoQL.Documentation` become part of `help://`.
 
 | Topic | File path |
 |-------|-----------|
-| Vision & north stars | `docs/north-star/` (README.md, formats.md, commands.md, read-tool.md, reliability.md, etc.) |
-| Design | `docs/RepoqlDesign.md` |
+| Documentation doctrine | `design/documentation-structure.md` |
+| Vision & north stars | `docs/north-star/` (current corpus) |
+| Design | `docs/RepoqlDesign.md` (current corpus) |
 | Schema | `docs/Schema.md` |
 | Testing | `docs/knowledge/testing-guidelines.md` |
-| Indexing pipeline | `docs/flows/current/indexing/` |
-| Failure modes | `docs/flows/current/*/failure-modes/` |
+| Indexing pipeline | `docs/flows/current/indexing/` (current corpus) |
+| Failure modes | `docs/flows/current/*/failure-modes/` (current corpus) |
 | Full awareness guide | `docs/knowledge/building-repoql.md` |
 
 ---
@@ -270,5 +277,4 @@ See `/effective-delegation` skill for the full partnership model.
 ---
 
 *Build the tool you'd never want to work without.*
-
 

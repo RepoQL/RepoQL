@@ -283,7 +283,7 @@ dotnet run -- --treenode-filter "/*/*/*/MyTestName*"  # Filter tests (from test 
 
 ## North Stars
 
-Detailed vision documents live in `docs/north-star/`. Read them when working in an area — they describe what "great" looks like for each capability: formats, read tool, commands, diagnostics, extensibility, globbing, reliability, the plugin, the web UI, and more.
+Detailed vision documents live in `docs/north-star/` today, with the target internal doctrine layout described in `design/documentation-structure.md`. Read them when working in an area — they describe what "great" looks like for each capability: formats, read tool, commands, diagnostics, extensibility, globbing, reliability, the plugin, and more.
 
 ---
 
