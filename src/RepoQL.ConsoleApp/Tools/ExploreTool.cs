@@ -52,6 +52,7 @@ internal sealed class ExploreTool(
         - file:///src/**/*.cs — C# files only
         - file:///src/**;!**/tests/** — source without tests
         - help://** — documentation only
+        - github://owner/repo/** — imported repository (use query("SELECT * FROM Filesystems") to find URI schemes)
         - Combine with ; exclude with !
 
         **boost**: Regex to elevate matches (demotes others relatively).
@@ -73,30 +74,33 @@ internal sealed class ExploreTool(
         4. penalize ranks DOWN (demote matches)
 
         Example: Find auth implementations, not tests:
-        → breadth=5, keywords="authenticate authorize", penalize="(?i)test|mock"
+        → breadth=5, uriGlob="file:///src/**", keywords="authenticate authorize", penalize="(?i)test|mock"
 
         Example: Find service contracts:
-        → breadth=5, keywords="service", boost="(?i)interface|abstract"
+        → breadth=5, uriGlob="file:///src/**", keywords="service", boost="(?i)interface|abstract"
         </LAYERED_APPROACH>
 
         <QUICK_PATTERNS>
         Ranked survey:
-        → breadth=8, keywords="Controller", tokenBudget=3000
+        → breadth=8, uriGlob="file:///src/**", keywords="Controller", tokenBudget=3000
 
-        Find where something is:
+        Find where something is (wide search — no scope):
         → breadth=5, keywords="cache", tokenBudget=1500
 
         Examine specific code:
-        → breadth=2, keywords="cache invalidation", tokenBudget=2500
+        → breadth=2, uriGlob="file:///src/**", keywords="cache invalidation", tokenBudget=2500
 
         Find production code only:
-        → breadth=5, keywords="database connection", penalize="(?i)test|mock", tokenBudget=1500
+        → breadth=5, uriGlob="file:///src/**;!**/tests/**", keywords="database connection", penalize="(?i)test|mock", tokenBudget=1500
 
         Find contracts/interfaces:
-        → breadth=5, keywords="service", boost="(?i)interface|abstract", tokenBudget=1500
+        → breadth=5, uriGlob="file:///src/**/*.cs", keywords="service", boost="(?i)interface|abstract", tokenBudget=1500
 
-        Narrow to a specific area (when needed):
-        → breadth=8, uriGlob="help://**", tokenBudget=1000
+        Search documentation:
+        → breadth=8, uriGlob="help://**", keywords="configuration", tokenBudget=1000
+
+        Explore an imported repository:
+        → breadth=5, uriGlob="github://owner/repo/**", keywords="middleware routing", tokenBudget=2000
         </QUICK_PATTERNS>
 
         <TIPS>
