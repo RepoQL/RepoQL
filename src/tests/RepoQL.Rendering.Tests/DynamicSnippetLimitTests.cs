@@ -100,44 +100,24 @@ public class DynamicSnippetLimitTests
     }
 
     [Test]
-    [DisplayName("JIT search path uses dynamic snippet limit")]
-    public async Task Given_JitSearch_When_BreadthIsBalanced_Then_UsesDynamicSnippetLimit()
+    [DisplayName("Enrichment path preserves snippet limits")]
+    public async Task Given_JitEnrichment_When_BreadthIsBalanced_Then_SnippetLimitsApply()
     {
         var documentUri = "file:///repo/sample.cs";
-        var jitResult = new JitObjectSearchResult(
-            SelectedDocuments:
-            [
-                new DocumentExpansionCandidate(
-                    DocumentUri: documentUri,
-                    DocumentScore: 100,
-                    SoftmaxProbability: 1.0,
-                    CumulativeProbability: 1.0,
-                    Headline: "Doc",
-                    Structure: null,
-                    Lang: "cs",
-                    SemanticType: "code",
-                    Source: "hybrid",
-                    SemanticScore: 100,
-                    Bm25Score: 100,
-                    StructMentions: 0,
-                    BodyMentions: 0,
-                    HighScoringChunks: [])
-            ],
-            ScoredObjects: CreateJitObjects(documentUri, 6),
-            QuerySignals: new NormalizedQuerySignals
-            {
-                RawQuery = "find symbol",
-                QueryEmbedding = null,
-                BoostPatterns = [],
-                NegativePattern = null,
-                QueryTokensLower = new HashSet<string>(),
-                BoostRegex = string.Empty,
-                DetectedIntent = QueryIntent.Semantic,
-                SoftmaxTemperature = 0.5
-            });
+        var candidates = CreateCandidates(documentUri, 6);
 
-        var searchEngine = new ExploreSearchEngine(
-            new StubExploreCandidateService(new ExploreCandidateResult([], TotalMatched: 0)));
+        // Enrichment stub that changes one score
+        var enrichedCandidates = candidates.ToList();
+        var lastObjectIndex = enrichedCandidates.FindLastIndex(c =>
+            c.NodeScope.Equals("object", StringComparison.OrdinalIgnoreCase));
+        if (lastObjectIndex >= 0)
+        {
+            var c = enrichedCandidates[lastObjectIndex];
+            enrichedCandidates[lastObjectIndex] = c with { Score = c.Score + 10 };
+        }
+
+        var searchEngine = new ExploreSearchEngine(new StubExploreCandidateService(
+            new ExploreCandidateResult(candidates, TotalMatched: 1)));
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
@@ -146,7 +126,8 @@ public class DynamicSnippetLimitTests
                 Patterns: [],
                 Breadth: 5,
                 TokenBudget: 2000),
-            jitService: new StubJitObjectSearchService(jitResult),
+            jitService: new StubJitEnrichmentService(
+                new JitEnrichmentResult(enrichedCandidates, ScoresChanged: true)),
             jitCache: new JitEmbeddingCache(),
             cancellationToken: CancellationToken.None);
 
@@ -154,6 +135,7 @@ public class DynamicSnippetLimitTests
         var document = result.Results[0];
         document.Scope.Should().Be(SearchScope.Document);
         document.ChildObjects.Should().NotBeNull();
+        // With breadth=5 and budget=2000, snippet limit for 1 doc group = 5
         document.ChildObjects!.Count(c => c.Snippet is not null).Should().Be(5);
         document.ChildObjects.Count(c => c.Snippet is null).Should().Be(1);
     }
@@ -231,32 +213,6 @@ public class DynamicSnippetLimitTests
             .ToList();
     }
 
-    private static List<ObjectCandidate> CreateJitObjects(string documentUri, int count)
-    {
-        return Enumerable.Range(0, count)
-            .Select(i => new ObjectCandidate
-            {
-                NodeId = $"node-{i}",
-                Uri = $"{documentUri}#symbol=Method{i}",
-                DocumentUri = documentUri,
-                Kind = "cs_method",
-                Symbol = $"Method{i}",
-                Headline = $"Method {i}",
-                Structure = null,
-                Body = $"body {i}",
-                Snippet = $"snippet {i}",
-                LineStart = i + 1,
-                LineEnd = i + 2,
-                StartByte = null,
-                EndByte = null,
-                Lang = "cs",
-                SemanticType = "code",
-                FinalScore = count - i,
-                Confidence = 80 - i
-            })
-            .ToList();
-    }
-
     private sealed class StubExploreCandidateService(ExploreCandidateResult result) : IExploreCandidateService
     {
         public Task<ExploreCandidateResult> SearchAsync(
@@ -269,15 +225,13 @@ public class DynamicSnippetLimitTests
         }
     }
 
-    private sealed class StubJitObjectSearchService(JitObjectSearchResult result) : IJitObjectSearchService
+    private sealed class StubJitEnrichmentService(JitEnrichmentResult result) : IJitObjectSearchService
     {
-        public Task<JitObjectSearchResult> SearchAsync(
-            string? question,
-            string? scope,
-            string? boostPattern,
-            string? penalizePattern,
-            ObjectSearchConfig config,
+        public Task<JitEnrichmentResult> EnrichAsync(
+            string question,
+            IReadOnlyList<ExploreCandidate> candidates,
             JitEmbeddingCache jitCache,
+            ObjectSearchConfig config,
             CancellationToken cancellationToken)
         {
             return Task.FromResult(result);

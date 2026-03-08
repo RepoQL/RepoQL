@@ -41,7 +41,7 @@ internal sealed class ExploreCandidateService : IExploreCandidateService
                 CAST(fuzzy_score AS DOUBLE) AS fuzzy_score,
                 CAST(sem_score AS DOUBLE) AS sem_score,
                 CAST(score AS DOUBLE) AS score,
-                CAST(confidence AS INTEGER) AS confidence,
+                confidence,
                 sem_provenance
             FROM _explore_candidates(
                 q := {ToSqlLiteral(query)},

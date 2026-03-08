@@ -14,7 +14,7 @@ public static class RepresentationFormatter
     /// </summary>
     public static string FormatMinimal(ExploreResult result)
     {
-        var headline = GetHeadline(result) ?? ExtractFileName(result.Uri);
+        var headline = GetHeadline(result, result.Uri) ?? ExtractFileName(result.Uri);
         return $"{result.Uri}  {headline}";
     }
 
@@ -32,7 +32,7 @@ public static class RepresentationFormatter
         var (_, isChild) = GetDisplayUri(result.Uri, parentUri);
         if (!isChild)
         {
-            var headline = GetHeadline(result);
+            var headline = GetHeadline(result, result.Uri);
             if (headline != null)
             {
                 sb.Append("  ");
@@ -59,7 +59,7 @@ public static class RepresentationFormatter
         var (_, isChild) = GetDisplayUri(result.Uri, parentUri);
         if (!isChild)
         {
-            var headline = GetHeadline(result);
+            var headline = GetHeadline(result, result.Uri);
             if (headline != null)
             {
                 sb.Append("  ");
@@ -431,7 +431,25 @@ public static class RepresentationFormatter
         return (uri, false);
     }
 
-    private static string? GetHeadline(ExploreResult result) => GetSingleLineHeadline(result);
+    private static string? GetHeadline(ExploreResult result, string? uri = null)
+    {
+        var headline = GetSingleLineHeadline(result);
+        if (headline is null || uri is null)
+            return headline;
+
+        // Strip redundant filename prefix: "foo.cs | Type | ..." → "Type | ..."
+        // when the URI already shows the filename.
+        var pipeIndex = headline.IndexOf(" | ", StringComparison.Ordinal);
+        if (pipeIndex <= 0)
+            return headline;
+
+        var prefix = headline[..pipeIndex];
+        var fileName = ExtractFileName(uri);
+        if (string.Equals(prefix, fileName, StringComparison.OrdinalIgnoreCase))
+            return headline[(pipeIndex + 3)..];
+
+        return headline;
+    }
 
     /// <summary>
     /// Get headline as a single line (truncate at first newline).

@@ -214,10 +214,12 @@ scored AS (
         e.mime,
         e.headline,
         e.structure,
-        -- Snippet from best chunk when available
+        -- Snippet from best chunk when chunk score exceeds noise floor.
+        -- Below threshold the "best" chunk is just least-bad noise — fall back to document snippet.
         CASE
             WHEN s.best_chunk_start IS NOT NULL
                  AND s.best_chunk_end IS NOT NULL
+                 AND COALESCE(s.sem_score, 0) >= 0.30
                  AND e.text_content IS NOT NULL
                  AND LENGTH(e.text_content) > 0
             THEN array_to_string(
@@ -233,7 +235,7 @@ scored AS (
             )
             WHEN e.node_scope = 'document'
             THEN substr(COALESCE(e.text_content, ''), 1, 640)
-            ELSE substr(COALESCE(e.headline || E'\n\n' || e.structure, e.headline, e.structure, ''), 1, 640)
+            ELSE NULL  -- objects without chunk evidence use structure field, not snippet
         END AS snippet,
         e.line_start,
         e.line_end,
@@ -323,7 +325,13 @@ promoted AS (
 ranked AS (
     SELECT
         p.*,
-        score_confidence(p.promoted_score) AS confidence,
+        -- Min-max confidence: 10 (lowest) to 100 (highest) within result set.
+        -- score_confidence() is calibrated for search() scores (0-2+), not combine() scores (0-0.3).
+        -- Use result-relative normalization instead.
+        CAST(LEAST(100, GREATEST(10,
+            10 + 90.0 * (p.promoted_score - MIN(p.promoted_score) OVER ())
+            / NULLIF(MAX(p.promoted_score) OVER () - MIN(p.promoted_score) OVER (), 0)
+        )) AS INTEGER) AS confidence,
         ROW_NUMBER() OVER (ORDER BY p.promoted_score DESC, LENGTH(p.uri)) AS rank_pos
     FROM promoted p
 )

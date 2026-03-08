@@ -10,10 +10,12 @@ CREATE OR REPLACE MACRO zero_one(x) AS (
     END
 );
 
--- Combine normalized scores with configurable weights.
--- Default weights: semantic 0.70, BM25 0.15, fuzzy 0.15
+-- Combine normalized scores: max-signal + weighted blend.
+-- The strongest single signal dominates; multi-signal agreement adds a bonus.
+-- No classifier needed — a perfect lexical match naturally outscores semantic noise.
 CREATE OR REPLACE MACRO combine(bm25n, fuzzn, semn, wb := 0.15, wf := 0.15, ws := 0.70) AS (
-    COALESCE(wb * bm25n, 0) + COALESCE(wf * fuzzn, 0) + COALESCE(ws * semn, 0)
+    GREATEST(COALESCE(bm25n, 0), COALESCE(fuzzn, 0), COALESCE(semn, 0))
+    + 0.2 * (COALESCE(wb * bm25n, 0) + COALESCE(wf * fuzzn, 0) + COALESCE(ws * semn, 0))
 );
 
 -- Classify a query to determine the best search route.

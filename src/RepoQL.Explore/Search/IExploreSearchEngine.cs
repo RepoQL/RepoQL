@@ -9,6 +9,14 @@ public interface IExploreSearchEngine
         CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Unified explore search engine. Single code path: _explore_candidates → optional JIT
+/// enrichment → pattern boosts → results. No parallel JIT path.
+///
+/// Purpose: Orchestrate search retrieval, JIT enrichment, and result grouping.
+/// Complexity: Candidate retrieval, JIT eligibility check, result grouping by document,
+///   pattern boost/penalty with re-sort.
+/// </summary>
 public sealed class ExploreSearchEngine : IExploreSearchEngine
 {
     private readonly IExploreCandidateService _candidateService;
@@ -24,72 +32,42 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         JitEmbeddingCache? jitCache,
         CancellationToken cancellationToken)
     {
-        if (ShouldUseJitSearch(parameters, jitService) && jitCache is not null)
-        {
-            return await SearchWithJitAsync(parameters, jitService!, jitCache, cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        return await SearchStandardAsync(parameters, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static bool ShouldUseJitSearch(SearchParameters parameters, IJitObjectSearchService? jitService)
-    {
-        if (jitService is null)
-            return false;
-
-        if (string.IsNullOrWhiteSpace(parameters.Question))
-            return false;
-
-        return parameters.Breadth <= 7;
-    }
-
-    private async Task<SearchEngineResult> SearchWithJitAsync(
-        SearchParameters parameters,
-        IJitObjectSearchService jitService,
-        JitEmbeddingCache jitCache,
-        CancellationToken cancellationToken)
-    {
-        var config = GetJitSearchConfig(parameters.Breadth, parameters.TokenBudget);
-
-        var boostPattern = parameters.Patterns.Count > 0
-            ? string.Join(",", parameters.Patterns)
-            : null;
-        var penalizePattern = parameters.PenalizePatterns is { Count: > 0 }
-            ? string.Join(",", parameters.PenalizePatterns)
-            : null;
-
-        var jitResult = await jitService.SearchAsync(
-            parameters.Question,
-            parameters.Scope,
-            boostPattern,
-            penalizePattern,
-            config,
-            jitCache,
-            cancellationToken).ConfigureAwait(false);
-
-        var results = ConvertJitResults(jitResult, parameters);
-
-        return new SearchEngineResult(
-            results,
-            TotalDocumentsMatched: jitResult.SelectedDocuments.Count,
-            TotalObjectsMatched: jitResult.ScoredObjects.Count,
-            TrustSignal: null
-        );
-    }
-
-    private async Task<SearchEngineResult> SearchStandardAsync(
-        SearchParameters parameters,
-        CancellationToken cancellationToken)
-    {
-        var k = Math.Min(200, (parameters.Breadth * 15) + 20);
+        // Phase 1: Retrieve candidates via _explore_candidates SQL macro
+        // Candidate count adapts to budget and breadth.
+        // Low breadth concentrates budget on fewer, deeper results.
+        // High breadth spreads across more results with lighter representation.
+        var targetPerFile = (int)(300.0 / Math.Max(parameters.Breadth, 1));
+        var k = Math.Clamp(parameters.TokenBudget / targetPerFile, 5, 200);
         var candidateResult = await _candidateService.SearchAsync(
             parameters.Question,
             parameters.Scope,
             k,
             cancellationToken).ConfigureAwait(false);
 
-        var results = BuildStandardResults(candidateResult.Candidates, parameters);
+        var candidates = candidateResult.Candidates;
+
+        // Phase 2: JIT enrichment for uncertain object candidates
+        if (ShouldEnrichWithJit(parameters, jitService) && jitCache is not null)
+        {
+            var config = GetJitSearchConfig(parameters.Breadth, parameters.TokenBudget);
+            var enrichment = await jitService!.EnrichAsync(
+                parameters.Question!,
+                candidates,
+                jitCache,
+                config,
+                cancellationToken).ConfigureAwait(false);
+
+            if (enrichment.ScoresChanged)
+            {
+                candidates = enrichment.Candidates;
+                candidates = ApplyDocumentPromotion(candidates);
+            }
+        }
+
+        // Phase 3: Build grouped results
+        var results = BuildStandardResults(candidates, parameters);
+
+        // Phase 4: Pattern boosts/penalties with re-sort
         var boosted = false;
 
         var boostPatterns = PatternBooster.ParsePatterns(string.Join(",", parameters.Patterns));
@@ -110,6 +88,17 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             TotalObjectsMatched: candidateResult.Candidates.Count(candidate => IsObject(candidate.NodeScope)),
             TrustSignal: null
         );
+    }
+
+    private static bool ShouldEnrichWithJit(SearchParameters parameters, IJitObjectSearchService? jitService)
+    {
+        if (jitService is null)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(parameters.Question))
+            return false;
+
+        return parameters.Breadth <= 7;
     }
 
     private static List<SearchResult> BuildStandardResults(
@@ -221,218 +210,49 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         return fragmentIndex >= 0 ? candidate.Uri[..fragmentIndex] : candidate.Uri;
     }
 
+    /// <summary>
+    /// After JIT enrichment changes scores, re-apply document promotion:
+    /// document.score = max(own_score, best_child_score * 0.9)
+    /// This matches the logic in _explore_candidates.sql (line ~304).
+    /// </summary>
+    private static IReadOnlyList<ExploreCandidate> ApplyDocumentPromotion(IReadOnlyList<ExploreCandidate> candidates)
+    {
+        var result = candidates.ToList();
+        var grouped = result.Select((c, i) => (Candidate: c, Index: i))
+            .GroupBy(x => x.Candidate.DocId);
+
+        foreach (var group in grouped)
+        {
+            var docEntry = group.FirstOrDefault(x =>
+                string.Equals(x.Candidate.NodeScope, "document", StringComparison.OrdinalIgnoreCase));
+            if (docEntry.Candidate is null) continue;
+
+            var bestChildScore = group
+                .Where(x => string.Equals(x.Candidate.NodeScope, "object", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Candidate.Score)
+                .DefaultIfEmpty(0.0)
+                .Max();
+
+            var promotedScore = bestChildScore * 0.9;
+            if (promotedScore > docEntry.Candidate.Score)
+            {
+                result[docEntry.Index] = docEntry.Candidate with { Score = promotedScore };
+            }
+        }
+
+        return result;
+    }
+
     private static bool IsDocument(string nodeScope)
         => string.Equals(nodeScope, "document", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsObject(string nodeScope)
         => string.Equals(nodeScope, "object", StringComparison.OrdinalIgnoreCase);
 
-    private static IReadOnlyList<SearchResult> ConvertJitResults(
-        JitObjectSearchResult jitResult,
-        SearchParameters parameters)
-    {
-        var results = new List<SearchResult>();
-
-        var objectsByDoc = jitResult.ScoredObjects
-            .GroupBy(o => o.DocumentUri)
-            .ToDictionary(g => g.Key, g => g.ToList());
-        var snippetLimit = FileGrouper.CalculateSnippetLimit(
-            parameters.Breadth,
-            parameters.TokenBudget,
-            Math.Max(jitResult.SelectedDocuments.Count, objectsByDoc.Count));
-        var documentScores = jitResult.SelectedDocuments.Select(doc => doc.DocumentScore).ToList();
-        var minDocumentScore = documentScores.Count > 0 ? documentScores.Min() : 0.0;
-        var documentScoreRange = (documentScores.Count > 0 ? documentScores.Max() : 0.0) - minDocumentScore;
-
-        var processedDocs = new HashSet<string>();
-        foreach (var doc in jitResult.SelectedDocuments)
-        {
-            processedDocs.Add(doc.DocumentUri);
-
-            if (objectsByDoc.TryGetValue(doc.DocumentUri, out var docObjects) && docObjects.Count > 0)
-            {
-                var childObjects = new List<SearchResult>();
-                var snippetObjects = docObjects.Take(snippetLimit).ToList();
-                var headlineObjects = docObjects.Skip(snippetLimit).ToList();
-
-                foreach (var obj in snippetObjects)
-                {
-                    childObjects.Add(new SearchResult(
-                        Uri: obj.Uri,
-                        Scope: SearchScope.Symbol,
-                        Kind: obj.Kind,
-                        Symbol: obj.Symbol,
-                        Headline: obj.Headline,
-                        Structure: obj.Structure,
-                        Snippet: obj.Snippet ?? obj.Body,
-                        LineStart: obj.LineStart,
-                        LineEnd: obj.LineEnd,
-                        Lang: obj.Lang,
-                        SemanticType: obj.SemanticType,
-                        RawScore: obj.FinalScore,
-                        Confidence: obj.Confidence,
-                        ChildObjects: null,
-                        Provenance: ComputeProvenance(
-                            semantic: obj.SemanticScore,
-                            name: obj.NameHitScore,
-                            regex: obj.RegexHitScore,
-                            chunk: obj.ChunkOverlapScore)
-                    ));
-                }
-
-                foreach (var obj in headlineObjects)
-                {
-                    childObjects.Add(new SearchResult(
-                        Uri: obj.Uri,
-                        Scope: SearchScope.Symbol,
-                        Kind: obj.Kind,
-                        Symbol: obj.Symbol,
-                        Headline: obj.Headline,
-                        Structure: obj.Structure,
-                        Snippet: null,
-                        LineStart: obj.LineStart,
-                        LineEnd: obj.LineEnd,
-                        Lang: obj.Lang,
-                        SemanticType: obj.SemanticType,
-                        RawScore: obj.FinalScore,
-                        Confidence: obj.Confidence,
-                        ChildObjects: null,
-                        Provenance: ComputeProvenance(
-                            semantic: obj.SemanticScore,
-                            name: obj.NameHitScore,
-                            regex: obj.RegexHitScore,
-                            chunk: obj.ChunkOverlapScore)
-                    ));
-                }
-
-                results.Add(new SearchResult(
-                    Uri: doc.DocumentUri,
-                    Scope: SearchScope.Document,
-                    Kind: null,
-                    Symbol: null,
-                    Headline: doc.Headline,
-                    Structure: doc.Structure,
-                    Snippet: null,
-                    LineStart: null,
-                    LineEnd: null,
-                    Lang: doc.Lang,
-                    SemanticType: doc.SemanticType,
-                    RawScore: doc.DocumentScore,
-                    Confidence: documentScoreRange <= 0
-                        ? 50
-                        : (int)(10 + (90 * (doc.DocumentScore - minDocumentScore) / documentScoreRange)),
-                    ChildObjects: childObjects,
-                    Provenance: ComputeDocumentProvenance(doc)
-                ));
-            }
-            else
-            {
-                results.Add(new SearchResult(
-                    Uri: doc.DocumentUri,
-                    Scope: SearchScope.Document,
-                    Kind: null,
-                    Symbol: null,
-                    Headline: doc.Headline,
-                    Structure: doc.Structure,
-                    Snippet: null,
-                    LineStart: null,
-                    LineEnd: null,
-                    Lang: doc.Lang,
-                    SemanticType: doc.SemanticType,
-                    RawScore: doc.DocumentScore,
-                    Confidence: documentScoreRange <= 0
-                        ? 50
-                        : (int)(10 + (90 * (doc.DocumentScore - minDocumentScore) / documentScoreRange)),
-                    ChildObjects: null,
-                    Provenance: ComputeDocumentProvenance(doc)
-                ));
-            }
-        }
-
-        foreach (var (docUri, docObjects) in objectsByDoc)
-        {
-            if (processedDocs.Contains(docUri))
-                continue;
-
-            var snippetObjects = docObjects.Take(snippetLimit).ToList();
-            var headlineObjects = docObjects.Skip(snippetLimit).ToList();
-
-            foreach (var obj in snippetObjects)
-            {
-                results.Add(new SearchResult(
-                    Uri: obj.Uri,
-                    Scope: SearchScope.Symbol,
-                    Kind: obj.Kind,
-                    Symbol: obj.Symbol,
-                    Headline: obj.Headline,
-                    Structure: obj.Structure,
-                    Snippet: obj.Snippet ?? obj.Body,
-                    LineStart: obj.LineStart,
-                    LineEnd: obj.LineEnd,
-                    Lang: obj.Lang,
-                    SemanticType: obj.SemanticType,
-                    RawScore: obj.FinalScore,
-                    Confidence: obj.Confidence,
-                    ChildObjects: null,
-                    Provenance: ComputeProvenance(
-                        semantic: obj.SemanticScore,
-                        name: obj.NameHitScore,
-                        regex: obj.RegexHitScore,
-                        chunk: obj.ChunkOverlapScore)
-                ));
-            }
-
-            foreach (var obj in headlineObjects)
-            {
-                results.Add(new SearchResult(
-                    Uri: obj.Uri,
-                    Scope: SearchScope.Symbol,
-                    Kind: obj.Kind,
-                    Symbol: obj.Symbol,
-                    Headline: obj.Headline,
-                    Structure: obj.Structure,
-                    Snippet: null,
-                    LineStart: obj.LineStart,
-                    LineEnd: obj.LineEnd,
-                    Lang: obj.Lang,
-                    SemanticType: obj.SemanticType,
-                    RawScore: obj.FinalScore,
-                    Confidence: obj.Confidence,
-                    ChildObjects: null,
-                    Provenance: ComputeProvenance(
-                        semantic: obj.SemanticScore,
-                        name: obj.NameHitScore,
-                        regex: obj.RegexHitScore,
-                        chunk: obj.ChunkOverlapScore)
-                ));
-            }
-        }
-
-        if (parameters.Patterns.Count > 0)
-        {
-            var patterns = PatternBooster.ParsePatterns(string.Join(",", parameters.Patterns));
-            PatternBooster.ApplyBoosts(results, patterns);
-        }
-
-        if (parameters.PenalizePatterns is { Count: > 0 })
-        {
-            var penalizePatterns = PatternBooster.ParsePatterns(string.Join(",", parameters.PenalizePatterns));
-            PatternBooster.ApplyPenalties(results, penalizePatterns);
-        }
-
-        return results;
-    }
-
-    private static string? ComputeDocumentProvenance(DocumentExpansionCandidate doc)
-    {
-        var lexical = (doc.StructMentions + doc.BodyMentions) * 0.1;
-        return ComputeProvenance(
-            semantic: doc.SemanticScore,
-            name: 0.0,
-            regex: lexical,
-            chunk: doc.Bm25Score);
-    }
-
+    /// <summary>
+    /// Compute provenance label from signal contributions.
+    /// Returns the dominant signal, or "mixed" if top two are close.
+    /// </summary>
     public static string? ComputeProvenance(double semantic, double name, double regex, double chunk)
     {
         var signals = new List<(string Label, double Score)>
@@ -463,7 +283,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         return top.Label;
     }
 
-    private static ObjectSearchConfig GetJitSearchConfig(int breadth, int tokenBudget)
+    internal static ObjectSearchConfig GetJitSearchConfig(int breadth, int tokenBudget)
     {
         var budgetScale = Math.Clamp(tokenBudget / 1500.0, 0.2, 1.5);
 
@@ -471,12 +291,8 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         {
             return new ObjectSearchConfig
             {
-                MinProbabilityMass = 0.90,
-                MaxDocumentsToExpand = Math.Max(2, (int)(10 * budgetScale)),
-                MinDocumentsToExpand = 2,
                 MaxJitEmbeddings = Math.Max(5, (int)(40 * budgetScale)),
                 JitEmbeddingThreshold = 0.12,
-                MaxObjectsPerDocument = 60
             };
         }
 
@@ -484,36 +300,15 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         {
             return new ObjectSearchConfig
             {
-                MinProbabilityMass = 0.85,
-                MaxDocumentsToExpand = Math.Max(3, (int)(15 * budgetScale)),
-                MinDocumentsToExpand = 3,
                 MaxJitEmbeddings = Math.Max(5, (int)(30 * budgetScale)),
                 JitEmbeddingThreshold = 0.15,
-                MaxObjectsPerDocument = 50
-            };
-        }
-
-        if (breadth <= 8)
-        {
-            return new ObjectSearchConfig
-            {
-                MinProbabilityMass = 0.80,
-                MaxDocumentsToExpand = Math.Max(2, (int)(8 * budgetScale)),
-                MinDocumentsToExpand = 2,
-                MaxJitEmbeddings = Math.Max(3, (int)(15 * budgetScale)),
-                JitEmbeddingThreshold = 0.20,
-                MaxObjectsPerDocument = 30
             };
         }
 
         return new ObjectSearchConfig
         {
-            MinProbabilityMass = 0.75,
-            MaxDocumentsToExpand = 0,
-            MinDocumentsToExpand = 0,
-            MaxJitEmbeddings = 0,
-            JitEmbeddingThreshold = 1.0,
-            MaxObjectsPerDocument = 0
+            MaxJitEmbeddings = Math.Max(3, (int)(15 * budgetScale)),
+            JitEmbeddingThreshold = 0.20,
         };
     }
 }

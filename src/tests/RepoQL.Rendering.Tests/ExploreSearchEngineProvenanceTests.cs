@@ -30,7 +30,7 @@ public class ExploreSearchEngineProvenanceTests
     }
 
     [Test]
-    [DisplayName("Standard path assigns provenance from document and object score components")]
+    [DisplayName("Standard path passes through provenance from SQL")]
     public async Task Given_StandardSearch_When_ScoresAvailable_Then_ResultsIncludeProvenance()
     {
         var documentUri = "file:///repo/sample.cs";
@@ -102,70 +102,70 @@ public class ExploreSearchEngineProvenanceTests
     }
 
     [Test]
-    [DisplayName("JIT path assigns provenance from object candidate signals")]
-    public async Task Given_JitSearch_When_ScoresAvailable_Then_ResultsIncludeProvenance()
+    [DisplayName("JIT enrichment updates provenance to direct for enriched objects")]
+    public async Task Given_JitEnrichment_When_ScoresUpdated_Then_ProvenanceUpdatedToDirect()
     {
         var documentUri = "file:///repo/sample.cs";
-        var jitResult = new JitObjectSearchResult(
-            SelectedDocuments:
-            [
-                new DocumentExpansionCandidate(
-                    DocumentUri: documentUri,
-                    DocumentScore: 0.9,
-                    SoftmaxProbability: 1.0,
-                    CumulativeProbability: 1.0,
-                    Headline: "Sample",
-                    Structure: null,
-                    Lang: "csharp",
-                    SemanticType: "code.csharp",
-                    Source: "hybrid",
-                    SemanticScore: 0.2,
-                    Bm25Score: 0.9,
-                    StructMentions: 0,
-                    BodyMentions: 0,
-                    HighScoringChunks: [])
-            ],
-            ScoredObjects:
-            [
-                new ObjectCandidate
-                {
-                    NodeId = "n1",
-                    Uri = $"{documentUri}#symbol=Validate",
-                    DocumentUri = documentUri,
-                    Kind = "cs_method",
-                    Symbol = "Validate",
-                    Headline = "Validate",
-                    Structure = null,
-                    Body = "bool Validate() => true;",
-                    Snippet = "bool Validate() => true;",
-                    LineStart = 10,
-                    LineEnd = 11,
-                    StartByte = null,
-                    EndByte = null,
-                    Lang = "csharp",
-                    SemanticType = "code.csharp",
-                    SemanticScore = 0.95,
-                    NameHitScore = 0.2,
-                    RegexHitScore = 0.1,
-                    ChunkOverlapScore = 0.1,
-                    FinalScore = 0.95,
-                    Confidence = 90
-                }
-            ],
-            QuerySignals: new NormalizedQuerySignals
-            {
-                RawQuery = "validate token",
-                QueryEmbedding = null,
-                BoostPatterns = [],
-                NegativePattern = null,
-                QueryTokensLower = new HashSet<string>(),
-                BoostRegex = string.Empty,
-                DetectedIntent = QueryIntent.Semantic,
-                SoftmaxTemperature = 0.5
-            });
+        var docId = Guid.NewGuid();
+        var objectNodeId = Guid.NewGuid();
 
-        var searchEngine = new ExploreSearchEngine(
-            new StubExploreCandidateService(new ExploreCandidateResult([], TotalMatched: 0)));
+        var originalCandidates = new List<ExploreCandidate>
+        {
+            new(
+                DocId: docId,
+                NodeId: Guid.NewGuid(),
+                Uri: documentUri,
+                Path: documentUri,
+                NodeScope: "document",
+                Kind: "document",
+                Symbol: null,
+                Lang: "csharp",
+                Mime: "code.csharp",
+                Headline: "Sample",
+                Structure: null,
+                Snippet: null,
+                LineStart: null,
+                LineEnd: null,
+                BM25Score: 0.2,
+                FuzzyScore: 0.0,
+                SemScore: 0.9,
+                Score: 0.9,
+                Confidence: 88,
+                SemProvenance: "semantic"),
+            new(
+                DocId: docId,
+                NodeId: objectNodeId,
+                Uri: $"{documentUri}#symbol=Validate",
+                Path: documentUri,
+                NodeScope: "object",
+                Kind: "cs_method",
+                Symbol: "Validate",
+                Lang: "csharp",
+                Mime: "code.csharp",
+                Headline: "Validate",
+                Structure: null,
+                Snippet: "bool Validate() => true;",
+                LineStart: 10,
+                LineEnd: 11,
+                BM25Score: 0.1,
+                FuzzyScore: 0.0,
+                SemScore: 0.2,
+                Score: 0.5,
+                Confidence: 60,
+                SemProvenance: "inherited")
+        };
+
+        // Enrichment updates the object's provenance to "direct" and boosts score
+        var enrichedCandidates = originalCandidates.ToList();
+        enrichedCandidates[1] = enrichedCandidates[1] with
+        {
+            Score = 0.85,
+            SemScore = 0.9,
+            SemProvenance = "direct"
+        };
+
+        var searchEngine = new ExploreSearchEngine(new StubExploreCandidateService(
+            new ExploreCandidateResult(originalCandidates, TotalMatched: 1)));
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
@@ -174,15 +174,16 @@ public class ExploreSearchEngineProvenanceTests
                 Patterns: [],
                 Breadth: 5,
                 TokenBudget: 2000),
-            jitService: new StubJitObjectSearchService(jitResult),
+            jitService: new StubJitEnrichmentService(
+                new JitEnrichmentResult(enrichedCandidates, ScoresChanged: true)),
             jitCache: new JitEmbeddingCache(),
             cancellationToken: CancellationToken.None);
 
         result.Results.Should().HaveCount(1);
         var documentResult = result.Results[0];
-        documentResult.Provenance.Should().Be("content");
+        documentResult.Provenance.Should().Be("semantic");
         documentResult.ChildObjects.Should().NotBeNull();
-        documentResult.ChildObjects![0].Provenance.Should().Be("semantic");
+        documentResult.ChildObjects![0].Provenance.Should().Be("direct");
     }
 
     private sealed class StubExploreCandidateService(ExploreCandidateResult result) : IExploreCandidateService
@@ -197,15 +198,13 @@ public class ExploreSearchEngineProvenanceTests
         }
     }
 
-    private sealed class StubJitObjectSearchService(JitObjectSearchResult result) : IJitObjectSearchService
+    private sealed class StubJitEnrichmentService(JitEnrichmentResult result) : IJitObjectSearchService
     {
-        public Task<JitObjectSearchResult> SearchAsync(
-            string? question,
-            string? scope,
-            string? boostPattern,
-            string? penalizePattern,
-            ObjectSearchConfig config,
+        public Task<JitEnrichmentResult> EnrichAsync(
+            string question,
+            IReadOnlyList<ExploreCandidate> candidates,
             JitEmbeddingCache jitCache,
+            ObjectSearchConfig config,
             CancellationToken cancellationToken)
         {
             return Task.FromResult(result);

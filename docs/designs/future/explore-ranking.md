@@ -286,8 +286,10 @@ Standard path uses chunk scores from `_explore_candidates` output. `ChunkProximi
 ### Phase 5: Re-sort after boosts
 `PatternBooster` returns a flag indicating scores changed. If changed, re-sort before confidence normalization. Build + test.
 
-### Phase 6: Unify JIT path
+### Phase 6: Unify JIT path ✓
 JIT becomes an enrichment step within `ExploreSearchService`, not a parallel path. Triggered after initial ranking for top uncertain candidates. Build + test.
+
+**Done.** `IJitObjectSearchService` changed from full search to `EnrichAsync` enrichment method. `ExploreSearchEngine` has single code path: `_explore_candidates` → optional JIT enrichment → pattern boosts → results. `JitObjectSearchService` reduced from ~1200 lines to ~480 lines — keeps query normalization, provenance-based JIT planning, ONNX embedding with persistence, score blending. Dead code deleted: document selection, softmax, chunk scoring, object retrieval, scope degradation, snippet population. All 956 tests pass across Rendering, Tests, and DuckDB test projects.
 
 ### Phase 7: Voyage reranker integration (optional, paying users)
 After `_explore_candidates` returns ranked results, `ExploreSearchService` sends top-30 candidates (query + snippet/headline/structure) to Voyage's reranker API. Compute rank displacement (`reranker_rank - hybrid_rank`) and apply as a score modifier — items moved up get boosted, items moved down get penalized. The hybrid score remains the primary authority; the reranker is a correction signal. Behind feature flag. Timeout after 2s with graceful fallback to unmodified hybrid scores. Build + test.
