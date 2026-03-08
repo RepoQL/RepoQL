@@ -615,26 +615,14 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
             var lines = result.Snippet.Split('\n');
             var startLine = result.LineStart ?? 1;
 
-            for (var i = 0; i < lines.Length && i < 15; i++)
+            for (var i = 0; i < lines.Length; i++)
             {
                 var lineNum = startLine + i;
                 var lineText = lines[i].TrimEnd('\r');
 
-                var isFocus = result.LineStart.HasValue && result.LineEnd.HasValue &&
-                              lineNum >= result.LineStart.Value && lineNum <= result.LineEnd.Value;
-
                 builder.Append('\n');
-                builder.Append(isFocus ? '>' : ' ');
-                builder.Append(lineNum.ToString(CultureInfo.InvariantCulture).PadLeft(4));
-                builder.Append(": ");
+                builder.Append(lineNum.ToString(CultureInfo.InvariantCulture).PadRight(5));
                 builder.Append(lineText);
-            }
-
-            if (lines.Length > 15)
-            {
-                builder.Append("\n  ... (");
-                builder.Append(lines.Length - 15);
-                builder.Append(" more lines)");
             }
         }
 
