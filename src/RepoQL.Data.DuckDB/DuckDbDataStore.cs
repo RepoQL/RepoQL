@@ -1506,7 +1506,10 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
                 "Macros/git_diff.sql",
                 "Macros/git_patches.sql",
                 "Macros/changes_related_to.sql",
-                "Macros/similar.sql"
+                "Macros/similar.sql",
+                // Operations macros depend on _operations_internal UDF (registered above)
+                "Macros/operations.sql",
+                "Views/operations.sql"
             };
 
             foreach (var script in schemaScripts)
