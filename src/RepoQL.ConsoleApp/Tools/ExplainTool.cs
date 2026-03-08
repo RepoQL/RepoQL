@@ -3,7 +3,6 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
-using RepoQL.Contracts;
 using RepoQL.Protocol;
 
 namespace RepoQL.ConsoleApp.Tools;
@@ -13,25 +12,21 @@ namespace RepoQL.ConsoleApp.Tools;
 ///
 /// Purpose: Agents ask a question and get a prose answer with citations.
 /// Unlike explore (which returns structured results for the agent to read),
-/// explain searches wide internally (50k+ tokens), then synthesizes via LLM.
+/// explain searches wide inside the host, then synthesizes a focused answer via the server-side LLM provider.
 ///
-/// Complexity: Extracts keywords from question via LLM, calls explore with high budget
-/// for deep context, then synthesizes a focused answer via LLM. Falls back to raw
-/// explore results if LLM is not configured.
+/// Complexity: Client-side responsibility is limited to readiness UX ("call again to wait")
+/// and transport error handling. Search and synthesis happen in the host.
 /// </summary>
 [McpServerToolType]
 internal sealed class ExplainTool(
     RepoQlClientProvider clientProvider,
     SelfTestRunner selfTestRunner,
-    SessionOrientation sessionOrientation,
-    ILlmProvider llmProvider)
+    SessionOrientation sessionOrientation)
 {
     private readonly RepoQlClientProvider _clientProvider = clientProvider ?? throw new ArgumentNullException(nameof(clientProvider));
     private readonly SelfTestRunner _selfTestRunner = selfTestRunner ?? throw new ArgumentNullException(nameof(selfTestRunner));
     private readonly SessionOrientation _sessionOrientation = sessionOrientation ?? throw new ArgumentNullException(nameof(sessionOrientation));
-    private readonly ILlmProvider _llmProvider = llmProvider ?? throw new ArgumentNullException(nameof(llmProvider));
 
-    // Track last request to implement "call again to wait" pattern (static to persist across tool invocations)
     private static string? _lastRequestSignature;
 
     private const string ToolInstructions = """
@@ -93,116 +88,45 @@ internal sealed class ExplainTool(
         if (tokenBudget <= 0)
             return ToolResult.Error("Error: tokenBudget must be a positive integer.");
 
-        // Check orientation
         var orientationFooter = _sessionOrientation.CheckOrientation(uriGlob);
-
-        // Create request signature for "call again to wait" pattern
         var requestSignature = $"explain|{tokenBudget}|{uriGlob}|{question}";
         var isRepeatRequest = _lastRequestSignature == requestSignature;
 
-        // Explain always requires semantic search (question is always provided)
         var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
         var scopeStatus = await client.GetScopeReadinessAsync(uriGlob, cancellationToken).ConfigureAwait(false);
 
         if (!scopeStatus.IsReady && !isRepeatRequest)
         {
-            // First time seeing this request while scope not ready - return status and instructions
             _lastRequestSignature = requestSignature;
             return ToolResult.Success(RepoQlClientScopeExtensions.FormatScopeNotReadyMessage(scopeStatus, uriGlob));
         }
 
         if (!scopeStatus.IsReady && isRepeatRequest)
-        {
-            // Repeat request - wait until scope is ready
             await client.WaitForScopeAsync(uriGlob, cancellationToken).ConfigureAwait(false);
-        }
 
-        // Clear the pending request now that we're executing
         _lastRequestSignature = null;
 
-        // Execute: extract keywords → explore wide → synthesize via LLM
         try
         {
-            client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-
-            // Step 1: Extract search keywords from the question via LLM
-            var searchKeywords = question;
-            if (_llmProvider.Enabled)
-            {
-                var extracted = await _llmProvider.ExtractKeywordsAsync(question, cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(extracted))
-                    searchKeywords = extracted;
-            }
-
-            // Step 2: Explore with high budget for LLM context (low breadth = deep structure)
-            const int llmContextBudget = 50_000;
-            var response = await client.ExploreAsync(
-                llmContextBudget,
-                2, // low breadth = deep, few results with full structure
-                uriGlob,
-                searchKeywords,
-                boost: null,
-                penalize: null,
-                limit: null,
-                cancellationToken).ConfigureAwait(false);
-
+            var response = await client.ExplainAsync(question, uriGlob, tokenBudget, cancellationToken).ConfigureAwait(false);
             if (!response.Success)
-            {
                 return ToolResult.Error($"Error: {response.Error}");
-            }
 
-            // Step 3: Synthesize via LLM, or fall back to raw results
-            if (!_llmProvider.Enabled)
-            {
-                return ToolResult.Success(
-                    "[LLM not configured — showing raw explore results. Set OPENROUTER_API_KEY for synthesized answers.]\n\n"
-                    + response.RenderedOutput + orientationFooter);
-            }
-
-            var synthesized = await _llmProvider.SummarizeAsync(
-                response.RenderedOutput,
-                question,
-                maxTokens: Math.Max(500, tokenBudget),
-                repoTree: null,
-                ct: cancellationToken).ConfigureAwait(false);
-
-            // Extract footer from explore response (the [tok | time | status] line)
-            var footer = ExtractFooter(response.RenderedOutput);
-
-            return ToolResult.Success(
-                $"## {question}\n\n{synthesized}\n\n---\n{footer}" + orientationFooter);
+            return ToolResult.Success(response.RenderedOutput + orientationFooter);
         }
         catch (Exception ex)
         {
             if (ex is RepoQlDiagnosticsException diagnosticsException)
-            {
                 return ToolResult.Error($"Error: Explain failed. {ExtractErrorMessage(ex)}\n\n{diagnosticsException.Diagnostics}");
-            }
 
-            // For infrastructure errors, append diagnostic information
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
                 var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancellationToken);
                 return ToolResult.Error($"Error: Explain failed. {ExtractErrorMessage(ex)}\n\n{diagnostics}");
             }
+
             return ToolResult.Error($"Error: Explain failed. {ExtractErrorMessage(ex)}");
         }
-    }
-
-    /// <summary>
-    /// Extracts the status footer line (e.g. "[1.8k tok | 1.1s | index: ready]") from explore output.
-    /// </summary>
-    private static string ExtractFooter(string exploreOutput)
-    {
-        // Footer is the last line starting with '['
-        var lines = exploreOutput.Split('\n');
-        for (var i = lines.Length - 1; i >= 0; i--)
-        {
-            var trimmed = lines[i].TrimStart();
-            if (trimmed.StartsWith('[') && trimmed.Contains("tok"))
-                return trimmed;
-        }
-        return string.Empty;
     }
 
     private static string ExtractErrorMessage(Exception ex)
