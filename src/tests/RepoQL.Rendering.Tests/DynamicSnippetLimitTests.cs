@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Explore.Search;
 
 namespace RepoQL.Rendering.Tests;
@@ -79,7 +80,8 @@ public class DynamicSnippetLimitTests
         var documentUri = "file:///repo/sample.cs";
         var candidates = CreateCandidates(documentUri, 5);
         var searchEngine = new ExploreSearchEngine(new StubExploreCandidateService(
-            new ExploreCandidateResult(candidates, TotalMatched: 1)));
+            new ExploreCandidateResult(candidates, TotalMatched: 1)),
+            DisabledRerankProvider.Instance);
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
@@ -117,7 +119,8 @@ public class DynamicSnippetLimitTests
         }
 
         var searchEngine = new ExploreSearchEngine(new StubExploreCandidateService(
-            new ExploreCandidateResult(candidates, TotalMatched: 1)));
+            new ExploreCandidateResult(candidates, TotalMatched: 1)),
+            DisabledRerankProvider.Instance);
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(

@@ -1,3 +1,5 @@
+using RepoQL.Contracts.Embeddings;
+
 namespace RepoQL.Explore.Search;
 
 public interface IExploreSearchEngine
@@ -11,19 +13,21 @@ public interface IExploreSearchEngine
 
 /// <summary>
 /// Unified explore search engine. Single code path: _explore_candidates → optional JIT
-/// enrichment → pattern boosts → results. No parallel JIT path.
+/// enrichment → pattern boosts → rerank → results. No parallel JIT path.
 ///
 /// Purpose: Orchestrate search retrieval, JIT enrichment, and result grouping.
 /// Complexity: Candidate retrieval, JIT eligibility check, result grouping by document,
-///   pattern boost/penalty with re-sort.
+///   pattern boost/penalty with re-sort, document-level reranking.
 /// </summary>
 public sealed class ExploreSearchEngine : IExploreSearchEngine
 {
     private readonly IExploreCandidateService _candidateService;
+    private readonly IRerankProvider _rerankProvider;
 
-    public ExploreSearchEngine(IExploreCandidateService candidateService)
+    public ExploreSearchEngine(IExploreCandidateService candidateService, IRerankProvider rerankProvider)
     {
         _candidateService = candidateService ?? throw new ArgumentNullException(nameof(candidateService));
+        _rerankProvider = rerankProvider ?? throw new ArgumentNullException(nameof(rerankProvider));
     }
 
     public async Task<SearchEngineResult> SearchAsync(
@@ -82,6 +86,15 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         if (boosted)
             results.Sort((a, b) => b.RawScore.CompareTo(a.RawScore));
 
+        // Phase 5: Document-level reranking via Voyage AI
+        // Runs last so it sees JIT-corrected scores and pattern boosts.
+        // Applies a position-delta modifier: 3% per position moved, floor 0.0.
+        if (ShouldRerank(parameters, results))
+        {
+            await ApplyRerankAsync(parameters.Question!, results, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
         return new SearchEngineResult(
             results,
             TotalDocumentsMatched: candidateResult.TotalMatched,
@@ -89,6 +102,124 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             TrustSignal: null
         );
     }
+
+    // ---- Reranking ----
+
+    private const int RerankMaxDocuments = 20;
+    private const double RerankRelevanceCutoff = 0.15; // Don't send docs below 15% of top score
+    private const double RerankStepSize = 0.03; // 3% score modifier per position moved
+
+    private bool ShouldRerank(SearchParameters parameters, List<SearchResult> results)
+    {
+        if (!_rerankProvider.Enabled)
+            return false;
+        if (string.IsNullOrWhiteSpace(parameters.Question))
+            return false;
+        if (results.Count < 5)
+            return false;
+        if (parameters.Breadth >= 8)
+            return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Rerank document-level results and apply position-delta modifier in-place.
+    /// Sends headline + structure to the reranker for richer signal than the calling LLM sees.
+    /// </summary>
+    private async Task ApplyRerankAsync(
+        string query,
+        List<SearchResult> results,
+        CancellationToken cancellationToken)
+    {
+        // Select documents eligible for reranking (above relevance cutoff)
+        var topScore = results[0].RawScore;
+        var cutoff = topScore * RerankRelevanceCutoff;
+
+        var rerankCandidates = new List<(int ResultIndex, SearchResult Result)>();
+        for (var i = 0; i < results.Count && rerankCandidates.Count < RerankMaxDocuments; i++)
+        {
+            if (results[i].RawScore >= cutoff)
+                rerankCandidates.Add((i, results[i]));
+        }
+
+        if (rerankCandidates.Count < 3)
+            return;
+
+        // Build rerank documents: headline + structure for each
+        var documents = rerankCandidates.Select((c, idx) =>
+        {
+            var text = BuildRerankText(c.Result);
+            return new RerankDocument(idx, text);
+        }).ToList();
+
+        RerankResult rerankResult;
+        try
+        {
+            rerankResult = await _rerankProvider.RerankAsync(
+                query, documents, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch
+        {
+            // Reranking is best-effort — failures don't break search
+            return;
+        }
+
+        if (rerankResult.Results.Count == 0)
+            return;
+
+        // Build reranked position map: original index → new rank position
+        var rerankedPositions = new Dictionary<int, int>();
+        for (var newRank = 0; newRank < rerankResult.Results.Count; newRank++)
+        {
+            var originalIdx = rerankResult.Results[newRank].Index;
+            rerankedPositions[originalIdx] = newRank;
+        }
+
+        // Apply position-delta modifier to scores
+        for (var originalRank = 0; originalRank < rerankCandidates.Count; originalRank++)
+        {
+            if (!rerankedPositions.TryGetValue(originalRank, out var newRank))
+                continue;
+
+            var delta = originalRank - newRank; // positive = moved up
+            var modifier = 1.0 + delta * RerankStepSize;
+            modifier = Math.Max(modifier, 0.0); // floor at 0 (100% penalty cap)
+
+            var (resultIndex, result) = rerankCandidates[originalRank];
+            results[resultIndex] = result with { RawScore = result.RawScore * modifier };
+        }
+
+        // Re-sort after modifier application
+        results.Sort((a, b) => b.RawScore.CompareTo(a.RawScore));
+    }
+
+    private static string BuildRerankText(SearchResult result)
+    {
+        var parts = new List<string>(3);
+
+        if (!string.IsNullOrEmpty(result.Headline))
+            parts.Add(result.Headline);
+
+        if (!string.IsNullOrEmpty(result.Structure))
+            parts.Add(result.Structure);
+
+        // Include child object headlines for richer document representation
+        if (result.ChildObjects is { Count: > 0 })
+        {
+            var childHeadlines = result.ChildObjects
+                .Where(c => !string.IsNullOrEmpty(c.Headline))
+                .Select(c => c.Headline!)
+                .Take(10);
+            var joined = string.Join("; ", childHeadlines);
+            if (joined.Length > 0)
+                parts.Add(joined);
+        }
+
+        return string.Join("\n", parts);
+    }
+
+    // ---- JIT enrichment ----
 
     private static bool ShouldEnrichWithJit(SearchParameters parameters, IJitObjectSearchService? jitService)
     {

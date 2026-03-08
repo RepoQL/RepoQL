@@ -2,6 +2,7 @@ using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts.Embeddings;
+using ProtoRerank = RepoQL.Embedding.RerankDocument;
 
 namespace RepoQL.Embedding.Client;
 
@@ -10,7 +11,7 @@ namespace RepoQL.Embedding.Client;
 /// Complexity: Channel lifecycle, bearer token injection, proto ↔ domain mapping,
 /// and dimension validation on first call.
 /// </summary>
-public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IDisposable
+public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IRerankProvider, IDisposable
 {
     private readonly GrpcChannel _channel;
     private readonly EmbeddingService.EmbeddingServiceClient _client;
@@ -50,6 +51,7 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IDispo
     public string Model => _model ?? "unknown";
     public int Dimension => _dimension;
     public bool Enabled => true;
+    public string? Source { get; set; }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default)
         => EnsureModelInfoAsync(cancellationToken);
@@ -61,6 +63,7 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IDispo
         await EnsureModelInfoAsync(cancellationToken).ConfigureAwait(false);
 
         var request = new EmbedChunksRequest();
+        request.Source = Source ?? "";
         foreach (var group in groups)
         {
             var protoGroup = new ChunkGroup
@@ -121,9 +124,11 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IDispo
         }
 
         if (nullVectorCount > 0)
+        {
             _logger?.LogWarning(
                 "gRPC EmbedChunks: {NullCount}/{Total} embeddings had empty vectors",
                 nullVectorCount, response.Embeddings.Count);
+        }
 
         return new ContextualEmbeddingResult(vectors, response.TotalTokens);
     }
@@ -140,6 +145,53 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IDispo
             cancellationToken: cancellationToken);
 
         return response.Vector.Count > 0 ? response.Vector.ToArray() : null;
+    }
+
+    public async Task<Contracts.Embeddings.RerankResult> RerankAsync(
+        string query,
+        IReadOnlyList<Contracts.Embeddings.RerankDocument> documents,
+        int topK = 0,
+        CancellationToken cancellationToken = default)
+    {
+        var request = new RerankRequest { Query = query, TopK = topK };
+        foreach (var doc in documents)
+        {
+            request.Documents.Add(new ProtoRerank
+            {
+                Index = doc.Index,
+                Text = doc.Text
+            });
+        }
+
+        _logger?.LogInformation(
+            "gRPC Rerank request: {DocCount} documents, query length {QueryLen}",
+            documents.Count, query.Length);
+
+        RerankResponse response;
+        try
+        {
+            response = await _client.RerankAsync(
+                request,
+                headers: AuthHeaders(),
+                cancellationToken: cancellationToken);
+        }
+        catch (RpcException rpcEx)
+        {
+            _logger?.LogError(rpcEx,
+                "gRPC Rerank failed: status={Status}, detail={Detail}",
+                rpcEx.StatusCode, rpcEx.Status.Detail);
+            throw;
+        }
+
+        _logger?.LogInformation(
+            "gRPC Rerank response: {ResultCount} results, {Tokens} tokens",
+            response.Results.Count, response.TotalTokens);
+
+        var results = response.Results
+            .Select(r => new Contracts.Embeddings.RerankScore(r.Index, r.RelevanceScore))
+            .ToList();
+
+        return new Contracts.Embeddings.RerankResult(results, response.TotalTokens);
     }
 
     private async Task EnsureModelInfoAsync(CancellationToken ct)

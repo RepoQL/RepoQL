@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Reflection;
+using LibGit2Sharp;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -173,25 +174,39 @@ public static class RepoIndexerServiceCollectionExtensions
             return cache;
         });
 
-        // Remote contextual embedding provider: if embedding.remote.url is configured,
-        // register GrpcEmbeddingProvider as IContextualEmbeddingProvider.
-        // This is the primary embedding path — contextual embeddings via Voyage AI.
-        services.AddSingleton<IContextualEmbeddingProvider>(sp =>
+        // Remote embedding provider: if embedding.remote.url is configured,
+        // register GrpcEmbeddingProvider for contextual embeddings and reranking.
+        // Single shared instance — one gRPC channel serves both capabilities.
+        services.AddSingleton<RepoQL.Embedding.Client.GrpcEmbeddingProvider?>(sp =>
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
             var remote = config.Embedding.Remote;
             if (string.IsNullOrWhiteSpace(remote.Url) || string.IsNullOrWhiteSpace(remote.ApiKey))
-                return new DisabledContextualEmbeddingProvider();
+                return null;
 
             var logger = sp.GetService<ILogger<RepoQL.Embedding.Client.GrpcEmbeddingProvider>>();
             var timeout = remote.TimeoutSeconds ?? 30;
-            IContextualEmbeddingProvider provider = new RepoQL.Embedding.Client.GrpcEmbeddingProvider(
-                remote.Url, remote.ApiKey, timeout, logger);
+            return new RepoQL.Embedding.Client.GrpcEmbeddingProvider(
+                remote.Url, remote.ApiKey, timeout, logger)
+            {
+                Source = ResolveEmbeddingSource(resolvedRoot, logger)
+            };
+        });
+
+        services.AddSingleton<IContextualEmbeddingProvider>(sp =>
+        {
+            var grpc = sp.GetService<RepoQL.Embedding.Client.GrpcEmbeddingProvider>();
+            if (grpc is null)
+                return new DisabledContextualEmbeddingProvider();
 
             var embeddingCache = sp.GetRequiredService<EmbeddingCache>();
             var cacheLogger = sp.GetService<ILogger<CachingContextualEmbeddingProvider>>();
-            return new CachingContextualEmbeddingProvider(provider, embeddingCache, cacheLogger);
+            return new CachingContextualEmbeddingProvider(grpc, embeddingCache, cacheLogger);
         });
+
+        services.AddSingleton<IRerankProvider>(sp =>
+            sp.GetService<RepoQL.Embedding.Client.GrpcEmbeddingProvider>() as IRerankProvider
+            ?? DisabledRerankProvider.Instance);
 
         // Embeddings provider: local ONNX for flat (non-contextual) embedding.
         // Used for query embedding when remote is unavailable, and as the search() UDF backing.
@@ -762,6 +777,37 @@ public static class RepoIndexerServiceCollectionExtensions
         if (settings.MaxTokens is > 0)
             maxTokens = settings.MaxTokens.Value;
         return maxTokens;
+    }
+
+    private static string ResolveEmbeddingSource(string? repoRoot, ILogger? logger)
+    {
+        if (string.IsNullOrWhiteSpace(repoRoot) || !Repository.IsValid(repoRoot))
+            return "";
+
+        try
+        {
+            using var repository = new Repository(repoRoot);
+            var remoteUrl =
+                repository.Network.Remotes["origin"]?.Url
+                ?? repository.Network.Remotes.FirstOrDefault()?.Url;
+
+            if (string.IsNullOrWhiteSpace(remoteUrl))
+                return "";
+
+            var normalized = RepoQL.Embedding.Client.SourceNormalizer.Normalize(remoteUrl);
+            if (string.IsNullOrEmpty(normalized) &&
+                !remoteUrl.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            {
+                logger?.LogWarning("Failed to normalize git remote URL for embedding source: {RemoteUrl}", remoteUrl);
+            }
+
+            return normalized;
+        }
+        catch (Exception ex) when (ex is RepositoryNotFoundException or LibGit2SharpException)
+        {
+            logger?.LogWarning(ex, "Failed to resolve git remote URL for embedding source");
+            return "";
+        }
     }
 
     private static long ResolveSharedCacheSizeLimit(RepoQlConfig.CacheSettings settings)

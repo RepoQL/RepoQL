@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Explore.Search;
 
 namespace RepoQL.Rendering.Tests;
@@ -81,7 +82,8 @@ public class ExploreSearchEngineProvenanceTests
                     Confidence: 81,
                     SemProvenance: "name")
             ],
-            TotalMatched: 1)));
+            TotalMatched: 1)),
+            DisabledRerankProvider.Instance);
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
@@ -165,7 +167,8 @@ public class ExploreSearchEngineProvenanceTests
         };
 
         var searchEngine = new ExploreSearchEngine(new StubExploreCandidateService(
-            new ExploreCandidateResult(originalCandidates, TotalMatched: 1)));
+            new ExploreCandidateResult(originalCandidates, TotalMatched: 1)),
+            DisabledRerankProvider.Instance);
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
