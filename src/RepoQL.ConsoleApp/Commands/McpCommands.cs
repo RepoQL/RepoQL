@@ -5,12 +5,10 @@ using RepoQL.Commands;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Tools;
-using ConsoleAppFramework;
 using RepoQL.ConsoleApp.Logging;
 
 namespace RepoQL.ConsoleApp.Commands;
 
-[RegisterCommands]
 internal class McpCommands
 {
     /// <summary>
@@ -35,8 +33,7 @@ internal class McpCommands
                 consoleLogOptions.LogToStandardErrorThreshold = LogLevel.Trace;
             });
 
-            builder.Services.AddRepoQlConsoleServices();
-            builder.Services.AddSingleton<RepoResourceService>();
+            builder.Services.AddRepoQlMcpServices();
 
             builder.Services
                 .AddMcpServer(s =>

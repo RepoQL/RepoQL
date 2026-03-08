@@ -1,20 +1,17 @@
 using Grpc.Core;
 using JetBrains.Annotations;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using OpenTelemetry;
-using OpenTelemetry.Trace;
 using Spectre.Console;
+using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Helpers;
+using RepoQL.ConsoleApp.Logging;
 using ConsoleAppFramework;
 
-// Defaults to 80 :(
 AnsiConsole.Profile.Width = 1000;
 
-// Disable ANSI colors when running as MCP server to prevent JSON-RPC corruption
-// (ANSI escape codes in stdout corrupt the JSON protocol)
 var isMcpMode = args.Any(a => a.Equals("mcp", StringComparison.OrdinalIgnoreCase));
 if (isMcpMode)
 {
@@ -25,8 +22,6 @@ if (isMcpMode)
     if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("REPOQL_IMPLICIT_SOURCE")))
         Environment.SetEnvironmentVariable("REPOQL_IMPLICIT_SOURCE", "mcp");
 
-    // Force auto-flush on stdout to prevent WSL buffering delays
-    // This ensures JSON-RPC responses are sent immediately
     Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
 }
 
@@ -38,55 +33,232 @@ if (!string.IsNullOrWhiteSpace(explicitWorkingDirectory) &&
     Environment.CurrentDirectory = explicitWorkingDirectory;
 }
 
-var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
+Environment.ExitCode = await RunAsync(args, isMcpMode).ConfigureAwait(false);
+
+static async Task<int> RunAsync(string[] commandLineArgs, bool isMcpMode)
 {
-    ApplicationName = "RepoQL", 
-    Args = args
-});
-
-builder.Configuration
-    .AddEnvironmentVariables()
-    .AddCommandLine(args);
-builder.Logging.ClearProviders();
-builder.Logging.AddOpenTelemetry();
-builder.Services.AddRepoQlConsoleServices(ShouldPrewarmClient(args));
-builder.Services.AddOpenTelemetry()
-    .WithTracing(t => t
-        .AddSource("RepoQL.*")
-        .AddAspNetCoreInstrumentation())
-    .UseOtlpExporter();
-
-var app = builder.ToConsoleAppBuilder();
-
-app.UseFilter<ExceptionLoggingFilter>();
-
-await app.RunAsync(args);
-
-static bool ShouldPrewarmClient(string[] commandLineArgs)
-{
-    foreach (var arg in commandLineArgs)
+    try
     {
-        if (string.IsNullOrWhiteSpace(arg))
-            continue;
-        if (arg.StartsWith('-'))
-            continue;
-
-        var normalized = arg.ToLowerInvariant();
-        return normalized switch
+        var mode = StartupMode.Parse(commandLineArgs);
+        switch (mode.Kind)
         {
-            "serve" => false,
-            "query" => true,
-            "explore" => true,
-            "read" => true,
-            "import" => true,
-            "reindex" => true,
-            "mcp" => true,
-            _ => false
-        };
+            case StartupKind.RootHelp:
+                WriteRootHelp();
+                return 0;
+
+            case StartupKind.Version:
+                Console.WriteLine(HostLogging.GetHostVersion());
+                return 0;
+
+            case StartupKind.Serve:
+                return await RunServeAsync(mode.RemainingArgs).ConfigureAwait(false);
+
+            case StartupKind.Mcp:
+                return await RunMcpAsync(mode.RemainingArgs).ConfigureAwait(false);
+
+            default:
+                return await RunCliAsync(commandLineArgs).ConfigureAwait(false);
+        }
+    }
+    catch (RpcException rpcEx)
+    {
+        await WriteErrorAsync(rpcEx.Status.Detail, isMcpMode).ConfigureAwait(false);
+        return 1;
+    }
+    catch (Exception ex)
+    {
+        await WriteErrorAsync(ex.GetBaseException().ToString(), isMcpMode).ConfigureAwait(false);
+        return 1;
+    }
+}
+
+static async Task<int> RunServeAsync(string[] args)
+{
+    if (args.Any(IsHelpFlag))
+    {
+        WriteServeHelp();
+        return 0;
     }
 
-    return false;
+    var options = ParseServeOptions(args);
+    var command = new HostCommands(AnsiConsole.Console);
+    await command.Serve(options.Repository, options.ImplicitStart).ConfigureAwait(false);
+    return 0;
 }
+
+static async Task<int> RunMcpAsync(string[] args)
+{
+    if (args.Any(IsHelpFlag))
+    {
+        WriteMcpHelp();
+        return 0;
+    }
+
+    if (args.Length > 0)
+        throw new ArgumentException($"Unknown arguments for mcp: {string.Join(' ', args)}");
+
+    var command = new McpCommands();
+    await command.Mcp().ConfigureAwait(false);
+    return 0;
+}
+
+static async Task<int> RunCliAsync(string[] args)
+{
+    var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
+    {
+        ApplicationName = "RepoQL",
+        Args = args
+    });
+
+    builder.Configuration
+        .AddEnvironmentVariables()
+        .AddCommandLine(args);
+    builder.Logging.ClearProviders();
+    builder.Services.AddRepoQlCliServices();
+
+    var app = builder.ToConsoleAppBuilder();
+    app.UseFilter<ExceptionLoggingFilter>();
+
+    await app.RunAsync(args).ConfigureAwait(false);
+    return 0;
+}
+
+static ServeOptions ParseServeOptions(string[] args)
+{
+    string? repository = null;
+    var implicitStart = false;
+
+    for (var i = 0; i < args.Length; i++)
+    {
+        var arg = args[i];
+        if (string.IsNullOrWhiteSpace(arg))
+            continue;
+
+        switch (arg)
+        {
+            case "--implicit-start":
+                implicitStart = true;
+                continue;
+
+            case "--repository":
+            case "-r":
+                if (i + 1 >= args.Length)
+                    throw new ArgumentException("Missing value for --repository.");
+
+                repository = args[++i];
+                continue;
+        }
+
+        if (arg.StartsWith("--repository=", StringComparison.OrdinalIgnoreCase))
+        {
+            repository = arg["--repository=".Length..];
+            continue;
+        }
+
+        if (arg.Length > 0 && arg[0] == '-')
+            throw new ArgumentException($"Unknown serve option '{arg}'.");
+
+        if (repository is not null)
+            throw new ArgumentException($"Unexpected extra serve argument '{arg}'.");
+
+        repository = arg;
+    }
+
+    return new ServeOptions(repository, implicitStart);
+}
+
+static bool IsHelpFlag(string value)
+    => value is "-h" or "--help";
+
+static void WriteRootHelp()
+{
+    Console.WriteLine(
+        "Usage: repoql [command] [options]\n" +
+        "\n" +
+        "Commands:\n" +
+        "  serve      Start the RepoQL host and keep it running.\n" +
+        "  mcp        Run RepoQL as an MCP server.\n" +
+        "  query      Execute DuckDB SQL or a ::command.\n" +
+        "  explore    Search and explore the repository.\n" +
+        "  explain    Ask a question about the repository.\n" +
+        "  read       Read repository content with budget control.\n" +
+        "  import     Import or remove an external repository.\n" +
+        "  install    Install RepoQL as an MCP server for AI agents.\n" +
+        "\n" +
+        "Flags:\n" +
+        "  -h, --help     Show this help message.\n" +
+        "  --version      Show the RepoQL version.\n" +
+        "\n" +
+        "Run 'repoql <command> --help' for command-specific help.");
+}
+
+static void WriteServeHelp()
+{
+    Console.WriteLine(
+        "Usage: repoql serve [repository] [--repository PATH] [--implicit-start]\n" +
+        "\n" +
+        "Start the RepoQL host for a repository and keep it running.\n" +
+        "\n" +
+        "Options:\n" +
+        "  [repository]       Repository root to serve. Defaults to the current directory.\n" +
+        "  --repository PATH  Explicit repository root to serve.\n" +
+        "  --implicit-start   Marks the host launch as client-triggered.\n" +
+        "  -h, --help         Show this help message.");
+}
+
+static void WriteMcpHelp()
+{
+    Console.WriteLine(
+        "Usage: repoql mcp\n" +
+        "\n" +
+        "Run RepoQL as an MCP server over stdio.\n" +
+        "\n" +
+        "Options:\n" +
+        "  -h, --help   Show this help message.");
+}
+
+static async Task WriteErrorAsync(string message, bool isMcpMode)
+{
+    if (isMcpMode)
+        await Console.Error.WriteLineAsync(message).ConfigureAwait(false);
+    else
+        AnsiConsole.Console.WriteLine(message, Color.Red);
+}
+
+internal enum StartupKind
+{
+    RootHelp,
+    Version,
+    Serve,
+    Mcp,
+    Cli
+}
+
+internal readonly record struct StartupMode(StartupKind Kind, string[] RemainingArgs)
+{
+    public static StartupMode Parse(string[] args)
+    {
+        if (args.Length == 0)
+            return new StartupMode(StartupKind.RootHelp, []);
+
+        var first = args[0];
+        if (first is "-h" or "--help")
+            return new StartupMode(StartupKind.RootHelp, args[1..]);
+
+        if (string.Equals(first, "--version", StringComparison.OrdinalIgnoreCase))
+            return new StartupMode(StartupKind.Version, args[1..]);
+
+        if (string.Equals(first, "serve", StringComparison.OrdinalIgnoreCase))
+            return new StartupMode(StartupKind.Serve, args[1..]);
+
+        if (string.Equals(first, "mcp", StringComparison.OrdinalIgnoreCase))
+            return new StartupMode(StartupKind.Mcp, args[1..]);
+
+        return new StartupMode(StartupKind.Cli, args);
+    }
+}
+
+internal readonly record struct ServeOptions(string? Repository, bool ImplicitStart);
 
 [UsedImplicitly]
 internal class ExceptionLoggingFilter(ConsoleAppFramework.ConsoleAppFilter next, IAnsiConsole console) : ConsoleAppFramework.ConsoleAppFilter(next)
@@ -99,7 +271,6 @@ internal class ExceptionLoggingFilter(ConsoleAppFramework.ConsoleAppFilter next,
         }
         catch (RpcException rpcEx)
         {
-            // In MCP mode, write errors to stderr to avoid corrupting JSON-RPC on stdout
             if (IsMcpMode(context))
                 await Console.Error.WriteLineAsync(rpcEx.Status.Detail);
             else
@@ -107,7 +278,6 @@ internal class ExceptionLoggingFilter(ConsoleAppFramework.ConsoleAppFilter next,
         }
         catch (Exception e)
         {
-            // In MCP mode, write errors to stderr to avoid corrupting JSON-RPC on stdout
             if (IsMcpMode(context))
                 await Console.Error.WriteLineAsync(e.GetBaseException().ToString());
             else

@@ -37,12 +37,10 @@ using RepoQL.Read;
 using RepoQL.Explore.Search;
 using Serilog;
 using Spectre.Console;
-using ConsoleAppFramework;
 using Microsoft.Extensions.Configuration;
 
 namespace RepoQL.ConsoleApp.Commands;
 
-[RegisterCommands]
 internal class HostCommands(IAnsiConsole console)
 {
     public async Task Serve(string? repository = null, bool implicitStart = false)

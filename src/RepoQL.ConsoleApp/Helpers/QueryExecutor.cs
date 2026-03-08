@@ -13,7 +13,6 @@ internal sealed class QueryExecutor
     {
         _formatterFactory = formatterFactory;
         _clientProvider = clientProvider;
-        _ = _clientProvider.EnsureStarted();
     }
 
     public async Task<QueryExecutionResult> ExecuteAsync(
