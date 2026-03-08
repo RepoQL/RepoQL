@@ -465,3 +465,85 @@ public class SearchMacroEmbeddingDimensionTests : IDisposable
         results.Select(r => r.uri).Should().Contain(_uriBad);
     }
 }
+
+public class SearchSemanticCalibrationMacroTests : IDisposable
+{
+    private readonly ServiceProvider _serviceProvider;
+    private readonly DuckDbDataStore _store;
+
+    public SearchSemanticCalibrationMacroTests()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<IEmbeddingProvider>(new DisabledTestEmbeddingProvider());
+        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IMcpToolCaller?>(_ => null);
+        services.AddSingleton<UriRegistry>();
+        _serviceProvider = services.BuildServiceProvider();
+        _store = new DuckDbDataStore(serviceProvider: _serviceProvider);
+    }
+
+    public void Dispose()
+    {
+        _store?.Dispose();
+        _serviceProvider?.Dispose();
+    }
+
+    private sealed class DisabledTestEmbeddingProvider : IEmbeddingProvider
+    {
+        public bool Enabled => false;
+        public string Model => "test-disabled";
+        public int Dimension => 1024;
+        public Task<float[]?> EmbedQueryAsync(string text, CancellationToken ct = default) => Task.FromResult<float[]?>(null);
+        public Task<float[]?> EmbedPassageAsync(string text, CancellationToken ct = default) => Task.FromResult<float[]?>(null);
+        public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+    }
+
+    [Test]
+    public void SemQueryConfidence_FadesFlatSemanticDistributions()
+    {
+        var result = _store.Read(
+            """
+            SELECT
+                sem_calibrate(0.149, 1024) AS noise_base,
+                sem_query_confidence(0.149, 0.100, 556, 1024) AS noise_conf,
+                sem_calibrate(0.149, 1024) * sem_query_confidence(0.149, 0.100, 556, 1024) AS noise_final,
+                sem_calibrate(0.378, 1024) AS strong_base,
+                sem_query_confidence(0.378, 0.171, 556, 1024) AS strong_conf,
+                sem_calibrate(0.378, 1024) * sem_query_confidence(0.378, 0.171, 556, 1024) AS strong_final
+            """,
+            r => new
+            {
+                NoiseBase = r.GetDouble(0),
+                NoiseConf = r.GetDouble(1),
+                NoiseFinal = r.GetDouble(2),
+                StrongBase = r.GetDouble(3),
+                StrongConf = r.GetDouble(4),
+                StrongFinal = r.GetDouble(5)
+            })[0];
+
+        result.NoiseBase.Should().BeApproximately(0.283, 0.001);
+        result.NoiseConf.Should().BeApproximately(0.272, 0.001);
+        result.NoiseFinal.Should().BeLessThan(0.10, "flat semantic distributions should not dominate hybrid scoring");
+
+        result.StrongBase.Should().BeApproximately(0.829, 0.001);
+        result.StrongConf.Should().BeApproximately(1.0, 0.001);
+        result.StrongFinal.Should().BeApproximately(result.StrongBase, 0.001,
+            "well-separated semantic results should keep their calibrated weight");
+    }
+
+    [Test]
+    public void SemQueryConfidence_SkipsContrastGateForTinyCandidateSets()
+    {
+        var confidence = _store.Read(
+            "SELECT sem_query_confidence(0.149, 0.149, 4, 1024)",
+            r => r.GetDouble(0))[0];
+
+        confidence.Should().BeApproximately(1.0, 0.001,
+            "tiny candidate sets do not have stable percentiles and should not be suppressed");
+    }
+}

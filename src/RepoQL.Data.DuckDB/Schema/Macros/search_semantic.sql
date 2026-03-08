@@ -188,12 +188,33 @@ limited AS (
     QUALIFY sem_rank <= (SELECT limit_cand FROM params)
 ),
 
-normalized AS (
+sem_stats AS (
+    SELECT
+        COUNT(*) AS candidate_count,
+        MAX(sem_score) AS top_sem,
+        quantile_cont(sem_score, 0.90) AS p90_sem
+    FROM limited
+),
+
+calibrated AS (
     SELECT
         l.*,
-        sem_cubed_boost(l.sem_score) AS sem_norm,
-        rrf_score(l.sem_rank) AS rrf_sem
+        sem_calibrate(l.sem_score, (SELECT query_dim FROM vss_ready)) AS sem_base_norm,
+        sem_query_confidence(
+            (SELECT top_sem FROM sem_stats),
+            (SELECT p90_sem FROM sem_stats),
+            (SELECT candidate_count FROM sem_stats),
+            (SELECT query_dim FROM vss_ready)
+        ) AS sem_query_conf
     FROM limited l
+),
+
+normalized AS (
+    SELECT
+        c.*,
+        c.sem_base_norm * c.sem_query_conf AS sem_norm,
+        rrf_score(c.sem_rank) AS rrf_sem
+    FROM calibrated c
 )
 
 SELECT

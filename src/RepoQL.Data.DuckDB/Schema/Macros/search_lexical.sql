@@ -30,6 +30,7 @@ filtered AS (
     SELECT
         sf.node_id,
         sf.doc_id,
+        doc.artifact_id AS doc_artifact_id,
         -- search_key: lowercase document path
         LOWER(REPLACE(repository_uri_container(
             COALESCE(n.uri, doc.uri, 'repoql://unknown')
@@ -65,7 +66,7 @@ filtered AS (
         )) AS symbol_key
     FROM _lex_scope sf
     JOIN node n ON n.id = sf.node_id
-    LEFT JOIN node doc ON doc.id = sf.doc_id AND n.kind <> 'document'
+    LEFT JOIN node doc ON doc.id = sf.doc_id
     LEFT JOIN artifact a ON a.id = COALESCE(
         CASE WHEN n.kind = 'document' THEN n.artifact_id END,
         doc.artifact_id
@@ -112,9 +113,8 @@ score_source AS (
         TRY_CAST(match_score(p.keywords_lc, ri.search_key) AS DOUBLE) AS fuzz
     FROM filtered ri
     CROSS JOIN params p
-    -- Join to artifact for body position check (documents have artifact_id via doc node)
-    LEFT JOIN node doc ON doc.id = ri.doc_id
-    LEFT JOIN artifact art ON art.id = doc.artifact_id
+    -- Join to artifact for body position check via the document artifact resolved in filtered
+    LEFT JOIN artifact art ON art.id = ri.doc_artifact_id
     WHERE p.keywords_empty = FALSE
 ),
 

@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json.Nodes;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
@@ -159,6 +160,138 @@ public sealed class FindCandidatesMacroTests : IDisposable
         rows.Select(r => r["uri"]?.ToString()).Should().BeEquivalentTo([docA.Uri, docB.Uri]);
     }
 
+    [Test]
+    public void SearchLexical_BodyMatch_FindsDocumentWithoutExtraDocJoinFilter()
+    {
+        var doc = CreateDocument(
+            "file:///src/body-match.cs",
+            "namespace Demo;\nclass BodyMatch { const string Marker = \"specialwidgetbody\"; }\n");
+
+        var rows = _store.Query("""
+            SELECT node_id, doc_id
+            FROM _search_lexical(
+                'specialwidgetbody',
+                uri_glob := 'file:///src/body-match.cs'
+            )
+            """);
+
+        rows.Should().HaveCount(1);
+        Guid.Parse(rows[0]["node_id"]!.ToString()!).Should().Be(doc.Id);
+        Guid.Parse(rows[0]["doc_id"]!.ToString()!).Should().Be(doc.Id);
+    }
+
+    [Test]
+    public void SearchCandidates_EnrichesChildNodeMetadata_WithSimpleDocumentJoins()
+    {
+        var doc = CreateDocumentWithChild(
+            "file:///src/widget.cs",
+            """
+            namespace Demo;
+            class Widget
+            {
+                void Run() { }
+            }
+            """,
+            "Demo.Widget.Run",
+            startLine: 4,
+            endLine: 4);
+
+        var rows = _store.Read("""
+            SELECT kind, uri, path, line_start, line_end
+            FROM _search_candidates(
+                'Demo.Widget.Run',
+                k := 10,
+                uri_glob := 'file:///src/widget.cs'
+            )
+            ORDER BY score DESC, uri
+            """,
+            r => new
+            {
+                Kind = r.GetString(0),
+                Uri = r.GetString(1),
+                Path = r.GetString(2),
+                LineStart = r.IsDBNull(3) ? (int?)null : r.GetInt32(3),
+                LineEnd = r.IsDBNull(4) ? (int?)null : r.GetInt32(4)
+            });
+
+        rows.Should().ContainSingle(r => r.Uri == doc.ChildUri);
+        var child = rows.Single(r => r.Uri == doc.ChildUri);
+        child.Kind.Should().Be("csharp.member");
+        child.Path.Should().Be(doc.DocumentUri);
+        child.LineStart.Should().Be(4);
+        child.LineEnd.Should().Be(4);
+    }
+
+    [Test]
+    public void Related_EnrichesChildNodeMetadata_WithSimpleDocumentJoins()
+    {
+        var seed = CreateDocument(
+            "file:///src/seed.cs",
+            "namespace Demo;\nclass Seed { }\n");
+
+        var relatedDoc = CreateDocumentWithChild(
+            "file:///src/widget-helper.cs",
+            """
+            namespace Demo;
+            class WidgetHelper
+            {
+                void Run() { }
+            }
+            """,
+            "Demo.WidgetHelper.Run",
+            startLine: 4,
+            endLine: 4);
+
+        _store.WriteEmbeddings(
+        [
+            new DocumentEmbedding(
+                seed.Id,
+                seed.Id,
+                0,
+                DocumentEmbedding.TypeFull,
+                seed.Uri,
+                DocumentEmbedding.ScopeDocument,
+                [1f, 0f, 0f, 0f],
+                "test",
+                4),
+            new DocumentEmbedding(
+                relatedDoc.DocumentId,
+                relatedDoc.ChildId,
+                0,
+                DocumentEmbedding.TypeFull,
+                relatedDoc.ChildUri,
+                DocumentEmbedding.ScopeObject,
+                [1f, 0f, 0f, 0f],
+                "test",
+                4)
+        ]);
+
+        var rows = _store.Read("""
+            SELECT kind, uri, path, line_start, line_end
+            FROM related(
+                'file:///src/seed.cs',
+                k := 10,
+                uri_glob := 'file:///src/widget-helper.cs'
+            )
+            ORDER BY score DESC, uri
+            """,
+            r => new
+            {
+                Kind = r.GetString(0),
+                Uri = r.GetString(1),
+                Path = r.GetString(2),
+                LineStart = r.IsDBNull(3) ? (int?)null : r.GetInt32(3),
+                LineEnd = r.IsDBNull(4) ? (int?)null : r.GetInt32(4)
+            });
+
+        rows.Should().ContainSingle(r => r.Uri == relatedDoc.ChildUri);
+        var child = rows.Single(r => r.Uri == relatedDoc.ChildUri);
+        child.Kind.Should().Be("csharp.member");
+        child.Path.Should().Be(relatedDoc.DocumentUri);
+        child.LineStart.Should().Be(4);
+        child.LineEnd.Should().Be(4);
+    }
+
     private DocumentInfo CreateDocument(string uri, string content)
     {
         var docId = Guid.NewGuid();
@@ -196,7 +329,88 @@ public sealed class FindCandidatesMacroTests : IDisposable
         return new DocumentInfo(docId, uri);
     }
 
+    private DocumentWithChildInfo CreateDocumentWithChild(
+        string documentUri,
+        string content,
+        string symbol,
+        int startLine,
+        int endLine)
+    {
+        var parsedDocumentUri = RepoUri.Parse(documentUri);
+        var documentId = Guid.NewGuid();
+        var artifactId = Guid.NewGuid();
+        var childId = Guid.NewGuid();
+        var spanId = Guid.NewGuid();
+        var symbolUri = RepoUri.FromSymbol(parsedDocumentUri.Container, symbol, startLine, endLine);
+
+        _store.IndexArtifact(new ParsedArtifact
+        {
+            Artifact = new Artifact
+            {
+                Id = artifactId,
+                Digest = $"sha256:{Guid.NewGuid():N}",
+                Size = content.Length,
+                Text = content,
+                Headline = Path.GetFileName(documentUri),
+                Summary = "test",
+                Structure = symbol,
+                MediaType = SemanticMediaType.Parse("text/x-csharp")
+            },
+            DocumentNode = new Node
+            {
+                Id = documentId,
+                Kind = "document",
+                Uri = parsedDocumentUri,
+                ArtifactId = artifactId,
+                Props = new JsonObject()
+            },
+            Children =
+            [
+                new Node
+                {
+                    Id = childId,
+                    Kind = "csharp.member",
+                    Uri = symbolUri,
+                    SpanId = spanId,
+                    Headline = "Run",
+                    Props = new JsonObject
+                    {
+                        ["name"] = "Run",
+                        ["symbol"] = symbol
+                    }
+                }
+            ],
+            Spans =
+            [
+                new Span
+                {
+                    Id = spanId,
+                    DocumentId = documentId,
+                    StartLine = startLine,
+                    EndLine = endLine,
+                    StartColumn = 1,
+                    EndColumn = 15
+                }
+            ],
+            Edges =
+            [
+                new Edge
+                {
+                    SrcId = documentId,
+                    DstId = childId,
+                    Type = "HAS_PART",
+                    IsComposition = true,
+                    Ordinal = 0
+                }
+            ]
+        });
+
+        return new DocumentWithChildInfo(documentId, childId, documentUri, symbolUri.ToString()!);
+    }
+
     private sealed record DocumentInfo(Guid Id, string Uri);
+
+    private sealed record DocumentWithChildInfo(Guid DocumentId, Guid ChildId, string DocumentUri, string ChildUri);
 
     private sealed class DeterministicEmbeddingProvider : IEmbeddingProvider
     {

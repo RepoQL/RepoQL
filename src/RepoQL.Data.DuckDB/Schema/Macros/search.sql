@@ -166,8 +166,8 @@ enriched AS (
     FROM final_nodes fn
     JOIN _sc_scope sf ON sf.node_id = fn.fn_node_id
     JOIN node n ON n.id = fn.fn_node_id
-    LEFT JOIN span sp ON sp.id = n.span_id AND n.kind <> 'document'
-    LEFT JOIN node doc ON doc.id = sf.doc_id AND n.kind <> 'document'
+    LEFT JOIN span sp ON sp.id = n.span_id
+    LEFT JOIN node doc ON doc.id = sf.doc_id
     LEFT JOIN artifact a ON a.id = COALESCE(
         CASE WHEN n.kind = 'document' THEN n.artifact_id END,
         doc.artifact_id
@@ -349,7 +349,7 @@ scoring_candidates AS (
         LOWER(REPLACE(repository_uri_container(COALESCE(n.uri, doc.uri, 'unknown')), '\\', '/')) AS search_key
     FROM _rel_scope sf
     JOIN node n ON n.id = sf.node_id
-    LEFT JOIN node doc ON doc.id = sf.doc_id AND n.kind <> 'document'
+    LEFT JOIN node doc ON doc.id = sf.doc_id
     LEFT JOIN document_embedding de ON de.node_id = sf.node_id
         AND de.embedding_type = 'full' AND de.chunk_index = 0
 ),
@@ -457,8 +457,8 @@ enriched_final AS (
         json_object('mode', bp_out.requested_mode, 'seed_uri', bp_out.seed) AS explain_json
     FROM final f
     JOIN node n ON n.id = f.node_id
-    LEFT JOIN span sp ON sp.id = n.span_id AND n.kind <> 'document'
-    LEFT JOIN node doc ON doc.id = f.doc_id AND n.kind <> 'document'
+    LEFT JOIN span sp ON sp.id = n.span_id
+    LEFT JOIN node doc ON doc.id = f.doc_id
     LEFT JOIN artifact a ON a.id = COALESCE(
         CASE WHEN n.kind = 'document' THEN n.artifact_id END,
         doc.artifact_id
