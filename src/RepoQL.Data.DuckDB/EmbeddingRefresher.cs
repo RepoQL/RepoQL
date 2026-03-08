@@ -860,7 +860,9 @@ public sealed class EmbeddingRefresher
     // Voyage API context window is 32k tokens per group (context + all chunks).
     // Conservative estimate: ~3 chars/token for code → 90k chars ≈ 30k tokens.
     // Documents with many chunks must be split across multiple groups.
-    internal const int MaxContextualGroupChars = 90_000;
+    // Voyage context window is 32K tokens per group. Dense code tokenizes at ~2 chars/token
+    // (worst case: braces, operators, short identifiers). 60K chars ≈ 30K tokens — safe margin.
+    internal const int MaxContextualGroupChars = 60_000;
 
     private async Task<float[]?[]> EmbedContextualAsync(
         List<PendingDocument> pendingDocs, int totalItems, CancellationToken ct)
