@@ -21,9 +21,11 @@ public static class PatternBooster
     /// Apply pattern boosts to search results.
     /// Each match applies 110% boost (compounding).
     /// </summary>
-    public static void ApplyBoosts(IList<SearchResult> results, IReadOnlyList<Regex> patterns)
+    public static bool ApplyBoosts(IList<SearchResult> results, IReadOnlyList<Regex> patterns)
     {
-        if (patterns.Count == 0) return;
+        if (patterns.Count == 0) return false;
+
+        var changed = false;
 
         for (var i = 0; i < results.Count; i++)
         {
@@ -35,8 +37,11 @@ public static class PatternBooster
             {
                 var boost = Math.Pow(BoostMultiplier, matchCount);
                 results[i] = result with { RawScore = result.RawScore * boost };
+                changed = true;
             }
         }
+
+        return changed;
     }
 
     /// <summary>
@@ -63,9 +68,11 @@ public static class PatternBooster
     /// Apply pattern penalties to search results.
     /// Each match applies 50% penalty (de-ranking).
     /// </summary>
-    public static void ApplyPenalties(IList<SearchResult> results, IReadOnlyList<Regex> patterns)
+    public static bool ApplyPenalties(IList<SearchResult> results, IReadOnlyList<Regex> patterns)
     {
-        if (patterns.Count == 0) return;
+        if (patterns.Count == 0) return false;
+
+        var changed = false;
 
         for (var i = 0; i < results.Count; i++)
         {
@@ -77,8 +84,11 @@ public static class PatternBooster
             {
                 var penalty = Math.Pow(PenalizeMultiplier, matchCount);
                 results[i] = result with { RawScore = result.RawScore * penalty };
+                changed = true;
             }
         }
+
+        return changed;
     }
 
     private static int CountMatches(string searchText, IReadOnlyList<Regex> patterns)

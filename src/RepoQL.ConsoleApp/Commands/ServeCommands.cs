@@ -163,6 +163,7 @@ internal class HostCommands(IAnsiConsole console)
             // Search services for ExploreOrchestrator (server-side, using DuckDbDataStore directly)
             builder.Services.AddSingleton<IDocumentSearchService, DocumentSearchService>();
             builder.Services.AddSingleton<IObjectSearchService, ObjectSearchService>();
+            builder.Services.AddSingleton<IExploreCandidateService, ExploreCandidateService>();
             builder.Services.AddSingleton<IExploreSearchEngine, ExploreSearchEngine>();
             // JIT object search uses local ONNX for fast JIT embeddings
             builder.Services.AddSingleton<IJitObjectSearchService>(sp =>

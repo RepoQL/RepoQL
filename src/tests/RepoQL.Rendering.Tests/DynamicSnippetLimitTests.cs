@@ -77,16 +77,9 @@ public class DynamicSnippetLimitTests
     public async Task Given_StandardSearch_When_BreadthIsBalanced_Then_UsesDynamicSnippetLimit()
     {
         var documentUri = "file:///repo/sample.cs";
-        var documents = new List<DocumentMatch>
-        {
-            new(documentUri, "Doc", null, null, "cs", null, 100)
-        };
-        var objects = CreateObjectMatches(documentUri, 5);
-
-        var documentSearch = new StubDocumentSearchService(
-            new DocumentSearchResult(documents, new Dictionary<string, IReadOnlyList<ChunkScore>>()));
-        var objectSearch = new StubObjectSearchService(objects);
-        var searchEngine = new ExploreSearchEngine(documentSearch, objectSearch);
+        var candidates = CreateCandidates(documentUri, 5);
+        var searchEngine = new ExploreSearchEngine(new StubExploreCandidateService(
+            new ExploreCandidateResult(candidates, TotalMatched: 1)));
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
@@ -144,8 +137,7 @@ public class DynamicSnippetLimitTests
             });
 
         var searchEngine = new ExploreSearchEngine(
-            new StubDocumentSearchService(new DocumentSearchResult([], new Dictionary<string, IReadOnlyList<ChunkScore>>())),
-            new StubObjectSearchService([]));
+            new StubExploreCandidateService(new ExploreCandidateResult([], TotalMatched: 0)));
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
@@ -164,6 +156,60 @@ public class DynamicSnippetLimitTests
         document.ChildObjects.Should().NotBeNull();
         document.ChildObjects!.Count(c => c.Snippet is not null).Should().Be(5);
         document.ChildObjects.Count(c => c.Snippet is null).Should().Be(1);
+    }
+
+    private static List<ExploreCandidate> CreateCandidates(string documentUri, int count)
+    {
+        var docId = Guid.NewGuid();
+        var candidates = new List<ExploreCandidate>
+        {
+            new(
+                DocId: docId,
+                NodeId: Guid.NewGuid(),
+                Uri: documentUri,
+                Path: documentUri,
+                NodeScope: "document",
+                Kind: "document",
+                Symbol: null,
+                Lang: "cs",
+                Mime: "code",
+                Headline: "Doc",
+                Structure: null,
+                Snippet: null,
+                LineStart: null,
+                LineEnd: null,
+                BM25Score: 0,
+                FuzzyScore: 0,
+                SemScore: 0,
+                Score: 100,
+                Confidence: 80,
+                SemProvenance: "direct")
+        };
+
+        candidates.AddRange(Enumerable.Range(0, count)
+            .Select(i => new ExploreCandidate(
+                DocId: docId,
+                NodeId: Guid.NewGuid(),
+                Uri: $"{documentUri}#symbol=Method{i}",
+                Path: documentUri,
+                NodeScope: "object",
+                Kind: "cs_method",
+                Symbol: $"Method{i}",
+                Lang: "cs",
+                Mime: "code",
+                Headline: $"Method {i}",
+                Structure: null,
+                Snippet: $"snippet {i}",
+                LineStart: i + 1,
+                LineEnd: i + 2,
+                BM25Score: 0,
+                FuzzyScore: 0,
+                SemScore: 0,
+                Score: count - i,
+                Confidence: 80 - i,
+                SemProvenance: "direct")));
+
+        return candidates;
     }
 
     private static List<ObjectMatch> CreateObjectMatches(string documentUri, int count)
@@ -211,27 +257,15 @@ public class DynamicSnippetLimitTests
             .ToList();
     }
 
-    private sealed class StubDocumentSearchService(DocumentSearchResult result) : IDocumentSearchService
+    private sealed class StubExploreCandidateService(ExploreCandidateResult result) : IExploreCandidateService
     {
-        public Task<DocumentSearchResult> SearchAsync(
+        public Task<ExploreCandidateResult> SearchAsync(
+            string? query,
             string? scope,
-            string? question,
-            int limit,
+            int k,
             CancellationToken cancellationToken)
         {
             return Task.FromResult(result);
-        }
-    }
-
-    private sealed class StubObjectSearchService(IReadOnlyList<ObjectMatch> objects) : IObjectSearchService
-    {
-        public Task<IReadOnlyList<ObjectMatch>> SearchInDocumentsAsync(
-            IReadOnlyList<string> documentUris,
-            string? question,
-            int objectsPerDocument,
-            CancellationToken cancellationToken)
-        {
-            return Task.FromResult(objects);
         }
     }
 

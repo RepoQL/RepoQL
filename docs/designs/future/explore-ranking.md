@@ -238,7 +238,19 @@ Both JIT and standard paths use the same absolute confidence normalization (the 
 
 ## Alternatives Considered
 
-**LLM reranking.** Use an LLM to re-rank top-50 candidates. Adds latency and cost. Better approach: get the initial ranking right so LLM reranking isn't needed. Could be added later as an optional precision layer.
+**Neural reranking (Voyage) — rank displacement modifier.** Use Voyage's reranker API on top-30 candidates after hybrid scoring. Paying users only. The reranker does NOT replace the hybrid score — it modifies it based on rank displacement. The approach:
+
+1. Send top-N candidates (query + snippet/headline/structure) to Voyage reranker
+2. Reranker returns its own ranking
+3. For each candidate, compute displacement: `reranker_rank - hybrid_rank`
+4. Apply displacement as a score modifier: items moved up get boosted, items moved down get penalized
+5. Re-sort on modified scores
+
+This preserves the hybrid score as the primary authority. The reranker is a correction signal, not a replacement. Benefits: (a) the reranker sees actual text, catching relevance that features miss, (b) the hybrid score's structural and semantic evidence isn't thrown away, (c) a reranker timeout or failure is graceful — original ranking stands. The modifier function should be calibrated so large displacements produce proportionally larger corrections but never overwhelm the base score.
+
+The reranker fits after Phase 4 (Unified Ranking) and before Phase 5 (Budget Allocation) in the architecture diagram.
+
+**LLM reranking.** Use an LLM to re-rank top-50 candidates. Higher latency and cost than neural reranking. Consider only if Voyage reranker proves insufficient for complex natural-language queries.
 
 **Full symbol-first architecture.** Always search symbols, derive documents from symbol matches. Loses document-level queries ("find the config file") and broad inventory. The hybrid pool is better.
 
@@ -257,8 +269,10 @@ Both JIT and standard paths use the same absolute confidence normalization (the 
 
 ## Implementation Sequence
 
-### Phase 1: `_explore_candidates` SQL macro
+### Phase 1: `_explore_candidates` SQL macro ✓
 New macro alongside `_search_candidates`. Shares internals, differs in: no document collapse, dampened inheritance, chunk evidence passthrough. Build + test.
+
+**Done.** `explore_candidates.sql` — 7 tests covering unified pool, dampened inheritance, chunk overlap, document promotion, chunk evidence passthrough, scope filtering, and empty-query fallback.
 
 ### Phase 2: Scope-first in C# layer
 `ExploreSearchService` passes full glob to `_explore_candidates`. Remove `ConvertScopeToSearchLike` degradation. Build + test with scoped queries.
@@ -275,5 +289,8 @@ Standard path uses chunk scores from `_explore_candidates` output. `ChunkProximi
 ### Phase 6: Unify JIT path
 JIT becomes an enrichment step within `ExploreSearchService`, not a parallel path. Triggered after initial ranking for top uncertain candidates. Build + test.
 
-### Phase 7: Validate and switch
+### Phase 7: Voyage reranker integration (optional, paying users)
+After `_explore_candidates` returns ranked results, `ExploreSearchService` sends top-30 candidates (query + snippet/headline/structure) to Voyage's reranker API. Compute rank displacement (`reranker_rank - hybrid_rank`) and apply as a score modifier — items moved up get boosted, items moved down get penalized. The hybrid score remains the primary authority; the reranker is a correction signal. Behind feature flag. Timeout after 2s with graceful fallback to unmodified hybrid scores. Build + test.
+
+### Phase 8: Validate and switch
 Feature flag to A/B compare old vs new. Run standard test suite of explore queries. Measure: result relevance, timing, token usage. Switch default when satisfied.

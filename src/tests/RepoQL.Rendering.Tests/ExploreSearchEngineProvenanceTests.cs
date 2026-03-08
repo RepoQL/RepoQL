@@ -34,46 +34,54 @@ public class ExploreSearchEngineProvenanceTests
     public async Task Given_StandardSearch_When_ScoresAvailable_Then_ResultsIncludeProvenance()
     {
         var documentUri = "file:///repo/sample.cs";
-        var documentSearch = new StubDocumentSearchService(
-            new DocumentSearchResult(
+        var docId = Guid.NewGuid();
+        var searchEngine = new ExploreSearchEngine(new StubExploreCandidateService(
+            new ExploreCandidateResult(
             [
-                new DocumentMatch(
+                new ExploreCandidate(
+                    DocId: docId,
+                    NodeId: Guid.NewGuid(),
                     Uri: documentUri,
+                    Path: documentUri,
+                    NodeScope: "document",
+                    Kind: "document",
+                    Symbol: null,
+                    Lang: "csharp",
+                    Mime: "code.csharp",
                     Headline: "Sample",
                     Structure: null,
                     Snippet: null,
-                    Lang: "csharp",
-                    SemanticType: "code.csharp",
+                    LineStart: null,
+                    LineEnd: null,
+                    BM25Score: 0.2,
+                    FuzzyScore: 0.0,
+                    SemScore: 0.9,
                     Score: 0.9,
-                    SemanticScore: 0.9,
-                    NameHitScore: 0.0,
-                    RegexHitScore: 0.1,
-                    ChunkOverlapScore: 0.2)
+                    Confidence: 88,
+                    SemProvenance: "semantic"),
+                new ExploreCandidate(
+                    DocId: docId,
+                    NodeId: Guid.NewGuid(),
+                    Uri: $"{documentUri}#symbol=Validate",
+                    Path: documentUri,
+                    NodeScope: "object",
+                    Kind: "cs_method",
+                    Symbol: "Validate",
+                    Lang: "csharp",
+                    Mime: "code.csharp",
+                    Headline: "Validate",
+                    Structure: null,
+                    Snippet: "bool Validate() => true;",
+                    LineStart: 10,
+                    LineEnd: 11,
+                    BM25Score: 0.1,
+                    FuzzyScore: 0.95,
+                    SemScore: 0.2,
+                    Score: 0.8,
+                    Confidence: 81,
+                    SemProvenance: "name")
             ],
-            new Dictionary<string, IReadOnlyList<ChunkScore>>()));
-
-        var objectSearch = new StubObjectSearchService(
-        [
-            new ObjectMatch(
-                Uri: $"{documentUri}#symbol=Validate",
-                DocumentUri: documentUri,
-                Kind: "cs_method",
-                Symbol: "Validate",
-                Headline: "Validate",
-                Structure: null,
-                Snippet: "bool Validate() => true;",
-                LineStart: 10,
-                LineEnd: 11,
-                Lang: "csharp",
-                SemanticType: "code.csharp",
-                Score: 0.8,
-                SemanticScore: 0.2,
-                NameHitScore: 0.95,
-                RegexHitScore: 0.1,
-                ChunkOverlapScore: 0.1)
-        ]);
-
-        var searchEngine = new ExploreSearchEngine(documentSearch, objectSearch);
+            TotalMatched: 1)));
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
@@ -157,8 +165,7 @@ public class ExploreSearchEngineProvenanceTests
             });
 
         var searchEngine = new ExploreSearchEngine(
-            new StubDocumentSearchService(new DocumentSearchResult([], new Dictionary<string, IReadOnlyList<ChunkScore>>())),
-            new StubObjectSearchService([]));
+            new StubExploreCandidateService(new ExploreCandidateResult([], TotalMatched: 0)));
 
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
@@ -178,27 +185,15 @@ public class ExploreSearchEngineProvenanceTests
         documentResult.ChildObjects![0].Provenance.Should().Be("semantic");
     }
 
-    private sealed class StubDocumentSearchService(DocumentSearchResult result) : IDocumentSearchService
+    private sealed class StubExploreCandidateService(ExploreCandidateResult result) : IExploreCandidateService
     {
-        public Task<DocumentSearchResult> SearchAsync(
+        public Task<ExploreCandidateResult> SearchAsync(
+            string? query,
             string? scope,
-            string? question,
-            int limit,
+            int k,
             CancellationToken cancellationToken)
         {
             return Task.FromResult(result);
-        }
-    }
-
-    private sealed class StubObjectSearchService(IReadOnlyList<ObjectMatch> objects) : IObjectSearchService
-    {
-        public Task<IReadOnlyList<ObjectMatch>> SearchInDocumentsAsync(
-            IReadOnlyList<string> documentUris,
-            string? question,
-            int objectsPerDocument,
-            CancellationToken cancellationToken)
-        {
-            return Task.FromResult(objects);
         }
     }
 

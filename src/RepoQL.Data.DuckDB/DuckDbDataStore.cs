@@ -1490,6 +1490,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
                 "Macros/search_semantic.sql",
                 "Macros/search_debug.sql",
                 "Macros/search.sql",
+                "Macros/explore_candidates.sql",
                 "Macros/hybrid_search.sql",
                 "Macros/search_symbol.sql",
                 "Tables/file_system_mount.sql",
