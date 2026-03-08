@@ -61,7 +61,7 @@ internal sealed class DocumentSearchServiceTests
 
         // Vendor and docs are newer, but code should still rank first for inventory.
         context.SeedDocument(
-            "file:///src/RepoQL.Web/wwwroot/lib/bootstrap/bootstrap.bundle.min.js.map",
+            "file:///src/Formats/RepoQL.Formats.TypeScript/Node/node_modules/typescript/lib/typescript.js",
             "application/json;kind=json.doc",
             now,
             "Bootstrap map");
@@ -271,3 +271,4 @@ internal sealed class DocumentSearchServiceTests
         private static string EscapeSql(string value) => value.Replace("'", "''");
     }
 }
+

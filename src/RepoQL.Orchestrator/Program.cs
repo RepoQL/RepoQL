@@ -195,8 +195,6 @@ var host = builder.AddProject<RepoQL_ConsoleApp>("host", options => options.Laun
             IsHighlighted = true
         });
 
-builder.AddProject<RepoQL_Web>("web")
-    .WaitFor(host);
 
 builder.Build().Run();
 

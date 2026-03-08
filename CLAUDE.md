@@ -155,7 +155,7 @@ Beyond the schema, these subsystems are what you'll encounter building RepoQL.
 | **Embeddings** | Local ONNX model, no cloud. Vector search via DuckDB VSS. Generated during idle processing. `src/RepoQL.Embeddings/` |
 | **Snapshots** | Pre-computed indexed data shipped with binary. Makes `help://` instantly queryable on first startup. `src/RepoQL.Data.DuckDB/Snapshots/` |
 | **Command system** | `[CommandClass]` + `[Command("name")]` → auto-discovered. `::` prefix, never overlaps SQL. `src/RepoQL.Commands/` |
-| **Dashboard** | React app for "what is it doing?" Real-time status via gRPC `WatchStatus` streaming. `dashboard/` |
+| **Dashboard** | React app for "what is it doing?" Real-time status via the host dashboard event stream (`/api/events`). `dashboard/` |
 | **Observability** | OpenTelemetry throughout. Aspire in dev (`RepoQL.Orchestrator`). Logs to `.repoql/` file. Long-term: RepoQL as OTEL collector. |
 | **Agent integrations** | Claude Code plugin, clawdbot/openclaw — skills that teach agents desire paths. `integrations/` |
 
@@ -231,7 +231,6 @@ dotnet run -- --output Detailed            # Verbose output
 | `RepoQL.LLM.Client` | LLM provider abstraction for LLM-powered features |
 | `RepoQL.Templating` | Liquid templates for x-ray generation |
 | `RepoQL.Documentation` | Embedded `help://` docs — where help content lives physically |
-| `RepoQL.Web` | Blazor web UI for diagnostics and testing |
 | `RepoQL.Orchestrator` | Aspire host for development telemetry |
 | `integrations/` | Claude Code plugin, clawdbot/openclaw — skills and desire paths |
 
@@ -271,3 +270,5 @@ See `/effective-delegation` skill for the full partnership model.
 ---
 
 *Build the tool you'd never want to work without.*
+
+

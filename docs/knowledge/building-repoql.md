@@ -117,7 +117,7 @@ Pre-computed indexed data shipped with the binary. Exists so `help://` documenta
 **Go deeper:** `src/RepoQL.Data.DuckDB/Snapshots/`, `src/RepoQL.Contracts/Snapshots/`
 
 ### 16. Observability
-OpenTelemetry throughout — metrics, traces, activities. Aspire (via `RepoQL.Orchestrator`) shows telemetry in development. Logs go to `.repoql/` file for startup failures and field debugging. The dashboard (React app in `/dashboard/`) addresses "what is it doing?" with real-time status streaming via gRPC `WatchStatus`. Long-term plan: RepoQL server as an OTEL collector.
+OpenTelemetry throughout — metrics, traces, activities. Aspire (via `RepoQL.Orchestrator`) shows telemetry in development. Logs go to `.repoql/` file for startup failures and field debugging. The dashboard (React app in `/dashboard/`) addresses "what is it doing?" with real-time status via the host dashboard event stream (`/api/events`) backed by `StatusEventAggregator`. Long-term plan: RepoQL server as an OTEL collector.
 
 **Go deeper:** `dashboard/`, `src/RepoQL.Orchestrator/`, `src/RepoQL.ConsoleApp/Diagnostics/`
 
@@ -262,7 +262,6 @@ These are existential. Every feature, every PR, every design decision must be ev
 | `RepoQL.Templating` | Liquid templates for x-ray | X-ray generation |
 | `RepoQL.Grammar` | ANTLR grammar support | Parser development |
 | `RepoQL.LLM.Client` | LLM provider abstraction | LLM-powered features |
-| `RepoQL.Web` | Blazor web UI | Diagnostics, testing UI |
 | `RepoQL.Documentation` | Embedded docs (help:// source) | Adding/updating help docs |
 | `RepoQL.Orchestrator` | Aspire host for dev telemetry | Development observability |
 
@@ -289,3 +288,4 @@ Detailed vision documents live in `docs/north-star/`. Read them when working in 
 ---
 
 *You are the artisan and the user. Build the tool you'd never want to work without.*
+

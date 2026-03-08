@@ -13,10 +13,10 @@ namespace RepoQL.ConsoleApp.Host;
 
 /// <summary>
 /// Aggregates indexing events and status changes, broadcasting them as <see cref="StatusEvent"/>
-/// to all connected subscribers via server-streaming gRPC.
+/// to any connected subscriber, including the dashboard SSE bridge.
 /// </summary>
 /// <remarks>
-/// <para>Replaces polling-based status monitoring with event-driven streaming.</para>
+/// <para>Provides event-driven status updates to internal consumers that need a live stream.</para>
 /// <para>
 /// Subscribes to <see cref="IndexingEngine.StateChanged"/> for fine-grained state transitions
 /// and samples <see cref="IIndexingCoordinator.GetPipelineStatus"/> on each change.

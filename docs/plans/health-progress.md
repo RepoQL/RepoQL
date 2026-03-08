@@ -65,7 +65,7 @@ When the host is starting up, clients get a clear ready/not-ready signal via sta
 
 ### Progress Visibility (No New Tracker)
 
-- Clients rely on `WatchStatus` (stream) and `GetPipelineStatus` (poll) for progress context.
+- The dashboard relies on `/api/events` and `/api/snapshot` for progress context, while agents pull detail through SQL and tool responses.
 - No new server-side monitor/snapshotter is added for progress.
 
 ### Idle Shutdown Behavior
@@ -81,7 +81,7 @@ When the host is starting up, clients get a clear ready/not-ready signal via sta
 ### Client Integration
 
 - Client health check uses gRPC health for readiness.
-- Richer progress comes from `WatchStatus`/`GetPipelineStatus` (no new RPC required).
+- Richer progress comes from the existing dashboard event/snapshot endpoints and existing SQL diagnostics surfaces.
 
 ## Constraints
 
@@ -99,4 +99,4 @@ When the host is starting up, clients get a clear ready/not-ready signal via sta
 Health check never fails — always returns current state:
 1. If not ready, return NOT_SERVING for base service ("" and `repoql.v1.RepoQL`).
 2. If degraded, return NOT_SERVING for the relevant per-service health keys.
-3. For detail, use `WatchStatus`/`GetPipelineStatus` rather than extending health payloads.
+3. For detail, use the dashboard event/snapshot endpoints or SQL diagnostics rather than extending health payloads.

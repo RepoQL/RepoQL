@@ -502,7 +502,7 @@ public sealed class PdfLoaderTests
         Directory.CreateDirectory(tempDir);
         var filePath = Path.Combine(tempDir, fileName);
 
-        var pngBytes = File.ReadAllBytes(FindRepoImagePath());
+        var pngBytes = File.ReadAllBytes(FindTestImagePath());
 
         using var builder = new PdfDocumentBuilder();
         var page = builder.AddPage(PageSize.A4);
@@ -514,19 +514,19 @@ public sealed class PdfLoaderTests
         return new TestFileScope(filePath, tempDir);
     }
 
-    private static string FindRepoImagePath()
+    private static string FindTestImagePath()
     {
         var current = new DirectoryInfo(Directory.GetCurrentDirectory());
         while (current is not null)
         {
-            var candidate = Path.Combine(current.FullName, "src", "RepoQL.Web", "wwwroot", "favicon.png");
+            var candidate = Path.Combine(current.FullName, "src", "tests", "RepoQL.Formats.Pdf.Tests", "Resources", "test-image.png");
             if (File.Exists(candidate))
                 return candidate;
 
             current = current.Parent;
         }
 
-        throw new FileNotFoundException("Could not locate src/RepoQL.Web/wwwroot/favicon.png from test working directory.");
+        throw new FileNotFoundException("Could not locate src/tests/RepoQL.Formats.Pdf.Tests/Resources/test-image.png from test working directory.");
     }
 
     private static PdfDocumentState CreateSyntheticState(
@@ -719,3 +719,4 @@ public sealed class PdfLoaderTests
             => throw new NotSupportedException("Fake file info does not support reading.");
     }
 }
+

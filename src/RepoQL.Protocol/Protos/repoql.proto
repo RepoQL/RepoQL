@@ -40,8 +40,6 @@ service RepoQL {
   // Import an external repository (e.g., github://owner/repo). Returns after waiting for pipeline stages.
   rpc ImportRepository(ImportRequest) returns (ImportResponse);
 
-  // Retrieve the current pipeline status without blocking.
-  rpc GetPipelineStatus(GetPipelineStatusRequest) returns (GetPipelineStatusResponse);
 
   // Instruct the host process to shut down gracefully.
   rpc ShutdownHost(ShutdownHostRequest) returns (ShutdownHostResponse);
@@ -55,8 +53,6 @@ service RepoQL {
   // Read repository content with token-budget-aware representation selection.
   rpc Read(ReadRequest) returns (ReadResponse);
 
-  // Stream real-time status events. Replaces polling for live dashboard updates.
-  rpc WatchStatus(WatchStatusRequest) returns (stream StatusEvent);
 }
 
 // ----- Raw query -----
@@ -342,11 +338,6 @@ message ImportResponse {
   optional string operation_id = 7;
 }
 
-message GetPipelineStatusRequest {}
-
-message GetPipelineStatusResponse {
-  PipelineStatus status = 1;
-}
 
 message PipelineStatus {
   google.protobuf.Timestamp captured_at = 1;
@@ -579,11 +570,6 @@ message ReadResponse {
   ExploreIndexerStatus status = 7;
 }
 
-// ----- WatchStatus: real-time status streaming -----
-
-message WatchStatusRequest {
-  // Reserved for future filters (e.g., event types to subscribe to).
-}
 
 message StatusEvent {
   // Event timestamp.

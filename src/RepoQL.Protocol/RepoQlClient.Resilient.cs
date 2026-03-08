@@ -252,68 +252,6 @@ public sealed class RepoQlClient : RepoQlConnectionClient
         }
     }
 
-    public override async IAsyncEnumerable<StatusEvent> WatchStatusAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        var maxAttempts = IsManaged ? 2 : 1;
-        var attempt = 0;
-
-        while (attempt < maxAttempts)
-        {
-            var recoveryAttempted = attempt > 0;
-            try
-            {
-                await PrepareForCallAsync(recoveryAttempted, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (IsManaged && !IsUserError(ex))
-            {
-                ThrowDiagnostics(ex, recoveryAttempted, circuitBreakerOpen: _circuitBreaker.IsOpen(DateTime.UtcNow));
-            }
-
-            var client = Client ?? throw new InvalidOperationException("RepoQL client is not connected.");
-            using var call = client.WatchStatus(new WatchStatusRequest(), cancellationToken: cancellationToken);
-            var emitted = false;
-            Exception failure = new InvalidOperationException("RepoQL status stream failed unexpectedly.");
-
-            while (true)
-            {
-                bool moved;
-                try
-                {
-                    moved = await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    failure = ex;
-                    break;
-                }
-
-                if (!moved)
-                {
-                    _circuitBreaker.RecordSuccess(DateTime.UtcNow);
-                    _leaseFaulted = false;
-                    yield break;
-                }
-
-                emitted = true;
-                yield return call.ResponseStream.Current;
-            }
-
-            if (!emitted && attempt == 0 && IsManaged && ShouldAttemptReconnect(failure) && !IsUserError(failure))
-            {
-                Logger.LogWarning(failure, "RepoQlClient: status stream failed; disposing channel and retrying.");
-                DisposeChannel();
-                attempt++;
-                continue;
-            }
-
-            if (!IsUserError(failure) && IsManaged)
-            {
-                ThrowDiagnostics(failure, recoveryAttempted, circuitBreakerOpen: _circuitBreaker.IsOpen(DateTime.UtcNow));
-            }
-
-            throw failure;
-        }
-    }
 
     public override ValueTask DisposeAsync()
     {

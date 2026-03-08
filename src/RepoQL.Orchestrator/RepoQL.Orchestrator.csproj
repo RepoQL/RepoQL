@@ -15,7 +15,6 @@
     <ProjectReference Include="..\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\RepoQL.Protocol\RepoQL.Protocol.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\RepoQL.Embedding.Service\RepoQL.Embedding.Service.csproj" />
-    <ProjectReference Include="..\RepoQL.Web\RepoQL.Web.csproj" />
   </ItemGroup>
 
   <ItemGroup>

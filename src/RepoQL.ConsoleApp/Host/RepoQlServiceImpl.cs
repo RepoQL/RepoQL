@@ -44,7 +44,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly EmbeddingMode _embeddingMode;
     private readonly ExploreOrchestrator _exploreOrchestrator;
     private readonly ReadOrchestrator _readOrchestrator;
-    private readonly StatusEventAggregator _statusAggregator;
     private readonly UriRegistry? _uriRegistry;
     private readonly QueueCommandService? _queueCommandService;
     private readonly RepoQlConfig.HostSettings _hostSettings;
@@ -79,7 +78,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         IHostApplicationLifetime hostLifetime,
         ExploreOrchestrator exploreOrchestrator,
         ReadOrchestrator readOrchestrator,
-        StatusEventAggregator statusAggregator,
         RepoQlConfig config,
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
@@ -101,7 +99,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
         _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
         _readOrchestrator = readOrchestrator ?? throw new ArgumentNullException(nameof(readOrchestrator));
-        _statusAggregator = statusAggregator ?? throw new ArgumentNullException(nameof(statusAggregator));
         _uriRegistry = uriRegistry;
         _queueCommandService = queueCommandService;
         _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
@@ -1148,12 +1145,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private static string EscapeSqlLiteral(string value)
         => value.Replace("'", "''", StringComparison.Ordinal);
 
-    public override Task<GetPipelineStatusResponse> GetPipelineStatus(GetPipelineStatusRequest request, ServerCallContext context)
-    {
-        var snapshot = coordinator.GetPipelineStatus();
-        return Task.FromResult(new GetPipelineStatusResponse { Status = ToProtoStatus(snapshot) });
-    }
-
     private static ReindexProgress ToProtoProgress(ReindexProgressSnapshot snapshot)
     {
         var proto = new ReindexProgress
@@ -1342,35 +1333,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 Success = false,
                 Error = ex.Message
             };
-        }
-    }
-
-    /// <summary>
-    /// Stream real-time status events to the client. Replaces polling for live dashboard updates.
-    /// </summary>
-    public override async Task WatchStatus(
-        WatchStatusRequest request,
-        IServerStreamWriter<StatusEvent> responseStream,
-        ServerCallContext context)
-    {
-        _logger.LogDebug("Client subscribed to status stream");
-
-        try
-        {
-            await foreach (var evt in _statusAggregator.WatchAsync(context.CancellationToken).ConfigureAwait(false))
-            {
-                await responseStream.WriteAsync(evt, context.CancellationToken).ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // Client disconnected - normal
-            _logger.LogDebug("Client disconnected from status stream");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Status stream error");
-            throw;
         }
     }
 

@@ -963,13 +963,6 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
                 OperationId: response.HasOperationId ? response.OperationId : null);
         }, cancellationToken);
 
-    public Task<ProtoPipelineStatus> GetPipelineStatusAsync(CancellationToken cancellationToken = default)
-        => InvokeWithReconnectAsync(async (client, ct) =>
-        {
-            var response = await client.GetPipelineStatusAsync(new GetPipelineStatusRequest(), deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
-            return response.Status ?? new ProtoPipelineStatus();
-        }, cancellationToken);
-
     public Task<PreviewDocumentResponse> PreviewDocumentAsync(
         string uri,
         byte[]? content = null,
@@ -1055,15 +1048,3 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
             return response.ProcessId;
         }, cancellationToken);
 
-    public virtual async IAsyncEnumerable<StatusEvent> WatchStatusAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        await EnsureConnectedAsync(forceReconnect: false, cancellationToken).ConfigureAwait(false);
-        var client = _client ?? throw new InvalidOperationException("RepoQL client is not connected.");
-        using var call = client.WatchStatus(new WatchStatusRequest(), cancellationToken: cancellationToken);
-
-        while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
-        {
-            yield return call.ResponseStream.Current;
-        }
-    }
-}

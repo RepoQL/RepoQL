@@ -88,11 +88,6 @@ public interface IRepoQlClient : IAsyncDisposable
         bool analyze = false,
         CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// Retrieve the current pipeline status without blocking.
-    /// </summary>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    Task<PipelineStatus> GetPipelineStatusAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Runs the hot-path pipeline for a single document without persisting results.
@@ -155,11 +150,6 @@ public interface IRepoQlClient : IAsyncDisposable
         int tokenBudget,
         CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// Stream real-time status events from the server. Replaces polling for live dashboard updates.
-    /// </summary>
-    /// <param name="cancellationToken">Cancellation token to stop the stream.</param>
-    IAsyncEnumerable<StatusEvent> WatchStatusAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Request the host process to shut down gracefully.
