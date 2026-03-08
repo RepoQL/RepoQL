@@ -22,6 +22,7 @@ public sealed class CsvLoader : IFormatLoader, IFormatMaterializer, IFormatSchem
 {
     internal const string StateMetadataKey = "csv.state";
     private const int MaxSampleRows = 100;
+    internal const long DefaultMaxFileSizeBytes = 64 * 1024 * 1024;
 
     private static readonly SemanticMediaType CsvMediaType =
         SemanticMediaType.Create("text", "csv").WithKind("csv.table");
@@ -32,10 +33,17 @@ public sealed class CsvLoader : IFormatLoader, IFormatMaterializer, IFormatSchem
     private static readonly SemanticMediaType PsvMediaType =
         SemanticMediaType.Create("text", "plain").WithKind("data.psv");
 
+    private readonly long _maxFileSizeBytes;
+
     private readonly LiquidTemplateRenderer _renderer = new(
         assembly: typeof(CsvLoader).Assembly,
         resourceRoot: "RepoQL.Formats.Csv.Templates",
         configure: StandardFilters.RegisterAll);
+
+    public CsvLoader(long maxFileSizeBytes = DefaultMaxFileSizeBytes)
+    {
+        _maxFileSizeBytes = maxFileSizeBytes;
+    }
 
     public bool Supports(SemanticMediaType mediaType)
     {
@@ -100,17 +108,20 @@ public sealed class CsvLoader : IFormatLoader, IFormatMaterializer, IFormatSchem
         if (artifact.RepoUri is null)
             throw new InvalidOperationException("RepoUri required for CSV loader.");
 
+        ValidateFileSize(artifact.File.Length, artifact.File.Name);
+
         var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
             artifact.File,
             cancellationToken: cancellationToken).ConfigureAwait(false);
+        ValidateFileSize(loaded.ByteLength, artifact.File.Name);
 
         var text = loaded.Text;
         var delimiterResult = DelimiterDetector.Detect(text);
-        var parsedRows = ParseAllRows(text, delimiterResult.Delimiter);
-        var sampleRows = parsedRows.Take(MaxSampleRows).ToList();
+        var sampledRows = SampleRowsAndCount(text, delimiterResult.Delimiter);
+        var sampleRows = sampledRows.SampleRows;
 
         var inference = ColumnTypeInferrer.Infer(sampleRows);
-        var totalDataRows = Math.Max(0, parsedRows.Count - (inference.HasHeader ? 1 : 0));
+        var totalDataRows = Math.Max(0, sampledRows.TotalRowCount - (inference.HasHeader ? 1 : 0));
         var sampledDataRows = Math.Max(0, sampleRows.Count - (inference.HasHeader ? 1 : 0));
         var scaledColumns = ScaleColumnTokenEstimates(inference.Columns, totalDataRows, sampledDataRows);
 
@@ -313,18 +324,32 @@ public sealed class CsvLoader : IFormatLoader, IFormatMaterializer, IFormatSchem
         return null;
     }
 
-    private static List<IReadOnlyList<string>> ParseAllRows(string text, char delimiter)
+    private void ValidateFileSize(long size, string fileName)
     {
-        var rows = new List<IReadOnlyList<string>>();
+        if (size > 0 && size > _maxFileSizeBytes)
+        {
+            throw new InvalidDataException(
+                $"Delimited file '{fileName}' is {size} bytes which exceeds the {_maxFileSizeBytes} byte safety limit.");
+        }
+    }
+
+    private static SampledRows SampleRowsAndCount(string text, char delimiter)
+    {
+        var sampleRows = new List<IReadOnlyList<string>>(MaxSampleRows);
+        var totalRowCount = 0;
         using var reader = new StringReader(text);
 
         string? line;
         while ((line = reader.ReadLine()) is not null)
         {
-            rows.Add(DelimiterDetector.ParseFields(line, delimiter));
+            totalRowCount++;
+            if (sampleRows.Count < MaxSampleRows)
+            {
+                sampleRows.Add(DelimiterDetector.ParseFields(line, delimiter));
+            }
         }
 
-        return rows;
+        return new SampledRows(sampleRows, totalRowCount);
     }
 
     private static IReadOnlyList<CsvColumnInfo> ScaleColumnTokenEstimates(
@@ -402,4 +427,6 @@ public sealed class CsvLoader : IFormatLoader, IFormatMaterializer, IFormatSchem
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }
+
+    private sealed record SampledRows(IReadOnlyList<IReadOnlyList<string>> SampleRows, int TotalRowCount);
 }

@@ -1,3 +1,4 @@
+using System.Text;
 using AwesomeAssertions;
 using Microsoft.Extensions.FileProviders;
 using RepoQL.Contracts;
@@ -199,6 +200,49 @@ public sealed class CsvLoaderTests
     }
 
     [Test]
+    [DisplayName("LoadAsync rejects delimited files over safety limit")]
+    public async Task LoadAsync_RejectsFilesOverSafetyLimit()
+    {
+        var loader = new CsvLoader(maxFileSizeBytes: 32);
+        var artifact = new DiscoveredArtifact
+        {
+            File = new FakeFileInfo("huge.csv", length: 33),
+            RepoUri = RepoUri.Parse("file:///huge.csv")
+        };
+
+        await loader.CanLoadAsync(artifact);
+
+        var act = () => loader.LoadAsync(artifact);
+
+        await act.Should()
+            .ThrowAsync<InvalidDataException>()
+            .WithMessage("*exceeds the 32 byte safety limit*");
+    }
+
+    [Test]
+    [DisplayName("LoadAsync counts rows beyond the inference sample window")]
+    public async Task LoadAsync_CountsRowsBeyondInferenceSampleWindow()
+    {
+        var builder = new StringBuilder("id,name\n");
+        for (var i = 1; i <= 150; i++)
+        {
+            builder.Append(i).Append(",user_").Append(i).Append('\n');
+        }
+
+        using var testFile = new TestFileScope(builder.ToString(), "many_rows.csv");
+        using var artifact = CreateArtifactFromFile(testFile.FilePath);
+        var loader = new CsvLoader();
+
+        await loader.CanLoadAsync(artifact.Artifact);
+        var document = await loader.LoadAsync(artifact.Artifact);
+        var records = loader.Materialize(document);
+
+        var docNode = records.Nodes.Single(n => n.Kind == "document");
+        docNode.Props["row_count"]!.GetValue<int>().Should().Be(150);
+        docNode.Props["column_count"]!.GetValue<int>().Should().Be(2);
+    }
+
+    [Test]
     [DisplayName("Column nodes include expected properties and inferred types")]
     public async Task LoadAsync_ColumnNodesHaveExpectedProperties()
     {
@@ -346,16 +390,24 @@ public sealed class CsvLoaderTests
 
     private sealed class FakeFileInfo : IFileInfo
     {
-        public FakeFileInfo(string name) => Name = name;
+        private readonly long _length;
+        private readonly Func<Stream>? _streamFactory;
+
+        public FakeFileInfo(string name, long length = 0, Func<Stream>? streamFactory = null)
+        {
+            Name = name;
+            _length = length;
+            _streamFactory = streamFactory;
+        }
 
         public bool Exists => true;
-        public long Length => 0;
+        public long Length => _length;
         public string? PhysicalPath => null;
         public string Name { get; }
         public DateTimeOffset LastModified => DateTimeOffset.Now;
         public bool IsDirectory => false;
 
         public Stream CreateReadStream()
-            => throw new NotSupportedException("Fake file info does not support reading");
+            => _streamFactory?.Invoke() ?? throw new NotSupportedException("Fake file info does not support reading");
     }
 }
