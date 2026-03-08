@@ -356,21 +356,59 @@ public class RepresentationFormatterTests
     // Rich format tests
 
     [Test]
-    [DisplayName("Rich shows snippet in code fence")]
-    public void Given_Rich_Then_ShowsCodeFence()
+    [DisplayName("Rich single-line snippet shown inline")]
+    public void Given_RichSingleLine_Then_ShowsInline()
     {
         var result = new ExploreResult(
             Uri: "file:///src/Auth.cs#line=42",
             Confidence: 98,
             Kind: "method",
-            Headline: "ValidateToken",  // Should be ignored
+            Headline: "ValidateToken",
             Structure: null,
             Snippet: "public bool Validate() { return true; }",
             Lang: "csharp");
 
         var output = RepresentationFormatter.FormatRich(result, showConfidence: true);
 
-        output.Should().Be(" 98% file:///src/Auth.cs#line=42\n```csharp\npublic bool Validate() { return true; }\n```");
+        output.Should().Be(" 98% file:///src/Auth.cs#line=42\n  public bool Validate() { return true; }");
+    }
+
+    [Test]
+    [DisplayName("Rich multi-line snippet in code fence")]
+    public void Given_RichMultiLine_Then_ShowsCodeFence()
+    {
+        var result = new ExploreResult(
+            Uri: "file:///src/Auth.cs#line=42",
+            Confidence: 98,
+            Kind: "method",
+            Headline: "ValidateToken",
+            Structure: null,
+            Snippet: "public bool Validate()\n{\n    return true;\n}",
+            Lang: "csharp");
+
+        var output = RepresentationFormatter.FormatRich(result, showConfidence: true);
+
+        output.Should().Be(" 98% file:///src/Auth.cs#line=42\n```csharp\npublic bool Validate()\n{\n    return true;\n}\n```");
+    }
+
+    [Test]
+    [DisplayName("Rich snippet matching headline is suppressed")]
+    public void Given_RichSnippetSameAsHeadline_Then_Suppressed()
+    {
+        var result = new ExploreResult(
+            Uri: "file:///src/Auth.cs#line=42",
+            Confidence: 98,
+            Kind: "method",
+            Headline: "public DocumentSearchService(DuckDbDataStore db)",
+            Structure: null,
+            Snippet: "public DocumentSearchService(DuckDbDataStore db)",
+            Lang: "csharp");
+
+        var output = RepresentationFormatter.FormatRich(result, showConfidence: true);
+
+        // Should NOT contain the snippet since it's identical to headline
+        output.Should().NotContain("```");
+        output.Should().NotContain("\n  public");
     }
 
     [Test]
@@ -425,7 +463,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatRich(result, showConfidence: true);
 
-        output.Should().Be(" 98% file:///src/Auth.cs#line=42 (name)\n```csharp\npublic bool Validate() { return true; }\n```");
+        output.Should().Be(" 98% file:///src/Auth.cs#line=42 (name)\n  public bool Validate() { return true; }");
     }
 
     // Confidence formatting tests

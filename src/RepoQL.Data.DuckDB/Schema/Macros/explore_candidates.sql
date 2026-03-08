@@ -235,7 +235,20 @@ scored AS (
             )
             WHEN e.node_scope = 'document'
             THEN substr(COALESCE(e.text_content, ''), 1, 640)
-            ELSE NULL  -- objects without chunk evidence use structure field, not snippet
+            -- Objects with line range: extract actual source lines (capped at 20)
+            WHEN e.line_start IS NOT NULL
+                 AND e.line_end IS NOT NULL
+                 AND e.text_content IS NOT NULL
+                 AND LENGTH(e.text_content) > 0
+            THEN array_to_string(
+                list_slice(
+                    string_split(e.text_content, chr(10)),
+                    GREATEST(1, e.line_start),
+                    LEAST(e.line_start + 19, e.line_end)
+                ),
+                chr(10)
+            )
+            ELSE NULL
         END AS snippet,
         e.line_start,
         e.line_end,

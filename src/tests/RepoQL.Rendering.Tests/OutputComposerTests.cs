@@ -187,13 +187,13 @@ public class OutputComposerTests
     }
 
     [Test]
-    [DisplayName("Rich item with snippet is multi-line")]
+    [DisplayName("Rich item with multi-line snippet is multi-line")]
     public void Given_RichWithSnippet_Then_IsMultiline()
     {
         var decisions = new[]
         {
             new RenderingDecision(
-                new ExploreResult("file:///a.cs", 95, "method", null, null, "code here", "csharp"),
+                new ExploreResult("file:///a.cs", 95, "method", null, null, "line1\nline2", "csharp"),
                 Representation.Rich, 30),
             new RenderingDecision(
                 new ExploreResult("file:///b.cs", 80, null, "B", null, null, null),
@@ -203,7 +203,7 @@ public class OutputComposerTests
 
         var output = OutputComposer.Compose(result, showConfidence: true);
 
-        // Should have blank line after rich item
+        // Should have blank line after rich item with code fence
         output.Should().Contain("```\n\n 80%");
     }
 
@@ -236,7 +236,7 @@ public class OutputComposerTests
         var decisions = new[]
         {
             new RenderingDecision(
-                new ExploreResult("file:///a.cs", 95, null, null, null, "code", "cs"),
+                new ExploreResult("file:///a.cs", 95, null, null, null, "line1\nline2", "cs"),
                 Representation.Rich, 30),
         };
         var omittedByType = new Dictionary<string, int> { ["code.csharp"] = 3 };

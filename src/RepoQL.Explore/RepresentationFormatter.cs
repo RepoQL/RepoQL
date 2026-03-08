@@ -100,15 +100,31 @@ public static class RepresentationFormatter
 
         if (!string.IsNullOrEmpty(result.Snippet))
         {
-            sb.Append('\n');
-            sb.Append("```");
-            if (!string.IsNullOrEmpty(result.Lang))
-                sb.Append(result.Lang);
-            sb.Append('\n');
-            sb.Append(result.Snippet);
-            if (!result.Snippet.EndsWith('\n'))
+            // Skip snippet if it just repeats the headline — no information gained.
+            var headline = GetSingleLineHeadline(result);
+            var isRedundant = headline != null
+                && result.Snippet.TrimEnd() == headline.TrimEnd();
+
+            if (!isRedundant && result.Snippet.Contains('\n'))
+            {
+                // Multi-line snippet: code fence
                 sb.Append('\n');
-            sb.Append("```");
+                sb.Append("```");
+                if (!string.IsNullOrEmpty(result.Lang))
+                    sb.Append(result.Lang);
+                sb.Append('\n');
+                sb.Append(result.Snippet);
+                if (!result.Snippet.EndsWith('\n'))
+                    sb.Append('\n');
+                sb.Append("```");
+            }
+            else if (!isRedundant)
+            {
+                // Single-line snippet with new information: inline
+                sb.Append('\n');
+                sb.Append("  ");
+                sb.Append(result.Snippet.TrimEnd());
+            }
         }
 
         return sb.ToString();

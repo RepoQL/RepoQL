@@ -109,11 +109,11 @@ public static class OutputComposer
     /// </summary>
     private static bool IsMultiline(RenderingDecision decision)
     {
-        // Standard (has structure) and Rich (has snippet) are multi-line
         return decision.Level switch
         {
             Representation.Standard => !string.IsNullOrEmpty(decision.Result.Structure),
-            Representation.Rich => !string.IsNullOrEmpty(decision.Result.Snippet),
+            Representation.Rich => !string.IsNullOrEmpty(decision.Result.Snippet)
+                && decision.Result.Snippet.Contains('\n'),
             _ => false
         };
     }
