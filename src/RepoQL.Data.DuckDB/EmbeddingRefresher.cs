@@ -123,10 +123,26 @@ public sealed class EmbeddingRefresher
         if (_contextualProvider is null && (embeddingProvider is null || !embeddingProvider.Enabled))
             return false;
 
+        // Eagerly initialize contextual provider so ActiveModelInfo returns the correct model
+        // before we build the refresh plan. Without this, documents with ONNX embeddings
+        // would be skipped even when switching to a contextual model.
+        if (_contextualProvider is not null && !_contextualDisabled)
+        {
+            try
+            {
+                await _contextualProvider.InitializeAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Contextual provider initialization failed, falling back to local embedding");
+                _contextualDisabled = true;
+            }
+        }
+
         var (activeModel, activeDimension) = ActiveModelInfo(embeddingProvider);
         var changed = PruneEmbeddingsForCurrentModel(activeModel, activeDimension);
 
-        var refreshPlan = LoadDocumentRefreshPlan(targetDocumentIds);
+        var refreshPlan = LoadDocumentRefreshPlan(targetDocumentIds, activeModel);
         var totalDocuments = CountTotalDocuments(targetDocumentIds);
         var docsSkippedAsUpToDate = totalDocuments - refreshPlan.Count;
         var isTargeted = targetDocumentIds is { Count: > 0 };
@@ -656,7 +672,7 @@ public sealed class EmbeddingRefresher
         return (int)(result ?? 0L);
     }
 
-    private IReadOnlyList<DocumentRefreshPlanRow> LoadDocumentRefreshPlan(IReadOnlyList<Guid>? targetDocumentIds)
+    private IReadOnlyList<DocumentRefreshPlanRow> LoadDocumentRefreshPlan(IReadOnlyList<Guid>? targetDocumentIds, string activeModel)
     {
         if (targetDocumentIds is { Count: 0 })
             return [];
@@ -685,6 +701,7 @@ public sealed class EmbeddingRefresher
                          JOIN artifact a ON a.id = n.artifact_id
                          LEFT JOIN document_embedding de
                               ON de.doc_id = n.id AND de.scope = '{DocumentEmbeddingScope}' AND de.embedding_type = '{FullEmbeddingType}'
+                              AND de.model = '{activeModel}'
                 WHERE n.kind = 'document'
                   AND a.text_content IS NOT NULL
                   AND (de.doc_id IS NULL OR de.updated_at < n.updated_at)

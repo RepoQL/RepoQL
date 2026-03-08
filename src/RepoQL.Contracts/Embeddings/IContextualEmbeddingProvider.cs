@@ -13,6 +13,13 @@ public interface IContextualEmbeddingProvider
     bool Enabled { get; }
 
     /// <summary>
+    /// Ensure model metadata (Model, Dimension) is populated.
+    /// Called once before the first embedding request so the refresh plan
+    /// can determine the active model before any vectors are generated.
+    /// </summary>
+    Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+    /// <summary>
     /// Embed grouped chunks with document-level context.
     /// Each group represents one document's chunks in document order.
     /// The provider sends them to the embedding model as a unit so chunks

@@ -51,6 +51,9 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IDispo
     public int Dimension => _dimension;
     public bool Enabled => true;
 
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+        => EnsureModelInfoAsync(cancellationToken);
+
     public async Task<ContextualEmbeddingResult> EmbedChunksAsync(
         IReadOnlyList<DocumentChunkGroup> groups,
         CancellationToken cancellationToken = default)

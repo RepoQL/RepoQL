@@ -31,6 +31,9 @@ public sealed class CachingContextualEmbeddingProvider : IContextualEmbeddingPro
     public int Dimension => _inner.Dimension;
     public bool Enabled => _inner.Enabled;
 
+    public Task InitializeAsync(CancellationToken cancellationToken = default)
+        => _inner.InitializeAsync(cancellationToken);
+
     public async Task<ContextualEmbeddingResult> EmbedChunksAsync(
         IReadOnlyList<DocumentChunkGroup> groups,
         CancellationToken cancellationToken = default)
