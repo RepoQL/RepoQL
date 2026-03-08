@@ -1535,9 +1535,6 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             if (_formatSchemaScripts.Count > 0)
                 _logger.LogDebug("[DuckDB] Format schema scripts applied ({Count} scripts)", _formatSchemaScripts.Count);
 
-            // Check if assembly version changed - if so, invalidate embedded documentation cache
-            CheckAndUpdateVersion();
-
             _schemaInitialized = true;
 
             // Checkpoint WAL on startup to flush any uncommitted entries from previous session
@@ -1589,9 +1586,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     }
 
     private const string MetadataKeySchemaVersion = "schema_version";
-    private const string MetadataKeyAssemblyVersion = "assembly_version";
     public const string MetadataKeyVssStructureReady = "vss_structure_ready";
-    private const string EmbeddedDocsScheme = "help://";
 
     private void EnsureSchemaVersion()
     {
@@ -1661,127 +1656,6 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         cmd.Parameters.Add(new DuckDBParameter { Value = key });
         cmd.Parameters.Add(new DuckDBParameter { Value = value });
         cmd.ExecuteNonQuery();
-    }
-
-    /// <summary>
-    /// Checks if the assembly version changed since last run. If so, deletes all
-    /// embedded documentation artifacts so they get re-indexed with fresh content.
-    /// </summary>
-    private void CheckAndUpdateVersion()
-    {
-        var currentVersion = typeof(DuckDbDataStore).Assembly
-            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? typeof(DuckDbDataStore).Assembly.GetName().Version?.ToString()
-            ?? "unknown";
-
-        try
-        {
-            var storedVersion = TryReadMetadataValue(MetadataKeyAssemblyVersion);
-
-            if (storedVersion == currentVersion)
-            {
-                _logger.LogDebug("[DuckDB] Version unchanged ({Version}), embedded docs cache valid", currentVersion);
-                return;
-            }
-
-            if (storedVersion is not null)
-            {
-                _logger.LogInformation("[DuckDB] Version changed from {OldVersion} to {NewVersion}, invalidating embedded docs cache",
-                    storedVersion, currentVersion);
-
-                // Delete all artifacts with help:// URIs
-                var deleteCount = DeleteArtifactsByUriPrefix(EmbeddedDocsScheme);
-                _logger.LogInformation("[DuckDB] Deleted {Count} embedded documentation artifacts for re-indexing", deleteCount);
-            }
-            else
-            {
-                _logger.LogDebug("[DuckDB] First run, setting version to {Version}", currentVersion);
-            }
-
-            UpsertMetadataValue(MetadataKeyAssemblyVersion, currentVersion);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[DuckDB] Version check failed, embedded docs may be stale");
-        }
-    }
-
-    /// <summary>
-    /// Deletes all documents (nodes and their artifacts) whose URI starts with the given prefix.
-    /// Used to invalidate embedded documentation cache on version change.
-    /// </summary>
-    private int DeleteArtifactsByUriPrefix(string uriPrefix)
-    {
-        // Get all document node IDs and their artifact IDs matching the URI prefix
-        // URI is stored on node table; artifacts are content-addressed blobs referenced by nodes
-        using var selectCmd = _connection.CreateCommand();
-        selectCmd.CommandText = @"
-            SELECT id, artifact_id
-            FROM node
-            WHERE uri LIKE $1 || '%' AND kind = 'document'";
-        selectCmd.Parameters.Add(new DuckDBParameter { Value = uriPrefix });
-
-        var nodesToDelete = new List<(Guid NodeId, Guid? ArtifactId)>();
-        using (var reader = selectCmd.ExecuteReader())
-        {
-            while (reader.Read())
-            {
-                var nodeId = reader.GetGuid(0);
-                var artifactId = reader.IsDBNull(1) ? (Guid?)null : reader.GetGuid(1);
-                nodesToDelete.Add((nodeId, artifactId));
-            }
-        }
-
-        if (nodesToDelete.Count == 0)
-            return 0;
-
-        // Delete in batches to avoid parameter limits
-        foreach (var (nodeId, artifactId) in nodesToDelete)
-        {
-            // Delete embeddings (doc_id references the document node)
-            using var deleteEmbedCmd = _connection.CreateCommand();
-            deleteEmbedCmd.CommandText = "DELETE FROM document_embedding WHERE doc_id = $1";
-            deleteEmbedCmd.Parameters.Add(new DuckDBParameter { Value = nodeId });
-            deleteEmbedCmd.ExecuteNonQuery();
-
-            // Delete annotations (scope_document_id references the document node)
-            using var deleteAnnotCmd = _connection.CreateCommand();
-            deleteAnnotCmd.CommandText = "DELETE FROM annotation WHERE scope_document_id = $1";
-            deleteAnnotCmd.Parameters.Add(new DuckDBParameter { Value = nodeId });
-            deleteAnnotCmd.ExecuteNonQuery();
-
-            // Delete spans (document_id references the document node)
-            using var deleteSpanCmd = _connection.CreateCommand();
-            deleteSpanCmd.CommandText = "DELETE FROM span WHERE document_id = $1";
-            deleteSpanCmd.Parameters.Add(new DuckDBParameter { Value = nodeId });
-            deleteSpanCmd.ExecuteNonQuery();
-
-            // Delete edges involving any nodes from this document
-            using var deleteEdgeCmd = _connection.CreateCommand();
-            deleteEdgeCmd.CommandText = @"
-                DELETE FROM edge
-                WHERE source_node_id IN (SELECT id FROM node WHERE artifact_id = $1)
-                   OR destination_node_id IN (SELECT id FROM node WHERE artifact_id = $1)";
-            deleteEdgeCmd.Parameters.Add(new DuckDBParameter { Value = artifactId ?? Guid.Empty });
-            deleteEdgeCmd.ExecuteNonQuery();
-
-            // Delete all nodes referencing this artifact (includes child nodes)
-            if (artifactId.HasValue)
-            {
-                using var deleteNodeCmd = _connection.CreateCommand();
-                deleteNodeCmd.CommandText = "DELETE FROM node WHERE artifact_id = $1";
-                deleteNodeCmd.Parameters.Add(new DuckDBParameter { Value = artifactId.Value });
-                deleteNodeCmd.ExecuteNonQuery();
-
-                // Delete the artifact itself
-                using var deleteArtCmd = _connection.CreateCommand();
-                deleteArtCmd.CommandText = "DELETE FROM artifact WHERE id = $1";
-                deleteArtCmd.Parameters.Add(new DuckDBParameter { Value = artifactId.Value });
-                deleteArtCmd.ExecuteNonQuery();
-            }
-        }
-
-        return nodesToDelete.Count;
     }
 
     /// <summary>
