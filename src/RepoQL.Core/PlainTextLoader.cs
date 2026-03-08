@@ -1,3 +1,4 @@
+using System.IO.Hashing;
 using System.Text.Json.Nodes;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
@@ -6,11 +7,25 @@ namespace RepoQL.Core;
 
 internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
 {
+    internal const long DefaultMaxTextReadBytes = 256 * 1024 * 1024;
+
+    private const string DigestMetadataKey = "plaintext.digest";
+    private const string SizeMetadataKey = "plaintext.size";
+    private const string ContentOmittedMetadataKey = "plaintext.content_omitted";
+    private const string ContentOmissionReasonMetadataKey = "plaintext.content_omission_reason";
+
     private static readonly SemanticMediaType PlainText = SemanticMediaType
         .Create("text", "plain")
         .WithKind("plain.document");
 
+    private readonly long _maxTextReadBytes;
+
     internal static SemanticMediaType PlainTextMediaType => PlainText;
+
+    public PlainTextLoader(long maxTextReadBytes = DefaultMaxTextReadBytes)
+    {
+        _maxTextReadBytes = maxTextReadBytes;
+    }
 
     public bool Supports(SemanticMediaType mediaType)
     {
@@ -38,28 +53,52 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
 
         string text;
         string digest;
-        long size;
+        var size = artifact.File.Exists ? artifact.File.Length : 0L;
+        var media = artifact.MediaType ?? PlainText;
+        var contentOmitted = false;
+        string? contentOmissionReason = null;
+
         try
         {
-            var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
-                artifact.File,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            text = loaded.Text;
-            digest = loaded.Digest;
-            size = loaded.ByteLength;
+            if (ShouldReadAsText(media) && size > 0 && size > _maxTextReadBytes)
+            {
+                text = string.Empty;
+                digest = await ComputeDigestAsync(artifact.File, cancellationToken).ConfigureAwait(false);
+                contentOmitted = true;
+                contentOmissionReason = $"size>{_maxTextReadBytes}";
+            }
+            else if (ShouldReadAsText(media))
+            {
+                var loaded = await FileContentReader.ReadAllTextWithDigestAsync(
+                    artifact.File,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                text = loaded.Text;
+                digest = loaded.Digest;
+                size = loaded.ByteLength;
+            }
+            else
+            {
+                text = string.Empty;
+                digest = await ComputeDigestAsync(artifact.File, cancellationToken).ConfigureAwait(false);
+                contentOmitted = true;
+                contentOmissionReason = "non-text";
+            }
         }
         catch
         {
             text = string.Empty;
             digest = ContentDigest.FromBytes(ReadOnlySpan<byte>.Empty);
             size = artifact.File.Exists ? artifact.File.Length : 0;
+            contentOmitted = true;
+            contentOmissionReason ??= "load-failed";
         }
 
-        var media = artifact.MediaType ?? PlainText;
         var metadata = new Dictionary<string, object?>
         {
-            ["plaintext.digest"] = digest,
-            ["plaintext.size"] = size
+            [DigestMetadataKey] = digest,
+            [SizeMetadataKey] = size,
+            [ContentOmittedMetadataKey] = contentOmitted,
+            [ContentOmissionReasonMetadataKey] = contentOmissionReason
         };
 
         return new DocumentModel(artifact.RepoUri, media, text, metadata: metadata);
@@ -67,13 +106,13 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
 
     public Records Materialize(DocumentModel document)
     {
-        var digest = document.GetMetadataOrDefault<string>("plaintext.digest") ?? "unknown";
-        var size = document.GetMetadataOrDefault<long>("plaintext.size");
+        var digest = document.GetMetadataOrDefault<string>(DigestMetadataKey) ?? "unknown";
+        var size = document.GetMetadataOrDefault<long>(SizeMetadataKey);
+        var contentOmitted = document.GetMetadataOrDefault<bool>(ContentOmittedMetadataKey);
+        var contentOmissionReason = document.GetMetadataOrDefault<string>(ContentOmissionReasonMetadataKey);
 
-        // Calculate token count for the text content
         var tokenCount = TokenEstimator.EstimateTokensSafe(document.Text);
 
-        // Prepare x-ray fields for initializer; best-effort and terse
         string? headline = null;
         string? summary = null;
         try
@@ -84,19 +123,32 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
                 : $"{document.MediaType.Type}/{document.MediaType.Subtype}";
             var sizeHuman = FormatBytes(size);
             var lineCount = document.LineMap?.LineCount ?? 0;
-            var tokensStr = tokenCount.HasValue ? $" | {FormatTokens(tokenCount.Value)}" : "";
+            var tokensStr = !contentOmitted && tokenCount.HasValue ? $" | {FormatTokens(tokenCount.Value)}" : "";
 
-            headline = lineCount > 0
-                ? $"{fileName} | {kindOrBase} | {sizeHuman} | {lineCount} lines{tokensStr}"
-                : $"{fileName} | {kindOrBase} | {sizeHuman}{tokensStr}";
-
-            var summaryLines = new List<string>(2)
+            if (contentOmitted)
             {
-                $"Type: {kindOrBase}"
-            };
-            var shape = lineCount > 0 ? $"Size: {sizeHuman}, Lines: {lineCount}" : $"Size: {sizeHuman}";
-            summaryLines.Add(shape);
-            summary = string.Join('\n', summaryLines);
+                headline = $"{fileName} | {kindOrBase} | {sizeHuman} | content omitted";
+                summary = string.Join('\n', new[]
+                {
+                    $"Type: {kindOrBase}",
+                    $"Size: {sizeHuman}",
+                    $"Content omitted: {DescribeContentOmission(contentOmissionReason)}"
+                });
+            }
+            else
+            {
+                headline = lineCount > 0
+                    ? $"{fileName} | {kindOrBase} | {sizeHuman} | {lineCount} lines{tokensStr}"
+                    : $"{fileName} | {kindOrBase} | {sizeHuman}{tokensStr}";
+
+                var summaryLines = new List<string>(2)
+                {
+                    $"Type: {kindOrBase}"
+                };
+                var shape = lineCount > 0 ? $"Size: {sizeHuman}, Lines: {lineCount}" : $"Size: {sizeHuman}";
+                summaryLines.Add(shape);
+                summary = string.Join('\n', summaryLines);
+            }
         }
         catch
         {
@@ -141,9 +193,35 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
         };
     }
 
+    private static bool ShouldReadAsText(SemanticMediaType mediaType)
+        => string.Equals(mediaType.Type, "text", StringComparison.OrdinalIgnoreCase);
+
+    private string DescribeContentOmission(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            return "content was not loaded";
+
+        if (reason.StartsWith("size>", StringComparison.Ordinal))
+            return $"file exceeds the {_maxTextReadBytes} byte safety limit";
+
+        return reason switch
+        {
+            "non-text" => "binary media is indexed as metadata only",
+            "load-failed" => "content could not be loaded safely",
+            _ => "content was not loaded"
+        };
+    }
+
+    private static async Task<string> ComputeDigestAsync(Microsoft.Extensions.FileProviders.IFileInfo file, CancellationToken cancellationToken)
+    {
+        var algo = new XxHash64();
+        await using var stream = file.CreateReadStream();
+        await algo.AppendAsync(stream, cancellationToken).ConfigureAwait(false);
+        return "xxh64:" + Convert.ToHexString(algo.GetCurrentHash()).ToLowerInvariant();
+    }
+
     private static string GetFileName(RepoUri uri)
     {
-        // Try LocalPath for file://, otherwise use last segment of AbsolutePath.
         try
         {
             if (uri.IsFile)
@@ -154,8 +232,8 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
         }
         catch
         {
-            // fall through
         }
+
         var ap = Uri.UnescapeDataString(uri.AbsolutePath);
         var slash = ap.LastIndexOf('/')
                     >= 0 ? ap[(ap.LastIndexOf('/') + 1)..] : ap;
