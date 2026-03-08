@@ -172,6 +172,8 @@ public partial class IndexingEngine : IAsyncDisposable
     private string? _lastError;
     private long _firstEpochStartTicks;
     private int _readyLogged;
+    private int _indexerQueueFaulted;
+    private int _analysisQueueFaulted;
 
     /// <summary>
     /// Optional callback invoked at each lifecycle milestone during idle processing.
@@ -384,7 +386,8 @@ public partial class IndexingEngine : IAsyncDisposable
             comparer: new IndexItemComparer(),
             logger: Logger)
         {
-            OnItemTimeout = HandleHotPathItemTimeout
+            OnItemTimeout = HandleHotPathItemTimeout,
+            OnQueueFault = HandleIndexerQueueFault
         };
         AnalysisQueue = new WorkQueue<IndexItem>(
             "AnalysisQueue",
@@ -399,6 +402,8 @@ public partial class IndexingEngine : IAsyncDisposable
             meter: null,
             comparer: new IndexItemComparer(),
             logger: Logger);
+        AnalysisQueue.OnItemTimeout = HandleAnalysisItemTimeout;
+        AnalysisQueue.OnQueueFault = HandleAnalysisQueueFault;
         if (StructureEmbeddingsEnabled)
         {
             _structureEmbeddingChannel = Channel.CreateBounded<IndexItem>(
@@ -433,14 +438,13 @@ public partial class IndexingEngine : IAsyncDisposable
             (item, ct) => IndexRebuilder.ProcessItemAsync(item, ct));
         HotPathIdle += OnHotPathIdle;
         Shutdown.Token.Register(() => _analysisEpochChannel.Writer.TryComplete());
-        _idleProcessingTask = Task.Run(ProcessIdleEpochsAsync);
-
-        // FM-007 fix: Observe faults on the idle processing task to detect silent death.
-        // Without this, if ProcessIdleEpochsAsync throws before entering its main loop,
-        // the task dies silently and no idle processing ever runs.
-        _ = _idleProcessingTask.ContinueWith(
-            t => Logger.LogCritical(t.Exception, "ProcessIdleEpochsAsync died unexpectedly. Idle processing has stopped."),
-            TaskContinuationOptions.OnlyOnFaulted);
+        _idleProcessingTask = Task.Run(() =>
+            IdleLoopSupervisor.RunAsync(
+                loopName: "idle processing",
+                runLoopAsync: _ => ProcessIdleEpochsAsync(),
+                onFailure: ex => Volatile.Write(ref _lastError, $"Idle processing: {ex.Message}"),
+                logger: Logger,
+                cancellationToken: Shutdown.Token));
 
         RegisterStageCounter(IndexingState.ClassificationBusy, IndexingState.ClassificationIdle);
         RegisterStageCounter(IndexingState.ParsingBusy, IndexingState.ParsingIdle);
@@ -1760,8 +1764,11 @@ public partial class IndexingEngine : IAsyncDisposable
             { "stage", "timeout" }
         });
 
-        // Store last error for diagnostics
-        Volatile.Write(ref _lastError, $"{item.Uri}: Timed out after {elapsed.TotalSeconds:F1}s");
+        // Store last error for diagnostics unless the queue has already entered a terminal fault.
+        if (Volatile.Read(ref _indexerQueueFaulted) == 0)
+        {
+            Volatile.Write(ref _lastError, $"{item.Uri}: Timed out after {elapsed.TotalSeconds:F1}s");
+        }
 
         item.TryMarkTimedOut();
 
@@ -1806,6 +1813,36 @@ public partial class IndexingEngine : IAsyncDisposable
         }
 
         LogItemTimedOut(Logger, item.Uri, elapsed.TotalSeconds);
+    }
+
+    private void HandleAnalysisItemTimeout(IndexItem item, TimeSpan elapsed)
+    {
+        if (Volatile.Read(ref _analysisQueueFaulted) == 0)
+        {
+            Volatile.Write(ref _lastError, $"Analysis {item.Uri}: Timed out after {elapsed.TotalSeconds:F1}s");
+        }
+
+        AddEpochTag(item.Epoch, "analysis.result", "timeout");
+        AddEpochTag(item.Epoch, "analysis.timeout_duration_ms", elapsed.TotalMilliseconds);
+
+        Logger.LogWarning(
+            "Analysis item {Uri} timed out after {ElapsedSeconds:F1}s",
+            item.Uri,
+            elapsed.TotalSeconds);
+    }
+
+    private void HandleIndexerQueueFault(Exception ex)
+    {
+        Volatile.Write(ref _indexerQueueFaulted, 1);
+        Volatile.Write(ref _lastError, $"IndexingQueue fault: {ex.Message}");
+        Logger.LogCritical(ex, "Indexer queue entered a terminal fault.");
+    }
+
+    private void HandleAnalysisQueueFault(Exception ex)
+    {
+        Volatile.Write(ref _analysisQueueFaulted, 1);
+        Volatile.Write(ref _lastError, $"AnalysisQueue fault: {ex.Message}");
+        Logger.LogCritical(ex, "Analysis queue entered a terminal fault.");
     }
 
     public IndexingState State { get; private set; } = IndexingState.AllIdle;

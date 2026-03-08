@@ -76,6 +76,8 @@ namespace RepoQL.Indexing;
 public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
 #pragma warning restore CA1711
 {
+    private const string TimedOutDisposition = "timed out";
+    private const string QueueFaultDisposition = "was abandoned after queue fault";
     private readonly Channel<T> _channel;
     private readonly ConcurrentDictionary<T, byte> _waitSet;
     private readonly ConcurrentDictionary<int, InFlightItem> _inFlightItems = new();
@@ -89,6 +91,8 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     private int _timeoutCount;
     private int _orphanedTasks;
     private readonly int _readerCount;
+    private readonly object _queueStateLock = new();
+    private Exception? _fatalError;
 
     public int Depth => Volatile.Read(ref _depth);
     public int MaxDepth { get; }
@@ -108,6 +112,11 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     /// Use this to perform cleanup (e.g., decrement epoch counters).
     /// </summary>
     public Action<T, TimeSpan>? OnItemTimeout { get; set; }
+
+    /// <summary>
+    /// Invoked once when the queue enters a terminal faulted state.
+    /// </summary>
+    public Action<Exception>? OnQueueFault { get; set; }
 
     /// <summary>
     /// Creates a new work queue with concurrent workers.
@@ -212,14 +221,14 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
 
     /// <summary>
     /// Maximum orphaned tasks (timed-out but still holding thread pool threads) before
-    /// workers switch to inline processing. Prevents uncapped thread pool growth.
+    /// the queue enters a terminal fault. Prevents uncapped thread pool growth.
     /// </summary>
     private int MaxOrphanedTasks => _readerCount * 2;
 
     /// <summary>
     /// Processes an item with optional timeout.
-    /// When orphaned tasks accumulate (thread pool starvation risk), falls back to
-    /// inline processing on the worker's own thread — slower but doesn't leak threads.
+    /// When orphaned tasks accumulate (thread pool starvation risk), the queue fails fast
+    /// and abandons pending items through the normal timeout cleanup path.
     /// </summary>
     private async Task ProcessItemWithTimeoutAsync(
         T item,
@@ -234,35 +243,21 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             return;
         }
 
-        // If too many orphaned tasks are holding thread pool threads, fall back to
-        // inline processing. This means a stuck item blocks the worker, but at least
-        // we don't keep spawning Task.Run threads that accumulate indefinitely.
+        if (TryGetFatalError(out _))
+        {
+            HandleItemTimeout(item, startTimestamp, QueueFaultDisposition);
+            return;
+        }
+
+        // If too many orphaned tasks are holding thread pool threads, fail the queue
+        // and abandon pending items through the normal timeout cleanup path.
         if (Volatile.Read(ref _orphanedTasks) >= MaxOrphanedTasks)
         {
-            _logger.LogWarning(
-                "WorkQueue {QueueName} has {OrphanCount} orphaned tasks (limit {Limit}), processing inline to prevent thread pool starvation",
-                _name, Volatile.Read(ref _orphanedTasks), MaxOrphanedTasks);
-
-            using var inlineCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            inlineCts.CancelAfter(_itemTimeout.Value);
-            try
-            {
-                await processItem(item, inlineCts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // processItem threw OCE from our timeout CTS — treat as timeout.
-                HandleItemTimeout(item, startTimestamp);
-                return;
-            }
-
-            // Some delegates catch OperationCanceledException internally and return normally.
-            // Detect this via wall-clock: if we exceeded the timeout, it was a timeout regardless.
-            var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
-            if (elapsed >= _itemTimeout.Value)
-            {
-                HandleItemTimeout(item, startTimestamp);
-            }
+            var fatalError = new InvalidOperationException(
+                $"WorkQueue {_name} entered terminal fault after reaching orphan pressure " +
+                $"({Volatile.Read(ref _orphanedTasks)} orphaned tasks, limit {MaxOrphanedTasks}).");
+            TryEnterTerminalFault(fatalError);
+            HandleItemTimeout(item, startTimestamp, QueueFaultDisposition);
             return;
         }
 
@@ -277,7 +272,7 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         catch (TimeoutException)
         {
             timeoutCts.Cancel();
-            HandleItemTimeout(item, startTimestamp);
+            HandleItemTimeout(item, startTimestamp, TimedOutDisposition);
             TrackOrphanedTask(processingTask, item);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -288,13 +283,14 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         }
     }
 
-    private void HandleItemTimeout(T item, long startTimestamp)
+    private void HandleItemTimeout(T item, long startTimestamp, string disposition)
     {
         var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
 
         _logger.LogWarning(
-            "WorkQueue {QueueName} item timed out after {ElapsedSeconds:F1}s (timeout={TimeoutSeconds:F0}s). Item: {Item}",
+            "WorkQueue {QueueName} item {Disposition} after {ElapsedSeconds:F1}s (timeout={TimeoutSeconds:F0}s). Item: {Item}",
             _name,
+            disposition,
             elapsed.TotalSeconds,
             _itemTimeout?.TotalSeconds ?? 0,
             item);
@@ -342,16 +338,29 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     /// <summary>Enqueue an item if not already pending. Removes on failure to allow retries.</summary>
     public async ValueTask<bool> EnqueueAsync(T item, CancellationToken ct)
     {
+        ThrowIfFaulted();
+
         if (!_waitSet.TryAdd(item, 0))
             return false;
 
         try
         {
-            var newDepth = Interlocked.Increment(ref _depth);
-            if (newDepth == 1)
+            lock (_queueStateLock)
             {
-                Volatile.Write(ref _idleTcs, new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously));
+                if (_fatalError is not null)
+                {
+                    _waitSet.TryRemove(item, out _);
+                    throw _fatalError;
+                }
+
+                if (_depth == 0)
+                {
+                    _idleTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
+
+                _depth++;
             }
+
             await _channel.Writer.WriteAsync(item, ct).ConfigureAwait(false);
         }
         catch
@@ -367,10 +376,13 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     {
         if (_waitSet.TryRemove(item, out _))
         {
-            var newDepth = Interlocked.Decrement(ref _depth);
-            if (newDepth == 0)
+            lock (_queueStateLock)
             {
-                Volatile.Read(ref _idleTcs).TrySetResult(true);
+                _depth--;
+                if (_depth == 0)
+                {
+                    _idleTcs.TrySetResult(true);
+                }
             }
         }
     }
@@ -393,7 +405,13 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     }
 
     /// <summary>Completes the next time the queue has no pending or in-flight items.</summary>
-    public Task WhenIdleAsync() => Volatile.Read(ref _idleTcs).Task;
+    public Task WhenIdleAsync()
+    {
+        lock (_queueStateLock)
+        {
+            return _idleTcs.Task;
+        }
+    }
 
     /// <summary>Completes once all worker tasks have started running.</summary>
     public Task WorkersReadyAsync() => _workersReadyTcs.Task;
@@ -403,6 +421,59 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         tcs.SetResult(true);
         return tcs;
+    }
+
+    private bool TryGetFatalError(out Exception? fatalError)
+    {
+        lock (_queueStateLock)
+        {
+            fatalError = _fatalError;
+            return fatalError is not null;
+        }
+    }
+
+    private void ThrowIfFaulted()
+    {
+        Exception? fatalError;
+        lock (_queueStateLock)
+        {
+            fatalError = _fatalError;
+        }
+
+        if (fatalError is not null)
+            throw fatalError;
+    }
+
+    private void TryEnterTerminalFault(Exception fatalError)
+    {
+        ArgumentNullException.ThrowIfNull(fatalError);
+
+        Action<Exception>? callback = null;
+        lock (_queueStateLock)
+        {
+            if (_fatalError is not null)
+                return;
+
+            _fatalError = fatalError;
+            callback = OnQueueFault;
+        }
+
+        _logger.LogCritical(
+            fatalError,
+            "WorkQueue {QueueName} entered terminal fault. Pending items will be abandoned while the queue drains.",
+            _name);
+
+        if (callback is null)
+            return;
+
+        try
+        {
+            callback(fatalError);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "WorkQueue {QueueName} OnQueueFault callback threw exception", _name);
+        }
     }
     public WorkQueueSnapshot CaptureSnapshot()
     {

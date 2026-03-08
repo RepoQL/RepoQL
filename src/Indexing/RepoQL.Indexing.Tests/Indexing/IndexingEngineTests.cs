@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using FakeItEasy;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
@@ -16,6 +17,7 @@ using Microsoft.Extensions.FileProviders;
 using RepoQL.FileSystem.Abstractions;
 using RepoQL.Testing;
 using RepoQL.Testing.Indexing;
+using System.Collections.Concurrent;
 using ModelSpan = RepoQL.Contracts.Models.Span;
 
 namespace RepoQL.Indexing.Tests.Indexing;
@@ -365,6 +367,155 @@ public class IndexingEngineTests
 
         A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._)).MustNotHaveHappened();
         A.CallTo(() => context.MultiFileAnalyzer.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._)).MustNotHaveHappened();
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("Hot-path queue faults on orphan pressure without leaking idle or catalog state")]
+    public async Task Given_HotPathOrphanPressure_When_QueueFaults_Then_EngineFailsFastAndDrains(CancellationToken token)
+    {
+        var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
+        await catalog.EnsureInitializedAsync(token);
+
+        var classifierStarted = new ConcurrentBag<string>();
+        var neverCompletes = NewTaskCompletionSource<bool>();
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithCatalog(catalog);
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1,
+                HotPathItemTimeout = TimeSpan.FromMilliseconds(100)
+            });
+        });
+
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async call =>
+            {
+                var item = call.GetArgument<IndexItem>(0)!;
+                var uri = item.Uri.ToString();
+                classifierStarted.Add(uri);
+
+                if (uri.Contains("stuck-", StringComparison.Ordinal))
+                {
+                    await neverCompletes.Task.ConfigureAwait(false);
+                }
+
+                return PipelineResult.Success;
+            });
+
+        await using var engine = context.Engine;
+
+        foreach (var uri in new[]
+        {
+            "file:///repo/ok.md",
+            "file:///repo/stuck-1.md",
+            "file:///repo/stuck-2.md",
+            "file:///repo/after-1.md",
+            "file:///repo/after-2.md",
+            "file:///repo/after-3.md"
+        })
+        {
+            await engine.EnqueueItemAsync(CreateRawArtifact(uri), IndexItemOptions.Default, token);
+        }
+
+        using var settle = CancellationTokenSource.CreateLinkedTokenSource(token);
+        settle.CancelAfter(TimeSpan.FromSeconds(5));
+        while ((engine.LastError?.Contains("IndexingQueue fault", StringComparison.Ordinal) != true) ||
+               engine.HotPathTimeoutCount < 5 ||
+               engine.GetHotPathPendingItems().Count > 0)
+        {
+            await Task.Delay(25, settle.Token);
+        }
+
+        var reachedIdle = await engine.WaitForAsync(IndexingState.AllIdle, token);
+        reachedIdle.Should().BeTrue();
+
+        engine.GetPendingIdleProcessingCount().Should().Be(0);
+        engine.LastError.Should().Contain("IndexingQueue fault");
+        engine.HotPathTimeoutCount.Should().Be(5);
+        catalog.PendingDigestCount.Should().Be(0);
+        classifierStarted.Should().Contain(uri => uri.EndsWith("ok.md", StringComparison.Ordinal));
+        classifierStarted.Should().Contain(uri => uri.EndsWith("stuck-1.md", StringComparison.Ordinal));
+        classifierStarted.Should().Contain(uri => uri.EndsWith("stuck-2.md", StringComparison.Ordinal));
+        classifierStarted.Should().NotContain(uri => uri.EndsWith("after-1.md", StringComparison.Ordinal));
+        classifierStarted.Should().NotContain(uri => uri.EndsWith("after-2.md", StringComparison.Ordinal));
+        classifierStarted.Should().NotContain(uri => uri.EndsWith("after-3.md", StringComparison.Ordinal));
+
+        Func<Task> act = async () => await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/post-fault.md"), IndexItemOptions.Default, token);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*terminal fault*");
+    }
+
+    [Test]
+    [DisplayName("Idle loop supervisor restarts twice before a successful run")]
+    public async Task Given_IdleSupervisor_When_RunFailsTwiceThenSucceeds_Then_RestartsWithFixedBackoff()
+    {
+        var observedFailures = new List<string>();
+        var observedDelays = new List<TimeSpan>();
+        var attempts = 0;
+        using var cts = new CancellationTokenSource();
+
+        await IdleLoopSupervisor.RunAsync(
+            loopName: "idle test loop",
+            runLoopAsync: async cancellationToken =>
+            {
+                attempts++;
+                if (attempts <= 2)
+                    throw new InvalidOperationException($"boom-{attempts}");
+
+                cts.Cancel();
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            },
+            onFailure: ex => observedFailures.Add(ex.Message),
+            logger: NullLogger.Instance,
+            cancellationToken: cts.Token,
+            delayAsync: (delay, _) =>
+            {
+                observedDelays.Add(delay);
+                return Task.CompletedTask;
+            });
+
+        attempts.Should().Be(3);
+        observedFailures.Should().BeEquivalentTo(["boom-1", "boom-2"]);
+        observedDelays.Should().BeEquivalentTo(
+            [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1)],
+            options => options.WithStrictOrdering());
+    }
+
+    [Test]
+    [DisplayName("Idle loop supervisor stops after the third restart attempt")]
+    public async Task Given_IdleSupervisor_When_RunAlwaysFails_Then_RestartsThreeTimesAndStops()
+    {
+        var observedFailures = new List<string>();
+        var observedDelays = new List<TimeSpan>();
+        var attempts = 0;
+
+        await IdleLoopSupervisor.RunAsync(
+            loopName: "idle test loop",
+            runLoopAsync: _ =>
+            {
+                attempts++;
+                throw new InvalidOperationException($"boom-{attempts}");
+            },
+            onFailure: ex => observedFailures.Add(ex.Message),
+            logger: NullLogger.Instance,
+            cancellationToken: CancellationToken.None,
+            delayAsync: (delay, _) =>
+            {
+                observedDelays.Add(delay);
+                return Task.CompletedTask;
+            });
+
+        attempts.Should().Be(4);
+        observedFailures.Should().BeEquivalentTo(["boom-1", "boom-2", "boom-3", "boom-4"]);
+        observedDelays.Should().BeEquivalentTo(
+            [TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5)],
+            options => options.WithStrictOrdering());
     }
 
     [Test]

@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Collections.Concurrent;
 
 namespace RepoQL.Indexing.Tests.Indexing;
 
@@ -149,6 +150,104 @@ internal class WorkQueueTests
         processedItems.Should().NotContain(2);
         timedOutItems.Should().ContainSingle().Which.Should().Be(2);
         queue.TimeoutCount.Should().Be(1);
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("WhenIdleAsync returns a fresh task for each busy cycle")]
+    public async Task Given_RepeatedBusyCycles_When_CapturingWhenIdle_Then_EachTaskCompletesAfterItsCycle(CancellationToken token)
+    {
+        var releaseByItem = new ConcurrentDictionary<int, TaskCompletionSource<bool>>();
+        var startedByItem = new ConcurrentDictionary<int, TaskCompletionSource<bool>>();
+
+        await using var queue = new WorkQueue<int>(
+            "idle_race_regression",
+            capacity: 16,
+            readers: 1,
+            async (item, ct) =>
+            {
+                startedByItem[item].TrySetResult(true);
+                await releaseByItem[item].Task.WaitAsync(ct).ConfigureAwait(false);
+            },
+            CancellationToken.None,
+            logger: NullLogger.Instance);
+
+        Task? previousIdleTask = null;
+        for (var item = 0; item < 25; item++)
+        {
+            var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            startedByItem[item] = started;
+            releaseByItem[item] = release;
+
+            await queue.EnqueueAsync(item, token);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+
+            var idleTask = queue.WhenIdleAsync();
+            idleTask.IsCompleted.Should().BeFalse();
+            if (previousIdleTask is not null)
+            {
+                idleTask.Should().NotBeSameAs(previousIdleTask);
+            }
+
+            release.TrySetResult(true);
+            await idleTask.WaitAsync(TimeSpan.FromSeconds(2), token);
+
+            previousIdleTask = idleTask;
+        }
+
+        queue.Depth.Should().Be(0);
+        queue.WhenIdleAsync().IsCompleted.Should().BeTrue();
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("Orphan pressure faults the queue and abandons remaining items")]
+    public async Task Given_OrphanPressure_When_LimitReached_Then_QueueFaultsAndFutureEnqueueFails(CancellationToken token)
+    {
+        var processedItems = new ConcurrentBag<int>();
+        var timedOutItems = new ConcurrentBag<int>();
+        var queueFaults = new ConcurrentBag<Exception>();
+        var neverCompletes = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var queue = new WorkQueue<int>(
+            "orphan_pressure",
+            capacity: 16,
+            readers: 1,
+            async (item, _) =>
+            {
+                if (item is 2 or 3)
+                {
+                    await neverCompletes.Task.ConfigureAwait(false);
+                    return;
+                }
+
+                processedItems.Add(item);
+            },
+            CancellationToken.None,
+            itemTimeout: TimeSpan.FromMilliseconds(100),
+            logger: NullLogger.Instance)
+        {
+            OnItemTimeout = (item, _) => timedOutItems.Add(item),
+            OnQueueFault = ex => queueFaults.Add(ex)
+        };
+
+        foreach (var item in Enumerable.Range(1, 6))
+        {
+            await queue.EnqueueAsync(item, token);
+        }
+
+        await queue.WhenIdleAsync().WaitAsync(token);
+
+        processedItems.Should().Contain(1);
+        queueFaults.Should().ContainSingle();
+        queueFaults.Single().Message.Should().Contain("terminal fault");
+        timedOutItems.Should().BeEquivalentTo([2, 3, 4, 5, 6]);
+        queue.TimeoutCount.Should().Be(5);
+
+        Func<Task> act = async () => await queue.EnqueueAsync(99, token);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*terminal fault*");
     }
 
     [Test]
