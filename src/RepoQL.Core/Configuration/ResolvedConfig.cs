@@ -17,12 +17,14 @@ public sealed class ResolvedConfig
         RepoQlConfig settings,
         Dictionary<string, ResolvedSetting> resolved,
         SettingRegistry registry,
-        string userConfigDir)
+        string userConfigDir,
+        string? repoRoot = null)
     {
         Settings = settings;
         _resolved = resolved;
         _registry = registry;
         UserConfigDir = userConfigDir;
+        RepoRoot = repoRoot;
     }
 
     /// <summary>The typed config values. Components should inject <see cref="ResolvedConfig"/> and use this property.</summary>
@@ -31,12 +33,21 @@ public sealed class ResolvedConfig
     /// <summary>The resolved user configuration directory (normally <c>~/.repoql</c>).</summary>
     public string UserConfigDir { get; private set; }
 
+    /// <summary>The repository root path, used for locating repo-scoped config files.</summary>
+    public string? RepoRoot { get; private set; }
+
     /// <summary>All resolved settings with their provenance.</summary>
     public IReadOnlyDictionary<string, ResolvedSetting> AllResolved => _resolved;
 
     /// <summary>Gets provenance for a single key, or null if the key doesn't exist.</summary>
     public ResolvedSetting? GetProvenance(string key)
         => _resolved.TryGetValue(key, out var setting) ? setting : null;
+
+    /// <summary>
+    /// Re-loads configuration from disk and env vars using stored repo root and user config dir.
+    /// </summary>
+    public void Reload(Microsoft.Extensions.Logging.ILogger? logger = null)
+        => Reload(RepoRoot, logger, UserConfigDir);
 
     /// <summary>
     /// Re-loads configuration from disk and env vars.

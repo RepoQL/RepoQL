@@ -88,7 +88,7 @@ public static class ConfigurationLoader
 
         // Build the typed config object
         var config = BuildConfig(resolved, registry);
-        return new ResolvedConfig(config, resolved, registry, userDir);
+        return new ResolvedConfig(config, resolved, registry, userDir, repoRoot);
     }
 
     private static void ApplyJsonFile(

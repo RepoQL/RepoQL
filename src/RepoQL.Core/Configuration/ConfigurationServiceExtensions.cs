@@ -28,6 +28,11 @@ public static class ConfigurationServiceExtensions
         // even after Reload() is called.
         services.AddSingleton(sp => sp.GetRequiredService<ResolvedConfig>().Settings);
 
+        // Watch config files on disk and auto-reload on changes.
+        // Created eagerly so watchers start immediately.
+        var watcher = new ConfigFileWatcher(resolved, logger);
+        services.AddSingleton(watcher);
+
         return services;
     }
 }
