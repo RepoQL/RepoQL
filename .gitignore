@@ -17,6 +17,7 @@ artifacts/
 **/bin/
 **/obj/
 .repoql/*
+.claude/worktrees/
 .next
 
 # ML Models (too big)
