@@ -128,3 +128,4 @@ internal static class ServiceCollectionExtensions
         return services;
     }
 }
+

@@ -120,6 +120,7 @@ internal sealed class ExploreTool(
         [Description("Regex patterns to boost matches, comma-separated (e.g., \"Validate.*Token,(?i)auth\")")] string? boost = null,
         [Description("Regex patterns to de-rank matches, comma-separated (e.g., \"(?i)test|mock,\\.generated\\.\")")] string? penalize = null,
         [Description("Cap results shown - used with token budget to decide how things are displayed. Leave blank to have explore optimize it.")] int? limit = null,
+        [Description("Natural language question for reranking (e.g., \"Which files implement format loaders?\"). Keywords drive retrieval; question drives reranking precision.")] string? question = null,
         CancellationToken cancellationToken = default)
     {
         if (tokenBudget <= 0)
@@ -131,7 +132,7 @@ internal sealed class ExploreTool(
         var orientationFooter = _sessionOrientation.CheckOrientation(uriGlob);
 
         // Create request signature for "call again to wait" pattern
-        var requestSignature = $"{tokenBudget}|{breadth}|{uriGlob}|{keywords}|{boost}|{penalize}|{limit}";
+        var requestSignature = $"{tokenBudget}|{breadth}|{uriGlob}|{keywords}|{boost}|{penalize}|{limit}|{question}";
         var isRepeatRequest = _lastRequestSignature == requestSignature;
 
         // Only check scope readiness if doing semantic search (keywords provided)
@@ -171,6 +172,7 @@ internal sealed class ExploreTool(
                 boost,
                 penalize,
                 limit,
+                question,
                 cancellationToken).ConfigureAwait(false);
 
             if (!response.Success)

@@ -179,6 +179,7 @@ static void WriteRootHelp()
         "  serve      Start the RepoQL host and keep it running.\n" +
         "  mcp        Run RepoQL as an MCP server.\n" +
         "  query      Execute DuckDB SQL or a ::command.\n" +
+        "  command    Run an imperative RepoQL command.\n" +
         "  explore    Search and explore the repository.\n" +
         "  explain    Ask a question about the repository.\n" +
         "  read       Read repository content with budget control.\n" +
@@ -288,3 +289,5 @@ internal class ExceptionLoggingFilter(ConsoleAppFramework.ConsoleAppFilter next,
     private static bool IsMcpMode(ConsoleAppFramework.ConsoleAppContext context)
         => context.Arguments.Any(a => a.Equals("mcp", StringComparison.OrdinalIgnoreCase));
 }
+
+

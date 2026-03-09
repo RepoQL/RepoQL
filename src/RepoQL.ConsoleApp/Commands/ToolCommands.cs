@@ -1,14 +1,14 @@
 using ConsoleAppFramework;
 using RepoQL.Commands;
+using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
-using RepoQL.Contracts;
 using RepoQL.Protocol;
 using Spectre.Console;
 
 namespace RepoQL.ConsoleApp.Commands;
 
 /// <summary>
-/// CLI verbs for the five core MCP tools: query, explore, explain, read, import.
+/// CLI verbs for the six core MCP tools: query, command, explore, explain, read, import.
 ///
 /// Purpose: Lets humans use the same capabilities from the terminal that agents
 /// use via MCP — same gRPC calls, same rendered output, no MCP client required.
@@ -18,8 +18,44 @@ namespace RepoQL.ConsoleApp.Commands;
 /// replaced with CLI-appropriate behavior (spinners, print-everything).
 /// </summary>
 [RegisterCommands]
-internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, RepoQlClientProvider clientProvider, CommandRegistry commandRegistry)
+internal class ToolCommands(
+    IAnsiConsole console,
+    QueryExecutor queryExecutor,
+    RepoQlClientProvider clientProvider,
+    CommandRegistry commandRegistry,
+    SelfTestRunner selfTestRunner)
 {
+    private readonly IAnsiConsole _console = console;
+    private readonly QueryExecutor _queryExecutor = queryExecutor;
+    private readonly RepoQlClientProvider _clientProvider = clientProvider;
+    private readonly CommandRegistry _commandRegistry = commandRegistry;
+    private readonly SelfTestRunner _selfTestRunner = selfTestRunner;
+
+    /// <summary>
+    /// Run an imperative command such as diagnostics, config, or queue management.
+    /// </summary>
+    /// <param name="command">Command to run (e.g. "diagnostics.fast", "config", "?").</param>
+    /// <param name="cancel">Cancellation token.</param>
+    public async Task Command(
+        [Argument] string command,
+        CancellationToken cancel = default)
+    {
+        if (string.IsNullOrWhiteSpace(command))
+            throw new ArgumentException("Command cannot be empty.");
+
+        var input = command.Trim();
+        if (!input.StartsWith("::", StringComparison.Ordinal))
+            input = $"::{input}";
+
+        var parsed = CommandParser.TryParse(input);
+        if (parsed == null)
+            throw new ArgumentException("Could not parse command. Use `repoql command ?` to list available commands.");
+
+        _commandRegistry.DiscoverCommands();
+        var result = await _commandRegistry.ExecuteAsync(parsed, cancel).ConfigureAwait(false);
+        WriteCommandResult(result);
+    }
+
     /// <summary>
     /// Execute a DuckDB SQL query or ::command against the indexed repository.
     /// </summary>
@@ -31,27 +67,23 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         int budget = 15_000,
         CancellationToken cancel = default)
     {
-        // Command dispatch: ::name[params] syntax
         var parsed = CommandParser.TryParse(sql);
         if (parsed != null)
         {
-            commandRegistry.DiscoverCommands();
-            var cmdResult = await commandRegistry.ExecuteAsync(parsed, cancel);
-            if (cmdResult.IsError)
-                console.MarkupLine($"[red]{Markup.Escape(cmdResult.Text)}[/]");
-            else
-                console.WriteLine(cmdResult.Text);
+            _commandRegistry.DiscoverCommands();
+            var cmdResult = await _commandRegistry.ExecuteAsync(parsed, cancel).ConfigureAwait(false);
+            WriteCommandResult(cmdResult);
             return;
         }
 
-        var result = await queryExecutor.ExecuteAsync(sql, int.MaxValue, ResultFormat.Toon, budget, cancel)
+        var result = await _queryExecutor.ExecuteAsync(sql, int.MaxValue, ResultFormat.Toon, budget, cancel)
             .ConfigureAwait(false);
 
         var output = result.Lines.Length > 0
             ? string.Join(Environment.NewLine, result.Lines)
             : "No results.";
 
-        console.WriteLine(output);
+        _console.WriteLine(output);
     }
 
     /// <summary>
@@ -82,25 +114,22 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
                 "Suggested mapping: inventory=8, locate=5, inspect=2.");
         }
 
-        var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
+        var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
-        // For keyword searches, wait for scope readiness with a spinner
         if (!string.IsNullOrWhiteSpace(keywords))
-        {
             await WaitForScopeReadyAsync(client, uri, cancel).ConfigureAwait(false);
-        }
 
         var response = await client.ExploreAsync(
-            budget, breadthValue, uri, keywords, boost, penalize, limit, cancel)
+            budget, breadthValue, uri, keywords, boost, penalize, limit, cancellationToken: cancel)
             .ConfigureAwait(false);
 
         if (!response.Success)
         {
-            console.MarkupLine($"[red]{Markup.Escape(response.Error)}[/]");
+            WriteError(response.Error);
             return;
         }
 
-        console.WriteLine(response.RenderedOutput);
+        _console.WriteLine(response.RenderedOutput);
     }
 
     /// <summary>
@@ -116,20 +145,27 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         string? uri = null,
         CancellationToken cancel = default)
     {
-        var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
-        await WaitForScopeReadyAsync(client, uri, cancel).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(question))
+            throw new ArgumentException("Question cannot be empty.");
 
-        var response = await client.ExploreAsync(
-            budget, 5, uri, question, null, null, null, cancel)
-            .ConfigureAwait(false);
-
-        if (!response.Success)
+        try
         {
-            console.MarkupLine($"[red]{Markup.Escape(response.Error)}[/]");
-            return;
-        }
+            var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
+            await WaitForScopeReadyAsync(client, uri, cancel).ConfigureAwait(false);
 
-        console.WriteLine(response.RenderedOutput);
+            var response = await client.ExplainAsync(question, uri, budget, cancel).ConfigureAwait(false);
+            if (!response.Success)
+            {
+                WriteError(response.Error);
+                return;
+            }
+
+            _console.WriteLine(response.RenderedOutput);
+        }
+        catch (Exception ex)
+        {
+            await WriteExplainErrorAsync(ex, cancel).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -143,9 +179,8 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         int budget = 3000,
         CancellationToken cancel = default)
     {
-        var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
+        var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
-        // For semantic modifiers, wait for scope readiness
         if (uri.Contains("=> find:", StringComparison.OrdinalIgnoreCase) ||
             uri.Contains("=> question:", StringComparison.OrdinalIgnoreCase))
         {
@@ -157,11 +192,11 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
 
         if (!response.Success)
         {
-            console.MarkupLine($"[red]{Markup.Escape(response.Error)}[/]");
+            WriteError(response.Error);
             return;
         }
 
-        console.WriteLine(response.RenderedOutput);
+        _console.WriteLine(response.RenderedOutput);
     }
 
     /// <summary>
@@ -175,9 +210,9 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         CancellationToken cancel = default)
     {
         var isRemoval = uri.TrimStart().StartsWith('-');
-        var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
+        var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
-        await console.Status()
+        await _console.Status()
             .Spinner(Spinner.Known.Dots)
             .StartAsync(isRemoval ? "Removing import..." : "Importing repository...", async _ =>
             {
@@ -185,13 +220,9 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
             });
 
         if (isRemoval)
-        {
-            console.MarkupLine($"[green]Removed:[/] {Markup.Escape(uri.Trim().TrimStart('-'))}");
-        }
+            _console.MarkupLine($"[green]Removed:[/] {Markup.Escape(uri.Trim().TrimStart('-'))}");
         else
-        {
-            console.MarkupLine($"[green]Imported:[/] {Markup.Escape(uri.Trim())}");
-        }
+            _console.MarkupLine($"[green]Imported:[/] {Markup.Escape(uri.Trim())}");
     }
 
     private async Task WaitForScopeReadyAsync(IRepoQlClient client, string? scope, CancellationToken cancel)
@@ -200,7 +231,7 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
         if (status.IsReady)
             return;
 
-        await console.Status()
+        await _console.Status()
             .Spinner(Spinner.Known.Dots)
             .StartAsync($"Waiting for indexing... {status.ReadyPercent}% ready", async ctx =>
             {
@@ -215,6 +246,37 @@ internal class ToolCommands(IAnsiConsole console, QueryExecutor queryExecutor, R
                 }
             });
     }
+
+    private async Task WriteExplainErrorAsync(Exception ex, CancellationToken cancel)
+    {
+        var cleanMessage = ErrorClassifier.GetCleanMessage(ex);
+
+        if (ex is RepoQlDiagnosticsException diagnosticsException)
+        {
+            WriteError($"{cleanMessage}\n\n{diagnosticsException.Diagnostics}");
+            return;
+        }
+
+        if (ErrorClassifier.IsInfrastructureError(ex))
+        {
+            var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancel).ConfigureAwait(false);
+            WriteError($"{cleanMessage}\n\n{diagnostics}");
+            return;
+        }
+
+        WriteError(cleanMessage);
+    }
+
+    private void WriteCommandResult(CommandResult result)
+    {
+        if (result.IsError)
+            WriteError(result.Text);
+        else
+            _console.WriteLine(result.Text);
+    }
+
+    private void WriteError(string message)
+        => _console.MarkupLine($"[red]{Markup.Escape(message)}[/]");
 
     private static string? ExtractBaseUri(string uri)
     {

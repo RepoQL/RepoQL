@@ -998,6 +998,7 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
         string? boost = null,
         string? penalize = null,
         int? limit = null,
+        string? question = null,
         CancellationToken cancellationToken = default)
         => InvokeWithReconnectAsync(async (client, ct) =>
         {
@@ -1017,11 +1018,33 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
                 request.Penalize = penalize;
             if (limit.HasValue)
                 request.Limit = limit.Value;
+            if (!string.IsNullOrWhiteSpace(question))
+                request.Question = question;
 
             var response = await client.ExploreAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
             return response;
         }, cancellationToken);
 
+
+    public Task<ExplainResponse> ExplainAsync(
+        string question,
+        string? scope = null,
+        int tokenBudget = 2000,
+        CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            var request = new Contracts.ExplainRequest
+            {
+                Question = question,
+                TokenBudget = tokenBudget
+            };
+
+            if (!string.IsNullOrWhiteSpace(scope))
+                request.Scope = scope;
+
+            var response = await client.ExplainAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            return response;
+        }, cancellationToken);
     public Task<ReadResponse> ReadAsync(
         string uri,
         int tokenBudget,
@@ -1048,3 +1071,4 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
             return response.ProcessId;
         }, cancellationToken);
 
+}

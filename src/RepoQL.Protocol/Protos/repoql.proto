@@ -50,6 +50,9 @@ service RepoQL {
   // Execute an explore query returning both structured results and pre-rendered output.
   rpc Explore(ExploreRequest) returns (ExploreResponse);
 
+  // Ask a question about the repository and get a synthesized answer with citations.
+  rpc Explain(ExplainRequest) returns (ExplainResponse);
+
   // Read repository content with token-budget-aware representation selection.
   rpc Read(ReadRequest) returns (ReadResponse);
 
@@ -338,7 +341,6 @@ message ImportResponse {
   optional string operation_id = 7;
 }
 
-
 message PipelineStatus {
   google.protobuf.Timestamp captured_at = 1;
   repeated StageStatus stages = 2;
@@ -486,6 +488,8 @@ message ExploreRequest {
   string penalize = 6;
   // Max results to show (0 = auto-calculate).
   int32 limit = 7;
+  // Natural language question for reranking (optional). Keywords drive retrieval; question drives reranking.
+  string question = 8;
 }
 
 message ExploreResponse {
@@ -545,6 +549,26 @@ message ExploreIndexerStatus {
 
 // ----- Read: token-budget-aware content retrieval -----
 
+message ExplainRequest {
+  // Natural-language question to answer.
+  string question = 1;
+  // Optional scope filter (glob pattern or URI).
+  string scope = 2;
+  // Maximum tokens to invest in the synthesized response.
+  int32 token_budget = 3;
+}
+
+message ExplainResponse {
+  // True if the explain request executed successfully.
+  bool success = 1;
+  // Error message if success is false.
+  string error = 2;
+  // Pre-rendered markdown output for display/MCP.
+  string rendered_output = 3;
+  // Current indexer status with readiness info.
+  ExploreIndexerStatus status = 4;
+}
+
 message ReadRequest {
   // URI or glob pattern (e.g., file:///path, help:///file.md, file:///**/*.cs).
   // Append ' // <question>' for LLM synthesis via xray Understand.
@@ -569,7 +593,6 @@ message ReadResponse {
   // Current indexer status with readiness info.
   ExploreIndexerStatus status = 7;
 }
-
 
 message StatusEvent {
   // Event timestamp.

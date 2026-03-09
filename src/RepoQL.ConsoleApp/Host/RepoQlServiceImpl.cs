@@ -1232,7 +1232,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 Keywords: string.IsNullOrWhiteSpace(request.Keywords) ? null : request.Keywords,
                 Boost: string.IsNullOrWhiteSpace(request.Boost) ? null : request.Boost,
                 Penalize: string.IsNullOrWhiteSpace(request.Penalize) ? null : request.Penalize,
-                Limit: request.Limit > 0 ? request.Limit : null
+                Limit: request.Limit > 0 ? request.Limit : null,
+                Question: string.IsNullOrWhiteSpace(request.Question) ? null : request.Question
             );
 
             // Execute via orchestrator (pass stopwatch for accurate timing in output)
@@ -1284,6 +1285,116 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         }
     }
 
+
+    public override async Task<ExplainResponse> Explain(ExplainRequest request, ServerCallContext context)
+    {
+        var sw = Stopwatch.StartNew();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request.Question))
+            {
+                return new ExplainResponse
+                {
+                    Success = false,
+                    Error = "Question cannot be empty."
+                };
+            }
+
+            if (request.TokenBudget <= 0)
+            {
+                return new ExplainResponse
+                {
+                    Success = false,
+                    Error = "token_budget must be a positive integer."
+                };
+            }
+
+            var status = GetTrustSignal(0, context.CancellationToken);
+            var scope = string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope;
+            var searchKeywords = request.Question;
+
+            if (_llmProvider?.Enabled == true)
+            {
+                var extracted = await _llmProvider.ExtractKeywordsAsync(request.Question, context.CancellationToken).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(extracted))
+                    searchKeywords = extracted;
+            }
+
+            var query = new ExploreQuery(
+                TokenBudget: 50_000,
+                Breadth: 2,
+                Scope: scope,
+                Keywords: searchKeywords,
+                Boost: null,
+                Penalize: null,
+                Limit: null);
+
+            var result = await _exploreOrchestrator.ExecuteAsync(query, status, context.CancellationToken, sw).ConfigureAwait(false);
+
+            string renderedOutput;
+            if (_llmProvider?.Enabled != true)
+            {
+                renderedOutput = "[LLM not configured — showing raw explore results. Set OPENROUTER_API_KEY for synthesized answers.]\n\n"
+                    + result.RenderedOutput;
+            }
+            else
+            {
+                var synthesized = await _llmProvider.SummarizeAsync(
+                    result.RenderedOutput,
+                    request.Question,
+                    maxTokens: Math.Max(500, request.TokenBudget),
+                    repoTree: null,
+                    ct: context.CancellationToken).ConfigureAwait(false);
+
+                var footer = string.Empty;
+                var lines = result.RenderedOutput.Split('\n');
+                for (var i = lines.Length - 1; i >= 0; i--)
+                {
+                    var trimmed = lines[i].TrimStart();
+                    if (trimmed.StartsWith('[') && trimmed.Contains("tok", StringComparison.Ordinal))
+                    {
+                        footer = trimmed;
+                        break;
+                    }
+                }
+
+                renderedOutput = string.IsNullOrWhiteSpace(footer)
+                    ? $"## {request.Question}\n\n{synthesized}"
+                    : $"## {request.Question}\n\n{synthesized}\n\n---\n{footer}";
+            }
+
+            return new ExplainResponse
+            {
+                Success = true,
+                RenderedOutput = renderedOutput,
+                Status = new ExploreIndexerStatus
+                {
+                    IndexPending = status.IndexPending,
+                    SemanticReady = status.SemanticReady,
+                    Ready = status.IndexPending == 0 && status.SemanticReady,
+                    ElapsedMs = sw.ElapsedMilliseconds,
+                    IndexTotal = status.IndexTotal,
+                    IndexFailed = status.IndexFailed,
+                    IndexStale = status.IndexStale,
+                    SemanticPercent = status.SemanticPercent
+                }
+            };
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            throw new RpcException(new Status(StatusCode.Cancelled, "Explain request was canceled."));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Explain request failed");
+            return new ExplainResponse
+            {
+                Success = false,
+                Error = ex.Message
+            };
+        }
+    }
     public override async Task<ReadResponse> Read(ReadRequest request, ServerCallContext context)
     {
         var sw = Stopwatch.StartNew();

@@ -128,6 +128,7 @@ public interface IRepoQlClient : IAsyncDisposable
     /// <param name="boost">Optional comma-separated regex patterns to boost matches.</param>
     /// <param name="penalize">Optional comma-separated regex patterns to de-rank matches.</param>
     /// <param name="limit">Optional max results to show (null = auto-calculate).</param>
+    /// <param name="question">Optional natural language question for reranking.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     Task<ExploreResponse> ExploreAsync(
         int tokenBudget,
@@ -137,6 +138,20 @@ public interface IRepoQlClient : IAsyncDisposable
         string? boost = null,
         string? penalize = null,
         int? limit = null,
+        string? question = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Ask a question about the repository and get a synthesized answer with citations.
+    /// </summary>
+    /// <param name="question">Natural-language question to answer.</param>
+    /// <param name="scope">Optional scope filter (glob pattern or URI).</param>
+    /// <param name="tokenBudget">Maximum tokens to invest in the synthesized response.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<ExplainResponse> ExplainAsync(
+        string question,
+        string? scope = null,
+        int tokenBudget = 2000,
         CancellationToken cancellationToken = default);
 
     /// <summary>
