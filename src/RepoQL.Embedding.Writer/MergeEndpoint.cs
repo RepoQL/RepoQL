@@ -4,8 +4,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace RepoQL.Embedding.Writer;
 
 /// <summary>
-/// Purpose: Maps Cloud Tasks HTTP callbacks onto cache merge processing.
-/// Complexity: JSON payload parsing, bad-message acknowledgement, retryable error mapping.
+/// Purpose: Maps merge triggers onto cache merge processing.
+/// Complexity: Accepts both Eventarc CloudEvent payloads (production) and direct JSON (local dev),
+/// bad-message acknowledgement, retryable error mapping.
 /// </summary>
 internal static class MergeEndpoint
 {
@@ -14,18 +15,8 @@ internal static class MergeEndpoint
         HttpContext ctx,
         ILoggerFactory? loggerFactory = null)
     {
-        MergeRequest? request;
+        var path = await ExtractStagingPathAsync(ctx).ConfigureAwait(false);
 
-        try
-        {
-            request = await ctx.Request.ReadFromJsonAsync<MergeRequest>(cancellationToken: ctx.RequestAborted);
-        }
-        catch (JsonException)
-        {
-            return Results.Ok();
-        }
-
-        var path = request?.Path;
         if (!CacheMergeHandler.TryParseStagingPath(path, out _))
             return Results.Ok();
 
@@ -48,6 +39,35 @@ internal static class MergeEndpoint
         }
     }
 
+    private static async Task<string?> ExtractStagingPathAsync(HttpContext ctx)
+    {
+        try
+        {
+            // Eventarc sends CloudEvents with ce-type header in binary content mode.
+            if (ctx.Request.Headers.ContainsKey("ce-type"))
+            {
+                var gcsEvent = await ctx.Request.ReadFromJsonAsync<GcsObjectData>(cancellationToken: ctx.RequestAborted);
+                return gcsEvent?.Name;
+            }
+
+            // Local dev: direct JSON from embedding service.
+            var request = await ctx.Request.ReadFromJsonAsync<MergeRequest>(cancellationToken: ctx.RequestAborted);
+            return request?.Path;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    // CloudEvent binary content mode body for google.cloud.storage.object.v1.finalized
+    private sealed class GcsObjectData
+    {
+        public string? Name { get; init; }
+        public string? Bucket { get; init; }
+    }
+
+    // Direct invocation format (local dev)
     private sealed class MergeRequest
     {
         public string? Path { get; init; }

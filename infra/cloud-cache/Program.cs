@@ -6,8 +6,8 @@ return await Deployment.RunAsync<CloudCacheInfrastructureStack>();
 
 /// <summary>
 /// Provisions the GCP foundation for the cloud embedding cache.
-/// Complexity: storage buckets, queueing, scheduling, service identities, HMAC credentials,
-/// Secret Manager storage, and bucket-scoped IAM bindings for the cache services.
+/// Complexity: storage buckets, scheduling, service identities, HMAC credentials,
+/// Secret Manager storage, Eventarc IAM prerequisites, and bucket-scoped IAM bindings.
 /// </summary>
 internal sealed class CloudCacheInfrastructureStack : Stack
 {
@@ -15,10 +15,11 @@ internal sealed class CloudCacheInfrastructureStack : Stack
     {
         var env = Deployment.Instance.StackName;
         var config = new Config();
+        var gcpConfig = new Config("gcp");
 
         var bucketLocation = config.Get("bucketLocation") ?? "US";
         var region = config.Get("region")
-            ?? new Config("gcp").Get("region")
+            ?? gcpConfig.Get("region")
             ?? "us-central1";
         var compactionSchedule = config.Get("compactionSchedule") ?? "0 0 * * *";
         var schedulerTimeZone = config.Get("schedulerTimeZone") ?? "Etc/UTC";
@@ -27,8 +28,15 @@ internal sealed class CloudCacheInfrastructureStack : Stack
 
         var embeddingsBucketName = $"repoql-embeddings-{env}";
         var stagingBucketName = $"repoql-staging-{env}";
-        var queueName = $"embedding-merge-{env}";
         var schedulerName = $"embedding-compaction-{env}";
+
+        // Look up the project to get the project number for service agent IAM.
+        var gcpProjectId = gcpConfig.Require("project");
+
+        var project = Gcp.Organizations.GetProject.Invoke(new Gcp.Organizations.GetProjectInvokeArgs
+        {
+            ProjectId = gcpProjectId,
+        });
 
         var embeddingsBucket = new Gcp.Storage.Bucket("embeddingsBucket", new Gcp.Storage.BucketArgs
         {
@@ -60,23 +68,11 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             },
         });
 
-        var mergeQueue = new Gcp.CloudTasks.Queue("mergeQueue", new Gcp.CloudTasks.QueueArgs
-        {
-            Name = queueName,
-            Location = region,
-            RetryConfig = new Gcp.CloudTasks.Inputs.QueueRetryConfigArgs
-            {
-                MaxAttempts = 5,
-                MinBackoff = "10s",
-                MaxBackoff = "600s",
-            },
-        });
-
         var embeddingServiceAccount = new Gcp.ServiceAccount.Account("embeddingServiceAccount", new Gcp.ServiceAccount.AccountArgs
         {
             AccountId = $"embedding-service-{env}",
             DisplayName = $"RepoQL embedding service ({env})",
-            Description = "Reads embeddings, writes staging objects, and enqueues merge work.",
+            Description = "Reads embeddings and writes staging objects. Also serves as the Eventarc trigger identity.",
         });
 
         var cacheWriterAccount = new Gcp.ServiceAccount.Account("cacheWriterAccount", new Gcp.ServiceAccount.AccountArgs
@@ -129,6 +125,8 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             compactionHmac.AccessId,
             compactionHmac.Secret);
 
+        // --- Bucket-scoped IAM ---
+
         _ = new Gcp.Storage.BucketIAMMember("embeddingServiceEmbeddingsRead", new Gcp.Storage.BucketIAMMemberArgs
         {
             Bucket = embeddingsBucket.Name,
@@ -140,14 +138,6 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         {
             Bucket = stagingBucket.Name,
             Role = "roles/storage.objectCreator",
-            Member = AsServiceAccountMember(embeddingServiceAccount.Email),
-        });
-
-        _ = new Gcp.CloudTasks.QueueIamMember("embeddingServiceQueueEnqueue", new Gcp.CloudTasks.QueueIamMemberArgs
-        {
-            Name = mergeQueue.Name,
-            Location = region,
-            Role = "roles/cloudtasks.enqueuer",
             Member = AsServiceAccountMember(embeddingServiceAccount.Email),
         });
 
@@ -172,6 +162,27 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Member = AsServiceAccountMember(compactionAccount.Email),
         });
 
+        // --- Eventarc IAM prerequisites ---
+        // The embedding service SA is reused as the Eventarc trigger identity.
+        // It needs eventarc.eventReceiver to receive GCS events.
+        // The GCS service agent needs pubsub.publisher to emit notifications.
+
+        _ = new Gcp.Projects.IAMMember("embeddingServiceEventarcReceiver", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/eventarc.eventReceiver",
+            Member = AsServiceAccountMember(embeddingServiceAccount.Email),
+        });
+
+        _ = new Gcp.Projects.IAMMember("gcsServiceAgentPubsubPublisher", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/pubsub.publisher",
+            Member = project.Apply(p => $"serviceAccount:service-{p.Number}@gs-project-accounts.iam.gserviceaccount.com"),
+        });
+
+        // --- Compaction scheduler ---
+
         var schedulerPayload = Convert.ToBase64String(
             Encoding.UTF8.GetBytes($"{{\"environment\":\"{env}\",\"trigger\":\"nightly-compaction\"}}"));
 
@@ -194,9 +205,10 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             },
         });
 
+        // --- Outputs ---
+
         EmbeddingsBucketName = embeddingsBucket.Name;
         StagingBucketName = stagingBucket.Name;
-        MergeQueueName = mergeQueue.Name;
         CompactionSchedulerName = compactionScheduler.Name;
         ServiceAccountEmails = Output.Tuple(
                 embeddingServiceAccount.Email,
@@ -231,9 +243,6 @@ internal sealed class CloudCacheInfrastructureStack : Stack
 
     [Output]
     public Output<string> StagingBucketName { get; private set; } = null!;
-
-    [Output]
-    public Output<string> MergeQueueName { get; private set; } = null!;
 
     [Output]
     public Output<string> CompactionSchedulerName { get; private set; } = null!;

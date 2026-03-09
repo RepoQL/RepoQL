@@ -1,13 +1,8 @@
+using System.Net.Http.Json;
 using DuckDB.NET.Data;
-using Google.Protobuf;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using RepoQL.Embedding.Storage;
-using System.Net.Http.Json;
-using CloudTask = Google.Cloud.Tasks.V2.Task;
-using CloudTaskHttpMethod = Google.Cloud.Tasks.V2.HttpMethod;
-using CloudTaskHttpRequest = Google.Cloud.Tasks.V2.HttpRequest;
-using CloudTasksClient = Google.Cloud.Tasks.V2.CloudTasksClient;
 
 namespace RepoQL.Embedding.Service.Cache;
 
@@ -27,7 +22,6 @@ internal sealed class EmbeddingCacheLayer : IDisposable
     private readonly DuckDBConnection _connection;
     private readonly IObjectStorageClient _storageClient;
     private readonly HttpClient _httpClient;
-    private readonly CloudTasksClient? _tasksClient;
     private readonly SemaphoreSlim _connectionGate = new(1, 1);
     private bool _disposed;
     private long _tableSequence;
@@ -51,9 +45,6 @@ internal sealed class EmbeddingCacheLayer : IDisposable
 #pragma warning restore RQL003
         _connection.Open();
         ConfigureDuckDb();
-
-        if (string.IsNullOrWhiteSpace(_settings.DirectWriterUrl))
-            _tasksClient = CloudTasksClient.Create();
     }
 
     public bool Enabled => _settings.Enabled;
@@ -64,12 +55,6 @@ internal sealed class EmbeddingCacheLayer : IDisposable
             return false;
 
         if (string.IsNullOrWhiteSpace(settings.EmbeddingsBucket) || string.IsNullOrWhiteSpace(settings.StagingBucket))
-            return false;
-
-        var hasDispatchConfiguration =
-            !string.IsNullOrWhiteSpace(settings.DirectWriterUrl) ||
-            (!string.IsNullOrWhiteSpace(settings.CloudTasksQueue) && !string.IsNullOrWhiteSpace(settings.WriterServiceUrl));
-        if (!hasDispatchConfiguration)
             return false;
 
         try
@@ -192,7 +177,10 @@ internal sealed class EmbeddingCacheLayer : IDisposable
                     await _storageClient.UploadAsync(_settings.StagingBucket, objectPath, stream, ct).ConfigureAwait(false);
                 }
 
-                await EnqueueWriteAsync(objectPath, ct).ConfigureAwait(false);
+                // In production, Eventarc triggers the writer on OBJECT_FINALIZE.
+                // In local dev, call the writer directly.
+                if (!string.IsNullOrWhiteSpace(_settings.DirectWriterUrl))
+                    await NotifyWriterDirectlyAsync(objectPath, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -302,29 +290,11 @@ internal sealed class EmbeddingCacheLayer : IDisposable
         }
     }
 
-    private async Task EnqueueWriteAsync(string stagingPath, CancellationToken ct)
+    private async Task NotifyWriterDirectlyAsync(string stagingPath, CancellationToken ct)
     {
-        if (!string.IsNullOrWhiteSpace(_settings.DirectWriterUrl))
-        {
-            using var response = await _httpClient.PostAsJsonAsync(_settings.DirectWriterUrl, new WriteRequest(stagingPath), ct)
-                .ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-            return;
-        }
-
-        var task = new CloudTask
-        {
-            HttpRequest = new CloudTaskHttpRequest
-            {
-                HttpMethod = CloudTaskHttpMethod.Post,
-                Url = _settings.WriterServiceUrl,
-                Headers = { ["Content-Type"] = "application/json" },
-                Body = ByteString.CopyFromUtf8($$"""{"path":"{{stagingPath}}"}""")
-            }
-        };
-
-        ArgumentNullException.ThrowIfNull(_tasksClient);
-        await _tasksClient.CreateTaskAsync(_settings.CloudTasksQueue, task, cancellationToken: ct).ConfigureAwait(false);
+        using var response = await _httpClient.PostAsJsonAsync(_settings.DirectWriterUrl, new WriteRequest(stagingPath), ct)
+            .ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
     }
 
     private void ExecuteNonQuery(string sql)
@@ -402,4 +372,7 @@ internal sealed class EmbeddingCacheLayer : IDisposable
     }
 
     private sealed record WriteRequest(string Path);
+
+    // Note: DirectWriterUrl is only used in local dev (Aspire orchestrator).
+    // In production, GCS OBJECT_FINALIZE events trigger the writer via Eventarc.
 }

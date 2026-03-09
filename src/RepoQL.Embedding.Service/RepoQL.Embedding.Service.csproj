@@ -20,7 +20,6 @@
     <PackageReference Include="Grpc.AspNetCore" />
     <PackageReference Include="DuckDB.NET.Data.Full" />
     <PackageReference Include="Google.Cloud.Storage.V1" />
-    <PackageReference Include="Google.Cloud.Tasks.V2" />
   </ItemGroup>
 
   <ItemGroup>

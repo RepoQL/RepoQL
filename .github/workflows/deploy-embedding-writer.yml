@@ -114,3 +114,35 @@ jobs:
             --set-env-vars=ASPNETCORE_URLS=http://+:8080,Writer__StorageBackend=gcs
             --set-env-vars=Writer__EmbeddingsBucket=${{ vars.CACHE_EMBEDDINGS_BUCKET }},Writer__StagingBucket=${{ vars.CACHE_STAGING_BUCKET }}
             --set-secrets=REPOQL_CACHE_GCS_HMAC_KEY_ID=${{ vars.CACHE_WRITER_HMAC_KEY_SECRET }}:latest,REPOQL_CACHE_GCS_HMAC_SECRET=${{ vars.CACHE_WRITER_HMAC_SECRET_SECRET }}:latest
+
+      - name: Create Eventarc trigger for staging bucket
+        shell: bash
+        env:
+          REGION: ${{ inputs.region || 'us-central1' }}
+          TRIGGER_SA: embedding-service-${{ inputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
+        run: |
+          set -euo pipefail
+
+          TRIGGER_NAME="staging-to-writer-${{ inputs.environment }}"
+
+          # Grant the embedding service SA run.invoker on the writer service
+          gcloud run services add-iam-policy-binding "$SERVICE_NAME" \
+            --region="${REGION}" \
+            --member="serviceAccount:${TRIGGER_SA}" \
+            --role="roles/run.invoker" \
+            --quiet
+
+          # Create or update the Eventarc trigger
+          if gcloud eventarc triggers describe "$TRIGGER_NAME" --location="${REGION}" &>/dev/null; then
+            echo "Eventarc trigger ${TRIGGER_NAME} already exists."
+          else
+            gcloud eventarc triggers create "$TRIGGER_NAME" \
+              --location="${REGION}" \
+              --destination-run-service="$SERVICE_NAME" \
+              --destination-run-region="${REGION}" \
+              --destination-run-path="/merge" \
+              --event-filters="type=google.cloud.storage.object.v1.finalized" \
+              --event-filters="bucket=${{ vars.CACHE_STAGING_BUCKET }}" \
+              --service-account="${TRIGGER_SA}"
+            echo "Created Eventarc trigger ${TRIGGER_NAME}."
+          fi

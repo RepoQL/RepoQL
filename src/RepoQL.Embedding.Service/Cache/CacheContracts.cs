@@ -19,8 +19,6 @@ public sealed class CacheLayerSettings
     public string S3SecretKey { get; set; } = "";
     public string EmbeddingsBucket { get; set; } = "";
     public string StagingBucket { get; set; } = "";
-    public string CloudTasksQueue { get; set; } = "";
-    public string WriterServiceUrl { get; set; } = "";
     public string DirectWriterUrl { get; set; } = "";
 
     public ObjectStorageBackendSettings ToObjectStorageBackendSettings()

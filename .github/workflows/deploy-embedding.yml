@@ -129,5 +129,4 @@ jobs:
             --region="${REGION}" \
             --set-env-vars="CacheLayer__Enabled=true,CacheLayer__StorageBackend=gcs" \
             --set-env-vars="CacheLayer__EmbeddingsBucket=${{ vars.CACHE_EMBEDDINGS_BUCKET }},CacheLayer__StagingBucket=${{ vars.CACHE_STAGING_BUCKET }}" \
-            --set-env-vars="CacheLayer__CloudTasksQueue=${{ vars.CACHE_TASKS_QUEUE }},CacheLayer__WriterServiceUrl=${{ vars.CACHE_WRITER_URL }}" \
             --update-secrets="REPOQL_CACHE_GCS_HMAC_KEY_ID=${{ vars.CACHE_EMBEDDING_HMAC_KEY_SECRET }}:latest,REPOQL_CACHE_GCS_HMAC_SECRET=${{ vars.CACHE_EMBEDDING_HMAC_SECRET_SECRET }}:latest"
