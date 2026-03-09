@@ -121,6 +121,9 @@ jobs:
         shell: bash
         env:
           REGION: ${{ inputs.region || 'us-central1' }}
+          # Eventarc trigger location must match bucket location.
+          # Staging bucket is US multi-region → trigger location is "us".
+          TRIGGER_LOCATION: ${{ vars.CACHE_BUCKET_LOCATION || 'us' }}
           TRIGGER_SA: embedding-service-${{ inputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
         run: |
           set -euo pipefail
@@ -136,12 +139,12 @@ jobs:
             --quiet
 
           # Create or update the Eventarc trigger
-          if gcloud eventarc triggers describe "$TRIGGER_NAME" --project="${{ vars.GCP_PROJECT_ID }}" --location="${REGION}" &>/dev/null; then
+          if gcloud eventarc triggers describe "$TRIGGER_NAME" --project="${{ vars.GCP_PROJECT_ID }}" --location="${TRIGGER_LOCATION}" &>/dev/null; then
             echo "Eventarc trigger ${TRIGGER_NAME} already exists."
           else
             gcloud eventarc triggers create "$TRIGGER_NAME" \
               --project="${{ vars.GCP_PROJECT_ID }}" \
-              --location="${REGION}" \
+              --location="${TRIGGER_LOCATION}" \
               --destination-run-service="$SERVICE_NAME" \
               --destination-run-region="${REGION}" \
               --destination-run-path="/merge" \
