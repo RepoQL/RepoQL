@@ -174,6 +174,23 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Member = AsServiceAccountMember(compactionAccount.Email),
         });
 
+        // --- Secret Manager access ---
+        // Service accounts need to read secrets mounted as env vars by Cloud Run.
+
+        _ = new Gcp.Projects.IAMMember("embeddingServiceSecretAccessor", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/secretmanager.secretAccessor",
+            Member = AsServiceAccountMember(embeddingServiceAccount.Email),
+        });
+
+        _ = new Gcp.Projects.IAMMember("cacheWriterSecretAccessor", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/secretmanager.secretAccessor",
+            Member = AsServiceAccountMember(cacheWriterAccount.Email),
+        });
+
         // --- Eventarc IAM prerequisites ---
         // The embedding service SA is reused as the Eventarc trigger identity.
         // It needs eventarc.eventReceiver to receive GCS events.
