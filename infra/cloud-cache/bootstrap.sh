@@ -69,12 +69,19 @@ for ROLE in "${ROLES[@]}"; do
     --quiet > /dev/null
 done
 
-# --- Activate GCS service agent ---
-# Required for Eventarc (GCS → Pub/Sub notifications).
+# --- Activate service agents ---
+# GCS service agent: required for Eventarc (GCS → Pub/Sub notifications).
+# Eventarc service agent: created lazily by GCP — force-provision so Pulumi
+# can grant it bucket IAM before the first trigger is created.
 
 echo ""
 echo "Activating GCS service agent..."
 gcloud storage service-agent --project="${PROJECT}"
+
+echo "Activating Eventarc service agent..."
+gcloud beta services identity create \
+  --service=eventarc.googleapis.com \
+  --project="${PROJECT}"
 
 echo ""
 echo "Bootstrap complete. You can now run:"
