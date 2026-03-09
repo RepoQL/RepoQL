@@ -38,6 +38,18 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             ProjectId = gcpProjectId,
         });
 
+        // --- Artifact Registry ---
+
+        var containerRepo = new Gcp.ArtifactRegistry.Repository("containerRepo", new Gcp.ArtifactRegistry.RepositoryArgs
+        {
+            RepositoryId = "repoql",
+            Location = region,
+            Format = "DOCKER",
+            Description = "Container images for RepoQL embedding services.",
+        });
+
+        // --- Storage ---
+
         var embeddingsBucket = new Gcp.Storage.Bucket("embeddingsBucket", new Gcp.Storage.BucketArgs
         {
             Name = embeddingsBucketName,
