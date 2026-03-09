@@ -1,0 +1,52 @@
+name: deploy-cloud-cache-infra
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Pulumi stack (dev or prod)'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+concurrency:
+  group: deploy-infra-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Pulumi up (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+          include-prerelease: true
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: pulumi/actions@v6
+        with:
+          command: up
+          stack-name: ${{ inputs.environment }}
+          work-dir: infra/cloud-cache
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}

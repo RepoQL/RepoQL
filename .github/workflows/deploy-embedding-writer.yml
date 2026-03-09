@@ -1,4 +1,4 @@
-name: deploy-embedding-service
+name: deploy-embedding-writer
 
 on:
   workflow_dispatch:
@@ -11,10 +11,6 @@ on:
         description: 'Container image tag (default: git SHA)'
         default: ''
         type: string
-      enable_cache:
-        description: 'Enable cloud embedding cache'
-        default: false
-        type: boolean
       environment:
         description: 'Target environment'
         required: true
@@ -25,22 +21,22 @@ on:
           - prod
 
 concurrency:
-  group: deploy-embedding-${{ inputs.environment }}
+  group: deploy-embedding-writer-${{ inputs.environment }}
   cancel-in-progress: false
 
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-  SERVICE_NAME: repoql-embedding
+  SERVICE_NAME: repoql-embedding-writer
   AR_HOSTNAME: ${{ inputs.region || 'us-central1' }}-docker.pkg.dev
 
 permissions:
   contents: read
-  id-token: write  # Required for Workload Identity Federation
+  id-token: write
 
 jobs:
   deploy:
-    name: Build and deploy to Cloud Run (${{ inputs.environment }})
+    name: Build and deploy writer to Cloud Run
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
     steps:
@@ -91,7 +87,7 @@ jobs:
 
           echo "Publishing container image: ${full_image}"
 
-          dotnet publish src/RepoQL.Embedding.Service/RepoQL.Embedding.Service.csproj \
+          dotnet publish src/RepoQL.Embedding.Writer/RepoQL.Embedding.Writer.csproj \
             -c Release \
             /t:PublishContainer \
             -p:ContainerRegistry="${registry}" \
@@ -108,26 +104,13 @@ jobs:
           region: ${{ inputs.region || 'us-central1' }}
           image: ${{ env.image }}
           flags: >-
-            --use-http2
             --port=8080
             --min-instances=0
             --max-instances=1
-            --memory=512Mi
+            --memory=1Gi
             --cpu=1
             --timeout=300
-            --allow-unauthenticated
-            --set-env-vars=ASPNETCORE_URLS=http://+:8080
-            --set-secrets=Embedding__VoyageApiKey=repoql-embedding-voyage-api-key:latest,Auth__ApiKeyHashes__0=repoql-embedding-auth-key-hash-0:latest
-
-      - name: Enable cloud cache
-        if: inputs.enable_cache
-        shell: bash
-        env:
-          REGION: ${{ inputs.region || 'us-central1' }}
-        run: |
-          gcloud run services update ${{ env.SERVICE_NAME }} \
-            --region="${REGION}" \
-            --set-env-vars="CacheLayer__Enabled=true,CacheLayer__StorageBackend=gcs" \
-            --set-env-vars="CacheLayer__EmbeddingsBucket=${{ vars.CACHE_EMBEDDINGS_BUCKET }},CacheLayer__StagingBucket=${{ vars.CACHE_STAGING_BUCKET }}" \
-            --set-env-vars="CacheLayer__CloudTasksQueue=${{ vars.CACHE_TASKS_QUEUE }},CacheLayer__WriterServiceUrl=${{ vars.CACHE_WRITER_URL }}" \
-            --update-secrets="REPOQL_CACHE_GCS_HMAC_KEY_ID=${{ vars.CACHE_EMBEDDING_HMAC_KEY_SECRET }}:latest,REPOQL_CACHE_GCS_HMAC_SECRET=${{ vars.CACHE_EMBEDDING_HMAC_SECRET_SECRET }}:latest"
+            --no-allow-unauthenticated
+            --set-env-vars=ASPNETCORE_URLS=http://+:8080,Writer__StorageBackend=gcs
+            --set-env-vars=Writer__EmbeddingsBucket=${{ vars.CACHE_EMBEDDINGS_BUCKET }},Writer__StagingBucket=${{ vars.CACHE_STAGING_BUCKET }}
+            --set-secrets=REPOQL_CACHE_GCS_HMAC_KEY_ID=${{ vars.CACHE_WRITER_HMAC_KEY_SECRET }}:latest,REPOQL_CACHE_GCS_HMAC_SECRET=${{ vars.CACHE_WRITER_HMAC_SECRET_SECRET }}:latest
