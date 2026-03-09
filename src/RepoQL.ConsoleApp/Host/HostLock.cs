@@ -16,8 +16,9 @@ namespace RepoQL.ConsoleApp.Host;
 /// </para>
 /// <para>
 /// <b>Sharing model</b>: The holder opens with <c>FileShare.Read</c>, so competing processes can read the PID
-/// via <see cref="TryReadHolderPid"/> while the lock is held. Write exclusivity is enforced by the OS —
-/// only one process can hold <c>FileAccess.ReadWrite</c> at a time.
+/// via <see cref="TryReadHolderPid"/> while the lock is held. On Windows, write exclusivity is enforced by
+/// <c>FileShare</c> semantics. On Linux, <c>FileShare.Read</c> is not enforced, so an advisory lock via
+/// <see cref="FileStream.Lock"/> (which maps to <c>flock()</c>) provides cross-process exclusion.
 /// </para>
 /// <para>
 /// <b>Acquisition is two-phase</b>: Phase 1 opens the FileStream (lock acquisition). Phase 2 writes the PID.
@@ -38,6 +39,14 @@ namespace RepoQL.ConsoleApp.Host;
 internal sealed class HostLock : IDisposable
 {
     private const string PidPrefix = "PID:";
+
+    /// <summary>
+    /// Byte offset for the advisory lock. Placed well beyond PID content so that
+    /// <see cref="TryReadHolderPid"/> can read bytes 0..N without hitting the locked range.
+    /// On Windows, byte-range locks block reads; on Unix, flock() is whole-file anyway.
+    /// </summary>
+    private const long LockOffset = 1024;
+
     private readonly FileStream _stream;
 
     private HostLock(string path, FileStream stream)
@@ -59,8 +68,9 @@ internal sealed class HostLock : IDisposable
     /// Returns the lock on success, or null with <paramref name="failure"/> indicating why.
     /// </summary>
     /// <remarks>
-    /// Two-phase acquisition: (1) open the file for exclusive write access, (2) write the PID.
-    /// Phase 1 failures from sharing violations → <see cref="HostLockFailure.Locked"/>.
+    /// Two-phase acquisition: (1) open the file for exclusive write access, (1b) acquire advisory lock
+    /// for cross-platform exclusivity, (2) write the PID.
+    /// Phase 1/1b failures from sharing or lock violations → <see cref="HostLockFailure.Locked"/>.
     /// Phase 2 failures (IO during PID write) → <see cref="HostLockFailure.Error"/> with stream disposed.
     /// This separation prevents Unix IO errors (ENOSPC, EIO) from being misclassified as lock contention.
     /// </remarks>
@@ -93,6 +103,26 @@ internal sealed class HostLock : IDisposable
             failure = HostLockFailure.Error;
             error = ex;
             return null;
+        }
+
+        // Phase 1b: Acquire an advisory lock for cross-platform exclusivity.
+        // On Linux, FileShare.Read does NOT enforce exclusive write access — the FileStream
+        // constructor above succeeds even if another process has the file open. FileStream.Lock
+        // maps to flock() on Unix, which provides the actual cross-process exclusion.
+        // On Windows, FileShare already enforces exclusivity so this step is skipped.
+        if (!OperatingSystem.IsWindows())
+        {
+            try
+            {
+                stream.Lock(LockOffset, 1);
+            }
+            catch (IOException)
+            {
+                // Another process holds the advisory lock — treat as lock contention.
+                stream.Dispose();
+                failure = HostLockFailure.Locked;
+                return null;
+            }
         }
 
         // Phase 2: Write our PID so zombie detection can identify us.
@@ -156,6 +186,14 @@ internal sealed class HostLock : IDisposable
 
     public void Dispose()
     {
+        // Release the advisory lock before closing the stream (Unix only — see Phase 1b).
+        // Ignore errors — Dispose must be safe even if the stream is already broken.
+        if (!OperatingSystem.IsWindows())
+        {
+            try { _stream.Unlock(LockOffset, 1); }
+            catch { /* Best-effort unlock; stream disposal releases the lock regardless. */ }
+        }
+
         _stream.Dispose();
     }
 

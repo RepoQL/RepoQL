@@ -1125,6 +1125,10 @@ public partial class IndexingEngine : IAsyncDisposable
         if (item.Epoch < 0)
             return;
 
+        // Don't accumulate idle work after a terminal fault — it can never be processed.
+        if (Volatile.Read(ref _indexerQueueFaulted) == 1)
+            return;
+
         bool needsRequeue;
         lock (_analysisLock)
         {
@@ -1549,6 +1553,10 @@ public partial class IndexingEngine : IAsyncDisposable
         IReadOnlyList<IndexItem> analysisItems,
         int analysisItemsAlreadyEnqueued)
     {
+        // Don't requeue if either queue is terminally faulted — the items can never be processed.
+        if (Volatile.Read(ref _indexerQueueFaulted) == 1 || Volatile.Read(ref _analysisQueueFaulted) == 1)
+            return (0, 0, 0);
+
         var analysisStartIndex = Math.Clamp(analysisItemsAlreadyEnqueued, 0, analysisItems.Count);
         var requeuedEpochs = new HashSet<long>();
         var requeuedStructureCount = 0;
@@ -1836,6 +1844,15 @@ public partial class IndexingEngine : IAsyncDisposable
         Volatile.Write(ref _indexerQueueFaulted, 1);
         Volatile.Write(ref _lastError, $"IndexingQueue fault: {ex.Message}");
         Logger.LogCritical(ex, "Indexer queue entered a terminal fault.");
+
+        // Clear pending idle processing state — no further idle work can run after a terminal fault.
+        // Without this, items that completed the hot path before the fault remain orphaned in the
+        // pending collections, causing GetPendingIdleProcessingCount() to report stale counts.
+        lock (_analysisLock)
+        {
+            _pendingAnalysis.Clear();
+            _pendingStructureEmbeddings.Clear();
+        }
     }
 
     private void HandleAnalysisQueueFault(Exception ex)
@@ -1843,6 +1860,14 @@ public partial class IndexingEngine : IAsyncDisposable
         Volatile.Write(ref _analysisQueueFaulted, 1);
         Volatile.Write(ref _lastError, $"AnalysisQueue fault: {ex.Message}");
         Logger.LogCritical(ex, "Analysis queue entered a terminal fault.");
+
+        // Clear pending idle processing state — the analysis queue can no longer accept work,
+        // and RequeueIdleBacklogAfterFailure would keep reviving doomed items otherwise.
+        lock (_analysisLock)
+        {
+            _pendingAnalysis.Clear();
+            _pendingStructureEmbeddings.Clear();
+        }
     }
 
     public IndexingState State { get; private set; } = IndexingState.AllIdle;
