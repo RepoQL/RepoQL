@@ -16,6 +16,7 @@ public sealed class RepoQlConfig
     public McpSettings Mcp { get; set; } = new();
     public DotnetSettings Dotnet { get; set; } = new();
     public CacheSettings Cache { get; set; } = new();
+    public SearchSettings Search { get; set; } = new();
     public FindSettings Find { get; set; } = new();
 
     public sealed class DuckDbSettings
@@ -230,6 +231,13 @@ public sealed class RepoQlConfig
             RequiresRestart = true, DefaultValue = "128",
             LegacyEnvVar = "REPOQL_SHARED_CACHE_SIZE_LIMIT")]
         public long? SizeLimit { get; set; }
+    }
+
+    public sealed class SearchSettings
+    {
+        [Setting("Enable document reranking",
+            DefaultValue = "true")]
+        public bool? RerankEnabled { get; set; }
     }
 
     public sealed class FindSettings

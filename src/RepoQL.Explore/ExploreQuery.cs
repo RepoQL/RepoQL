@@ -11,6 +11,7 @@ namespace RepoQL.Explore;
 /// <param name="Boost">Optional comma-separated regex patterns to boost matches.</param>
 /// <param name="Penalize">Optional comma-separated regex patterns to de-rank matches.</param>
 /// <param name="Limit">Optional max results to show (null = auto-calculate).</param>
+/// <param name="Question">Optional natural language question for reranking. Keywords drive retrieval; question drives reranking.</param>
 public sealed record ExploreQuery(
     int TokenBudget,
     int Breadth = 5,
@@ -18,4 +19,5 @@ public sealed record ExploreQuery(
     string? Keywords = null,
     string? Boost = null,
     string? Penalize = null,
-    int? Limit = null);
+    int? Limit = null,
+    string? Question = null);

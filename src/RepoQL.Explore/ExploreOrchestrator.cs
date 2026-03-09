@@ -58,7 +58,8 @@ public sealed class ExploreOrchestrator
             Patterns: boostPatterns,
             Breadth: query.Breadth,
             TokenBudget: query.TokenBudget,
-            PenalizePatterns: penalizePatterns.Count > 0 ? penalizePatterns : null
+            PenalizePatterns: penalizePatterns.Count > 0 ? penalizePatterns : null,
+            RerankQuery: string.IsNullOrWhiteSpace(query.Question) ? null : query.Question
         );
 
         // Create JIT cache for this search session

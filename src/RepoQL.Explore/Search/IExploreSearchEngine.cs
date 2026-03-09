@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Embeddings;
 
 namespace RepoQL.Explore.Search;
@@ -23,11 +25,19 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
 {
     private readonly IExploreCandidateService _candidateService;
     private readonly IRerankProvider _rerankProvider;
+    private readonly RepoQlConfig _config;
+    private readonly ILogger? _logger;
 
-    public ExploreSearchEngine(IExploreCandidateService candidateService, IRerankProvider rerankProvider)
+    public ExploreSearchEngine(
+        IExploreCandidateService candidateService,
+        IRerankProvider rerankProvider,
+        RepoQlConfig? config = null,
+        ILogger<ExploreSearchEngine>? logger = null)
     {
         _candidateService = candidateService ?? throw new ArgumentNullException(nameof(candidateService));
         _rerankProvider = rerankProvider ?? throw new ArgumentNullException(nameof(rerankProvider));
+        _config = config ?? new RepoQlConfig();
+        _logger = logger;
     }
 
     public async Task<SearchEngineResult> SearchAsync(
@@ -88,10 +98,12 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
 
         // Phase 5: Document-level reranking via Voyage AI
         // Runs last so it sees JIT-corrected scores and pattern boosts.
-        // Applies a position-delta modifier: 3% per position moved, floor 0.0.
+        // Applies relevance-based modifier: above neutral → boost, below → heavier penalty.
+        // Uses RerankQuery (natural language question) when available; falls back to keywords.
         if (ShouldRerank(parameters, results))
         {
-            await ApplyRerankAsync(parameters.Question!, results, cancellationToken)
+            var rerankQuery = parameters.RerankQuery ?? parameters.Question!;
+            await ApplyRerankAsync(rerankQuery, results, cancellationToken)
                 .ConfigureAwait(false);
         }
 
@@ -107,10 +119,14 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
 
     private const int RerankMaxDocuments = 20;
     private const double RerankRelevanceCutoff = 0.15; // Don't send docs below 15% of top score
-    private const double RerankStepSize = 0.03; // 3% score modifier per position moved
+    private const double RerankNeutralRelevance = 0.40; // Relevance scores above this boost, below this penalize
+    private const double RerankBoostScale = 1.0;        // Trust positive signal
+    private const double RerankPenaltyScale = 2.5;      // Trust negative signal more heavily
 
     private bool ShouldRerank(SearchParameters parameters, List<SearchResult> results)
     {
+        if (_config.Search.RerankEnabled == false)
+            return false;
         if (!_rerankProvider.Enabled)
             return false;
         if (string.IsNullOrWhiteSpace(parameters.Question))
@@ -123,7 +139,8 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
     }
 
     /// <summary>
-    /// Rerank document-level results and apply position-delta modifier in-place.
+    /// Rerank document-level results and apply relevance-based modifier in-place.
+    /// Uses the reranker's relevance score directly: above neutral → boost, below → heavier penalty.
     /// Sends headline + structure to the reranker for richer signal than the calling LLM sees.
     /// </summary>
     private async Task ApplyRerankAsync(
@@ -168,23 +185,48 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         if (rerankResult.Results.Count == 0)
             return;
 
-        // Build reranked position map: original index → new rank position
-        var rerankedPositions = new Dictionary<int, int>();
-        for (var newRank = 0; newRank < rerankResult.Results.Count; newRank++)
+        // Build relevance map: original candidate index → relevance score
+        var relevanceMap = new Dictionary<int, double>();
+        for (var i = 0; i < rerankResult.Results.Count; i++)
         {
-            var originalIdx = rerankResult.Results[newRank].Index;
-            rerankedPositions[originalIdx] = newRank;
+            relevanceMap[rerankResult.Results[i].Index] = rerankResult.Results[i].RelevanceScore;
         }
 
-        // Apply position-delta modifier to scores
+        // Diagnostic: log reranker output with computed modifiers
+        if (_logger?.IsEnabled(LogLevel.Information) == true)
+        {
+            _logger.LogInformation("Rerank diagnostics for query: \"{Query}\" (neutral={Neutral}, boost={Boost}, penalty={Penalty})",
+                query, RerankNeutralRelevance, RerankBoostScale, RerankPenaltyScale);
+            for (var i = 0; i < rerankResult.Results.Count; i++)
+            {
+                var rr = rerankResult.Results[i];
+                var origIdx = rr.Index;
+                var candidate = rerankCandidates[origIdx];
+                var uri = candidate.Result.Uri;
+                var shortUri = uri.Contains('/') ? uri[(uri.LastIndexOf('/') + 1)..] : uri;
+                if (shortUri.Length > 50) shortUri = shortUri[..50];
+                var distance = rr.RelevanceScore - RerankNeutralRelevance;
+                var scale = distance >= 0 ? RerankBoostScale : RerankPenaltyScale;
+                var mod = Math.Max(1.0 + distance * scale, 0.1);
+                _logger.LogInformation(
+                    "  Rerank [{NewRank}] relevance={Relevance} modifier={Modifier} base={BaseScore} adjusted={Adjusted} uri={Uri}",
+                    i.ToString().PadLeft(2),
+                    rr.RelevanceScore.ToString("F4"), mod.ToString("F3"),
+                    candidate.Result.RawScore.ToString("F4"),
+                    (candidate.Result.RawScore * mod).ToString("F4"), shortUri);
+            }
+        }
+
+        // Apply relevance-based modifier to scores
+        // Above neutral → boost (scale 1.0). Below neutral → heavier penalty (scale 2.5).
         for (var originalRank = 0; originalRank < rerankCandidates.Count; originalRank++)
         {
-            if (!rerankedPositions.TryGetValue(originalRank, out var newRank))
+            if (!relevanceMap.TryGetValue(originalRank, out var relevance))
                 continue;
 
-            var delta = originalRank - newRank; // positive = moved up
-            var modifier = 1.0 + delta * RerankStepSize;
-            modifier = Math.Max(modifier, 0.0); // floor at 0 (100% penalty cap)
+            var distance = relevance - RerankNeutralRelevance;
+            var scale = distance >= 0 ? RerankBoostScale : RerankPenaltyScale;
+            var modifier = Math.Max(1.0 + distance * scale, 0.1); // floor at 10%
 
             var (resultIndex, result) = rerankCandidates[originalRank];
             results[resultIndex] = result with { RawScore = result.RawScore * modifier };

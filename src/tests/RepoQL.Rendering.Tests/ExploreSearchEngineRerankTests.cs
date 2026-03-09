@@ -123,13 +123,13 @@ public class ExploreSearchEngineRerankTests
     }
 
     [Test]
-    [DisplayName("Position modifier is bounded at floor 0")]
-    public async Task Given_MassiveDemotion_Then_ScoreFlooredAtZero()
+    [DisplayName("Relevance modifier has a floor")]
+    public async Task Given_LowRelevance_Then_ScoreFlooredAboveZero()
     {
-        // Create many docs so a big demotion is possible
+        // Create many docs so lowest-relevance doc gets a strong penalty
         var candidates = CreateDocumentCandidates(20);
 
-        // Reranker reverses: doc0 drops 19 positions → modifier = 1.0 - 19*0.03 = 0.43
+        // Reranker reverses: doc0 gets lowest relevance → strong penalty, but floor prevents zero
         var reranker = new StubRerankProvider(reverseOrder: true);
         var searchEngine = new ExploreSearchEngine(
             new StubExploreCandidateService(new ExploreCandidateResult(candidates, TotalMatched: 20)),

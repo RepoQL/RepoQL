@@ -9,7 +9,8 @@ public record SearchParameters(
     IReadOnlyList<string> Patterns,
     int Breadth = 5,
     int TokenBudget = 2000,
-    IReadOnlyList<string>? PenalizePatterns = null
+    IReadOnlyList<string>? PenalizePatterns = null,
+    string? RerankQuery = null
 );
 
 /// <summary>
