@@ -34,6 +34,16 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
+    [DisplayName("ReadScalar converts non-nullable numeric results to nullable numeric targets")]
+    public void ReadScalar_ConvertsNumericResultsToNullableNumericTargets()
+    {
+        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
+
+        db.ReadScalar<long?>("SELECT 1").Should().Be(1L);
+        db.ReadScalar<long?>("SELECT CAST(NULL AS BIGINT)").Should().BeNull();
+    }
+
+    [Test]
     [DisplayName("Query with mapper returns typed results")]
     public void Query_WithMapper_ReturnsTypedResults()
     {

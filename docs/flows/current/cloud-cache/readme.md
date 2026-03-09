@@ -32,7 +32,14 @@ flowchart LR
 - **6-month TTL** — storage hygiene via eviction during compaction, not correctness
 - **IAM separation** — workers write staging only, never embeddings directly
 
+## Status
+
+Deployed to both dev and prod (March 2026). End-to-end verified: cache miss → Voyage → staging → Eventarc → writer → cache hit.
+
+Compaction job exists in code but is not yet deployed as a Cloud Run job. Currently the compaction endpoint is registered in the writer service. The Cloud Scheduler job is provisioned by Pulumi but points to a placeholder URL.
+
 ## Related
 
+- [Design: Cloud Embedding Cache](../../../designs/current/cloud-embedding-cache.md) — architecture and contracts
+- [Operations Guide](../../../designs/current/cloud-embedding-cache-ops.md) — deployment, secrets, troubleshooting
 - `docs/north-star/embedding-cache.md` — what great looks like
-- `docs/flows/future/embedding-cache.md` — local cache flow (separate system)

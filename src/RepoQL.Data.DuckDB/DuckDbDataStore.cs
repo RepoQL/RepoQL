@@ -801,7 +801,10 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
 
         if (result is null or DBNull) return default;
         if (result is T typed) return typed;
-        return (T)Convert.ChangeType(result, typeof(T));
+        var targetType = typeof(T);
+        var conversionType = Nullable.GetUnderlyingType(targetType) ?? targetType;
+        var converted = Convert.ChangeType(result, conversionType, CultureInfo.InvariantCulture);
+        return (T?)converted;
     }
 
     private static CancellationTokenRegistration RegisterCommandCancellation(DuckDBCommand command, CancellationToken cancellationToken)
