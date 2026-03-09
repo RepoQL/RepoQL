@@ -1,0 +1,4 @@
+name: cloud-cache
+runtime:
+  name: dotnet
+description: RepoQL cloud embedding cache infrastructure on GCP.

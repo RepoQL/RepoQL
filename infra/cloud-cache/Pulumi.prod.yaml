@@ -1,0 +1,9 @@
+config:
+  gcp:project: repoql-production
+  gcp:region: us-central1
+
+  cloud-cache:bucketLocation: US
+  cloud-cache:compactionSchedule: "0 0 * * *"
+  cloud-cache:schedulerTimeZone: Etc/UTC
+  # Placeholder until the writer Cloud Run service is deployed.
+  cloud-cache:compactionEndpointUrl: https://replace-after-writer-deploy.run.app
