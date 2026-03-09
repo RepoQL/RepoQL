@@ -210,6 +210,14 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Member = project.Apply(p => $"serviceAccount:service-{p.Number}@gs-project-accounts.iam.gserviceaccount.com"),
         });
 
+        // Eventarc service agent needs to read staging bucket metadata to validate triggers.
+        _ = new Gcp.Storage.BucketIAMMember("eventarcServiceAgentStagingViewer", new Gcp.Storage.BucketIAMMemberArgs
+        {
+            Bucket = stagingBucket.Name,
+            Role = "roles/storage.objectViewer",
+            Member = project.Apply(p => $"serviceAccount:service-{p.Number}@gcp-sa-eventarc.iam.gserviceaccount.com"),
+        });
+
         // Pub/Sub SA needs to mint OIDC tokens for authenticated push to Cloud Run.
         _ = new Gcp.Projects.IAMMember("pubsubServiceAgentTokenCreator", new Gcp.Projects.IAMMemberArgs
         {
