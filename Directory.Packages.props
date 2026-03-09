@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageVersion Include="AWSSDK.S3" Version="4.0.13.1" />
     <PackageVersion Include="Antlr4.Runtime.Standard" Version="4.13.1" />
     <PackageVersion Include="Antlr4BuildTasks" Version="12.11.0" />
     <PackageVersion Include="AwesomeAssertions" Version="9.2.1" />
@@ -17,6 +18,8 @@
     <PackageVersion Include="FakeItEasy" Version="8.3.0" />
     <PackageVersion Include="Fluid.Core" Version="2.25.0" />
     <PackageVersion Include="Google.Protobuf" Version="3.33.0" />
+    <PackageVersion Include="Google.Cloud.Storage.V1" Version="4.13.0" />
+    <PackageVersion Include="Google.Cloud.Tasks.V2" Version="3.6.0" />
     <PackageVersion Include="GraphQL-Parser" Version="9.5.0" />
     <PackageVersion Include="Grpc.AspNetCore" Version="2.71.0" />
     <PackageVersion Include="Grpc.AspNetCore.Server" Version="2.71.0" />
@@ -85,3 +88,4 @@
   </ItemGroup>
 
 </Project>
+

@@ -2,13 +2,15 @@
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
-    <AssemblyName>repoql-embedding</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>repoql-embedding-writer</AssemblyName>
 
     <!-- dotnet publish produces a container image by default -->
     <PublishProfile>DefaultContainer</PublishProfile>
-    <ContainerRepository>repoql-embedding</ContainerRepository>
+    <ContainerRepository>repoql-embedding-writer</ContainerRepository>
     <ContainerFamily>noble</ContainerFamily>
-    <UserSecretsId>dbcf7209-9611-44dd-924e-b35e955f586a</UserSecretsId>
+    <UserSecretsId>31e51d7c-0e21-4a78-a55f-505493414b2f</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,19 +19,17 @@
 
   <ItemGroup>
     <PackageReference Include="AWSSDK.S3" />
-    <PackageReference Include="Grpc.AspNetCore" />
     <PackageReference Include="DuckDB.NET.Data.Full" />
     <PackageReference Include="Google.Cloud.Storage.V1" />
     <PackageReference Include="Google.Cloud.Tasks.V2" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" />
     <ProjectReference Include="..\RepoQL.Embedding.Storage\RepoQL.Embedding.Storage.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="RepoQL.Embedding.Service.Tests" />
+    <InternalsVisibleTo Include="RepoQL.Embedding.Writer.Tests" />
   </ItemGroup>
 
 </Project>

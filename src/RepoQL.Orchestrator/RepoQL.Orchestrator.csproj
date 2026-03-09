@@ -1,5 +1,4 @@
 <Project Sdk="Aspire.AppHost.Sdk/13.1.0">
-    
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -8,18 +7,15 @@
     <IsAspireHost>true</IsAspireHost>
     <UserSecretsId>262cdc7c-4509-4bad-ade1-3d4cc013a93e</UserSecretsId>
   </PropertyGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\RepoQL.ConsoleApp\RepoQL.ConsoleApp.csproj" />
     <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\RepoQL.Protocol\RepoQL.Protocol.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\RepoQL.Embedding.Service\RepoQL.Embedding.Service.csproj" />
+    <ProjectReference Include="..\RepoQL.Embedding.Writer\RepoQL.Embedding.Writer.csproj" />
   </ItemGroup>
-
   <ItemGroup>
-    <ProjectReference Update="$(RepositoryRoot)src/RepoQL.Analyzers/RepoQL.Analyzers.csproj"
-                      IsAspireProjectResource="false" />
+    <ProjectReference Update="$(RepositoryRoot)src/RepoQL.Analyzers/RepoQL.Analyzers.csproj" IsAspireProjectResource="false" />
   </ItemGroup>
-
 </Project>

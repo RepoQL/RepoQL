@@ -8,15 +8,15 @@ A team imports `github://company/platform-docs` in every repository they work on
 
 ## Content Identity
 
-- An agent should be able to import the same content in two repositories and pay the embedding cost only once
+- An agent should be able to import the same source in two repositories and pay the embedding cost only once
 - An agent should be able to re-index an unchanged file without recomputing its embedding
 - An agent should be able to trust that two identical texts always produce the same cache key, regardless of file path, repository, or machine
 - An agent should be able to upgrade the embedding model and have stale entries miss naturally — no purge, no manual invalidation
 
 ```
-Same content + same model → same key → cache hit
-Changed content           → different key → cache miss → recompute
-Changed model             → different key → cache miss → recompute
+Same source + same content + same model → cache hit
+Changed content                        → cache miss → recompute
+Changed model                          → cache miss → recompute (new shard)
 ```
 
 ---
@@ -59,6 +59,22 @@ Developer C:  new hire → points at shared cache → semantic search from minut
 
 ---
 
+## Storage Lifecycle
+
+- An agent should be able to trust the cache manages its own size without manual intervention
+- An agent should be able to set a time horizon beyond which unused entries are reclaimed
+- An agent should never lose correctness from expiry — expired entries simply recompute on next access
+- An agent should be able to distinguish storage hygiene (TTL, size limits) from correctness controls (key composition) — they are independent concerns
+- An agent should be able to trust that a model upgrade invalidates stale entries immediately via key mismatch, not eventually via TTL
+
+```
+Model changes  → key mismatch → instant miss → correctness
+Time passes    → TTL expires  → lazy eviction → disk hygiene
+Both together  → stale entries stop being hit AND get cleaned up
+```
+
+---
+
 ## Trust and Integrity
 
 - An agent should be able to verify a cached embedding by recomputing it from the same input
@@ -72,11 +88,13 @@ Developer C:  new hire → points at shared cache → semantic search from minut
 
 | Declaration | Why It Matters |
 |-------------|----------------|
-| Same content + same model = cache hit, always | Deterministic. No false misses, no stale hits. |
+| Same source + same content + same model = cache hit, always | Deterministic. No false misses, no stale hits. |
 | Store full dimensions, truncate on read | One entry serves all consumers regardless of dim config |
 | Cross-repo sharing with zero coordination | Import a popular library and skip hours of embedding |
 | Layered caches compose naturally | Local speed + shared breadth + cloud reach, same interface |
 | No cache is also fine | Cache is pure acceleration, never correctness-critical |
+| Cache manages its own size over time | No manual cleanup, no unbounded growth |
+| TTL is hygiene, key composition is correctness | Independent concerns, independently tunable |
 
 ---
 
@@ -90,7 +108,9 @@ Developer C:  new hire → points at shared cache → semantic search from minut
 | Make search depend on cache availability | An agent should get correct results with or without a cache |
 | Require manual invalidation on model change | An agent should see natural misses when the model changes |
 | Conflate passage and query embeddings in the cache | An agent should be able to trust that passage and query embeddings are cached separately (asymmetric models produce different vectors for the same text) |
+| Rely on TTL for correctness after model change | An agent should see instant misses from key composition, not eventual misses from expiry |
+| Let the cache grow unbounded | An agent should be able to trust the cache self-manages within configured limits |
 
 ---
 
-*An agent should never compute an embedding that someone — on this machine, on this team, or in this community — already computed for the same content.*
+*An agent should never compute an embedding that someone — on this machine, on this team, or working on the same source — already computed for the same content.*

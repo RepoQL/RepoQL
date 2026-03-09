@@ -11,8 +11,43 @@ var builder = DistributedApplication.CreateBuilder(args);
 builder.Services.AddHealthChecks()
     .AddCheck<RepoQlHostHealthCheck>("repoql-host");
 
+var minio = builder.AddContainer("minio", "minio/minio")
+    .WithArgs("server", "/data", "--console-address", ":9001")
+    .WithHttpEndpoint(targetPort: 9000, name: "s3")
+    .WithHttpEndpoint(targetPort: 9001, name: "console")
+    .WithEnvironment("MINIO_ROOT_USER", "minioadmin")
+    .WithEnvironment("MINIO_ROOT_PASSWORD", "minioadmin");
+
+var writer = builder.AddProject<RepoQL_Embedding_Writer>("writer")
+    .WaitFor(minio)
+    .WithEnvironment("Writer__StorageBackend", "s3")
+    .WithEnvironment("Writer__S3Endpoint", minio.GetEndpoint("s3"))
+    .WithEnvironment("Writer__S3AccessKey", "minioadmin")
+    .WithEnvironment("Writer__S3SecretKey", "minioadmin")
+    .WithEnvironment("Writer__EmbeddingsBucket", "repoql-embeddings")
+    .WithEnvironment("Writer__StagingBucket", "repoql-staging");
+
+writer.WithEnvironment(async context =>
+{
+    var writerUrl = await writer.GetEndpoint("http").GetValueAsync(context.CancellationToken).ConfigureAwait(false);
+    context.EnvironmentVariables["Writer__DirectCompactionUrl"] = $"{writerUrl.TrimEnd('/')}/compact";
+});
+
 var embedding = builder.AddProject<RepoQL_Embedding_Service>("embedding")
-    .WithHttpEndpoint(name: "grpc", targetPort: 8080)
+    .WaitFor(minio)
+    .WaitFor(writer)
+    .WithEnvironment("CacheLayer__Enabled", "true")
+    .WithEnvironment("CacheLayer__StorageBackend", "s3")
+    .WithEnvironment("CacheLayer__S3Endpoint", minio.GetEndpoint("s3"))
+    .WithEnvironment("CacheLayer__S3AccessKey", "minioadmin")
+    .WithEnvironment("CacheLayer__S3SecretKey", "minioadmin")
+    .WithEnvironment("CacheLayer__EmbeddingsBucket", "repoql-embeddings")
+    .WithEnvironment("CacheLayer__StagingBucket", "repoql-staging")
+    .WithEnvironment(async context =>
+    {
+        var writerUrl = await writer.GetEndpoint("http").GetValueAsync(context.CancellationToken).ConfigureAwait(false);
+        context.EnvironmentVariables["CacheLayer__DirectWriterUrl"] = $"{writerUrl.TrimEnd('/')}/merge";
+    })
     .WithCommand(
         name: "smoke_test",
         displayName: "Smoke test (GetModelInfo)",
@@ -23,7 +58,7 @@ var embedding = builder.AddProject<RepoQL_Embedding_Service>("embedding")
                 var ct = context.CancellationToken;
                 var model = context.ServiceProvider.GetRequiredService<DistributedApplicationModel>();
                 var resource = model.Resources.OfType<ProjectResource>().First(r => r.Name == "embedding");
-                var endpoint = resource.GetEndpoint("grpc");
+                var endpoint = resource.GetEndpoint("http");
                 var url = endpoint.Url;
 
                 using var channel = Grpc.Net.Client.GrpcChannel.ForAddress(url, new Grpc.Net.Client.GrpcChannelOptions
@@ -271,3 +306,6 @@ static void MakeDirectoryDeletable(string directory)
         // best-effort; deletion will retry and surface failures if persistent
     }
 }
+
+
+

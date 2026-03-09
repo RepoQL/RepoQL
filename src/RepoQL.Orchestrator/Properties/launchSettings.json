@@ -10,7 +10,8 @@
         "ASPNETCORE_ENVIRONMENT": "Development",
         "DOTNET_ENVIRONMENT": "Development",
         "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "https://localhost:21294",
-        "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "https://localhost:22290"
+        "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "https://localhost:22290",
+          "DOTNET_ASPIRE_CONTAINER_RUNTIME": "podman"
       }
     },
     "http": {
@@ -22,7 +23,8 @@
         "ASPNETCORE_ENVIRONMENT": "Development",
         "DOTNET_ENVIRONMENT": "Development",
         "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:19160",
-        "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:20033"
+        "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "http://localhost:20033",
+          "DOTNET_ASPIRE_CONTAINER_RUNTIME": "podman"
       }
     }
   }

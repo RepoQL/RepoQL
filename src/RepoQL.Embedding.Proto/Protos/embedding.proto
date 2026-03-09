@@ -29,6 +29,11 @@ message EmbedChunksRequest {
   // Groups of chunks, each from one document.
   // Order within a group matters — chunks should be in document order.
   repeated ChunkGroup groups = 1;
+
+  // Canonical repo origin for cache shard placement.
+  // Normalized: "{host}/{path}" (e.g., "github.com/org/repo").
+  // Empty = skip cloud cache (e.g., file:// with no git remote).
+  string source = 2;
 }
 
 message ChunkGroup {
