@@ -230,6 +230,14 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             },
         });
 
+        // --- Monitoring dashboard ---
+
+        _ = new Gcp.Monitoring.Dashboard("embeddingDashboard", new Gcp.Monitoring.DashboardArgs
+        {
+            DashboardJson = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "dashboard.json")),
+            Project = gcpProjectId,
+        });
+
         // --- Outputs ---
 
         EmbeddingsBucketName = embeddingsBucket.Name;
