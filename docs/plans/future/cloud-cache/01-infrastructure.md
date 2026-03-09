@@ -1,5 +1,5 @@
 ---
-description: Pulumi infrastructure for the cloud embedding cache — GCS buckets, Cloud Tasks, IAM, Cloud Scheduler.
+description: Pulumi infrastructure for the cloud embedding cache — GCS buckets, IAM, Cloud Scheduler. Eventarc trigger managed by deploy workflow.
 tags: [plan, cloud-cache, infrastructure, pulumi]
 audience: { human: 40, agent: 60 }
 categories: ["Plan[95%]", "Design[5%]"]
@@ -15,14 +15,15 @@ Implements: [Cloud Embedding Cache Design](../../../designs/future/cloud-embeddi
 - Pulumi C# project with three stacks (`dev`, `staging`, `prod`)
 - GCS embeddings bucket — Standard storage, uniform bucket-level access
 - GCS staging bucket — Standard storage, 24h lifecycle policy
-- Cloud Tasks queue for cache merge messages
 - Cloud Scheduler job for nightly compaction trigger
 - IAM service accounts with scoped permissions per service
+- IAM grants for Eventarc plumbing (GCS service agent → Pub/Sub publisher, Pub/Sub service agent → token creator, writer SA → event receiver)
 - HMAC keys for DuckDB httpfs GCS access
 - Secret Manager references for HMAC credentials
 
 **Does not cover:**
 - Cloud Run service deployments (Plans: 03-cache-layer, 04-writer, 05-compaction)
+- Eventarc trigger creation (handled by deploy-embedding-writer workflow, because it references the Cloud Run writer service)
 - Application code (Plans: 02 through 05)
 - CI/CD pipeline for Pulumi deployments (follow-on)
 - Monitoring and alerting infrastructure (follow-on)
@@ -33,6 +34,7 @@ Once infrastructure exists:
 - **Plans 03, 04, 05 can proceed** — they deploy to resources this plan creates
 - **Dev environment available immediately** — developers can test against real GCS buckets
 - **IAM boundaries enforced from day one** — no retroactive permission tightening
+- **Eventarc IAM grants in place** — the deploy-embedding-writer workflow can create the trigger without additional IAM setup
 
 This is the foundation layer. All other cloud cache plans depend on it.
 
@@ -62,11 +64,6 @@ This is the foundation layer. All other cloud cache plans depend on it.
 - The staging bucket shall have a lifecycle rule deleting objects older than 1 day
 - When the staging lifecycle rule fires, orphaned staging files shall be removed automatically
 
-### Cloud Tasks
-
-- The merge queue shall be configured with retry policy: max 5 attempts, 10s min backoff, 600s max backoff
-- The merge queue shall be located in the same region as the Cloud Run services
-
 ### Cloud Scheduler
 
 - The compaction scheduler shall trigger nightly at a configurable time
@@ -76,13 +73,15 @@ This is the foundation layer. All other cloud cache plans depend on it.
 
 - The embedding service account shall have read access to the embeddings bucket
 - The embedding service account shall have write access to the staging bucket
-- The embedding service account shall have enqueue permission on the Cloud Tasks queue
+- The writer service account shall have `eventarc.eventReceiver` role (for Eventarc trigger authentication)
+- The GCS service agent shall have `pubsub.publisher` role (to publish OBJECT_FINALIZE events to Pub/Sub)
+- The Pub/Sub service agent shall have `iam.serviceAccountTokenCreator` role (to authenticate push delivery to Cloud Run)
 - The writer service account shall have read and delete access to the staging bucket
 - The writer service account shall have read and write access to the embeddings bucket
 - The compaction service account shall have read and write access to the embeddings bucket
 - When a service account is compromised, it shall not have permissions beyond its role
   - The embedding service shall not write to the embeddings bucket
-  - The writer shall not enqueue tasks or access Voyage credentials
+  - The writer shall not access Voyage credentials
 
 ### HMAC Keys
 
@@ -92,7 +91,7 @@ This is the foundation layer. All other cloud cache plans depend on it.
 
 ### Outputs
 
-- The Pulumi stack shall export bucket names, queue name, scheduler name, and service account emails
+- The Pulumi stack shall export bucket names, scheduler name, and service account emails
 - The Pulumi stack shall export Secret Manager resource names for HMAC credentials
 
 ## Constraints
@@ -107,7 +106,7 @@ This is the foundation layer. All other cloud cache plans depend on it.
 - [Cloud Embedding Cache Design](../../../designs/future/cloud-embedding-cache.md) — infrastructure section with Pulumi code sketch
 - [Pulumi GCP Provider](https://www.pulumi.com/registry/packages/gcp/) — `Pulumi.Gcp` NuGet package
 - [GCS HMAC Keys](https://cloud.google.com/storage/docs/authentication/hmackeys) — for DuckDB httpfs authentication
-- [Cloud Tasks](https://cloud.google.com/tasks/docs) — queue configuration and retry semantics
+- [Eventarc](https://cloud.google.com/eventarc/docs) — GCS event routing to Cloud Run
 
 ## Error Policy
 

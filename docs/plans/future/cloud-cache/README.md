@@ -19,8 +19,8 @@ These plans implement the [Cloud Embedding Cache Design](../../../designs/future
            ▼           ▼               │
 ┌────────────────┐  ┌────────────────┐ │
 │ 04-writer      │  │ 03-cache-layer │◄┘
-│ Cloud Tasks    │  │ DuckDB, lookup │
-│ consumer       │  │ staging, enqueue│
+│ Eventarc       │  │ DuckDB, lookup │
+│ consumer       │  │ staging write  │
 └────────┬───────┘  └────────────────┘
          │
          ▼
@@ -35,16 +35,16 @@ These plans implement the [Cloud Embedding Cache Design](../../../designs/future
 
 | # | Plan | What it delivers |
 |---|------|------------------|
-| 01 | [Infrastructure](01-infrastructure.md) | Pulumi stacks, GCS buckets, Cloud Tasks queue, IAM, Cloud Scheduler |
+| 01 | [Infrastructure](01-infrastructure.md) | Pulumi stacks, GCS buckets, IAM, Cloud Scheduler, Eventarc IAM grants |
 | 02 | [Proto & Source Resolution](02-proto-source-resolution.md) | `source` proto field, URL normalization, host-side resolution |
-| 03 | [Cache Layer](03-cache-layer.md) | `EmbeddingCacheLayer` — DuckDB lookup, staging write, Cloud Tasks enqueue |
-| 04 | [Writer Service](04-writer-service.md) | Cloud Run writer — Cloud Tasks consumer, part file append, `_source.json` |
+| 03 | [Cache Layer](03-cache-layer.md) | `EmbeddingCacheLayer` — DuckDB lookup, staging write (Eventarc triggers writer) |
+| 04 | [Writer Service](04-writer-service.md) | Cloud Run writer — Eventarc consumer, part file append, `_source.json` |
 | 05 | [Compaction](05-compaction.md) | Cloud Run job — shard locking, dedup, eviction, part consolidation |
 
 ## Execution Strategy
 
 **Phase 1: Foundation (01 + 02)** — can proceed in parallel
-- Infrastructure creates the buckets, queues, and IAM
+- Infrastructure creates the buckets, IAM, and Eventarc IAM grants
 - Proto change adds the `source` field and normalization
 
 **Phase 2: Core (03 + 04)** — can proceed in parallel, both depend on 01

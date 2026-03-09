@@ -12,22 +12,33 @@ How newly computed embeddings move from the staging bucket into the permanent em
 
 ## Trigger
 
-Cloud Tasks delivers a message containing a staging file path. The message was enqueued by the embedding service after computing new vectors.
+Eventarc delivers a CloudEvent to the writer's merge endpoint when a new object is created in the staging bucket (GCS OBJECT_FINALIZE event, routed via Pub/Sub). The staging file was uploaded by the embedding service after computing new vectors.
+
+In production, the payload is a CloudEvent (detected via the `ce-type` header) containing the GCS object metadata:
 
 ```json
-{ "path": "staging/source={hash}/model={model}/instance-abc-3f9a1c.parquet" }
+{
+  "bucket": "repoql-staging-prod",
+  "name": "source={hash}/model={model}/instance-abc-3f9a1c.parquet"
+}
+```
+
+For local development, the writer also accepts direct JSON posts (via `DirectWriterUrl`) with a simple path payload:
+
+```json
+{ "path": "source={hash}/model={model}/instance-abc-3f9a1c.parquet" }
 ```
 
 ---
 
 ## Stages
 
-### 1. Message Receipt
+### 1. Event Receipt
 
 **Actor**: Writer service (Cloud Run)
-**Action**: Receive Cloud Tasks HTTP callback with staging file path
-**Output**: Staging path to process
-**Failure**: Cloud Tasks retries on non-2xx response (exponential backoff, max 1 hour)
+**Action**: Receive Eventarc CloudEvent (production) or direct JSON post (local dev). The merge endpoint detects the format via the `ce-type` header — present means CloudEvent, absent means direct JSON.
+**Output**: Staging path to process (extracted from CloudEvent object name or direct JSON path)
+**Failure**: Pub/Sub retries on non-2xx response (exponential backoff)
 
 ### 2. Staging File Read
 
@@ -50,7 +61,7 @@ The source and model are encoded in the staging file path (`source={hash}/model=
 **Actor**: Writer service → GCS embeddings bucket
 **Action**: Sort staging rows by sha256, write as a new part file in the target shard
 **Output**: New part file `part-{timestamp}.parquet` in the shard
-**Failure**: GCS write fails → Cloud Tasks retries the message
+**Failure**: GCS write fails → Pub/Sub retries the event
 
 ```
 Existing shard:     part-0001.parquet (10K rows)
@@ -73,12 +84,12 @@ On first write to a new shard, the writer also creates `_source.json` containing
 **Output**: Staging file removed
 **Failure**: Delete fails → file remains, cleaned by 24h lifecycle policy. No correctness issue.
 
-### 6. Message Acknowledgement
+### 6. Event Acknowledgement
 
-**Actor**: Writer service → Cloud Tasks
+**Actor**: Writer service → Eventarc (Pub/Sub)
 **Action**: Return 2xx to acknowledge successful processing
-**Output**: Message removed from queue
-**Failure**: If any prior stage failed and we didn't acknowledge, Cloud Tasks retries
+**Output**: Event acknowledged, Pub/Sub removes from subscription
+**Failure**: If any prior stage failed and we didn't acknowledge, Pub/Sub retries
 
 ---
 
@@ -88,27 +99,28 @@ Flow completes when:
 - New vectors appended as a part file in the embeddings shard
 - `_source.json` created if this is a new shard (best-effort)
 - Staging file deleted (best-effort)
-- Cloud Tasks message acknowledged
+- Eventarc event acknowledged (2xx response)
 
 ## Flow Diagram
 
 ```mermaid
 sequenceDiagram
-    participant Tasks as Cloud Tasks
-    participant Writer as Writer Service
     participant Staging as GCS Staging
+    participant Eventarc as Eventarc (Pub/Sub)
+    participant Writer as Writer Service
     participant Embeddings as GCS Embeddings
 
-    Tasks->>Writer: HTTP callback (staging path)
+    Staging->>Eventarc: OBJECT_FINALIZE event
+    Eventarc->>Writer: CloudEvent (object metadata)
     Writer->>Staging: Read parquet file
 
     alt File exists
         Writer->>Writer: Sort rows by sha256
         Writer->>Embeddings: Write new part file
         Writer->>Staging: Delete staging file
-        Writer-->>Tasks: 200 OK
+        Writer-->>Eventarc: 200 OK
     else File missing
-        Writer-->>Tasks: 200 OK (already processed)
+        Writer-->>Eventarc: 200 OK (already processed)
     end
 ```
 
@@ -118,12 +130,12 @@ Every failure mode resolves cleanly:
 
 | Failure point | What happens | Resolution |
 |---------------|-------------|------------|
-| Writer crashes mid-read | Message not acknowledged | Cloud Tasks retries → writer re-reads staging file |
-| Writer crashes after append, before staging delete | Message not acknowledged | Cloud Tasks retries → re-append is idempotent (sha256 dedup at read/compaction) |
-| Writer crashes after staging delete, before ack | Message not acknowledged | Cloud Tasks retries → staging file gone → ack immediately |
-| Staging file expired (24h lifecycle) | File missing on retry | Ack message → embedding will be cached on next request |
-| Embeddings write fails (GCS error) | Exception → non-2xx | Cloud Tasks retries with backoff |
-| Duplicate messages (Cloud Tasks at-least-once) | Same staging file processed twice | sha256 dedup at compaction → no corruption |
+| Writer crashes mid-read | Event not acknowledged | Pub/Sub retries → writer re-reads staging file |
+| Writer crashes after append, before staging delete | Event not acknowledged | Pub/Sub retries → re-append is idempotent (sha256 dedup at read/compaction) |
+| Writer crashes after staging delete, before ack | Event not acknowledged | Pub/Sub retries → staging file gone → ack immediately |
+| Staging file expired (24h lifecycle) | File missing on retry | Ack event → embedding will be cached on next request |
+| Embeddings write fails (GCS error) | Exception → non-2xx | Pub/Sub retries with backoff |
+| Duplicate events (Pub/Sub at-least-once) | Same staging file processed twice | sha256 dedup at compaction → no corruption |
 
 The key property: **at-least-once delivery + idempotent append + sha256 dedup = exactly-once semantics for the cache.**
 
@@ -131,9 +143,9 @@ The key property: **at-least-once delivery + idempotent append + sha256 dedup = 
 
 | Error | Behaviour |
 |-------|-----------|
-| Staging file not found | Acknowledge message (already processed or expired) |
-| Staging file corrupted | Log error, acknowledge message (don't retry corrupt data) |
-| GCS embeddings write timeout | Don't acknowledge → Cloud Tasks retries |
+| Staging file not found | Acknowledge event (already processed or expired) |
+| Staging file corrupted | Log error, acknowledge event (don't retry corrupt data) |
+| GCS embeddings write timeout | Don't acknowledge → Pub/Sub retries |
 | Concurrent writers to same shard | Each writes a separate part file — no conflict. Compaction merges later. |
 
 ## Timing
@@ -144,15 +156,15 @@ The key property: **at-least-once delivery + idempotent append + sha256 dedup = 
 | Sort + write new part | ~50-200ms (depends on batch size) |
 | Staging delete | ~30-50ms |
 | End-to-end | ~150-400ms per message |
-| Cloud Tasks delivery latency | ~100-500ms from enqueue |
+| Eventarc delivery latency | ~1-10s from staging upload (GCS notification + Pub/Sub) |
 
 ## Verification
 
 | Environment | How |
 |-------------|-----|
-| **Local** | Writer watches a local directory instead of Cloud Tasks. Moves files from staging/ to embeddings/. Same logic, no GCS. |
-| **Automated tests** | Enqueue known staging file. Assert part file appears in correct shard. Assert staging file deleted. Assert duplicate message produces no corruption. |
-| **Production** | Messages processed/second. Staging bucket depth (should trend to zero). Failed message count. Shard part file count (input to compaction trigger). |
+| **Local** | Direct JSON post to the writer's merge endpoint via `DirectWriterUrl`. Same logic, no Eventarc. |
+| **Automated tests** | Post known staging file path. Assert part file appears in correct shard. Assert staging file deleted. Assert duplicate event produces no corruption. |
+| **Production** | Events processed/second. Staging bucket depth (should trend to zero). Pub/Sub dead-letter count. Shard part file count (input to compaction trigger). |
 
 ## Related
 

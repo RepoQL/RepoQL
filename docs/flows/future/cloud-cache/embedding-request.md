@@ -83,14 +83,14 @@ Parquet schema per row:
 | `vector` | `INT8[]` | 1024-dim int8 embedding |
 | `created_at` | `TIMESTAMP` | For eviction ordering |
 
-### 5. Task Enqueue
+### 5. Eventarc Trigger (Automatic)
 
-**Actor**: Embedding service → Cloud Tasks
-**Action**: Enqueue a message containing only the staging file path
-**Output**: Cloud Tasks message: `{ "path": "staging/source={hash}/model={model}/instance-abc-{uuid}.parquet" }`
-**Failure**: Enqueue fails → staging file orphaned, swept by 24h lifecycle. No data loss — same content will be cached on next request.
+**Actor**: GCS → Eventarc (Pub/Sub) → Writer service
+**Action**: The staging bucket upload in Stage 4 emits a GCS OBJECT_FINALIZE event. Eventarc routes this event to the writer service as a CloudEvent — no explicit dispatch by the embedding service is needed.
+**Output**: CloudEvent delivered to the writer's merge endpoint containing the staging object metadata
+**Failure**: Event delivery fails → Pub/Sub retries with exponential backoff. If delivery ultimately fails, the staging file is swept by 24h lifecycle. No data loss — same content will be cached on next request.
 
-The message payload is a path string, not vectors. The broker never touches embedding data.
+The embedding service's responsibility ends at the staging write. The trigger is infrastructure-level, not application code.
 
 ### 6. Response
 
@@ -106,10 +106,9 @@ The message payload is a path string, not vectors. The broker never touches embe
 Flow completes when:
 - All chunks have vectors (from cache or Voyage)
 - New vectors written to staging (best-effort)
-- Cloud Tasks message enqueued (best-effort)
 - Response returned to client
 
-The client always gets vectors. Cache population is fire-and-forget — failures in staging/enqueue don't affect the response.
+The client always gets vectors. Cache population is fire-and-forget — staging write failures don't affect the response. The writer is triggered automatically by Eventarc when the staging file lands — no explicit dispatch step in the embedding service.
 
 ## Flow Diagram
 
@@ -121,7 +120,8 @@ sequenceDiagram
     participant GCS as GCS Embeddings
     participant Voyage as Voyage API
     participant Staging as GCS Staging
-    participant Tasks as Cloud Tasks
+    participant Eventarc as Eventarc (Pub/Sub)
+    participant Writer as Writer Service
 
     Client->>Service: EmbedChunks(groups, source)
     Service->>Service: SHA256(context + chunk) each chunk
@@ -135,10 +135,13 @@ sequenceDiagram
         Service->>Voyage: Embed misses only
         Voyage-->>Service: int8 vectors (1024-dim)
         Service->>Staging: Write new vectors (parquet)
-        Service->>Tasks: Enqueue staging path
     end
 
     Service-->>Client: All vectors (cached + new)
+
+    Note over Staging,Writer: Asynchronous — after response returned
+    Staging->>Eventarc: OBJECT_FINALIZE event
+    Eventarc->>Writer: CloudEvent (staging object metadata)
 
     Note over Client: Host sends concurrent batches<br/>over one HTTP/2 connection
 ```
@@ -150,7 +153,7 @@ sequenceDiagram
 | GCS embeddings unreachable | All cache misses → full Voyage computation. Expensive but correct. |
 | Voyage API error | Return error to client. No partial results. |
 | Staging write fails | Log warning, continue. Vectors still returned. Cache misses repeat next time. |
-| Cloud Tasks enqueue fails | Staging file orphaned, cleaned up by 24h lifecycle. |
+| Eventarc delivery fails | Pub/Sub retries with backoff. If all retries exhausted, staging file cleaned by 24h lifecycle. |
 | DuckDB parquet read error | Catch per-query exception, fall through to full Voyage computation. Log corrupted file for compaction cleanup. |
 | Cold GCS file (200-500ms first read) | Mitigated by background prefetch when repo opened in UI. |
 

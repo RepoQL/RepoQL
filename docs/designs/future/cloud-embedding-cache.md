@@ -16,7 +16,7 @@ Embeddings are deterministic — same model + same content = same vector. A cont
 
 **Extends:** [EmbeddingServiceImpl](../../../src/RepoQL.Embedding.Service/EmbeddingServiceImpl.cs) — cache logic added to the existing service, not a new service
 
-**Infrastructure:** Pulumi (C#) — GCS, Cloud Tasks, Cloud Run, IAM
+**Infrastructure:** Pulumi (C#) — GCS, Cloud Run, IAM; Eventarc trigger via deploy workflow
 
 ## Constraints
 
@@ -62,11 +62,11 @@ Embeddings are deterministic — same model + same content = same vector. A cont
 │      {uuid}.pqt │               │      _source.json       │
 └─────────────────┘               └─────────────────────────┘
          │                                    ▲
-         │ Cloud Tasks message (path only)    │ merge
+         │ OBJECT_FINALIZE event (Eventarc)   │ merge
          ▼                                    │
 ┌─────────────────┐               ┌─────────────────────────┐
-│  Cloud Tasks    │──────────────►│  Cloud Run: Writer      │
-│  (queue)        │               │  (scales to zero)       │
+│  Eventarc       │──────────────►│  Cloud Run: Writer      │
+│  (Pub/Sub)      │               │  (scales to zero)       │
 └─────────────────┘               └─────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
@@ -77,7 +77,7 @@ Embeddings are deterministic — same model + same content = same vector. A cont
 └─────────────────────────────────────────────────────────┘
 ```
 
-Four deployables. Three are Cloud Run (embedding service, writer, compaction job). One is infrastructure (Cloud Tasks queue). All managed by Pulumi.
+Three Cloud Run deployables (embedding service, writer, compaction job). Staging-to-writer trigger via Eventarc (GCS OBJECT_FINALIZE → Pub/Sub → Cloud Run). The writer still uses Cloud Tasks for compaction dispatch. Buckets and IAM managed by Pulumi; the Eventarc trigger is created by the deploy-embedding-writer workflow (because it references the Cloud Run service which is deployed separately from infrastructure).
 
 ---
 
@@ -91,8 +91,8 @@ Four deployables. Three are Cloud Run (embedding service, writer, compaction job
 /// Looks up GCS parquet via embedded DuckDB, passes misses to Voyage,
 /// writes new vectors to staging.
 ///
-/// Complexity: SHA256 hashing, DuckDB httpfs queries, GCS staging writes,
-/// Cloud Tasks enqueue. All contained within EmbeddingServiceImpl.
+/// Complexity: SHA256 hashing, DuckDB httpfs queries, GCS staging writes.
+/// All contained within EmbeddingServiceImpl.
 /// </summary>
 internal sealed class EmbeddingCacheLayer : IDisposable
 {
@@ -111,7 +111,8 @@ internal sealed class EmbeddingCacheLayer : IDisposable
         CancellationToken ct = default);
 
     /// <summary>
-    /// Write newly computed vectors to staging and enqueue merge task.
+    /// Write newly computed vectors to staging.
+    /// Eventarc triggers the writer on OBJECT_FINALIZE — no explicit dispatch needed.
     /// Fire-and-forget — failures don't affect the response.
     /// </summary>
     Task WriteBackAsync(
@@ -137,19 +138,19 @@ public sealed class CacheLayerSettings
     public bool Enabled { get; set; } = false;  // opt-in
     public string EmbeddingsBucket { get; set; } = "";
     public string StagingBucket { get; set; } = "";
-    public string CloudTasksQueue { get; set; } = "";
-    public string WriterServiceUrl { get; set; } = "";
+    public string DirectWriterUrl { get; set; } = "";  // local dev only — bypasses Eventarc
 }
 ```
 
 ### Writer Service
 
-The writer is a standalone Cloud Run service that receives Cloud Tasks HTTP callbacks.
+The writer is a standalone Cloud Run service triggered by Eventarc (GCS OBJECT_FINALIZE events on the staging bucket, delivered via Pub/Sub). It also accepts direct JSON posts for local development (via `DirectWriterUrl`).
 
 ```csharp
 /// <summary>
 /// Processes staging files into permanent embeddings shards.
-/// Receives Cloud Tasks callbacks with staging file paths.
+/// Receives Eventarc CloudEvent payloads (production) or direct JSON (local dev).
+/// The MergeEndpoint detects CloudEvent format via the ce-type header.
 /// Idempotent — safe to retry.
 /// </summary>
 internal sealed class CacheMergeHandler
@@ -366,21 +367,15 @@ var stagingBucket = new Gcp.Storage.Bucket($"repoql-staging-{env}", new()
     },
 });
 
-// Cloud Tasks queue
-var mergeQueue = new Gcp.CloudTasks.Queue($"embedding-merge-{env}", new()
-{
-    Location = "us-central1",
-    RetryConfig = new()
-    {
-        MaxAttempts = 5,
-        MinBackoff = "10s",
-        MaxBackoff = "600s",
-    },
-});
-
-// IAM: embedding service can read embeddings, write staging, enqueue tasks
+// IAM: embedding service can read embeddings, write staging
+// IAM: embedding service SA has eventarc.eventReceiver (for Eventarc trigger auth)
+// IAM: GCS service agent has pubsub.publisher (to publish OBJECT_FINALIZE events)
+// IAM: Pub/Sub service agent has iam.serviceAccountTokenCreator (to authenticate push delivery)
 // IAM: writer service can read staging, write embeddings, delete staging
 // IAM: compaction job can read/write embeddings
+//
+// Note: The Eventarc trigger itself is created by the deploy-embedding-writer workflow,
+// not Pulumi, because it references the Cloud Run writer service which is deployed separately.
 ```
 
 Three Pulumi stacks: `dev`, `staging`, `prod`. Same code, different config. `pulumi up` per environment.
@@ -453,9 +448,10 @@ Cache failures never propagate to the client. The embedding service returns vect
 |----------|---------|
 | Embedding service → Embeddings bucket | Read-only IAM |
 | Embedding service → Staging bucket | Write-only IAM |
+| Eventarc → Writer | CloudEvent delivery via Pub/Sub push; authenticated via `eventarc.eventReceiver` on the writer SA |
 | Writer → Staging bucket | Read + delete IAM |
 | Writer → Embeddings bucket | Read + write IAM |
-| Cloud Tasks → Writer | OIDC token authentication |
+| Writer → Cloud Tasks (compaction) | Enqueue permission for compaction dispatch |
 | Compaction → Embeddings bucket | Read + write IAM |
 | Customer data isolation | Shard-per-source path convention. No cross-source queries. |
 
@@ -468,7 +464,7 @@ If the embedding service is compromised, the attacker can read cached embeddings
 | Chose | Over | Because |
 |-------|------|---------|
 | GCS Parquet + DuckDB httpfs | Dedicated vector database | No new infrastructure. DuckDB is embedded. Parquet is the lingua franca. Point queries on sorted files are fast enough. |
-| Cloud Tasks + separate writer | Direct writes to embeddings | IAM blast radius. Single-writer prevents corruption. At-least-once + sha256 dedup = clean semantics. |
+| Eventarc (GCS events) + separate writer | Direct writes to embeddings | IAM blast radius. Single-writer prevents corruption. At-least-once + sha256 dedup = clean semantics. Eventarc eliminates explicit dispatch code — the staging write is the trigger. |
 | Content-only hash + model in path | Model in hash (like local cache) | Shard-level model migration. Old shards evict naturally. Cleaner GCS organization. |
 | int8 native storage | float32 with quantization | Voyage produces int8 natively. No conversion, no quality loss. 4x smaller. |
 | Inline cache layer | Decorator pattern (like local) | Need source identifier from gRPC request. Need pre-group access to chunks. |
@@ -494,7 +490,7 @@ If the embedding service is compromised, the attacker can read cached embeddings
 |------|------------|
 | DuckDB httpfs latency on cold GCS files | Background prefetch when repo opened in UI. Object cache for warm files. |
 | Single writer bottleneck at scale | Shard the writer by source prefix. Each writer instance handles a subset. |
-| Cloud Tasks message backlog | Monitor queue depth. Scale writer instances. Messages are small (path strings). |
+| Eventarc delivery backlog | Monitor Pub/Sub subscription backlog. Scale writer instances. Events are small (GCS object metadata). |
 | GCS cost surprises | Standard class for both buckets. 24h lifecycle on staging prevents accumulation. Monitor operation counts per shard. |
 | Stale compaction lock | Lock uses GCS `ifGenerationMatch` preconditions. Stale after 1 hour → atomic overwrite via generation match. No races. |
 | Customer discovers they can read other customers' embeddings via GCS | Vectors are not source code — they're lossy projections. Still, shard-per-source and IAM prevent enumeration. |

@@ -1,6 +1,6 @@
 ---
-description: Cloud Run writer service — processes staging files into permanent embedding shards.
-tags: [plan, cloud-cache, writer, cloud-run, cloud-tasks]
+description: Cloud Run writer service — processes staging files into permanent embedding shards, triggered by Eventarc.
+tags: [plan, cloud-cache, writer, cloud-run, eventarc]
 audience: { human: 35, agent: 65 }
 categories: ["Plan[95%]", "Design[5%]"]
 ---
@@ -12,7 +12,7 @@ Implements: [Cloud Embedding Cache Design](../../../designs/future/cloud-embeddi
 ## Scope
 
 **Covers:**
-- Cloud Run service that receives Cloud Tasks HTTP callbacks
+- Cloud Run service triggered by Eventarc (GCS OBJECT_FINALIZE → Pub/Sub → Cloud Run)
 - `CacheMergeHandler` — read staging parquet, append part file to embeddings shard
 - `_source.json` creation on first write to a new shard
 - Staging file cleanup after successful append
@@ -22,7 +22,7 @@ Implements: [Cloud Embedding Cache Design](../../../designs/future/cloud-embeddi
 
 **Does not cover:**
 - GCS bucket creation or IAM (Plan: 01-infrastructure — prerequisite)
-- Staging file creation or Cloud Tasks enqueue (Plan: 03-cache-layer — upstream)
+- Staging file creation (Plan: 03-cache-layer — upstream)
 - Compaction logic (Plan: 05-compaction — downstream)
 - Writer scaling or sharding by source prefix (extension point, not v1)
 
@@ -36,8 +36,9 @@ Once the writer exists:
 
 ## Prerequisites
 
-- Plan 01 complete — GCS buckets, Cloud Tasks queue, IAM service accounts exist
-- Plan 03 in progress or complete — staging files being produced (writer can be deployed before cache layer is live; it simply has no messages to process)
+- Plan 01 complete — GCS buckets, IAM service accounts and Eventarc IAM grants exist
+- Plan 03 in progress or complete — staging files being produced (writer can be deployed before cache layer is live; it simply has no events to process)
+- deploy-embedding-writer workflow creates the Eventarc trigger (references the Cloud Run service)
 - .NET Cloud Run project template
 - `Google.Cloud.Storage.V1` NuGet package for GCS operations
 - Parquet read/write library compatible with the staging schema
@@ -48,18 +49,20 @@ A staging file becomes a queryable cache entry within seconds. The writer is inv
 
 ## Done Criteria
 
-### Cloud Tasks Consumer
+### Merge Endpoint
 
-- The writer shall expose an HTTP POST endpoint for Cloud Tasks callbacks
-- The endpoint shall accept `{ "path": "source={hash}/model={model}/instance-{id}-{uuid}.parquet" }` payloads
+- The writer shall expose an HTTP POST merge endpoint
+- The endpoint shall accept both CloudEvent payloads (production, detected via `ce-type` header) and direct JSON payloads (local dev via `DirectWriterUrl`)
+- For CloudEvent payloads: extract the staging object path from the GCS OBJECT_FINALIZE event data (`bucket` + `name` fields)
+- For direct JSON payloads: extract the staging path from `{ "path": "source={hash}/model={model}/instance-{id}-{uuid}.parquet" }`
 - The writer shall return 200 to acknowledge successful processing
-- When processing fails with a retryable error, the writer shall return non-2xx to trigger Cloud Tasks retry
+- When processing fails with a retryable error, the writer shall return non-2xx to trigger Pub/Sub retry
 - The writer shall validate the staging path format before processing
-  - If the path doesn't match the expected pattern, return 200 (acknowledge, don't retry bad messages)
+  - If the path doesn't match the expected pattern, return 200 (acknowledge, don't retry bad events)
 
 ### Staging File Read
 
-- The writer shall read the parquet file from the staging bucket at the path in the message
+- The writer shall read the parquet file from the staging bucket at the path in the event
 - The writer shall extract source hash and model from the staging path (no metadata parsing needed)
 - When the staging file is missing (already processed or expired), the writer shall return 200
 - When the staging file is corrupted (invalid parquet), the writer shall log error and return 200 (don't retry corrupt data)
@@ -71,7 +74,7 @@ A staging file becomes a queryable cache entry within seconds. The writer is inv
   - Path: `gs://embeddings/source={source_hash}/model={model}/part-{timestamp}.parquet`
 - The writer shall NOT read or rewrite existing part files — append only
 - The parquet file shall use zstd compression
-- When GCS write fails, the writer shall return non-2xx for Cloud Tasks retry
+- When GCS write fails, the writer shall return non-2xx for Pub/Sub retry
 
 ### `_source.json` Metadata
 
@@ -94,7 +97,7 @@ A staging file becomes a queryable cache entry within seconds. The writer is inv
 
 ### Idempotency
 
-- When the same staging file is processed twice (Cloud Tasks at-least-once delivery), the writer shall produce a duplicate part file
+- When the same staging file is processed twice (Pub/Sub at-least-once delivery), the writer shall produce a duplicate part file
   - Duplicate sha256 entries are harmless — resolved by `DISTINCT ON` at read time and dedup at compaction
 - The writer shall not attempt deduplication — it only appends
 
@@ -115,7 +118,8 @@ A staging file becomes a queryable cache entry within seconds. The writer is inv
 
 - [Cloud Embedding Cache Design](../../../designs/future/cloud-embedding-cache.md) — Writer Service contract, GCS Path Convention
 - [Cloud Cache Flows: Cache Merge](../../../flows/future/cloud-cache/cache-merge.md) — stage-by-stage flow
-- [Cloud Tasks retry semantics](https://cloud.google.com/tasks/docs/creating-http-target-tasks) — at-least-once delivery, exponential backoff
+- [Eventarc GCS triggers](https://cloud.google.com/eventarc/docs/run/create-trigger-storage-gcloud) — OBJECT_FINALIZE events to Cloud Run
+- [Cloud Tasks](https://cloud.google.com/tasks/docs/creating-http-target-tasks) — used for compaction dispatch (not merge trigger)
 
 ## Error Policy
 
@@ -125,6 +129,6 @@ The writer is designed for safe retry. Every failure mode resolves:
 |---------|--------------|------------|
 | Staging file missing | 200 | Already processed or expired — acknowledge |
 | Staging file corrupt | 200 | Don't retry bad data — acknowledge, log |
-| GCS embeddings write fails | 500 | Cloud Tasks retries with backoff |
+| GCS embeddings write fails | 500 | Pub/Sub retries with backoff |
 | Staging delete fails | 200 | Part file written successfully — 24h lifecycle handles cleanup |
-| Writer crashes mid-processing | N/A | No ack — Cloud Tasks retries — re-append is idempotent |
+| Writer crashes mid-processing | N/A | No ack — Pub/Sub retries — re-append is idempotent |

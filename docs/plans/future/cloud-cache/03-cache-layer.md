@@ -1,5 +1,5 @@
 ---
-description: EmbeddingCacheLayer — DuckDB lookup, staging write, Cloud Tasks enqueue in the embedding service.
+description: EmbeddingCacheLayer — DuckDB lookup and staging write in the embedding service. Eventarc triggers the writer automatically.
 tags: [plan, cloud-cache, cache-layer, duckdb, grpc]
 audience: { human: 35, agent: 65 }
 categories: ["Plan[95%]", "Design[5%]"]
@@ -13,13 +13,12 @@ Implements: [Cloud Embedding Cache Design](../../../designs/future/cloud-embeddi
 
 **Covers:**
 - `EmbeddingCacheLayer` class — lookup, write-back, DuckDB lifecycle
-- `CacheLayerSettings` configuration — buckets, queue, enabled flag
+- `CacheLayerSettings` configuration — buckets, enabled flag, optional `DirectWriterUrl` for local dev
 - `ChunkFingerprint` and `CacheLookupResult` records
 - Content fingerprinting — `SHA256(context + "\0" + chunk_content)`
 - DuckDB embedded instance with httpfs for GCS parquet reads
 - Cache lookup via `DISTINCT ON (sha256)` query against source+model shard
-- Staging write — parquet file to staging bucket with source and model in path
-- Cloud Tasks enqueue — staging path message
+- Staging write — parquet file to staging bucket with source and model in path (Eventarc triggers the writer automatically on OBJECT_FINALIZE)
 - Vector type boundary — int8/float conversion at cache read/write
 - Integration into `EmbeddingServiceImpl.EmbedChunks`
 - DI registration — opt-in via `CacheLayerSettings.Enabled`
@@ -37,14 +36,13 @@ Once the cache layer exists:
 - **Cache hits on the hot path** — repeated embeddings for the same source + content skip Voyage
 - **Cost reduction proportional to shared code** — 100 developers on one repo ≈ 1x Voyage cost
 - **End-to-end latency improvement** — cache hit: ~100-150ms vs cache miss: ~600-2200ms
-- **Staging pipeline feeds writer** — new vectors flow to permanent storage via Cloud Tasks
+- **Staging pipeline feeds writer** — new vectors flow to permanent storage via Eventarc (triggered by staging upload)
 
 ## Prerequisites
 
 - Plan 01 complete — GCS buckets exist, IAM configured, HMAC keys in Secret Manager
 - Plan 02 complete — `source` field available in `EmbedChunksRequest`
 - DuckDB .NET bindings available — `DuckDB.NET.Data` NuGet package
-- Cloud Tasks client library — `Google.Cloud.Tasks.V2` NuGet package
 
 ## North Star
 
@@ -87,12 +85,6 @@ Cache lookup adds less than 150ms to the hot path. Cache miss is indistinguishab
   - If any value is outside [-128, 127], log error and skip that vector
 - The staging write shall be fire-and-forget — failures logged, not propagated to the caller
 
-### Cloud Tasks Enqueue
-
-- The cache layer shall enqueue a Cloud Tasks message with the staging file path after successful staging write
-- The message payload shall be `{ "path": "source={hash}/model={model}/instance-{id}-{uuid}.parquet" }`
-- When enqueue fails, log warning and continue — staging file will be cleaned by 24h lifecycle
-
 ### Vector Type Boundary
 
 - When reading from cache, the cache layer shall widen `TINYINT[]` to `float[]` for the gRPC response
@@ -118,7 +110,7 @@ Cache lookup adds less than 150ms to the hot path. Cache miss is indistinguishab
 - **Inline layer, not decorator** — design chose inline because the cache needs the `source` field from gRPC request and operates on flat chunks, not contextual groups
 - **DuckDB is a new dependency** — adds ~1-2s cold start and ~50-100MB memory. Acceptable for Cloud Run with minimum instances = 1 in production
 - **HMAC keys, not workload identity** — DuckDB httpfs only supports S3-compatible auth; native GCP workload identity doesn't work
-- **Fire-and-forget write-back** — staging write and Cloud Tasks enqueue must never delay the response. Use `Task.Run` or equivalent, catch all exceptions
+- **Fire-and-forget write-back** — staging write must never delay the response. Use `Task.Run` or equivalent, catch all exceptions. No explicit dispatch needed — Eventarc triggers the writer on staging upload
 - **No `EmbedQuery` caching** — design explicitly excluded query embeddings (low-volume, no source context)
 
 ## References
@@ -129,7 +121,6 @@ Cache lookup adds less than 150ms to the hot path. Cache miss is indistinguishab
 - [`embedding.proto`](../../../src/RepoQL.Embedding.Proto/Protos/embedding.proto) — gRPC contract
 - [DuckDB .NET](https://github.com/Giorgi/DuckDB.NET) — `DuckDB.NET.Data` NuGet package
 - [DuckDB httpfs](https://duckdb.org/docs/extensions/httpfs/s3api) — GCS via S3-compatible API
-- [Google.Cloud.Tasks.V2](https://cloud.google.com/dotnet/docs/reference/Google.Cloud.Tasks.V2/latest) — Cloud Tasks client
 
 ## Error Policy
 
@@ -140,6 +131,5 @@ Cache errors never reach the client. Every cache failure falls through to Voyage
 | DuckDB query exception | Log, treat batch as all misses |
 | GCS unreachable | Log, treat batch as all misses |
 | Staging write fails | Log warning, response unaffected |
-| Cloud Tasks enqueue fails | Log warning, staging file orphaned (24h cleanup) |
 | Vector narrowing validation fails | Log error, skip that vector in staging write |
 | DuckDB initialization fails | Log error, cache disabled for service lifetime |

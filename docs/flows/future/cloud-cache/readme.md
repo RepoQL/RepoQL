@@ -16,8 +16,8 @@ flowchart LR
     Service --> GCS_E[(GCS Embeddings)]
     Service --> Voyage[Voyage API]
     Service --> GCS_S[(GCS Staging)]
-    GCS_S --> Tasks[Cloud Tasks]
-    Tasks --> Writer[Writer Service]
+    GCS_S -->|OBJECT_FINALIZE| Eventarc[Eventarc / Pub/Sub]
+    Eventarc --> Writer[Writer Service]
     Writer --> GCS_E
     Scheduler([Cloud Scheduler]) --> Compactor[Compaction Job]
     Compactor --> GCS_E
