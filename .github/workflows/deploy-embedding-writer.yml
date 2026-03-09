@@ -101,6 +101,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: ${{ env.SERVICE_NAME }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
           region: ${{ inputs.region || 'us-central1' }}
           image: ${{ env.image }}
           flags: >-
@@ -127,16 +128,18 @@ jobs:
 
           # Grant the embedding service SA run.invoker on the writer service
           gcloud run services add-iam-policy-binding "$SERVICE_NAME" \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
             --region="${REGION}" \
             --member="serviceAccount:${TRIGGER_SA}" \
             --role="roles/run.invoker" \
             --quiet
 
           # Create or update the Eventarc trigger
-          if gcloud eventarc triggers describe "$TRIGGER_NAME" --location="${REGION}" &>/dev/null; then
+          if gcloud eventarc triggers describe "$TRIGGER_NAME" --project="${{ vars.GCP_PROJECT_ID }}" --location="${REGION}" &>/dev/null; then
             echo "Eventarc trigger ${TRIGGER_NAME} already exists."
           else
             gcloud eventarc triggers create "$TRIGGER_NAME" \
+              --project="${{ vars.GCP_PROJECT_ID }}" \
               --location="${REGION}" \
               --destination-run-service="$SERVICE_NAME" \
               --destination-run-region="${REGION}" \

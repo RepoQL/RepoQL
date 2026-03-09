@@ -105,6 +105,7 @@ jobs:
         uses: google-github-actions/deploy-cloudrun@v2
         with:
           service: ${{ env.SERVICE_NAME }}
+          project_id: ${{ vars.GCP_PROJECT_ID }}
           region: ${{ inputs.region || 'us-central1' }}
           image: ${{ env.image }}
           flags: >-
@@ -126,6 +127,7 @@ jobs:
           REGION: ${{ inputs.region || 'us-central1' }}
         run: |
           gcloud run services update ${{ env.SERVICE_NAME }} \
+            --project="${{ vars.GCP_PROJECT_ID }}" \
             --region="${REGION}" \
             --set-env-vars="CacheLayer__Enabled=true,CacheLayer__StorageBackend=gcs" \
             --set-env-vars="CacheLayer__EmbeddingsBucket=${{ vars.CACHE_EMBEDDINGS_BUCKET }},CacheLayer__StagingBucket=${{ vars.CACHE_STAGING_BUCKET }}" \
