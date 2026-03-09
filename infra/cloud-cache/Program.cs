@@ -181,6 +181,14 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Member = project.Apply(p => $"serviceAccount:service-{p.Number}@gs-project-accounts.iam.gserviceaccount.com"),
         });
 
+        // Pub/Sub SA needs to mint OIDC tokens for authenticated push to Cloud Run.
+        _ = new Gcp.Projects.IAMMember("pubsubServiceAgentTokenCreator", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/iam.serviceAccountTokenCreator",
+            Member = project.Apply(p => $"serviceAccount:service-{p.Number}@gcp-sa-pubsub.iam.gserviceaccount.com"),
+        });
+
         // --- Compaction scheduler ---
 
         var schedulerPayload = Convert.ToBase64String(
