@@ -260,10 +260,10 @@ Payment failed          → "Billing issue — check repoql.ai/billing"
 
 | Plan | Price (Marketplace) | Price (Stripe) | Explain | Reranking | Cloud Embedding |
 |------|--------------------|--------------:|--------:|----------:|----------------:|
-| **Pro** | $12/month | $10/month | 2,000/month | Included | 5 repos |
+| **Pro** | $12/month | $10/month | 2,000/month | Included | Unlimited |
 | **Team** | $30/seat/month | $25/seat/month | Unlimited | Included | Unlimited |
 
-Price differential reflects GitHub's 25% cut — both land at roughly the same net revenue. Users self-select on convenience (Marketplace) vs price (Stripe).
+Price differential reflects GitHub's 5% cut (reduced from 25% in January 2021) — both land at roughly the same net revenue. Users self-select on convenience (Marketplace) vs price (Stripe).
 
 No free cloud tier. Cloud features cost real money per-call — giving them away creates a sustainability problem. The free experience is RepoQL core, which is genuinely useful on its own.
 
