@@ -26,6 +26,8 @@ public sealed class GcsObjectStorageClient : IObjectStorageClient
 
     public async Task UploadAsync(string bucket, string path, Stream stream, CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(bucket);
+
         try
         {
             await _storageClient.UploadObjectAsync(

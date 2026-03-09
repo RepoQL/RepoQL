@@ -174,6 +174,9 @@ internal sealed class EmbeddingCacheLayer : IDisposable
 
                 await using (var stream = File.OpenRead(tempPath))
                 {
+                    _logger.LogDebug(
+                        "Writing cache parquet to bucket={Bucket} path={Path} bytes={Bytes}",
+                        _settings.StagingBucket, objectPath, stream.Length);
                     await _storageClient.UploadAsync(_settings.StagingBucket, objectPath, stream, ct).ConfigureAwait(false);
                 }
 
