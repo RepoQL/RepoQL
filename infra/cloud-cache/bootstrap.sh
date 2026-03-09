@@ -54,6 +54,7 @@ ROLES=(
   "roles/monitoring.admin"            # Create/update dashboards
   "roles/resourcemanager.projectIamAdmin"  # Manage IAM bindings via Pulumi
   "roles/run.admin"                   # Deploy Cloud Run services
+  "roles/storage.admin"               # Manage buckets + bucket-level IAM via Pulumi
 )
 
 for ROLE in "${ROLES[@]}"; do
