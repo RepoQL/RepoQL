@@ -189,6 +189,23 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Member = project.Apply(p => $"serviceAccount:service-{p.Number}@gcp-sa-pubsub.iam.gserviceaccount.com"),
         });
 
+        // --- Cloud Trace ---
+        // Both services send OTLP to the Cloud Run built-in collector on localhost:4317.
+
+        _ = new Gcp.Projects.IAMMember("embeddingServiceTraceAgent", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/cloudtrace.agent",
+            Member = AsServiceAccountMember(embeddingServiceAccount.Email),
+        });
+
+        _ = new Gcp.Projects.IAMMember("cacheWriterTraceAgent", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/cloudtrace.agent",
+            Member = AsServiceAccountMember(cacheWriterAccount.Email),
+        });
+
         // --- Compaction scheduler ---
 
         var schedulerPayload = Convert.ToBase64String(

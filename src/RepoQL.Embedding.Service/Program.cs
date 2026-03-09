@@ -1,9 +1,23 @@
 using Microsoft.Extensions.Options;
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 using RepoQL.Embedding.Service;
 using RepoQL.Embedding.Service.Cache;
 using RepoQL.Embedding.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Logging.AddOpenTelemetry();
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(m => m
+        .AddMeter("RepoQL.Embedding.*")
+        .AddAspNetCoreInstrumentation()
+        .AddRuntimeInstrumentation())
+    .WithTracing(t => t
+        .AddSource("RepoQL.Embedding.*")
+        .AddAspNetCoreInstrumentation())
+    .UseOtlpExporter();
 
 builder.Services.AddGrpc(options =>
 {

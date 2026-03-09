@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -20,6 +21,7 @@ namespace RepoQL.Embedding.Writer;
 /// </summary>
 internal sealed class CacheMergeHandler : IDisposable
 {
+    private static readonly ActivitySource ActivitySource = new("RepoQL.Embedding.Writer");
     private const string SourceMetadataFileName = "_source.json";
 
     private readonly WriterSettings _settings;
@@ -87,11 +89,17 @@ internal sealed class CacheMergeHandler : IDisposable
 
     public async Task HandleAsync(string stagingPath, CancellationToken ct)
     {
+        using var activity = ActivitySource.StartActivity("writer.merge", ActivityKind.Consumer);
+
         if (!TryParseStagingPath(stagingPath, out var pathInfo))
         {
             _logger.LogWarning("Ignoring merge request with invalid staging path {StagingPath}", stagingPath);
+            activity?.SetTag("merge.status", "invalid_path");
             return;
         }
+
+        activity?.SetTag("merge.source_hash", pathInfo.SourceHash);
+        activity?.SetTag("merge.model", pathInfo.Model);
 
         string? downloadedStagingFile = null;
         string? mergedPartFile = null;

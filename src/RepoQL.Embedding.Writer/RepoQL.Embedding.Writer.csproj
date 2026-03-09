@@ -22,6 +22,10 @@
     <PackageReference Include="DuckDB.NET.Data.Full" />
     <PackageReference Include="Google.Cloud.Storage.V1" />
     <PackageReference Include="Google.Cloud.Tasks.V2" />
+    <PackageReference Include="OpenTelemetry" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
   </ItemGroup>
 
   <ItemGroup>

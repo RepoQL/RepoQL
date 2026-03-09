@@ -111,7 +111,7 @@ jobs:
             --cpu=1
             --timeout=300
             --no-allow-unauthenticated
-            --set-env-vars=ASPNETCORE_URLS=http://+:8080,Writer__StorageBackend=gcs
+            --set-env-vars=ASPNETCORE_URLS=http://+:8080,Writer__StorageBackend=gcs,OTEL_SERVICE_NAME=repoql-embedding-writer,OTEL_RESOURCE_ATTRIBUTES=service.version=${{ steps.tag.outputs.tag }}
             --set-env-vars=Writer__EmbeddingsBucket=${{ vars.CACHE_EMBEDDINGS_BUCKET }},Writer__StagingBucket=${{ vars.CACHE_STAGING_BUCKET }}
             --set-secrets=REPOQL_CACHE_GCS_HMAC_KEY_ID=${{ vars.CACHE_WRITER_HMAC_KEY_SECRET }}:latest,REPOQL_CACHE_GCS_HMAC_SECRET=${{ vars.CACHE_WRITER_HMAC_SECRET_SECRET }}:latest
 

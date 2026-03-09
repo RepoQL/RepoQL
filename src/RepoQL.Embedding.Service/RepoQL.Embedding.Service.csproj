@@ -19,7 +19,12 @@
     <PackageReference Include="AWSSDK.S3" />
     <PackageReference Include="Grpc.AspNetCore" />
     <PackageReference Include="DuckDB.NET.Data.Full" />
+    <PackageReference Include="OpenTelemetry" />
     <PackageReference Include="Google.Cloud.Storage.V1" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,7 +1,20 @@
+using OpenTelemetry;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 using RepoQL.Embedding.Writer;
 using RepoQL.Embedding.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Logging.AddOpenTelemetry();
+builder.Services.AddOpenTelemetry()
+    .WithMetrics(m => m
+        .AddMeter("RepoQL.Embedding.Writer")
+        .AddAspNetCoreInstrumentation())
+    .WithTracing(t => t
+        .AddSource("RepoQL.Embedding.Writer")
+        .AddAspNetCoreInstrumentation())
+    .UseOtlpExporter();
 
 builder.Services.Configure<WriterSettings>(builder.Configuration.GetSection("Writer"));
 builder.Services.AddHttpClient();

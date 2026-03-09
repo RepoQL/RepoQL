@@ -116,7 +116,7 @@ jobs:
             --cpu=1
             --timeout=300
             --allow-unauthenticated
-            --set-env-vars=ASPNETCORE_URLS=http://+:8080
+            --set-env-vars=ASPNETCORE_URLS=http://+:8080,OTEL_SERVICE_NAME=repoql-embedding,OTEL_RESOURCE_ATTRIBUTES=service.version=${{ steps.tag.outputs.tag }}
             --set-secrets=Embedding__VoyageApiKey=repoql-embedding-voyage-api-key:latest,Auth__ApiKeyHashes__0=repoql-embedding-auth-key-hash-0:latest
 
       - name: Enable cloud cache
