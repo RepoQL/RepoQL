@@ -1,4 +1,4 @@
-﻿using RepoQL.Grammar.Core;
+using RepoQL.Formats.Mermaid.Core;
 
 namespace RepoQL.Formats.Mermaid;
 

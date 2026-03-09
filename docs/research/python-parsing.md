@@ -21,7 +21,7 @@ RepoQL needs to index Python codebases into its knowledge graph — extracting c
 - **Ruby** — uses `TreeSitter.DotNet` (tree-sitter via native P/Invoke). In-process, thread-safe, S-expression queries. ~850 lines in `RubyTreeSitterClient.cs`.
 - **TypeScript/JavaScript** — uses a persistent Node.js child process (`TypeScriptNodeClient.cs`). Line-delimited JSON protocol over stdin/stdout, mutex-serialized (single-flight). Requires Node.js installed.
 - **Terraform, CSS, PHP** — use ANTLR4 (`Antlr4.Runtime.Standard` + `Antlr4BuildTasks`). Pure .NET, grammar files compiled at build time.
-- **RepoQL.Grammar** — provides `AntlrLanguageBase` (used by Terraform/CSS/PHP) and `PidginLanguageBase` (infrastructure only — no production format uses it yet) integration points.
+- **Terraform, CSS, PHP** — already use ANTLR4 directly today, which proves the generated-parser integration pattern in RepoQL.
 
 ---
 
@@ -154,7 +154,7 @@ The `python3_13` grammar includes:
 </Antlr4>
 ```
 
-Extraction uses a visitor pattern over the generated concrete syntax tree. The existing `AntlrLanguageBase<TLexer, TParser, TRoot>` in `RepoQL.Grammar` provides integration scaffolding.
+Extraction uses a visitor pattern over the generated concrete syntax tree. RepoQL already has direct ANTLR-based format loaders, so the integration pattern is proven even without a shared grammar project.
 
 **Error recovery:** Limited. ANTLR produces error nodes but with less granularity than tree-sitter's partial parse trees.
 

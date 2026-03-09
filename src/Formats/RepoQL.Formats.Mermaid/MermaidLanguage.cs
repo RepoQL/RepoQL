@@ -1,7 +1,7 @@
-using RepoQL.Grammar.Core;
-using RepoQL.Grammar.Diagnostics;
-using RepoQL.Grammar.Language;
-using RepoQL.Grammar.Syntax;
+using RepoQL.Formats.Mermaid.Core;
+using RepoQL.Formats.Mermaid.Diagnostics;
+using RepoQL.Formats.Mermaid.Language;
+using RepoQL.Formats.Mermaid.Syntax;
 
 namespace RepoQL.Formats.Mermaid;
 
@@ -247,3 +247,4 @@ public sealed class MermaidLanguage : ILanguage
         }
     }
 }
+

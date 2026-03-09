@@ -232,7 +232,6 @@ dotnet run -- --output Detailed            # Verbose output
 | `RepoQL.Embedding.Writer` | Persistence pipeline for embedding writes |
 | `RepoQL.Embedding.Storage` | Local storage and caching for embedding artifacts |
 | `RepoQL.Mcp.Client` | External MCP server discovery and SQL macro generation |
-| `RepoQL.Grammar` | Language parsing framework (ANTLR/Pidgin), syntax trees |
 | `RepoQL.LLM.Client` | LLM provider abstraction for LLM-powered features |
 | `RepoQL.Templating` | Liquid templates for x-ray generation |
 | `RepoQL.Analyzers` | Roslyn analyzers that enforce RepoQL architectural rules |

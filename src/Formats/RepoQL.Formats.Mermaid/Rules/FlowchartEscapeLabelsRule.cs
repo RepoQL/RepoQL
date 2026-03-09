@@ -1,6 +1,5 @@
-using RepoQL.Grammar.Core;
-using RepoQL.Grammar.Diagnostics;
-using RepoQL.Grammar.Rules;
+using RepoQL.Formats.Mermaid.Core;
+using RepoQL.Formats.Mermaid.Diagnostics;
 
 namespace RepoQL.Formats.Mermaid.Rules;
 

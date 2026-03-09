@@ -108,7 +108,7 @@ ANTLR4 has excellent C# target support and is already used by RepoQL for PHP par
 
 **Coverage:** Package/import declarations, function/method declarations with receivers, variable/const/type declarations, all statement types, full expression parsing, type literals (arrays, structs, pointers, functions, interfaces, slices, maps, channels), composite literals, type assertions, conversions. Spec basis is golang.org/ref/spec.
 
-**RepoQL precedent:** Already in use. `RepoQL.Formats.PHP` demonstrates the exact pattern: include `.g4` files, set `<Visitor>true</Visitor>`, implement a visitor. The `RepoQL.Grammar` project also references `Antlr4.Runtime.Standard`.
+**RepoQL precedent:** Already in use. `RepoQL.Formats.PHP` demonstrates the exact pattern: include `.g4` files, set `<Visitor>true</Visitor>`, implement a visitor. RepoQL already ships ANTLR-based loaders directly in format projects.
 
 Integration pattern (from PHP):
 
@@ -202,7 +202,7 @@ Relevant LSP capabilities:
 
 **ast-grep** ([ast-grep/ast-grep](https://github.com/ast-grep/ast-grep)) — Structural code search built on tree-sitter. Rust CLI, no .NET library API. Not suitable as a parser.
 
-**Pidgin parser combinators** — already used in `RepoQL.Grammar`. Hand-writing a Go parser with combinators would be a massive undertaking when grammars already exist. Not practical.
+**Pidgin parser combinators** — possible in theory, but hand-writing a Go parser with combinators would be a massive undertaking when grammars already exist. Not practical.
 
 **`go/packages` + `go/types` (Go semantic analysis)** — Go's `go/packages` package loads typed, resolved package information including cross-package references and computed interface satisfaction. This is the authoritative way to determine which types implement which interfaces. Accessible only from Go code — same integration story as asty (shell out or CGO). Relevant if RepoQL needs semantic-level accuracy beyond what syntax parsing provides.
 
@@ -296,7 +296,7 @@ Separate from `.go` file parsing. A `go.mod` parser should extract:
 | Indirect dependencies | `DEPENDS_ON` edges (marked indirect) |
 | Replace directives | Annotation with replacement path |
 
-go.mod uses a simple, well-specified format. Could be parsed with Pidgin combinators (already in `RepoQL.Grammar`) or simple line-based parsing.
+go.mod uses a simple, well-specified format. It could be parsed with parser combinators or simple line-based parsing.
 
 **go.work (workspace mode):** Go 1.18+ supports multi-module workspaces via `go.work` files. These declare which local modules are part of a workspace, replacing `replace` directives during development. A `go.work` parser would capture workspace membership and local module relationships.
 

@@ -2,15 +2,14 @@ using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
+using RepoQL.Formats.Mermaid.Diagnostics;
+using RepoQL.Formats.Mermaid.Language;
 using RepoQL.Formats.Mermaid.Rules;
-using RepoQL.Grammar.Diagnostics;
-using RepoQL.Grammar.Language;
-using RepoQL.Grammar.Rules;
-using RepoQL.Grammar.Syntax;
+using RepoQL.Formats.Mermaid.Syntax;
 
 namespace RepoQL.Formats.Mermaid;
 
-public sealed class  MermaidAnalyzer : IFormatAnalyzer, IAnnotationSourceProvider
+public sealed class MermaidAnalyzer : IFormatAnalyzer, IAnnotationSourceProvider
 {
     public bool Supports(SemanticMediaType mediaType)
         => string.Equals(mediaType.Kind, "mermaid.doc", StringComparison.OrdinalIgnoreCase);
@@ -147,3 +146,4 @@ public sealed class  MermaidAnalyzer : IFormatAnalyzer, IAnnotationSourceProvide
         yield return "RepoQL.Mermaid";
     }
 }
+
