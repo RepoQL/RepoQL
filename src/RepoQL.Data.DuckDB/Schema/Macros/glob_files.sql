@@ -30,7 +30,7 @@ CREATE OR REPLACE MACRO glob_files(
 ) AS TABLE
 WITH params AS (
     SELECT
-        NULLIF(TRIM(COALESCE(CAST(pattern_spec AS VARCHAR), '')), '') AS pattern,
+        NULLIF(TRIM(COALESCE(CAST(pattern_spec AS VARCHAR), '')), '') AS requested_uri_glob,
         uris AS uri_list
 )
 SELECT * FROM (
@@ -46,8 +46,8 @@ SELECT * FROM (
     -- Branch 2: Pattern provided - use registry-based glob
     -- The structured UDF returns JSON array, use json_each to convert to rows
     SELECT j.value->>'uri' AS uri
-    FROM json_each(_glob_files_internal((SELECT pattern FROM params))) AS j
-    WHERE (SELECT pattern FROM params) IS NOT NULL
+    FROM json_each(_glob_files_internal((SELECT requested_uri_glob FROM params))) AS j
+    WHERE (SELECT requested_uri_glob FROM params) IS NOT NULL
         AND (SELECT uri_list FROM params) IS NULL
         AND j.type = 'OBJECT'
 
@@ -57,7 +57,8 @@ SELECT * FROM (
     SELECT n.uri
     FROM node n
     WHERE n.kind = 'document'
-        AND (SELECT pattern FROM params) IS NULL
+        AND (SELECT requested_uri_glob FROM params) IS NULL
         AND (SELECT uri_list FROM params) IS NULL
 )
 ORDER BY uri;
+

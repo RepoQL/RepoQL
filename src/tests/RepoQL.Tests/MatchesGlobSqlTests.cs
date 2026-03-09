@@ -11,7 +11,8 @@ internal class MatchesGlobSqlTests
     /// <summary>
     /// Creates a DuckDbDataStore with UriRegistry support for glob_files tests.
     /// </summary>
-    private static (DuckDbDataStore Store, UriRegistry Registry) CreateStoreWithRegistry()
+    private static (DuckDbDataStore Store, UriRegistry Registry) CreateStoreWithRegistry(
+        IEnumerable<FormatSqlScript>? formatSchemaScripts = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(new RepositoryConfiguration { Path = "/repo" });
@@ -22,7 +23,10 @@ internal class MatchesGlobSqlTests
         var serviceProvider = services.BuildServiceProvider();
 
         var registry = serviceProvider.GetRequiredService<UriRegistry>();
-        var store = new DuckDbDataStore(":memory:", serviceProvider: serviceProvider);
+        var store = new DuckDbDataStore(
+            ":memory:",
+            formatSchemaScripts: formatSchemaScripts,
+            serviceProvider: serviceProvider);
         return (store, registry);
     }
 
@@ -284,6 +288,38 @@ internal class MatchesGlobSqlTests
         rows[0]["uri"]?.ToString().Should().Be("file:///repo/src/App.cs#symbol=Namespace.MyClass.Method");
     }
 
+    [Test]
+    public void GlobFiles_CanBeCalledFromMacroWithPatternParameter()
+    {
+        var scripts = new[]
+        {
+            new FormatSqlScript(
+                "nested_glob_files_regression",
+                """
+                CREATE OR REPLACE MACRO nested_glob_files(pattern := NULL) AS TABLE (
+                    WITH scope_uris AS (
+                        SELECT DISTINCT gf.uri AS scoped_uri
+                        FROM glob_files(pattern_spec := pattern) gf
+                        WHERE pattern IS NOT NULL
+                    )
+                    SELECT scoped_uri AS uri
+                    FROM scope_uris
+                    ORDER BY scoped_uri
+                );
+                """)
+        };
+
+        var (store, registry) = CreateStoreWithRegistry(scripts);
+        using var _ = store;
+
+        SeedDocument(store, registry, "file:///repo/src/App.cs", Guid.Parse("11111111-1111-1111-1111-111111111111"));
+        SeedDocument(store, registry, "file:///repo/src/tests/Test.cs", Guid.Parse("22222222-2222-2222-2222-222222222222"));
+        SeedDocument(store, registry, "file:///repo/lib/Helper.cs", Guid.Parse("33333333-3333-3333-3333-333333333333"));
+
+        var rows = store.Query("SELECT * FROM nested_glob_files('src/**;!src/tests/**')").ToList();
+        rows.Should().HaveCount(1);
+        rows[0]["uri"]?.ToString().Should().Be("file:///repo/src/App.cs");
+    }
     // === Absolute Path Normalization ===
 
     private static DuckDbDataStore CreateStoreWithRepoRoot(string repoRoot)
