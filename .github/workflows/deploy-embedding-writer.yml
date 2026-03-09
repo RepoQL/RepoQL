@@ -45,7 +45,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-          include-prerelease: true
+          dotnet-quality: 'preview'
 
       - name: Authenticate to Google Cloud
         id: auth
