@@ -8,6 +8,7 @@
     <PublishProfile>DefaultContainer</PublishProfile>
     <ContainerRepository>repoql-embedding</ContainerRepository>
     <ContainerFamily>noble</ContainerFamily>
+    <PublishTrimmed>false</PublishTrimmed>
     <UserSecretsId>dbcf7209-9611-44dd-924e-b35e955f586a</UserSecretsId>
   </PropertyGroup>
 
