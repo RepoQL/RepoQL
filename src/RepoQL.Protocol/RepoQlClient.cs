@@ -353,13 +353,22 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
 
     private static void LaunchHost(string repoPath, ILogger logger)
     {
+        var suppress = Environment.GetEnvironmentVariable("REPOQL_SUPPRESS_HOST_LAUNCH");
+        if (string.Equals(suppress, "1", StringComparison.Ordinal) ||
+            string.Equals(suppress, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogInformation("RepoQlClient: host launch suppressed by REPOQL_SUPPRESS_HOST_LAUNCH.");
+            return;
+        }
+
         var implicitEnv = new Dictionary<string, string?>
         {
             ["REPOQL_IMPLICIT"] = "1",
         };
 
         foreach (var env in Environment.GetEnvironmentVariables().OfType<DictionaryEntry>().Where(kvp =>
-                         kvp.Key is string key && key.StartsWith("REPOQL_", StringComparison.OrdinalIgnoreCase))
+                         kvp.Key is string key && key.StartsWith("REPOQL_", StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(key, "REPOQL_SUPPRESS_HOST_LAUNCH", StringComparison.OrdinalIgnoreCase))
                      .Select(kvp => new
                      {
                          Key = (string)kvp.Key,
@@ -447,6 +456,11 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
         }
     }
 
+    // Host process state is static because the gRPC host is shared infrastructure that outlives
+    // any single client instance. Multiple clients connect to the same host via leases; the host
+    // shuts itself down via IdleShutdownHostedService when all leases expire. The diagnostic
+    // streaming tasks (Task.Run in StartProcess) are intentionally fire-and-forget — they
+    // terminate naturally when the host process exits and its stdout/stderr streams close.
     private static string? _lastHostStderr;
     private static int? _lastHostExitCode;
     private static readonly object _hostDiagnosticsLock = new();
