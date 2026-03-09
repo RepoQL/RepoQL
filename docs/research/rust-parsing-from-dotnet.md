@@ -287,7 +287,7 @@ Rust 1.60 to current stable (1.85+ as of February 2026) represents ~25 releases 
 
 ### Integration
 
-ANTLR's C# target is well-supported. RepoQL already has ANTLR infrastructure in the `RepoQL.Grammar` project. The PHP loader uses ANTLR4 via compiled grammar. Integration would follow the same pattern.
+ANTLR's C# target is well-supported. RepoQL already has ANTLR-based loaders in the repo. The PHP loader uses ANTLR4 via compiled grammar, and a Rust loader would follow the same pattern.
 
 ### Error tolerance
 

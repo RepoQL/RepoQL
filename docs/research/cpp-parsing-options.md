@@ -380,7 +380,7 @@ BSD (runtime and grammars). Compatible.
 
 | Dimension | Tree-Sitter | libclang | clangd | Universal Ctags | srcML | ANTLR4 |
 |-----------|------------|----------|--------|-----------------|-------|--------|
-| Existing codebase precedent | Partial — TreeSitter.DotNet used for Ruby but **does not bundle C++ grammar**; integration pattern proven, grammar must be added | No | No (subprocess pattern exists for TS) | No | No | No (ANTLR infrastructure exists in RepoQL.Grammar) |
+| Existing codebase precedent | Partial — TreeSitter.DotNet used for Ruby but **does not bundle C++ grammar**; integration pattern proven, grammar must be added | No | No (subprocess pattern exists for TS) | No | No | Partial (ANTLR-based loaders already exist for other formats) |
 | Implementation model | Follow Ruby loader pattern: TreeSitterClient + S-expression queries → DocumentModel | Follow TypeScript subprocess pattern, or in-process via ClangSharp P/Invoke | Subprocess over JSON-RPC (like TS loader but heavier protocol) | Subprocess, parse tags output | Subprocess, parse XML output | In-process, generated parser |
 | Laptop-friendly | Yes | Marginal (37 MB binary, header deps) | No (GB-scale memory) | Yes | Yes | Yes |
 | Time-to-usable | Immediate (no config needed, but grammar must be bundled) | Requires headers/build system | Requires full project setup | Immediate | Immediate | Immediate |
@@ -421,7 +421,7 @@ Findings from this research resolved several initially unknown items. Remaining 
 - **Quantitative tree-sitter C++ error rates:** Qualitative data now exists (see Known Macro Impact) but no formal benchmark measures what percentage of files in a given project parse without ERROR nodes. This matters for the "trustworthy or loudly not" promise.
 - **libclang AST completeness without headers:** The degradation mechanism is now understood (see libclang Requirements section) but no benchmark measures the practical utility: "if I parse a `.cpp` file with no includes available, how many of its functions and classes appear in the AST?"
 - **Hybrid approach feasibility:** Using tree-sitter as the fast default with optional libclang enrichment when a compilation database is available. No existing implementation to reference.
-- **RepoQL.Grammar (ANTLR/Pidgin):** The project has a grammar framework. Whether this could host a C/C++ grammar as an alternative to tree-sitter or libclang was not evaluated.
+- **ANTLR/Pidgin approach:** RepoQL has used ANTLR-based loaders before, but whether a shared grammar abstraction or parser-combinator approach would make sense for C/C++ was not evaluated.
 - **CppAst.NET without headers:** CppAst.NET wraps libclang and surfaces errors through `CppCompilation.Diagnostics`. Without configured include folders, it produces clang errors. How useful the partial output is for structural extraction is not benchmarked.
 
 ---

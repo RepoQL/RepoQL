@@ -9,7 +9,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
-    <ProjectReference Include="..\..\RepoQL.Grammar\RepoQL.Grammar.csproj" />
     <ProjectReference Include="..\..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
   </ItemGroup>
 
@@ -27,3 +26,4 @@
 
 
 </Project>
+

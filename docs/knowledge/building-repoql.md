@@ -260,7 +260,7 @@ These are existential. Every feature, every PR, every design decision must be ev
 | `RepoQL.Mcp.Client` | External MCP server integration | MCP-from-SQL, config discovery |
 | `RepoQL.Core` | Shared indexing infrastructure | Format registry, pipeline snapshots, work queue, EditorConfig, metrics |
 | `RepoQL.Templating` | Liquid templates for x-ray | X-ray generation |
-| `RepoQL.Grammar` | ANTLR grammar support | Parser development |
+| ANTLR-based format loaders | Generated parser support in format projects | Parser development |
 | `RepoQL.LLM.Client` | LLM provider abstraction | LLM-powered features |
 | `RepoQL.Documentation` | Embedded docs (help:// source) | Adding/updating help docs |
 | `RepoQL.Orchestrator` | Aspire host for dev telemetry | Development observability |
