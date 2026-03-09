@@ -49,11 +49,14 @@ echo "Granting WIF SA project-level roles..."
 
 ROLES=(
   "roles/artifactregistry.admin"      # Create repos + push images
+  "roles/cloudscheduler.admin"        # Create Cloud Scheduler jobs via Pulumi
   "roles/eventarc.admin"              # Create Eventarc triggers (GCS → writer)
+  "roles/iam.serviceAccountAdmin"     # Create service accounts via Pulumi
   "roles/iam.serviceAccountUser"      # Act as Cloud Run service accounts
   "roles/monitoring.admin"            # Create/update dashboards
   "roles/resourcemanager.projectIamAdmin"  # Manage IAM bindings via Pulumi
   "roles/run.admin"                   # Deploy Cloud Run services
+  "roles/secretmanager.admin"         # Create secrets via Pulumi
   "roles/storage.admin"               # Manage buckets + bucket-level IAM via Pulumi
 )
 
