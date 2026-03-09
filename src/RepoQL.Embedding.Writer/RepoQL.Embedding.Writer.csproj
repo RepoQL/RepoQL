@@ -10,6 +10,7 @@
     <PublishProfile>DefaultContainer</PublishProfile>
     <ContainerRepository>repoql-embedding-writer</ContainerRepository>
     <ContainerFamily>noble</ContainerFamily>
+    <PublishTrimmed>false</PublishTrimmed>
     <UserSecretsId>31e51d7c-0e21-4a78-a55f-505493414b2f</UserSecretsId>
   </PropertyGroup>
 
