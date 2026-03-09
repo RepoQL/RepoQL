@@ -58,6 +58,7 @@ ROLES=(
   "roles/run.admin"                   # Deploy Cloud Run services
   "roles/secretmanager.admin"         # Create secrets via Pulumi
   "roles/storage.admin"               # Manage buckets + bucket-level IAM via Pulumi
+  "roles/storage.hmacKeyAdmin"        # Create HMAC keys for service accounts
 )
 
 for ROLE in "${ROLES[@]}"; do
