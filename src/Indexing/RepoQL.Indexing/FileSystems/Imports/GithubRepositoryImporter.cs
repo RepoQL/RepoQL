@@ -225,8 +225,8 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
 
             // Fetch the requested ref with 1 year of history for blame/log support
             // Note: This works for branches. Tags may need the initial clone to have included them.
-            await RunGitAsync(["fetch", "origin", spec.Ref!, "--shallow-since=1 year ago"], targetRoot, ct)
-                .ConfigureAwait(false);
+            await FetchShallowWithFallbackAsync(["fetch", "origin", spec.Ref!, "--shallow-since=1 year ago"],
+                ["fetch", "origin", spec.Ref!, "--depth=1"], targetRoot, ct).ConfigureAwait(false);
 
             // Checkout the requested branch
             await RunGitAsync(["checkout", spec.Ref!], targetRoot, ct).ConfigureAwait(false);
@@ -234,7 +234,8 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             // Pull latest changes only when on a branch
             if (IsOnBranch(targetRoot))
             {
-                await RunGitAsync(["pull", "--shallow-since=1 year ago"], targetRoot, ct).ConfigureAwait(false);
+                await FetchShallowWithFallbackAsync(["pull", "--shallow-since=1 year ago"],
+                    ["pull", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
             }
             else
             {
@@ -245,11 +246,12 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         {
             // No specific ref - just pull latest on current branch
             _logger.LogInformation("[GitHub] Pulling latest changes on current branch");
-            await RunGitAsync(["fetch", "origin", "--shallow-since=1 year ago"], targetRoot, ct)
-                .ConfigureAwait(false);
+            await FetchShallowWithFallbackAsync(["fetch", "origin", "--shallow-since=1 year ago"],
+                ["fetch", "origin", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
             if (IsOnBranch(targetRoot))
             {
-                await RunGitAsync(["pull", "--shallow-since=1 year ago"], targetRoot, ct).ConfigureAwait(false);
+                await FetchShallowWithFallbackAsync(["pull", "--shallow-since=1 year ago"],
+                    ["pull", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
             }
             else
             {
@@ -332,6 +334,31 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         }
     }
 
+    /// <summary>
+    /// Runs a shallow git command, falling back to a depth-based alternative when the remote has no commits
+    /// within the shallow-since window (git fails with "error processing shallow info").
+    /// </summary>
+    private async Task FetchShallowWithFallbackAsync(
+        IReadOnlyList<string> shallowArgs,
+        IReadOnlyList<string> depthFallbackArgs,
+        string workingDirectory,
+        CancellationToken ct)
+    {
+        try
+        {
+            await RunGitAsync(shallowArgs, workingDirectory, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex.Message.Contains("error processing shallow info", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("[GitHub] Shallow fetch failed (repo may have no recent commits). Retrying with --depth=1.");
+            await RunGitAsync(depthFallbackArgs, workingDirectory, ct).ConfigureAwait(false);
+        }
+    }
+
     /// <summary>Clones a repository using git directly (fallback when gh is unavailable/fails).</summary>
     private async Task RunGitCloneAsync(RepositorySpec spec, string targetRoot, CancellationToken cancellationToken)
     {
@@ -347,7 +374,35 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         args.Add(spec.CloneUrl);
         args.Add(targetRoot);
         _logger.LogDebug("[GitHub] Running fallback git clone for {CloneUrl}", spec.CloneUrl);
-        await RunGitAsync(args, _primary.RootPath, cancellationToken).ConfigureAwait(false);
+
+        try
+        {
+            await RunGitAsync(args, _primary.RootPath, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex.Message.Contains("error processing shallow info", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning("[GitHub] Shallow clone failed (repo may have no recent commits). Retrying with --depth=1 for {Owner}/{Repo}.",
+                spec.Owner, spec.Repository);
+            if (Directory.Exists(targetRoot))
+                Directory.Delete(targetRoot, recursive: true);
+        }
+
+        // Retry with --depth=1 which always works regardless of commit age
+        var depthArgs = new List<string> { "clone", "--depth=1" };
+        if (!string.IsNullOrWhiteSpace(spec.Ref))
+        {
+            depthArgs.Add("--branch");
+            depthArgs.Add(spec.Ref!);
+        }
+        depthArgs.Add(spec.CloneUrl);
+        depthArgs.Add(targetRoot);
+        _logger.LogDebug("[GitHub] Running depth-1 fallback clone for {CloneUrl}", spec.CloneUrl);
+        await RunGitAsync(depthArgs, _primary.RootPath, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Executes a git command.</summary>

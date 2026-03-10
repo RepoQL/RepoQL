@@ -13,9 +13,18 @@ namespace RepoQL.ConsoleApp.CommandImplementations;
 internal sealed class ReindexCommand(RepoQlClientProvider clientProvider)
 {
     [Command("reindex", Description = "Reindex files, optionally scoped to a URI pattern")]
-    public async Task<CommandResult> Execute(
-        [CommandParam("URI glob pattern (e.g., file:///src/**/*.cs). Omit for all.")] string? scope,
+    public Task<CommandResult> Execute(
+        [CommandParam("URI glob pattern (e.g., file:///src/**/*.cs, github://owner/repo/**). Omit to reindex ALL file systems including imports.")] string? scope,
         CancellationToken cancel)
+        => RunReindex(clear: false, scope, cancel);
+
+    [Command("reindex.clear", Description = "Clear existing data then reindex from scratch")]
+    public Task<CommandResult> ExecuteClear(
+        [CommandParam("URI glob pattern (e.g., file:///src/**/*.cs, github://owner/repo/**). Omit to reindex ALL file systems including imports.")] string? scope,
+        CancellationToken cancel)
+        => RunReindex(clear: true, scope, cancel);
+
+    private async Task<CommandResult> RunReindex(bool clear, string? scope, CancellationToken cancel)
     {
         try
         {
@@ -28,7 +37,7 @@ internal sealed class ReindexCommand(RepoQlClientProvider clientProvider)
             List<string>? failureDetails = null;
             List<string>? milestones = null;
 
-            await foreach (var progress in client.ReindexAllAsync(clear: false, scope: scope, cancellationToken: cancel).ConfigureAwait(false))
+            await foreach (var progress in client.ReindexAllAsync(clear: clear, scope: scope, cancellationToken: cancel).ConfigureAwait(false))
             {
                 totalItems = Math.Max(totalItems, (long)progress.TotalItems);
                 var phase = progress.Phase.ToString().Replace("ReindexPhase", "");
