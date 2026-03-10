@@ -100,6 +100,19 @@ interface PipelineEvent {
   reindexing?: boolean;
 }
 
+interface SnapshotHost {
+  repositoryPath?: string | null;
+  startedAt?: string | null;
+  dashboardUrl?: string | null;
+  initialIndexingCompleted?: boolean | null;
+}
+
+interface SnapshotPipeline {
+  stages?: Array<{ name: string; busy: boolean; queued: number; inProgress: number }> | null;
+  reindexing?: boolean | null;
+  writerPending?: boolean | null;
+}
+
 interface ActivityEvent {
   type?: string;
   operation?: string;
@@ -216,28 +229,30 @@ const STATE_MAP: Record<string, OperationState> = {
   Cancelled: 'cancelled',
 };
 
-function mapServerOperation(s: SnapshotResponse['operations'][number]): OperationSnapshot {
-  const state = STATE_MAP[s.state] ?? 'running';
+function mapServerOperation(s: SnapshotResponse['operations'][number] | null | undefined): OperationSnapshot {
+  const description = s?.description?.trim() || 'Operation';
+  const state = STATE_MAP[s?.state ?? ''] ?? 'running';
   return {
-    id: s.id,
-    kind: inferOperationKind(s.description),
-    description: s.description,
+    id: s?.id ?? crypto.randomUUID(),
+    kind: inferOperationKind(description),
+    description,
     state,
-    createdAt: Date.parse(s.createdAt) || Date.now(),
+    createdAt: Date.parse(s?.createdAt ?? '') || Date.now(),
     completedAt: state !== 'running' ? Date.now() : null,
-    totalFiles: s.progress.totalFiles,
-    indexedCount: s.progress.indexedCount,
-    embeddedCount: s.progress.embeddedCount,
-    failedCount: s.progress.failedCount,
-    readyPercent: s.progress.readyPercent,
+    totalFiles: s?.progress?.totalFiles ?? 0,
+    indexedCount: s?.progress?.indexedCount ?? 0,
+    embeddedCount: s?.progress?.embeddedCount ?? 0,
+    failedCount: s?.progress?.failedCount ?? 0,
+    readyPercent: s?.progress?.readyPercent ?? 0,
     milestones: [],
     recentLog: [],
   };
 }
 
-function inferOperationKind(description: string): OperationKind {
-  if (description.includes('import')) return 'import';
-  if (description.includes('reindex') || description.includes('Reindex')) return 'reindex';
+function inferOperationKind(description: string | null | undefined): OperationKind {
+  const text = description ?? '';
+  if (text.includes('import')) return 'import';
+  if (text.includes('reindex') || text.includes('Reindex')) return 'reindex';
   return 'startup';
 }
 
@@ -299,6 +314,28 @@ function sortQueries(entries: QueryEntry[]): QueryEntry[] {
     || b.timestamp - a.timestamp
     || b.id - a.id,
   );
+}
+
+function normalizeSnapshot(raw: SnapshotResponse): SnapshotResponse {
+  const host = (raw?.host ?? {}) as SnapshotHost;
+  const pipeline = (raw?.pipeline ?? {}) as SnapshotPipeline;
+
+  return {
+    host: {
+      repositoryPath: host.repositoryPath ?? '',
+      startedAt: host.startedAt ?? '',
+      dashboardUrl: host.dashboardUrl ?? null,
+      initialIndexingCompleted: host.initialIndexingCompleted ?? false,
+    },
+    pipeline: {
+      stages: Array.isArray(pipeline.stages) ? pipeline.stages : [],
+      reindexing: pipeline.reindexing ?? false,
+      writerPending: pipeline.writerPending ?? false,
+    },
+    operations: Array.isArray(raw?.operations) ? raw.operations : [],
+    queries: Array.isArray(raw?.queries) ? raw.queries : [],
+    files: Array.isArray(raw?.files) ? raw.files : [],
+  };
 }
 
 // --- Count files by state ---
@@ -513,7 +550,8 @@ export function useRepoQLDashboard(): {
         }
         return (await res.json()) as SnapshotResponse;
       })
-      .then((data) => {
+      .then((raw) => {
+        const data = normalizeSnapshot(raw);
         batch(() => {
           setSnapshot(data);
 
@@ -609,7 +647,7 @@ export function useRepoQLDashboard(): {
 
     es.addEventListener('queries', (event) => {
       const parsed = parseJson<ServerQuery[]>((event as MessageEvent).data);
-      if (!parsed) return;
+      if (!Array.isArray(parsed)) return;
       setQueries(sortQueries(parsed.map(mapServerQuery)).slice(0, MAX_QUERY_ENTRIES));
     });
 
@@ -672,7 +710,7 @@ export function useRepoQLDashboard(): {
 
     es.addEventListener('operations', (event) => {
       const parsed = parseJson<SnapshotResponse['operations']>((event as MessageEvent).data);
-      if (parsed) setOperations(parsed.map(mapServerOperation));
+      if (Array.isArray(parsed)) setOperations(parsed.map(mapServerOperation));
     });
 
     onCleanup(() => es.close());
@@ -720,7 +758,7 @@ export function useRepoQLDashboard(): {
     const fullEmbedded = stateCounts.full_embedded ?? 0;
 
     return {
-      title: snap?.host.repositoryPath ?? 'Indexing...',
+      title: snap?.host?.repositoryPath ?? 'Indexing...',
       stateCounts,
       files,
       total,
@@ -768,10 +806,10 @@ export function useRepoQLDashboard(): {
 
     const snap = snapshot();
     const pe = pipelineEvent();
-    const ready = pe?.ready ?? snap?.host.initialIndexingCompleted ?? false;
-    const reindexing = pe?.reindexing ?? snap?.pipeline.reindexing ?? false;
+    const ready = pe?.ready ?? snap?.host?.initialIndexingCompleted ?? false;
+    const reindexing = pe?.reindexing ?? snap?.pipeline?.reindexing ?? false;
     const phase = derivePhaseFromFiles(fd.stateCounts, ready, reindexing);
-    const stageRate = (pe?.stages ?? snap?.pipeline.stages ?? [])
+    const stageRate = (pe?.stages ?? snap?.pipeline?.stages ?? [])
       .reduce((sum, s) => sum + ((s as PipelineStageEvent).throughputPerSec ?? 0), 0);
 
     return {
