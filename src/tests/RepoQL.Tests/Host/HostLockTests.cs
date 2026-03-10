@@ -35,6 +35,12 @@ internal sealed class HostLockTests
         }
     }
 
+    [Test]
+    public void ShouldUseAdvisoryLock_MatchesPlatformRequirements()
+    {
+        HostLock.ShouldUseAdvisoryLock().Should().Be(OperatingSystem.IsLinux());
+    }
+
     /// <summary>Lock file contains the current process PID in "PID:nnn" format after acquisition.</summary>
     [Test]
     public void TryAcquire_WritesPidToLockFile()

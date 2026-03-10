@@ -17,9 +17,9 @@ namespace RepoQL.ConsoleApp.Host;
 /// </para>
 /// <para>
 /// <b>Sharing model</b>: The holder opens with <c>FileShare.Read</c>, so competing processes can read the PID
-/// via <see cref="TryReadHolderPid"/> while the lock is held. On Windows, write exclusivity is enforced by
+/// via <see cref="TryReadHolderPid"/> while the lock is held. On Windows and macOS, write exclusivity is enforced by
 /// <c>FileShare</c> semantics. On Linux, <c>FileShare.Read</c> is not enforced, so an advisory lock via
-/// <see cref="FileStream.Lock"/> (which maps to <c>flock()</c>) provides cross-process exclusion.
+/// <see cref="FileStream.Lock"/> provides cross-process exclusion.
 /// </para>
 /// <para>
 /// <b>Acquisition is two-phase</b>: Phase 1 opens the FileStream (lock acquisition). Phase 2 writes the PID.
@@ -122,12 +122,11 @@ internal sealed class HostLock : IDisposable
             return null;
         }
 
-        // Phase 1b: Acquire an advisory lock for cross-platform exclusivity.
-        // On Linux, FileShare.Read does NOT enforce exclusive write access — the FileStream
-        // constructor above succeeds even if another process has the file open. FileStream.Lock
-        // maps to flock() on Unix, which provides the actual cross-process exclusion.
-        // On Windows, FileShare already enforces exclusivity so this step is skipped.
-        if (!OperatingSystem.IsWindows())
+        // Phase 1b: Acquire an advisory lock only where FileShare semantics are insufficient.
+        // Linux allows a second writer to open the file despite FileShare.Read, so we add an
+        // explicit advisory lock there. macOS throws PlatformNotSupportedException for region
+        // locking and already honors the FileShare contract, so it must skip this path.
+        if (ShouldUseAdvisoryLock())
         {
             try
             {
@@ -205,9 +204,9 @@ internal sealed class HostLock : IDisposable
 
     public void Dispose()
     {
-        // Release the advisory lock before closing the stream (Unix only — see Phase 1b).
+        // Release the advisory lock before closing the stream when we acquired one.
         // Ignore errors — Dispose must be safe even if the stream is already broken.
-        if (!OperatingSystem.IsWindows())
+        if (ShouldUseAdvisoryLock())
         {
             try { _stream.Unlock(LockOffset, 1); }
             catch { /* Best-effort unlock; stream disposal releases the lock regardless. */ }
@@ -224,6 +223,9 @@ internal sealed class HostLock : IDisposable
 
     private static string NormalizeProcessLockKey(string lockPath)
         => System.IO.Path.GetFullPath(lockPath);
+
+    internal static bool ShouldUseAdvisoryLock()
+        => OperatingSystem.IsLinux();
 
     /// <summary>
     /// Detect whether an IOException represents a file-sharing conflict (another process holds the lock).
