@@ -32,7 +32,19 @@ builder.Services.AddSingleton<ApiKeyAuthInterceptor>();
 builder.Services.AddSingleton<IXaiChatClient>(sp =>
 {
     var options = sp.GetRequiredService<IOptions<InferenceServiceOptions>>().Value;
-    var channel = Grpc.Net.Client.GrpcChannel.ForAddress(options.Endpoint);
+    var handler = new SocketsHttpHandler
+    {
+        EnableMultipleHttp2Connections = true,
+        PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan,
+        KeepAlivePingDelay = TimeSpan.FromSeconds(30),
+        KeepAlivePingTimeout = TimeSpan.FromSeconds(10),
+    };
+    var channel = Grpc.Net.Client.GrpcChannel.ForAddress(options.Endpoint, new Grpc.Net.Client.GrpcChannelOptions
+    {
+        HttpHandler = handler,
+        MaxReceiveMessageSize = 8 * 1024 * 1024,
+        MaxSendMessageSize = 8 * 1024 * 1024,
+    });
     var client = new XaiApi.Chat.ChatClient(channel);
     return new XaiChatClientAdapter(client);
 });

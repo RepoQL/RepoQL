@@ -77,7 +77,7 @@ internal sealed class GrokClient : IGrokClient
 
         var headers = new Metadata
         {
-            { "authorization", $"Bearer {_options.GrokApiKey}" }
+            { "authorization", $"Bearer {_options.GrokApiKey.Trim()}" }
         };
 
         try
