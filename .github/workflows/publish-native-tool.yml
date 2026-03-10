@@ -233,10 +233,12 @@ jobs:
           $hostLog = ""
           $hostStderr = ""
 
+          $smokeSql = '"SELECT 1 AS ok"'
+
           try {
             $process = Start-Process `
               -FilePath $binaryPath `
-              -ArgumentList @('query', 'SELECT 1 AS ok') `
+              -ArgumentList @('query', $smokeSql) `
               -WorkingDirectory $repoRoot `
               -RedirectStandardOutput $stdoutFile `
               -RedirectStandardError $stderrFile `
