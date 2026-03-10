@@ -103,6 +103,7 @@ internal sealed class RepoQlClientProvider : IAsyncDisposable
         try
         {
             var client = await task.ConfigureAwait(false);
+            // DisposeAsync is synchronous (returns ValueTask.CompletedTask) — discard suppresses CS4014.
             var _ = client.DisposeAsync().ConfigureAwait(false);
         }
         catch (Exception ex)

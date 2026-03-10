@@ -258,12 +258,18 @@ internal sealed class RepoCommandTests : IDisposable
 
     /// <summary>
     /// Execute ::repo[path] with a short timeout so connection tests fail fast.
+    /// Host launch is suppressed via REPOQL_SUPPRESS_HOST_LAUNCH (set in GlobalSetup).
+    /// StartTimeoutMs is set to 500ms so EnsureServerRunning fails quickly via TimeoutException
+    /// rather than waiting for the CTS.
     /// </summary>
     private static async Task<CommandResult> ExecuteRepo(string path)
     {
-        var provider = new RepoQlClientProvider(new RepoQL.Contracts.Configuration.RepoQlConfig());
+        var config = new RepoQL.Contracts.Configuration.RepoQlConfig();
+        config.Host.StartTimeoutMs = 500;
+        var provider = new RepoQlClientProvider(config);
+        await using var _ = provider;
         var command = new RepoCommand(provider);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         return await command.Execute(path, cts.Token);
     }
 

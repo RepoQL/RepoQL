@@ -794,7 +794,7 @@ public static class RepoIndexerServiceCollectionExtensions
             if (string.IsNullOrWhiteSpace(remoteUrl))
                 return "";
 
-            var normalized = RepoQL.Embedding.Client.SourceNormalizer.Normalize(remoteUrl);
+            var normalized = SourceNormalizer.Normalize(remoteUrl);
             if (string.IsNullOrEmpty(normalized) &&
                 !remoteUrl.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
             {
