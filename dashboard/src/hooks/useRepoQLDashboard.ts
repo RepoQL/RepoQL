@@ -88,17 +88,49 @@ interface ActivityEvent {
 
 const ACTIVITY_LABELS: Record<string, string> = {
   IndexingActivityFileChanged: 'Changed',
-  IndexingActivityFileDiscovered: 'Discovered',
-  IndexingActivityFileParsed: 'Parsed',
-  IndexingActivityFileAnalyzed: 'Analyzed',
-  IndexingActivityEmbeddingsGenerated: 'Embedded',
-  IndexingActivityBatchComplete: 'Batch done',
+  IndexingActivityEmbeddingsGenerated: 'Indexed',
 };
 
-/** Trim a URI or path to just the filename */
-function shortPath(uri: string): string {
-  const last = uri.replace(/\\/g, '/').split('/').pop();
-  return last ?? uri;
+const HIGH_SIGNAL_FILE_STATES = new Set<FileState>([
+  'parsed',
+  'struct_embedded',
+  'full_embedded',
+  'failed',
+]);
+
+const LOW_SIGNAL_ACTIVITY_TYPES = new Set([
+  'IndexingActivityBatchComplete',
+  'IndexingActivityFileDiscovered',
+  'IndexingActivityFileParsed',
+  'IndexingActivityFileAnalyzed',
+]);
+
+interface ActivityDraft {
+  operation: string;
+  path: string;
+  langColor: string;
+}
+
+/** Keep enough of the path to distinguish repeated filenames */
+function compactPath(uri: string): string {
+  const normalized = uri.replace(/\\/g, '/');
+
+  if (normalized.startsWith('github://')) {
+    const segments = normalized.slice('github://'.length).split('/').filter(Boolean);
+    if (segments.length <= 4) {
+      return `github/${segments.join('/')}`;
+    }
+
+    return `github/${segments[0]}/${segments[1]}/.../${segments.slice(-2).join('/')}`;
+  }
+
+  const withoutScheme = normalized.replace(/^[a-z]+:\/\/\/?/i, '');
+  const segments = withoutScheme.split('/').filter(Boolean);
+  if (segments.length <= 2) {
+    return segments.join('/') || uri;
+  }
+
+  return `.../${segments.slice(-2).join('/')}`;
 }
 
 interface HealthEvent {
@@ -276,12 +308,51 @@ export function useRepoQLDashboard(): {
   }
 
   function appendActivity(operation: string, path: string, langColor: string, timestamp: number) {
-    activityId += 1;
-    const id = activityId;
-    setActivities((prev) => [
-      { id, operation, path, langColor, timestamp },
-      ...prev.slice(0, MAX_ACTIVITY_ENTRIES - 1),
-    ]);
+    setActivities((prev) => {
+      const latest = prev[0];
+      if (
+        latest
+        && latest.operation === operation
+        && latest.path === path
+        && Math.abs(latest.timestamp - timestamp) < 1500
+      ) {
+        return prev;
+      }
+
+      activityId += 1;
+      return [
+        { id: activityId, operation, path, langColor, timestamp },
+        ...prev.slice(0, MAX_ACTIVITY_ENTRIES - 1),
+      ];
+    });
+  }
+
+  function buildFileActivity(previous: ServerFile | undefined, next: ServerFile): ActivityDraft | null {
+    const nextState = (next.state as FileState) || 'discovered';
+    if (!HIGH_SIGNAL_FILE_STATES.has(nextState)) {
+      return null;
+    }
+
+    const previousState = previous ? ((previous.state as FileState) || 'discovered') : null;
+    if (previousState === nextState) {
+      return null;
+    }
+
+    const path = compactPath(next.path);
+    const langColor = nextState === 'failed' ? 'var(--red)' : pickLangColor(next.path);
+
+    switch (nextState) {
+      case 'parsed':
+        return { operation: 'Parsed', path, langColor };
+      case 'struct_embedded':
+        return { operation: 'Ready', path, langColor };
+      case 'full_embedded':
+        return { operation: 'Indexed', path, langColor };
+      case 'failed':
+        return { operation: 'Failed', path, langColor };
+      default:
+        return null;
+    }
   }
 
   // 1-second tick for elapsed time
@@ -368,41 +439,61 @@ export function useRepoQLDashboard(): {
       if (!parsed) return;
 
       const rawType = parsed.type ?? parsed.operation ?? '';
+      if (
+        rawType.includes('Idle')
+        || rawType.includes('Unspecified')
+        || LOW_SIGNAL_ACTIVITY_TYPES.has(rawType)
+      ) {
+        return;
+      }
 
-      // Skip noise
-      if (rawType.includes('Idle') || rawType.includes('Unspecified')) return;
-
-      const label = ACTIVITY_LABELS[rawType] ?? rawType;
       const uri = parsed.uri ?? parsed.path ?? '';
-      const path = uri ? shortPath(uri) : parsed.message ?? '';
-      const counts = parsed.processedCount ? ` (${parsed.processedCount})` : '';
-      const display = path ? `${path}${counts}` : `${label}${counts}`;
-      const color = parsed.langColor ?? pickLangColor(uri || path);
-      const timestamp = coerceTimestamp(parsed.timestamp);
+      if (!uri) return;
 
-      appendActivity(label, display, color, timestamp);
+      const label = ACTIVITY_LABELS[rawType] ?? (rawType.startsWith('IndexingActivity') ? 'Updated' : (rawType || 'Updated'));
+      appendActivity(
+        label,
+        compactPath(uri),
+        parsed.langColor ?? pickLangColor(uri),
+        coerceTimestamp(parsed.timestamp),
+      );
     });
 
     es.addEventListener('health', (event) => {
       const parsed = parseJson<HealthEvent>((event as MessageEvent).data);
       if (!parsed) return;
 
+      const status = (parsed.status ?? '').toLowerCase();
+      if (!['degraded', 'error', 'unhealthy'].includes(status)) {
+        return;
+      }
+
       const detail = parsed.message ?? parsed.status ?? 'host-health';
-      appendActivity('health', detail, 'var(--fg3)', coerceTimestamp(parsed.timestamp));
+      appendActivity('Health', detail, 'var(--red)', coerceTimestamp(parsed.timestamp));
     });
 
-    // Delta file updates — merge into map
+    // Delta file updates — merge into map and surface meaningful file progress.
     es.addEventListener('file_updates', (event) => {
       const parsed = parseJson<ServerFile[]>((event as MessageEvent).data);
       if (!parsed || parsed.length === 0) return;
 
+      const drafts: ActivityDraft[] = [];
       setFileMap((prev) => {
         const next = new Map(prev);
         for (const f of parsed) {
+          const activity = buildFileActivity(prev.get(f.path), f);
+          if (activity) {
+            drafts.push(activity);
+          }
           next.set(f.path, f);
         }
         return next;
       });
+
+      const timestamp = Date.now();
+      for (const draft of drafts) {
+        appendActivity(draft.operation, draft.path, draft.langColor, timestamp);
+      }
     });
 
     // File removals
@@ -410,13 +501,21 @@ export function useRepoQLDashboard(): {
       const paths = parseJson<string[]>((event as MessageEvent).data);
       if (!paths || paths.length === 0) return;
 
+      const removed: string[] = [];
       setFileMap((prev) => {
         const next = new Map(prev);
         for (const p of paths) {
-          next.delete(p);
+          if (next.delete(p)) {
+            removed.push(p);
+          }
         }
         return next;
       });
+
+      const timestamp = Date.now();
+      for (const path of removed) {
+        appendActivity('Removed', compactPath(path), pickLangColor(path), timestamp);
+      }
     });
 
     // Legacy full file snapshot (backward compat)

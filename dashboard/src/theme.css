@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
 
 :root {
   /* Surface */
@@ -12,11 +12,11 @@
   --border-l: #32323e;
 
   /* Foreground */
-  --fg: #e0dfd8;
-  --fg1: #c8c8c0;
-  --fg2: #a0a098;
-  --fg3: #727268;
-  --fg4: #484850;
+  --fg: #f2efe8;
+  --fg1: #ddd9cf;
+  --fg2: #b7b2a7;
+  --fg3: #918b80;
+  --fg4: #676572;
 
   /* Accent */
   --blue: #4a9eff;
@@ -48,8 +48,8 @@
   --lang-unknown: #555560;
 
   /* Typography */
-  --font-mono: 'IBM Plex Mono', monospace;
-  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'Azeret Mono', monospace;
+  --font-sans: 'Plus Jakarta Sans', 'Segoe UI', sans-serif;
 }
 
 *,
@@ -64,5 +64,8 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans);
+  line-height: 1.45;
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
+
