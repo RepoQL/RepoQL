@@ -28,7 +28,7 @@ internal sealed class EmbeddingServiceOptions
     public int Concurrency { get; set; } = 4;
 
     /// <summary>Voyage reranking model. Used when Rerank RPC model field is empty.</summary>
-    public string RerankModel { get; set; } = "rerank-2.5-lite";
+    public string RerankModel { get; set; } = "rerank-2.5";
 }
 
 /// <summary>
