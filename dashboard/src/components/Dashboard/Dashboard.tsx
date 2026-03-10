@@ -1,16 +1,21 @@
 import { Show } from 'solid-js';
 import type {
-  ActivityEntry, ClientLease, LanguageCount, OperationSnapshot,
-  PipelineState, SourceSection,
+  ActivityEntry,
+  FileError,
+  LanguageCount,
+  OperationSnapshot,
+  PipelineState,
+  QueryEntry,
+  SourceSection,
 } from '../../types';
 import { ActivityStream } from '../ActivityStream';
-import { ClientLeases } from '../ClientLeases';
+import { ErrorPanel } from '../ErrorPanel';
 import { FileTreemap } from '../FileTreemap';
 import { LanguageSpectrum } from '../LanguageSpectrum';
 import { OperationTracker } from '../OperationTracker';
-import { PhaseIndicator } from '../PhaseIndicator';
 import { PipelineSankey } from '../PipelineSankey';
 import { ProgressRings } from '../ProgressRings';
+import { QueryActivity } from '../QueryActivity';
 import { StatusHeader } from '../StatusHeader';
 import './Dashboard.css';
 
@@ -21,7 +26,8 @@ export interface DashboardProps {
   sections: SourceSection[];
   languages: LanguageCount[];
   activities: ActivityEntry[];
-  leases: ClientLease[];
+  errors: FileError[];
+  queries: QueryEntry[];
   operations: OperationSnapshot[];
   now: number;
 }
@@ -58,15 +64,13 @@ export function Dashboard(props: DashboardProps) {
             fullEmbedded={props.pipeline.fullEmbedded}
             complete={complete()}
           />
-          <PhaseIndicator phase={props.pipeline.phase} />
-          <LanguageSpectrum languages={props.languages} />
           <Show when={props.operations.length > 0}>
             <OperationTracker operations={props.operations} now={props.now} />
           </Show>
-          <Show when={props.leases.length > 0}>
-            <ClientLeases clients={props.leases} now={props.now} />
-          </Show>
+          <ErrorPanel errors={props.errors} />
+          <QueryActivity entries={props.queries} />
           <ActivityStream entries={props.activities} />
+          <LanguageSpectrum languages={props.languages} />
         </div>
       </div>
 

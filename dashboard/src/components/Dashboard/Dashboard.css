@@ -8,7 +8,7 @@
 .dashboard-main {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 220px;
+  grid-template-columns: minmax(0, 1fr) 360px;
   grid-template-rows: auto 1fr;
   gap: 0;
   min-height: 0;
@@ -24,7 +24,6 @@
   grid-row: 2 / 3;
   grid-column: 1 / 2;
   display: flex;
-  border-right: 1px solid var(--border);
   min-height: 0;
   overflow: hidden;
 }
@@ -34,9 +33,16 @@
   grid-column: 2 / 3;
   display: flex;
   flex-direction: column;
+  gap: 10px;
+  padding: 10px;
   background: var(--surface);
+  border-left: 1px solid var(--border);
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+}
+
+.dashboard-sidebar > * {
+  flex-shrink: 0;
 }
 
 /* Completion wash */
@@ -53,3 +59,4 @@
 .done-wash.show {
   opacity: 1;
 }
+

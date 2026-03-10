@@ -38,7 +38,8 @@ internal static class DashboardEndpoints
         IOperationManager operations,
         UriRegistry uriRegistry,
         HostState hostState,
-        DuckDbDataStore dataStore)
+        DuckDbDataStore dataStore,
+        DashboardQueryActivityTracker queryActivity)
     {
         var pipelineStatus = coordinator.GetPipelineStatus();
         var leases = LeaseRegistry.Snapshot();
@@ -88,6 +89,7 @@ internal static class DashboardEndpoints
                     readyPercent = op.Progress.ReadyPercent,
                 },
             }).ToArray(),
+            queries = SnapshotQueries(queryActivity),
             files = SnapshotFiles(uriRegistry, tokenCounts),
         };
 
@@ -122,6 +124,24 @@ internal static class DashboardEndpoints
         }
     }
 
+
+    private static object[] SnapshotQueries(DashboardQueryActivityTracker queryActivity)
+    {
+        return queryActivity.CaptureSnapshot(DateTime.UtcNow)
+            .Select(entry => new
+            {
+                id = entry.Id,
+                tool = entry.Tool,
+                @params = entry.Parameters,
+                tokenBudget = entry.TokenBudget,
+                tokensUsed = entry.TokensUsed,
+                elapsedMs = entry.ElapsedMs,
+                resultSummary = entry.ResultSummary,
+                timestampUtc = entry.TimestampUtc,
+                state = entry.State.ToString().ToLowerInvariant(),
+            })
+            .ToArray();
+    }
     // --- File snapshot from UriRegistry ---
 
     private static object[] SnapshotFiles(UriRegistry registry, Dictionary<string, int> tokenCounts)
@@ -298,6 +318,7 @@ internal static class DashboardEndpoints
         UriRegistry uriRegistry,
         IOperationManager operations,
         DuckDbDataStore dataStore,
+        DashboardQueryActivityTracker queryActivity,
         CancellationToken cancellationToken)
     {
         // Disable response buffering for real-time streaming.
@@ -411,7 +432,7 @@ internal static class DashboardEndpoints
             // Periodic snapshots: leases and operations.
             if (now - lastPeriodicSend >= periodicSnapshotInterval)
             {
-                await WritePeriodicSnapshots(context.Response, operations, cancellationToken).ConfigureAwait(false);
+                await WritePeriodicSnapshots(context.Response, operations, queryActivity, cancellationToken).ConfigureAwait(false);
                 lastPeriodicSend = now;
             }
         }
@@ -488,10 +509,14 @@ internal static class DashboardEndpoints
     }
 
     private static async Task WritePeriodicSnapshots(
-        HttpResponse response, IOperationManager operations, CancellationToken ct)
+        HttpResponse response,
+        IOperationManager operations,
+        DashboardQueryActivityTracker queryActivity,
+        CancellationToken ct)
     {
         await WriteLeaseSnapshot(response, ct).ConfigureAwait(false);
         await WriteOperationsSnapshot(response, operations, ct).ConfigureAwait(false);
+        await WriteQuerySnapshot(response, queryActivity, ct).ConfigureAwait(false);
     }
 
     private static async Task WriteLeaseSnapshot(HttpResponse response, CancellationToken ct)
@@ -510,6 +535,18 @@ internal static class DashboardEndpoints
             ct).ConfigureAwait(false);
     }
 
+
+    private static async Task WriteQuerySnapshot(
+        HttpResponse response,
+        DashboardQueryActivityTracker queryActivity,
+        CancellationToken ct)
+    {
+        await WriteSseEvent(
+            response,
+            "queries",
+            JsonSerializer.Serialize(SnapshotQueries(queryActivity), JsonOptions),
+            ct).ConfigureAwait(false);
+    }
     private static async Task WriteOperationsSnapshot(
         HttpResponse response, IOperationManager operations, CancellationToken ct)
     {
@@ -537,3 +574,4 @@ internal static class DashboardEndpoints
             ct).ConfigureAwait(false);
     }
 }
+

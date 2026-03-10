@@ -1,6 +1,15 @@
 .spectrum-section {
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--border);
+  padding: 12px 20px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
+}
+
+.spectrum-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .spectrum-label {
@@ -9,13 +18,18 @@
   color: var(--fg3);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  margin-bottom: 8px;
+}
+
+.spectrum-meta {
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  color: var(--fg3);
 }
 
 .spectrum-bar {
-  height: 8px;
+  height: 6px;
   display: flex;
-  border-radius: 2px;
+  border-radius: 999px;
   overflow: hidden;
   background: var(--well);
   gap: 1px;
@@ -24,26 +38,50 @@
 .spec-seg {
   transition: flex 0.6s ease;
   min-width: 0;
+  opacity: 0.72;
 }
 
 .spectrum-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-top: 10px;
 }
 
 .spec-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  min-width: 0;
   font-family: var(--font-mono);
-  font-size: 0.5rem;
+  font-size: 0.55rem;
   color: var(--fg3);
 }
 
 .spec-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.spec-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spec-share {
+  margin-left: auto;
+  color: var(--fg2);
+}
+
+.spec-more {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  color: var(--fg3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }

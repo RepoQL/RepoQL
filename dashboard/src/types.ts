@@ -180,9 +180,12 @@ export interface FileError {
 
 export type ToolName = 'explore' | 'explain' | 'query' | 'read';
 
+export type QueryState = 'running' | 'completed' | 'failed';
+
 export interface QueryEntry {
   id: number;
   tool: ToolName;
+  state: QueryState;
   /** Key parameter summary — e.g. intent, keywords, URI glob, SQL snippet */
   params: string;
   /** Token budget requested */
@@ -195,7 +198,6 @@ export interface QueryEntry {
   resultSummary: string;
   timestamp: number;
 }
-
 // ─── Connection Status ───
 
 export type HostStatus = 'connected' | 'disconnected' | 'reconnecting';

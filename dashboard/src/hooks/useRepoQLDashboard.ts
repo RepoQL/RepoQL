@@ -1,8 +1,22 @@
 import { createSignal, createMemo, createEffect, onMount, onCleanup, batch } from 'solid-js';
 import { throttle, leadingAndTrailing, scheduleIdle } from '@solid-primitives/scheduled';
 import type {
-  ActivityEntry, ClientLease, FileEntry, FileState, Language, LanguageCount,
-  OperationKind, OperationSnapshot, OperationState, PipelinePhase,
+  ActivityEntry,
+  ErrorCategory,
+  FileEntry,
+  FileError,
+  FileGroup,
+  FileState,
+  Language,
+  LanguageCount,
+  OperationKind,
+  OperationSnapshot,
+  OperationState,
+  PipelinePhase,
+  QueryEntry,
+  QueryState,
+  SourceSection,
+  ToolName,
 } from '../types';
 import { LANGUAGES } from '../types';
 import {
@@ -30,6 +44,18 @@ interface ServerFile {
   structure?: string | null;
 }
 
+interface ServerQuery {
+  id: number;
+  tool?: string | null;
+  params?: string | null;
+  tokenBudget?: number | null;
+  tokensUsed?: number | null;
+  elapsedMs?: number | null;
+  resultSummary?: string | null;
+  timestampUtc?: string | null;
+  state?: string | null;
+}
+
 interface SnapshotResponse {
   host: {
     repositoryPath: string;
@@ -42,7 +68,6 @@ interface SnapshotResponse {
     reindexing: boolean;
     writerPending: boolean;
   };
-  leases: Array<{ clientId: string; lastBeatUtc: string }>;
   operations: Array<{
     id: string;
     description: string;
@@ -56,6 +81,7 @@ interface SnapshotResponse {
       readyPercent: number;
     };
   }>;
+  queries: ServerQuery[];
   files: ServerFile[];
 }
 
@@ -140,6 +166,8 @@ interface HealthEvent {
 }
 
 const MAX_ACTIVITY_ENTRIES = 50;
+const MAX_ERROR_ENTRIES = 24;
+const MAX_QUERY_ENTRIES = 24;
 
 // --- Referential equality for arrays (used by stability caches) ---
 
@@ -179,19 +207,6 @@ function lookupLang(ext: string): Language {
   return LANGUAGES[normalized] ?? { name: normalized.slice(1) || 'Other', color: '#555560' };
 }
 
-// --- Map server leases to client type ---
-
-function mapServerLease(s: SnapshotResponse['leases'][number]): ClientLease {
-  return {
-    id: s.clientId,
-    name: s.clientId.slice(0, 12),
-    connectedAt: Date.parse(s.lastBeatUtc) || Date.now(),
-    activeRequest: null,
-    requestCount: 0,
-    totalTokensUsed: 0,
-  };
-}
-
 // --- Map server operations to client type ---
 
 const STATE_MAP: Record<string, OperationState> = {
@@ -226,6 +241,66 @@ function inferOperationKind(description: string): OperationKind {
   return 'startup';
 }
 
+// --- Map server queries to client type ---
+
+function coerceToolName(value: string | null | undefined): ToolName {
+  switch ((value ?? '').toLowerCase()) {
+    case 'explore':
+    case 'explain':
+    case 'read':
+    case 'query':
+      return value!.toLowerCase() as ToolName;
+    default:
+      return 'query';
+  }
+}
+
+function coerceQueryState(value: string | null | undefined): QueryState {
+  switch ((value ?? '').toLowerCase()) {
+    case 'running':
+      return 'running';
+    case 'failed':
+      return 'failed';
+    default:
+      return 'completed';
+  }
+}
+
+function mapServerQuery(s: ServerQuery): QueryEntry {
+  const state = coerceQueryState(s.state);
+
+  return {
+    id: Number.isFinite(s.id) ? s.id : Math.trunc(Date.now() + Math.random() * 1000),
+    tool: coerceToolName(s.tool),
+    state,
+    params: s.params?.trim() || '(no parameters)',
+    tokenBudget: Math.max(0, s.tokenBudget ?? 0),
+    tokensUsed: Math.max(0, s.tokensUsed ?? 0),
+    elapsed: Math.max(0, s.elapsedMs ?? 0),
+    resultSummary: s.resultSummary?.trim() || (state === 'running' ? 'Awaiting response' : ''),
+    timestamp: coerceTimestamp(s.timestampUtc),
+  };
+}
+
+function sortQueries(entries: QueryEntry[]): QueryEntry[] {
+  const stateRank = (state: QueryState) => {
+    switch (state) {
+      case 'running':
+        return 0;
+      case 'failed':
+        return 1;
+      default:
+        return 2;
+    }
+  };
+
+  return [...entries].sort((a, b) =>
+    stateRank(a.state) - stateRank(b.state)
+    || b.timestamp - a.timestamp
+    || b.id - a.id,
+  );
+}
+
 // --- Count files by state ---
 
 function countByState(files: FileEntry[]): Record<string, number> {
@@ -234,6 +309,72 @@ function countByState(files: FileEntry[]): Record<string, number> {
     counts[f.state] = (counts[f.state] ?? 0) + 1;
   }
   return counts;
+}
+
+function classifyErrorCategory(message: string): ErrorCategory {
+  const lower = message.toLowerCase();
+
+  if (lower.includes('encoding') || lower.includes('utf-') || lower.includes('byte order mark') || lower.includes('invalid byte')) {
+    return 'encoding';
+  }
+  if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('deadline')) {
+    return 'timeout';
+  }
+  if (lower.includes('unsupported') || lower.includes('not supported') || lower.includes('no loader')) {
+    return 'unsupported';
+  }
+  if (lower.includes('permission denied') || lower.includes('access denied') || lower.includes('file not found') || lower.includes('directory') || lower.includes('path') || lower.includes('i/o') || lower.includes('io exception')) {
+    return 'io';
+  }
+  if (lower.includes('parse') || lower.includes('syntax') || lower.includes('unexpected token')) {
+    return 'parse';
+  }
+
+  return 'unknown';
+}
+
+function summarizeErrorMessage(message: string | null | undefined): string {
+  const normalized = (message ?? '').replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return 'Unknown failure';
+  }
+
+  return normalized.length <= 140 ? normalized : `${normalized.slice(0, 137)}...`;
+}
+
+function buildErrorHint(category: ErrorCategory): string | undefined {
+  switch (category) {
+    case 'encoding':
+      return 'Check file encoding and byte-order markers.';
+    case 'timeout':
+      return 'Inspect the parser or file size for long-running work.';
+    case 'unsupported':
+      return 'This format may need a loader or should be excluded.';
+    case 'io':
+      return 'Check the file path, permissions, and whether it still exists.';
+    case 'parse':
+      return 'Inspect the file near the reported syntax boundary.';
+    default:
+      return undefined;
+  }
+}
+
+function buildFileErrors(files: FileEntry[]): FileError[] {
+  return files
+    .filter((file) => file.state === 'failed' && !!file.error)
+    .map((file) => {
+      const message = summarizeErrorMessage(file.error);
+      const category = classifyErrorCategory(message);
+      return {
+        path: compactPath(file.path),
+        lang: file.lang,
+        category,
+        message,
+        hint: buildErrorHint(category),
+      } satisfies FileError;
+    })
+    .sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }))
+    .slice(0, MAX_ERROR_ENTRIES);
 }
 
 // --- Hook ---
@@ -248,8 +389,8 @@ export function useRepoQLDashboard(): {
   const [snapshot, setSnapshot] = createSignal<SnapshotResponse | null>(null);
   const [pipelineEvent, setPipelineEvent] = createSignal<PipelineEvent | null>(null);
   const [activities, setActivities] = createSignal<ActivityEntry[]>([]);
+  const [queries, setQueries] = createSignal<QueryEntry[]>([]);
   const [fileMap, setFileMap] = createSignal<Map<string, ServerFile>>(new Map());
-  const [leases, setLeases] = createSignal<ClientLease[]>([]);
   const [operations, setOperations] = createSignal<OperationSnapshot[]>([]);
   const [now, setNow] = createSignal(Date.now());
 
@@ -285,7 +426,7 @@ export function useRepoQLDashboard(): {
   const groupCache = new Map<string, FileGroup>();
 
   function stableGroups(groups: FileGroup[], prefix: string): FileGroup[] {
-    return groups.map(g => {
+    return groups.map((g) => {
       const key = prefix + '\0' + g.label;
       const cached = groupCache.get(key);
       if (cached && sameItems(cached.files, g.files)) return cached;
@@ -297,7 +438,7 @@ export function useRepoQLDashboard(): {
   const sectionCache = new Map<string, SourceSection>();
 
   function stabilizeSections(raw: SourceSection[]): SourceSection[] {
-    return raw.map(s => {
+    return raw.map((s) => {
       const stableGs = stableGroups(s.groups, s.prefix);
       const cached = sectionCache.get(s.prefix);
       if (cached && sameItems(cached.groups, stableGs) && cached.total === s.total) return cached;
@@ -376,20 +517,14 @@ export function useRepoQLDashboard(): {
         batch(() => {
           setSnapshot(data);
 
-          // Populate file map from snapshot
           const map = new Map<string, ServerFile>();
           for (const f of data.files) {
             map.set(f.path, f);
           }
           setFileMap(map);
 
-          // Populate leases and operations from snapshot
-          if (data.leases.length > 0) {
-            setLeases(data.leases.map(mapServerLease));
-          }
-          if (data.operations.length > 0) {
-            setOperations(data.operations.map(mapServerOperation));
-          }
+          setOperations(data.operations.map(mapServerOperation));
+          setQueries(sortQueries((data.queries ?? []).map(mapServerQuery)).slice(0, MAX_QUERY_ENTRIES));
 
           const startedAt = Date.parse(data.host.startedAt);
           if (Number.isFinite(startedAt)) {
@@ -472,6 +607,12 @@ export function useRepoQLDashboard(): {
       appendActivity('Health', detail, 'var(--red)', coerceTimestamp(parsed.timestamp));
     });
 
+    es.addEventListener('queries', (event) => {
+      const parsed = parseJson<ServerQuery[]>((event as MessageEvent).data);
+      if (!parsed) return;
+      setQueries(sortQueries(parsed.map(mapServerQuery)).slice(0, MAX_QUERY_ENTRIES));
+    });
+
     // Delta file updates — merge into map and surface meaningful file progress.
     es.addEventListener('file_updates', (event) => {
       const parsed = parseJson<ServerFile[]>((event as MessageEvent).data);
@@ -529,11 +670,6 @@ export function useRepoQLDashboard(): {
       setFileMap(map);
     });
 
-    es.addEventListener('leases', (event) => {
-      const parsed = parseJson<SnapshotResponse['leases']>((event as MessageEvent).data);
-      if (parsed) setLeases(parsed.map(mapServerLease));
-    });
-
     es.addEventListener('operations', (event) => {
       const parsed = parseJson<SnapshotResponse['operations']>((event as MessageEvent).data);
       if (parsed) setOperations(parsed.map(mapServerOperation));
@@ -562,11 +698,11 @@ export function useRepoQLDashboard(): {
       ? Array.from(map.values()).sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }))
       : snap?.files ?? [];
 
-    const files = serverFiles.map(f => stableFile(f));
+    const files = serverFiles.map((f) => stableFile(f));
 
     // Prune cache for removed files (lazy — only when cache grows beyond file count)
     if (fileCache.size > files.length + 100) {
-      const current = new Set(serverFiles.map(f => f.path));
+      const current = new Set(serverFiles.map((f) => f.path));
       for (const key of fileCache.keys()) {
         if (!current.has(key)) fileCache.delete(key);
       }
@@ -575,20 +711,36 @@ export function useRepoQLDashboard(): {
     const stateCounts = countByState(files);
 
     const total = files.length;
-    const failed = stateCounts['failed'] ?? 0;
-    const discovered = total - (stateCounts['hidden'] ?? 0);
-    const classified = discovered - (stateCounts['discovered'] ?? 0);
-    const parsed = (stateCounts['parsed'] ?? 0) + (stateCounts['struct_embedded'] ?? 0)
-      + (stateCounts['full_embedded'] ?? 0) + failed;
-    const structEmbedded = (stateCounts['struct_embedded'] ?? 0) + (stateCounts['full_embedded'] ?? 0);
-    const fullEmbedded = stateCounts['full_embedded'] ?? 0;
+    const failed = stateCounts.failed ?? 0;
+    const discovered = total - (stateCounts.hidden ?? 0);
+    const classified = discovered - (stateCounts.discovered ?? 0);
+    const parsed = (stateCounts.parsed ?? 0) + (stateCounts.struct_embedded ?? 0)
+      + (stateCounts.full_embedded ?? 0) + failed;
+    const structEmbedded = (stateCounts.struct_embedded ?? 0) + (stateCounts.full_embedded ?? 0);
+    const fullEmbedded = stateCounts.full_embedded ?? 0;
 
     return {
       title: snap?.host.repositoryPath ?? 'Indexing...',
-      stateCounts, files,
-      total, discovered, classified, parsed, structEmbedded, fullEmbedded, failed,
+      stateCounts,
+      files,
+      total,
+      discovered,
+      classified,
+      parsed,
+      structEmbedded,
+      fullEmbedded,
+      failed,
       sections: stabilizeSections(groupBySources(files)),
     };
+  });
+
+  const errors = createMemo<FileError[]>(() => {
+    const fd = fileData();
+    if (!fd) {
+      return [];
+    }
+
+    return buildFileErrors(fd.files);
   });
 
   // Language distribution — deferred to idle time so it doesn't block tile rendering.
@@ -639,7 +791,8 @@ export function useRepoQLDashboard(): {
       sections: fd.sections,
       languages: languages(),
       activities: activities(),
-      leases: leases(),
+      errors: errors(),
+      queries: queries(),
       operations: operations(),
       get now() { return now(); },
     };
@@ -661,16 +814,16 @@ function derivePhaseFromFiles(
   const total = Object.values(stateCounts).reduce((s, c) => s + c, 0);
   if (total === 0) return 'idle';
 
-  const discovered = stateCounts['discovered'] ?? 0;
-  const classified = stateCounts['classified'] ?? 0;
-  const structEmbedding = stateCounts['struct_embedded'] ?? 0;
+  const discovered = stateCounts.discovered ?? 0;
+  const classified = stateCounts.classified ?? 0;
+  const structEmbedding = stateCounts.struct_embedded ?? 0;
 
-  if (structEmbedding > 0 && stateCounts['parsed']) return 'struct_embedding';
+  if (structEmbedding > 0 && stateCounts.parsed) return 'struct_embedding';
   if (classified > 0) return 'parsing';
   if (discovered > 0) return 'discovery';
 
-  const fullEmbedded = stateCounts['full_embedded'] ?? 0;
-  const parsedCount = stateCounts['parsed'] ?? 0;
+  const fullEmbedded = stateCounts.full_embedded ?? 0;
+  const parsedCount = stateCounts.parsed ?? 0;
   if (parsedCount > 0 && fullEmbedded < total) return 'struct_embedding';
 
   return 'idle';
@@ -686,7 +839,7 @@ function parseJson<T>(raw: string): T | null {
   }
 }
 
-function coerceTimestamp(value: number | string | undefined): number {
+function coerceTimestamp(value: number | string | null | undefined): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
   }

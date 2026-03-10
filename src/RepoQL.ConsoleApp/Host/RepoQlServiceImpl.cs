@@ -50,6 +50,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly RepoQlConfig.HostSettings _hostSettings;
     private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
     private readonly RepoQlConfig.InferenceSettings _inferenceSettings;
+    private readonly DashboardQueryActivityTracker? _dashboardQueryActivity;
     private readonly ILogger<RepoQlServiceImpl> _logger;
 
     /// <summary>System prompt for the explain synthesis LLM call. Shapes output into Answer/Evidence/Nuance.</summary>
@@ -157,6 +158,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         IInferenceProvider? inferenceProvider = null,
         UriRegistry? uriRegistry = null,
         QueueCommandService? queueCommandService = null,
+        DashboardQueryActivityTracker? dashboardQueryActivity = null,
         ILogger<RepoQlServiceImpl>? logger = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
@@ -177,6 +179,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
         _embeddingSettings = config.Embedding;
         _inferenceSettings = config.Inference;
+        _dashboardQueryActivity = dashboardQueryActivity;
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
     }
 
@@ -185,7 +188,9 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         // No barrier - queries execute immediately with whatever data is available.
         // ExploreTool handles "call again to wait" pattern for semantic readiness.
         var resp = new RawQueryResponse();
-        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var sw = Stopwatch.StartNew();
+        var activity = _dashboardQueryActivity?.Begin("query", SummarizeSqlForDashboard(request.Sql), request.TokenBudget);
+
         try
         {
             // Substitute parameters into SQL (DuckDbDataStore.Query does not support params)
@@ -266,10 +271,12 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
+            activity?.Cancel("Cancelled");
             throw new RpcException(new Status(StatusCode.Cancelled, "Query request was canceled."));
         }
         catch (Exception ex)
         {
+            activity?.Cancel(SummarizeDashboardText(ex.Message));
             throw new RpcException(new Status(StatusCode.Internal, ex.Message));
         }
 
@@ -285,9 +292,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         resp.SemanticReady = trustSignal.SemanticReady;
         resp.SemanticPercent = trustSignal.SemanticPercent;
 
-        return resp;
+        return activity?.Complete(resp, BuildQueryActivitySummary(resp), EstimateQueryActivityTokens(resp)) ?? resp;
     }
-
     /// <summary>
     /// Extract user intent from SQL comment (-- or /* */).
     /// </summary>
@@ -1295,13 +1301,17 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     public override async Task<ExploreResponse> Explore(ExploreRequest request, ServerCallContext context)
     {
         var sw = Stopwatch.StartNew();
+        var activity = _dashboardQueryActivity?.Begin("explore", SummarizeExploreParameters(request), request.TokenBudget);
 
         try
         {
             var scope = string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope;
             var notReady = await CheckScopeReadinessAsync(scope, request.Readiness, context.CancellationToken).ConfigureAwait(false);
             if (notReady is not null)
-                return new ExploreResponse { Success = false, Error = notReady };
+            {
+                var failure = new ExploreResponse { Success = false, Error = notReady };
+                return activity?.Fail(failure, notReady, EstimateResponseTokens(notReady)) ?? failure;
+            }
 
             var status = GetTrustSignal(0, context.CancellationToken);
 
@@ -1349,20 +1359,22 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 response.Results.Add(ToProtoExploreResult(exploreResult));
             }
 
-            return response;
+            return activity?.Complete(response, BuildExploreActivitySummary(response), EstimateResponseTokens(response.RenderedOutput)) ?? response;
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
+            activity?.Cancel("Cancelled");
             throw new RpcException(new Status(StatusCode.Cancelled, "Explore request was canceled."));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Explore query failed");
-            return new ExploreResponse
+            var failure = new ExploreResponse
             {
                 Success = false,
                 Error = ex.Message
             };
+            return activity?.Fail(failure, ex.Message, EstimateResponseTokens(ex.Message)) ?? failure;
         }
     }
 
@@ -1370,40 +1382,47 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     public override async Task<ExplainResponse> Explain(ExplainRequest request, ServerCallContext context)
     {
         var sw = Stopwatch.StartNew();
+        var activity = _dashboardQueryActivity?.Begin("explain", SummarizeExplainParameters(request), request.TokenBudget);
 
         try
         {
             if (string.IsNullOrWhiteSpace(request.Question))
             {
-                return new ExplainResponse
+                var failure = new ExplainResponse
                 {
                     Success = false,
                     Error = "Question cannot be empty."
                 };
+                return activity?.Fail(failure, failure.Error, EstimateResponseTokens(failure.Error)) ?? failure;
             }
 
             if (request.TokenBudget <= 0)
             {
-                return new ExplainResponse
+                var failure = new ExplainResponse
                 {
                     Success = false,
                     Error = "token_budget must be a positive integer."
                 };
+                return activity?.Fail(failure, failure.Error, EstimateResponseTokens(failure.Error)) ?? failure;
             }
 
             var scope = string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope;
             var notReady = await CheckScopeReadinessAsync(scope, request.Readiness, context.CancellationToken).ConfigureAwait(false);
             if (notReady is not null)
-                return new ExplainResponse { Success = false, Error = notReady };
+            {
+                var failure = new ExplainResponse { Success = false, Error = notReady };
+                return activity?.Fail(failure, notReady, EstimateResponseTokens(notReady)) ?? failure;
+            }
 
             var status = GetTrustSignal(0, context.CancellationToken);
             if (_inferenceProvider?.Available != true)
             {
-                return new ExplainResponse
+                var failure = new ExplainResponse
                 {
                     Success = false,
                     Error = "Inference service not configured (set inference.service_url and cloud.api_key)"
                 };
+                return activity?.Fail(failure, failure.Error, EstimateResponseTokens(failure.Error)) ?? failure;
             }
 
             string searchKeywords;
@@ -1481,7 +1500,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             foreach (var (uri, tokens, isError) in toolCallLog)
                 synthesis.ToolCalls.Add(new ExplainToolCall { Uri = uri, TokensUsed = tokens, IsError = isError });
 
-            return new ExplainResponse
+            var response = new ExplainResponse
             {
                 Success = true,
                 RenderedOutput = $"## {request.Question}\n\n{synthesized.Content}",
@@ -1498,24 +1517,30 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     SemanticPercent = status.SemanticPercent
                 }
             };
+
+            return activity?.Complete(response, BuildExplainActivitySummary(response), EstimateExplainActivityTokens(response)) ?? response;
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
+            activity?.Cancel("Cancelled");
             throw new RpcException(new Status(StatusCode.Cancelled, "Explain request was canceled."));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Explain request failed");
-            return new ExplainResponse
+            var failure = new ExplainResponse
             {
                 Success = false,
                 Error = ex.Message
             };
+            return activity?.Fail(failure, ex.Message, EstimateResponseTokens(ex.Message)) ?? failure;
         }
     }
+
     public override async Task<ReadResponse> Read(ReadRequest request, ServerCallContext context)
     {
         var sw = Stopwatch.StartNew();
+        var activity = _dashboardQueryActivity?.Begin("read", SummarizeReadParameters(request), request.TokenBudget);
 
         try
         {
@@ -1529,7 +1554,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 context.CancellationToken,
                 sw).ConfigureAwait(false);
 
-            return new ReadResponse
+            var response = new ReadResponse
             {
                 Success = result.Success,
                 Error = result.Error ?? "",
@@ -1549,22 +1574,136 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     SemanticPercent = status.SemanticPercent
                 }
             };
+
+            if (!response.Success)
+                return activity?.Fail(response, response.Error, EstimateResponseTokens(response.Error)) ?? response;
+
+            return activity?.Complete(response, BuildReadActivitySummary(response), EstimateResponseTokens(response.RenderedOutput)) ?? response;
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
+            activity?.Cancel("Cancelled");
             throw new RpcException(new Status(StatusCode.Cancelled, "Read request was canceled."));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Read operation failed");
-            return new ReadResponse
+            var failure = new ReadResponse
             {
                 Success = false,
                 Error = ex.Message
             };
+            return activity?.Fail(failure, ex.Message, EstimateResponseTokens(ex.Message)) ?? failure;
         }
     }
 
+
+    private static string SummarizeSqlForDashboard(string sql)
+    {
+        var withoutLineComments = Regex.Replace(sql, @"--.*?(?=\r?\n|$)", " ");
+        var withoutComments = Regex.Replace(withoutLineComments, @"/\*[\s\S]*?\*/", " ");
+        return SummarizeDashboardText(withoutComments, 96);
+    }
+
+    private static string SummarizeExploreParameters(ExploreRequest request)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(request.Question))
+            parts.Add(request.Question);
+        else if (!string.IsNullOrWhiteSpace(request.Keywords))
+            parts.Add(request.Keywords);
+
+        if (!string.IsNullOrWhiteSpace(request.Scope))
+            parts.Add(request.Scope);
+
+        return SummarizeDashboardText(string.Join(" · ", parts.Where(static part => !string.IsNullOrWhiteSpace(part))), 96);
+    }
+
+    private static string SummarizeExplainParameters(ExplainRequest request)
+        => SummarizeDashboardText(request.Question, 96);
+
+    private static string SummarizeReadParameters(ReadRequest request)
+        => SummarizeDashboardText(request.Uri, 96);
+
+    private static string BuildQueryActivitySummary(RawQueryResponse response)
+    {
+        if (response.Summarized)
+        {
+            return response.OriginalRowCount > 0
+                ? $"Summarized {response.OriginalRowCount} rows"
+                : "Summarized result";
+        }
+
+        return response.Truncated
+            ? $"{response.RowCount}+ rows"
+            : $"{response.RowCount} rows";
+    }
+
+    private static string BuildExploreActivitySummary(ExploreResponse response)
+    {
+        if (!response.Success)
+            return SummarizeDashboardText(response.Error, 96);
+
+        return response.Truncated
+            ? $"{response.Results.Count}+ results"
+            : $"{response.Results.Count} results";
+    }
+
+    private static string BuildExplainActivitySummary(ExplainResponse response)
+    {
+        if (!response.Success)
+            return SummarizeDashboardText(response.Error, 96);
+
+        if (response.Synthesis is not null && response.Synthesis.MatchCount > 0)
+            return $"{response.Synthesis.MatchCount} matches";
+
+        return "Answer generated";
+    }
+
+    private static string BuildReadActivitySummary(ReadResponse response)
+    {
+        if (!response.Success)
+            return SummarizeDashboardText(response.Error, 96);
+
+        var parts = new List<string>();
+        if (response.FilesRead > 0)
+            parts.Add($"{response.FilesRead} files");
+        if (!string.IsNullOrWhiteSpace(response.Representation))
+            parts.Add(response.Representation);
+
+        return parts.Count > 0 ? string.Join(" · ", parts) : "Read complete";
+    }
+
+    private static int EstimateQueryActivityTokens(RawQueryResponse response)
+    {
+        if (response.Rows.Count == 0 && response.Columns.Count == 0)
+            return 0;
+
+        return TokenEstimator.EstimateTokens(FormatResponseForTokenEstimation(response));
+    }
+
+    private static int EstimateExplainActivityTokens(ExplainResponse response)
+    {
+        if (response.Synthesis is not null && response.Synthesis.OutputTokens > 0)
+            return (int)response.Synthesis.OutputTokens;
+
+        return EstimateResponseTokens(response.Success ? response.RenderedOutput : response.Error);
+    }
+
+    private static int EstimateResponseTokens(string? content)
+        => string.IsNullOrWhiteSpace(content) ? 0 : TokenEstimator.EstimateTokens(content);
+
+    private static string SummarizeDashboardText(string? text, int maxLength = 96)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "(none)";
+
+        var normalized = Regex.Replace(text, @"\s+", " ").Trim();
+        if (normalized.Length <= maxLength)
+            return normalized;
+
+        return normalized[..Math.Max(1, maxLength - 3)] + "...";
+    }
     /// <summary>
     /// Check scope readiness per the ScopeReadiness enum.
     /// Returns null if ready (or forced), an error message if not ready and readiness is NONE.
@@ -1845,3 +1984,5 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     private sealed record ExplainReadToolArguments(string? UriGlob, int TokenBudget);
 }
+
+

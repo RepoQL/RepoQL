@@ -1,5 +1,5 @@
 import { createMemo, For, Show } from 'solid-js';
-import type { QueryEntry, ToolName } from '../../types';
+import type { QueryEntry, QueryState, ToolName } from '../../types';
 import './QueryActivity.css';
 
 export interface QueryActivityProps {
@@ -13,16 +13,28 @@ const TOOL_COLORS: Record<ToolName, string> = {
   read: 'var(--fg2)',
 };
 
+const STATE_LABELS: Record<QueryState, string> = {
+  running: 'Active',
+  completed: 'Done',
+  failed: 'Failed',
+};
+
 export function QueryActivity(props: QueryActivityProps) {
+  const activeCount = createMemo(() => props.entries.filter((entry) => entry.state === 'running').length);
+  const failedCount = createMemo(() => props.entries.filter((entry) => entry.state === 'failed').length);
+
   return (
     <div class="query-activity">
       <div class="qa-header">
         <span class="qa-title">Tool Activity</span>
-        <span class="qa-count">{props.entries.length}</span>
+        <span class="qa-summary">
+          {activeCount()} active
+          <Show when={failedCount() > 0}> · {failedCount()} failed</Show>
+        </span>
       </div>
       <div class="qa-list">
         <Show when={props.entries.length === 0}>
-          <div class="qa-empty">No queries yet</div>
+          <div class="qa-empty">No tool activity yet</div>
         </Show>
         <For each={props.entries}>
           {(entry) => (
@@ -36,27 +48,39 @@ export function QueryActivity(props: QueryActivityProps) {
 
 function QueryRow(props: { entry: QueryEntry }) {
   const color = createMemo(() => TOOL_COLORS[props.entry.tool]);
-  const efficiency = createMemo(() =>
-    props.entry.tokenBudget > 0
-      ? Math.round((props.entry.tokensUsed / props.entry.tokenBudget) * 100)
-      : 0,
+  const tokens = createMemo(() => {
+    if (props.entry.tokenBudget > 0) {
+      return `${props.entry.tokensUsed}/${props.entry.tokenBudget}t`;
+    }
+
+    return `${props.entry.tokensUsed}t`;
+  });
+
+  const elapsedLabel = createMemo(() =>
+    props.entry.state === 'running' ? `${props.entry.elapsed}ms live` : `${props.entry.elapsed}ms`,
   );
 
+  const resultLabel = createMemo(() => {
+    if (props.entry.resultSummary) {
+      return props.entry.resultSummary;
+    }
+
+    return props.entry.state === 'running' ? 'Awaiting response' : 'No summary';
+  });
+
   return (
-    <div class="qa-row">
+    <div class={`qa-row ${props.entry.state}`} style={{ '--qa-accent': color() }}>
       <div class="qa-row-top">
-        <span class="qa-tool" style={{ color: color() }}>{props.entry.tool}</span>
-        <span class="qa-elapsed">{props.entry.elapsed}ms</span>
+        <div class="qa-tool-group">
+          <span class="qa-tool">{props.entry.tool}</span>
+          <span class={`qa-state ${props.entry.state}`}>{STATE_LABELS[props.entry.state]}</span>
+        </div>
+        <span class="qa-elapsed">{elapsedLabel()}</span>
       </div>
       <div class="qa-params">{props.entry.params}</div>
       <div class="qa-row-bottom">
-        <span class="qa-result">{props.entry.resultSummary}</span>
-        <span class="qa-tokens">
-          {props.entry.tokensUsed}/{props.entry.tokenBudget}t
-          <span class={`qa-eff ${efficiency() > 85 ? 'high' : efficiency() > 50 ? 'mid' : 'low'}`}>
-            {efficiency()}%
-          </span>
-        </span>
+        <span class="qa-result">{resultLabel()}</span>
+        <span class="qa-meta">{tokens()}</span>
       </div>
     </div>
   );

@@ -2,6 +2,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
   padding: 14px 24px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -11,6 +12,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .hdr-dot {
@@ -19,6 +21,7 @@
   border-radius: 50%;
   background: var(--fg3);
   transition: all 1s;
+  flex-shrink: 0;
 }
 
 .hdr-dot.active {
@@ -39,12 +42,45 @@
 }
 
 .hdr-title {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  color: var(--fg2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--fg);
 }
 
 .hdr-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.hdr-phase {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(74, 158, 255, 0.22);
+  background: rgba(74, 158, 255, 0.08);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--fg2);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hdr-phase.complete {
+  border-color: rgba(61, 214, 140, 0.24);
+  background: rgba(61, 214, 140, 0.1);
+  color: var(--green);
+}
+
+.hdr-elapsed {
   font-family: var(--font-mono);
   font-size: 0.65rem;
   color: var(--fg3);

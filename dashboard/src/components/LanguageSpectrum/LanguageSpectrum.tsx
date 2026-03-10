@@ -1,4 +1,4 @@
-import { createMemo, For } from 'solid-js';
+import { createMemo, For, Show } from 'solid-js';
 import type { LanguageCount } from '../../types';
 import './LanguageSpectrum.css';
 
@@ -7,17 +7,23 @@ export interface LanguageSpectrumProps {
 }
 
 export function LanguageSpectrum(props: LanguageSpectrumProps) {
-  const legendItems = createMemo(() => props.languages.filter((language) => language.fraction > 0.04));
+  const activeLanguages = createMemo(() => props.languages.filter((language) => language.count > 0));
+  const legendItems = createMemo(() => activeLanguages().slice(0, 4));
+  const remaining = createMemo(() => Math.max(0, activeLanguages().length - legendItems().length));
 
   return (
     <div class="spectrum-section">
-      <div class="spectrum-label">Languages</div>
+      <div class="spectrum-header">
+        <span class="spectrum-label">Composition</span>
+        <span class="spectrum-meta">{activeLanguages().length} langs</span>
+      </div>
       <div class="spectrum-bar">
-        <For each={props.languages}>
+        <For each={activeLanguages()}>
           {(language) => (
             <div
               class="spec-seg"
-              style={{ flex: language.fraction, background: language.lang.color, opacity: 0.7 }}
+              style={{ flex: language.fraction, background: language.lang.color }}
+              title={`${language.lang.name} ${Math.round(language.fraction * 100)}%`}
             />
           )}
         </For>
@@ -27,11 +33,15 @@ export function LanguageSpectrum(props: LanguageSpectrumProps) {
           {(language) => (
             <div class="spec-item">
               <span class="spec-dot" style={{ background: language.lang.color }} />
-              {language.lang.name} {Math.round(language.fraction * 100)}%
+              <span class="spec-name">{language.lang.name}</span>
+              <span class="spec-share">{Math.round(language.fraction * 100)}%</span>
             </div>
           )}
         </For>
       </div>
+      <Show when={remaining() > 0}>
+        <div class="spec-more">+{remaining()} more</div>
+      </Show>
     </div>
   );
 }

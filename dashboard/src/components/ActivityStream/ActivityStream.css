@@ -1,9 +1,20 @@
 .stream-section {
-  flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
   overflow: hidden;
+}
+
+.stream-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
 }
 
 .stream-label {
@@ -12,33 +23,34 @@
   color: var(--fg3);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  padding: 14px 20px 8px;
-  flex-shrink: 0;
+}
+
+.stream-count {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--fg3);
 }
 
 .stream-list {
-  flex: 1;
-  overflow: hidden;
-  padding: 0 20px;
+  overflow-y: auto;
+  max-height: 260px;
+  padding: 10px 16px 12px;
   position: relative;
 }
 
-.stream-list::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 40px;
-  background: linear-gradient(transparent, var(--surface));
-  pointer-events: none;
+.stream-empty {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  color: var(--fg3);
+  text-align: center;
+  padding: 8px 0;
 }
 
 .s-item {
   font-family: var(--font-mono);
   font-size: 0.58rem;
   color: var(--fg3);
-  padding: 2px 0;
+  padding: 4px 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -49,18 +61,22 @@
 }
 
 .s-dot {
-  width: 4px;
-  height: 4px;
-  border-radius: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
   flex-shrink: 0;
 }
 
 .s-op {
-  color: var(--fg3);
+  color: var(--fg2);
+  flex-shrink: 0;
 }
 
 .s-path {
-  color: var(--fg2);
+  min-width: 0;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @keyframes s-in {

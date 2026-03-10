@@ -140,11 +140,12 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton(hostState);
             builder.Services.AddSingleton<ServiceDegradationTracker>(_ => new ServiceDegradationTracker(hostState, repo));
             builder.Services.AddSingleton<IServiceDegradationTracker>(sp => sp.GetRequiredService<ServiceDegradationTracker>());
+            var preferredDashboardPort = ResolvePreferredDashboardPort(repo, serilogLogger);
             string? socketPath = null;
             builder.WebHost.ConfigureKestrel(options =>
             {
                 socketPath = GrpcServerHelper.ConfigureUnixSocket(options, repo);
-                options.Listen(IPAddress.Loopback, 0, listenOptions =>
+                options.Listen(IPAddress.Loopback, preferredDashboardPort ?? 0, listenOptions =>
                 {
                     listenOptions.Protocols = Microsoft.AspNetCore.Server.Kestrel.Core.HttpProtocols.Http1;
                 });
@@ -195,6 +196,7 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddHostedService<MountRestorationService>();
             builder.Services.AddHostedService<IdleShutdownHostedService>();
             builder.Services.AddSingleton<StatusEventAggregator>();
+            builder.Services.AddSingleton<DashboardQueryActivityTracker>();
             builder.Services.AddHostedService<PipelineHealthPublisher>();
 
             var app = builder.Build();
@@ -333,6 +335,47 @@ internal class HostCommands(IAnsiConsole console)
                     });
 
         console.MarkupLine("[green]Repopulation complete[/]");
+    }
+
+    private static int? ResolvePreferredDashboardPort(string repo, Serilog.ILogger logger)
+    {
+        if (!HostDiagnosticsStore.TryReadReport<DashboardBindReport>(repo, "dashboard-bind.json", out var report)
+            || string.IsNullOrWhiteSpace(report?.Url)
+            || !Uri.TryCreate(report.Url, UriKind.Absolute, out var uri)
+            || !uri.IsLoopback
+            || uri.Port <= 0)
+        {
+            return null;
+        }
+
+        if (!IsLoopbackPortAvailable(uri.Port))
+        {
+            logger.Information("Previous dashboard port {Port} is unavailable; falling back to an ephemeral port.", uri.Port);
+            return null;
+        }
+
+        logger.Information("Reusing previous dashboard port {Port}.", uri.Port);
+        return uri.Port;
+    }
+
+    private static bool IsLoopbackPortAvailable(int port)
+    {
+        TcpListener? listener = null;
+        try
+        {
+            listener = new TcpListener(IPAddress.Loopback, port);
+            listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, false);
+            listener.Start();
+            return true;
+        }
+        catch (SocketException)
+        {
+            return false;
+        }
+        finally
+        {
+            listener?.Stop();
+        }
     }
 
     private async Task TryShutdownExistingHostAsync(
@@ -770,4 +813,6 @@ internal class HostCommands(IAnsiConsole console)
     }
 
 }
+
+
 
