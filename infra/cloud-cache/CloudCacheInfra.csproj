@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Pulumi" Version="3.101.2" />
+    <PackageReference Include="Pulumi.Cloudflare" Version="6.13.0" />
     <PackageReference Include="Pulumi.Gcp" Version="9.14.0" />
   </ItemGroup>
 

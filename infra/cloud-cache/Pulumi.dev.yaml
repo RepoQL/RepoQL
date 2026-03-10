@@ -5,5 +5,8 @@ config:
   cloud-cache:compactionSchedule: "0 0 * * *"
   cloud-cache:schedulerTimeZone: Etc/UTC
   # Placeholder until the writer Cloud Run service is deployed.
-
   cloud-cache:compactionEndpointUrl: https://replace-after-writer-deploy.run.app
+  # Cloudflare — Cloud Run origins for proxied DNS records.
+  # CLOUDFLARE_API_TOKEN env var provides auth (scoped to Zone:DNS:Edit, Zone:Zone Settings:Edit, Zone:Zone:Read).
+  cloud-cache:embeddingServiceOrigin: repoql-embedding-s3lststjqa-uc.a.run.app
+  cloud-cache:inferenceServiceOrigin: repoql-inference-858599035276.us-central1.run.app

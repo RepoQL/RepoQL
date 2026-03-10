@@ -1,13 +1,15 @@
 using System.Text;
 using Pulumi;
+using Cloudflare = Pulumi.Cloudflare;
 using Gcp = Pulumi.Gcp;
 
 return await Deployment.RunAsync<CloudCacheInfrastructureStack>();
 
 /// <summary>
-/// Provisions the GCP foundation for the cloud embedding cache.
+/// Provisions the GCP foundation for the cloud embedding cache and Cloudflare DNS/CDN proxy.
 /// Complexity: storage buckets, scheduling, service identities, HMAC credentials,
-/// Secret Manager storage, Eventarc IAM prerequisites, and bucket-scoped IAM bindings.
+/// Secret Manager storage, Eventarc IAM prerequisites, bucket-scoped IAM bindings,
+/// and Cloudflare proxied DNS records for public gRPC services.
 /// </summary>
 internal sealed class CloudCacheInfrastructureStack : Stack
 {
@@ -275,8 +277,71 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Project = gcpProjectId,
         });
 
+        // --- Cloudflare DNS & CDN proxy ---
+        // Proxied CNAME records to Cloud Run services. Cloudflare terminates TLS at the edge,
+        // provides free DDoS protection and analytics. SSL "Full" mode works because Cloud Run
+        // presents a valid *.run.app cert. gRPC toggle enables HTTP/2 gRPC proxying (unary RPCs).
+        // Auth remains at the application layer (ApiKeyAuthInterceptor).
+
+        var domain = config.Get("domain") ?? "repoql.ai";
+        var embeddingServiceOrigin = config.Require("embeddingServiceOrigin");
+        var inferenceServiceOrigin = config.Require("inferenceServiceOrigin");
+
+        var zone = Cloudflare.GetZone.Invoke(new Cloudflare.GetZoneInvokeArgs
+        {
+            Filter = new Cloudflare.Inputs.GetZoneFilterInputArgs
+            {
+                Name = domain,
+            },
+        });
+
+        var zoneId = zone.Apply(z => z.Id);
+
+        _ = new Cloudflare.ZoneSetting("grpc", new Cloudflare.ZoneSettingArgs
+        {
+            ZoneId = zoneId,
+            SettingId = "grpc",
+            Value = "on",
+        });
+
+        _ = new Cloudflare.ZoneSetting("ssl", new Cloudflare.ZoneSettingArgs
+        {
+            ZoneId = zoneId,
+            SettingId = "ssl",
+            Value = "full",
+        });
+
+        _ = new Cloudflare.ZoneSetting("alwaysUseHttps", new Cloudflare.ZoneSettingArgs
+        {
+            ZoneId = zoneId,
+            SettingId = "always_use_https",
+            Value = "on",
+        });
+
+        var embeddingDns = new Cloudflare.DnsRecord("embeddingDns", new Cloudflare.DnsRecordArgs
+        {
+            ZoneId = zoneId,
+            Name = "embedding",
+            Type = "CNAME",
+            Content = embeddingServiceOrigin,
+            Ttl = 1, // automatic when proxied
+            Proxied = true,
+        });
+
+        var inferenceDns = new Cloudflare.DnsRecord("inferenceDns", new Cloudflare.DnsRecordArgs
+        {
+            ZoneId = zoneId,
+            Name = "inference",
+            Type = "CNAME",
+            Content = inferenceServiceOrigin,
+            Ttl = 1,
+            Proxied = true,
+        });
+
         // --- Outputs ---
 
+        EmbeddingServiceUrl = embeddingDns.Name.Apply(n => $"https://{n}.{domain}");
+        InferenceServiceUrl = inferenceDns.Name.Apply(n => $"https://{n}.{domain}");
         EmbeddingsBucketName = embeddingsBucket.Name;
         StagingBucketName = stagingBucket.Name;
         CompactionSchedulerName = compactionScheduler.Name;
@@ -307,6 +372,12 @@ internal sealed class CloudCacheInfrastructureStack : Stack
                 ["compactionSecretKey"] = values.Item6,
             });
     }
+
+    [Output]
+    public Output<string> EmbeddingServiceUrl { get; private set; } = null!;
+
+    [Output]
+    public Output<string> InferenceServiceUrl { get; private set; } = null!;
 
     [Output]
     public Output<string> EmbeddingsBucketName { get; private set; } = null!;
