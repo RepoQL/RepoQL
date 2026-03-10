@@ -16,7 +16,8 @@ public static class ConfigurationServiceExtensions
     public static IServiceCollection AddResolvedConfig(
         this IServiceCollection services,
         string? repoRoot,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        ConfigReloadMode reloadMode = ConfigReloadMode.Watch)
     {
         var registry = SettingRegistry.Build();
         var resolved = ConfigurationLoader.Load(registry, repoRoot, logger);
@@ -28,10 +29,19 @@ public static class ConfigurationServiceExtensions
         // even after Reload() is called.
         services.AddSingleton(sp => sp.GetRequiredService<ResolvedConfig>().Settings);
 
-        // Watch config files on disk and auto-reload on changes.
-        // Created eagerly so watchers start immediately.
-        var watcher = new ConfigFileWatcher(resolved, logger);
-        services.AddSingleton(watcher);
+        switch (reloadMode)
+        {
+            case ConfigReloadMode.Watch:
+                services.AddSingleton(new ConfigFileWatcher(resolved, logger));
+                break;
+            case ConfigReloadMode.Poll:
+                services.AddSingleton(new ConfigFilePoller(resolved, logger));
+                break;
+            case ConfigReloadMode.None:
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(reloadMode), reloadMode, null);
+        }
 
         return services;
     }

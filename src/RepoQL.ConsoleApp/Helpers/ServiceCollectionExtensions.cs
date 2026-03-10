@@ -41,7 +41,7 @@ internal static class ServiceCollectionExtensions
             .AddRepoQlClientServices(prewarmClient: true)
             .AddFormattingServices()
             .AddDiagnosticsServices(includeSessionOrientation: true)
-            .AddConfigurationServices(startupRepoRoot)
+            .AddConfigurationServices(startupRepoRoot, ConfigReloadMode.Poll)
             .AddInferenceServices()
             .AddCommandServices()
             .AddResourceServices()
@@ -84,9 +84,12 @@ internal static class ServiceCollectionExtensions
         return services;
     }
 
-    private static IServiceCollection AddConfigurationServices(this IServiceCollection services, string startupRepoRoot)
+    private static IServiceCollection AddConfigurationServices(
+        this IServiceCollection services,
+        string startupRepoRoot,
+        ConfigReloadMode reloadMode = ConfigReloadMode.Watch)
     {
-        services.AddResolvedConfig(startupRepoRoot);
+        services.AddResolvedConfig(startupRepoRoot, reloadMode: reloadMode);
         services.AddScoped<EnvironmentContext>();
         return services;
     }
@@ -130,4 +133,3 @@ internal static class ServiceCollectionExtensions
         return services;
     }
 }
-
