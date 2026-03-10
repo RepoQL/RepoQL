@@ -6,7 +6,7 @@ namespace RepoQL.Contracts.Inference;
 /// </summary>
 public sealed class DisabledInferenceProvider : IInferenceProvider
 {
-    private const string DisabledMessage = "Inference service not configured (set inference.service_url and inference.api_key)";
+    private const string DisabledMessage = "Inference service not configured (set inference.service_url and cloud.api_key)";
 
     public bool Available => false;
 

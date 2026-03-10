@@ -69,7 +69,7 @@ internal sealed class ConfigCommandTests : IDisposable
     [Test]
     public async Task List_Masks_Sensitive_Values()
     {
-        var set = await _command.Set("inference.api_key", "abcd1234yz", "local", CancellationToken.None);
+        var set = await _command.Set("cloud.api_key", "abcd1234yz", "local", CancellationToken.None);
         set.IsError.Should().BeFalse();
 
         var list = await _command.List(CancellationToken.None);
@@ -123,7 +123,7 @@ internal sealed class ConfigCommandTests : IDisposable
     [Test]
     public async Task Set_Rejects_Sensitive_Key_At_Repo_Scope()
     {
-        var result = await _command.Set("inference.api_key", "top-secret", "repo", CancellationToken.None);
+        var result = await _command.Set("cloud.api_key", "top-secret", "repo", CancellationToken.None);
 
         result.IsError.Should().BeTrue();
         result.Text.Should().Contain("sensitive");

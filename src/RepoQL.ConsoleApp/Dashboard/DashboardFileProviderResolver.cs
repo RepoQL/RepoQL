@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Primitives;
 
 namespace RepoQL.ConsoleApp.Dashboard;
 
@@ -17,6 +18,7 @@ internal static class DashboardFileProviderResolver
         return TryCreatePhysicalProvider(Path.Combine(baseDirectory, "wwwroot"))
             ?? TryCreatePhysicalProvider(baseDirectory)
             ?? TryCreateEmbeddedProvider(assembly, "wwwroot")
+            ?? TryCreateEmbeddedPrefixedProvider(assembly, "wwwroot")
             ?? TryCreateEmbeddedProvider(assembly, subpath: null);
     }
 
@@ -42,6 +44,43 @@ internal static class DashboardFileProviderResolver
         catch (InvalidOperationException)
         {
             return null;
+        }
+    }
+
+    private static IFileProvider? TryCreateEmbeddedPrefixedProvider(Assembly assembly, string prefix)
+    {
+        var provider = TryCreateEmbeddedProvider(assembly, subpath: null);
+        if (provider is null)
+            return null;
+
+        var prefixedProvider = new PrefixedFileProvider(provider, prefix);
+        return prefixedProvider.GetFileInfo("index.html").Exists ? prefixedProvider : null;
+    }
+
+    private sealed class PrefixedFileProvider(IFileProvider inner, string prefix) : IFileProvider
+    {
+        private readonly string _prefix = prefix.Trim().Trim('/', '\\');
+
+        public IDirectoryContents GetDirectoryContents(string subpath)
+            => GetCandidates(subpath)
+                .Select(inner.GetDirectoryContents)
+                .FirstOrDefault(contents => contents.Exists)
+                ?? NotFoundDirectoryContents.Singleton;
+
+        public IFileInfo GetFileInfo(string subpath)
+            => GetCandidates(subpath)
+                .Select(inner.GetFileInfo)
+                .FirstOrDefault(file => file.Exists)
+                ?? new NotFoundFileInfo(subpath);
+
+        public IChangeToken Watch(string filter)
+            => inner.Watch(GetCandidates(filter).First());
+
+        private IEnumerable<string> GetCandidates(string subpath)
+        {
+            var normalized = subpath.TrimStart('/', '\\');
+            yield return $"{_prefix}/{normalized}";
+            yield return $"{_prefix}\\{normalized}";
         }
     }
 }

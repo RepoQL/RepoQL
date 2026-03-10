@@ -26,7 +26,7 @@ public class LlmUdf(IInferenceProvider inferenceProvider)
         [UdfDefault("500")] int maxTokens)
     {
         if (!inferenceProvider.Available)
-            return "Inference service not configured (set inference.service_url and inference.api_key)";
+            return "Inference service not configured (set inference.service_url and cloud.api_key)";
 
         try
         {

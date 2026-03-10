@@ -78,7 +78,7 @@ internal sealed class ReadOrchestratorQuestionTests
         result.Success.Should().BeFalse();
         result.Error.Should().Contain("Inference service not configured");
         result.Error.Should().Contain("inference.service_url");
-        result.Error.Should().Contain("inference.api_key");
+        result.Error.Should().Contain("cloud.api_key");
     }
 
     [Test]

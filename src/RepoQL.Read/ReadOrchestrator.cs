@@ -375,7 +375,7 @@ public sealed partial class ReadOrchestrator
         {
             return new ReadExecutionResult(
                 Success: false,
-                Error: "Inference service not configured. Set inference.service_url and inference.api_key to enable question synthesis.");
+                Error: "Inference service not configured. Set inference.service_url and cloud.api_key to enable question synthesis.");
         }
 
         // Fetch content - matches_glob handles exact URIs, globs, and fragment patterns uniformly

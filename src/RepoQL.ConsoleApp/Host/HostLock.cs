@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using RepoQL.Contracts;
 
@@ -39,6 +40,7 @@ namespace RepoQL.ConsoleApp.Host;
 internal sealed class HostLock : IDisposable
 {
     private const string PidPrefix = "PID:";
+    private static readonly ConcurrentDictionary<string, byte> ProcessLocks = new(GetProcessLockComparer());
 
     /// <summary>
     /// Byte offset for the advisory lock. Placed well beyond PID content so that
@@ -48,10 +50,12 @@ internal sealed class HostLock : IDisposable
     private const long LockOffset = 1024;
 
     private readonly FileStream _stream;
+    private readonly string _processLockKey;
 
-    private HostLock(string path, FileStream stream)
+    private HostLock(string path, string processLockKey, FileStream stream)
     {
         Path = path;
+        _processLockKey = processLockKey;
         _stream = stream;
     }
 
@@ -79,6 +83,16 @@ internal sealed class HostLock : IDisposable
         failure = HostLockFailure.None;
         error = null;
         var lockPath = GetLockPath(repoRoot);
+        var processLockKey = NormalizeProcessLockKey(lockPath);
+
+        // Process-local guard: flock/FileShare semantics do not reliably reject a second
+        // acquisition attempt from the same process on Unix, but the host still needs
+        // single-owner semantics within the current process.
+        if (!ProcessLocks.TryAdd(processLockKey, 0))
+        {
+            failure = HostLockFailure.Locked;
+            return null;
+        }
 
         // Phase 1: Acquire the OS-level file lock.
         // IsSharingViolation determines if the IOException means "another process holds this file."
@@ -89,17 +103,20 @@ internal sealed class HostLock : IDisposable
         }
         catch (IOException ex) when (IsSharingViolation(ex))
         {
+            ProcessLocks.TryRemove(processLockKey, out _);
             failure = HostLockFailure.Locked;
             return null;
         }
         catch (UnauthorizedAccessException ex)
         {
+            ProcessLocks.TryRemove(processLockKey, out _);
             failure = HostLockFailure.Unauthorized;
             error = ex;
             return null;
         }
         catch (Exception ex)
         {
+            ProcessLocks.TryRemove(processLockKey, out _);
             failure = HostLockFailure.Error;
             error = ex;
             return null;
@@ -120,6 +137,7 @@ internal sealed class HostLock : IDisposable
             {
                 // Another process holds the advisory lock — treat as lock contention.
                 stream.Dispose();
+                ProcessLocks.TryRemove(processLockKey, out _);
                 failure = HostLockFailure.Locked;
                 return null;
             }
@@ -135,11 +153,12 @@ internal sealed class HostLock : IDisposable
             stream.Write(content);
             stream.Flush();
 
-            return new HostLock(lockPath, stream);
+            return new HostLock(lockPath, processLockKey, stream);
         }
         catch (Exception ex)
         {
             stream.Dispose();
+            ProcessLocks.TryRemove(processLockKey, out _);
             failure = HostLockFailure.Error;
             error = ex;
             return null;
@@ -195,7 +214,16 @@ internal sealed class HostLock : IDisposable
         }
 
         _stream.Dispose();
+        ProcessLocks.TryRemove(_processLockKey, out _);
     }
+
+    private static IEqualityComparer<string> GetProcessLockComparer()
+        => OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
+    private static string NormalizeProcessLockKey(string lockPath)
+        => System.IO.Path.GetFullPath(lockPath);
 
     /// <summary>
     /// Detect whether an IOException represents a file-sharing conflict (another process holds the lock).

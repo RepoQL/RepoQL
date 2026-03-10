@@ -24,49 +24,52 @@ internal sealed class DatabaseReadContentProvider(DuckDbDataStore db) : IReadCon
         // COALESCE picks the right artifact_id for both cases.
         // Use glob_files() table function for proper symbol pattern matching.
         var sql = $"""
-            SELECT g.uri,
+            WITH matched_documents AS (
+                SELECT g.uri,
+                       a.media_type,
+                       a.headline,
+                       a.summary,
+                       a.structure,
+                       a.text_content,
+                       replace(replace(a.text_content, chr(13) || chr(10), chr(10)), chr(13), chr(10)) as normalized_text,
+                       s.start_line,
+                       s.end_line,
+                       TRY_CAST(repository_uri_line_start(g.uri) AS INTEGER) as requested_start_line,
+                       TRY_CAST(repository_uri_line_end(g.uri) AS INTEGER) as requested_end_line
+                FROM glob_files('{escapedPattern}') g
+                LEFT JOIN node n ON n.uri = g.uri
+                LEFT JOIN span s ON s.id = n.span_id
+                LEFT JOIN node doc_by_span ON doc_by_span.id = s.document_id
+                LEFT JOIN node doc_by_container
+                    ON doc_by_container.kind = 'document'
+                   AND doc_by_container.container_uri_lowercase = lower(repository_uri_container(g.uri))
+                LEFT JOIN node doc_by_container_scan
+                    ON doc_by_container.id IS NULL
+                   AND doc_by_container_scan.kind = 'document'
+                   AND lower(doc_by_container_scan.uri) = lower(repository_uri_container(g.uri))
+                JOIN artifact a ON a.id = COALESCE(n.artifact_id, doc_by_span.artifact_id, doc_by_container.artifact_id, doc_by_container_scan.artifact_id)
+                {(hasFragment ? "" : "WHERE COALESCE(n.kind, doc_by_container.kind, doc_by_container_scan.kind) = 'document'")}
+            )
+            SELECT uri,
                    CASE
-                        WHEN COALESCE(
-                                 TRY_CAST(repository_uri_line_start(g.uri) AS INTEGER),
-                                 s.start_line
-                             ) IS NOT NULL
-                             AND a.text_content IS NOT NULL
+                        WHEN COALESCE(requested_start_line, start_line) IS NOT NULL
+                             AND normalized_text IS NOT NULL
                         THEN array_to_string(
                             list_slice(
-                                string_split(a.text_content, chr(10)),
-                                COALESCE(
-                                    TRY_CAST(repository_uri_line_start(g.uri) AS INTEGER),
-                                    s.start_line
-                                ),
-                                COALESCE(
-                                    TRY_CAST(repository_uri_line_end(g.uri) AS INTEGER),
-                                    TRY_CAST(repository_uri_line_start(g.uri) AS INTEGER),
-                                    s.end_line,
-                                    s.start_line
-                                )
+                                string_split(normalized_text, chr(10)),
+                                COALESCE(requested_start_line, start_line),
+                                COALESCE(requested_end_line, requested_start_line, end_line, start_line)
                             ),
                             chr(10)
                         )
-                        ELSE a.text_content
+                        ELSE text_content
                    END as text_content,
-                   a.media_type,
-                   a.headline,
-                   a.summary,
-                   a.structure
-            FROM glob_files('{escapedPattern}') g
-            LEFT JOIN node n ON n.uri = g.uri
-            LEFT JOIN span s ON s.id = n.span_id
-            LEFT JOIN node doc_by_span ON doc_by_span.id = s.document_id
-            LEFT JOIN node doc_by_container
-                ON doc_by_container.kind = 'document'
-               AND doc_by_container.container_uri_lowercase = lower(repository_uri_container(g.uri))
-            LEFT JOIN node doc_by_container_scan
-                ON doc_by_container.id IS NULL
-               AND doc_by_container_scan.kind = 'document'
-               AND lower(doc_by_container_scan.uri) = lower(repository_uri_container(g.uri))
-            JOIN artifact a ON a.id = COALESCE(n.artifact_id, doc_by_span.artifact_id, doc_by_container.artifact_id, doc_by_container_scan.artifact_id)
-            {(hasFragment ? "" : "WHERE COALESCE(n.kind, doc_by_container.kind, doc_by_container_scan.kind) = 'document'")}
-            ORDER BY g.uri
+                   media_type,
+                   headline,
+                   summary,
+                   structure
+            FROM matched_documents
+            ORDER BY uri
             """;
 
         return Task.FromResult(QueryReadDocuments(sql, cancellationToken));
