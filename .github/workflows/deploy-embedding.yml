@@ -119,7 +119,7 @@ jobs:
             --allow-unauthenticated
             --service-account=embedding-service-${{ inputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
             --set-env-vars=ASPNETCORE_URLS=http://+:8080,OTEL_SERVICE_NAME=repoql-embedding,OTEL_RESOURCE_ATTRIBUTES=service.version=${{ steps.tag.outputs.tag }}
-            --set-secrets=Embedding__VoyageApiKey=repoql-embedding-voyage-api-key:latest,Auth__ApiKeyHashes__0=repoql-embedding-auth-key-hash-0:latest
+            --set-secrets=Embedding__VoyageApiKey=repoql-embedding-voyage-api-key:latest,Auth__ApiKeyHashes__0=repoql-embedding-auth-key-hash-0:latest,Auth__ApiKeyHashes__1=repoql-embedding-auth-key-hash-1:latest
 
       - name: Enable cloud cache
         if: inputs.enable_cache
