@@ -131,9 +131,9 @@ Index a Python file. Query its classes, methods, decorators, type annotations, a
 - The structure shall show type annotations inline on parameters and return types
 
 ### SQL Views
-- `python_types` shall show: `document_uri`, `type_uri`, `name`, `qualified_name`, `type_kind`, `extends`, `metaclass`, `is_abstract`, `decorators`, `docstring`, `slots`, `variables`, `structure`
-- `python_methods` shall show: `document_uri`, `type_uri`, `type_name`, `type_qualified_name`, `method_uri`, `headline`, `name`, `method_kind`, `visibility`, `is_static`, `is_classmethod`, `is_async`, `is_generator`, `uses_async_with`, `uses_async_for`, `is_generated`, `is_overload`, `generator`, `parameters`, `return_type`, `decorators`, `docstring`
-- `python_imports` shall show: `document_uri`, `specifier`, `imported_names`, `is_relative`, `relative_level`, `is_type_checking_only`, `dependency_type`
+- `python_types` shall show: `file_uri`, `type_uri`, `name`, `qualified_name`, `type_kind`, `extends`, `metaclass`, `is_abstract`, `decorators`, `docstring`, `slots`, `variables`, `structure`
+- `python_methods` shall show: `file_uri`, `type_uri`, `type_name`, `type_qualified_name`, `method_uri`, `headline`, `name`, `method_kind`, `visibility`, `is_static`, `is_classmethod`, `is_async`, `is_generator`, `uses_async_with`, `uses_async_for`, `is_generated`, `is_overload`, `generator`, `parameters`, `return_type`, `decorators`, `docstring`
+- `python_imports` shall show: `file_uri`, `specifier`, `imported_names`, `is_relative`, `relative_level`, `is_type_checking_only`, `dependency_type`
 - Views shall be embedded as `Schema/python_views.sql` and registered via `IFormatSchemaProvider`
 
 ### Shared View Integration

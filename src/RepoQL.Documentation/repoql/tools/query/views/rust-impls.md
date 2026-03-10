@@ -1,5 +1,5 @@
 ---
-description: "rust_impls(type_uri, target_type, target_qualified_name, trait_name, is_unsafe, document_uri)"
+description: "rust_impls(type_uri, target_type, target_qualified_name, trait_name, is_unsafe, file_uri)"
 tags: ["query", "views", "rust", "impls", "traits", "implements"]
 audience: ["LLMs", "Humans"]
 categories: ["Reference[100%]", "Query-Views[95%]"]
@@ -35,7 +35,7 @@ ORDER BY count DESC;
 **Example**
 ```sql
 -- Trait implementations for a type
-SELECT trait_name, is_unsafe, document_uri
+SELECT trait_name, is_unsafe, file_uri
 FROM rust_impls
 WHERE target_type = 'RegexMatcher';
 
@@ -63,7 +63,7 @@ WHERE parent_name = 'RegexMatcher' AND impl_trait IS NULL;
 **Example**
 ```sql
 -- All unsafe trait implementations
-SELECT target_type, trait_name, document_uri
+SELECT target_type, trait_name, file_uri
 FROM rust_impls
 WHERE is_unsafe;
 ```
@@ -80,4 +80,4 @@ WHERE is_unsafe;
 | `target_qualified_name` | string | Qualified name of the implementing type |
 | `trait_name` | string | Name of the implemented trait (deferred reference) |
 | `is_unsafe` | boolean | True for `unsafe impl` declarations |
-| `document_uri` | string | Document where the impl block appears |
+| `file_uri` | string | Document where the impl block appears |

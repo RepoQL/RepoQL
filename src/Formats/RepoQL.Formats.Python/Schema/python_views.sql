@@ -1,6 +1,6 @@
 CREATE OR REPLACE VIEW python_types AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     n.uri AS type_uri,
     n.properties->>'name' AS name,
     n.properties->>'qualified_name' AS qualified_name,
@@ -21,7 +21,7 @@ WHERE n.kind = 'py.type';
 
 CREATE OR REPLACE VIEW python_methods AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.uri AS type_uri,
     parent.properties->>'name' AS type_name,
     parent.properties->>'qualified_name' AS type_qualified_name,
@@ -55,7 +55,7 @@ WHERE m.kind = 'py.member';
 
 CREATE OR REPLACE VIEW python_imports AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     e.properties->>'specifier' AS specifier,
     e.properties->>'names' AS imported_names,
     COALESCE(e.properties->>'is_relative', 'false') = 'true' AS is_relative,

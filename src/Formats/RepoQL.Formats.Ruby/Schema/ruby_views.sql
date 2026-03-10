@@ -5,7 +5,7 @@ SELECT
     MAX(n.properties->>'extends') AS extends,
     COUNT(*) AS definition_count,
     LIST(doc.uri ORDER BY COALESCE(n.properties->>'is_reopening', 'false')) AS defined_in,
-    MIN(CASE WHEN COALESCE(n.properties->>'is_reopening', 'false') != 'true' THEN doc.uri END) AS origin_file,
+    MIN(CASE WHEN COALESCE(n.properties->>'is_reopening', 'false') != 'true' THEN doc.uri END) AS file_uri,
     MAX(n.structure) AS structure
 FROM node n
 JOIN edge e ON e.destination_node_id = n.id
@@ -16,7 +16,7 @@ GROUP BY n.properties->>'qualified_name', n.properties->>'kind';
 
 CREATE OR REPLACE VIEW ruby_methods AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.uri AS type_uri,
     parent.properties->>'name' AS type_name,
     parent.properties->>'qualified_name' AS type_qualified_name,
@@ -42,6 +42,7 @@ WHERE m.kind = 'rb.member';
 CREATE OR REPLACE VIEW ruby_mixins AS
 SELECT
     src.uri AS type_uri,
+    repository_uri_container(src.uri) AS file_uri,
     src.properties->>'name' AS type_name,
     src.properties->>'qualified_name' AS type_qualified_name,
     src.properties->>'kind' AS type_kind,
@@ -57,6 +58,7 @@ ORDER BY src.id, mixin_order;
 CREATE OR REPLACE VIEW ruby_mro AS
 SELECT
     type_uri,
+    file_uri,
     type_name,
     type_qualified_name,
     module_name,
@@ -73,6 +75,7 @@ ORDER BY type_uri, mro_tier, mixin_order;
 CREATE OR REPLACE VIEW ruby_inheritance AS
 SELECT
     src.uri AS class_uri,
+    repository_uri_container(src.uri) AS file_uri,
     src.properties->>'name' AS class_name,
     src.properties->>'qualified_name' AS qualified_name,
     e.properties->>'target' AS superclass_name
@@ -82,7 +85,7 @@ WHERE e.type = 'EXTENDS' AND src.kind = 'rb.type';
 
 CREATE OR REPLACE VIEW ruby_constants AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.properties->>'qualified_name' AS namespace,
     c.uri AS constant_uri,
     c.properties->>'name' AS name,
@@ -98,7 +101,7 @@ WHERE c.kind = 'rb.constant';
 
 CREATE OR REPLACE VIEW ruby_requires AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     e.properties->>'path' AS required_path,
     COALESCE(e.properties->>'is_relative', 'false') = 'true' AS is_internal,
     CASE
@@ -112,6 +115,7 @@ WHERE e.type = 'REQUIRES';
 CREATE OR REPLACE VIEW ruby_aliases AS
 SELECT
     src.uri AS source_uri,
+    repository_uri_container(src.uri) AS file_uri,
     src.properties->>'name' AS alias_name,
     e.properties->>'alias_type' AS alias_type,
     dst.properties->>'name' AS original_name,
@@ -124,6 +128,7 @@ WHERE e.type = 'ALIASES';
 CREATE OR REPLACE VIEW ruby_associations AS
 SELECT
     src.uri AS model_uri,
+    repository_uri_container(src.uri) AS file_uri,
     src.properties->>'name' AS model_name,
     src.properties->>'qualified_name' AS model_qualified_name,
     e.properties->>'association' AS association_type,
@@ -134,7 +139,7 @@ WHERE e.type = 'ASSOCIATES' AND src.kind = 'rb.type';
 
 CREATE OR REPLACE VIEW ruby_validations AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.rule_id AS field_name,
     a.message AS validation_rule,
     a.data->>'options' AS options
@@ -144,7 +149,7 @@ WHERE a.kind = 'ruby.validation';
 
 CREATE OR REPLACE VIEW ruby_callbacks AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.rule_id AS callback_type,
     a.message AS callback_method,
     a.data->>'options' AS options
@@ -154,7 +159,7 @@ WHERE a.kind = 'ruby.callback';
 
 CREATE OR REPLACE VIEW ruby_metaprogramming AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.message AS description,
     s.start_line AS line
 FROM annotation a

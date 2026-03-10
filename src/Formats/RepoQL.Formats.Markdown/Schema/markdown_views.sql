@@ -1,6 +1,6 @@
 CREATE OR REPLACE VIEW markdown_headings AS
 SELECT
-  d.uri AS document_uri,
+  d.uri AS file_uri,
   CASE
     WHEN json_extract_string(h.properties, '$.slug') IS NOT NULL
     THEN d.uri || '#' || json_extract_string(h.properties, '$.slug')
@@ -21,7 +21,7 @@ WHERE h.kind = 'md_heading';
 
 CREATE OR REPLACE VIEW markdown_links AS
 SELECT
-  d.uri AS document_uri,
+  d.uri AS file_uri,
   CASE
     WHEN s.start_line IS NOT NULL
     THEN d.uri || '#line=' || CAST(s.start_line AS VARCHAR)
@@ -42,7 +42,7 @@ WHERE l.kind = 'md_link';
 
 CREATE OR REPLACE VIEW markdown_codeblocks AS
 SELECT
-  d.uri AS document_uri,
+  d.uri AS file_uri,
   CASE
     WHEN s.start_line IS NOT NULL
     THEN d.uri || '#line=' || CAST(s.start_line AS VARCHAR)
@@ -64,7 +64,7 @@ WHERE b.kind = 'md_code_block';
 
 CREATE OR REPLACE VIEW markdown_capsules AS
 SELECT
-  d.uri AS document_uri,
+  d.uri AS file_uri,
   CASE
     WHEN json_extract_string(c.properties, '$.name') IS NOT NULL
     THEN d.uri || '#capsule=' || json_extract_string(c.properties, '$.name')

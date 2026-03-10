@@ -231,7 +231,7 @@ WITH hits AS (
 )
 SELECT h.uri, mh.level, mh.text
 FROM hits h
-JOIN markdown_headings mh ON mh.document_uri = h.uri
+JOIN markdown_headings mh ON mh.file_uri = h.uri
 ORDER BY h.score DESC, mh.start_line
 ```
 

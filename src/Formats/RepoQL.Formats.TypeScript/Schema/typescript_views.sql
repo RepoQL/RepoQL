@@ -1,6 +1,6 @@
 CREATE OR REPLACE VIEW typescript_imports AS
 SELECT
-    d.uri AS document_uri,
+    d.uri AS file_uri,
     json_extract_string(i.import_json, '$.specifier') AS specifier,
     json_extract_string(i.import_json, '$.kind') AS import_kind,
     json_extract_string(i.import_json, '$.style') AS import_style,
@@ -23,7 +23,7 @@ WHERE d.kind = 'document'
 
 CREATE OR REPLACE VIEW typescript_declarations AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     decl.uri AS declaration_uri,
     decl.headline,
     json_extract_string(decl.properties, '$.name') AS name,
@@ -44,7 +44,7 @@ WHERE decl.kind IN ('typescript.type', 'typescript.function', 'ts_decl_variable'
 
 CREATE OR REPLACE VIEW typescript_components AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     comp.uri AS component_uri,
     comp.headline,
     json_extract_string(comp.properties, '$.name') AS name,
@@ -58,7 +58,7 @@ WHERE comp.kind IN ('typescript.type', 'typescript.function', 'ts_decl_variable'
 
 CREATE OR REPLACE VIEW typescript_members AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.uri AS type_uri,
     json_extract_string(parent.properties, '$.name') AS type_name,
     member.uri AS member_uri,

@@ -1,7 +1,7 @@
 CREATE OR REPLACE VIEW pdf_bookmarks AS
 SELECT
     n.id,
-    parent.uri AS document_uri,
+    parent.uri AS file_uri,
     n.properties->>'title' AS title,
     CAST(n.properties->>'level' AS INTEGER) AS level,
     CAST(n.properties->>'target_page' AS INTEGER) AS target_page,
@@ -17,7 +17,7 @@ WHERE n.kind = 'pdf_bookmark';
 CREATE OR REPLACE VIEW pdf_form_fields AS
 SELECT
     n.id,
-    parent.uri AS document_uri,
+    parent.uri AS file_uri,
     n.properties->>'field_name' AS field_name,
     n.properties->>'field_type' AS field_type,
     n.properties->>'value' AS value,
@@ -31,7 +31,7 @@ WHERE n.kind = 'pdf_form_field';
 CREATE OR REPLACE VIEW pdf_annotations AS
 SELECT
     a.id,
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.kind AS annotation_type,
     CAST(json_extract_string(a.data, '$.page') AS INTEGER) AS page,
     a.message AS content,

@@ -436,7 +436,7 @@ GROUP BY
 -- rust_functions: free functions with full signature detail
 CREATE OR REPLACE VIEW rust_functions AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     f.uri AS function_uri,
     f.headline,
     f.properties->>'name' AS name,
@@ -458,7 +458,7 @@ WHERE f.kind = 'rs.function';
 -- rust_methods: methods with their declaring type and signature detail
 CREATE OR REPLACE VIEW rust_methods AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.uri AS parent_uri,
     parent.properties->>'name' AS parent_name,
     parent.properties->>'qualified_name' AS parent_qualified_name,
@@ -492,7 +492,7 @@ SELECT
     src.properties->>'qualified_name' AS target_qualified_name,
     e.properties->>'target' AS trait_name,
     COALESCE(e.properties->>'is_unsafe', 'false') = 'true' AS is_unsafe,
-    doc.uri AS document_uri
+    doc.uri AS file_uri
 FROM edge e
 JOIN node src ON src.id = e.source_node_id
 JOIN edge de ON de.destination_node_id = src.id
@@ -514,7 +514,7 @@ WHERE e.type = 'DERIVES' AND src.kind = 'rs.type';
 -- rust_macros: macro_rules! definitions
 CREATE OR REPLACE VIEW rust_macros AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     m.uri AS macro_uri,
     m.properties->>'name' AS name,
     m.properties->>'qualified_name' AS qualified_name,
@@ -528,7 +528,7 @@ WHERE m.kind = 'rs.macro';
 -- rust_imports: use declarations with alias and glob tracking
 CREATE OR REPLACE VIEW rust_imports AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     e.properties->>'path' AS import_path,
     e.properties->>'alias' AS alias,
     COALESCE(e.properties->>'is_glob', 'false') = 'true' AS is_glob,
@@ -540,7 +540,7 @@ WHERE e.type = 'IMPORTS';
 -- rust_modules: module declarations
 CREATE OR REPLACE VIEW rust_modules AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     m.uri AS module_uri,
     m.properties->>'name' AS name,
     m.properties->>'qualified_name' AS qualified_name,
@@ -554,23 +554,23 @@ WHERE m.kind = 'rs.module';
 
 -- rust_unsafe: everything marked unsafe — functions, methods, traits, trait impls
 CREATE OR REPLACE VIEW rust_unsafe AS
-SELECT 'function' AS item_kind, name, qualified_name, document_uri
+SELECT 'function' AS item_kind, name, qualified_name, file_uri
 FROM rust_functions WHERE is_unsafe
 UNION ALL
-SELECT 'method' AS item_kind, name, declaring_type || '.' || name AS qualified_name, document_uri
+SELECT 'method' AS item_kind, name, declaring_type || '.' || name AS qualified_name, file_uri
 FROM rust_methods WHERE is_unsafe
 UNION ALL
-SELECT 'trait' AS item_kind, name, qualified_name, defined_in[1] AS document_uri
+SELECT 'trait' AS item_kind, name, qualified_name, defined_in[1] AS file_uri
 FROM rust_types WHERE is_unsafe AND type_kind = 'trait'
 UNION ALL
 SELECT 'impl' AS item_kind, target_type || ' → ' || trait_name AS name,
-    target_qualified_name AS qualified_name, document_uri
+    target_qualified_name AS qualified_name, file_uri
 FROM rust_impls WHERE is_unsafe;
 
 -- rust_macro_expansion: honesty annotations about invisible macro-generated code
 CREATE OR REPLACE VIEW rust_macro_expansion AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.rule_id AS macro_name,
     a.message AS description,
     s.start_line AS line

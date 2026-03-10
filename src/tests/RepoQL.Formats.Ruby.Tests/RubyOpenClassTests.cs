@@ -80,7 +80,7 @@ public sealed class RubyOpenClassTests
 
         var rows = repo.Store.RawQuery(
             """
-            SELECT qualified_name, type_kind, extends, definition_count, defined_in, origin_file
+            SELECT qualified_name, type_kind, extends, definition_count, defined_in, file_uri
             FROM ruby_types
             WHERE qualified_name = 'OpenClass'
             """).ToArray();
@@ -95,7 +95,7 @@ public sealed class RubyOpenClassTests
         var definedIn = ((IEnumerable<string>)row["defined_in"]!).ToArray();
         definedIn.Should().Contain(uri => uri.Contains("open_class_part1.rb", StringComparison.Ordinal));
         definedIn.Should().Contain(uri => uri.Contains("open_class_part2.rb", StringComparison.Ordinal));
-        row["origin_file"]!.ToString().Should().Contain("open_class_part1.rb");
+        row["file_uri"]!.ToString().Should().Contain("open_class_part1.rb");
     }
 
     private static async Task<IndexedRepoBuilder> CreateRubyRepoAsync()

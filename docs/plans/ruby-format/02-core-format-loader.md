@@ -111,8 +111,8 @@ Index a Ruby file. Query its classes and methods through the same SQL surface as
 - Block-accepting methods shall show `&block` in their parameter list
 
 ### SQL Views
-- `ruby_types` shall show `qualified_name`, `type_kind`, `extends`, `definition_count`, `structure` — aggregated by `n.properties->>'qualified_name'` (not a bare column name). The `defined_in`, `origin_file`, and `is_reopening`-dependent logic are deferred to Plan 03, which replaces this view with the full reopening-aware version
-- `ruby_methods` shall show `document_uri`, `type_uri`, `type_name`, `type_qualified_name`, `method_uri`, `headline`, `name`, `visibility`, `is_class_method`, `accepts_block`, `is_generated`, `generator`, `parameters`
+- `ruby_types` shall show `qualified_name`, `type_kind`, `extends`, `definition_count`, `structure` — aggregated by `n.properties->>'qualified_name'` (not a bare column name). The `defined_in`, `file_uri`, and `is_reopening`-dependent logic are deferred to Plan 03, which replaces this view with the full reopening-aware version
+- `ruby_methods` shall show `file_uri`, `type_uri`, `type_name`, `type_qualified_name`, `method_uri`, `headline`, `name`, `visibility`, `is_class_method`, `accepts_block`, `is_generated`, `generator`, `parameters`
 - Views shall be embedded as `Schema/ruby_views.sql` and registered via `IFormatSchemaProvider`
 
 ### Shared View Integration

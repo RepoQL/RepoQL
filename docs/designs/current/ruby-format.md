@@ -313,7 +313,7 @@ SELECT
     MAX(n.properties->>'extends') AS extends,
     COUNT(*) AS definition_count,
     LIST(doc.uri ORDER BY COALESCE(n.properties->>'is_reopening', 'false')) AS defined_in,
-    MIN(CASE WHEN COALESCE(n.properties->>'is_reopening', 'false') != 'true' THEN doc.uri END) AS origin_file,
+    MIN(CASE WHEN COALESCE(n.properties->>'is_reopening', 'false') != 'true' THEN doc.uri END) AS file_uri,
     MAX(n.structure) AS structure
 FROM node n
 JOIN edge e ON e.destination_node_id = n.id
@@ -325,7 +325,7 @@ GROUP BY n.properties->>'qualified_name', n.properties->>'kind';
 -- ruby_methods: methods with their declaring type and parameter details
 CREATE OR REPLACE VIEW ruby_methods AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.uri AS type_uri,
     parent.properties->>'name' AS type_name,
     parent.properties->>'qualified_name' AS type_qualified_name,
@@ -397,7 +397,7 @@ WHERE e.type = 'EXTENDS' AND src.kind = 'rb.type';
 -- ruby_constants: constant definitions with namespace
 CREATE OR REPLACE VIEW ruby_constants AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.properties->>'qualified_name' AS namespace,
     c.uri AS constant_uri,
     c.properties->>'name' AS name,
@@ -414,7 +414,7 @@ WHERE c.kind = 'rb.constant';
 -- ruby_requires: dependency graph with internal/external classification
 CREATE OR REPLACE VIEW ruby_requires AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     e.properties->>'path' AS required_path,
     COALESCE(e.properties->>'is_relative', 'false') = 'true' AS is_internal,
     CASE
@@ -453,7 +453,7 @@ WHERE e.type = 'ASSOCIATES' AND src.kind = 'rb.type';
 -- ruby_validations: model validations from annotation table
 CREATE OR REPLACE VIEW ruby_validations AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.rule_id AS field_name,
     a.message AS validation_rule,
     a.data->>'options' AS options
@@ -464,7 +464,7 @@ WHERE a.kind = 'ruby.validation';
 -- ruby_callbacks: controller/model callbacks from annotation table
 CREATE OR REPLACE VIEW ruby_callbacks AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.rule_id AS callback_type,
     a.message AS callback_method,
     a.data->>'options' AS options
@@ -475,7 +475,7 @@ WHERE a.kind = 'ruby.callback';
 -- ruby_metaprogramming: honesty annotations about unextractable structure
 CREATE OR REPLACE VIEW ruby_metaprogramming AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.message AS description,
     s.start_line AS line
 FROM annotation a
@@ -554,7 +554,7 @@ Each extraction phase (classes, methods, mixins, requires) is independently try/
 | Thread-safety bugs in `ThreadLocal<Parser>` | Unit test concurrent parsing. Tree-sitter documentation is clear on the constraint. Research notes this as untested in practice |
 | Metaprogramming detection too aggressive (false positives) | Conservative: only extract patterns listed in the design. Mark confidence level. Agents can filter by confidence |
 | Metaprogramming detection too conservative (false negatives) | Extension point: new patterns can be added to queries without changing architecture. `attr_accessor`, `has_many`, `validates` cover the highest-value 80% |
-| Open class aggregation confuses agents | `ruby_types` view aggregates by qualified_name, showing definition_count and origin_file. Shared `Types` view shows per-node locality. Both perspectives available |
+| Open class aggregation confuses agents | `ruby_types` view aggregates by qualified_name, showing definition_count and file_uri. Shared `Types` view shows per-node locality. Both perspectives available |
 | `is_reopening` heuristic wrong | Conservative: defaults to `false` when uncertain. Agents can use `ruby_types.definition_count > 1` as a more reliable signal |
 
 ## Extension Points

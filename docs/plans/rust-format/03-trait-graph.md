@@ -96,7 +96,7 @@ When a type implements three traits across two files, the agent sees all three I
 ### SQL Views
 
 **rust_impls** — trait implementations with target type and trait name:
-- Shall show: `type_uri`, `target_type`, `target_qualified_name`, `trait_name`, `is_unsafe`, `document_uri`
+- Shall show: `type_uri`, `target_type`, `target_qualified_name`, `trait_name`, `is_unsafe`, `file_uri`
 - Shall join from IMPLEMENTS edge → source `rs.type` node → parent document via HAS_PART
 
 **rust_derives** — derive macro relationships per type:
@@ -105,7 +105,7 @@ When a type implements three traits across two files, the agent sees all three I
 
 **rust_unsafe** — everything marked unsafe in one query:
 - Shall UNION ALL across: unsafe functions (from rust_functions), unsafe methods (from rust_methods), unsafe traits (from rust_types where type_kind = 'trait'), unsafe trait impls (from rust_impls)
-- Each row shall have: `item_kind` ("function"/"method"/"trait"/"impl"), `name`, `qualified_name`, `document_uri`
+- Each row shall have: `item_kind` ("function"/"method"/"trait"/"impl"), `name`, `qualified_name`, `file_uri`
 
 ### Ordinal Correctness
 - Methods from trait impl blocks shall carry ordinals relative to the impl block's position in the file, preserving source order

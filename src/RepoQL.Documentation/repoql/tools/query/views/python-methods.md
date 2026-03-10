@@ -1,5 +1,5 @@
 ---
-description: "python_methods(document_uri, type_uri, type_name, type_qualified_name, method_uri, headline, name, method_kind, visibility, is_static, is_classmethod, is_async, is_generator, uses_async_with, uses_async_for, is_generated, is_overload, generator, parameters, return_type, decorators, docstring)"
+description: "python_methods(file_uri, type_uri, type_name, type_qualified_name, method_uri, headline, name, method_kind, visibility, is_static, is_classmethod, is_async, is_generator, uses_async_with, uses_async_for, is_generated, is_overload, generator, parameters, return_type, decorators, docstring)"
 tags: ["query", "views", "python", "methods", "functions"]
 audience: ["LLMs", "Humans"]
 categories: ["Reference[100%]", "Query-Views[95%]"]
@@ -107,7 +107,7 @@ WHERE is_overload = true;
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `document_uri` | string | Parent document URI |
+| `file_uri` | string | Parent document URI |
 | `type_uri` | string | Parent type URI |
 | `type_name` | string | Parent type simple name |
 | `type_qualified_name` | string | Parent type qualified name |

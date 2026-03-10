@@ -1,6 +1,6 @@
 CREATE OR REPLACE VIEW go_types AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     t.uri AS type_uri,
     t.properties->>'name' AS name,
     t.properties->>'qualified_name' AS qualified_name,
@@ -28,7 +28,7 @@ GROUP BY
 
 CREATE OR REPLACE VIEW go_functions AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     doc.properties->>'package_name' AS package_name,
     f.uri AS function_uri,
     f.headline,
@@ -48,7 +48,7 @@ WHERE f.kind = 'go.function'
 
 CREATE OR REPLACE VIEW go_methods AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.uri AS type_uri,
     parent.properties->>'name' AS type_name,
     parent.properties->>'qualified_name' AS type_qualified_name,
@@ -76,7 +76,7 @@ WHERE m.kind = 'go.member'
   AND json_extract_string(m.properties, '$.kind') = 'method'
 UNION ALL
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     NULL AS type_uri,
     NULL AS type_name,
     NULL AS type_qualified_name,
@@ -101,7 +101,7 @@ WHERE m.kind = 'go.member'
 
 CREATE OR REPLACE VIEW go_imports AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     doc.properties->>'package_name' AS package_name,
     e.properties->>'target' AS target,
     e.properties->>'alias' AS alias,
@@ -114,7 +114,7 @@ WHERE e.type = 'IMPORTS'
 
 CREATE OR REPLACE VIEW go_fields AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.uri AS type_uri,
     parent.properties->>'name' AS type_name,
     parent.properties->>'qualified_name' AS type_qualified_name,
@@ -139,7 +139,7 @@ WHERE f.kind = 'go.member'
 CREATE OR REPLACE VIEW go_constants AS
 SELECT
     c.uri AS uri,
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     c.properties->>'name' AS name,
     c.properties->>'qualified_name' AS qualified_name,
     c.properties->>'const_type' AS const_type,
@@ -160,7 +160,7 @@ WHERE c.kind = 'go.member'
 CREATE OR REPLACE VIEW go_variables AS
 SELECT
     v.uri AS uri,
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     v.properties->>'name' AS name,
     v.properties->>'qualified_name' AS qualified_name,
     v.properties->>'var_type' AS var_type,
@@ -183,7 +183,7 @@ WHERE v.kind = 'go.member'
 
 CREATE OR REPLACE VIEW go_enum_blocks AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.data->>'type_name' AS type_name,
     a.data->>'constant_names' AS constant_names,
     CAST(a.data->>'constant_count' AS INTEGER) AS constant_count
@@ -194,7 +194,7 @@ WHERE a.kind = 'go.enum_block';
 
 CREATE OR REPLACE VIEW go_tests AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     COALESCE(a.data->>'name', f.properties->>'name') AS function_name,
     a.data->>'test_kind' AS test_kind,
     a.data->>'tests_symbol' AS tests_symbol,
@@ -210,7 +210,7 @@ WHERE a.kind = 'go.test';
 
 CREATE OR REPLACE VIEW go_init_functions AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     doc.properties->>'package_name' AS package_name,
     f.properties->>'name' AS function_name,
     s.start_line AS start_line,
@@ -226,7 +226,7 @@ WHERE f.kind = 'go.function'
 
 CREATE OR REPLACE VIEW go_directives AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     CASE a.kind
         WHEN 'go.build_constraint' THEN 'build'
         WHEN 'go.embed' THEN 'embed'
@@ -257,7 +257,7 @@ SELECT
     source_type.uri AS struct_uri,
     source_type.properties->>'name' AS struct_name,
     e.properties->>'target' AS embedded_type,
-    doc.uri AS document_uri
+    doc.uri AS file_uri
 FROM edge e
 JOIN node source_type ON source_type.id = e.source_node_id
     AND source_type.kind = 'go.type'
@@ -269,7 +269,7 @@ WHERE e.type = 'EMBEDS';
 
 CREATE OR REPLACE VIEW go_dependencies AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     e.properties->>'target' AS module_path,
     e.properties->>'version' AS version,
     COALESCE(e.properties->>'indirect', 'false') = 'true' AS is_indirect
@@ -281,7 +281,7 @@ WHERE e.type = 'DEPENDS_ON'
 
 CREATE OR REPLACE VIEW go_replaces AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.data->>'old_path' AS old_path,
     a.data->>'old_version' AS old_version,
     a.data->>'new_path' AS new_path,

@@ -127,7 +127,7 @@ Comments and tracked changes are the collaboration record. They tell you not jus
 -- Documents with unresolved review comments
 SELECT doc.uri, doc.headline, COUNT(*) AS open_comments
 FROM document_comments c
-JOIN Files doc ON doc.uri = c.document_uri
+JOIN Files doc ON doc.uri = c.file_uri
 WHERE c.resolved = false
 GROUP BY doc.uri, doc.headline
 ORDER BY open_comments DESC
@@ -135,7 +135,7 @@ ORDER BY open_comments DESC
 -- What did a specific reviewer flag?
 SELECT doc.uri, c.author, c.text
 FROM document_comments c
-JOIN Files doc ON doc.uri = c.document_uri
+JOIN Files doc ON doc.uri = c.file_uri
 WHERE c.author LIKE '%Sarah%'
 ```
 

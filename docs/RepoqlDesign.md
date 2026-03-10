@@ -368,7 +368,7 @@ SELECT uri, symbol, score FROM search('authentication', k := 10)
 SELECT t.qualified_name, m.name
 FROM csharp_types t
 JOIN csharp_members m ON m.declaring_type_id = t.type_id
-WHERE t.document_uri = 'file:///UserService.cs'
+WHERE t.file_uri = 'file:///UserService.cs'
 ```
 
 #### 2. `explore` - The Primary Discovery Tool
@@ -590,7 +590,7 @@ SELECT t.qualified_name,
        AVG(JSON_ARRAY_LENGTH(m.parameters)) as avg_params
 FROM csharp_types t
 JOIN csharp_members m ON m.declaring_type_id = t.type_id
-WHERE t.document_uri IN (
+WHERE t.file_uri IN (
   'file:///AuthService.cs',
   'file:///TokenValidator.cs',
   'file:///JwtMiddleware.cs'

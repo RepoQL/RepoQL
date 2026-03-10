@@ -56,7 +56,7 @@ WITH RECURSIVE deps AS (
 SELECT * FROM deps
 
 -- Go types through the universal surface
-SELECT name, document_uri FROM Types WHERE lang = 'go' AND kind = 'interface'
+SELECT name, file_uri FROM Types WHERE lang = 'go' AND kind = 'interface'
 ```
 
 ---
@@ -77,7 +77,7 @@ Go's implicit interfaces are the most powerful structural relationship in the la
 
 ```sql
 -- What implements Handler?
-SELECT type_name, document_uri
+SELECT type_name, file_uri
 FROM go_implements
 WHERE interface_name = 'Handler'
 
@@ -163,12 +163,12 @@ structure →
 
 ```sql
 -- All custom error types
-SELECT type_name, document_uri
+SELECT type_name, file_uri
 FROM go_implements
 WHERE interface_name = 'error'
 
 -- All sentinel errors
-SELECT name, document_uri
+SELECT name, file_uri
 FROM go_variables
 WHERE type = 'error' AND exported = true
 ```
@@ -207,7 +207,7 @@ Concurrency is Go's defining runtime feature. An agent debugging a race conditio
 
 ```sql
 -- All exported interfaces in the module
-SELECT name, package, document_uri
+SELECT name, package, file_uri
 FROM go_types
 WHERE kind = 'interface' AND exported = true
 
@@ -286,12 +286,12 @@ Compiler directives look like comments but carry semantic weight. `//go:embed te
 
 ```sql
 -- All benchmarks
-SELECT name, package, document_uri
+SELECT name, package, file_uri
 FROM go_tests
 WHERE test_kind = 'benchmark'
 
 -- Tests for a specific function
-SELECT name, document_uri
+SELECT name, file_uri
 FROM go_tests
 WHERE tests_symbol = 'Authenticate'
 ```

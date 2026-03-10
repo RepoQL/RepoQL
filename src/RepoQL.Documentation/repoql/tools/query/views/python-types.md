@@ -1,5 +1,5 @@
 ---
-description: "python_types(document_uri, type_uri, name, qualified_name, type_kind, extends, metaclass, is_abstract, decorators, docstring, slots, variables, structure)"
+description: "python_types(file_uri, type_uri, name, qualified_name, type_kind, extends, metaclass, is_abstract, decorators, docstring, slots, variables, structure)"
 tags: ["query", "views", "python", "types", "classes"]
 audience: ["LLMs", "Humans"]
 categories: ["Reference[100%]", "Query-Views[95%]"]
@@ -13,7 +13,7 @@ Type-level Python declarations (`py.type`) with inheritance, decorators, and var
 
 ```sql
 -- All Python types
-SELECT qualified_name, type_kind, document_uri FROM python_types;
+SELECT qualified_name, type_kind, file_uri FROM python_types;
 
 -- Dataclasses and protocols
 SELECT qualified_name, type_kind
@@ -107,7 +107,7 @@ WHERE variables::text LIKE '%\"variable_kind\":\"instance\"%';
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `document_uri` | string | Parent Python document URI |
+| `file_uri` | string | Parent Python document URI |
 | `type_uri` | string | Type symbol URI |
 | `name` | string | Simple type name |
 | `qualified_name` | string | Qualified type name |

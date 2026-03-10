@@ -3,9 +3,9 @@
 ## Views
 
 ```sql
-csharp_namespaces(namespace_id, document_uri, qualified_name, name, parent_namespace_id, span_id, properties)
-csharp_types(type_id, document_uri, qualified_name, name, kind, namespace, accessibility, base_type, interfaces, is_partial, is_static, is_record, span_id, properties)
-csharp_members(member_id, document_uri, declaring_type_id, declaring_type, name, kind, accessibility, is_static, is_async, return_type, parameters, span_id, properties)
+csharp_namespaces(namespace_id, file_uri, qualified_name, name, parent_namespace_id, span_id, properties)
+csharp_types(type_id, file_uri, qualified_name, name, kind, namespace, accessibility, base_type, interfaces, is_partial, is_static, is_record, span_id, properties)
+csharp_members(member_id, file_uri, declaring_type_id, declaring_type, name, kind, accessibility, is_static, is_async, return_type, parameters, span_id, properties)
 ```
 
 All views include `properties->>'symbol_key'` for stable symbol identification.
@@ -14,7 +14,7 @@ All views include `properties->>'symbol_key'` for stable symbol identification.
 
 ```sql
 -- Find all public interfaces
-SELECT qualified_name, document_uri
+SELECT qualified_name, file_uri
 FROM csharp_types
 WHERE kind = 'interface' AND accessibility = 'public'
 
@@ -24,7 +24,7 @@ FROM csharp_members
 WHERE is_async = true
 
 -- Find implementations of an interface
-SELECT t.qualified_name, t.document_uri
+SELECT t.qualified_name, t.file_uri
 FROM csharp_types t
 JOIN edge e ON e.source_node_id = t.type_id
 WHERE e.type = 'IMPLEMENTS'
@@ -61,7 +61,7 @@ WITH hits AS (
 )
 SELECT h.uri, t.qualified_name, t.kind, sn.line_number, sn.text
 FROM hits h
-JOIN csharp_types t ON t.document_uri = h.uri
+JOIN csharp_types t ON t.file_uri = h.uri
 JOIN LATERAL snippet(h.uri || '#line=' || (
   SELECT s.start_line FROM span s WHERE s.id = t.span_id
 ), 3) sn ON true
@@ -168,7 +168,7 @@ Stable identifiers from Roslyn `SymbolKey` API:
 
 ```sql
 -- Group partial types by symbol
-SELECT properties->>'symbol_key', STRING_AGG(document_uri, ', ')
+SELECT properties->>'symbol_key', STRING_AGG(file_uri, ', ')
 FROM csharp_types
 WHERE is_partial = true
 GROUP BY properties->>'symbol_key'

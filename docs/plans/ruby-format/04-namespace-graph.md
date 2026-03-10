@@ -70,8 +70,8 @@ Every constant, every dependency, every alias — queryable. An agent can see wh
 - When both alias source and target are within the same class, the edge shall connect the corresponding `rb.member` nodes
 
 ### SQL Views
-- `ruby_constants` shall show: document_uri, namespace (enclosing qualified_name), constant_uri, name, qualified_name
-- `ruby_requires` shall show: document_uri, required_path, is_internal (boolean), dependency_type ("internal"/"external")
+- `ruby_constants` shall show: file_uri, namespace (enclosing qualified_name), constant_uri, name, qualified_name
+- `ruby_requires` shall show: file_uri, required_path, is_internal (boolean), dependency_type ("internal"/"external")
 - `ruby_aliases` shall show: source_uri, alias_name, alias_type, original_name, original_uri
 - `ruby_aliases` shall use LEFT JOIN on destination so aliases with unresolved targets still appear
 

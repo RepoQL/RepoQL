@@ -1,5 +1,5 @@
 ---
-description: "python_imports(document_uri, specifier, imported_names, is_relative, relative_level, is_type_checking_only, dependency_type)"
+description: "python_imports(file_uri, specifier, imported_names, is_relative, relative_level, is_type_checking_only, dependency_type)"
 tags: ["query", "views", "python", "imports", "dependencies"]
 audience: ["LLMs", "Humans"]
 categories: ["Reference[100%]", "Query-Views[95%]"]
@@ -13,15 +13,15 @@ Python import edges (`IMPORTS`) normalized into rows for dependency and type-che
 
 ```sql
 -- All Python imports
-SELECT document_uri, specifier, imported_names FROM python_imports;
+SELECT file_uri, specifier, imported_names FROM python_imports;
 
 -- Relative imports
-SELECT document_uri, specifier, relative_level
+SELECT file_uri, specifier, relative_level
 FROM python_imports
 WHERE is_relative = true;
 
 -- Type-checking-only dependencies
-SELECT document_uri, specifier
+SELECT file_uri, specifier
 FROM python_imports
 WHERE is_type_checking_only = true;
 ```
@@ -35,11 +35,11 @@ WHERE is_type_checking_only = true;
 
 **Example**
 ```sql
-SELECT document_uri, specifier
+SELECT file_uri, specifier
 FROM python_imports
 WHERE specifier LIKE 'django.%';
 
-SELECT document_uri, specifier, imported_names
+SELECT file_uri, specifier, imported_names
 FROM python_imports
 WHERE imported_names IS NOT NULL;
 ```
@@ -60,14 +60,14 @@ Type-checking-only imports are flagged so agents can distinguish runtime and sta
 
 **Example**
 ```sql
-SELECT document_uri, specifier
+SELECT file_uri, specifier
 FROM python_imports
 WHERE is_type_checking_only = true;
 
-SELECT document_uri,
+SELECT file_uri,
        SUM(CASE WHEN is_type_checking_only THEN 1 ELSE 0 END) AS type_only_count
 FROM python_imports
-GROUP BY document_uri
+GROUP BY file_uri
 ORDER BY type_only_count DESC;
 ```
 //BOUNDARY: Detection is syntactic (`if TYPE_CHECKING` scope). Runtime behavior is not evaluated.
@@ -91,7 +91,7 @@ SELECT dependency_type, COUNT(*) AS imports
 FROM python_imports
 GROUP BY dependency_type;
 
-SELECT document_uri, specifier
+SELECT file_uri, specifier
 FROM python_imports
 WHERE dependency_type = 'internal';
 ```
@@ -109,7 +109,7 @@ WHERE dependency_type = 'internal';
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `document_uri` | string | Importing document URI |
+| `file_uri` | string | Importing document URI |
 | `specifier` | string | Module specifier text |
 | `imported_names` | string | Imported names and aliases summary |
 | `is_relative` | boolean | Relative import flag |

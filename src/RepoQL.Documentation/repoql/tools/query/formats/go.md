@@ -76,7 +76,7 @@ WHERE is_pointer_receiver = true;
 **Depth**
 - `go_functions`: `name`, `qualified_name`, `visibility` (`public`/`private`), `parameters`, `return_type`, `signature`, `headline`
 - `go_methods`: adds `type_name`, `type_qualified_name`, `declaring_type`, `receiver`, `receiver_type`, `is_pointer_receiver`
-- `go_init_functions`: init functions specifically — `document_uri`, `package_name`, `function_name`, `start_line`
+- `go_init_functions`: init functions specifically — `file_uri`, `package_name`, `function_name`, `start_line`
 - Visibility follows Go convention: exported (uppercase) = `public`, unexported = `private`
 
 ---
@@ -161,7 +161,7 @@ GROUP BY target
 ORDER BY usage_count DESC;
 
 -- Aliased imports
-SELECT document_uri, target, alias
+SELECT file_uri, target, alias
 FROM go_imports
 WHERE alias IS NOT NULL;
 ```
@@ -257,9 +257,9 @@ FROM go_tests
 WHERE test_kind = 'benchmark';
 
 -- Test coverage by file
-SELECT document_uri, COUNT(*) as test_count
+SELECT file_uri, COUNT(*) as test_count
 FROM go_tests
-GROUP BY document_uri;
+GROUP BY file_uri;
 ```
 //BOUNDARY: `test_kind` is one of: `test`, `benchmark`, `example`, `fuzz`, `testmain`. `tests_symbol` is the name suffix after the prefix (e.g., `TestFoo` → `Foo`). Detection requires the file to end with `_test.go`.
 
@@ -273,12 +273,12 @@ GROUP BY document_uri;
 **Example**
 ```sql
 -- Build constraints
-SELECT document_uri, directive_text
+SELECT file_uri, directive_text
 FROM go_directives
 WHERE directive_kind = 'build';
 
 -- Goroutine launch sites
-SELECT document_uri, directive_text, start_line
+SELECT file_uri, directive_text, start_line
 FROM go_directives
 WHERE directive_kind = 'goroutine';
 
@@ -305,7 +305,7 @@ FROM go_embeds
 WHERE struct_name = 'standardRenderer';
 
 -- Find all types that embed a given type
-SELECT struct_name, document_uri
+SELECT struct_name, file_uri
 FROM go_embeds
 WHERE embedded_type = 'Mutex';
 ```
@@ -316,21 +316,21 @@ WHERE embedded_type = 'Mutex';
 ## Views
 
 ```sql
-go_types(document_uri, type_uri, name, qualified_name, type_kind, package_name, field_count, method_count)
-go_functions(document_uri, package_name, function_uri, headline, name, qualified_name, visibility, parameters, return_type, signature)
-go_methods(document_uri, type_uri, type_name, type_qualified_name, method_uri, headline, name, declaring_type, receiver, receiver_type, is_pointer_receiver, visibility, parameters, return_type, signature)
-go_fields(document_uri, type_uri, type_name, type_qualified_name, field_uri, name, field_type, tag, is_embedded, visibility)
-go_constants(uri, document_uri, name, qualified_name, const_type, const_value, is_exported, enum_type, start_line, node_id)
-go_variables(uri, document_uri, name, qualified_name, var_type, var_value, is_exported, is_sentinel_error, is_interface_assertion, asserted_interface, asserted_type, start_line, node_id)
-go_imports(document_uri, package_name, target, alias, import_category)
-go_embeds(struct_uri, struct_name, embedded_type, document_uri)
-go_enum_blocks(document_uri, type_name, constant_names, constant_count)
-go_tests(document_uri, function_name, test_kind, tests_symbol, start_line)
-go_init_functions(document_uri, package_name, function_name, start_line, node_id)
-go_directives(document_uri, directive_kind, directive_text, start_line)
+go_types(file_uri, type_uri, name, qualified_name, type_kind, package_name, field_count, method_count)
+go_functions(file_uri, package_name, function_uri, headline, name, qualified_name, visibility, parameters, return_type, signature)
+go_methods(file_uri, type_uri, type_name, type_qualified_name, method_uri, headline, name, declaring_type, receiver, receiver_type, is_pointer_receiver, visibility, parameters, return_type, signature)
+go_fields(file_uri, type_uri, type_name, type_qualified_name, field_uri, name, field_type, tag, is_embedded, visibility)
+go_constants(uri, file_uri, name, qualified_name, const_type, const_value, is_exported, enum_type, start_line, node_id)
+go_variables(uri, file_uri, name, qualified_name, var_type, var_value, is_exported, is_sentinel_error, is_interface_assertion, asserted_interface, asserted_type, start_line, node_id)
+go_imports(file_uri, package_name, target, alias, import_category)
+go_embeds(struct_uri, struct_name, embedded_type, file_uri)
+go_enum_blocks(file_uri, type_name, constant_names, constant_count)
+go_tests(file_uri, function_name, test_kind, tests_symbol, start_line)
+go_init_functions(file_uri, package_name, function_name, start_line, node_id)
+go_directives(file_uri, directive_kind, directive_text, start_line)
 go_implements(type_uri, type_name, type_qualified_name, interface_uri, interface_name, interface_qualified_name, receiver_kind, is_stdlib, interface_target)
-go_dependencies(document_uri, module_path, version, is_indirect)
-go_replaces(document_uri, old_path, old_version, new_path, new_version, is_local_path)
+go_dependencies(file_uri, module_path, version, is_indirect)
+go_replaces(file_uri, old_path, old_version, new_path, new_version, is_local_path)
 ```
 
 ---

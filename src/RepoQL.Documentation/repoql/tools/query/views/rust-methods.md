@@ -1,5 +1,5 @@
 ---
-description: "rust_methods(document_uri, parent_uri, parent_name, parent_qualified_name, method_uri, headline, name, qualified_name, declaring_type, visibility, is_async, is_unsafe, is_const, is_static, self_kind, parameters, return_type, impl_trait)"
+description: "rust_methods(file_uri, parent_uri, parent_name, parent_qualified_name, method_uri, headline, name, qualified_name, declaring_type, visibility, is_async, is_unsafe, is_const, is_static, self_kind, parameters, return_type, impl_trait)"
 tags: ["query", "views", "rust", "methods", "impl", "self", "async"]
 audience: ["LLMs", "Humans"]
 categories: ["Reference[100%]", "Query-Views[95%]"]
@@ -104,7 +104,7 @@ Boolean flags surface async, unsafe, and const qualifiers on methods.
 **Example**
 ```sql
 -- Unsafe methods
-SELECT parent_name, name, document_uri
+SELECT parent_name, name, file_uri
 FROM rust_methods
 WHERE is_unsafe;
 
@@ -121,7 +121,7 @@ WHERE is_const;
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `document_uri` | string | Document containing this method |
+| `file_uri` | string | Document containing this method |
 | `parent_uri` | string | URI of the parent type node |
 | `parent_name` | string | Simple name of the parent type |
 | `parent_qualified_name` | string | Qualified name of the parent type |

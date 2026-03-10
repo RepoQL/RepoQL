@@ -18,7 +18,7 @@ Implements: [Ruby Format Design](../../designs/current/ruby-format.md) — Graph
 - `extend self` detection on modules
 - Edge materialization: EXTENDS, INCLUDES, PREPENDS, EXTENDS_MODULE
 - Reopening detection heuristic (`is_reopening` property on `rb.type`)
-- `ruby_types` view replacement with full reopening-aware version (defined_in, origin_file, is_reopening-dependent ordering)
+- `ruby_types` view replacement with full reopening-aware version (defined_in, file_uri, is_reopening-dependent ordering)
 - SQL views: `ruby_mixins`, `ruby_mro`, `ruby_inheritance`
 - Tests: mixin ordering, reopening detection, inheritance edges, MRO tier ordering
 
@@ -70,7 +70,7 @@ When a module is mixed into nine models, the agent sees all nine relationships w
 
 ### Reopening Detection
 - **Within a single file:** when the same class name appears twice in one file, one with superclass and one without, the materializer shall set `is_reopening: "true"` on the definition without a superclass clause
-- **Cross-file reopening** is not detectable during single-file materialization (the materializer processes one DocumentModel at a time and must not query the database). Cross-file reopening is handled by the `ruby_types` view: `definition_count > 1` signals a distributed definition. The `origin_file` column uses `is_reopening` from within-file detection to find the primary definition
+- **Cross-file reopening** is not detectable during single-file materialization (the materializer processes one DocumentModel at a time and must not query the database). Cross-file reopening is handled by the `ruby_types` view: `definition_count > 1` signals a distributed definition. The `file_uri` column uses `is_reopening` from within-file detection to find the primary definition
 - When both definitions in the same file lack a superclass clause, `is_reopening` shall default to `"false"` for both
 - When uncertain, `is_reopening` shall always default to `"false"` — false negatives preferred over false positives
 
@@ -80,7 +80,7 @@ When a module is mixed into nine models, the agent sees all nine relationships w
 - `ruby_mro` shall order mixins by tier: PREPENDS (tier 0), INCLUDES (tier 1), EXTENDS_MODULE (tier 2), then by mixin_order within tier
 - `ruby_inheritance` shall show: class_uri, class_name, qualified_name, superclass_name
 - `ruby_inheritance` shall only include `rb.type` nodes with EXTENDS edges
-- Plan 03 shall replace the Plan 02 `ruby_types` view with the full version: aggregated by `n.properties->>'qualified_name'`, showing definition_count, `defined_in` (file list ordered by is_reopening), `origin_file` (first non-reopening definition via MIN/CASE), extends (MAX across definitions), structure
+- Plan 03 shall replace the Plan 02 `ruby_types` view with the full version: aggregated by `n.properties->>'qualified_name'`, showing definition_count, `defined_in` (file list ordered by is_reopening), `file_uri` (first non-reopening definition via MIN/CASE), extends (MAX across definitions), structure
 
 ### Ordinal Correctness
 - When a class includes modules A, B, C in that order, ordinals shall be 0, 1, 2

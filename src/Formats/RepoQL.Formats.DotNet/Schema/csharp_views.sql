@@ -4,7 +4,7 @@
 CREATE OR REPLACE VIEW csharp_namespaces AS
 SELECT
     ns.id                AS namespace_id,
-    doc.uri              AS document_uri,
+    doc.uri              AS file_uri,
     ns.properties->>'qualified_name' AS qualified_name,
     ns.properties->>'name'    AS name,
     ns.properties->>'parent_namespace_id' AS parent_namespace_id,
@@ -18,7 +18,7 @@ WHERE ns.kind = 'csharp.namespace';
 CREATE OR REPLACE VIEW csharp_types AS
 SELECT
     t.id                       AS type_id,
-    doc.uri                    AS document_uri,
+    doc.uri                    AS file_uri,
     t.properties->>'qualified_name' AS qualified_name,
     t.properties->>'name'           AS name,
     TRY_CAST(t.properties->>'kind' AS csharp_type_kind) AS kind,
@@ -47,7 +47,7 @@ WITH parent_types AS (
 )
 SELECT
     m.id                      AS member_id,
-    doc.uri                   AS document_uri,
+    doc.uri                   AS file_uri,
     t.id                      AS declaring_type_id,
     t.properties->>'qualified_name' AS declaring_type,
     m.properties->>'name'          AS name,

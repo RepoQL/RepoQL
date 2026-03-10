@@ -132,9 +132,10 @@ SELECT rule_id, data->>'$.rule.helpUri' AS help_url,
 FROM Annotations WHERE kind = 'lint' AND rule_id = 'javascript/XSS';
 
 -- Cross-scanner hotspots
-SELECT scope_document_uri, count(DISTINCT source) AS scanners, count(*) AS total
+SELECT split_part(resolved_target_uri, '#', 1) AS file_uri,
+       count(DISTINCT source) AS scanners, count(*) AS total
 FROM Annotations WHERE kind = 'lint'
-GROUP BY scope_document_uri HAVING count(DISTINCT source) > 1
+GROUP BY file_uri HAVING count(DISTINCT source) > 1
 ORDER BY scanners DESC;
 ```
 

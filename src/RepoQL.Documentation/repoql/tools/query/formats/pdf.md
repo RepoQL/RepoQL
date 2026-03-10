@@ -77,13 +77,13 @@ WHERE n.uri = 'file:///docs/spec.pdf' AND n.kind = 'document';
 -- All bookmarks for a document
 SELECT title, level, target_page, start_page, end_page
 FROM pdf_bookmarks
-WHERE document_uri = 'file:///docs/spec.pdf'
+WHERE file_uri = 'file:///docs/spec.pdf'
 ORDER BY start_page;
 
 -- Top-level outline only
 SELECT title, target_page
 FROM pdf_bookmarks
-WHERE document_uri = 'file:///docs/spec.pdf' AND level = 1;
+WHERE file_uri = 'file:///docs/spec.pdf' AND level = 1;
 
 -- Find section by name
 SELECT title, start_page, end_page
@@ -97,7 +97,7 @@ WHERE title ILIKE '%authentication%';
 - `level`: Nesting depth (1 = top-level)
 - `target_page`: Page the bookmark points to
 - `start_page`, `end_page`: Computed page range (until next same-level bookmark)
-- `document_uri`: Parent document URI
+- `file_uri`: Parent document URI
 - `document_headline`: Parent document headline
 - Bookmarks also exist as `pdf_bookmark` nodes with `HAS_PART` edges from document
 
@@ -113,12 +113,12 @@ WHERE title ILIKE '%authentication%';
 -- All form fields
 SELECT field_name, field_type, value, page
 FROM pdf_form_fields
-WHERE document_uri = 'file:///forms/application.pdf';
+WHERE file_uri = 'file:///forms/application.pdf';
 
 -- Filled fields only
 SELECT field_name, value
 FROM pdf_form_fields
-WHERE document_uri = 'file:///forms/application.pdf' AND value IS NOT NULL;
+WHERE file_uri = 'file:///forms/application.pdf' AND value IS NOT NULL;
 ```
 //BOUNDARY: Only AcroForm fields. XFA forms not supported.
 
@@ -141,13 +141,13 @@ WHERE document_uri = 'file:///forms/application.pdf' AND value IS NOT NULL;
 -- All annotations
 SELECT annotation_type, page, content, author
 FROM pdf_annotations
-WHERE document_uri = 'file:///docs/reviewed.pdf'
+WHERE file_uri = 'file:///docs/reviewed.pdf'
 ORDER BY page;
 
 -- Comments only
 SELECT page, content, author, date
 FROM pdf_annotations
-WHERE document_uri = 'file:///docs/reviewed.pdf' AND annotation_type = 'comment';
+WHERE file_uri = 'file:///docs/reviewed.pdf' AND annotation_type = 'comment';
 ```
 //BOUNDARY: Types: `comment`, `highlight`, `stamp`. Links are edges, not annotations.
 
@@ -264,9 +264,9 @@ Properties stored on the `document` node (accessible via `node.properties`):
 | Find all PDFs | `SELECT uri, headline FROM node WHERE kind = 'document' AND headline LIKE '%pdf%'` |
 | Read PDF text | `read("file:///docs/spec.pdf", 3000)` |
 | Read specific pages | `read("file:///docs/spec.pdf#page=5,8", 2000)` |
-| List bookmarks | `SELECT title, target_page FROM pdf_bookmarks WHERE document_uri = '...'` |
+| List bookmarks | `SELECT title, target_page FROM pdf_bookmarks WHERE file_uri = '...'` |
 | Find section | `SELECT * FROM pdf_bookmarks WHERE title ILIKE '%intro%'` |
-| List form fields | `SELECT field_name, value FROM pdf_form_fields WHERE document_uri = '...'` |
+| List form fields | `SELECT field_name, value FROM pdf_form_fields WHERE file_uri = '...'` |
 | Find comments | `SELECT page, content FROM pdf_annotations WHERE annotation_type = 'comment'` |
 | Check page count | `SELECT properties->>'page_count' FROM node WHERE uri = '...' AND kind = 'document'` |
 | PDFs with bookmarks | `SELECT uri FROM node WHERE kind = 'document' AND properties->>'has_bookmarks' = 'true'` |

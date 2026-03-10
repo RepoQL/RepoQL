@@ -121,7 +121,7 @@ snippet(uri, context_lines)
 - `uri`: Document URI with optional fragment (`#line=42`, `#symbol=Foo`)
 - `context_lines`: Lines before/after focal point
 
-**Returns**: `line_number, text, is_focus, focus_start_column, focus_end_column, language, document_uri, resolved_uri`
+**Returns**: `line_number, text, is_focus, focus_start_column, focus_end_column, language, file_uri, resolved_uri`
 
 **Examples**:
 ```sql

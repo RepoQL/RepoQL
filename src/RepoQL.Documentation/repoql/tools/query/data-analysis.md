@@ -262,7 +262,7 @@ SELECT uri, headline, structure FROM search('authentication', k := 20)
 **Depth**
 - When query results exceed the token budget and the SQL contains comments, the summarizer uses comments as its guiding question
 - A comment like `-- What patterns exist?` produces a focused synthesis; no comment returns raw data
-- **Trap**: debugging comments (`-- Fix: column is document_uri`) pollute the synthesis with irrelevant context
+- **Trap**: debugging comments (`-- Fix: column is file_uri`) pollute the synthesis with irrelevant context
 - Strip scratch comments before the final query; keep only the question you want answered
 - SeeAlso: SearchEnrich, MultiStepAnalysis
 

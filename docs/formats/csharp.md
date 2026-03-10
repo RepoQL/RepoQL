@@ -76,7 +76,7 @@ WHERE qualified_name LIKE 'MyApp.Services%';
 
 Columns:
 - `namespace_id`: Node ID
-- `document_uri`: Source file URI
+- `file_uri`: Source file URI
 - `qualified_name`: Fully qualified namespace
 - `name`: Simple name
 - `parent_namespace_id`: Parent namespace (if nested)
@@ -92,7 +92,7 @@ WHERE kind = 'class'
 
 Columns:
 - `type_id`: Node ID
-- `document_uri`: Source file URI
+- `file_uri`: Source file URI
 - `qualified_name`: Fully qualified type name
 - `name`: Simple name
 - `kind`: `class`, `interface`, `struct`, `enum`, `record`, `delegate`
@@ -115,7 +115,7 @@ WHERE kind = 'method'
 
 Columns:
 - `member_id`: Node ID
-- `document_uri`: Source file URI
+- `file_uri`: Source file URI
 - `declaring_type_id`: Parent type node ID
 - `declaring_type`: Qualified name of declaring type
 - `name`: Member name
@@ -132,7 +132,7 @@ Columns:
 
 ### Find all public interfaces
 ```sql
-SELECT qualified_name, document_uri
+SELECT qualified_name, file_uri
 FROM csharp_types
 WHERE kind = 'interface'
   AND accessibility = 'public'
@@ -142,7 +142,7 @@ ORDER BY qualified_name;
 ### Find implementations of a specific interface
 ```sql
 -- Find all types implementing IPaymentProcessor
-SELECT t.qualified_name, t.document_uri
+SELECT t.qualified_name, t.file_uri
 FROM csharp_types AS t
 JOIN edge AS e ON e.source_node_id = t.type_id
 WHERE e.type = 'IMPLEMENTS'
@@ -154,7 +154,7 @@ WHERE e.type = 'IMPLEMENTS'
 SELECT
     declaring_type || '.' || name AS full_name,
     return_type,
-    document_uri
+    file_uri
 FROM csharp_members
 WHERE is_async = true
 ORDER BY declaring_type, name;
@@ -186,11 +186,11 @@ WHERE e.type = 'USES_SYMBOL';
 -- Find all partial type declarations
 SELECT
     qualified_name,
-    document_uri,
+    file_uri,
     COUNT(*) OVER (PARTITION BY properties->>'symbol_key') AS part_count
 FROM csharp_types
 WHERE is_partial = true
-ORDER BY qualified_name, document_uri;
+ORDER BY qualified_name, file_uri;
 ```
 
 ### Find source generator outputs
@@ -224,7 +224,7 @@ ORDER BY a.severity DESC, a.rule_id;
 -- Find all types decorated with [Serializable]
 SELECT DISTINCT
     t.qualified_name,
-    t.document_uri
+    t.file_uri
 FROM csharp_types AS t
 JOIN edge AS e ON e.source_node_id = t.type_id
 JOIN node AS attr ON attr.id = e.destination_node_id
@@ -239,7 +239,7 @@ WHERE e.type = 'ANNOTATED_WITH'
 SELECT
     declaring_type || '.' || name AS method,
     JSON_ARRAY_LENGTH(parameters) AS param_count,
-    document_uri
+    file_uri
 FROM csharp_members
 WHERE kind = 'method'
   AND JSON_ARRAY_LENGTH(parameters) > 5

@@ -46,7 +46,7 @@ CREATE OR REPLACE VIEW cpp_includes AS
 SELECT
     n.properties->>'target' AS target_header,
     n.properties->>'style' AS include_style,  -- '<>' or '""'
-    repository_uri_container(n.uri) AS source_uri,
+    repository_uri_container(n.uri) AS file_uri,
     n.id AS node_id
 FROM node n
 WHERE n.kind = 'cpp.include';

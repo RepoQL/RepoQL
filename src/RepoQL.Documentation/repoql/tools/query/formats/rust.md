@@ -108,7 +108,7 @@ FROM rust_impls
 WHERE target_type = 'RegexMatcher';
 
 -- Who implements a specific trait?
-SELECT target_type, document_uri
+SELECT target_type, file_uri
 FROM rust_impls
 WHERE trait_name = 'Matcher';
 
@@ -180,7 +180,7 @@ SELECT name, qualified_name, visibility, is_inline
 FROM rust_modules;
 
 -- Public modules
-SELECT name, document_uri
+SELECT name, file_uri
 FROM rust_modules
 WHERE visibility = 'public';
 ```
@@ -205,12 +205,12 @@ GROUP BY import_path
 ORDER BY usage_count DESC;
 
 -- Re-exports (pub use)
-SELECT document_uri, import_path
+SELECT file_uri, import_path
 FROM rust_imports
 WHERE is_reexport;
 
 -- Glob imports
-SELECT document_uri, import_path
+SELECT file_uri, import_path
 FROM rust_imports
 WHERE is_glob;
 
@@ -235,13 +235,13 @@ SELECT name, qualified_name, visibility
 FROM rust_macros;
 
 -- Where is the graph incomplete due to macros?
-SELECT document_uri, macro_name, description, line
+SELECT file_uri, macro_name, description, line
 FROM rust_macro_expansion;
 
 -- Macro-heavy files
-SELECT document_uri, COUNT(*) AS expansion_count
+SELECT file_uri, COUNT(*) AS expansion_count
 FROM rust_macro_expansion
-GROUP BY document_uri
+GROUP BY file_uri
 ORDER BY expansion_count DESC;
 
 -- Which macros cause the most honesty annotations?
@@ -269,7 +269,7 @@ ORDER BY count DESC;
 **Example**
 ```sql
 -- Full unsafe audit
-SELECT item_kind, name, qualified_name, document_uri
+SELECT item_kind, name, qualified_name, file_uri
 FROM rust_unsafe;
 
 -- Unsafe by category
@@ -311,15 +311,15 @@ WHERE visibility LIKE 'pub_in:%';
 
 ```sql
 rust_types(qualified_name, name, type_kind, visibility, generics, derives, supertraits, is_unsafe, definition_count, defined_in, structure)
-rust_functions(document_uri, function_uri, headline, name, qualified_name, visibility, is_async, is_unsafe, is_const, is_test, generics, parameters, return_type)
-rust_methods(document_uri, parent_uri, parent_name, parent_qualified_name, method_uri, headline, name, qualified_name, declaring_type, visibility, is_async, is_unsafe, is_const, is_static, self_kind, parameters, return_type, impl_trait)
-rust_impls(type_uri, target_type, target_qualified_name, trait_name, is_unsafe, document_uri)
+rust_functions(file_uri, function_uri, headline, name, qualified_name, visibility, is_async, is_unsafe, is_const, is_test, generics, parameters, return_type)
+rust_methods(file_uri, parent_uri, parent_name, parent_qualified_name, method_uri, headline, name, qualified_name, declaring_type, visibility, is_async, is_unsafe, is_const, is_static, self_kind, parameters, return_type, impl_trait)
+rust_impls(type_uri, target_type, target_qualified_name, trait_name, is_unsafe, file_uri)
 rust_derives(type_uri, type_name, type_qualified_name, derived_trait)
-rust_modules(document_uri, module_uri, name, qualified_name, visibility, is_inline)
-rust_unsafe(item_kind, name, qualified_name, document_uri)
-rust_imports(document_uri, import_path, alias, is_glob, is_reexport)
-rust_macros(document_uri, macro_uri, name, qualified_name, visibility)
-rust_macro_expansion(document_uri, macro_name, description, line)
+rust_modules(file_uri, module_uri, name, qualified_name, visibility, is_inline)
+rust_unsafe(item_kind, name, qualified_name, file_uri)
+rust_imports(file_uri, import_path, alias, is_glob, is_reexport)
+rust_macros(file_uri, macro_uri, name, qualified_name, visibility)
+rust_macro_expansion(file_uri, macro_name, description, line)
 ```
 
 ---
@@ -367,12 +367,12 @@ rust_macro_expansion(document_uri, macro_name, description, line)
 | What does type X derive? | `SELECT derived_trait FROM rust_derives WHERE type_name = 'X'` |
 | Public API surface | `SELECT name, return_type FROM rust_functions WHERE visibility = 'public'` |
 | Async methods | `SELECT parent_name, name FROM rust_methods WHERE is_async` |
-| Unsafe audit | `SELECT item_kind, name, document_uri FROM rust_unsafe` |
+| Unsafe audit | `SELECT item_kind, name, file_uri FROM rust_unsafe` |
 | Dependency usage | `SELECT import_path, COUNT(*) FROM rust_imports GROUP BY 1 ORDER BY 2 DESC` |
-| Re-exports | `SELECT document_uri, import_path FROM rust_imports WHERE is_reexport` |
-| Macro hotspots | `SELECT document_uri, COUNT(*) FROM rust_macro_expansion GROUP BY 1 ORDER BY 2 DESC` |
-| Test functions | `SELECT name, document_uri FROM rust_functions WHERE is_test` |
-| Graph completeness | `SELECT document_uri, macro_name, description FROM rust_macro_expansion` |
+| Re-exports | `SELECT file_uri, import_path FROM rust_imports WHERE is_reexport` |
+| Macro hotspots | `SELECT file_uri, COUNT(*) FROM rust_macro_expansion GROUP BY 1 ORDER BY 2 DESC` |
+| Test functions | `SELECT name, file_uri FROM rust_functions WHERE is_test` |
+| Graph completeness | `SELECT file_uri, macro_name, description FROM rust_macro_expansion` |
 | Derive fingerprint | `SELECT type_name, LIST(derived_trait ORDER BY derived_trait) FROM rust_derives GROUP BY 1` |
 | Most-implemented traits | `SELECT trait_name, COUNT(*) FROM rust_impls GROUP BY 1 ORDER BY 2 DESC` |
 | Trait method surface | `SELECT parent_name, name, impl_trait FROM rust_methods WHERE impl_trait IS NOT NULL` |
@@ -387,7 +387,6 @@ rust_macro_expansion(document_uri, macro_name, description, line)
 | Looking for `rs.method` node kind | Methods are `rs.member` — use `rust_methods` view |
 | Expecting inherent impls in `rust_impls` | `rust_impls` only shows trait impls. For inherent methods, use `rust_methods WHERE impl_trait IS NULL` |
 | Using `trait_name` in `rust_derives` | The column is `derived_trait`, not `trait_name` |
-| Using `file_uri` as a column name | All Rust views use `document_uri` |
 | Expecting structured generics | `generics` is raw text (e.g., `<'a, T: Clone>`) — not parsed into individual parameters |
 | Querying `rust_macro_expansion` for definitions | `rust_macro_expansion` is honesty annotations. For definitions, use `rust_macros` |
 | Expecting `rust_types.derives` to be an array | It's a comma-separated string. For per-trait querying, use `rust_derives` view |

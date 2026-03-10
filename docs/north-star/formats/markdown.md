@@ -47,7 +47,7 @@ read("file:///docs/auth-design.md#approach") → just that section
 
 ```sql
 -- What links to the schema doc?
-SELECT document_uri, link_text
+SELECT file_uri, link_text
 FROM markdown_links
 WHERE href LIKE '%Schema.md%'
 ```
@@ -63,7 +63,7 @@ WHERE href LIKE '%Schema.md%'
 
 ```sql
 -- All GraphQL examples in docs
-SELECT document_uri, start_line
+SELECT file_uri, start_line
 FROM markdown_codeblocks
 WHERE language = 'graphql'
 ```

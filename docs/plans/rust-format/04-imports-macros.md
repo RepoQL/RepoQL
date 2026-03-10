@@ -88,15 +88,15 @@ An agent should see every `use` path — what's imported, from where, whether it
 ### SQL Views
 
 **rust_imports** — use declarations with alias and glob tracking:
-- Shall show: `document_uri`, `import_path`, `alias`, `is_glob`, `is_reexport`
+- Shall show: `file_uri`, `import_path`, `alias`, `is_glob`, `is_reexport`
 - Shall join from IMPORTS edge → source document node
 
 **rust_macros** — macro_rules! definitions:
-- Shall show: `document_uri`, `macro_uri`, `name`, `qualified_name`, `visibility`
+- Shall show: `file_uri`, `macro_uri`, `name`, `qualified_name`, `visibility`
 - Shall join from rs.macro node → parent document via HAS_PART
 
 **rust_macro_expansion** — honesty annotations about invisible macro-generated code:
-- Shall show: `document_uri`, `macro_name` (from `rule_id`), `description` (from `message`), `line` (from span)
+- Shall show: `file_uri`, `macro_name` (from `rule_id`), `description` (from `message`), `line` (from span)
 - Shall join from `rs.macro_expansion` annotations → document → optional span
 - This view surfaces all macro expansion annotations: derives (from Plan 03), macro invocations (this plan), and proc-macro attributes (this plan)
 

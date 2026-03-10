@@ -37,7 +37,7 @@ Once this exists:
 - **Validation rules visible** — `SELECT * FROM ruby_validations` shows what fields are validated and how
 - **Callbacks traceable** — `SELECT * FROM ruby_callbacks WHERE callback_type = 'before_action'`
 - **Generated methods appear in the graph** — `attr_accessor :name` produces `rb.member` nodes that appear in `ruby_methods` with `is_generated: true`
-- **Agents know what's missing** — `SELECT * FROM ruby_metaprogramming WHERE document_uri LIKE '%user%'` shows where the graph is incomplete and why
+- **Agents know what's missing** — `SELECT * FROM ruby_metaprogramming WHERE file_uri LIKE '%user%'` shows where the graph is incomplete and why
 - **X-ray shows the full picture** — structure includes associations, validations, and generated accessors alongside hand-written methods
 
 This is the highest-value Ruby-specific increment. A Ruby indexer that ignores Rails misses the questions agents actually ask.
@@ -99,9 +99,9 @@ An agent querying a Rails model sees the complete API surface: hand-written meth
 
 ### SQL Views
 - `ruby_associations` shall show: model_uri, model_name, model_qualified_name, association_type, target_model
-- `ruby_validations` shall show: document_uri, field_name, validation_rule, options
-- `ruby_callbacks` shall show: document_uri, callback_type, callback_method, options
-- `ruby_metaprogramming` shall show: document_uri, description, line (from span)
+- `ruby_validations` shall show: file_uri, field_name, validation_rule, options
+- `ruby_callbacks` shall show: file_uri, callback_type, callback_method, options
+- `ruby_metaprogramming` shall show: file_uri, description, line (from span)
 
 ### X-Ray Structure Updates
 - Generated methods from attr_accessor shall appear in structure with `~` prefix (e.g., `~name (attr_accessor)`)

@@ -40,7 +40,7 @@ WHERE definition_count > 1;
 - `extends`: Superclass name (classes only)
 - `definition_count`: Number of `rb.type` nodes with this qualified name
 - `defined_in`: Array of document URIs (origin first)
-- `origin_file`: First non-reopening definition
+- `file_uri`: First non-reopening definition
 - `structure`: X-ray structure text
 - Also participates in shared `Types` view via `WHERE n.kind LIKE '%.type'`
 
@@ -149,15 +149,15 @@ ORDER BY model_name;
 -- Validations on a model
 SELECT field_name, validation_rule, options
 FROM ruby_validations
-WHERE document_uri LIKE '%user%';
+WHERE file_uri LIKE '%user%';
 
 -- Callbacks
 SELECT callback_type, callback_method, options
 FROM ruby_callbacks
-WHERE document_uri LIKE '%controller%';
+WHERE file_uri LIKE '%controller%';
 
 -- Where is the graph incomplete?
-SELECT document_uri, description, line
+SELECT file_uri, description, line
 FROM ruby_metaprogramming;
 ```
 //BOUNDARY: Metaprogramming annotations cover: dynamic `define_method`, `class_eval`, `module_eval`, `instance_eval`, `method_missing`. Bare `eval(...)` is NOT annotated.
@@ -179,7 +179,7 @@ FROM ruby_metaprogramming;
 -- External gems vs internal requires
 SELECT required_path, dependency_type
 FROM ruby_requires
-WHERE document_uri LIKE '%app/models%';
+WHERE file_uri LIKE '%app/models%';
 
 -- Constants defined in a namespace
 SELECT name, qualified_name
@@ -197,18 +197,18 @@ FROM ruby_aliases;
 ## Views
 
 ```sql
-ruby_types(qualified_name, type_kind, extends, definition_count, defined_in, origin_file, structure)
-ruby_methods(document_uri, type_uri, type_name, type_qualified_name, method_uri, headline, name, visibility, is_class_method, accepts_block, is_generated, generator, parameters)
+ruby_types(qualified_name, type_kind, extends, definition_count, defined_in, file_uri, structure)
+ruby_methods(file_uri, type_uri, type_name, type_qualified_name, method_uri, headline, name, visibility, is_class_method, accepts_block, is_generated, generator, parameters)
 ruby_mixins(type_uri, type_name, type_qualified_name, type_kind, mechanism, module_name, mixin_order)
 ruby_mro(type_uri, type_name, type_qualified_name, module_name, mechanism, mro_tier, mixin_order)
 ruby_inheritance(class_uri, class_name, qualified_name, superclass_name)
-ruby_constants(document_uri, namespace, constant_uri, name, qualified_name)
-ruby_requires(document_uri, required_path, is_internal, dependency_type)
+ruby_constants(file_uri, namespace, constant_uri, name, qualified_name)
+ruby_requires(file_uri, required_path, is_internal, dependency_type)
 ruby_aliases(source_uri, alias_name, alias_type, original_name, original_uri)
 ruby_associations(model_uri, model_name, model_qualified_name, association_type, target_model)
-ruby_validations(document_uri, field_name, validation_rule, options)
-ruby_callbacks(document_uri, callback_type, callback_method, options)
-ruby_metaprogramming(document_uri, description, line)
+ruby_validations(file_uri, field_name, validation_rule, options)
+ruby_callbacks(file_uri, callback_type, callback_method, options)
+ruby_metaprogramming(file_uri, description, line)
 ```
 
 ---
@@ -260,7 +260,7 @@ ruby_metaprogramming(document_uri, description, line)
 | Inheritance tree | `SELECT qualified_name, superclass_name FROM ruby_inheritance` |
 | Mixin graph | `SELECT type_qualified_name, mechanism, module_name FROM ruby_mixins` |
 | External dependencies | `SELECT required_path FROM ruby_requires WHERE dependency_type = 'external'` |
-| Graph completeness | `SELECT document_uri, description FROM ruby_metaprogramming` |
+| Graph completeness | `SELECT file_uri, description FROM ruby_metaprogramming` |
 | View structure without reading | `SELECT headline, structure FROM artifact a JOIN node n ON n.artifact_id = a.id WHERE n.uri = '...'` |
 
 ---

@@ -1,6 +1,6 @@
 CREATE OR REPLACE VIEW php_types AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     t.uri AS type_uri,
     t.headline,
     json_extract_string(t.properties, '$.name') AS name,
@@ -20,7 +20,7 @@ WHERE t.kind = 'php.type';
 
 CREATE OR REPLACE VIEW php_members AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.uri AS type_uri,
     json_extract_string(parent.properties, '$.name') AS type_name,
     member.uri AS member_uri,

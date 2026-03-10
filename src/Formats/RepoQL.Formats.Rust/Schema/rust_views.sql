@@ -45,7 +45,7 @@ GROUP BY n.properties->>'qualified_name';
 
 CREATE OR REPLACE VIEW rust_functions AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     f.uri AS function_uri,
     f.headline,
     f.properties->>'name' AS name,
@@ -66,7 +66,7 @@ WHERE f.kind = 'rs.function';
 
 CREATE OR REPLACE VIEW rust_methods AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     parent.uri AS parent_uri,
     parent.properties->>'name' AS parent_name,
     parent.properties->>'qualified_name' AS parent_qualified_name,
@@ -100,7 +100,7 @@ SELECT
     src.properties->>'qualified_name' AS target_qualified_name,
     e.properties->>'target' AS trait_name,
     COALESCE(e.properties->>'is_unsafe', 'false') = 'true' AS is_unsafe,
-    doc.uri AS document_uri
+    doc.uri AS file_uri
 FROM edge e
 JOIN node src ON src.id = e.source_node_id AND src.kind = 'rs.type'
 JOIN edge de ON de.destination_node_id = src.id
@@ -120,7 +120,7 @@ WHERE e.type = 'DERIVES';
 
 CREATE OR REPLACE VIEW rust_modules AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     m.uri AS module_uri,
     m.properties->>'name' AS name,
     m.properties->>'qualified_name' AS qualified_name,
@@ -137,7 +137,7 @@ SELECT
     'function' AS item_kind,
     f.name AS name,
     f.qualified_name AS qualified_name,
-    f.document_uri AS document_uri
+    f.file_uri AS file_uri
 FROM rust_functions f
 WHERE f.is_unsafe
 
@@ -147,7 +147,7 @@ SELECT
     'method' AS item_kind,
     m.name AS name,
     m.qualified_name AS qualified_name,
-    m.document_uri AS document_uri
+    m.file_uri AS file_uri
 FROM rust_methods m
 WHERE m.is_unsafe
 
@@ -157,9 +157,9 @@ SELECT
     'trait' AS item_kind,
     t.name AS name,
     t.qualified_name AS qualified_name,
-    d.document_uri AS document_uri
+    d.file_uri AS file_uri
 FROM rust_types t
-CROSS JOIN UNNEST(t.defined_in) AS d(document_uri)
+CROSS JOIN UNNEST(t.defined_in) AS d(file_uri)
 WHERE t.type_kind = 'trait' AND t.is_unsafe
 
 UNION ALL
@@ -168,13 +168,13 @@ SELECT
     'impl' AS item_kind,
     i.target_type AS name,
     i.target_qualified_name AS qualified_name,
-    i.document_uri AS document_uri
+    i.file_uri AS file_uri
 FROM rust_impls i
 WHERE i.is_unsafe;
 
 CREATE OR REPLACE VIEW rust_imports AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     e.properties->>'path' AS import_path,
     e.properties->>'alias' AS alias,
     COALESCE(e.properties->>'is_glob', 'false') = 'true' AS is_glob,
@@ -185,7 +185,7 @@ WHERE e.type = 'IMPORTS';
 
 CREATE OR REPLACE VIEW rust_macros AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     m.uri AS macro_uri,
     m.properties->>'name' AS name,
     m.properties->>'qualified_name' AS qualified_name,
@@ -198,7 +198,7 @@ WHERE m.kind = 'rs.macro';
 
 CREATE OR REPLACE VIEW rust_macro_expansion AS
 SELECT
-    doc.uri AS document_uri,
+    doc.uri AS file_uri,
     a.rule_id AS macro_name,
     a.message AS description,
     s.start_line AS line

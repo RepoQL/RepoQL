@@ -159,7 +159,7 @@ Extend `markdown_links` to surface resolution status:
 ```sql
 CREATE OR REPLACE VIEW markdown_links AS
 SELECT
-  d.uri AS document_uri,
+  d.uri AS file_uri,
   CASE WHEN s.start_line IS NOT NULL
     THEN d.uri || '#line=' || CAST(s.start_line AS VARCHAR)
     ELSE NULL

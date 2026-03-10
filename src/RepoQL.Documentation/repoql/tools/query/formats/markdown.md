@@ -3,13 +3,13 @@
 ## Views
 
 ```sql
-markdown_headings(document_uri, heading_uri, level, text, slug, start_line, end_line)
-markdown_links(document_uri, link_uri, href, link_text, link_title, start_line, end_line)
+markdown_headings(file_uri, heading_uri, level, text, slug, start_line, end_line)
+markdown_links(file_uri, link_uri, href, link_text, link_title, start_line, end_line)
 ```
 
 URIs ready for `snippet()`:
-- `heading_uri` = `document_uri#slug`
-- `link_uri` = `document_uri#line=N`
+- `heading_uri` = `file_uri#slug`
+- `link_uri` = `file_uri#line=N`
 
 ## Queries
 
@@ -17,13 +17,13 @@ URIs ready for `snippet()`:
 -- Document outline
 SELECT level, text, start_line
 FROM markdown_headings
-WHERE document_uri = 'file:///docs/Vision.md'
+WHERE file_uri = 'file:///docs/Vision.md'
 ORDER BY start_line
 
 -- Missing H1
-SELECT document_uri
+SELECT file_uri
 FROM markdown_headings
-GROUP BY document_uri
+GROUP BY file_uri
 HAVING MIN(level) > 1
 
 -- Broken links
@@ -37,7 +37,7 @@ WITH hits AS (
 )
 SELECT h.uri, mh.level, mh.text
 FROM hits h
-JOIN markdown_headings mh ON mh.document_uri = h.uri
+JOIN markdown_headings mh ON mh.file_uri = h.uri
 ORDER BY mh.start_line
 ```
 
@@ -54,7 +54,7 @@ SELECT line_number, text FROM snippet('file:///docs/Schema.md#line=42', 5)
 -- Heading section content
 SELECT text FROM snippet(heading_uri, 100)
 FROM markdown_headings
-WHERE document_uri = 'file:///docs/Vision.md' AND text = 'Core model'
+WHERE file_uri = 'file:///docs/Vision.md' AND text = 'Core model'
 ```
 
 ## X-Ray

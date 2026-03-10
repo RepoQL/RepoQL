@@ -134,9 +134,9 @@ Index a Rust file. Query its structs, enums, traits, and functions through the s
 
 ### SQL Views
 - `rust_types` shall show `qualified_name`, `name`, `type_kind`, `visibility`, `generics`, `derives`, `supertraits`, `is_unsafe`, `structure` — selected from `rs.type` nodes
-- `rust_functions` shall show `document_uri`, `function_uri`, `headline`, `name`, `qualified_name`, `visibility`, `is_async`, `is_unsafe`, `is_const`, `is_test`, `generics`, `parameters`, `return_type`
-- `rust_methods` shall show `document_uri`, `parent_uri`, `parent_name`, `parent_qualified_name`, `method_uri`, `headline`, `name`, `declaring_type`, `visibility`, `is_async`, `is_unsafe`, `is_const`, `is_static`, `self_kind`, `parameters`, `return_type`, `impl_trait` — using two-hop join (document → type → method)
-- `rust_modules` shall show `document_uri`, `module_uri`, `name`, `qualified_name`, `visibility`, `is_inline`
+- `rust_functions` shall show `file_uri`, `function_uri`, `headline`, `name`, `qualified_name`, `visibility`, `is_async`, `is_unsafe`, `is_const`, `is_test`, `generics`, `parameters`, `return_type`
+- `rust_methods` shall show `file_uri`, `parent_uri`, `parent_name`, `parent_qualified_name`, `method_uri`, `headline`, `name`, `declaring_type`, `visibility`, `is_async`, `is_unsafe`, `is_const`, `is_static`, `self_kind`, `parameters`, `return_type`, `impl_trait` — using two-hop join (document → type → method)
+- `rust_modules` shall show `file_uri`, `module_uri`, `name`, `qualified_name`, `visibility`, `is_inline`
 - Views shall be embedded as `Schema/rust_views.sql` and registered via `IFormatSchemaProvider`
 
 ### Shared View Integration

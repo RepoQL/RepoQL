@@ -46,7 +46,7 @@ WITH s AS (
   FROM file_search('mermaid graph', question := 'Show class diagrams', k := 5)
 )
 SELECT s.uri, h.text, h.level, h.start_line
-FROM s JOIN markdown_headings h ON h.document_uri = s.uri
+FROM s JOIN markdown_headings h ON h.file_uri = s.uri
 WHERE s.rn <= 3
 ORDER BY s.rn, h.level, h.start_line;
 

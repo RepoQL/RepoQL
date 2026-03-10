@@ -19,7 +19,7 @@ FROM Annotations
 WHERE rule_id LIKE '%/unresolved-%' OR rule_id LIKE '%/ambiguous-%'
 
 -- What's linking to a missing file?
-SELECT document_uri, href, link_text
+SELECT file_uri, href, link_text
 FROM markdown_links
 WHERE is_resolved = false AND target_uri IS NOT NULL
 ```
