@@ -160,8 +160,9 @@ public sealed class RepoQlConfig
     public sealed class InferenceSettings
     {
         [Setting("Inference service gRPC URL",
-            RequiresRestart = true)]
-        public string? ServiceUrl { get; set; }
+            RequiresRestart = true,
+            DefaultValue = "https://repoql-inference-858599035276.us-central1.run.app")]
+        public string? ServiceUrl { get; set; } = "https://repoql-inference-858599035276.us-central1.run.app";
 
         [Setting("Default tool token budget for explain",
             DefaultValue = "30000")]
