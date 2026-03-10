@@ -12,6 +12,7 @@ public sealed class RepoQlConfig
     public EmbeddingSettings Embedding { get; set; } = new();
     public OrtSettings Ort { get; set; } = new();
     public InferenceSettings Inference { get; set; } = new();
+    public CloudSettings Cloud { get; set; } = new();
     public HostSettings Host { get; set; } = new();
     public McpSettings Mcp { get; set; } = new();
     public DotnetSettings Dotnet { get; set; } = new();
@@ -89,10 +90,6 @@ public sealed class RepoQlConfig
             DefaultValue = "https://repoql-embedding-s3lststjqa-uc.a.run.app")]
         public string? Url { get; set; } = "https://repoql-embedding-s3lststjqa-uc.a.run.app";
 
-        [Setting("API key for authenticating with the remote embedding service",
-            Sensitive = true, RequiresRestart = true)]
-        public string? ApiKey { get; set; }
-
         [Setting("Request timeout in seconds",
             RequiresRestart = true, DefaultValue = "30")]
         public int? TimeoutSeconds { get; set; }
@@ -145,6 +142,18 @@ public sealed class RepoQlConfig
     }
 
     /// <summary>
+    /// Purpose: Shared authentication for all RepoQL cloud services (embedding, inference).
+    /// Complexity: Single API key used by both embedding and inference clients.
+    /// Individual service sections can still override if needed.
+    /// </summary>
+    public sealed class CloudSettings
+    {
+        [Setting("API key for RepoQL cloud services (embedding, inference)",
+            Sensitive = true, RequiresRestart = true)]
+        public string? ApiKey { get; set; }
+    }
+
+    /// <summary>
     /// Purpose: Configure remote inference service connection and tool-loop defaults.
     /// Complexity: Holds endpoint/auth settings plus explain-specific tool budget limits.
     /// </summary>
@@ -153,10 +162,6 @@ public sealed class RepoQlConfig
         [Setting("Inference service gRPC URL",
             RequiresRestart = true)]
         public string? ServiceUrl { get; set; }
-
-        [Setting("Inference service API key",
-            Sensitive = true, RequiresRestart = true)]
-        public string? ApiKey { get; set; }
 
         [Setting("Default tool token budget for explain",
             DefaultValue = "30000")]

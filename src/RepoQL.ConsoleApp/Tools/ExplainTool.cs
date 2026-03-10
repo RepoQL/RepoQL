@@ -3,6 +3,7 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Contracts;
 using RepoQL.Protocol;
 
 namespace RepoQL.ConsoleApp.Tools;
@@ -33,6 +34,8 @@ internal sealed class ExplainTool(
         <WHY>
         You want understanding, not raw text. Explain searches wide (often 50k tokens of context),
         then an LLM synthesizes a focused answer with citations.
+        
+        RepoQL rewards creativity, use your intuition and experiment
         </WHY>
 
         <WHEN_TO_USE>
@@ -80,6 +83,7 @@ internal sealed class ExplainTool(
         [Description("The question you want answered — full sentences work best (e.g., \"How does authentication work in MyProduct?\")")] string question,
         [Description("URI glob to scope the search (e.g., file:///src/Auth/**). Omit to search everywhere - this should be your default choice.")] string? uriGlob = null,
         [Description("Token budget for the response (default 2000)")] int tokenBudget = 2000,
+        [Description("Search keywords — code identifiers, class names, synonyms. You know the vocabulary better than the LLM. If omitted, keywords are extracted automatically.")] string? keywords = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(question))
@@ -89,33 +93,36 @@ internal sealed class ExplainTool(
             return ToolResult.Error("Error: tokenBudget must be a positive integer.");
 
         var orientationFooter = _sessionOrientation.CheckOrientation(uriGlob);
-        var requestSignature = $"explain|{tokenBudget}|{uriGlob}|{question}";
+        var requestSignature = $"explain|{tokenBudget}|{uriGlob}|{keywords}|{question}";
         var isRepeatRequest = _lastRequestSignature == requestSignature;
 
-        var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-        var scopeStatus = await client.GetScopeReadinessAsync(uriGlob, cancellationToken).ConfigureAwait(false);
-
-        if (!scopeStatus.IsReady && !isRepeatRequest)
-        {
-            _lastRequestSignature = requestSignature;
-            return ToolResult.Success(RepoQlClientScopeExtensions.FormatScopeNotReadyMessage(scopeStatus, uriGlob));
-        }
-
-        if (!scopeStatus.IsReady && isRepeatRequest)
-            await client.WaitForScopeAsync(uriGlob, cancellationToken).ConfigureAwait(false);
-
-        _lastRequestSignature = null;
+        // Scope readiness: first call sends NONE, repeat sends WAIT
+        var readiness = isRepeatRequest ? ScopeReadinessMode.Wait : ScopeReadinessMode.None;
 
         try
         {
-            var response = await client.ExplainAsync(question, uriGlob, tokenBudget, cancellationToken).ConfigureAwait(false);
-            if (!response.Success)
-                return ToolResult.Error($"Error: {response.Error}");
+            var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
+            var response = await client.ExplainAsync(question, uriGlob, tokenBudget, keywords, readiness, cancellationToken).ConfigureAwait(false);
 
-            return ToolResult.Success(response.RenderedOutput + orientationFooter);
+            if (!response.Success)
+            {
+                _lastRequestSignature = requestSignature;
+                return ToolResult.Error($"Error: {response.Error}");
+            }
+
+            _lastRequestSignature = null;
+
+            var footer = FormatExplainFooter(response);
+            var output = string.IsNullOrWhiteSpace(footer)
+                ? response.RenderedOutput
+                : $"{response.RenderedOutput}\n\n---\n{footer}";
+
+            return ToolResult.Success(output + orientationFooter);
         }
         catch (Exception ex)
         {
+            _lastRequestSignature = null;
+
             if (ex is RepoQlDiagnosticsException diagnosticsException)
                 return ToolResult.Error($"Error: Explain failed. {ExtractErrorMessage(ex)}\n\n{diagnosticsException.Diagnostics}");
 
@@ -127,6 +134,58 @@ internal sealed class ExplainTool(
 
             return ToolResult.Error($"Error: Explain failed. {ExtractErrorMessage(ex)}");
         }
+    }
+
+    private static string FormatExplainFooter(ExplainResponse response)
+    {
+        var parts = new List<string>();
+        var status = response.Status;
+        var synthesis = response.Synthesis;
+
+        // Match count + timing
+        if (synthesis is not null && synthesis.MatchCount > 0)
+            parts.Add($"{synthesis.MatchCount} matches");
+
+        if (status is not null && status.ElapsedMs > 0)
+            parts.Add($"{status.ElapsedMs / 1000.0:0.#}s");
+
+        // Synthesis ratio
+        if (synthesis is not null && synthesis.InputTokens > 0)
+        {
+            var inK = synthesis.InputTokens / 1000.0;
+            var outK = synthesis.OutputTokens / 1000.0;
+            parts.Add($"synthesis: {inK:0.#}k → {outK:0.#}k");
+        }
+
+        // Only surface problems — omit "ready" states
+        if (status is not null)
+        {
+            if (status.IndexPending > 0)
+                parts.Add($"index: {status.IndexPending} pending");
+            if (status.IndexFailed > 0)
+                parts.Add($"{status.IndexFailed} failed");
+            if (!status.SemanticReady)
+                parts.Add($"semantic: {status.SemanticPercent}%");
+        }
+
+        var footerLine = parts.Count > 0 ? $"[{string.Join(" · ", parts)}]" : "";
+
+        // Tool calls
+        if (synthesis is not null && synthesis.ToolCalls.Count > 0)
+        {
+            var toolLines = new List<string> { $"**Tool calls** ({synthesis.ToolCalls.Count}):" };
+            foreach (var tc in synthesis.ToolCalls)
+            {
+                var err = tc.IsError ? " (error)" : "";
+                toolLines.Add($"- `read({tc.Uri})` — {tc.TokensUsed} tok{err}");
+            }
+
+            footerLine = string.IsNullOrWhiteSpace(footerLine)
+                ? string.Join("\n", toolLines)
+                : $"{footerLine}\n{string.Join("\n", toolLines)}";
+        }
+
+        return footerLine;
     }
 
     private static string ExtractErrorMessage(Exception ex)

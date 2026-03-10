@@ -100,13 +100,14 @@ internal static class ServiceCollectionExtensions
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
             var settings = config.Inference;
+            var apiKey = config.Cloud.ApiKey;
             if (string.IsNullOrWhiteSpace(settings.ServiceUrl) ||
-                string.IsNullOrWhiteSpace(settings.ApiKey))
+                string.IsNullOrWhiteSpace(apiKey))
                 return new DisabledInferenceProvider();
 
             return new RepoQL.Inference.Client.InferenceClient(
                 settings.ServiceUrl,
-                settings.ApiKey,
+                apiKey,
                 sp.GetService<ILogger<RepoQL.Inference.Client.InferenceClient>>());
         });
 

@@ -1013,13 +1013,15 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
         string? penalize = null,
         int? limit = null,
         string? question = null,
+        ScopeReadinessMode readiness = ScopeReadinessMode.None,
         CancellationToken cancellationToken = default)
         => InvokeWithReconnectAsync(async (client, ct) =>
         {
             var request = new Contracts.ExploreRequest
             {
                 TokenBudget = tokenBudget,
-                Breadth = breadth
+                Breadth = breadth,
+                Readiness = readiness
             };
 
             if (!string.IsNullOrWhiteSpace(scope))
@@ -1044,17 +1046,23 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
         string question,
         string? scope = null,
         int tokenBudget = 2000,
+        string? keywords = null,
+        ScopeReadinessMode readiness = ScopeReadinessMode.None,
         CancellationToken cancellationToken = default)
         => InvokeWithReconnectAsync(async (client, ct) =>
         {
             var request = new Contracts.ExplainRequest
             {
                 Question = question,
-                TokenBudget = tokenBudget
+                TokenBudget = tokenBudget,
+                Readiness = readiness
             };
 
             if (!string.IsNullOrWhiteSpace(scope))
                 request.Scope = scope;
+
+            if (!string.IsNullOrWhiteSpace(keywords))
+                request.Keywords = keywords;
 
             var response = await client.ExplainAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
             return response;

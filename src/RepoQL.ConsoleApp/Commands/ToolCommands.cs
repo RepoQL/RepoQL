@@ -2,6 +2,7 @@ using ConsoleAppFramework;
 using RepoQL.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Contracts;
 using RepoQL.Protocol;
 using Spectre.Console;
 
@@ -25,12 +26,6 @@ internal class ToolCommands(
     CommandRegistry commandRegistry,
     SelfTestRunner selfTestRunner)
 {
-    private readonly IAnsiConsole _console = console;
-    private readonly QueryExecutor _queryExecutor = queryExecutor;
-    private readonly RepoQlClientProvider _clientProvider = clientProvider;
-    private readonly CommandRegistry _commandRegistry = commandRegistry;
-    private readonly SelfTestRunner _selfTestRunner = selfTestRunner;
-
     /// <summary>
     /// Run an imperative command such as diagnostics, config, or queue management.
     /// </summary>
@@ -51,8 +46,8 @@ internal class ToolCommands(
         if (parsed == null)
             throw new ArgumentException("Could not parse command. Use `repoql command ?` to list available commands.");
 
-        _commandRegistry.DiscoverCommands();
-        var result = await _commandRegistry.ExecuteAsync(parsed, cancel).ConfigureAwait(false);
+        commandRegistry.DiscoverCommands();
+        var result = await commandRegistry.ExecuteAsync(parsed, cancel).ConfigureAwait(false);
         WriteCommandResult(result);
     }
 
@@ -70,20 +65,20 @@ internal class ToolCommands(
         var parsed = CommandParser.TryParse(sql);
         if (parsed != null)
         {
-            _commandRegistry.DiscoverCommands();
-            var cmdResult = await _commandRegistry.ExecuteAsync(parsed, cancel).ConfigureAwait(false);
+            commandRegistry.DiscoverCommands();
+            var cmdResult = await commandRegistry.ExecuteAsync(parsed, cancel).ConfigureAwait(false);
             WriteCommandResult(cmdResult);
             return;
         }
 
-        var result = await _queryExecutor.ExecuteAsync(sql, int.MaxValue, ResultFormat.Toon, budget, cancel)
+        var result = await queryExecutor.ExecuteAsync(sql, int.MaxValue, ResultFormat.Toon, budget, cancel)
             .ConfigureAwait(false);
 
         var output = result.Lines.Length > 0
             ? string.Join(Environment.NewLine, result.Lines)
             : "No results.";
 
-        _console.WriteLine(output);
+        console.WriteLine(output);
     }
 
     /// <summary>
@@ -96,6 +91,8 @@ internal class ToolCommands(
     /// <param name="boost">Regex to elevate matches (e.g., "(?i)interface|abstract").</param>
     /// <param name="penalize">Regex to demote matches (e.g., "(?i)test|mock").</param>
     /// <param name="limit">Max results to show.</param>
+    /// <param name="wait">Wait for scope to be ready before executing.</param>
+    /// <param name="force">Execute immediately, accepting partial results from an unready scope.</param>
     /// <param name="cancel">Cancellation token.</param>
     public async Task Explore(
         [Argument] string breadth,
@@ -105,6 +102,8 @@ internal class ToolCommands(
         string? boost = null,
         string? penalize = null,
         int? limit = null,
+        bool wait = false,
+        bool force = false,
         CancellationToken cancel = default)
     {
         if (!int.TryParse(breadth, out var breadthValue) || breadthValue < 1 || breadthValue > 10)
@@ -114,13 +113,12 @@ internal class ToolCommands(
                 "Suggested mapping: inventory=8, locate=5, inspect=2.");
         }
 
-        var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
-
-        if (!string.IsNullOrWhiteSpace(keywords))
-            await WaitForScopeReadyAsync(client, uri, cancel).ConfigureAwait(false);
+        var readiness = ParseReadiness(wait, force);
+        var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
         var response = await client.ExploreAsync(
-            budget, breadthValue, uri, keywords, boost, penalize, limit, cancellationToken: cancel)
+            budget, breadthValue, uri, keywords, boost, penalize, limit,
+            readiness: readiness, cancellationToken: cancel)
             .ConfigureAwait(false);
 
         if (!response.Success)
@@ -129,7 +127,7 @@ internal class ToolCommands(
             return;
         }
 
-        _console.WriteLine(response.RenderedOutput);
+        console.WriteLine(response.RenderedOutput);
     }
 
     /// <summary>
@@ -138,11 +136,17 @@ internal class ToolCommands(
     /// <param name="question">The question to answer (e.g., "How does authentication work?").</param>
     /// <param name="budget">Token budget for response size.</param>
     /// <param name="uri">URI glob to scope the search (e.g., file:///src/Auth/**). Omit to search everywhere.</param>
+    /// <param name="keywords">Search keywords — code identifiers, class names, synonyms. Skips LLM keyword extraction.</param>
+    /// <param name="wait">Wait for scope to be ready before executing.</param>
+    /// <param name="force">Execute immediately, accepting partial results from an unready scope.</param>
     /// <param name="cancel">Cancellation token.</param>
     public async Task Explain(
         [Argument] string question,
         int budget = 2000,
         string? uri = null,
+        string? keywords = null,
+        bool wait = false,
+        bool force = false,
         CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(question))
@@ -150,17 +154,18 @@ internal class ToolCommands(
 
         try
         {
-            var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
-            await WaitForScopeReadyAsync(client, uri, cancel).ConfigureAwait(false);
+            var readiness = ParseReadiness(wait, force);
+            var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
-            var response = await client.ExplainAsync(question, uri, budget, cancel).ConfigureAwait(false);
+            var response = await client.ExplainAsync(question, uri, budget, keywords,
+                readiness: readiness, cancellationToken: cancel).ConfigureAwait(false);
             if (!response.Success)
             {
                 WriteError(response.Error);
                 return;
             }
 
-            _console.WriteLine(response.RenderedOutput);
+            console.WriteLine(response.RenderedOutput);
         }
         catch (Exception ex)
         {
@@ -176,10 +181,10 @@ internal class ToolCommands(
     /// <param name="cancel">Cancellation token.</param>
     public async Task Read(
         [Argument] string uri,
-        int budget = 3000,
+        int budget = 5000,
         CancellationToken cancel = default)
     {
-        var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
+        var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
         if (uri.Contains("=> find:", StringComparison.OrdinalIgnoreCase) ||
             uri.Contains("=> question:", StringComparison.OrdinalIgnoreCase))
@@ -196,7 +201,7 @@ internal class ToolCommands(
             return;
         }
 
-        _console.WriteLine(response.RenderedOutput);
+        console.WriteLine(response.RenderedOutput);
     }
 
     /// <summary>
@@ -210,9 +215,9 @@ internal class ToolCommands(
         CancellationToken cancel = default)
     {
         var isRemoval = uri.TrimStart().StartsWith('-');
-        var client = await _clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
+        var client = await clientProvider.GetClientAsync(cancel).ConfigureAwait(false);
 
-        await _console.Status()
+        await console.Status()
             .Spinner(Spinner.Known.Dots)
             .StartAsync(isRemoval ? "Removing import..." : "Importing repository...", async _ =>
             {
@@ -220,9 +225,9 @@ internal class ToolCommands(
             });
 
         if (isRemoval)
-            _console.MarkupLine($"[green]Removed:[/] {Markup.Escape(uri.Trim().TrimStart('-'))}");
+            console.MarkupLine($"[green]Removed:[/] {Markup.Escape(uri.Trim().TrimStart('-'))}");
         else
-            _console.MarkupLine($"[green]Imported:[/] {Markup.Escape(uri.Trim())}");
+            console.MarkupLine($"[green]Imported:[/] {Markup.Escape(uri.Trim())}");
     }
 
     private async Task WaitForScopeReadyAsync(IRepoQlClient client, string? scope, CancellationToken cancel)
@@ -231,7 +236,7 @@ internal class ToolCommands(
         if (status.IsReady)
             return;
 
-        await _console.Status()
+        await console.Status()
             .Spinner(Spinner.Known.Dots)
             .StartAsync($"Waiting for indexing... {status.ReadyPercent}% ready", async ctx =>
             {
@@ -259,7 +264,7 @@ internal class ToolCommands(
 
         if (ErrorClassifier.IsInfrastructureError(ex))
         {
-            var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancel).ConfigureAwait(false);
+            var diagnostics = await selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancel).ConfigureAwait(false);
             WriteError($"{cleanMessage}\n\n{diagnostics}");
             return;
         }
@@ -272,11 +277,18 @@ internal class ToolCommands(
         if (result.IsError)
             WriteError(result.Text);
         else
-            _console.WriteLine(result.Text);
+            console.WriteLine(result.Text);
     }
 
+    private static ScopeReadinessMode ParseReadiness(bool wait, bool force) => (wait, force) switch
+    {
+        (_, true) => ScopeReadinessMode.Force,
+        (true, _) => ScopeReadinessMode.Wait,
+        _ => ScopeReadinessMode.None
+    };
+
     private void WriteError(string message)
-        => _console.MarkupLine($"[red]{Markup.Escape(message)}[/]");
+        => console.MarkupLine($"[red]{Markup.Escape(message)}[/]");
 
     private static string? ExtractBaseUri(string uri)
     {

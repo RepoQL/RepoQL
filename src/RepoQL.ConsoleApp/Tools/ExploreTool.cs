@@ -23,7 +23,11 @@ internal sealed class ExploreTool(
 
     private const string ToolInstructions = """
         <WHY>
-        Don't read blind. Traditional search finds most results—you answer confidently but with gaps. Users run subagents to verify, wasting tokens. Explore searches wide first, so you see what exists before answering. No blind spots, no verification tax.
+        Don't read blind. Traditional search finds most results—you answer confidently but with gaps.
+        Users run subagents to verify, wasting tokens. Explore searches wide first, so you see what exists before answering. 
+        No blind spots, no verification tax.
+        
+        RepoQL rewards creativity, use your intuition and experiment
         </WHY>
 
         <BREADTH>
@@ -128,68 +132,45 @@ internal sealed class ExploreTool(
         if (breadth < 1 || breadth > 10)
             return ToolResult.Error("Error: breadth must be between 1 and 10.");
 
-        // Check orientation
         var orientationFooter = _sessionOrientation.CheckOrientation(uriGlob);
-
-        // Create request signature for "call again to wait" pattern
         var requestSignature = $"{tokenBudget}|{breadth}|{uriGlob}|{keywords}|{boost}|{penalize}|{limit}|{question}";
         var isRepeatRequest = _lastRequestSignature == requestSignature;
 
-        // Only check scope readiness if doing semantic search (keywords provided)
-        var requiresSemantic = !string.IsNullOrWhiteSpace(keywords);
+        // Scope readiness: first call sends NONE, repeat sends WAIT
+        var readiness = isRepeatRequest ? ScopeReadinessMode.Wait : ScopeReadinessMode.None;
 
-        if (requiresSemantic)
-        {
-            var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
-            var scopeStatus = await client.GetScopeReadinessAsync(uriGlob, cancellationToken).ConfigureAwait(false);
-
-            if (!scopeStatus.IsReady && !isRepeatRequest)
-            {
-                // First time seeing this request while scope not ready - return status and instructions
-                _lastRequestSignature = requestSignature;
-                return ToolResult.Success(RepoQlClientScopeExtensions.FormatScopeNotReadyMessage(scopeStatus, uriGlob));
-            }
-
-            if (!scopeStatus.IsReady && isRepeatRequest)
-            {
-                // Repeat request - wait until scope is ready
-                await client.WaitForScopeAsync(uriGlob, cancellationToken).ConfigureAwait(false);
-            }
-        }
-
-        // Clear the pending request now that we're executing
-        _lastRequestSignature = null;
-
-        // Execute via server
         try
         {
             var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
             var response = await client.ExploreAsync(
                 tokenBudget,
                 breadth,
-                uriGlob,  // Maps to internal 'scope' parameter
+                uriGlob,
                 keywords,
                 boost,
                 penalize,
                 limit,
                 question,
+                readiness,
                 cancellationToken).ConfigureAwait(false);
 
             if (!response.Success)
             {
+                // Not-ready error from NONE — store signature so repeat sends WAIT
+                _lastRequestSignature = requestSignature;
                 return ToolResult.Error($"Error: {response.Error}");
             }
 
+            _lastRequestSignature = null;
             return ToolResult.Success(response.RenderedOutput + orientationFooter);
         }
         catch (Exception ex)
         {
-            if (ex is RepoQlDiagnosticsException diagnosticsException)
-            {
-                return ToolResult.Error($"Error: Search failed. {ExtractErrorMessage(ex)}\n\n{diagnosticsException.Diagnostics}");
-            }
+            _lastRequestSignature = null;
 
-            // For infrastructure errors, append diagnostic information
+            if (ex is RepoQlDiagnosticsException diagnosticsException)
+                return ToolResult.Error($"Error: Search failed. {ExtractErrorMessage(ex)}\n\n{diagnosticsException.Diagnostics}");
+
             if (ErrorClassifier.IsInfrastructureError(ex))
             {
                 var diagnostics = await _selfTestRunner.RunAsync(DiagnosticCollectionMode.Fast, cancellationToken);

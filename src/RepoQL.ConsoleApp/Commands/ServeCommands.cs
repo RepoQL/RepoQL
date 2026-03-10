@@ -11,7 +11,6 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry;
@@ -221,52 +220,19 @@ internal class HostCommands(IAnsiConsole console)
             await DatabaseInitCoordinator.InitializeAsync(app.Services, repo, dbInit.Report, serilogLogger, CancellationToken.None)
                 .ConfigureAwait(false);
 
-            ManifestEmbeddedFileProvider? dashboardProvider = null;
-            // Dashboard: serve embedded static files.
-            // LinkBase="wwwroot" in the csproj should place files under wwwroot/ in the manifest,
-            // but some MSBuild configurations (notably publish with RID) drop the LinkBase, leaving
-            // files at the manifest root. Probe both locations so the dashboard works regardless.
+            var dashboardProvider = DashboardFileProviderResolver.Resolve(
+                typeof(HostState).Assembly,
+                AppContext.BaseDirectory);
+            if (dashboardProvider is not null)
             {
-                var assembly = typeof(HostState).Assembly;
-
-                // Try wwwroot/ subdirectory first (when LinkBase is respected).
-                try
-                {
-                    var sub = new ManifestEmbeddedFileProvider(assembly, "wwwroot");
-                    if (sub.GetFileInfo("index.html").Exists)
-                        dashboardProvider = sub;
-                }
-                catch (InvalidOperationException)
-                {
-                    // "Invalid path: 'wwwroot'" — directory doesn't exist in manifest.
-                }
-
-                // Fallback: files at manifest root (when LinkBase is stripped).
-                if (dashboardProvider is null)
-                {
-                    try
-                    {
-                        var root = new ManifestEmbeddedFileProvider(assembly);
-                        if (root.GetFileInfo("index.html").Exists)
-                            dashboardProvider = root;
-                    }
-                    catch (InvalidOperationException)
-                    {
-                        // No manifest at all.
-                    }
-                }
-
-                if (dashboardProvider is not null)
-                {
-                    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = dashboardProvider });
-                    app.UseStaticFiles(new StaticFileOptions { FileProvider = dashboardProvider });
-                }
-                else
-                {
-                    app.Logger.LogWarning(
-                        "Dashboard index.html not found in embedded resources (tried wwwroot/ and root). " +
-                        "Build/publish RepoQL.ConsoleApp with dashboard assets to enable the web dashboard.");
-                }
+                app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = dashboardProvider });
+                app.UseStaticFiles(new StaticFileOptions { FileProvider = dashboardProvider });
+            }
+            else
+            {
+                app.Logger.LogWarning(
+                    "Dashboard index.html not found in bundle extraction or embedded resources. " +
+                    "Build/publish RepoQL.ConsoleApp with dashboard assets to enable the web dashboard.");
             }
 
             // Always log startup info
@@ -296,7 +262,7 @@ internal class HostCommands(IAnsiConsole console)
             else
             {
                 app.Logger.LogWarning(
-                    "Dashboard SPA fallback is disabled because index.html is not embedded in the host assembly.");
+                    "Dashboard SPA fallback is disabled because no dashboard file provider is available.");
             }
 
             var health = app.Services.GetRequiredService<HealthServiceImpl>();
@@ -323,7 +289,7 @@ internal class HostCommands(IAnsiConsole console)
             {
                 hostState.DashboardUrl = dashboardUrl;
                 HostDiagnosticsStore.TryWriteReport(repo, "dashboard-bind.json",
-                    new { url = dashboardUrl, startedAt = DateTime.UtcNow.ToString("O") });
+                    new DashboardBindReport(dashboardUrl, DateTime.UtcNow.ToString("O")));
                 app.Logger.LogInformation("Dashboard available at {DashboardUrl}", dashboardUrl);
             }
 
@@ -804,3 +770,4 @@ internal class HostCommands(IAnsiConsole console)
     }
 
 }
+

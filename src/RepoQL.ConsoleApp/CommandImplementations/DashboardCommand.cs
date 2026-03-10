@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json.Serialization;
 using RepoQL.Commands;
 using RepoQL.Contracts;
 using RepoQL.ConsoleApp.Diagnostics;
@@ -59,8 +58,6 @@ internal sealed class DashboardCommand
 
         return null;
     }
-
-    private sealed record DashboardBindReport(
-        [property: JsonPropertyName("url")] string? Url,
-        [property: JsonPropertyName("startedAt")] string? StartedAt);
 }
+
+

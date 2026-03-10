@@ -61,7 +61,7 @@ internal sealed class ConfigurationLoaderTests
 
         resolved.Settings.DuckDb.MemoryLimit.Should().BeNull();
         resolved.Settings.Embedding.Mode.Should().BeNull();
-        resolved.Settings.Inference.ApiKey.Should().BeNull();
+        resolved.Settings.Cloud.ApiKey.Should().BeNull();
     }
 
     [Test]

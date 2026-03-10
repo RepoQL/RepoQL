@@ -28,6 +28,8 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
         DuckDB SQL for computation on the indexed repository.
         Use query when you need to COMPUTE (aggregate, filter, join, extract) - not just DISCOVER.
         Use describe and summarize to understand unfamiliar schema
+        
+        RepoQL rewards creativity, use your intuition and experiment
         </CONCEPT>
 
         <DECISION>

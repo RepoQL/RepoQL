@@ -286,9 +286,16 @@
             DependsOnTargets="BuildDashboard"
             BeforeTargets="AssignTargetPaths">
       <ItemGroup>
+        <Content Remove="$(RepositoryRoot)dashboard/dist/**" />
         <EmbeddedResource Remove="$(RepositoryRoot)dashboard/dist/**" />
         <DashboardDistFile Include="$(RepositoryRoot)dashboard/dist/**"
                            Condition="Exists('$(RepositoryRoot)dashboard/dist/index.html')" />
+        <Content Include="@(DashboardDistFile)"
+                 Link="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)"
+                 TargetPath="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="Always"
+                 ExcludeFromSingleFile="false" />
         <EmbeddedResource Include="@(DashboardDistFile)"
                           Link="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)" />
       </ItemGroup>

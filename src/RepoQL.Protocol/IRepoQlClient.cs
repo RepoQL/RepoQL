@@ -139,6 +139,7 @@ public interface IRepoQlClient : IAsyncDisposable
         string? penalize = null,
         int? limit = null,
         string? question = null,
+        ScopeReadinessMode readiness = ScopeReadinessMode.None,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -152,6 +153,8 @@ public interface IRepoQlClient : IAsyncDisposable
         string question,
         string? scope = null,
         int tokenBudget = 2000,
+        string? keywords = null,
+        ScopeReadinessMode readiness = ScopeReadinessMode.None,
         CancellationToken cancellationToken = default);
 
     /// <summary>

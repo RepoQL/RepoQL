@@ -36,6 +36,8 @@ internal sealed class ReadTool(
 
         The power: you don't read whole files. Explore gives you symbol URIs like `file:///src/Auth.cs#symbol=ValidateToken`. 
         Read fetches just that function body. Three symbols across three files? One read call, just the bodies, no waste.
+        
+        RepoQL rewards creativity, use your intuition and experiment
         </WHY>
 
         <CORE>
@@ -52,6 +54,10 @@ internal sealed class ReadTool(
         <MODIFIERS>
         Append ` => modifier` to get a specific view instead of content.
         The URI pattern always controls scope — narrow it to get depth, widen it to get breadth.
+        
+        **structure**: Signatures without bodies—see the shape without reading code.
+        → `file:///src/Auth/**/*.cs => structure` — shape of an entire subsystem in one call
+        → Combines with symbol wildcards: `file:///src/**/*.cs#symbol=*Controller => structure` - signature of all controllers
 
         **tree**: Directory structure with progressive detail.
         → `=> tree: folders` — just directories with file counts (cheapest)
@@ -59,10 +65,6 @@ internal sealed class ReadTool(
         → `=> tree: headlines` — directories + files + one-line summaries
 
         **headline**: One-line summary per file, flat list (no tree structure).
-
-        **structure**: Signatures without bodies—see the shape without reading code.
-        → `file:///src/Auth/**/*.cs => structure` — shape of an entire subsystem in one call
-        → Combines with symbol wildcards: `file:///src/**/*.cs#symbol=*Controller => structure` - signature of all controllers
 
         **content**: Full file with line numbers (explicit default).
 
@@ -208,6 +210,12 @@ internal sealed class ReadTool(
 
         Workflow: explore Inventory → explore Locate → read specific URIs
         </VS_EXPLORE>
+        
+        <GUIDANCE>
+           - Reach for structure first if you know what you are looking for, tree if you don't
+           - uri globs support multiple uris with ; as well as symbol globbing - use this power to your advantage - you can literally use File://**#symbol=get* to find every getter method in the sourcebase 
+           - similar allows you to do strange things with creative scoping like fuzzily finding tests, documentation and duplicates
+        </GUIDANCE>
         """;
 
     [McpServerTool(Name = "read", Title = "Read Content", ReadOnly = true, Idempotent = true, Destructive = false, OpenWorld = false), Description(ReadInstructions)]

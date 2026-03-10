@@ -51,6 +51,77 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
     private readonly RepoQlConfig.InferenceSettings _inferenceSettings;
     private readonly ILogger<RepoQlServiceImpl> _logger;
+
+    /// <summary>System prompt for the explain synthesis LLM call. Shapes output into Answer/Evidence/Nuance.</summary>
+    private const string ExplainSystemPrompt = """
+        # Repository Analysis Agent
+
+        You're augmenting another AI agent's codebase exploration. They're making real decisions—writing code, explaining systems, choosing architectures. They see only your response, not the underlying data. Your synthesis becomes their understanding, your confidence becomes their confidence.
+
+        ## Capsule: TruthStakes
+        **Invariant**: Claims become code; wrong information propagates into systems.
+        **Example**: Caller asks "does this validate input?" You see partial validation. Say "validates length but not format—SQL injection possible" not just "yes, it validates."
+        //BOUNDARY: When uncertain, say so explicitly rather than hedging with weak language.
+
+        ## Capsule: EvidenceRichness
+        **Invariant**: Generous inline snippets now save costly follow-ups later.
+        **Example**: Don't say "auth is in AuthService.cs:42". Show the URI from the context and include the snippet:
+        <uri from context>#line=42,48
+        ---
+        public bool ValidateToken(string token) {
+            return _jwt.Verify(token, _secret);
+        }
+        ---
+        //BOUNDARY: The caller cannot fetch more data. This response is their only view.
+        //BOUNDARY: Use the exact URIs from the supplied context — they may be file://, help://, github://, or other schemes. Never fabricate URIs.
+
+        ## Capsule: GapDetection
+        **Invariant**: Surface what's missing or anomalous—the caller can't see these patterns.
+        **Example**: "Auth checks user permissions, but I don't see where admin permissions are defined. Expected an AdminRole enum or similar."
+        //BOUNDARY: Patterns of absence matter as much as patterns of presence.
+
+        ## Capsule: VerifiableSynthesis
+        **Invariant**: Connect dots AND show your work—the caller needs both insight and evidence trail.
+        //BOUNDARY: Synthesis without evidence is unverifiable; evidence without synthesis wastes their time.
+
+        ## Capsule: UnknownUnknowns
+        **Invariant**: The caller asked one question but may need adjacent answers.
+        **Example**: Question about AuthService? Note "AuthService depends on TokenCache which isn't in your query—may affect token lifetime behavior."
+
+        ## Capsule: AgentEmpathy
+        **Invariant**: The caller is an AI agent like you—answer as you'd want to be answered.
+        //BOUNDARY: They're probably mid-task, not starting fresh. Context they already have shouldn't be repeated; context they're missing should be supplied.
+
+        ---
+
+        ## Response Format
+
+        <Answer>
+        Synthesis answering the question. If data doesn't fully answer, say what's missing and why.
+        </Answer>
+
+        <Evidence>
+        Generous snippets grounding your claims. Annotate conclusions alongside snippets.
+        Always provide snippets verbatim, or explicitly note when paraphrasing.
+        Use the exact URIs from the supplied context (file://, help://, github://, etc.) — never invent URIs.
+        </Evidence>
+
+        <Nuance>
+        (Optional—only if it genuinely adds value)
+        - Context they may not know they need
+        - Gaps or anomalies worth flagging
+        - Related files worth exploring
+        </Nuance>
+
+        If data doesn't answer, say so in Answer.
+
+        ## Remember
+        - Every claim should have evidence
+        - Gaps and anomalies should be surfaced
+        - Be careful about stating something doesn't exist vs wasn't in search results
+        - Misleading or unsubstantiated claims are much more damaging than no claims
+        """;
+
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
     {
         TypeInfoResolver = new DefaultJsonTypeInfoResolver()
@@ -1227,13 +1298,18 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
         try
         {
+            var scope = string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope;
+            var notReady = await CheckScopeReadinessAsync(scope, request.Readiness, context.CancellationToken).ConfigureAwait(false);
+            if (notReady is not null)
+                return new ExploreResponse { Success = false, Error = notReady };
+
             var status = GetTrustSignal(0, context.CancellationToken);
 
             // Build query
             var query = new ExploreQuery(
                 TokenBudget: request.TokenBudget,
                 Breadth: Math.Clamp(request.Breadth > 0 ? request.Breadth : 5, 1, 10),
-                Scope: string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope,
+                Scope: scope,
                 Keywords: string.IsNullOrWhiteSpace(request.Keywords) ? null : request.Keywords,
                 Boost: string.IsNullOrWhiteSpace(request.Boost) ? null : request.Boost,
                 Penalize: string.IsNullOrWhiteSpace(request.Penalize) ? null : request.Penalize,
@@ -1315,27 +1391,39 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 };
             }
 
-            var status = GetTrustSignal(0, context.CancellationToken);
             var scope = string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope;
+            var notReady = await CheckScopeReadinessAsync(scope, request.Readiness, context.CancellationToken).ConfigureAwait(false);
+            if (notReady is not null)
+                return new ExplainResponse { Success = false, Error = notReady };
+
+            var status = GetTrustSignal(0, context.CancellationToken);
             if (_inferenceProvider?.Available != true)
             {
                 return new ExplainResponse
                 {
                     Success = false,
-                    Error = "Inference service not configured (set inference.service_url and inference.api_key)"
+                    Error = "Inference service not configured (set inference.service_url and cloud.api_key)"
                 };
             }
 
-            var extracted = await _inferenceProvider.CompleteAsync(
-                new InferenceRequest
-                {
-                    Prompt = BuildKeywordExtractionPrompt(request.Question),
-                    Effort = InferenceEffort.Low
-                },
-                context.CancellationToken).ConfigureAwait(false);
-            var searchKeywords = string.IsNullOrWhiteSpace(extracted.Content)
-                ? request.Question
-                : extracted.Content.Trim();
+            string searchKeywords;
+            if (!string.IsNullOrWhiteSpace(request.Keywords))
+            {
+                searchKeywords = request.Keywords.Trim();
+            }
+            else
+            {
+                var extracted = await _inferenceProvider.CompleteAsync(
+                    new InferenceRequest
+                    {
+                        Prompt = BuildKeywordExtractionPrompt(request.Question),
+                        Effort = InferenceEffort.Low
+                    },
+                    context.CancellationToken).ConfigureAwait(false);
+                searchKeywords = string.IsNullOrWhiteSpace(extracted.Content)
+                    ? request.Question
+                    : extracted.Content.Trim();
+            }
 
             var query = new ExploreQuery(
                 TokenBudget: 50_000,
@@ -1348,10 +1436,18 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
             var result = await _exploreOrchestrator.ExecuteAsync(query, status, context.CancellationToken, sw).ConfigureAwait(false);
 
+            var treeUri = string.IsNullOrWhiteSpace(scope) ? "file://** => tree: folders" : $"{scope} => tree: folders";
+            var treeResult = await _readOrchestrator.ExecuteAsync(treeUri, 8_000, status, context.CancellationToken).ConfigureAwait(false);
+            var treeContext = treeResult.Success && !string.IsNullOrWhiteSpace(treeResult.RenderedOutput)
+                ? $"## Codebase structure\n\n{treeResult.RenderedOutput}\n\n## Search results\n\n{result.RenderedOutput}"
+                : result.RenderedOutput;
+
+            var toolCallLog = new List<(string Uri, int Tokens, bool IsError)>();
             var synthesized = await _inferenceProvider.CompleteWithToolsAsync(
                 new InferenceRequest
                 {
-                    Context = result.RenderedOutput,
+                    System = ExplainSystemPrompt,
+                    Context = treeContext,
                     Prompt = request.Question,
                     Effort = InferenceEffort.High,
                     MaxTokens = Math.Max(500, request.TokenBudget)
@@ -1362,21 +1458,34 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                     ToolTokenBudget = _inferenceSettings.ToolTokenBudget,
                     MaxRounds = _inferenceSettings.MaxRounds
                 },
-                (toolCall, ct) => ExecuteExplainReadToolAsync(toolCall, status, ct),
+                async (toolCall, ct) =>
+                {
+                    var uri = TryExtractToolCallUri(toolCall);
+                    var toolResult = await ExecuteExplainReadToolAsync(toolCall, status, ct).ConfigureAwait(false);
+                    toolCallLog.Add((uri ?? toolCall.Tool, toolResult.TokensUsed, toolResult.IsError));
+                    return toolResult;
+                },
                 context.CancellationToken).ConfigureAwait(false);
 
             if (!string.IsNullOrWhiteSpace(synthesized.Reasoning))
                 _logger.LogDebug("Explain reasoning trace: {Reasoning}", synthesized.Reasoning);
 
-            var footer = ExtractBudgetFooter(result.RenderedOutput);
-            var renderedOutput = string.IsNullOrWhiteSpace(footer)
-                ? $"## {request.Question}\n\n{synthesized.Content}"
-                : $"## {request.Question}\n\n{synthesized.Content}\n\n---\n{footer}";
+            var contextTokens = TokenEstimator.EstimateTokens(result.RenderedOutput);
+            var synthesis = new ExplainSynthesis
+            {
+                InputTokens = synthesized.InputTokens,
+                OutputTokens = synthesized.OutputTokens,
+                MatchCount = result.Results.Count,
+                ContextTokens = contextTokens
+            };
+            foreach (var (uri, tokens, isError) in toolCallLog)
+                synthesis.ToolCalls.Add(new ExplainToolCall { Uri = uri, TokensUsed = tokens, IsError = isError });
 
             return new ExplainResponse
             {
                 Success = true,
-                RenderedOutput = renderedOutput,
+                RenderedOutput = $"## {request.Question}\n\n{synthesized.Content}",
+                Synthesis = synthesis,
                 Status = new ExploreIndexerStatus
                 {
                     IndexPending = status.IndexPending,
@@ -1454,6 +1563,70 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 Error = ex.Message
             };
         }
+    }
+
+    /// <summary>
+    /// Check scope readiness per the ScopeReadiness enum.
+    /// Returns null if ready (or forced), an error message if not ready and readiness is NONE.
+    /// Blocks if readiness is WAIT until all in-scope files are indexed + have structure embeddings.
+    /// </summary>
+    private async Task<string?> CheckScopeReadinessAsync(
+        string? scope,
+        ScopeReadinessMode readiness,
+        CancellationToken ct)
+    {
+        if (_uriRegistry is null)
+            return null; // No registry — can't check, proceed optimistically
+
+        var scopeStatus = _uriRegistry.CheckScope(scope);
+        if (scopeStatus.IsIndexed && scopeStatus.PendingEmbedding.Count == 0)
+            return null; // Fully ready
+
+        return readiness switch
+        {
+            ScopeReadinessMode.Force => null,
+
+            ScopeReadinessMode.Wait => await WaitForScopeReadyAsync(scope, ct).ConfigureAwait(false),
+
+            // NONE (default) — fail with actionable error
+            _ => FormatScopeNotReadyError(scopeStatus, scope)
+        };
+    }
+
+    private async Task<string?> WaitForScopeReadyAsync(string? scope, CancellationToken ct)
+    {
+        var delay = TimeSpan.FromMilliseconds(200);
+        var maxDelay = TimeSpan.FromSeconds(2);
+
+        while (!ct.IsCancellationRequested)
+        {
+            var status = _uriRegistry!.CheckScope(scope);
+            if (status.IsIndexed && status.PendingEmbedding.Count == 0)
+                return null;
+
+            await Task.Delay(delay, ct).ConfigureAwait(false);
+            delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, maxDelay.Ticks));
+        }
+
+        ct.ThrowIfCancellationRequested();
+        return null; // unreachable
+    }
+
+    private static string FormatScopeNotReadyError(ScopeReadiness scopeStatus, string? scope)
+    {
+        var parts = new List<string>();
+        parts.Add($"Scope not ready: {scope ?? "(all files)"}");
+        parts.Add($"{scopeStatus.TotalFiles} files in scope, {scopeStatus.IndexedCount} indexed, {scopeStatus.EmbeddedCount} embedded");
+
+        if (scopeStatus.PendingIndex.Count > 0)
+            parts.Add($"{scopeStatus.PendingIndex.Count} pending indexing");
+        if (scopeStatus.PendingEmbedding.Count > 0)
+            parts.Add($"{scopeStatus.PendingEmbedding.Count} pending embedding");
+        if (scopeStatus.FailedFiles.Count > 0)
+            parts.Add($"{scopeStatus.FailedFiles.Count} failed");
+
+        parts.Add("Repeat the request to wait for readiness.");
+        return string.Join(". ", parts);
     }
 
     private TrustSignal GetTrustSignal(long executionTimeMs, CancellationToken ct)
@@ -1582,7 +1755,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         {
             args = JsonSerializer.Deserialize<ExplainReadToolArguments>(toolCall.ArgumentsJson, PreviewJsonOptions);
         }
-        catch (JsonException ex)
+        catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
             var content = $"Malformed read tool arguments: {ex.Message}";
             return new ToolCallResult
@@ -1657,17 +1830,17 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         }
     }
 
-    private static string ExtractBudgetFooter(string renderedOutput)
+    private static string? TryExtractToolCallUri(ToolCall toolCall)
     {
-        var lines = renderedOutput.Split('\n');
-        for (var i = lines.Length - 1; i >= 0; i--)
+        try
         {
-            var trimmed = lines[i].TrimStart();
-            if (trimmed.StartsWith('[') && trimmed.Contains("tok", StringComparison.Ordinal))
-                return trimmed;
+            var args = JsonSerializer.Deserialize<ExplainReadToolArguments>(toolCall.ArgumentsJson, PreviewJsonOptions);
+            return args?.UriGlob;
         }
-
-        return string.Empty;
+        catch
+        {
+            return null;
+        }
     }
 
     private sealed record ExplainReadToolArguments(string? UriGlob, int TokenBudget);

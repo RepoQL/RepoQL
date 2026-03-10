@@ -154,13 +154,14 @@ public static class RepoIndexerServiceCollectionExtensions
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
             var settings = config.Inference;
+            var apiKey = config.Cloud.ApiKey;
             if (string.IsNullOrWhiteSpace(settings.ServiceUrl) ||
-                string.IsNullOrWhiteSpace(settings.ApiKey))
+                string.IsNullOrWhiteSpace(apiKey))
                 return new DisabledInferenceProvider();
 
             return new RepoQL.Inference.Client.InferenceClient(
                 settings.ServiceUrl,
-                settings.ApiKey,
+                apiKey,
                 sp.GetService<ILogger<RepoQL.Inference.Client.InferenceClient>>());
         });
 
@@ -180,13 +181,14 @@ public static class RepoIndexerServiceCollectionExtensions
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
             var remote = config.Embedding.Remote;
-            if (string.IsNullOrWhiteSpace(remote.Url) || string.IsNullOrWhiteSpace(remote.ApiKey))
+            var apiKey = config.Cloud.ApiKey;
+            if (string.IsNullOrWhiteSpace(remote.Url) || string.IsNullOrWhiteSpace(apiKey))
                 return null;
 
             var logger = sp.GetService<ILogger<RepoQL.Embedding.Client.GrpcEmbeddingProvider>>();
             var timeout = remote.TimeoutSeconds ?? 30;
             return new RepoQL.Embedding.Client.GrpcEmbeddingProvider(
-                remote.Url, remote.ApiKey, timeout, logger)
+                remote.Url, apiKey, timeout, logger)
             {
                 Source = ResolveEmbeddingSource(resolvedRoot, logger)
             };

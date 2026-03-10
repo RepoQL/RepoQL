@@ -7,5 +7,6 @@
   <assembly fullname="repoql">
     <type fullname="RepoQL.ConsoleApp.CommandImplementations.*" preserve="all" />
     <type fullname="RepoQL.ConsoleApp.Tools.*" preserve="all" />
+    <type fullname="RepoQL.ConsoleApp.Host.RepoQlServiceImpl/ExplainReadToolArguments" preserve="all" />
   </assembly>
 </linker>
