@@ -235,6 +235,72 @@ jobs:
           source-dir: artifacts/version-marker
           destination-dir: latest
 
+  purge-cloudflare-cache:
+    needs: [version-check, publish-r2]
+    if: github.event_name == 'workflow_dispatch' || needs.version-check.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+      CLOUDFLARE_DOWNLOAD_HOST: ${{ vars.CLOUDFLARE_DOWNLOAD_HOST }}
+      CLOUDFLARE_CACHE_PURGE_TOKEN: ${{ secrets.CLOUDFLARE_CACHE_PURGE_TOKEN }}
+    steps:
+      - name: Check cache purge configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=()
+          present=0
+
+          for name in CLOUDFLARE_ZONE_ID CLOUDFLARE_DOWNLOAD_HOST CLOUDFLARE_CACHE_PURGE_TOKEN; do
+            if [[ -n "${!name:-}" ]]; then
+              present=$((present + 1))
+            else
+              missing+=("$name")
+            fi
+          done
+
+          if [[ $present -eq 0 ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Cloudflare cache purge not configured; skipping."
+            exit 0
+          fi
+
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "Partial Cloudflare cache purge configuration detected." >&2
+            printf 'Missing: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Purge latest download URLs from Cloudflare cache
+        if: steps.config.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          payload=$(jq -nc --arg host "$CLOUDFLARE_DOWNLOAD_HOST" '{
+            files: [
+              ("https://" + $host + "/latest/version.txt"),
+              ("https://" + $host + "/latest/linux-x64/repoql"),
+              ("https://" + $host + "/latest/linux-arm64/repoql"),
+              ("https://" + $host + "/latest/osx-arm64/repoql"),
+              ("https://" + $host + "/latest/win-x64/repoql.exe"),
+              ("https://" + $host + "/latest/win-arm64/repoql.exe")
+            ]
+          }')
+
+          response=$(curl --silent --show-error --fail \
+            --request POST \
+            --url "https://api.cloudflare.com/client/v4/zones/${CLOUDFLARE_ZONE_ID}/purge_cache" \
+            --header "Authorization: Bearer ${CLOUDFLARE_CACHE_PURGE_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data "$payload")
+
+          echo "$response" | jq .
+
   skip-notice:
     needs: version-check
     # Only emit skip notice for automated triggers; always run when manually queued (workflow_dispatch).
