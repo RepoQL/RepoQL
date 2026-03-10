@@ -165,6 +165,113 @@ jobs:
             echo "REPOQL_BINARY_PATH=$binary_path"
             echo "REPOQL_BINARY_NAME=$binary_name"
           } >> "$GITHUB_ENV"
+      - name: Smoke test ${{ matrix.rid }} binary
+        shell: pwsh
+        env:
+          RID: ${{ matrix.rid }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Write-GroupedLog([string]$title, [string]$content) {
+            Write-Host "::group::$title"
+            if ([string]::IsNullOrWhiteSpace($content)) {
+              Write-Host "(empty)"
+            }
+            else {
+              Write-Host $content
+            }
+            Write-Host "::endgroup::"
+          }
+
+          function Read-TextFile([string]$path) {
+            if (Test-Path $path) {
+              return [System.IO.File]::ReadAllText($path)
+            }
+
+            return ""
+          }
+
+          function Stop-RepoQlHost([string]$repoRoot) {
+            $lockPath = Join-Path $repoRoot ".repoql/host.lock"
+            if (-not (Test-Path $lockPath)) {
+              return
+            }
+
+            $lockContent = [System.IO.File]::ReadAllText($lockPath)
+            $match = [regex]::Match($lockContent, 'PID:(\d+)')
+            if (-not $match.Success) {
+              return
+            }
+
+            $pid = [int]$match.Groups[1].Value
+            try {
+              $process = Get-Process -Id $pid -ErrorAction Stop
+              Stop-Process -Id $pid -Force -ErrorAction Stop
+              $process.WaitForExit(10000) | Out-Null
+            }
+            catch {
+              Write-Host "Host cleanup warning: $($_.Exception.Message)"
+            }
+          }
+
+          $repoRoot = Join-Path $env:RUNNER_TEMP ("repoql-smoke-" + $env:RID)
+          if (Test-Path $repoRoot) {
+            Remove-Item -Recurse -Force $repoRoot
+          }
+
+          New-Item -ItemType Directory -Path $repoRoot | Out-Null
+          [System.IO.File]::WriteAllText((Join-Path $repoRoot 'README.md'), "# Smoke test`n")
+
+          $hostLogPath = Join-Path $repoRoot '.repoql/host.log'
+          $hostStderrPath = Join-Path $repoRoot '.repoql/host.stderr.log'
+          $binaryPath = $env:REPOQL_BINARY_PATH
+
+          $stdoutFile = Join-Path $repoRoot 'smoke.stdout.log'
+          $stderrFile = Join-Path $repoRoot 'smoke.stderr.log'
+          $stdout = ""
+          $stderr = ""
+          $hostLog = ""
+          $hostStderr = ""
+
+          try {
+            $process = Start-Process `
+              -FilePath $binaryPath `
+              -ArgumentList @('query', 'SELECT 1 AS ok') `
+              -WorkingDirectory $repoRoot `
+              -RedirectStandardOutput $stdoutFile `
+              -RedirectStandardError $stderrFile `
+              -PassThru
+
+            if (-not $process.WaitForExit(60000)) {
+              try { Stop-Process -Id $process.Id -Force -ErrorAction Stop } catch {}
+              throw "Smoke test timed out after 60 seconds."
+            }
+
+            $stdout = Read-TextFile $stdoutFile
+            $stderr = Read-TextFile $stderrFile
+            $hostLog = Read-TextFile $hostLogPath
+            $hostStderr = Read-TextFile $hostStderrPath
+
+            if ($process.ExitCode -ne 0) {
+              throw "Smoke test exited with code $($process.ExitCode)."
+            }
+
+            if ($stdout -notmatch '(^|\s)1(\s|$)') {
+              throw "Smoke test output did not contain the expected query result."
+            }
+          }
+          finally {
+            $stdout = if ([string]::IsNullOrWhiteSpace($stdout)) { Read-TextFile $stdoutFile } else { $stdout }
+            $stderr = if ([string]::IsNullOrWhiteSpace($stderr)) { Read-TextFile $stderrFile } else { $stderr }
+            $hostLog = if ([string]::IsNullOrWhiteSpace($hostLog)) { Read-TextFile $hostLogPath } else { $hostLog }
+            $hostStderr = if ([string]::IsNullOrWhiteSpace($hostStderr)) { Read-TextFile $hostStderrPath } else { $hostStderr }
+
+            Write-GroupedLog "Smoke stdout ($env:RID)" $stdout
+            Write-GroupedLog "Smoke stderr ($env:RID)" $stderr
+            Write-GroupedLog "Host log ($env:RID)" $hostLog
+            Write-GroupedLog "Host stderr ($env:RID)" $hostStderr
+            Stop-RepoQlHost $repoRoot
+          }
       - name: Upload ${{ matrix.rid }} binary artifact
         uses: actions/upload-artifact@v4
         with:
