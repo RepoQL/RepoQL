@@ -30,20 +30,20 @@ public sealed class GrokClientTests
             })
             .Returns(new GetChatCompletionResponse
             {
-                Choices =
+                Outputs =
                 {
                     new CompletionOutput
                     {
-                        Message = new Message
+                        Message = new CompletionMessage
                         {
-                            Content = { new Content { Text = "answer" } },
-                            ReasoningContent = { new Content { Text = "reasoning" } },
+                            Content = "answer",
+                            ReasoningContent = "reasoning",
                             EncryptedContent = "ciphertext"
                         },
-                        FinishReason = FinishReason.Stop
+                        FinishReason = (FinishReason)3
                     }
                 },
-                Usage = new XaiApi.Usage
+                Usage = new SamplingUsage
                 {
                     PromptTokens = 12,
                     CompletionTokens = 7,
@@ -85,15 +85,16 @@ public sealed class GrokClientTests
         await Assert.That(capturedRequest!.Model).IsEqualTo("grok-4-1-fast-reasoning");
         await Assert.That(capturedRequest.MaxTokens).IsEqualTo(123);
         await Assert.That(capturedRequest.Messages.Count).IsEqualTo(5);
-        await Assert.That(capturedRequest.Messages[0].Role).IsEqualTo(MessageRole.Developer);
-        await Assert.That(capturedRequest.Messages[2].Role).IsEqualTo(MessageRole.Assistant);
-        await Assert.That(capturedRequest.Messages[2].FunctionCalls[0].Name).IsEqualTo("read");
+        await Assert.That(capturedRequest.Messages[0].Role).IsEqualTo((MessageRole)6);
+        await Assert.That(capturedRequest.Messages[2].Role).IsEqualTo((MessageRole)2);
+        await Assert.That(capturedRequest.Messages[2].ToolCalls[0].Function.Name).IsEqualTo("read");
         await Assert.That(capturedRequest.Messages[2].EncryptedContent).IsEqualTo("previous-cipher");
-        await Assert.That(capturedRequest.Messages[3].Role).IsEqualTo(MessageRole.Tool);
+        await Assert.That(capturedRequest.Messages[2].ReasoningContent).IsEqualTo("assistant reasoning");
+        await Assert.That(capturedRequest.Messages[3].Role).IsEqualTo((MessageRole)5);
         await Assert.That(capturedRequest.Messages[3].ToolCallId).IsEqualTo("call-1");
         await Assert.That(capturedRequest.Tools.Count).IsEqualTo(1);
-        await Assert.That(capturedRequest.ToolChoice!.Mode).IsEqualTo(ToolMode.Auto);
-        await Assert.That(capturedRequest.Include).Contains("reasoning.encrypted_content");
+        await Assert.That(capturedRequest.ToolChoice!.Mode).IsEqualTo((ToolMode)1);
+        await Assert.That(capturedRequest.UseEncryptedContent).IsTrue();
         await Assert.That(capturedHeaders!.GetValue("authorization")).IsEqualTo("Bearer grok-secret");
 
         await Assert.That(result.Content).IsEqualTo("answer");
@@ -123,26 +124,30 @@ public sealed class GrokClientTests
                 A<CancellationToken>.Ignored))
             .Returns(new GetChatCompletionResponse
             {
-                Choices =
+                Outputs =
                 {
                     new CompletionOutput
                     {
-                        Message = new Message
+                        Message = new CompletionMessage
                         {
-                            FunctionCalls =
+                            ToolCalls =
                             {
-                                new FunctionCall
+                                new ToolCall
                                 {
                                     Id = "call-1",
-                                    Name = "read",
-                                    Arguments = "{\"uri\":\"file:///src/a.cs\",\"tokenBudget\":200}"
+                                    Type = (ToolCallType)1,
+                                    Function = new FunctionCall
+                                    {
+                                        Name = "read",
+                                        Arguments = "{\"uri\":\"file:///src/a.cs\",\"tokenBudget\":200}"
+                                    }
                                 }
                             }
                         },
-                        FinishReason = FinishReason.ToolCalls
+                        FinishReason = (FinishReason)4
                     }
                 },
-                Usage = new XaiApi.Usage()
+                Usage = new SamplingUsage()
             });
 
         var result = await client.CompleteAsync(

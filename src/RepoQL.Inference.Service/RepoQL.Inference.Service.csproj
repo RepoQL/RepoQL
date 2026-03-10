@@ -31,7 +31,10 @@
 
   <ItemGroup>
     <Protobuf Include="Protos\xai\api\v1\chat.proto" GrpcServices="Client" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\deferred.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\documents.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
     <Protobuf Include="Protos\xai\api\v1\image.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\sample.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
     <Protobuf Include="Protos\xai\api\v1\usage.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
   </ItemGroup>
 

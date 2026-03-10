@@ -41,7 +41,7 @@ internal sealed class GrokClient : IGrokClient
         var grpcRequest = new GetCompletionsRequest
         {
             Model = settings.Model,
-            Temperature = settings.Temperature,
+            Temperature = (float)settings.Temperature,
             ParallelToolCalls = request.ParallelToolCalls
         };
 
@@ -73,7 +73,7 @@ internal sealed class GrokClient : IGrokClient
         }
 
         if (request.IncludeEncryptedReasoningContent)
-            grpcRequest.Include.Add("reasoning.encrypted_content");
+            grpcRequest.UseEncryptedContent = true;
 
         var headers = new Metadata
         {
@@ -94,15 +94,15 @@ internal sealed class GrokClient : IGrokClient
                 DateTime.UtcNow.AddSeconds(_options.TimeoutSeconds),
                 cancellationToken).ConfigureAwait(false);
 
-            var choice = response.Choices.FirstOrDefault()
+            var choice = response.Outputs.FirstOrDefault()
                 ?? throw new GrokApiException("Grok returned no completion choices", StatusCode.Internal);
 
-            var content = JoinText(choice.Message?.Content);
-            var reasoning = JoinText(choice.Message?.ReasoningContent);
-            var toolCalls = choice.Message?.FunctionCalls.Select(static call => new GrokFunctionCall(
+            var content = choice.Message?.Content ?? "";
+            var reasoning = choice.Message?.ReasoningContent ?? "";
+            var toolCalls = choice.Message?.ToolCalls.Select(static call => new GrokFunctionCall(
                 call.Id,
-                call.Name,
-                call.Arguments)).ToArray() ?? [];
+                call.Function?.Name ?? "",
+                call.Function?.Arguments ?? "")).ToArray() ?? [];
             var usage = response.Usage is null
                 ? new Usage()
                 : new Usage
@@ -152,7 +152,7 @@ internal sealed class GrokClient : IGrokClient
             message.Content.Add(new Content { Text = source.Content });
 
         if (!string.IsNullOrWhiteSpace(source.Reasoning))
-            message.ReasoningContent.Add(new Content { Text = source.Reasoning });
+            message.ReasoningContent = source.Reasoning;
 
         if (!string.IsNullOrWhiteSpace(source.EncryptedContent))
             message.EncryptedContent = source.EncryptedContent;
@@ -164,11 +164,15 @@ internal sealed class GrokClient : IGrokClient
         {
             foreach (var functionCall in source.FunctionCalls)
             {
-                message.FunctionCalls.Add(new FunctionCall
+                message.ToolCalls.Add(new ToolCall
                 {
                     Id = functionCall.Id,
-                    Name = functionCall.Name,
-                    Arguments = functionCall.ArgumentsJson
+                    Type = (ToolCallType)1,
+                    Function = new FunctionCall
+                    {
+                        Name = functionCall.Name,
+                        Arguments = functionCall.ArgumentsJson
+                    }
                 });
             }
         }
@@ -180,11 +184,11 @@ internal sealed class GrokClient : IGrokClient
     {
         return role switch
         {
-            GrokMessageRole.User => MessageRole.User,
-            GrokMessageRole.Assistant => MessageRole.Assistant,
-            GrokMessageRole.Developer => MessageRole.Developer,
-            GrokMessageRole.Tool => MessageRole.Tool,
-            _ => MessageRole.User
+            GrokMessageRole.User => (MessageRole)1,
+            GrokMessageRole.Assistant => (MessageRole)2,
+            GrokMessageRole.Developer => (MessageRole)6,
+            GrokMessageRole.Tool => (MessageRole)5,
+            _ => (MessageRole)1
         };
     }
 
@@ -192,30 +196,18 @@ internal sealed class GrokClient : IGrokClient
     {
         return mode switch
         {
-            GrokToolMode.Required => ToolMode.Required,
-            GrokToolMode.None => ToolMode.None,
-            _ => ToolMode.Auto
+            GrokToolMode.Required => (ToolMode)3,
+            GrokToolMode.None => (ToolMode)2,
+            _ => (ToolMode)1
         };
-    }
-
-    private static string JoinText(IEnumerable<Content>? content)
-    {
-        if (content is null)
-            return "";
-
-        return string.Join(
-            "\n",
-            content
-                .Where(static item => !string.IsNullOrWhiteSpace(item.Text))
-                .Select(static item => item.Text.Trim()));
     }
 
     private static StopReason MapStopReason(FinishReason finishReason)
     {
         return finishReason switch
         {
-            FinishReason.Length => StopReason.MaxTokens,
-            FinishReason.ToolCalls => StopReason.Stop,
+            (FinishReason)1 => StopReason.MaxTokens,
+            (FinishReason)4 => StopReason.Stop,
             _ => StopReason.Stop
         };
     }
