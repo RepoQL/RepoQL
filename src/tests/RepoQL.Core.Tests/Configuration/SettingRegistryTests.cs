@@ -14,7 +14,8 @@ internal sealed class SettingRegistryTests
         registry.All.Should().NotBeEmpty();
         registry.Settings.Should().ContainKey("duckdb.memory_limit");
         registry.Settings.Should().ContainKey("embedding.mode");
-        registry.Settings.Should().ContainKey("llm.api_key");
+        registry.Settings.Should().ContainKey("inference.api_key");
+        registry.Settings.Should().ContainKey("inference.service_url");
         registry.Settings.Should().ContainKey("host.idle_grace_seconds");
         registry.Settings.Should().ContainKey("cache.size_limit");
         registry.Settings.Should().ContainKey("find.initial_candidate_limit");
@@ -57,9 +58,9 @@ internal sealed class SettingRegistryTests
         memLimit.Should().NotBeNull();
         memLimit!.LegacyEnvVar.Should().Be("DUCKDB_MEMORY_LIMIT");
 
-        var apiKey = registry.TryGet("llm.api_key");
+        var apiKey = registry.TryGet("inference.api_key");
         apiKey.Should().NotBeNull();
-        apiKey!.LegacyEnvVar.Should().Be("OPENROUTER_API_KEY");
+        apiKey!.LegacyEnvVar.Should().BeNull();
     }
 
     [Test]
@@ -81,7 +82,7 @@ internal sealed class SettingRegistryTests
     {
         var registry = SettingRegistry.Build();
 
-        var apiKey = registry.TryGet("llm.api_key");
+        var apiKey = registry.TryGet("inference.api_key");
         apiKey.Should().NotBeNull();
         apiKey!.Sensitive.Should().BeTrue();
 
@@ -140,7 +141,8 @@ internal sealed class SettingRegistryTests
     [Arguments("duckdb.memory_limit", "REPOQL_DUCKDB_MEMORY_LIMIT")]
     [Arguments("embedding.mode", "REPOQL_EMBEDDING_MODE")]
     [Arguments("ort.provider", "REPOQL_ORT_PROVIDER")]
-    [Arguments("llm.api_key", "REPOQL_LLM_API_KEY")]
+    [Arguments("inference.api_key", "REPOQL_INFERENCE_API_KEY")]
+    [Arguments("inference.service_url", "REPOQL_INFERENCE_SERVICE_URL")]
     public void DeriveEnvVar_Produces_Correct_Name(string key, string expected)
     {
         SettingRegistry.DeriveEnvVar(key).Should().Be(expected);

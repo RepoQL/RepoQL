@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Core.Operations;
 
 namespace RepoQL.Data.DuckDB.Tests;
@@ -20,7 +21,7 @@ public class OperationsUdfTests : IDisposable
 
         var services = new ServiceCollection();
         services.AddSingleton<IEmbeddingProvider>(new TestEmbeddingProvider());
-        services.AddSingleton<ILlmProvider>(new TestLlmProvider());
+        services.AddSingleton<IInferenceProvider>(new TestInferenceProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
         services.AddSingleton(_registry);
         services.AddSingleton<IOperationManager>(_operationManager);
@@ -220,17 +221,18 @@ public class OperationsUdfTests : IDisposable
             => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
     }
 
-    private class TestLlmProvider : ILlmProvider
+    private sealed class TestInferenceProvider : IInferenceProvider
     {
-        public bool Enabled => false;
-        public string Model => "disabled";
-        public Task<string> SummarizeAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
-            => Task.FromResult("LLM disabled");
-        public Task<LlmSummaryResult> SummarizeWithReasoningAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
-            => Task.FromResult(new LlmSummaryResult("LLM disabled"));
-        public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
-            => Task.FromResult("LLM disabled");
-        public Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
-            => Task.FromResult(string.Empty);
+        public bool Available => false;
+
+        public Task<InferenceResult> CompleteAsync(InferenceRequest request, CancellationToken ct = default)
+            => Task.FromResult(new InferenceResult { Content = "Inference disabled" });
+
+        public Task<InferenceResult> CompleteWithToolsAsync(
+            InferenceRequest request,
+            ToolOptions toolOptions,
+            Func<ToolCall, CancellationToken, Task<ToolCallResult>> executeTool,
+            CancellationToken ct = default)
+            => CompleteAsync(request, ct);
     }
 }

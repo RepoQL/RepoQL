@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>repoql-inference</AssemblyName>
+    <PublishProfile>DefaultContainer</PublishProfile>
+    <ContainerRepository>repoql-inference</ContainerRepository>
+    <ContainerFamily>noble</ContainerFamily>
+    <PublishTrimmed>false</PublishTrimmed>
+    <UserSecretsId>a880b957-d61f-4e23-9dc4-6ea0a9b4bb9b</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ContainerPort Include="8080" Type="tcp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.AspNetCore" />
+    <PackageReference Include="Grpc.Net.Client" />
+    <PackageReference Include="OpenTelemetry" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RepoQL.Inference.Proto\RepoQL.Inference.Proto.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\xai\api\v1\chat.proto" GrpcServices="Client" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\image.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\usage.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RepoQL.Inference.Service.Tests" />
+  </ItemGroup>
+
+</Project>

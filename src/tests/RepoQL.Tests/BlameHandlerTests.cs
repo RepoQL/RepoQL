@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
 using RepoQL.Read;
@@ -220,7 +221,7 @@ internal sealed class BlameHandlerTests
             services.AddSingleton(RepoConfig);
             services.AddSingleton<UriRegistry>();
             services.AddSingleton<IEmbeddingProvider?>(sp => null);
-            services.AddSingleton<ILlmProvider?>(sp => null);
+            services.AddSingleton<IInferenceProvider?>(sp => null);
             services.AddSingleton<IMcpToolCaller?>(sp => null);
             var provider = services.BuildServiceProvider();
 

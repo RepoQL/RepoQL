@@ -41,7 +41,7 @@
     <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
     <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
     <ProjectReference Include="..\RepoQL.Mcp.Client\RepoQL.Mcp.Client.csproj" />
-    <ProjectReference Include="..\RepoQL.LLM.Client\RepoQL.LLM.Client.csproj" />
+    <ProjectReference Include="..\RepoQL.Inference.Client\RepoQL.Inference.Client.csproj" />
     <ProjectReference Include="..\RepoQL.Sarif\RepoQL.Sarif.csproj" />
   </ItemGroup>
 

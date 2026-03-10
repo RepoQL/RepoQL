@@ -4,6 +4,7 @@ using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
 using RepoQL.Read;
@@ -175,7 +176,7 @@ internal sealed class FindHandlerTests
             services.AddSingleton(RepoConfig);
             services.AddSingleton<UriRegistry>();
             services.AddSingleton<IEmbeddingProvider>(new DisabledEmbeddingProvider());
-            services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+            services.AddSingleton<IInferenceProvider>(new DisabledInferenceProvider());
             services.AddSingleton<IMcpToolCaller?>(_ => null);
             var provider = services.BuildServiceProvider();
 
@@ -205,22 +206,19 @@ internal sealed class FindHandlerTests
                 => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
         }
 
-        private sealed class DisabledLlmProvider : ILlmProvider
+        private sealed class DisabledInferenceProvider : IInferenceProvider
         {
-            public bool Enabled => false;
-            public string Model => "disabled";
+            public bool Available => false;
 
-            public Task<string> SummarizeAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
-                => Task.FromResult("LLM disabled in tests");
+            public Task<InferenceResult> CompleteAsync(InferenceRequest request, CancellationToken ct = default)
+                => Task.FromResult(new InferenceResult { Content = "Inference disabled in tests" });
 
-            public Task<LlmSummaryResult> SummarizeWithReasoningAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
-                => Task.FromResult(new LlmSummaryResult("LLM disabled in tests"));
-
-            public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
-                => Task.FromResult("LLM disabled in tests");
-
-            public Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
-                => Task.FromResult(string.Empty);
+            public Task<InferenceResult> CompleteWithToolsAsync(
+                InferenceRequest request,
+                ToolOptions toolOptions,
+                Func<ToolCall, CancellationToken, Task<ToolCallResult>> executeTool,
+                CancellationToken ct = default)
+                => CompleteAsync(request, ct);
         }
 
         public RepositoryConfiguration RepoConfig { get; }

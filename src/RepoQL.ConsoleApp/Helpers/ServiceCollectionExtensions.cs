@@ -7,6 +7,7 @@ using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Tools;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Configuration;
+using RepoQL.Contracts.Inference;
 using RepoQL.Core.Configuration;
 using RepoQL.Templating;
 using Spectre.Console;
@@ -41,7 +42,7 @@ internal static class ServiceCollectionExtensions
             .AddFormattingServices()
             .AddDiagnosticsServices(includeSessionOrientation: true)
             .AddConfigurationServices(startupRepoRoot)
-            .AddLlmServices()
+            .AddInferenceServices()
             .AddCommandServices()
             .AddResourceServices()
             .AddLiquidTemplateServices();
@@ -90,19 +91,20 @@ internal static class ServiceCollectionExtensions
         return services;
     }
 
-    private static IServiceCollection AddLlmServices(this IServiceCollection services)
+    private static IServiceCollection AddInferenceServices(this IServiceCollection services)
     {
-        services.AddSingleton<ILlmProvider>(sp =>
+        services.AddSingleton<IInferenceProvider>(sp =>
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
-            var apiKey = config.Llm.ApiKey;
-            if (string.IsNullOrWhiteSpace(apiKey))
-                return new DisabledLlmProvider();
+            var settings = config.Inference;
+            if (string.IsNullOrWhiteSpace(settings.ServiceUrl) ||
+                string.IsNullOrWhiteSpace(settings.ApiKey))
+                return new DisabledInferenceProvider();
 
-            return new LLM.Client.OpenRouterLlmProvider(
-                apiKey: apiKey,
-                settings: config.Llm,
-                logger: sp.GetService<ILogger<LLM.Client.OpenRouterLlmProvider>>());
+            return new RepoQL.Inference.Client.InferenceClient(
+                settings.ServiceUrl,
+                settings.ApiKey,
+                sp.GetService<ILogger<RepoQL.Inference.Client.InferenceClient>>());
         });
 
         return services;

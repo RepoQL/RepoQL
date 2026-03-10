@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Data.DuckDB;
 
 namespace RepoQL.Tests;
@@ -18,7 +19,7 @@ internal class MatchesGlobSqlTests
         services.AddSingleton(new RepositoryConfiguration { Path = "/repo" });
         services.AddSingleton<UriRegistry>();
         services.AddSingleton<IEmbeddingProvider?>(sp => null);
-        services.AddSingleton<ILlmProvider?>(sp => null);
+        services.AddSingleton<IInferenceProvider?>(sp => null);
         services.AddSingleton<IMcpToolCaller?>(sp => null);
         var serviceProvider = services.BuildServiceProvider();
 
@@ -334,7 +335,7 @@ internal class MatchesGlobSqlTests
         services.AddSingleton(new RepositoryConfiguration { Path = repoRoot });
         services.AddSingleton<UriRegistry>();
         services.AddSingleton<IEmbeddingProvider?>(sp => null);
-        services.AddSingleton<ILlmProvider?>(sp => null);
+        services.AddSingleton<IInferenceProvider?>(sp => null);
         services.AddSingleton<IMcpToolCaller?>(sp => null);
         var serviceProvider = services.BuildServiceProvider();
 

@@ -28,6 +28,7 @@ using RepoQL.Core;
 using RepoQL.Core.Configuration;
 using RepoQL.Indexing.Hosting;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Data.DuckDB;
 using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
@@ -186,7 +187,7 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton(sp => new ReadOrchestrator(
                 sp.GetRequiredService<IReadContentProvider>(),
                 sp.GetRequiredService<ExploreOrchestrator>(),
-                sp.GetService<ILlmProvider>(),
+                sp.GetService<IInferenceProvider>(),
                 sp.GetServices<IModifierHandler>()));
 
             // gRPC already configured above

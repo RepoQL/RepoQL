@@ -12,7 +12,6 @@ public sealed class ExploreOrchestrator
 {
     private readonly IExploreSearchEngine _searchEngine;
     private readonly IJitObjectSearchService? _jitService;
-    private readonly ILlmProvider? _llmProvider;
 
     private const double StrongQualityThresholdRawScore = 0.70;
     private const double ModerateQualityThresholdRawScore = 0.40;
@@ -22,12 +21,10 @@ public sealed class ExploreOrchestrator
 
     public ExploreOrchestrator(
         IExploreSearchEngine searchEngine,
-        IJitObjectSearchService? jitService = null,
-        ILlmProvider? llmProvider = null)
+        IJitObjectSearchService? jitService = null)
     {
         _searchEngine = searchEngine ?? throw new ArgumentNullException(nameof(searchEngine));
         _jitService = jitService;
-        _llmProvider = llmProvider;
     }
 
     /// <summary>

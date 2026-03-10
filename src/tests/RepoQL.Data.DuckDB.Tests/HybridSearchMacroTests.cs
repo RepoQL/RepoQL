@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Contracts.Models;
 using RepoQL.Embeddings;
 using Artifact = RepoQL.Contracts.Models.Artifact;
@@ -19,7 +20,7 @@ public class SearchMacroTests : IDisposable
     {
         var services = new ServiceCollection();
         services.AddSingleton<IEmbeddingProvider>(new TestEmbeddingProvider());
-        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IInferenceProvider>(new DisabledInferenceProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
         services.AddSingleton<UriRegistry>();
         _serviceProvider = services.BuildServiceProvider();
@@ -336,7 +337,7 @@ public class SearchMacroEmbeddingDimensionTests : IDisposable
         var provider = new HashedEmbeddingProvider(QueryDimension, modelName: "test-hash-3");
         var services = new ServiceCollection();
         services.AddSingleton<IEmbeddingProvider>(provider);
-        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IInferenceProvider>(new DisabledInferenceProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
         services.AddSingleton<UriRegistry>();
         _serviceProvider = services.BuildServiceProvider();
@@ -475,7 +476,7 @@ public class SearchSemanticCalibrationMacroTests : IDisposable
     {
         var services = new ServiceCollection();
         services.AddSingleton<IEmbeddingProvider>(new DisabledTestEmbeddingProvider());
-        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IInferenceProvider>(new DisabledInferenceProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
         services.AddSingleton<UriRegistry>();
         _serviceProvider = services.BuildServiceProvider();

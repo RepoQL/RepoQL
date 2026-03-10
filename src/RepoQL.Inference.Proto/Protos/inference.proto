@@ -1,0 +1,210 @@
+syntax = "proto3";
+
+package repoql.inference.v1;
+
+option csharp_namespace = "RepoQL.Inference";
+
+// LLM inference with client-side tool execution.
+//
+// Two RPCs: Complete for simple prompt→response, CompleteWithTools
+// for the bidirectional tool loop. Use Complete when you don't
+// need tools — simpler failure modes, standard unary semantics.
+service InferenceService {
+  // Simple completion. No tools, no streaming.
+  // Send a prompt, receive a response.
+  rpc Complete(CompleteRequest) returns (Completion);
+
+  // Completion with tool use. Bidirectional streaming.
+  //
+  // Stream state machine:
+  //   Client sends: exactly one CompleteRequest
+  //   Server sends: zero or more ToolRequests (possibly parallel within a round)
+  //   Client sends: one ToolResponse per ToolRequest (matching call_id)
+  //   ... (tool rounds repeat until LLM stops or limits hit)
+  //   Server sends: exactly one Completion (terminal)
+  //
+  // On error: server closes stream with a gRPC status code.
+  rpc CompleteWithTools(stream ClientMessage) returns (stream ServerMessage);
+}
+
+// ─── Client → Server ──────────────────────────────────────────────
+
+message ClientMessage {
+  oneof message {
+    // First message on the stream. Exactly one required.
+    CompleteRequest request = 1;
+
+    // Tool execution result. Sent in response to a ToolRequest.
+    ToolResponse tool_response = 2;
+  }
+}
+
+message CompleteRequest {
+  // The question or instruction.
+  string prompt = 1;
+
+  // Pre-gathered context (e.g., explore results). Placed between
+  // system and prompt in the LLM context. Separating context from
+  // prompt lets the server structure the LLM input cleanly and
+  // maximizes prompt cache hits (system + tools stay stable).
+  string context = 2;
+
+  // System prompt. Placed first in the LLM context.
+  string system = 3;
+
+  // How hard to think. The server maps this to model selection,
+  // temperature, and provider-specific settings. The client never
+  // picks a model — intent in, implementation out.
+  Effort effort = 4;
+
+  // Guidance for response length. The LLM should aim for this
+  // but the server will not truncate. 0 = no guidance.
+  int32 max_tokens = 5;
+
+  // Tools the LLM can call. Currently: read only.
+  // Same name, same description that MCP/CLI consumers see.
+  // Only used with CompleteWithTools.
+  repeated ToolDefinition tools = 6;
+
+  // Maximum tool rounds before the server forces a final response.
+  // A round is one LLM turn that produces tool calls.
+  // 0 = server default. Only used with CompleteWithTools.
+  int32 max_rounds = 7;
+
+  // Total token budget for tool results. The server enforces this
+  // pre-dispatch: if a tool call's requested tokenBudget exceeds
+  // the remaining pool, the call is rejected and the LLM is told
+  // to answer with what it has. 0 = no tools (even if tools are
+  // defined). Only used with CompleteWithTools.
+  int32 tool_token_budget = 8;
+}
+
+// How hard to think. The server maps these to models and settings.
+// This decouples the client from provider details — adding a new
+// model or switching providers requires no client changes.
+//
+// Unknown values from newer clients fall back to EFFORT_UNSPECIFIED
+// (proto3 default), which maps to EFFORT_BALANCED.
+enum Effort {
+  // Server default (currently maps to EFFORT_BALANCED).
+  EFFORT_UNSPECIFIED = 0;
+
+  // Fast, non-reasoning. Best for extraction, formatting,
+  // deterministic tool paths. Low latency, low cost.
+  EFFORT_LOW = 1;
+
+  // Balanced. Good for most questions with tool use.
+  // Non-reasoning model, moderate temperature.
+  EFFORT_BALANCED = 2;
+
+  // Deep reasoning. Thinking tokens, multi-step planning.
+  // Best for ambiguous questions, complex analysis.
+  EFFORT_HIGH = 3;
+}
+
+// ─── Tool Definitions ─────────────────────────────────────────────
+
+// Client-provided tool definition. Passed through from the host's
+// tool registry — same names, descriptions, and schemas that
+// MCP/CLI consumers see.
+message ToolDefinition {
+  // Tool name. Must be unique within the request.
+  string name = 1;
+
+  // Human-readable description. Helps the LLM decide when to use it.
+  string description = 2;
+
+  // JSON Schema for the tool's parameters.
+  string parameters_json = 3;
+}
+
+// Client's response to a ToolRequest.
+message ToolResponse {
+  // Must match the call_id from the ToolRequest.
+  string call_id = 1;
+
+  // Tool output. Fed back to the LLM as the tool result.
+  string content = 2;
+
+  // If true, the tool call failed. Content is the error message.
+  // The LLM sees the error and can adjust its approach.
+  bool is_error = 3;
+
+  // Actual tokens in content, as counted by the client.
+  // The server deducts this from the remaining tool_token_budget.
+  // The client has a tokenizer (via the host) — accurate counts.
+  int32 tokens_used = 4;
+}
+
+// ─── Server → Client ──────────────────────────────────────────────
+
+message ServerMessage {
+  oneof message {
+    // The LLM wants to call a tool. The server is waiting
+    // for a ToolResponse with the matching call_id.
+    ToolRequest tool_request = 1;
+
+    // Final event. Always last on the stream. Contains the
+    // complete response, reasoning trace, and usage.
+    Completion completion = 10;
+  }
+}
+
+// Server requesting the client to execute a tool call.
+message ToolRequest {
+  // Unique identifier for this tool call. The client must
+  // include this in the ToolResponse.
+  string call_id = 1;
+
+  // Which tool round (1-indexed).
+  int32 round = 2;
+
+  // Tool name (matches a ToolDefinition.name from the request).
+  string tool = 3;
+
+  // Tool arguments as JSON, as produced by the LLM.
+  string arguments_json = 4;
+
+  // True if more ToolRequests follow in this round. False (or
+  // absent) means this is the last call in the round — the
+  // server will wait for all ToolResponses before continuing.
+  bool more_in_round = 5;
+}
+
+message Completion {
+  // The LLM's response text.
+  string content = 1;
+
+  // Reasoning trace (thinking tokens). Not part of the answer —
+  // included for explainability. Visible in host console when
+  // running standalone, logged for post-hoc analysis. Not sent
+  // to the consuming agent. May be empty (e.g., Effort.LOW).
+  string reasoning = 2;
+
+  StopReason stop_reason = 3;
+  Usage usage = 4;
+
+  // Model actually used (informational — the client didn't pick it).
+  string model = 5;
+}
+
+enum StopReason {
+  STOP_REASON_UNSPECIFIED = 0;
+  // Natural end of generation.
+  STOP_REASON_STOP = 1;
+  // LLM stopped due to max_tokens.
+  STOP_REASON_MAX_TOKENS = 2;
+  // Hit max_rounds — server forced a final response without tools.
+  STOP_REASON_TOOL_LIMIT = 3;
+  // Tool token budget exhausted.
+  STOP_REASON_TOOL_BUDGET = 4;
+}
+
+message Usage {
+  int32 input_tokens = 1;
+  int32 output_tokens = 2;
+  // Tokens consumed by tool results injected into LLM context.
+  int32 tool_tokens = 3;
+  // Reasoning/thinking tokens.
+  int32 thinking_tokens = 4;
+}

@@ -11,7 +11,7 @@ public sealed class RepoQlConfig
     public DuckDbSettings DuckDb { get; set; } = new();
     public EmbeddingSettings Embedding { get; set; } = new();
     public OrtSettings Ort { get; set; } = new();
-    public LlmSettings Llm { get; set; } = new();
+    public InferenceSettings Inference { get; set; } = new();
     public HostSettings Host { get; set; } = new();
     public McpSettings Mcp { get; set; } = new();
     public DotnetSettings Dotnet { get; set; } = new();
@@ -144,17 +144,27 @@ public sealed class RepoQlConfig
         public int? InterThreads { get; set; }
     }
 
-    public sealed class LlmSettings
+    /// <summary>
+    /// Purpose: Configure remote inference service connection and tool-loop defaults.
+    /// Complexity: Holds endpoint/auth settings plus explain-specific tool budget limits.
+    /// </summary>
+    public sealed class InferenceSettings
     {
-        [Setting("LLM API key",
-            Sensitive = true, RequiresRestart = true,
-            LegacyEnvVar = "OPENROUTER_API_KEY")]
+        [Setting("Inference service gRPC URL",
+            RequiresRestart = true)]
+        public string? ServiceUrl { get; set; }
+
+        [Setting("Inference service API key",
+            Sensitive = true, RequiresRestart = true)]
         public string? ApiKey { get; set; }
 
-        [Setting("Max concurrent LLM API calls",
-            RequiresRestart = true, DefaultValue = "4",
-            LegacyEnvVar = "REPOQL_OPENROUTER_CONCURRENCY")]
-        public int? Concurrency { get; set; }
+        [Setting("Default tool token budget for explain",
+            DefaultValue = "30000")]
+        public int ToolTokenBudget { get; set; } = 30_000;
+
+        [Setting("Default max tool rounds for explain",
+            DefaultValue = "5")]
+        public int MaxRounds { get; set; } = 5;
     }
 
     public sealed class HostSettings

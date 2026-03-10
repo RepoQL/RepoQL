@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package xai_api;
+
+message Usage {
+  int32 prompt_tokens = 1;
+  int32 completion_tokens = 2;
+  int32 total_tokens = 3;
+  int32 reasoning_tokens = 4;
+  int32 num_sources_used = 5;
+}

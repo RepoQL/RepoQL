@@ -10,6 +10,7 @@ using RepoQL.Contracts.Analysis;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Contracts.Models;
 using RepoQL.Core.Analysis;
 using RepoQL.Core.Analysis.EditorConfig;
@@ -149,20 +150,18 @@ public static class RepoIndexerServiceCollectionExtensions
             return new EmbeddingModeOptions(embeddingMode);
         });
 
-        // LLM provider: OpenRouter (cloud) if API key present, otherwise disabled
-        services.AddSingleton<ILlmProvider>(sp =>
+        services.AddSingleton<IInferenceProvider>(sp =>
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
-            var openRouterKey = config.Llm.ApiKey;
-            if (string.IsNullOrWhiteSpace(openRouterKey))
-            {
-                return new DisabledLlmProvider();
-            }
+            var settings = config.Inference;
+            if (string.IsNullOrWhiteSpace(settings.ServiceUrl) ||
+                string.IsNullOrWhiteSpace(settings.ApiKey))
+                return new DisabledInferenceProvider();
 
-            return new RepoQL.LLM.Client.OpenRouterLlmProvider(
-                apiKey: openRouterKey,
-                settings: config.Llm,
-                logger: sp.GetService<ILogger<RepoQL.LLM.Client.OpenRouterLlmProvider>>());
+            return new RepoQL.Inference.Client.InferenceClient(
+                settings.ServiceUrl,
+                settings.ApiKey,
+                sp.GetService<ILogger<RepoQL.Inference.Client.InferenceClient>>());
         });
 
         services.AddSingleton(sp =>

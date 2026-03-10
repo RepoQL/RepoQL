@@ -1,9 +1,10 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Contracts.Models;
 using RepoQL.Core;
 using RepoQL.Core.Analysis;
@@ -119,7 +120,7 @@ public sealed class IndexedRepoOptions
         services.AddSingleton(new RepositoryConfiguration { Path = Environment.CurrentDirectory });
         services.AddSingleton<UriRegistry>();
         services.AddSingleton<IEmbeddingProvider>(new DisabledTestEmbeddingProvider());
-        services.AddSingleton<ILlmProvider>(new DisabledTestLlmProvider());
+        services.AddSingleton<IInferenceProvider>(new DisabledTestInferenceProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
         return services.BuildServiceProvider();
     }
@@ -139,18 +140,19 @@ public sealed class IndexedRepoOptions
             => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
     }
 
-    private sealed class DisabledTestLlmProvider : ILlmProvider
+    private sealed class DisabledTestInferenceProvider : IInferenceProvider
     {
-        public bool Enabled => false;
-        public string Model => "test-disabled";
-        public Task<string> SummarizeAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
-            => Task.FromResult("LLM disabled in tests");
-        public Task<LlmSummaryResult> SummarizeWithReasoningAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
-            => Task.FromResult(new LlmSummaryResult("LLM disabled in tests"));
-        public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
-            => Task.FromResult("LLM disabled in tests");
-        public Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
-            => Task.FromResult(string.Empty);
+        public bool Available => false;
+
+        public Task<InferenceResult> CompleteAsync(InferenceRequest request, CancellationToken ct = default)
+            => Task.FromResult(new InferenceResult { Content = "Inference disabled in tests" });
+
+        public Task<InferenceResult> CompleteWithToolsAsync(
+            InferenceRequest request,
+            ToolOptions toolOptions,
+            Func<ToolCall, CancellationToken, Task<ToolCallResult>> executeTool,
+            CancellationToken ct = default)
+            => CompleteAsync(request, ct);
     }
 
     private sealed class LabelClassifier : IFileClassifier

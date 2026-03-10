@@ -25,6 +25,7 @@
         <DebugType>none</DebugType>
         <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
         <ApplicationIcon>..\..\repoql.ico</ApplicationIcon>
+        <UserSecretsId>7685a2b1-6ca7-4a99-ae8f-e6f4cb6608d7</UserSecretsId>
     </PropertyGroup>
     
     <PropertyGroup Condition="$(RuntimeIdentifier) != ''">

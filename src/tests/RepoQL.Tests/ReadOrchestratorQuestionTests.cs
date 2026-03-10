@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Inference;
 using RepoQL.Explore;
 using RepoQL.Read;
 using RepoQL.Explore.Search;
@@ -31,8 +32,8 @@ internal sealed class ReadOrchestratorQuestionTests
     [Arguments("file:///path => question:  Extra  spaces  ", "file:///path", "Extra  spaces")]
     public async Task QuestionSyntax_ParsesCorrectly(string input, string expectedPattern, string expectedQuestion)
     {
-        var llm = new StubLlmProvider("Synthesized answer");
-        var orchestrator = CreateOrchestrator(llm: llm);
+        var inference = new StubInferenceProvider("Synthesized answer");
+        var orchestrator = CreateOrchestrator(inference: inference);
 
         var result = await orchestrator.ExecuteAsync(
             input,
@@ -46,10 +47,10 @@ internal sealed class ReadOrchestratorQuestionTests
     }
 
     [Test]
-    public async Task QuestionSyntax_SmallContent_CallsLlmDirectly()
+    public async Task QuestionSyntax_SmallContent_CallsInferenceDirectly()
     {
-        var llm = new StubLlmProvider("This is the synthesized answer.");
-        var orchestrator = CreateOrchestrator(llm: llm);
+        var inference = new StubInferenceProvider("This is the synthesized answer.");
+        var orchestrator = CreateOrchestrator(inference: inference);
 
         var result = await orchestrator.ExecuteAsync(
             "file:///repo/test.cs => question: How does this work?",
@@ -64,9 +65,9 @@ internal sealed class ReadOrchestratorQuestionTests
     }
 
     [Test]
-    public async Task QuestionSyntax_NoLlmConfigured_ReturnsError()
+    public async Task QuestionSyntax_NoInferenceConfigured_ReturnsError()
     {
-        var orchestrator = CreateOrchestrator(llm: null);
+        var orchestrator = CreateOrchestrator(inference: null);
 
         var result = await orchestrator.ExecuteAsync(
             "file:///repo/test.cs => question: How does this work?",
@@ -75,15 +76,16 @@ internal sealed class ReadOrchestratorQuestionTests
             CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.Error.Should().Contain("LLM not configured");
-        result.Error.Should().Contain("OPENROUTER_API_KEY");
+        result.Error.Should().Contain("Inference service not configured");
+        result.Error.Should().Contain("inference.service_url");
+        result.Error.Should().Contain("inference.api_key");
     }
 
     [Test]
-    public async Task QuestionSyntax_LlmDisabled_ReturnsError()
+    public async Task QuestionSyntax_InferenceDisabled_ReturnsError()
     {
-        var llm = new StubLlmProvider("answer", enabled: false);
-        var orchestrator = CreateOrchestrator(llm: llm);
+        var inference = new StubInferenceProvider("answer", available: false);
+        var orchestrator = CreateOrchestrator(inference: inference);
 
         var result = await orchestrator.ExecuteAsync(
             "file:///repo/test.cs => question: How does this work?",
@@ -92,14 +94,14 @@ internal sealed class ReadOrchestratorQuestionTests
             CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.Error.Should().Contain("LLM not configured");
+        result.Error.Should().Contain("Inference service not configured");
     }
 
     [Test]
     public async Task QuestionSyntax_NoFilesMatch_ReturnsError()
     {
-        var llm = new StubLlmProvider("answer");
-        var orchestrator = CreateOrchestrator(llm: llm, documents: []);
+        var inference = new StubInferenceProvider("answer");
+        var orchestrator = CreateOrchestrator(inference: inference, documents: []);
 
         var result = await orchestrator.ExecuteAsync(
             "file:///nonexistent => question: What is this?",
@@ -115,7 +117,7 @@ internal sealed class ReadOrchestratorQuestionTests
     public async Task QuestionSyntax_MissingQuestion_FallsBackToDirectRead()
     {
         // "=> question:" with no text after it should not parse as question syntax
-        var orchestrator = CreateOrchestrator(llm: null);
+        var orchestrator = CreateOrchestrator(inference: null);
 
         var result = await orchestrator.ExecuteAsync(
             "file:///repo/test.cs => question:",
@@ -132,7 +134,7 @@ internal sealed class ReadOrchestratorQuestionTests
     public async Task QuestionSyntax_MissingPattern_FallsBackToDirectRead()
     {
         // "=> question: text" with no pattern should not parse as question syntax
-        var orchestrator = CreateOrchestrator(llm: null);
+        var orchestrator = CreateOrchestrator(inference: null);
 
         var result = await orchestrator.ExecuteAsync(
             "=> question: How does this work?",
@@ -148,7 +150,7 @@ internal sealed class ReadOrchestratorQuestionTests
     public async Task QuestionSyntax_NoArrowSeparator_FallsBackToDirectRead()
     {
         // No "=>" means not question syntax
-        var orchestrator = CreateOrchestrator(llm: null);
+        var orchestrator = CreateOrchestrator(inference: null);
 
         var result = await orchestrator.ExecuteAsync(
             "file:///repo/test.cs question: How does this work?",
@@ -164,7 +166,7 @@ internal sealed class ReadOrchestratorQuestionTests
     public async Task QuestionSyntax_OtherModifier_UsesModifierNotQuestion()
     {
         // "=> headline" should use the headline handler, not question
-        var orchestrator = CreateOrchestrator(llm: null);
+        var orchestrator = CreateOrchestrator(inference: null);
 
         var result = await orchestrator.ExecuteAsync(
             "file:///repo/test.cs => headline",
@@ -177,10 +179,10 @@ internal sealed class ReadOrchestratorQuestionTests
     }
 
     [Test]
-    public async Task QuestionSyntax_LlmError_ReturnsErrorResult()
+    public async Task QuestionSyntax_InferenceError_ReturnsErrorResult()
     {
-        var llm = new StubLlmProvider(throwOnSummarize: new InvalidOperationException("API limit exceeded"));
-        var orchestrator = CreateOrchestrator(llm: llm);
+        var inference = new StubInferenceProvider(throwOnComplete: new InvalidOperationException("API limit exceeded"));
+        var orchestrator = CreateOrchestrator(inference: inference);
 
         var result = await orchestrator.ExecuteAsync(
             "file:///repo/test.cs => question: How does this work?",
@@ -189,17 +191,17 @@ internal sealed class ReadOrchestratorQuestionTests
             CancellationToken.None);
 
         result.Success.Should().BeFalse();
-        result.Error.Should().Contain("LLM synthesis failed");
+        result.Error.Should().Contain("Inference synthesis failed");
         result.Error.Should().Contain("API limit exceeded");
     }
 
     private static ReadOrchestrator CreateOrchestrator(
-        ILlmProvider? llm = null,
+        IInferenceProvider? inference = null,
         IReadOnlyList<ReadDocument>? documents = null)
     {
         var contentProvider = new StubContentProvider(documents);
         var searchEngine = new StubSearchEngine();
-        var exploreOrchestrator = new ExploreOrchestrator(searchEngine, jitService: null, llmProvider: llm);
+        var exploreOrchestrator = new ExploreOrchestrator(searchEngine, jitService: null);
 
         // Use real modifier handlers for testing integration
         var modifierHandlers = new IModifierHandler[]
@@ -209,7 +211,7 @@ internal sealed class ReadOrchestratorQuestionTests
             new ContentHandler()
         };
 
-        return new ReadOrchestrator(contentProvider, exploreOrchestrator, llm, modifierHandlers);
+        return new ReadOrchestrator(contentProvider, exploreOrchestrator, inference, modifierHandlers);
     }
 
     private sealed class StubContentProvider : IReadContentProvider
@@ -239,36 +241,34 @@ internal sealed class ReadOrchestratorQuestionTests
             => Task.FromResult<string?>(string.Join("\n", uris));
     }
 
-    private sealed class StubLlmProvider : ILlmProvider
+    private sealed class StubInferenceProvider : IInferenceProvider
     {
         private readonly string _response;
-        private readonly Exception? _throwOnSummarize;
+        private readonly Exception? _throwOnComplete;
 
-        public StubLlmProvider(string response = "Synthesized answer", bool enabled = true, Exception? throwOnSummarize = null)
+        public StubInferenceProvider(string response = "Synthesized answer", bool available = true, Exception? throwOnComplete = null)
         {
             _response = response;
-            Enabled = enabled;
-            _throwOnSummarize = throwOnSummarize;
+            Available = available;
+            _throwOnComplete = throwOnComplete;
         }
 
-        public bool Enabled { get; }
-        public string Model => "stub-model";
+        public bool Available { get; }
 
-        public Task<string> SummarizeAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
+        public Task<InferenceResult> CompleteAsync(InferenceRequest request, CancellationToken ct = default)
         {
-            if (_throwOnSummarize is not null)
-                throw _throwOnSummarize;
-            return Task.FromResult(_response);
+            if (_throwOnComplete is not null)
+                throw _throwOnComplete;
+
+            return Task.FromResult(new InferenceResult { Content = _response });
         }
 
-        public Task<LlmSummaryResult> SummarizeWithReasoningAsync(string jsonData, string intent, int maxTokens = 500, string? repoTree = null, CancellationToken ct = default)
-            => Task.FromResult(new LlmSummaryResult(_response));
-
-        public Task<string> ExtractAsync(string jsonData, string intent, Func<string, int, string> readUri, CancellationToken ct = default)
-            => Task.FromResult(_response);
-
-        public Task<string> ExtractKeywordsAsync(string question, CancellationToken ct = default)
-            => Task.FromResult(question);
+        public Task<InferenceResult> CompleteWithToolsAsync(
+            InferenceRequest request,
+            ToolOptions toolOptions,
+            Func<ToolCall, CancellationToken, Task<ToolCallResult>> executeTool,
+            CancellationToken ct = default)
+            => CompleteAsync(request, ct);
     }
 
     private sealed class StubSearchEngine : IExploreSearchEngine

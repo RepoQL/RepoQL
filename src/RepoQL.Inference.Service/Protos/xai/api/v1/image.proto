@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package xai_api;
+
+message ImageUrlContent {
+  string url = 1;
+  optional string detail = 2;
+}

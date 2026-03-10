@@ -1,0 +1,115 @@
+syntax = "proto3";
+
+package xai_api;
+
+import "google/protobuf/timestamp.proto";
+import "xai/api/v1/image.proto";
+import "xai/api/v1/usage.proto";
+
+service Chat {
+  rpc GetCompletion(GetCompletionsRequest) returns (GetChatCompletionResponse);
+  rpc GetCompletionChunk(GetCompletionsRequest) returns (stream GetCompletionChunkResponse);
+}
+
+message Content {
+  oneof content {
+    string text = 1;
+    ImageUrlContent image_url = 2;
+  }
+}
+
+enum MessageRole {
+  UNSPECIFIED = 0;
+  USER = 1;
+  ASSISTANT = 2;
+  DEVELOPER = 3;
+  FUNCTION = 4 [deprecated = true];
+  TOOL = 5;
+}
+
+message Message {
+  MessageRole role = 1;
+  repeated Content content = 2;
+  repeated FunctionCall function_calls = 3;
+  repeated Content reasoning_content = 4;
+  optional string encrypted_content = 6;
+  optional string tool_call_id = 7;
+}
+
+enum FinishReason {
+  FINISH_REASON_UNSPECIFIED = 0;
+  STOP = 1;
+  LENGTH = 2;
+  TOOL_CALLS = 3;
+  CONTENT_FILTER = 4;
+}
+
+message CompletionOutput {
+  Message message = 1;
+  FinishReason finish_reason = 2;
+}
+
+message Function {
+  string name = 1;
+  optional string description = 2;
+  optional string parameters = 3;
+  optional bool strict = 4;
+}
+
+message Tool {
+  oneof tool {
+    Function function = 1;
+  }
+}
+
+enum ToolMode {
+  TOOL_MODE_UNSPECIFIED = 0;
+  AUTO = 1;
+  REQUIRED = 2;
+  NONE = 3;
+}
+
+message ToolChoice {
+  ToolMode mode = 1;
+  optional string tool_name = 2;
+}
+
+message FunctionCall {
+  string id = 1;
+  string name = 2;
+  string arguments = 3;
+}
+
+message ResponseFormat {
+  optional string type = 1;
+  optional string json_schema = 2;
+}
+
+message GetCompletionsRequest {
+  repeated Message messages = 1;
+  optional string model = 2;
+  repeated Tool tools = 3;
+  optional string conversation_id = 4;
+  optional int32 max_tokens = 5;
+  optional double temperature = 6;
+  optional double top_p = 7;
+  optional int64 seed = 8;
+  optional string stop = 9;
+  optional bool store_messages = 10;
+  repeated string include = 11;
+  optional ResponseFormat response_format = 12;
+  optional ToolChoice tool_choice = 13;
+  optional bool parallel_tool_calls = 14;
+}
+
+message GetChatCompletionResponse {
+  repeated CompletionOutput choices = 1;
+  Usage usage = 2;
+  google.protobuf.Timestamp created = 3;
+}
+
+message GetCompletionChunkResponse {
+  repeated CompletionOutput choices = 1;
+  Usage usage = 2;
+  google.protobuf.Timestamp created = 3;
+}

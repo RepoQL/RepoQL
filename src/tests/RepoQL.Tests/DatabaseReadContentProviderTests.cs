@@ -5,6 +5,7 @@ using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using ArtifactModel = RepoQL.Contracts.Models.Artifact;
@@ -102,7 +103,7 @@ internal sealed class DatabaseReadContentProviderTests
             services.AddSingleton(new RepositoryConfiguration { Path = "/repo" });
             services.AddSingleton<UriRegistry>();
             services.AddSingleton<IEmbeddingProvider?>(_ => null);
-            services.AddSingleton<ILlmProvider?>(_ => null);
+            services.AddSingleton<IInferenceProvider?>(_ => null);
             services.AddSingleton<IMcpToolCaller?>(_ => null);
 
             _serviceProvider = services.BuildServiceProvider();

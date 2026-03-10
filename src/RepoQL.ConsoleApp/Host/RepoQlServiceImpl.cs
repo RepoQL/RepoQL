@@ -15,6 +15,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.FileSystems;
@@ -40,7 +41,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly DocumentPreviewService _previewService;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IEmbeddingProvider? _embeddingProvider;
-    private readonly ILlmProvider? _llmProvider;
+    private readonly IInferenceProvider? _inferenceProvider;
     private readonly EmbeddingMode _embeddingMode;
     private readonly ExploreOrchestrator _exploreOrchestrator;
     private readonly ReadOrchestrator _readOrchestrator;
@@ -48,6 +49,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly QueueCommandService? _queueCommandService;
     private readonly RepoQlConfig.HostSettings _hostSettings;
     private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
+    private readonly RepoQlConfig.InferenceSettings _inferenceSettings;
     private readonly ILogger<RepoQlServiceImpl> _logger;
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -81,7 +83,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         RepoQlConfig config,
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
-        ILlmProvider? llmProvider = null,
+        IInferenceProvider? inferenceProvider = null,
         UriRegistry? uriRegistry = null,
         QueueCommandService? queueCommandService = null,
         ILogger<RepoQlServiceImpl>? logger = null)
@@ -89,7 +91,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _db = db ?? throw new ArgumentNullException(nameof(db));
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
         _embeddingProvider = embeddingProvider;
-        _llmProvider = llmProvider;
+        _inferenceProvider = inferenceProvider;
         _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
@@ -103,6 +105,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _queueCommandService = queueCommandService;
         _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
         _embeddingSettings = config.Embedding;
+        _inferenceSettings = config.Inference;
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
     }
 
@@ -156,24 +159,26 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 {
                     var intent = ExtractSqlComment(request.Sql);
 
-                    if (!string.IsNullOrWhiteSpace(intent) && _llmProvider is { Enabled: true })
+                    if (!string.IsNullOrWhiteSpace(intent) && _inferenceProvider is { Available: true })
                     {
                         try
                         {
                             var originalRowCount = resp.RowCount;
-                            var summary = await _llmProvider.SummarizeAsync(
-                                formatted,
-                                intent,
-                                maxTokens: request.TokenBudget,
-                                repoTree: null,
-                                ct: context.CancellationToken).ConfigureAwait(false);
+                            var summary = await _inferenceProvider.CompleteAsync(
+                                new InferenceRequest
+                                {
+                                    Context = formatted,
+                                    Prompt = intent,
+                                    MaxTokens = request.TokenBudget
+                                },
+                                context.CancellationToken).ConfigureAwait(false);
 
                             // Replace response with summarized version
                             resp.Rows.Clear();
                             resp.Columns.Clear();
                             resp.Columns.Add(new ColumnSchema { Name = "summary", DbType = "VARCHAR" });
                             var summaryRow = new RowData();
-                            summaryRow.Values.Add(Value.ForString(summary));
+                            summaryRow.Values.Add(Value.ForString(summary.Content));
                             resp.Rows.Add(summaryRow);
                             resp.RowCount = 1;
                             resp.Summarized = true;
@@ -1312,14 +1317,25 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
             var status = GetTrustSignal(0, context.CancellationToken);
             var scope = string.IsNullOrWhiteSpace(request.Scope) ? null : request.Scope;
-            var searchKeywords = request.Question;
-
-            if (_llmProvider?.Enabled == true)
+            if (_inferenceProvider?.Available != true)
             {
-                var extracted = await _llmProvider.ExtractKeywordsAsync(request.Question, context.CancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(extracted))
-                    searchKeywords = extracted;
+                return new ExplainResponse
+                {
+                    Success = false,
+                    Error = "Inference service not configured (set inference.service_url and inference.api_key)"
+                };
             }
+
+            var extracted = await _inferenceProvider.CompleteAsync(
+                new InferenceRequest
+                {
+                    Prompt = BuildKeywordExtractionPrompt(request.Question),
+                    Effort = InferenceEffort.Low
+                },
+                context.CancellationToken).ConfigureAwait(false);
+            var searchKeywords = string.IsNullOrWhiteSpace(extracted.Content)
+                ? request.Question
+                : extracted.Content.Trim();
 
             var query = new ExploreQuery(
                 TokenBudget: 50_000,
@@ -1332,37 +1348,30 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
             var result = await _exploreOrchestrator.ExecuteAsync(query, status, context.CancellationToken, sw).ConfigureAwait(false);
 
-            string renderedOutput;
-            if (_llmProvider?.Enabled != true)
-            {
-                renderedOutput = "[LLM not configured — showing raw explore results. Set OPENROUTER_API_KEY for synthesized answers.]\n\n"
-                    + result.RenderedOutput;
-            }
-            else
-            {
-                var synthesized = await _llmProvider.SummarizeAsync(
-                    result.RenderedOutput,
-                    request.Question,
-                    maxTokens: Math.Max(500, request.TokenBudget),
-                    repoTree: null,
-                    ct: context.CancellationToken).ConfigureAwait(false);
-
-                var footer = string.Empty;
-                var lines = result.RenderedOutput.Split('\n');
-                for (var i = lines.Length - 1; i >= 0; i--)
+            var synthesized = await _inferenceProvider.CompleteWithToolsAsync(
+                new InferenceRequest
                 {
-                    var trimmed = lines[i].TrimStart();
-                    if (trimmed.StartsWith('[') && trimmed.Contains("tok", StringComparison.Ordinal))
-                    {
-                        footer = trimmed;
-                        break;
-                    }
-                }
+                    Context = result.RenderedOutput,
+                    Prompt = request.Question,
+                    Effort = InferenceEffort.High,
+                    MaxTokens = Math.Max(500, request.TokenBudget)
+                },
+                new ToolOptions
+                {
+                    Tools = [InferenceReadToolDefinitionFactory.Create()],
+                    ToolTokenBudget = _inferenceSettings.ToolTokenBudget,
+                    MaxRounds = _inferenceSettings.MaxRounds
+                },
+                (toolCall, ct) => ExecuteExplainReadToolAsync(toolCall, status, ct),
+                context.CancellationToken).ConfigureAwait(false);
 
-                renderedOutput = string.IsNullOrWhiteSpace(footer)
-                    ? $"## {request.Question}\n\n{synthesized}"
-                    : $"## {request.Question}\n\n{synthesized}\n\n---\n{footer}";
-            }
+            if (!string.IsNullOrWhiteSpace(synthesized.Reasoning))
+                _logger.LogDebug("Explain reasoning trace: {Reasoning}", synthesized.Reasoning);
+
+            var footer = ExtractBudgetFooter(result.RenderedOutput);
+            var renderedOutput = string.IsNullOrWhiteSpace(footer)
+                ? $"## {request.Question}\n\n{synthesized.Content}"
+                : $"## {request.Question}\n\n{synthesized.Content}\n\n---\n{footer}";
 
             return new ExplainResponse
             {
@@ -1541,4 +1550,125 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
         return item;
     }
+
+    private static string BuildKeywordExtractionPrompt(string question)
+        => $"""
+            Extract search keywords from this question. Return ONLY space-separated keywords, no explanation.
+            Include technical terms, class names, function names that might appear in code.
+
+            Question: {question}
+
+            Keywords:
+            """;
+
+    private async Task<ToolCallResult> ExecuteExplainReadToolAsync(
+        ToolCall toolCall,
+        TrustSignal status,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(toolCall.Tool, "read", StringComparison.Ordinal))
+        {
+            var content = $"Unsupported tool: {toolCall.Tool}";
+            return new ToolCallResult
+            {
+                Content = content,
+                IsError = true,
+                TokensUsed = TokenEstimator.EstimateTokens(content)
+            };
+        }
+
+        ExplainReadToolArguments? args;
+        try
+        {
+            args = JsonSerializer.Deserialize<ExplainReadToolArguments>(toolCall.ArgumentsJson, PreviewJsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            var content = $"Malformed read tool arguments: {ex.Message}";
+            return new ToolCallResult
+            {
+                Content = content,
+                IsError = true,
+                TokensUsed = TokenEstimator.EstimateTokens(content)
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(args?.UriGlob))
+        {
+            var content = "read uriGlob is required";
+            return new ToolCallResult
+            {
+                Content = content,
+                IsError = true,
+                TokensUsed = TokenEstimator.EstimateTokens(content)
+            };
+        }
+
+        if (args.TokenBudget <= 0)
+        {
+            var content = "read tokenBudget must be a positive integer";
+            return new ToolCallResult
+            {
+                Content = content,
+                IsError = true,
+                TokensUsed = TokenEstimator.EstimateTokens(content)
+            };
+        }
+
+        if (args.UriGlob.Contains("=> question:", StringComparison.OrdinalIgnoreCase))
+        {
+            var content = "read => question: is not allowed during inference tool execution";
+            return new ToolCallResult
+            {
+                Content = content,
+                IsError = true,
+                TokensUsed = TokenEstimator.EstimateTokens(content)
+            };
+        }
+
+        try
+        {
+            var result = await _readOrchestrator.ExecuteAsync(
+                args.UriGlob,
+                args.TokenBudget,
+                status,
+                cancellationToken).ConfigureAwait(false);
+
+            var content = result.Success
+                ? result.RenderedOutput ?? string.Empty
+                : result.Error ?? "Read execution failed.";
+
+            return new ToolCallResult
+            {
+                Content = content,
+                IsError = !result.Success,
+                TokensUsed = TokenEstimator.EstimateTokens(content)
+            };
+        }
+        catch (Exception ex)
+        {
+            var content = ex.Message;
+            return new ToolCallResult
+            {
+                Content = content,
+                IsError = true,
+                TokensUsed = TokenEstimator.EstimateTokens(content)
+            };
+        }
+    }
+
+    private static string ExtractBudgetFooter(string renderedOutput)
+    {
+        var lines = renderedOutput.Split('\n');
+        for (var i = lines.Length - 1; i >= 0; i--)
+        {
+            var trimmed = lines[i].TrimStart();
+            if (trimmed.StartsWith('[') && trimmed.Contains("tok", StringComparison.Ordinal))
+                return trimmed;
+        }
+
+        return string.Empty;
+    }
+
+    private sealed record ExplainReadToolArguments(string? UriGlob, int TokenBudget);
 }

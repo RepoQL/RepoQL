@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Inference;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using ArtifactModel = RepoQL.Contracts.Models.Artifact;
@@ -25,7 +26,7 @@ internal class SearchTests
         services.AddSingleton(new RepositoryConfiguration { Path = Environment.CurrentDirectory });
         services.AddSingleton<UriRegistry>();
         services.AddSingleton<IEmbeddingProvider>(new DisabledTestEmbeddingProvider());
-        services.AddSingleton<ILlmProvider>(new DisabledLlmProvider());
+        services.AddSingleton<IInferenceProvider>(new DisabledInferenceProvider());
         services.AddSingleton<IMcpToolCaller?>(_ => null);
         return services.BuildServiceProvider();
     }

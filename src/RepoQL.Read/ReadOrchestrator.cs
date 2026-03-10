@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Inference;
 using CoreTokenEstimator = RepoQL.Contracts.TokenEstimator;
 
 using RepoQL.Explore;
@@ -17,14 +18,14 @@ namespace RepoQL.Read;
 ///
 /// Complexity: Integrates with IReadContentProvider for content fetching, TokenEstimator
 /// for budget decisions, ExploreOrchestrator for large content question synthesis, and
-/// ILlmProvider for direct LLM calls on smaller content. The progressive disclosure
+/// IInferenceProvider for direct inference calls on smaller content. The progressive disclosure
 /// logic (full -> structure -> headline) and glob handling are encapsulated here.
 /// </summary>
 public sealed partial class ReadOrchestrator
 {
     private readonly IReadContentProvider _contentProvider;
     private readonly ExploreOrchestrator _exploreOrchestrator;
-    private readonly ILlmProvider? _llmProvider;
+    private readonly IInferenceProvider? _inferenceProvider;
     private readonly ModifierDispatcher _modifierDispatcher;
 
     /// <summary>
@@ -36,12 +37,12 @@ public sealed partial class ReadOrchestrator
     public ReadOrchestrator(
         IReadContentProvider contentProvider,
         ExploreOrchestrator exploreOrchestrator,
-        ILlmProvider? llmProvider = null,
+        IInferenceProvider? inferenceProvider = null,
         IEnumerable<IModifierHandler>? modifierHandlers = null)
     {
         _contentProvider = contentProvider ?? throw new ArgumentNullException(nameof(contentProvider));
         _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
-        _llmProvider = llmProvider;
+        _inferenceProvider = inferenceProvider;
         _modifierDispatcher = new ModifierDispatcher(_contentProvider, modifierHandlers);
     }
 
@@ -370,12 +371,11 @@ public sealed partial class ReadOrchestrator
         CancellationToken cancellationToken,
         Stopwatch? stopwatch)
     {
-        // Check LLM availability early - question syntax requires LLM
-        if (_llmProvider is null || !_llmProvider.Enabled)
+        if (_inferenceProvider is null || !_inferenceProvider.Available)
         {
             return new ReadExecutionResult(
                 Success: false,
-                Error: "LLM not configured. Set OPENROUTER_API_KEY environment variable to enable question synthesis.");
+                Error: "Inference service not configured. Set inference.service_url and inference.api_key to enable question synthesis.");
         }
 
         // Fetch content - matches_glob handles exact URIs, globs, and fragment patterns uniformly
@@ -447,21 +447,26 @@ public sealed partial class ReadOrchestrator
             // Use the question as the intent, tokenBudget as maxTokens hint
             // Scale maxTokens: use 30% of budget for response (rest is for reasoning overhead)
             var maxResponseTokens = Math.Max(500, tokenBudget * 30 / 100);
-            var response = await _llmProvider!.SummarizeAsync(
-                contextWithFiles,
-                question,
-                maxTokens: maxResponseTokens,
-                repoTree: repoTree,
-                ct: cancellationToken).ConfigureAwait(false);
+            var fullContext = string.IsNullOrWhiteSpace(repoTree)
+                ? contextWithFiles
+                : $"{contextWithFiles}\n\nRepository tree:\n{repoTree}";
+            var response = await _inferenceProvider!.CompleteAsync(
+                new InferenceRequest
+                {
+                    Context = fullContext,
+                    Prompt = question,
+                    MaxTokens = maxResponseTokens
+                },
+                cancellationToken).ConfigureAwait(false);
 
             // Build output with status footer
-            var tokens = CoreTokenEstimator.EstimateTokens(response);
+            var tokens = CoreTokenEstimator.EstimateTokens(response.Content);
             var statusWithTiming = status with { ExecutionTimeMs = stopwatch?.ElapsedMilliseconds ?? 0 };
             var footer = RepresentationFormatter.FormatStatusFooter(statusWithTiming, tokens);
 
             return new ReadExecutionResult(
                 Success: true,
-                RenderedOutput: $"{response}\n{footer}",
+                RenderedOutput: $"{response.Content}\n{footer}",
                 Representation: "question",
                 FilesRead: documents.Count,
                 FilesOmitted: 0);
@@ -470,7 +475,7 @@ public sealed partial class ReadOrchestrator
         {
             return new ReadExecutionResult(
                 Success: false,
-                Error: $"LLM synthesis failed: {ex.Message}");
+                Error: $"Inference synthesis failed: {ex.Message}");
         }
     }
 
