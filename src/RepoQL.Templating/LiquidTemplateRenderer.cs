@@ -76,42 +76,62 @@ public sealed class LiquidTemplateRenderer : ITemplateRenderer
         _defaultEncoder = defaultEncoder;
     }
 
-    public async Task<string> RenderAsync(string templateNameOrPath, object? model, CancellationToken cancellationToken = default)
+    public string Render(string templateNameOrPath, object? model)
     {
         if (model is IReadOnlyDictionary<string, object?> dict)
-            return await RenderAsync(templateNameOrPath, dict, cancellationToken);
+            return Render(templateNameOrPath, dict);
 
+        var context = CreateContext(model);
+        var template = GetOrParseTemplate(templateNameOrPath);
+        return _defaultEncoder is not null
+            ? template.Render(context, _defaultEncoder)
+            : template.Render(context);
+    }
+
+    public string Render(string templateNameOrPath, IReadOnlyDictionary<string, object?> model)
+    {
+        var context = CreateContext(model);
+        var template = GetOrParseTemplate(templateNameOrPath);
+        return _defaultEncoder is not null
+            ? template.Render(context, _defaultEncoder)
+            : template.Render(context);
+    }
+
+    public Task<string> RenderAsync(string templateNameOrPath, object? model, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Render(templateNameOrPath, model));
+    }
+
+    public Task<string> RenderAsync(string templateNameOrPath, IReadOnlyDictionary<string, object?> model, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(Render(templateNameOrPath, model));
+    }
+
+    private TemplateContext CreateContext(object? model)
+    {
         var context = new TemplateContext(options: _options);
-
         if (model is not null)
         {
             // Dynamically allow public property access for the model type.
             context.Options.MemberAccessStrategy.Register(model.GetType());
             context.SetValue("model", FluidValue.Create(model, _options));
         }
-        
 
-        var template = await GetOrParseTemplateAsync(templateNameOrPath, cancellationToken);
-        if (_defaultEncoder is not null)
-            return await template.RenderAsync(context, _defaultEncoder);
-        return await template.RenderAsync(context);
+        return context;
     }
 
-    public async Task<string> RenderAsync(string templateNameOrPath, IReadOnlyDictionary<string, object?> model, CancellationToken cancellationToken = default)
+    private TemplateContext CreateContext(IReadOnlyDictionary<string, object?> model)
     {
         var context = new TemplateContext(options: _options);
         foreach (var (k, v) in model)
-        {
             context.SetValue(k, FluidValue.Create(v, _options));
-        }
 
-        var template = await GetOrParseTemplateAsync(templateNameOrPath, cancellationToken);
-        if (_defaultEncoder is not null)
-            return await template.RenderAsync(context, _defaultEncoder);
-        return await template.RenderAsync(context);
+        return context;
     }
 
-    private async Task<IFluidTemplate> GetOrParseTemplateAsync(string nameOrPath, CancellationToken ct)
+    private IFluidTemplate GetOrParseTemplate(string nameOrPath)
     {
         var path = NormalizePath(nameOrPath);
         if (_cache.TryGetValue(path, out var cached))
@@ -122,10 +142,10 @@ public sealed class LiquidTemplateRenderer : ITemplateRenderer
             throw new FileNotFoundException($"Template not found: {path}");
 
         string content;
-        await using (var stream = file.CreateReadStream())
+        using (var stream = file.CreateReadStream())
         using (var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
         {
-            content = (await reader.ReadToEndAsync(ct)).Trim();
+            content = reader.ReadToEnd().Trim();
         }
 
         if (!_parser.TryParse(content, out var tpl, out var errors))

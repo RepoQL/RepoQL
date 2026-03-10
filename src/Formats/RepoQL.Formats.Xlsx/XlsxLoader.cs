@@ -570,8 +570,8 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
             var model = BuildExploreModel(state, fileName);
 
             // Render summary and structure first so we can calculate token count for headline
-            summary = _renderer.RenderAsync("explore/summary", model).GetAwaiter().GetResult();
-            structure = _renderer.RenderAsync("explore/structure", model).GetAwaiter().GetResult();
+            summary = _renderer.Render("explore/summary", model);
+            structure = _renderer.Render("explore/structure", model);
 
             // For binary formats, estimate tokens from the text representation (summary + structure)
             var textForTokens = string.Join("\n", new[] { summary, structure }.Where(s => !string.IsNullOrEmpty(s)));
@@ -580,7 +580,7 @@ public sealed partial class XlsxLoader : IFormatLoader, IFormatMaterializer, IFo
             // Add token count to model for headline template
             model["token_count"] = tokenCount ?? 0;
 
-            headline = _renderer.RenderAsync("explore/headline", model).GetAwaiter().GetResult();
+            headline = _renderer.Render("explore/headline", model);
         }
         catch
         {

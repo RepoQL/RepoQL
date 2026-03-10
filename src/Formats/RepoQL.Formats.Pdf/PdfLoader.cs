@@ -287,8 +287,8 @@ public sealed partial class PdfLoader : IFormatLoader, IFormatMaterializer, IFor
         try
         {
             var model = BuildExploreModel(state, fileName, tokenCount ?? 0);
-            summary = _renderer.RenderAsync("explore/summary", model).GetAwaiter().GetResult();
-            structure = _renderer.RenderAsync("explore/structure", model).GetAwaiter().GetResult();
+            summary = _renderer.Render("explore/summary", model);
+            structure = _renderer.Render("explore/structure", model);
 
             if (tokenCount is null)
             {
@@ -299,7 +299,7 @@ public sealed partial class PdfLoader : IFormatLoader, IFormatMaterializer, IFor
             }
 
             model["token_count"] = tokenCount ?? 0;
-            headline = _renderer.RenderAsync("explore/headline", model).GetAwaiter().GetResult();
+            headline = _renderer.Render("explore/headline", model);
         }
         catch
         {

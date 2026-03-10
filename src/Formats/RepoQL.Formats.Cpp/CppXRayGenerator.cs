@@ -29,9 +29,9 @@ public sealed class CppXRayGenerator
             ["macro_warning"] = model.MacroWarning ?? string.Empty
         };
 
-        var headline = _renderer.RenderAsync("explore/headline", templateModel).GetAwaiter().GetResult();
-        var summary = _renderer.RenderAsync("explore/summary", templateModel).GetAwaiter().GetResult();
-        var structure = _renderer.RenderAsync("explore/structure", templateModel).GetAwaiter().GetResult();
+        var headline = _renderer.Render("explore/headline", templateModel);
+        var summary = _renderer.Render("explore/summary", templateModel);
+        var structure = _renderer.Render("explore/structure", templateModel);
 
         return new CppXRayOutput(
             Headline: headline?.Trim(),

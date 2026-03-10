@@ -160,9 +160,9 @@ public sealed partial class DocxLoader : IFormatLoader, IFormatMaterializer
         {
             var model = BuildExploreModel(state, fileName, tokenCount);
 
-            summary = _renderer.RenderAsync("explore/summary", model).GetAwaiter().GetResult();
-            structure = _renderer.RenderAsync("explore/structure", model).GetAwaiter().GetResult();
-            headline = _renderer.RenderAsync("explore/headline", model).GetAwaiter().GetResult();
+            summary = _renderer.Render("explore/summary", model);
+            structure = _renderer.Render("explore/structure", model);
+            headline = _renderer.Render("explore/headline", model);
         }
         catch
         {

@@ -351,9 +351,9 @@ public sealed partial class MarkdownLoader : IFormatLoader, IFormatMaterializer,
                 ["capsules_count"] = state.Surface.Capsules.Count
             };
 
-            headline = _renderer.RenderAsync("explore/headline", model).GetAwaiter().GetResult();
-            summary = _renderer.RenderAsync("explore/summary", model).GetAwaiter().GetResult();
-            structure = _renderer.RenderAsync("explore/structure", model).GetAwaiter().GetResult();
+            headline = _renderer.Render("explore/headline", model);
+            summary = _renderer.Render("explore/summary", model);
+            structure = _renderer.Render("explore/structure", model);
             }
             catch
             {

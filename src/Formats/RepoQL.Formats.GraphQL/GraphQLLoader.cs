@@ -91,9 +91,9 @@ public sealed partial class GraphQLLoader(ILogger<GraphQLLoader>? logger = null)
         string? structure = null;
         try
         {
-            headline = _renderer.RenderAsync("explore/headline", rendererModel).GetAwaiter().GetResult().Trim();
-            summary = _renderer.RenderAsync("explore/summary", rendererModel).GetAwaiter().GetResult().Trim();
-            structure = _renderer.RenderAsync("explore/structure", rendererModel).GetAwaiter().GetResult().Trim();
+            headline = _renderer.Render("explore/headline", rendererModel).Trim();
+            summary = _renderer.Render("explore/summary", rendererModel).Trim();
+            structure = _renderer.Render("explore/structure", rendererModel).Trim();
         }
         catch (Exception ex)
         {

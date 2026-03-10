@@ -146,9 +146,9 @@ public sealed class AppSettingsLoader(ITemplateRenderer? renderer = null) : IFor
             ["services"] = state.DetectedServices
         };
 
-        var headline = _renderer.RenderAsync("explore/headline-appsettings", model).GetAwaiter().GetResult();
-        var summary = _renderer.RenderAsync("explore/summary-appsettings", model).GetAwaiter().GetResult();
-        var structure = _renderer.RenderAsync("explore/structure-appsettings", model).GetAwaiter().GetResult();
+        var headline = _renderer.Render("explore/headline-appsettings", model);
+        var summary = _renderer.Render("explore/summary-appsettings", model);
+        var structure = _renderer.Render("explore/structure-appsettings", model);
 
         var artifact = new Artifact
         {

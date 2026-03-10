@@ -206,9 +206,9 @@ public sealed class CsvLoader : IFormatLoader, IFormatMaterializer, IFormatSchem
             ["type_counts"] = typeCounts
         };
 
-        var headline = _renderer.RenderAsync("explore/headline", model).GetAwaiter().GetResult();
-        var summary = _renderer.RenderAsync("explore/summary", model).GetAwaiter().GetResult();
-        var structure = _renderer.RenderAsync("explore/structure", model).GetAwaiter().GetResult();
+        var headline = _renderer.Render("explore/headline", model);
+        var summary = _renderer.Render("explore/summary", model);
+        var structure = _renderer.Render("explore/structure", model);
 
         var artifact = new Artifact
         {
