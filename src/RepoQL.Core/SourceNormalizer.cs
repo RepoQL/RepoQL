@@ -17,14 +17,16 @@ public static class SourceNormalizer
 
         var url = remoteUrl.Trim();
 
-        // Handle SSH URLs: git@github.com:owner/repo.git
-        if (url.StartsWith("git@", StringComparison.OrdinalIgnoreCase))
+        // Handle SCP-style SSH URLs: user@host:path (e.g. git@github.com:owner/repo.git,
+        // alice@git.company.com:team/repo.git)
+        var atIndex = url.IndexOf('@');
+        if (atIndex > 0 && !url.Contains("://"))
         {
-            var colonIndex = url.IndexOf(':');
+            var colonIndex = url.IndexOf(':', atIndex + 1);
             if (colonIndex < 0)
                 return "";
 
-            var host = url[4..colonIndex];
+            var host = url[(atIndex + 1)..colonIndex];
             if (string.IsNullOrEmpty(host))
                 return "";
 
@@ -42,11 +44,23 @@ public static class SourceNormalizer
             if (string.IsNullOrEmpty(path))
                 return "";
 
-            return $"{uri.Host.ToLowerInvariant()}/{path.ToLowerInvariant()}";
+            var host = uri.Host.ToLowerInvariant();
+            if (uri.Port is not (-1) && !IsDefaultPort(uri.Scheme, uri.Port))
+                host = $"{host}:{uri.Port}";
+
+            return $"{host}/{path.ToLowerInvariant()}";
         }
 
         return "";
     }
+
+    private static bool IsDefaultPort(string scheme, int port) => scheme switch
+    {
+        "https" => port == 443,
+        "http" => port == 80,
+        "ssh" => port == 22,
+        _ => false
+    };
 
     private static string StripDotGit(string path)
     {
