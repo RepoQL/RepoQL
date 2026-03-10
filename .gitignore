@@ -27,6 +27,8 @@ node_modules/
 Examples/
 **/tmpclaude*-cwd
 /nul
+.codex-*
+.tools/
 
 # Generated SARIF fixtures (machine-specific, regenerate with scripts/generate-sarif-fixtures.ps1)
 src/tests/RepoQL.Sarif.Tests/Fixtures/generated/
