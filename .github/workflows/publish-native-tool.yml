@@ -217,6 +217,23 @@ jobs:
           r2-bucket: ${{ vars.CLOUDFLARE_R2_BUCKET }}
           source-dir: artifacts/publish/${{ matrix.rid }}
           destination-dir: ${{ format('latest/{0}', matrix.rid) }}
+      - name: Write latest version marker
+        if: matrix.rid == 'linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/version-marker
+          printf '%s\n' "${RESOLVED_VERSION}" > artifacts/version-marker/version.txt
+      - name: Upload version marker to Cloudflare R2 (latest)
+        if: matrix.rid == 'linux-x64'
+        uses: ryand56/r2-upload-action@latest
+        with:
+          r2-account-id: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          r2-bucket: ${{ vars.CLOUDFLARE_R2_BUCKET }}
+          source-dir: artifacts/version-marker
+          destination-dir: latest
 
   skip-notice:
     needs: version-check
