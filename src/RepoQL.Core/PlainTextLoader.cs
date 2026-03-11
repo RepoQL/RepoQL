@@ -63,7 +63,7 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
             if (ShouldReadAsText(media) && size > 0 && size > _maxTextReadBytes)
             {
                 text = string.Empty;
-                digest = await ComputeDigestAsync(artifact.File, cancellationToken).ConfigureAwait(false);
+                digest = await FileDigest.ComputeAsync(artifact.File, cancellationToken).ConfigureAwait(false);
                 contentOmitted = true;
                 contentOmissionReason = $"size>{_maxTextReadBytes}";
             }
@@ -79,7 +79,7 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
             else
             {
                 text = string.Empty;
-                digest = await ComputeDigestAsync(artifact.File, cancellationToken).ConfigureAwait(false);
+                digest = await FileDigest.ComputeAsync(artifact.File, cancellationToken).ConfigureAwait(false);
                 contentOmitted = true;
                 contentOmissionReason = "non-text";
             }
@@ -210,14 +210,6 @@ internal sealed class PlainTextLoader : IFormatLoader, IFormatMaterializer
             "load-failed" => "content could not be loaded safely",
             _ => "content was not loaded"
         };
-    }
-
-    private static async Task<string> ComputeDigestAsync(Microsoft.Extensions.FileProviders.IFileInfo file, CancellationToken cancellationToken)
-    {
-        var algo = new XxHash64();
-        await using var stream = file.CreateReadStream();
-        await algo.AppendAsync(stream, cancellationToken).ConfigureAwait(false);
-        return "xxh64:" + Convert.ToHexString(algo.GetCurrentHash()).ToLowerInvariant();
     }
 
     private static string GetFileName(RepoUri uri)

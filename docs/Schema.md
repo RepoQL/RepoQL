@@ -24,7 +24,7 @@ Content bytes, optional decoded text, and x‑ray summaries.
 ```sql
 CREATE TABLE IF NOT EXISTS artifact (
   id           UUID PRIMARY KEY,
-  digest       TEXT NOT NULL UNIQUE,                  -- e.g., 'sha256:…'
+  digest       TEXT NOT NULL UNIQUE,                  -- e.g., 'xxh64:…' or 'xxh64-sampled:v1:…'
   byte_size    BIGINT NOT NULL,
   media_type   TEXT,                                  -- 'type/subtype;key=value…'
   text_content TEXT,                                  -- optional decoded text

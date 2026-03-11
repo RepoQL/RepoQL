@@ -50,7 +50,7 @@ public class IndexingCommitterTests
     {
         // Arrange
         var item = IndexingTestItemBuilder.ForMarkdown().WithContent("Hello").Build();
-        item.DigestHex = Convert.ToHexString(await item.RawArtifact.Digest.WithCancellation(CancellationToken.None));
+        item.DigestHex = await item.RawArtifact.Digest.WithCancellation(CancellationToken.None);
         item.MediaType = SemanticMediaType.Parse("text/markdown;kind=markdown.doc");
 
         using var db = new DuckDbDataStore(); // in-memory
@@ -232,7 +232,7 @@ public class IndexingCommitterTests
     {
         var item = IndexingTestItemBuilder.ForMarkdown().WithUri(uri).WithContent("# Title").Build();
         item.MediaType = SemanticMediaType.Parse("text/markdown;kind=markdown.doc");
-        item.DigestHex = Convert.ToHexString(await item.RawArtifact.Digest.WithCancellation(CancellationToken.None));
+        item.DigestHex = await item.RawArtifact.Digest.WithCancellation(CancellationToken.None);
 
         var artifactId = Guid.NewGuid();
         var artifact = new RepoQL.Contracts.Models.Artifact

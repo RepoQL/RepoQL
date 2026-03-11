@@ -45,10 +45,7 @@ public sealed class DuckDbDocumentCatalogDataSource : IDocumentCatalogDataSource
                 // Column 3 is document_id (not used - catalog uses URI as key)
                 var updatedAt = reader.GetDateTime(4);
 
-                // Database stores "xxh64:abc123", but catalog compares against "ABC123" (hex only, uppercase)
-                var digest = rawDigest.Contains(':')
-                    ? rawDigest[(rawDigest.IndexOf(':') + 1)..].ToUpperInvariant()
-                    : rawDigest.ToUpperInvariant();
+                var digest = rawDigest;
 
                 if (!RepoUri.TryParse(uriStr, out var uri))
                 {

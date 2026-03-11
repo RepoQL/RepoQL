@@ -1,10 +1,8 @@
 using System.Diagnostics;
-using System.Text.Json;
 using System.IO;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using DotNext.Threading;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Models;
 using RepoQL.FileSystem;
@@ -92,8 +90,7 @@ public sealed class DocumentPreviewService(
                 return Failure("Single-file analysis failed.", stages);
             }
 
-            var digestBytes = await item.RawArtifact.Digest.WithCancellation(cancellationToken).ConfigureAwait(false);
-            var digestHex = Convert.ToHexString(digestBytes).ToLowerInvariant();
+            var digestHex = await item.RawArtifact.Digest.WithCancellation(cancellationToken).ConfigureAwait(false);
             item.DigestHex = digestHex;
             var combinedRecords = BuildPreviewRecords(item);
 

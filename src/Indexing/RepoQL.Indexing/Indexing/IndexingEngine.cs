@@ -5,7 +5,6 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
-using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
@@ -635,11 +634,10 @@ public partial class IndexingEngine : IAsyncDisposable
 
             currentStage = "digest";
             var digestTimer = Stopwatch.StartNew();
-            var digestBytes = await item.RawArtifact.Digest.WithCancellation(cancellationToken).ConfigureAwait(false);
+            var digestHex = await item.RawArtifact.Digest.WithCancellation(cancellationToken).ConfigureAwait(false);
             digestTimer.Stop();
             RecordOperationDuration("digest", digestTimer.Elapsed, item);
 
-            var digestHex = Convert.ToHexString(digestBytes);
             item.DigestHex = digestHex;
 
             var evaluation = DocumentCatalog.Evaluate(item.Uri, digestHex);

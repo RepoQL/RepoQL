@@ -14,7 +14,8 @@ public sealed record Artifact
     public Guid Id { get; init; } = Guid.NewGuid();
 
     /// <summary>
-    ///     Gets the content hash of the raw bytes. Use a consistent scheme such as lowercase SHA-256.
+    ///     Gets the content digest of the raw bytes, for example <c>xxh64:&lt;hex&gt;</c> or
+    ///     <c>xxh64-sampled:v1:&lt;hex&gt;</c> for large-file sampled digests.
     /// </summary>
     public required string Digest { get; init; }
 
