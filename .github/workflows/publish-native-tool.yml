@@ -220,6 +220,7 @@ jobs:
           }
 
           New-Item -ItemType Directory -Path $repoRoot | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $repoRoot '.repoql') | Out-Null
           [System.IO.File]::WriteAllText((Join-Path $repoRoot 'README.md'), "# Smoke test`n")
 
           $hostLogPath = Join-Path $repoRoot '.repoql/host.log'
