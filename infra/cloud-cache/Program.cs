@@ -387,9 +387,7 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         // Auth remains at the application layer (ApiKeyAuthInterceptor).
 
         var domain = config.Get("domain") ?? "repoql.ai";
-        var cloudServiceOrigin = config.Get("cloudServiceOrigin") ?? "";
-        var embeddingServiceOrigin = config.Require("embeddingServiceOrigin");
-        var inferenceServiceOrigin = config.Require("inferenceServiceOrigin");
+        var cloudServiceOrigin = config.Require("cloudServiceOrigin");
 
         var zone = Cloudflare.GetZone.Invoke(new Cloudflare.GetZoneInvokeArgs
         {
@@ -422,48 +420,19 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Value = "on",
         });
 
-        var embeddingDns = new Cloudflare.DnsRecord("embeddingDns", new Cloudflare.DnsRecordArgs
+        var apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
         {
             ZoneId = zoneId,
-            Name = "embedding",
+            Name = "api",
             Type = "CNAME",
-            Content = embeddingServiceOrigin,
+            Content = cloudServiceOrigin,
             Ttl = 1, // automatic when proxied
             Proxied = true,
         });
 
-        var inferenceDns = new Cloudflare.DnsRecord("inferenceDns", new Cloudflare.DnsRecordArgs
-        {
-            ZoneId = zoneId,
-            Name = "inference",
-            Type = "CNAME",
-            Content = inferenceServiceOrigin,
-            Ttl = 1,
-            Proxied = true,
-        });
-
-        // Unified cloud service DNS record (replaces embedding + inference once migration verified)
-        Cloudflare.DnsRecord? apiDns = null;
-        if (!string.IsNullOrEmpty(cloudServiceOrigin))
-        {
-            apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
-            {
-                ZoneId = zoneId,
-                Name = "api",
-                Type = "CNAME",
-                Content = cloudServiceOrigin,
-                Ttl = 1,
-                Proxied = true,
-            });
-        }
-
         // --- Outputs ---
 
-        EmbeddingServiceUrl = embeddingDns.Name.Apply(n => $"https://{n}.{domain}");
-        InferenceServiceUrl = inferenceDns.Name.Apply(n => $"https://{n}.{domain}");
-        CloudServiceUrl = apiDns is not null
-            ? apiDns.Name.Apply(n => $"https://{n}.{domain}")
-            : Output.Create("(not configured — set cloudServiceOrigin)");
+        CloudServiceUrl = apiDns.Name.Apply(n => $"https://{n}.{domain}");
         EmbeddingsBucketName = embeddingsBucket.Name;
         StagingBucketName = stagingBucket.Name;
         CompactionSchedulerName = compactionScheduler.Name;
@@ -500,12 +469,6 @@ internal sealed class CloudCacheInfrastructureStack : Stack
                 ["cloudServiceSecretKey"] = values.Item8,
             });
     }
-
-    [Output]
-    public Output<string> EmbeddingServiceUrl { get; private set; } = null!;
-
-    [Output]
-    public Output<string> InferenceServiceUrl { get; private set; } = null!;
 
     [Output]
     public Output<string> CloudServiceUrl { get; private set; } = null!;
