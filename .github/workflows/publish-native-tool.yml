@@ -203,10 +203,10 @@ jobs:
               return
             }
 
-            $pid = [int]$match.Groups[1].Value
+            $processId = [int]$match.Groups[1].Value
             try {
-              $process = Get-Process -Id $pid -ErrorAction Stop
-              Stop-Process -Id $pid -Force -ErrorAction Stop
+              $process = Get-Process -Id $processId -ErrorAction Stop
+              Stop-Process -Id $processId -Force -ErrorAction Stop
               $process.WaitForExit(10000) | Out-Null
             }
             catch {
