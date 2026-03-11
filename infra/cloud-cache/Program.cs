@@ -387,7 +387,7 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         // Auth remains at the application layer (ApiKeyAuthInterceptor).
 
         var domain = config.Get("domain") ?? "repoql.ai";
-        var cloudServiceOrigin = config.Require("cloudServiceOrigin");
+        var cloudServiceOrigin = config.Get("cloudServiceOrigin") ?? "";
 
         var zone = Cloudflare.GetZone.Invoke(new Cloudflare.GetZoneInvokeArgs
         {
@@ -420,19 +420,25 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Value = "on",
         });
 
-        var apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
+        Cloudflare.DnsRecord? apiDns = null;
+        if (!string.IsNullOrEmpty(cloudServiceOrigin))
         {
-            ZoneId = zoneId,
-            Name = "api",
-            Type = "CNAME",
-            Content = cloudServiceOrigin,
-            Ttl = 1, // automatic when proxied
-            Proxied = true,
-        });
+            apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
+            {
+                ZoneId = zoneId,
+                Name = "api",
+                Type = "CNAME",
+                Content = cloudServiceOrigin,
+                Ttl = 1, // automatic when proxied
+                Proxied = true,
+            });
+        }
 
         // --- Outputs ---
 
-        CloudServiceUrl = apiDns.Name.Apply(n => $"https://{n}.{domain}");
+        CloudServiceUrl = apiDns is not null
+            ? apiDns.Name.Apply(n => $"https://{n}.{domain}")
+            : Output.Create("(not configured — set cloudServiceOrigin)");
         EmbeddingsBucketName = embeddingsBucket.Name;
         StagingBucketName = stagingBucket.Name;
         CompactionSchedulerName = compactionScheduler.Name;
