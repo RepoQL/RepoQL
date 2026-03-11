@@ -31,6 +31,7 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
         `diagnostics` | Run full system health diagnostics
         `diagnostics.fast` | Quick health checks
         `diagnostics.memory` | Host memory breakdown
+        `diagnostics.memory.heap` | Top managed heap types (expensive)
         `config` | View/change configuration
         `host.restart` | Restart the repoql host
         `queue.cancel` | Cancel one file at next stage boundary
