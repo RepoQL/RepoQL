@@ -9,6 +9,7 @@ namespace RepoQL.FileSystem.Classification;
 
 public class FileClassifier : IFileClassifier
 {
+    private const int InspectionByteCount = 64 * 1024;
     private static readonly SemanticMediaType PlainText = SemanticMediaType.Create("text", "plain");
     private static readonly SemanticMediaType OctetStream = SemanticMediaType.Create("application", "octet-stream");
 
@@ -27,10 +28,13 @@ public class FileClassifier : IFileClassifier
         if (mapped is not null)
             return mapped;
 
-        using var stream = fileInfo.CreateReadStream();
-        var matches = _inspector.Inspect(stream, true);
+        if (!TryReadPrefix(fileInfo, out var prefix, out var bytesRead))
+            return OctetStream;
+
+        var matches = _inspector.Inspect(prefix.AsSpan(0, bytesRead));
         var mimeType = matches.FirstOrDefault()?.Definition.File.MimeType;
-        if (!string.IsNullOrWhiteSpace(mimeType) && !string.Equals(mimeType, "application/octet-stream", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(mimeType)
+            && !string.Equals(mimeType, "application/octet-stream", StringComparison.OrdinalIgnoreCase))
         {
             try
             {
@@ -42,36 +46,59 @@ public class FileClassifier : IFileClassifier
             }
         }
 
-        if (LooksLikePlainText(fileInfo))
+        if (LooksLikePlainText(prefix.AsSpan(0, bytesRead)))
             return PlainText;
 
         return OctetStream;
     }
 
-    private static bool LooksLikePlainText(IFileInfo fileInfo)
+    private static bool TryReadPrefix(IFileInfo fileInfo, out byte[] buffer, out int bytesRead)
     {
+        var capacity = fileInfo.Length switch
+        {
+            <= 0 => InspectionByteCount,
+            < InspectionByteCount => (int)fileInfo.Length,
+            _ => InspectionByteCount
+        };
+
+        buffer = new byte[Math.Max(capacity, 1)];
+        bytesRead = 0;
+
         try
         {
             using var stream = fileInfo.CreateReadStream();
-            Span<byte> buffer = stackalloc byte[512];
-            var read = stream.Read(buffer);
-            if (read == 0)
-                return true; // Empty files treated as text
-
-            for (var i = 0; i < read; i++)
+            while (bytesRead < buffer.Length)
             {
-                var b = buffer[i];
-                if (b == 0)
-                    return false;
-                if (b < 0x09)
-                    return false;
+                var read = stream.Read(buffer, bytesRead, buffer.Length - bytesRead);
+                if (read <= 0)
+                    break;
+
+                bytesRead += read;
             }
 
             return true;
         }
         catch
         {
+            bytesRead = 0;
             return false;
         }
+    }
+
+    private static bool LooksLikePlainText(ReadOnlySpan<byte> buffer)
+    {
+        if (buffer.Length == 0)
+            return true; // Empty files treated as text
+
+        for (var i = 0; i < buffer.Length; i++)
+        {
+            var b = buffer[i];
+            if (b == 0)
+                return false;
+            if (b < 0x09)
+                return false;
+        }
+
+        return true;
     }
 }

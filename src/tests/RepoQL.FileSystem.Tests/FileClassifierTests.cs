@@ -26,6 +26,7 @@ public class FileClassifierTests
             ("build.gradle", "text", "plain", "build.gradle"),
             ("Solution.sln", "text", "plain", "dotnet.sln"),
             ("icon.png", "image", "png", null),
+            ("scan.tif", "image", "tiff", null),
             ("audio.mp3", "audio", "mpeg", null)
         };
 
@@ -61,6 +62,24 @@ public class FileClassifierTests
 
         mediaType.Type.Should().Be("application");
         mediaType.Subtype.Should().Be("octet-stream");
+    }
+
+    [Test]
+    public void UnknownLargeBinary_IsClassifiedFromBoundedPrefixRead()
+    {
+        var payload = new byte[256 * 1024];
+        payload[0] = 0x00;
+        payload[1] = 0xFF;
+        payload[2] = 0xEE;
+        payload[3] = 0xDD;
+
+        var file = new CountingBinaryFileInfo("payload.unknown", payload);
+
+        var mediaType = _classifier.GetMediaType(file);
+
+        mediaType.Type.Should().Be("application");
+        mediaType.Subtype.Should().Be("octet-stream");
+        file.TotalBytesRead.Should().BeLessThanOrEqualTo(64 * 1024);
     }
 
     [Test]
@@ -112,6 +131,21 @@ public class FileClassifierTests
         }
     }
 
+    [Test]
+    public void MapsTifWithoutInspectingContent()
+    {
+        var file = new ThrowingFileInfo("scan.tif");
+
+        var direct = file.GuessMediaTypeFromNamingConvention();
+        direct.Should().NotBeNull();
+        direct!.Type.Should().Be("image");
+        direct.Subtype.Should().Be("tiff");
+
+        var mediaType = _classifier.GetMediaType(file);
+        mediaType.Type.Should().Be("image");
+        mediaType.Subtype.Should().Be("tiff");
+    }
+
     private sealed class BinaryFileInfo(string name, byte[] content) : IFileInfo
     {
         public bool Exists => true;
@@ -121,5 +155,41 @@ public class FileClassifierTests
         public DateTimeOffset LastModified => DateTimeOffset.UtcNow;
         public bool IsDirectory => false;
         public Stream CreateReadStream() => new MemoryStream(content, writable: false);
+    }
+
+    private sealed class CountingBinaryFileInfo(string name, byte[] content) : IFileInfo
+    {
+        public bool Exists => true;
+        public long Length => content.Length;
+        public string PhysicalPath => string.Empty;
+        public string Name => name;
+        public DateTimeOffset LastModified => DateTimeOffset.UtcNow;
+        public bool IsDirectory => false;
+        public int TotalBytesRead { get; private set; }
+
+        public Stream CreateReadStream() => new CountingStream(this, content);
+
+        private sealed class CountingStream(CountingBinaryFileInfo owner, byte[] bytes) : MemoryStream(bytes, writable: false)
+        {
+            public override int Read(byte[] buffer, int offset, int count)
+            {
+                var read = base.Read(buffer, offset, count);
+                owner.TotalBytesRead += read;
+                return read;
+            }
+        }
+    }
+
+    private sealed class ThrowingFileInfo(string name) : IFileInfo
+    {
+        public bool Exists => true;
+        public long Length => 32L * 1024 * 1024;
+        public string PhysicalPath => string.Empty;
+        public string Name => name;
+        public DateTimeOffset LastModified => DateTimeOffset.UtcNow;
+        public bool IsDirectory => false;
+
+        public Stream CreateReadStream()
+            => throw new InvalidOperationException("Stream inspection should not be required for mapped extensions.");
     }
 }

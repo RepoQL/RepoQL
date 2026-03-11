@@ -291,7 +291,7 @@ public static class ClassificationExtensions
         Add("image/jpeg", ".jpg", ".jpeg");
         Add("image/gif", ".gif");
         Add("image/bmp", ".bmp");
-        Add("image/tiff", ".tiff");
+        Add("image/tiff", ".tiff", ".tif");
         Add("image/webp", ".webp");
         Add("image/avif", ".avif");
         Add("image/heic", ".heic");
