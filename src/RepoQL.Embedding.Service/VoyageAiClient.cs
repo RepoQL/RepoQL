@@ -222,6 +222,7 @@ internal sealed class VoyageAiClient : IDisposable
                 }
 
                 Interlocked.Exchange(ref _consecutiveFailures, 0);
+                EmbeddingMetrics.RecordRerankTokens(totalTokens);
                 return new VoyageRerankResult(results, totalTokens);
             }
             catch (HttpRequestException ex) when (attempt < MaxRetries && IsRetryable(ex))
@@ -284,6 +285,7 @@ internal sealed class VoyageAiClient : IDisposable
         string inputType,
         CancellationToken ct)
     {
+        var sw = Stopwatch.StartNew();
         using var activity = ActivitySource.StartActivity("voyage.contextualized_embed", ActivityKind.Client);
         activity?.SetTag("embed.model", _options.Model);
         activity?.SetTag("embed.groups", groups.Count);
@@ -358,8 +360,10 @@ internal sealed class VoyageAiClient : IDisposable
             }
         }
 
-        _logger.LogInformation("Voyage returned {VectorCount} vectors (dim={Dim}), {Tokens} tokens",
-            vectors.Count, vectors.Count > 0 ? vectors[0].Length : 0, totalTokens);
+        EmbeddingMetrics.RecordVoyageDuration(sw.Elapsed.TotalMilliseconds);
+
+        _logger.LogInformation("Voyage returned {VectorCount} vectors (dim={Dim}), {Tokens} tokens in {Duration}ms",
+            vectors.Count, vectors.Count > 0 ? vectors[0].Length : 0, totalTokens, (int)sw.Elapsed.TotalMilliseconds);
         return (vectors, totalTokens);
     }
 

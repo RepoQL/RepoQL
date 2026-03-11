@@ -41,6 +41,15 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
                 var fingerprints = BuildFingerprints(request);
                 var lookup = await _cache.LookupAsync(request.Source, fingerprints, context.CancellationToken);
 
+                var cacheHitCount = fingerprints.Count - lookup.Misses.Count;
+                if (cacheHitCount > 0)
+                {
+                    var hitTexts = fingerprints
+                        .Where(fp => !lookup.Misses.Any(m => m.OriginalIndex == fp.OriginalIndex))
+                        .Select(static fp => fp.Text);
+                    EmbeddingMetrics.RecordCacheHits(cacheHitCount, hitTexts);
+                }
+
                 if (lookup.Misses.Count == 0)
                     return BuildResponse(
                         fingerprints,
@@ -49,13 +58,17 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
                         totalTokens: 0);
 
                 var computed = await ComputeMissesAsync(request, lookup.Misses, context.CancellationToken);
+                EmbeddingMetrics.RecordVoyageChunks(lookup.Misses.Count, computed.TotalTokens);
+
                 if (computed.CacheEntries.Count > 0)
                     _ = _cache.WriteBackAsync(request.Source, computed.CacheEntries);
 
                 return BuildResponse(fingerprints, lookup.Hits, computed.ByIndex, computed.TotalTokens);
             }
 
-            return await ComputeAllAsync(groups, request, context.CancellationToken);
+            var result = await ComputeAllAsync(groups, request, context.CancellationToken);
+            EmbeddingMetrics.RecordVoyageChunks(totalChunks, result.TotalTokens);
+            return result;
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("circuit breaker", StringComparison.Ordinal))
         {
