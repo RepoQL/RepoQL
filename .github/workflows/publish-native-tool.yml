@@ -256,6 +256,8 @@ jobs:
             }
           }
           finally {
+            Stop-RepoQlHost $repoRoot
+
             $stdout = if ([string]::IsNullOrWhiteSpace($stdout)) { Read-TextFile $stdoutFile } else { $stdout }
             $stderr = if ([string]::IsNullOrWhiteSpace($stderr)) { Read-TextFile $stderrFile } else { $stderr }
             $hostLog = if ([string]::IsNullOrWhiteSpace($hostLog)) { Read-TextFile $hostLogPath } else { $hostLog }
@@ -265,7 +267,6 @@ jobs:
             Write-GroupedLog "Smoke stderr ($env:RID)" $stderr
             Write-GroupedLog "Host log ($env:RID)" $hostLog
             Write-GroupedLog "Host stderr ($env:RID)" $hostStderr
-            Stop-RepoQlHost $repoRoot
           }
       - name: Upload ${{ matrix.rid }} binary artifact
         uses: actions/upload-artifact@v4
