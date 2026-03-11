@@ -400,27 +400,8 @@ internal sealed class CloudCacheInfrastructureStack : Stack
 
         var zoneId = zone.Apply(z => z.Id);
 
-        _ = new Cloudflare.ZoneSetting("grpc", new Cloudflare.ZoneSettingArgs
-        {
-            ZoneId = zoneId,
-            SettingId = "grpc",
-            Value = "on",
-        });
-
-        _ = new Cloudflare.ZoneSetting("ssl", new Cloudflare.ZoneSettingArgs
-        {
-            ZoneId = zoneId,
-            SettingId = "ssl",
-            Value = "full",
-        });
-
-        _ = new Cloudflare.ZoneSetting("alwaysUseHttps", new Cloudflare.ZoneSettingArgs
-        {
-            ZoneId = zoneId,
-            SettingId = "always_use_https",
-            Value = "on",
-        });
-
+        // DNS-only CNAME — Cloud Run provides TLS and DDoS protection natively.
+        // gRPC proxying requires Cloudflare Pro ($20/mo) so we skip it.
         Cloudflare.DnsRecord? apiDns = null;
         if (!string.IsNullOrEmpty(cloudServiceOrigin))
         {
@@ -430,8 +411,8 @@ internal sealed class CloudCacheInfrastructureStack : Stack
                 Name = "api",
                 Type = "CNAME",
                 Content = cloudServiceOrigin,
-                Ttl = 1, // automatic when proxied
-                Proxied = true,
+                Ttl = 300,
+                Proxied = false,
             });
         }
 
