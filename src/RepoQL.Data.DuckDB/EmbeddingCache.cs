@@ -309,6 +309,9 @@ public sealed class EmbeddingCache : IDisposable
     {
         var sourceTableName = $"embedding_cache_compact_source_{Interlocked.Increment(ref _tableSequence)}";
         var dedupTableName = $"embedding_cache_compact_dedup_{Interlocked.Increment(ref _tableSequence)}";
+        var missingFileCount = 0;
+        var unreadableFileCount = 0;
+        List<string>? unreadableSamples = null;
 
         try
         {
@@ -329,6 +332,13 @@ public sealed class EmbeddingCache : IDisposable
             foreach (var parquetFile in parquetFiles)
             {
                 ct.ThrowIfCancellationRequested();
+
+                if (!File.Exists(parquetFile))
+                {
+                    missingFileCount++;
+                    continue;
+                }
+
                 try
                 {
                     using var importCmd = _connection.CreateCommand();
@@ -339,10 +349,34 @@ public sealed class EmbeddingCache : IDisposable
                         """;
                     importCmd.ExecuteNonQuery();
                 }
+                catch (Exception ex) when (IsMissingParquetFileException(parquetFile, ex))
+                {
+                    missingFileCount++;
+                }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Embedding cache compaction skipped unreadable parquet file {File}.", parquetFile);
+                    unreadableFileCount++;
+                    unreadableSamples ??= [];
+                    if (unreadableSamples.Count < 3)
+                        unreadableSamples.Add(parquetFile);
+
+                    _logger.LogDebug(ex, "Embedding cache compaction could not read parquet file {File}.", parquetFile);
                 }
+            }
+
+            if (missingFileCount > 0)
+            {
+                _logger.LogDebug(
+                    "Embedding cache compaction skipped {Count} parquet files that disappeared before they could be read.",
+                    missingFileCount);
+            }
+
+            if (unreadableFileCount > 0)
+            {
+                _logger.LogWarning(
+                    "Embedding cache compaction skipped {Count} unreadable parquet files. Sample: {Files}",
+                    unreadableFileCount,
+                    string.Join(", ", unreadableSamples ?? []));
             }
 
             using (var dedupCmd = _connection.CreateCommand())
@@ -858,6 +892,18 @@ public sealed class EmbeddingCache : IDisposable
         {
             // Best effort cleanup.
         }
+    }
+
+    internal static bool IsMissingParquetFileException(string parquetFile, Exception exception)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(parquetFile);
+        ArgumentNullException.ThrowIfNull(exception);
+
+        if (!File.Exists(parquetFile))
+            return true;
+
+        return exception.Message.Contains("No files found that match the pattern", StringComparison.OrdinalIgnoreCase)
+               && exception.Message.Contains(parquetFile, StringComparison.Ordinal);
     }
 
     private static string EscapeSqlLiteral(string value)

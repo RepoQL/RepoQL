@@ -304,6 +304,42 @@ public sealed class EmbeddingCacheTests : IDisposable
     }
 
     [Test]
+    public async Task Compaction_SummarizesUnreadableParquetFiles_Once()
+    {
+        var logger = new CollectingLogger<EmbeddingCache>();
+
+        using (var writerCache = CreateCache(compactionThreshold: 1000, maxSizeMb: 0, logger: logger))
+        {
+            var hash = CachingEmbeddingProvider.ComputeContentHash("test-model", "p", "valid-entry");
+            await writerCache.WriteBackAsync(
+            [
+                new CacheEntry(hash, "test-model", 2, [1.0f, 2.0f], DateTimeOffset.UtcNow)
+            ]);
+        }
+
+        File.WriteAllText(Path.Combine(_cachePath, "bad-a.parquet"), "not parquet");
+        File.WriteAllText(Path.Combine(_cachePath, "bad-b.parquet"), "also not parquet");
+
+        using var compactCache = CreateCache(compactionThreshold: 1, maxSizeMb: 0, logger: logger);
+        await compactCache.CompactAsync();
+
+        logger.WarningMessages.Should().ContainSingle(message =>
+            message.Contains("skipped 2 unreadable parquet files", StringComparison.OrdinalIgnoreCase));
+        logger.WarningMessages.Should().NotContain(message =>
+            message.Contains("skipped unreadable parquet file", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Test]
+    public void MissingParquetFileException_IsRecognized()
+    {
+        var parquetFile = Path.Combine(_cachePath, "gone.parquet");
+        var exception = new Exception(
+            $"IO Error: No files found that match the pattern \"{parquetFile}\"");
+
+        EmbeddingCache.IsMissingParquetFileException(parquetFile, exception).Should().BeTrue();
+    }
+
+    [Test]
     public async Task LayeredLookup_ChecksPathsInOrder()
     {
         var sharedPath = Path.Combine(_root, "shared");
@@ -582,4 +618,23 @@ public sealed class EmbeddingCacheTests : IDisposable
         return condition();
     }
 
+    private sealed class CollectingLogger<T> : ILogger<T>
+    {
+        public List<string> WarningMessages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel == LogLevel.Warning)
+                WarningMessages.Add(formatter(state, exception));
+        }
+    }
 }
