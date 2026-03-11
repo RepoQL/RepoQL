@@ -423,6 +423,7 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Name = "api",
             Type = "CNAME",
             Content = cloudServiceOrigin,
+            Ttl = 1, // 1 = automatic (Cloudflare manages TTL for proxied records)
             Proxied = true,
         });
 
