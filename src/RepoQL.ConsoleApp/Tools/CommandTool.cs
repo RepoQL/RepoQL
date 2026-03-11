@@ -39,6 +39,7 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
         `queue.skip` | Persistently skip one file
         `queue.retry` | Re-enqueue one failed/skipped file
         `dashboard` | show the user a dashboard of the current state of the database
+        `feedback` | Submit feedback about your experience with RepoQL
         </COMMON>
         """;
 

@@ -40,6 +40,24 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             ProjectId = gcpProjectId,
         });
 
+        // --- Firestore (product analytics) ---
+
+        var firestoreApi = new Gcp.Projects.Service("firestoreApi", new Gcp.Projects.ServiceArgs
+        {
+            Project = gcpProjectId,
+            ServiceName = "firestore.googleapis.com",
+            DisableDependentServices = false,
+            DisableOnDestroy = false,
+        });
+
+        var firestoreDb = new Gcp.Firestore.Database("productAnalyticsDb", new Gcp.Firestore.DatabaseArgs
+        {
+            Project = gcpProjectId,
+            Name = "(default)",
+            LocationId = region,
+            Type = "FIRESTORE_NATIVE",
+        }, new CustomResourceOptions { DependsOn = { firestoreApi } });
+
         // --- Artifact Registry ---
 
         var containerRepo = new Gcp.ArtifactRegistry.Repository("containerRepo", new Gcp.ArtifactRegistry.RepositoryArgs
@@ -228,6 +246,15 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Member = project.Apply(p => $"serviceAccount:service-{p.Number}@gcp-sa-pubsub.iam.gserviceaccount.com"),
         });
 
+        // --- Firestore IAM ---
+
+        _ = new Gcp.Projects.IAMMember("embeddingServiceFirestoreUser", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/datastore.user",
+            Member = AsServiceAccountMember(embeddingServiceAccount.Email),
+        });
+
         // --- Cloud Trace ---
         // Both services send OTLP to the Cloud Run built-in collector on localhost:4317.
 
@@ -277,6 +304,82 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Project = gcpProjectId,
         });
 
+        // --- Unified cloud service account ---
+        // Single service account for the merged cloud service (embedding + inference).
+        // Writer remains separate with its own service account.
+
+        var cloudServiceAccount = new Gcp.ServiceAccount.Account("cloudServiceAccount", new Gcp.ServiceAccount.AccountArgs
+        {
+            AccountId = $"cloud-service-{env}",
+            DisplayName = $"RepoQL cloud service ({env})",
+            Description = "Unified service account for the merged cloud service (embedding + inference).",
+        });
+
+        var cloudServiceHmac = new Gcp.Storage.HmacKey("cloudServiceHmac", new Gcp.Storage.HmacKeyArgs
+        {
+            ServiceAccountEmail = cloudServiceAccount.Email,
+            State = "ACTIVE",
+        });
+
+        var cloudServiceHmacSecrets = CreateHmacSecrets(
+            "cloud-service",
+            env,
+            cloudServiceHmac.AccessId,
+            cloudServiceHmac.Secret);
+
+        // Storage: read embeddings (cache lookup), write staging (cache write-back)
+        _ = new Gcp.Storage.BucketIAMMember("cloudServiceEmbeddingsRead", new Gcp.Storage.BucketIAMMemberArgs
+        {
+            Bucket = embeddingsBucket.Name,
+            Role = "roles/storage.objectViewer",
+            Member = AsServiceAccountMember(cloudServiceAccount.Email),
+        });
+
+        _ = new Gcp.Storage.BucketIAMMember("cloudServiceStagingWrite", new Gcp.Storage.BucketIAMMemberArgs
+        {
+            Bucket = stagingBucket.Name,
+            Role = "roles/storage.objectCreator",
+            Member = AsServiceAccountMember(cloudServiceAccount.Email),
+        });
+
+        // Firestore project ID secret (Cloud Run mounts this as Firestore__ProjectId)
+        var firestoreProjectSecret = new Gcp.SecretManager.Secret("firestoreProjectSecret", new Gcp.SecretManager.SecretArgs
+        {
+            SecretId = $"repoql-cloud-firestore-project",
+            Replication = new Gcp.SecretManager.Inputs.SecretReplicationArgs
+            {
+                Auto = new Gcp.SecretManager.Inputs.SecretReplicationAutoArgs(),
+            },
+        });
+
+        _ = new Gcp.SecretManager.SecretVersion("firestoreProjectSecretVersion", new Gcp.SecretManager.SecretVersionArgs
+        {
+            Secret = firestoreProjectSecret.Id,
+            SecretData = gcpProjectId,
+        });
+
+        // Secrets, Firestore, Trace
+        _ = new Gcp.Projects.IAMMember("cloudServiceSecretAccessor", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/secretmanager.secretAccessor",
+            Member = AsServiceAccountMember(cloudServiceAccount.Email),
+        });
+
+        _ = new Gcp.Projects.IAMMember("cloudServiceFirestoreUser", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/datastore.user",
+            Member = AsServiceAccountMember(cloudServiceAccount.Email),
+        });
+
+        _ = new Gcp.Projects.IAMMember("cloudServiceTraceAgent", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/cloudtrace.agent",
+            Member = AsServiceAccountMember(cloudServiceAccount.Email),
+        });
+
         // --- Cloudflare DNS & CDN proxy ---
         // Proxied CNAME records to Cloud Run services. Cloudflare terminates TLS at the edge,
         // provides free DDoS protection and analytics. SSL "Full" mode works because Cloud Run
@@ -284,6 +387,7 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         // Auth remains at the application layer (ApiKeyAuthInterceptor).
 
         var domain = config.Get("domain") ?? "repoql.ai";
+        var cloudServiceOrigin = config.Get("cloudServiceOrigin") ?? "";
         var embeddingServiceOrigin = config.Require("embeddingServiceOrigin");
         var inferenceServiceOrigin = config.Require("inferenceServiceOrigin");
 
@@ -338,22 +442,42 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Proxied = true,
         });
 
+        // Unified cloud service DNS record (replaces embedding + inference once migration verified)
+        Cloudflare.DnsRecord? apiDns = null;
+        if (!string.IsNullOrEmpty(cloudServiceOrigin))
+        {
+            apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
+            {
+                ZoneId = zoneId,
+                Name = "api",
+                Type = "CNAME",
+                Content = cloudServiceOrigin,
+                Ttl = 1,
+                Proxied = true,
+            });
+        }
+
         // --- Outputs ---
 
         EmbeddingServiceUrl = embeddingDns.Name.Apply(n => $"https://{n}.{domain}");
         InferenceServiceUrl = inferenceDns.Name.Apply(n => $"https://{n}.{domain}");
+        CloudServiceUrl = apiDns is not null
+            ? apiDns.Name.Apply(n => $"https://{n}.{domain}")
+            : Output.Create("(not configured — set cloudServiceOrigin)");
         EmbeddingsBucketName = embeddingsBucket.Name;
         StagingBucketName = stagingBucket.Name;
         CompactionSchedulerName = compactionScheduler.Name;
         ServiceAccountEmails = Output.Tuple(
                 embeddingServiceAccount.Email,
                 cacheWriterAccount.Email,
-                compactionAccount.Email)
+                compactionAccount.Email,
+                cloudServiceAccount.Email)
             .Apply(values => new Dictionary<string, string>
             {
                 ["embeddingService"] = values.Item1,
                 ["cacheWriter"] = values.Item2,
                 ["compaction"] = values.Item3,
+                ["cloudService"] = values.Item4,
             });
         HmacSecretResourceNames = Output.Tuple(
                 embeddingServiceHmacSecrets.AccessKeyIdSecretId,
@@ -361,7 +485,9 @@ internal sealed class CloudCacheInfrastructureStack : Stack
                 cacheWriterHmacSecrets.AccessKeyIdSecretId,
                 cacheWriterHmacSecrets.SecretKeySecretId,
                 compactionHmacSecrets.AccessKeyIdSecretId,
-                compactionHmacSecrets.SecretKeySecretId)
+                compactionHmacSecrets.SecretKeySecretId,
+                cloudServiceHmacSecrets.AccessKeyIdSecretId,
+                cloudServiceHmacSecrets.SecretKeySecretId)
             .Apply(values => new Dictionary<string, string>
             {
                 ["embeddingServiceAccessKeyId"] = values.Item1,
@@ -370,6 +496,8 @@ internal sealed class CloudCacheInfrastructureStack : Stack
                 ["cacheWriterSecretKey"] = values.Item4,
                 ["compactionAccessKeyId"] = values.Item5,
                 ["compactionSecretKey"] = values.Item6,
+                ["cloudServiceAccessKeyId"] = values.Item7,
+                ["cloudServiceSecretKey"] = values.Item8,
             });
     }
 
@@ -378,6 +506,9 @@ internal sealed class CloudCacheInfrastructureStack : Stack
 
     [Output]
     public Output<string> InferenceServiceUrl { get; private set; } = null!;
+
+    [Output]
+    public Output<string> CloudServiceUrl { get; private set; } = null!;
 
     [Output]
     public Output<string> EmbeddingsBucketName { get; private set; } = null!;

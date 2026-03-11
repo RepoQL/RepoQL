@@ -1,7 +1,8 @@
 using Grpc.Core;
-using RepoQL.Embedding.Service.Cache;
+using RepoQL.Cloud.Service.Analytics;
+using RepoQL.Cloud.Service.Embedding.Cache;
 
-namespace RepoQL.Embedding.Service;
+namespace RepoQL.Cloud.Service.Embedding;
 
 /// <summary>
 /// gRPC service implementation. Thin relay: validate, cache if available, forward misses to Voyage, return.

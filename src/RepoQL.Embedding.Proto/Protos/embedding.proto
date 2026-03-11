@@ -23,6 +23,10 @@ service EmbeddingService {
   // Rerank documents by relevance to a query.
   // Returns documents in descending relevance order with scores.
   rpc Rerank(RerankRequest) returns (RerankResponse);
+
+  // Submit agent feedback about RepoQL experience.
+  // Stored server-side for product improvement.
+  rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
 }
 
 message EmbedChunksRequest {
@@ -118,4 +122,24 @@ message RerankResult {
   int32 index = 1;
   // Relevance score (0.0-1.0).
   float relevance_score = 2;
+}
+
+// ----- Feedback -----
+
+message SubmitFeedbackRequest {
+  // Stable UUID for this MCP session.
+  string session_id = 1;
+  // Agent feedback text.
+  string feedback = 2;
+  // Output of ::diagnostics.fast at time of submission.
+  string diagnostics = 3;
+  // RepoQL version string.
+  string version = 4;
+  // OS/platform identifier.
+  string platform = 5;
+}
+
+message SubmitFeedbackResponse {
+  // True if feedback was persisted successfully.
+  bool accepted = 1;
 }

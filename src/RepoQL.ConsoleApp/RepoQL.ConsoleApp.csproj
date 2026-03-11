@@ -153,6 +153,7 @@
     <ProjectReference Include="..\RepoQL.Explore\RepoQL.Explore.csproj" />
     <ProjectReference Include="..\RepoQL.Read\RepoQL.Read.csproj" />
     <ProjectReference Include="..\RepoQL.Commands\RepoQL.Commands.csproj" />
+    <ProjectReference Include="..\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" />
   </ItemGroup>
 
     

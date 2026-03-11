@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoQL.Commands;
 using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.ConsoleApp.Feedback;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Tools;
@@ -78,6 +79,8 @@ internal static class ServiceCollectionExtensions
     {
         services.AddSingleton<DiagnosticsCollector>();
         services.AddSingleton<SelfTestRunner>();
+        services.AddSingleton<SessionInfo>();
+        services.AddSingleton<FeedbackStore>();
         if (includeSessionOrientation)
             services.AddSingleton<SessionOrientation>();
 

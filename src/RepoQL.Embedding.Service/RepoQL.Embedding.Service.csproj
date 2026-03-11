@@ -21,6 +21,7 @@
     <PackageReference Include="Grpc.AspNetCore" />
     <PackageReference Include="DuckDB.NET.Data.Full" />
     <PackageReference Include="OpenTelemetry" />
+    <PackageReference Include="Google.Cloud.Firestore" />
     <PackageReference Include="Google.Cloud.Storage.V1" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />

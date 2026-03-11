@@ -16,6 +16,7 @@
     <PackageVersion Include="FakeItEasy" Version="8.3.0" />
     <PackageVersion Include="Fluid.Core" Version="2.25.0" />
     <PackageVersion Include="Google.Protobuf" Version="3.33.0" />
+    <PackageVersion Include="Google.Cloud.Firestore" Version="3.10.0" />
     <PackageVersion Include="Google.Cloud.Storage.V1" Version="4.14.0" />
     <PackageVersion Include="Google.Cloud.Tasks.V2" Version="3.6.0" />
     <PackageVersion Include="GraphQL-Parser" Version="9.5.0" />

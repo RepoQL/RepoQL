@@ -2,22 +2,31 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
-using RepoQL.Embedding.Service;
-using RepoQL.Embedding.Service.Cache;
+using RepoQL.Cloud.Service.Analytics;
+using RepoQL.Cloud.Service.Auth;
+using RepoQL.Cloud.Service.Embedding;
+using RepoQL.Cloud.Service.Embedding.Cache;
+using RepoQL.Cloud.Service.Inference;
 using RepoQL.Embedding.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// --- Observability ---
 
 builder.Logging.AddOpenTelemetry();
 builder.Services.AddOpenTelemetry()
     .WithMetrics(m => m
         .AddMeter("RepoQL.Embedding.*")
+        .AddMeter("RepoQL.Inference.*")
         .AddAspNetCoreInstrumentation()
         .AddRuntimeInstrumentation())
     .WithTracing(t => t
         .AddSource("RepoQL.Embedding.*")
+        .AddSource("RepoQL.Inference.*")
         .AddAspNetCoreInstrumentation())
     .UseOtlpExporter();
+
+// --- gRPC ---
 
 builder.Services.AddGrpc(options =>
 {
@@ -28,11 +37,16 @@ builder.Services.AddGrpc(options =>
     options.Interceptors.Add<ApiKeyAuthInterceptor>();
 });
 
-builder.Services.AddSingleton<VoyageAiClient>();
+// --- Auth (shared) ---
+
+builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
 builder.Services.AddSingleton<ApiKeyAuthInterceptor>();
+
+// --- Embedding domain ---
+
+builder.Services.AddSingleton<VoyageAiClient>();
 builder.Services.AddHttpClient();
 builder.Services.Configure<EmbeddingServiceOptions>(builder.Configuration.GetSection("Embedding"));
-builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
 builder.Services.Configure<CacheLayerSettings>(builder.Configuration.GetSection("CacheLayer"));
 builder.Services.AddSingleton<IObjectStorageClient>(sp =>
 {
@@ -66,10 +80,39 @@ builder.Services.AddSingleton(typeof(EmbeddingCacheLayer), sp =>
     }
 });
 
+// --- Inference domain ---
+
+builder.Services.Configure<InferenceServiceOptions>(builder.Configuration.GetSection("Inference"));
+builder.Services.AddSingleton<IXaiChatClient>(sp =>
+{
+    var options = sp.GetRequiredService<IOptions<InferenceServiceOptions>>().Value;
+    var handler = new SocketsHttpHandler
+    {
+        EnableMultipleHttp2Connections = true,
+        PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan,
+        KeepAlivePingDelay = TimeSpan.FromSeconds(30),
+        KeepAlivePingTimeout = TimeSpan.FromSeconds(10),
+    };
+    var channel = Grpc.Net.Client.GrpcChannel.ForAddress(options.Endpoint, new Grpc.Net.Client.GrpcChannelOptions
+    {
+        HttpHandler = handler,
+        MaxReceiveMessageSize = 8 * 1024 * 1024,
+        MaxSendMessageSize = 8 * 1024 * 1024,
+    });
+    var client = new XaiApi.Chat.ChatClient(channel);
+    return new XaiChatClientAdapter(client);
+});
+builder.Services.AddSingleton<IGrokClient, GrokClient>();
+
+// --- Analytics ---
+
 builder.Services.AddSingleton<ProductAnalyticsStore>();
+
+// --- Build ---
 
 var app = builder.Build();
 
 app.MapGrpcService<EmbeddingServiceImpl>();
+app.MapGrpcService<InferenceServiceImpl>();
 
 app.Run();

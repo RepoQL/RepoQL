@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>repoql-cloud</AssemblyName>
+
+    <!-- dotnet publish produces a container image by default -->
+    <PublishProfile>DefaultContainer</PublishProfile>
+    <ContainerRepository>repoql-cloud</ContainerRepository>
+    <ContainerFamily>noble</ContainerFamily>
+    <PublishTrimmed>false</PublishTrimmed>
+    <UserSecretsId>7b2e3f4a-1c8d-4e5f-9a6b-0d7e8f9c1a2b</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ContainerPort Include="8080" Type="tcp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared -->
+    <PackageReference Include="OpenTelemetry" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+
+    <!-- Embedding -->
+    <PackageReference Include="AWSSDK.S3" />
+    <PackageReference Include="DuckDB.NET.Data.Full" />
+    <PackageReference Include="Google.Cloud.Firestore" />
+    <PackageReference Include="Google.Cloud.Storage.V1" />
+    <PackageReference Include="Grpc.AspNetCore" />
+
+    <!-- Inference -->
+    <PackageReference Include="Google.Protobuf" />
+    <PackageReference Include="Grpc.Net.Client" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" />
+    <ProjectReference Include="..\RepoQL.Inference.Proto\RepoQL.Inference.Proto.csproj" />
+    <ProjectReference Include="..\RepoQL.Embedding.Storage\RepoQL.Embedding.Storage.csproj" />
+  </ItemGroup>
+
+  <!-- Vendored xAI gRPC protos for Grok client -->
+  <ItemGroup>
+    <Protobuf Include="Protos\xai\api\v1\chat.proto" GrpcServices="Client" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\deferred.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\documents.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\image.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\sample.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
+    <Protobuf Include="Protos\xai\api\v1\usage.proto" GrpcServices="None" AdditionalImportDirs="Protos" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RepoQL.Cloud.Service.Tests" />
+  </ItemGroup>
+
+</Project>
