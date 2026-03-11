@@ -3,6 +3,11 @@ name: repoql-tests
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'Directory.Build.props'
+      - 'Directory.Packages.props'
+      - '*.sln'
   pull_request:
     branches: [ main ]
   workflow_dispatch:
