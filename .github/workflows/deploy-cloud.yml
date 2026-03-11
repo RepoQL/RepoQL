@@ -45,11 +45,36 @@ permissions:
   id-token: write
 
 jobs:
+  check-changes:
+    name: Check for cloud-relevant changes
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.check.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+
+      - name: Check changed paths
+        id: check
+        shell: bash
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -qE '^(src/RepoQL\.(Cloud\.Service|Embedding\.(Proto|Storage)|Inference\.Proto)/|infra/|Directory\.(Build|Packages)\.props$)'; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No cloud-relevant changes — skipping deployment"
+          fi
+
   deploy-dev:
     name: Deploy to dev
+    needs: [check-changes]
     if: >-
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-      (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev')
+      always() &&
+      ((needs.check-changes.outputs.deploy == 'true') ||
+       (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev'))
     runs-on: ubuntu-latest
     environment: dev
     env:
