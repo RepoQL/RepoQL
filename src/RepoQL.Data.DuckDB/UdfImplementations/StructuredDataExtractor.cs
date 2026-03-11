@@ -21,6 +21,8 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// </remarks>
 public static partial class StructuredDataExtractor
 {
+    private const int SuspiciousEmptyResultTextLength = 256;
+
     // Cached YAML deserializer for performance
     private static readonly IDeserializer YamlDeserializer = new DeserializerBuilder()
         .WithNamingConvention(CamelCaseNamingConvention.Instance)
@@ -43,50 +45,42 @@ public static partial class StructuredDataExtractor
 
         var trimmed = text.TrimStart();
 
-        // 1. Pure JSON (fast path) - starts with [ or {, validates with JsonDocument
-        if (trimmed.StartsWith('[') || trimmed.StartsWith('{'))
+        // 1. Pure JSON (fast path) - supports raw JSON plus quoted/escaped JSON payloads
+        if (trimmed.StartsWith('[') || trimmed.StartsWith('{') || trimmed.StartsWith('"'))
         {
-            if (IsValidJson(trimmed))
+            var normalizedJson = TryNormalizeJsonInput(trimmed);
+            if (normalizedJson is not null)
             {
-                if (unwrap && trimmed.StartsWith('{'))
-                    return UnwrapJsonEnvelope(trimmed);
-                return trimmed;
-            }
-
-            // Recovery: MCP JSON-RPC transport can double-escape JSON strings, producing
-            // literal \" instead of ". Try one layer of unescaping before giving up on JSON.
-            var unescaped = TryUnescapeJsonTransportLayer(trimmed);
-            if (unescaped is not null)
-            {
-                if (unwrap && unescaped.StartsWith('{'))
-                    return UnwrapJsonEnvelope(unescaped);
-                return unescaped;
+                var extracted = unwrap && normalizedJson.StartsWith('{')
+                    ? UnwrapJsonEnvelope(normalizedJson)
+                    : normalizedJson;
+                return FinalizeExtractedResult(text, extracted);
             }
         }
 
         // 2. JSONL - multiple lines, each a valid JSON object
         var jsonl = TryParseAsJsonl(text);
-        if (jsonl != null) return jsonl;
+        if (jsonl != null) return FinalizeExtractedResult(text, jsonl);
 
         // 3. TSV - tabs present, >=2 columns, >=2 data rows
         var tsv = TryParseAsTsv(text);
-        if (tsv != null) return tsv;
+        if (tsv != null) return FinalizeExtractedResult(text, tsv);
 
         // 4. CSV - commas (no tabs), >=2 columns, >=2 data rows
         var csv = TryParseAsCsv(text);
-        if (csv != null) return csv;
+        if (csv != null) return FinalizeExtractedResult(text, csv);
 
         // 5. YAML - starts with ---\n OR >=2 consecutive key: value lines
         var yaml = TryParseAsYaml(text);
-        if (yaml != null) return yaml;
+        if (yaml != null) return FinalizeExtractedResult(text, yaml);
 
         // 6. Embedded structured data in prose (JSON/YAML/CSV blocks)
         var embedded = TryParseEmbeddedStructuredData(text);
-        if (embedded != null) return embedded;
+        if (embedded != null) return FinalizeExtractedResult(text, embedded);
 
         // 7. Structured text (- Key: Value format with delimiters)
         var structured = TryParseStructuredText(text);
-        if (structured != null) return structured;
+        if (structured != null) return FinalizeExtractedResult(text, structured);
 
         // 8. Fallback: wrap as text object
         return WrapAsText(text);
@@ -297,6 +291,135 @@ public static partial class StructuredDataExtractor
         return $"{{\"text\": \"{escaped}\"}}";
     }
 
+    private static string FinalizeExtractedResult(string originalText, string extractedJson)
+        => ShouldPreferRawText(originalText, extractedJson)
+            ? WrapAsText(originalText)
+            : extractedJson;
+
+    private static bool ShouldPreferRawText(string originalText, string extractedJson)
+    {
+        if (!IsSemanticallyEmptyExtractedResult(extractedJson))
+            return false;
+
+        var trimmedOriginal = originalText.Trim();
+        return trimmedOriginal.Length >= SuspiciousEmptyResultTextLength;
+    }
+
+    private static string? TryNormalizeJsonInput(string text)
+    {
+        var current = text.Trim();
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            if (TryExtractJsonStringLiteral(current, out var innerJson))
+            {
+                current = innerJson;
+                continue;
+            }
+
+            if (IsStructuredJson(current))
+                return current;
+
+            var unescaped = UnescapeJsonTransportLayerOnce(current);
+            if (unescaped is null || unescaped == current)
+                return null;
+
+            current = unescaped;
+        }
+
+        return null;
+    }
+
+    private static bool IsSemanticallyEmptyExtractedResult(string extractedJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(extractedJson);
+            return IsSemanticallyEmptyExtractedResult(doc.RootElement);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsSemanticallyEmptyExtractedResult(JsonElement element)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Array:
+                return element.GetArrayLength() == 0;
+
+            case JsonValueKind.Object:
+            {
+                var hasPreferredPayload = false;
+                var hasAnyNonIgnoredProperty = false;
+
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (property.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+                        continue;
+
+                    if (IsDiagnosticEnvelopeProperty(property.Name))
+                        continue;
+
+                    hasAnyNonIgnoredProperty = true;
+
+                    if (IsPreferredEnvelopeProperty(property.Name))
+                    {
+                        hasPreferredPayload = true;
+                        if (!IsSemanticallyEmptyExtractedResult(property.Value))
+                            return false;
+
+                        continue;
+                    }
+
+                    if ((property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                        && !IsSemanticallyEmptyExtractedResult(property.Value))
+                    {
+                        return false;
+                    }
+                }
+
+                if (!hasAnyNonIgnoredProperty)
+                    return true;
+
+                return hasPreferredPayload;
+            }
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryExtractJsonStringLiteral(string text, out string innerJson)
+    {
+        innerJson = string.Empty;
+        if (!text.StartsWith('"'))
+            return false;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            if (doc.RootElement.ValueKind != JsonValueKind.String)
+                return false;
+
+            var value = doc.RootElement.GetString();
+            if (string.IsNullOrWhiteSpace(value))
+                return false;
+
+            var trimmed = value.Trim();
+            if (!trimmed.StartsWith('{') && !trimmed.StartsWith('[') && !trimmed.StartsWith('"') && !trimmed.Contains("\\\""))
+                return false;
+
+            innerJson = trimmed;
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Attempts to recover JSON that was double-escaped by transport (e.g., MCP JSON-RPC).
     /// Only called when the input starts with [ or { but fails JSON validation — never on valid input.
@@ -304,14 +427,51 @@ public static partial class StructuredDataExtractor
     /// </summary>
     internal static string? TryUnescapeJsonTransportLayer(string text)
     {
-        // Only attempt if the text contains literal \" sequences (the hallmark of transport escaping)
+        if (IsStructuredJson(text))
+            return null;
+
+        var current = text.Trim();
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            var candidate = UnescapeJsonTransportLayerOnce(current);
+            if (candidate is null || candidate == current)
+                return null;
+
+            if (TryExtractJsonStringLiteral(candidate, out var innerJson))
+            {
+                current = innerJson;
+                continue;
+            }
+
+            if (IsStructuredJson(candidate))
+                return candidate;
+
+            current = candidate;
+        }
+
+        return null;
+    }
+
+    private static bool IsStructuredJson(string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            return doc.RootElement.ValueKind is JsonValueKind.Object or JsonValueKind.Array;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static string? UnescapeJsonTransportLayerOnce(string text)
+    {
         if (!text.Contains("\\\""))
             return null;
 
-        // One layer of unescaping: \" → " then \\ → \
         // Order matters: unescape quotes first to avoid collapsing \\\" into \" prematurely.
-        var candidate = text.Replace("\\\"", "\"").Replace("\\\\", "\\");
-        return IsValidJson(candidate) ? candidate : null;
+        return text.Replace("\\\"", "\"").Replace("\\\\", "\\");
     }
 
     /// <summary>
@@ -538,33 +698,7 @@ public static partial class StructuredDataExtractor
         try
         {
             using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            // Already an array — no unwrapping needed
-            if (root.ValueKind == JsonValueKind.Array)
-                return json;
-
-            // Not an object — return as-is
-            if (root.ValueKind != JsonValueKind.Object)
-                return json;
-
-            // Search for the best array of objects
-            var candidates = new List<ArrayCandidate>();
-            FindArrayCandidates(root, 0, candidates);
-
-            if (candidates.Count == 0)
-                return json;
-
-            // Pick largest; break ties with deepest
-            var best = candidates[0];
-            for (int i = 1; i < candidates.Count; i++)
-            {
-                var c = candidates[i];
-                if (c.Size > best.Size || (c.Size == best.Size && c.Depth > best.Depth))
-                    best = c;
-            }
-
-            return best.Array.GetRawText();
+            return UnwrapJsonElement(doc.RootElement, json);
         }
         catch (JsonException)
         {
@@ -572,7 +706,38 @@ public static partial class StructuredDataExtractor
         }
     }
 
-    private readonly record struct ArrayCandidate(JsonElement Array, int Size, int Depth);
+    private static string UnwrapJsonElement(JsonElement element, string fallbackJson)
+    {
+        // Already an array — no unwrapping needed
+        if (element.ValueKind == JsonValueKind.Array)
+            return element.GetRawText();
+
+        // Not an object — return as-is
+        if (element.ValueKind != JsonValueKind.Object)
+            return fallbackJson;
+
+        // Prefer explicit transport envelopes before searching globally for tabular arrays.
+        if (TryExtractPreferredEnvelopeChildJson(element, out var preferredChildJson))
+            return UnwrapJsonEnvelope(preferredChildJson);
+
+        // Search for the best array of objects first.
+        var candidates = new List<ArrayCandidate>();
+        FindArrayCandidates(element, 0, candidates);
+
+        var best = PickBestArrayCandidate(candidates);
+        if (best is not null)
+            return best.Value.Array.GetRawText();
+
+        // If there is no tabular array, unwrap single-child envelopes like
+        // {"data": {...}, "errors": null, "warnings": null} or
+        // {"result": "{\"data\": {...}}"}.
+        if (TryExtractSingleEnvelopeChildJson(element, out var childJson))
+            return UnwrapJsonEnvelope(childJson);
+
+        return element.GetRawText();
+    }
+
+    private readonly record struct ArrayCandidate(JsonElement Array, int Size, int Depth, bool IsDiagnostic);
 
     /// <summary>
     /// Recursively collects arrays of objects from JSON object properties.
@@ -590,7 +755,11 @@ public static partial class StructuredDataExtractor
             {
                 // Check if first element is an object (array of objects = table candidate)
                 if (value[0].ValueKind == JsonValueKind.Object)
-                    candidates.Add(new ArrayCandidate(value, value.GetArrayLength(), depth));
+                    candidates.Add(new ArrayCandidate(
+                        value,
+                        value.GetArrayLength(),
+                        depth,
+                        IsDiagnosticEnvelopeProperty(property.Name)));
                 // Do NOT recurse into array elements
             }
             else if (value.ValueKind == JsonValueKind.Object)
@@ -599,6 +768,164 @@ public static partial class StructuredDataExtractor
             }
         }
     }
+
+    private static ArrayCandidate? PickBestArrayCandidate(List<ArrayCandidate> candidates)
+    {
+        if (candidates.Count == 0)
+            return null;
+
+        var best = candidates[0];
+        for (int i = 1; i < candidates.Count; i++)
+        {
+            var candidate = candidates[i];
+
+            if (best.IsDiagnostic != candidate.IsDiagnostic)
+            {
+                if (!candidate.IsDiagnostic)
+                    best = candidate;
+                continue;
+            }
+
+            if (candidate.Size > best.Size || (candidate.Size == best.Size && candidate.Depth > best.Depth))
+                best = candidate;
+        }
+
+        return best;
+    }
+
+    private static bool TryExtractPreferredEnvelopeChildJson(JsonElement element, out string childJson)
+    {
+        childJson = string.Empty;
+        string? bestPreferred = null;
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!IsPreferredEnvelopeProperty(property.Name))
+                continue;
+
+            if (!TryExtractJsonCandidate(property.Value, out var candidateJson))
+                return false;
+
+            if (bestPreferred is not null)
+                return false;
+
+            bestPreferred = candidateJson;
+        }
+
+        childJson = bestPreferred ?? string.Empty;
+        return !string.IsNullOrEmpty(childJson);
+    }
+
+    private static bool TryExtractSingleEnvelopeChildJson(JsonElement element, out string childJson)
+    {
+        childJson = string.Empty;
+        string? candidate = null;
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (IsIgnorableEnvelopeProperty(property))
+                continue;
+
+            if (!TryExtractJsonCandidate(property.Value, out var candidateJson))
+                return false;
+
+            if (candidate is not null)
+                return false;
+
+            candidate = candidateJson;
+        }
+
+        childJson = candidate ?? string.Empty;
+        return !string.IsNullOrEmpty(childJson);
+    }
+
+    private static bool TryExtractJsonCandidate(JsonElement value, out string json)
+    {
+        json = string.Empty;
+
+        switch (value.ValueKind)
+        {
+            case JsonValueKind.Object:
+                json = value.GetRawText();
+                return true;
+
+            case JsonValueKind.Array:
+                if (!IsArrayOfObjects(value))
+                    return false;
+
+                json = value.GetRawText();
+                return true;
+
+            case JsonValueKind.String:
+            {
+                var text = value.GetString();
+                if (string.IsNullOrWhiteSpace(text))
+                    return false;
+
+                var trimmed = text.Trim();
+                if (IsValidJson(trimmed))
+                {
+                    using var parsed = JsonDocument.Parse(trimmed);
+                    if (!IsJsonCandidate(parsed.RootElement))
+                        return false;
+
+                    json = trimmed;
+                    return true;
+                }
+
+                var unescaped = TryUnescapeJsonTransportLayer(trimmed);
+                if (unescaped is not null)
+                {
+                    using var parsed = JsonDocument.Parse(unescaped);
+                    if (!IsJsonCandidate(parsed.RootElement))
+                        return false;
+
+                    json = unescaped;
+                    return true;
+                }
+
+                return false;
+            }
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool IsJsonCandidate(JsonElement element)
+        => element.ValueKind == JsonValueKind.Object
+           || (element.ValueKind == JsonValueKind.Array && IsArrayOfObjects(element));
+
+    private static bool IsArrayOfObjects(JsonElement element)
+        => element.ValueKind == JsonValueKind.Array
+           && element.GetArrayLength() > 0
+           && element[0].ValueKind == JsonValueKind.Object;
+
+    private static bool IsIgnorableEnvelopeProperty(JsonProperty property)
+    {
+        if (property.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return true;
+
+        if (IsDiagnosticEnvelopeProperty(property.Name))
+            return true;
+
+        return property.Name.Equals("dashboardUrl", StringComparison.OrdinalIgnoreCase)
+               && property.Value.ValueKind == JsonValueKind.String;
+    }
+
+    private static bool IsPreferredEnvelopeProperty(string propertyName)
+        => propertyName.Equals("result", StringComparison.OrdinalIgnoreCase)
+           || propertyName.Equals("data", StringComparison.OrdinalIgnoreCase)
+           || propertyName.Equals("payload", StringComparison.OrdinalIgnoreCase)
+           || propertyName.Equals("response", StringComparison.OrdinalIgnoreCase)
+           || propertyName.Equals("body", StringComparison.OrdinalIgnoreCase)
+           || propertyName.Equals("actor", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsDiagnosticEnvelopeProperty(string propertyName)
+        => propertyName.Equals("errors", StringComparison.OrdinalIgnoreCase)
+           || propertyName.Equals("warnings", StringComparison.OrdinalIgnoreCase)
+           || propertyName.Equals("meta", StringComparison.OrdinalIgnoreCase)
+           || propertyName.Equals("metadata", StringComparison.OrdinalIgnoreCase);
 
     #endregion
 

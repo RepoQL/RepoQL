@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.Data.DuckDB.UdfImplementations;
+using System.Text.Json;
 
 namespace RepoQL.Data.DuckDB.Tests;
 
@@ -572,6 +573,50 @@ public class StructuredDataExtractorTests
     }
 
     [Test]
+    public async Task Extract_WithDiagnosticArrayAndEnvelopePayload_PrefersPayload()
+    {
+        var input = """
+            {
+              "data": {
+                "start_time_ms": 1772743737590,
+                "end_time_ms": 1772765337590
+              },
+              "errors": [
+                {
+                  "message": "partial failure"
+                }
+              ],
+              "warnings": null
+            }
+            """;
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().Contain("\"start_time_ms\"");
+        result.Should().Contain("\"end_time_ms\"");
+        result.Should().NotContain("\"errors\"");
+        result.Should().NotContain("\"message\":\"partial failure\"");
+    }
+
+    [Test]
+    public async Task Extract_WithStringifiedResultEnvelope_UnwrapsNestedJson()
+    {
+        var input = """
+            {
+              "result": "{\"data\":{\"start_time_ms\":1772743737590,\"end_time_ms\":1772765337590},\"errors\":null,\"warnings\":null}"
+            }
+            """;
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().Contain("\"start_time_ms\":1772743737590");
+        result.Should().Contain("\"end_time_ms\":1772765337590");
+        result.Should().NotContain("\"result\"");
+        result.Should().NotContain("\"errors\"");
+        result.Should().NotContain("\"warnings\"");
+    }
+
+    [Test]
     public async Task Extract_WithSameSizeArrays_PicksDeeper()
     {
         var input = """{"shallow": [{"x": 1}], "deep": {"nested": [{"y": 1}]}}""";
@@ -731,6 +776,52 @@ Header text
         result.Should().Contain("\"name\"");
         result.Should().Contain("test");
         StructuredDataExtractor.IsValidJson(result).Should().BeTrue();
+    }
+
+    [Test]
+    public async Task Extract_WithQuotedEscapedJsonObject_UnwrapsStringLiteralPayload()
+    {
+        var input = "\"{\\\"data\\\":{\\\"start_time_ms\\\":1772743737590,\\\"end_time_ms\\\":1772765337590}}\"";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().Contain("\"start_time_ms\":1772743737590");
+        result.Should().Contain("\"end_time_ms\":1772765337590");
+    }
+
+    [Test]
+    public async Task Extract_WithQuotedPlainString_FallsBackToText()
+    {
+        var result = StructuredDataExtractor.Extract("\"hello\"");
+
+        result.Should().Contain("\"text\":");
+        result.Should().Contain("hello");
+    }
+
+    [Test]
+    public async Task Extract_WithLargeTextAndEmptyEmbeddedArray_FallsBackToRawText()
+    {
+        var input = new string('x', 320) + " []";
+
+        var result = StructuredDataExtractor.Extract(input);
+
+        result.Should().Contain("\"text\":");
+        result.Should().Contain(new string('x', 32));
+        result.Should().NotBe("[]");
+    }
+
+    [Test]
+    public async Task Extract_WithLargeWrappedEmptyPreferredPayload_FallsBackToRawText()
+    {
+        var input = """
+            {"result":[],"warnings":null,"details":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+            """;
+
+        var result = StructuredDataExtractor.Extract(input);
+        using var doc = JsonDocument.Parse(result);
+
+        result.Should().Contain("\"text\":");
+        doc.RootElement.GetProperty("text").GetString().Should().Be(input);
     }
 
     [Test]

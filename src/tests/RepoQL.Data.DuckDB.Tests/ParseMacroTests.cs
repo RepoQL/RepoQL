@@ -74,6 +74,21 @@ public sealed class ParseMacroTests : IDisposable
     }
 
     [Test]
+    public async Task Parse_StringifiedResultEnvelope_UnwrapsNestedObject()
+    {
+        var rows = _store.Query("""
+            SELECT start_time_ms, end_time_ms
+            FROM parse('{
+              "result": "{\"data\":{\"start_time_ms\":1772743737590,\"end_time_ms\":1772765337590},\"errors\":null,\"warnings\":null}"
+            }')
+            """);
+
+        rows.Should().HaveCount(1);
+        Convert.ToInt64(rows[0]["start_time_ms"]).Should().Be(1772743737590);
+        Convert.ToInt64(rows[0]["end_time_ms"]).Should().Be(1772765337590);
+    }
+
+    [Test]
     public async Task Parse_Yaml_ReturnsTypedColumns()
     {
         var rows = _store.Query("""
