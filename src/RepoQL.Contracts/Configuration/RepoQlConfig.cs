@@ -85,10 +85,14 @@ public sealed class RepoQlConfig
     /// </summary>
     public sealed class RemoteEmbeddingSettings
     {
+#if DEBUG
         [Setting("gRPC endpoint URL for the remote embedding service",
             RequiresRestart = true,
-            DefaultValue = "https://repoql-embedding-s3lststjqa-uc.a.run.app")]
-        public string? Url { get; set; } = "https://repoql-embedding-s3lststjqa-uc.a.run.app";
+            DefaultValue = "https://repoql-embedding-4dl6e6infa-uc.a.run.app")]
+        public string? Url { get; set; } = "https://repoql-embedding-4dl6e6infa-uc.a.run.app";
+#else
+        public string? Url { get; } = "https://repoql-embedding-s3lststjqa-uc.a.run.app";
+#endif
 
         [Setting("Request timeout in seconds",
             RequiresRestart = true, DefaultValue = "30")]
@@ -159,10 +163,14 @@ public sealed class RepoQlConfig
     /// </summary>
     public sealed class InferenceSettings
     {
+#if DEBUG
         [Setting("Inference service gRPC URL",
             RequiresRestart = true,
-            DefaultValue = "https://repoql-inference-858599035276.us-central1.run.app")]
-        public string? ServiceUrl { get; set; } = "https://repoql-inference-858599035276.us-central1.run.app";
+            DefaultValue = "https://repoql-inference-4dl6e6infa-uc.a.run.app")]
+        public string? ServiceUrl { get; set; } = "https://repoql-inference-4dl6e6infa-uc.a.run.app";
+#else
+        public string? ServiceUrl { get; } = "https://repoql-inference-s3lststjqa-uc.a.run.app";
+#endif
 
         [Setting("Default tool token budget for explain",
             DefaultValue = "30000")]
