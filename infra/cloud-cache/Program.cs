@@ -394,6 +394,7 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Filter = new Cloudflare.Inputs.GetZoneFilterInputArgs
             {
                 Name = domain,
+                Match = "all",
             },
         });
 
