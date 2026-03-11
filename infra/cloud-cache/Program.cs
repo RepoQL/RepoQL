@@ -6,10 +6,10 @@ using Gcp = Pulumi.Gcp;
 return await Deployment.RunAsync<CloudCacheInfrastructureStack>();
 
 /// <summary>
-/// Provisions the GCP foundation for the cloud embedding cache and Cloudflare DNS/CDN proxy.
+/// Provisions the GCP foundation for the cloud embedding cache and Cloudflare edge proxy.
 /// Complexity: storage buckets, scheduling, service identities, HMAC credentials,
 /// Secret Manager storage, Eventarc IAM prerequisites, bucket-scoped IAM bindings,
-/// and Cloudflare proxied DNS records for public gRPC services.
+/// and Cloudflare proxied CNAME to GFE via Cloud Run domain mapping.
 /// </summary>
 internal sealed class CloudCacheInfrastructureStack : Stack
 {
@@ -387,7 +387,6 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         // Auth remains at the application layer (ApiKeyAuthInterceptor).
 
         var domain = config.Get("domain") ?? "repoql.ai";
-        var cloudServiceOrigin = config.Require("cloudServiceOrigin");
 
         var zone = Cloudflare.GetZone.Invoke(new Cloudflare.GetZoneInvokeArgs
         {
@@ -400,7 +399,7 @@ internal sealed class CloudCacheInfrastructureStack : Stack
 
         var zoneId = zone.Apply(z => z.Id);
 
-        // Zone settings — SSL Full (Cloud Run presents valid *.run.app cert).
+        // Zone settings — SSL Full (GFE presents valid Google-managed cert for api.repoql.ai).
         // gRPC is enabled via Cloudflare dashboard (Network → gRPC toggle).
         _ = new Cloudflare.ZoneSetting("sslSetting", new Cloudflare.ZoneSettingArgs
         {
@@ -409,13 +408,15 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Value = "full",
         });
 
-        // Proxied CNAME — Cloudflare terminates TLS, provides WAF/DDoS, proxies gRPC.
+        // Proxied CNAME to Google Frontend via Cloud Run domain mapping.
+        // Cloudflare terminates client TLS, provides WAF/DDoS/gRPC proxying.
+        // GFE routes to Cloud Run based on the domain mapping for api.repoql.ai.
         var apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
         {
             ZoneId = zoneId,
             Name = "api",
             Type = "CNAME",
-            Content = cloudServiceOrigin,
+            Content = "ghs.googlehosted.com",
             Ttl = 1, // 1 = automatic (Cloudflare manages TTL for proxied records)
             Proxied = true,
         });
