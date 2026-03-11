@@ -187,7 +187,21 @@ jobs:
             return [System.IO.File]::ReadAllText($path)
           }
 
+          function Dispose-ProcessObject($process) {
+            if ($null -eq $process) {
+              return
+            }
+
+            try {
+              $process.Dispose()
+            }
+            catch {
+              Write-Host "Process dispose warning: $($_.Exception.Message)"
+            }
+          }
+
           function Stop-RepoQlHost([string]$repoRoot, [string]$binaryPath) {
+            $stopProcess = $null
             try {
               $stopStdoutFile = Join-Path $repoRoot 'host.stop.stdout.log'
               $stopStderrFile = Join-Path $repoRoot 'host.stop.stderr.log'
@@ -204,16 +218,23 @@ jobs:
                 throw "host.stop timed out after 30 seconds."
               }
 
-              if ($stopProcess.ExitCode -eq 0) {
+              $stopExitCode = $stopProcess.ExitCode
+              Dispose-ProcessObject $stopProcess
+              $stopProcess = $null
+
+              if ($stopExitCode -eq 0) {
                 return
               }
 
               $stopStdout = Read-TextFile $stopStdoutFile
               $stopStderr = Read-TextFile $stopStderrFile
-              throw "host.stop exited with code $($stopProcess.ExitCode). stdout: $stopStdout stderr: $stopStderr"
+              throw "host.stop exited with code $stopExitCode. stdout: $stopStdout stderr: $stopStderr"
             }
             catch {
               Write-Host "Host stop command warning: $($_.Exception.Message)"
+            }
+            finally {
+              Dispose-ProcessObject $stopProcess
             }
 
             $lockPath = Join-Path $repoRoot ".repoql/host.lock"
@@ -259,6 +280,7 @@ jobs:
           $hostStderr = ""
 
           $smokeSql = '"SELECT 1 AS ok"'
+          $process = $null
 
           try {
             $process = Start-Process `
@@ -274,13 +296,17 @@ jobs:
               throw "Smoke test timed out after 60 seconds."
             }
 
+            $smokeExitCode = $process.ExitCode
+            Dispose-ProcessObject $process
+            $process = $null
+
             $stdout = Read-TextFile $stdoutFile
             $stderr = Read-TextFile $stderrFile
             $hostLog = Read-TextFile $hostLogPath
             $hostStderr = Read-TextFile $hostStderrPath
 
-            if ($process.ExitCode -ne 0) {
-              throw "Smoke test exited with code $($process.ExitCode)."
+            if ($smokeExitCode -ne 0) {
+              throw "Smoke test exited with code $smokeExitCode."
             }
 
             if ($stdout -notmatch '(^|\s)1(\s|$)') {
@@ -288,6 +314,7 @@ jobs:
             }
           }
           finally {
+            Dispose-ProcessObject $process
             Stop-RepoQlHost $repoRoot $binaryPath
 
             $stdout = if ([string]::IsNullOrWhiteSpace($stdout)) { Read-TextFile $stdoutFile } else { $stdout }
