@@ -400,20 +400,13 @@ internal sealed class CloudCacheInfrastructureStack : Stack
 
         var zoneId = zone.Apply(z => z.Id);
 
-        // Zone settings — SSL Full (Cloud Run presents valid *.run.app cert),
-        // gRPC enabled (Pro plan, proxies HTTP/2 gRPC through the edge).
+        // Zone settings — SSL Full (Cloud Run presents valid *.run.app cert).
+        // gRPC is enabled via Cloudflare dashboard (Network → gRPC toggle).
         _ = new Cloudflare.ZoneSetting("sslSetting", new Cloudflare.ZoneSettingArgs
         {
             ZoneId = zoneId,
             SettingId = "ssl",
             Value = "full",
-        });
-
-        _ = new Cloudflare.ZoneSetting("grpcSetting", new Cloudflare.ZoneSettingArgs
-        {
-            ZoneId = zoneId,
-            SettingId = "grpc",
-            Value = "on",
         });
 
         // Proxied CNAME — Cloudflare terminates TLS, provides WAF/DDoS, proxies gRPC.
