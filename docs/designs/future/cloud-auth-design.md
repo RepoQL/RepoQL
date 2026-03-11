@@ -2,18 +2,18 @@
 
 ## North Star
 
-One API key, one config line, works immediately. Identity and access grow without changing the client. The simplest auth that earns trust — no setup friction, no silent failures, no lock-in.
+`repoql login` → never think about auth again. The tool handles tokens, refresh, and recovery invisibly. API keys exist for CI and scripts, but the default path is: log in once, use forever.
 
 ## Context
 
-RepoQL cloud services (`api.repoql.ai`) expose embedding and inference over gRPC. Today, auth is a static list of SHA-256 key hashes in Cloud Run config — adding or revoking a key requires redeployment. There's no per-user identity, no usage tracking, no self-service key management.
+RepoQL cloud services (`api.repoql.ai`) expose embedding and inference over gRPC. Today, auth is a static list of SHA-256 key hashes in Cloud Run config — adding or revoking a key requires redeployment. There's no per-user identity, no usage tracking, no self-service.
 
-Two auth methods are needed:
+Two auth methods, one primary:
 
-1. **API keys** — long-lived opaque tokens for programmatic access (the Stripe/OpenAI pattern). This is the primary method — every RepoQL host uses it.
-2. **Sessions** — OAuth2 access tokens for interactive use (dashboard, future CLI login). Secondary — humans only.
+1. **Sessions (primary)** — User logs in once via CLI, gets a refresh token, access tokens rotate silently. The `gh auth login` model. This is how every human uses RepoQL.
+2. **API keys (secondary)** — Long-lived opaque tokens for CI/CD, scripts, and non-interactive use. The Stripe/OpenAI pattern. Fallback for machines.
 
-**Informed by:** `docs/designs/workos-auth-research.md`
+**Informed by:** `docs/research/workos-auth-research.md`
 
 ## Constraints
 
@@ -23,76 +23,72 @@ Two auth methods are needed:
 | gRPC latency | Per-request external API calls for validation are unacceptable. Validation must be local. |
 | Single writer | Firestore writes from Cloud Run only. RepoQL hosts are read-only consumers via gRPC. |
 | Existing interceptor works | `ApiKeyAuthInterceptor` already does SHA-256 validation. Extend, don't replace. |
-| No client changes for API keys | `Authorization: Bearer <key>` is already the wire format. Clients don't change. |
 | Laptop-first | RepoQL hosts never talk to Firestore or WorkOS directly. All auth resolves server-side. |
+| Login once | The user authenticates once. Everything after that is invisible. |
 
 ---
 
 ## Design
 
+### The Login Flow
+
+```
+repoql login
+    │
+    ▼
+Open browser → WorkOS AuthKit (hosted login page)
+    │
+    ▼
+User authenticates (email, Google, GitHub, etc.)
+    │
+    ▼
+Callback to localhost with authorization code
+    │
+    ▼
+CLI exchanges code for access token (JWT, 5min) + refresh token (30 days)
+    │
+    ▼
+Store refresh token in OS credential store (Windows Credential Manager / macOS Keychain / Linux Secret Service)
+Store access token in memory + ~/.repoql/auth.json (short-lived, ok on disk)
+    │
+    ▼
+Done. User never thinks about auth again.
+```
+
+### Silent Token Refresh
+
+The RepoQL host manages tokens transparently:
+
+```
+gRPC call → check access token expiry
+    │
+    ├── Valid (>30s remaining) → attach to request, proceed
+    │
+    ├── Expiring soon (<30s) → refresh in background, use current token
+    │
+    └── Expired → refresh synchronously, retry request
+            │
+            ├── Refresh succeeds → new access token, proceed
+            │
+            └── Refresh fails (revoked/expired) → prompt: "Session expired. Run: repoql login"
+```
+
+The refresh token (30 days) means a user who uses RepoQL daily never re-authenticates. If they go on a month-long holiday, one `repoql login` on return.
+
 ### Token Discrimination
 
-The interceptor receives `Authorization: Bearer <token>` and must determine which validation path to use. Two token types, distinguished by format:
+The interceptor receives `Authorization: Bearer <token>` and routes by format:
 
-| Token type | Format | Validation |
-|------------|--------|------------|
-| API key | Opaque, prefixed `rql_` | SHA-256 hash → Firestore lookup |
-| Access token | JWT (three dot-separated base64 segments) | Signature + claims validation |
+| Token type | Format | Validation | Primary use |
+|------------|--------|------------|-------------|
+| Access token | JWT (three dot-separated base64 segments) | JWKS signature + claims | Interactive (CLI, dashboard) |
+| API key | Opaque, prefixed `rql_` | SHA-256 hash → Firestore lookup | CI/CD, scripts |
 
-The interceptor examines the token. If it starts with `rql_`, it's an API key. If it decodes as a JWT header, it's a session token. Anything else is rejected.
+The prefix `rql_` can never be valid base64-encoded JSON — formats never collide.
 
-This is unambiguous — the prefix `rql_` can never be valid base64-encoded JSON, so the two formats never collide.
-
-### API Keys
-
-**Format:** `rql_` + 32 random bytes, base62-encoded. Example: `rql_7kX2mP9qR4nL5wY8...` (~48 characters total).
-
-**Lifecycle:**
-
-```
-Create key → return plaintext once → store SHA-256 hash + metadata in Firestore
-                                                    ↓
-Client sends key → interceptor hashes → lookup in cache → allow/deny
-                                                    ↑
-                            Firestore watch stream keeps cache warm
-```
-
-**Storage (Firestore):**
-
-Collection: `api-keys`
-
-```
-{
-  "hash": "a3f2...",           // SHA-256 hex, also the document ID
-  "prefix": "rql_7kX2",       // first 8 chars, for identification in UI
-  "name": "stuart-laptop",    // user-chosen label
-  "org_id": null,              // future: organization scope
-  "created_at": "2026-03-12T...",
-  "last_used_at": null,
-  "revoked": false,
-  "scopes": ["embedding", "inference"]  // future: granular permissions
-}
-```
-
-Document ID is the SHA-256 hash — lookups are O(1).
-
-**Cache:** Cloud Run service maintains an in-memory `HashSet<string>` of valid (non-revoked) key hashes, populated on startup from Firestore and kept current via Firestore real-time listeners. Cache miss falls through to a direct Firestore read (cold path for newly-created keys before the listener fires).
-
-**Key management:** Initially via a `::cloud-keys` command or admin gRPC endpoint. Future: WorkOS API Keys widget for self-service.
-
-### Session Tokens (WorkOS)
+### Session Auth (WorkOS) — Primary
 
 **Provider:** WorkOS — free up to 1M MAU, OAuth2/PKCE, organizations, SSO-ready.
-
-**Flow:**
-
-```
-User → WorkOS AuthKit → authorization code → Cloud Service exchanges for tokens
-                                                      ↓
-                                            Access token (JWT, 5min) + refresh token (30 days)
-                                                      ↓
-Client sends JWT → interceptor validates signature + expiry + claims → allow/deny
-```
 
 **JWT validation** uses WorkOS JWKS endpoint, cached locally with standard rotation. No per-request WorkOS API call — just local signature verification using `Microsoft.IdentityModel.Tokens`.
 
@@ -100,12 +96,65 @@ Client sends JWT → interceptor validates signature + expiry + claims → allow
 
 | Claim | Use |
 |-------|-----|
-| `sub` | User ID |
+| `sub` | User ID (identity for usage tracking, rate limiting) |
 | `org_id` | Organization (future: scoped access) |
 | `exp` | Expiry |
 | `permissions` | Future: granular access control |
 
-**Refresh tokens** are handled client-side. The dashboard or CLI detects a 401, uses the refresh token to get a new access token from WorkOS, retries. The gRPC service never sees refresh tokens.
+**Client-side token storage:**
+
+| Token | Storage | Lifetime |
+|-------|---------|----------|
+| Refresh token | OS credential store (encrypted) | 30 days (configurable in WorkOS) |
+| Access token | `~/.repoql/auth.json` + memory | 5 minutes |
+
+The refresh token never leaves the local machine, never hits the gRPC service, never gets logged.
+
+### API Keys (WorkOS API Keys) — Secondary
+
+WorkOS launched API Keys in October 2025 — org-scoped, with webhook events for lifecycle management.
+
+**Flow:**
+
+```
+User creates key via WorkOS dashboard/widget or CLI command
+    │
+    ▼
+WorkOS stores key, emits api_key.created webhook
+    │
+    ▼
+Cloud Service receives webhook → caches key hash in Firestore
+    │
+    ▼
+Client sends key → interceptor hashes → lookup in Firestore cache → allow/deny
+```
+
+**Why WorkOS API Keys over DIY:**
+- Self-service key management UI (embeddable widget) without building a dashboard
+- Org-scoped keys come free with WorkOS organizations
+- Webhook-based cache means validation is still local (no per-request WorkOS call)
+- One auth provider for both sessions and API keys — simpler to reason about
+
+**Fallback if WorkOS API Keys .NET SDK is incomplete:** DIY keys with `rql_` prefix, Firestore storage, same interceptor path. The wire format is identical either way — only the management layer changes.
+
+**Firestore cache (populated via webhooks):**
+
+Collection: `api-keys`
+
+```
+{
+  "hash": "a3f2...",           // SHA-256 hex, also the document ID
+  "prefix": "rql_7kX2",       // first 8 chars, for identification in UI
+  "name": "ci-pipeline",      // user-chosen label
+  "user_id": "user_...",      // WorkOS user who created it
+  "org_id": null,              // future: organization scope
+  "created_at": "2026-03-12T...",
+  "last_used_at": null,
+  "revoked": false
+}
+```
+
+Cache kept warm via Firestore real-time listeners. Cache miss falls through to direct Firestore read.
 
 ### Interceptor Architecture
 
@@ -118,7 +167,7 @@ Extend the existing `ApiKeyAuthInterceptor`:
 Bearer token ──────►  Discriminate by format  │
                     │     │           │       │
                     │     ▼           ▼       │
-                    │  API key?    JWT?       │
+                    │  rql_*?      JWT?       │
                     │     │           │       │
                     │     ▼           ▼       │
                     │  Hash+lookup  Validate  │
@@ -134,10 +183,10 @@ Both paths produce an `AuthIdentity` on the call context:
 
 ```csharp
 public record AuthIdentity(
-    string Id,              // key hash or user ID
-    AuthMethod Method,      // ApiKey or Session
-    string? OrgId,          // null until org support
-    string[] Scopes         // ["embedding", "inference"]
+    string UserId,           // WorkOS user ID (from JWT sub or key's user_id)
+    AuthMethod Method,       // ApiKey or Session
+    string? OrgId,           // null until org support
+    string DisplayName       // email or key name, for logging
 );
 
 public enum AuthMethod { ApiKey, Session }
@@ -145,9 +194,24 @@ public enum AuthMethod { ApiKey, Session }
 
 Downstream services read identity from context — they don't care how auth happened.
 
+### CLI Integration
+
+New commands:
+
+```
+repoql login          # Opens browser, completes OAuth, stores tokens
+repoql logout         # Clears stored tokens
+repoql whoami         # Shows current user, org, auth method
+repoql keys create    # Create an API key (for CI/scripts)
+repoql keys list      # List active keys
+repoql keys revoke    # Revoke a key
+```
+
+`repoql login` is the only auth command most users ever run.
+
 ### Bypass Hatch
 
-The existing behavior (empty `ApiKeyHashes` = open) is preserved as a development mode. In production, at least one key hash must exist or the Firestore listener must be configured. A startup health check logs a warning if auth is effectively disabled.
+The existing behavior (empty `ApiKeyHashes` = open) is preserved as a development mode. In production, at least one auth method must be configured. A startup health check logs a warning if auth is effectively disabled.
 
 ### Infrastructure (Pulumi)
 
@@ -155,11 +219,10 @@ New resources:
 
 | Resource | Purpose |
 |----------|---------|
-| Firestore collection `api-keys` | Key hash storage |
 | Secret Manager `workos-api-key` | WorkOS API key for server-side SDK |
 | Secret Manager `workos-client-id` | WorkOS client ID |
 
-Firestore already exists in both environments. The `api-keys` collection is created implicitly on first write (Firestore is schemaless).
+Firestore `api-keys` collection created implicitly on first webhook write.
 
 ### Configuration
 
@@ -168,17 +231,18 @@ Cloud Run environment variables (via Secret Manager):
 ```
 Auth__WorkOs__ApiKey=wos_...
 Auth__WorkOs__ClientId=client_...
+Auth__WorkOs__WebhookSecret=whsec_...
 Auth__Firestore__ProjectId=repoql-production
-Auth__Firestore__ApiKeysCollection=api-keys
 ```
 
-RepoQL host config (unchanged):
+RepoQL host config — after `repoql login`, managed automatically:
 
 ```
-Cloud.ApiKey=rql_7kX2mP9qR4nL5wY8...
+Cloud.AuthToken=eyJhbG...          # access token (auto-refreshed)
+Cloud.RefreshToken=<stored in OS credential manager>
 ```
 
-No client-side changes. The host doesn't know or care whether it's using a Firestore-backed key or a static hash.
+Legacy `Cloud.ApiKey` setting continues to work for API keys and backward compatibility.
 
 ---
 
@@ -186,28 +250,25 @@ No client-side changes. The host doesn't know or care whether it's using a Fires
 
 ### Usage Tracking
 
-Both auth paths write to the existing `product-analytics` Firestore collection. Per-request: key prefix (not the key), method called, token count, latency. Aggregated server-side, not per-call.
+Both auth paths write to the existing `product-analytics` Firestore collection. Per-request: user ID, method called, token count, latency. Aggregated server-side, not per-call. Per-user tracking enables future billing.
 
 ### Rate Limiting
 
-Per-key rate limiting via in-memory sliding window on Cloud Run. Not per-user initially — API keys are the unit of rate limiting. Limits configurable per key in Firestore metadata.
-
-### Key Rotation
-
-Users create a new key, update their config, then revoke the old key. No grace period complexity — the old key works until explicitly revoked. Revocation propagates via Firestore listener within seconds.
+Per-user rate limiting via in-memory sliding window on Cloud Run. Both auth methods resolve to a user ID — same limits regardless of method. Limits configurable per user/org in Firestore metadata.
 
 ### Error Messages
 
 | Scenario | gRPC Status | Detail |
 |----------|-------------|--------|
-| No Authorization header | `UNAUTHENTICATED` | "Missing authorization header. Set Cloud.ApiKey in RepoQL config." |
-| Malformed token | `UNAUTHENTICATED` | "Invalid token format. Expected API key (rql_...) or JWT." |
-| Unknown API key | `UNAUTHENTICATED` | "API key not recognized. Check Cloud.ApiKey value." |
-| Revoked API key | `PERMISSION_DENIED` | "API key has been revoked." |
-| Expired JWT | `UNAUTHENTICATED` | "Session expired. Re-authenticate." |
-| Invalid JWT signature | `UNAUTHENTICATED` | "Invalid session token." |
+| No Authorization header | `UNAUTHENTICATED` | "Not authenticated. Run: repoql login" |
+| Malformed token | `UNAUTHENTICATED` | "Invalid token format. Run: repoql login" |
+| Expired JWT, refresh works | *(handled client-side, user never sees this)* | |
+| Expired JWT, refresh fails | `UNAUTHENTICATED` | "Session expired. Run: repoql login" |
+| Unknown API key | `UNAUTHENTICATED` | "API key not recognized. Check key or run: repoql login" |
+| Revoked API key | `PERMISSION_DENIED` | "API key has been revoked. Create a new one: repoql keys create" |
+| Invalid JWT signature | `UNAUTHENTICATED` | "Invalid session. Run: repoql login" |
 
-Every error is actionable — the client (or the agent configuring it) can self-recover.
+Every error points the user to the one command that fixes it.
 
 ---
 
@@ -215,59 +276,61 @@ Every error is actionable — the client (or the agent configuring it) can self-
 
 | Chose | Over | Because |
 |-------|------|---------|
-| DIY API keys + Firestore | WorkOS API Keys | Local validation (no per-request API call), no SDK dependency risk, full control |
-| WorkOS for sessions | DIY OAuth2 | Don't build identity infrastructure; free 1M MAU; SSO-ready when needed |
-| Firestore real-time listener | Polling / webhook | Firestore already provisioned; listener is push-based, low-latency, built-in |
-| `rql_` prefix | No prefix | Unambiguous discrimination from JWTs; familiar pattern (Stripe `sk_`, OpenAI `sk-`) |
-| In-memory cache | Redis / Memcached | Single Cloud Run instance; no additional infrastructure |
-| Per-key rate limiting | Per-user | API keys are the billing/access unit; simpler; per-user comes with org support |
+| Sessions as primary | API keys as primary | Users shouldn't manage keys. Log in once, forget about it. |
+| WorkOS API Keys | DIY API keys | Self-service widget, org-scoping, webhook lifecycle — don't build what exists |
+| Webhook → Firestore cache | Direct WorkOS API validation | Local validation, no per-request latency hit |
+| OS credential store | Flat file for refresh token | Refresh tokens are long-lived secrets — encrypt at rest |
+| WorkOS for everything | Mixed providers | One identity provider, one set of user IDs, one org model |
+| Background token refresh | Refresh on 401 only | User never experiences auth latency |
 
 ## Alternatives Considered
 
-**WorkOS API Keys for everything:** The Oct 2025 feature provides org-scoped keys with an embeddable widget. However: (1) .NET SDK support for the API Keys feature is unverified, (2) validation would require a WorkOS API call per request (unacceptable for gRPC latency), (3) we'd depend on WorkOS for the critical path of every embedding/inference call. WorkOS API Keys could be a future self-service layer that writes to our Firestore store.
+**API keys as primary:** The Stripe/OpenAI model. But those are API-first products where the user IS a developer configuring integrations. RepoQL users are developers using a tool — they want to log in and forget, not manage keys. API keys exist for CI, not for daily use.
 
-**Unkey:** Purpose-built API key management with rate limiting built in. Attractive, but adds another dependency and another network hop for validation. Better fit at higher scale or if we need sophisticated per-key rate limiting beyond simple sliding windows.
+**DIY OAuth2:** Build the login flow ourselves against Google/GitHub. Works, but then we also build session management, token storage, user management, org support. WorkOS does all of this with a free tier of 1M MAU.
 
-**Static hashes only (status quo):** Works but doesn't scale. Adding a key requires redeployment. No revocation, no usage tracking, no self-service.
+**DIY API keys + separate WorkOS sessions:** The previous design. But maintaining two independent auth systems (DIY Firestore keys + WorkOS JWTs) is more complex than using WorkOS for both. WorkOS API Keys unify the model — one provider, one user identity, one org boundary.
 
-**JWT-only (no API keys):** The Node.js/web pattern. But API keys are the dominant pattern for API services (Stripe, OpenAI, Anthropic) because they're simpler for programmatic use — no token refresh, no OAuth dance. And RepoQL hosts are machines, not browsers.
+**Unkey for API keys:** Purpose-built, open source. But adds a second auth provider alongside WorkOS. If WorkOS API Keys prove insufficient, Unkey is the upgrade path.
 
 ## Risks
 
 | Risk | Mitigation |
 |------|------------|
-| Firestore listener drops | Fallback to direct read on cache miss; periodic full refresh as backstop |
-| WorkOS .NET SDK lags features | JWT validation uses standard libraries, not WorkOS SDK; session management is secondary |
-| Single Cloud Run instance = single cache | Cloud Run scales to multiple instances; each instance maintains its own cache via Firestore listener. Consistent because Firestore is the source of truth |
-| Key leaked | Revocation propagates in seconds via listener. Usage tracking surfaces anomalies. Future: key expiration |
-| WorkOS outage | API keys (primary method) don't depend on WorkOS at all. Only session tokens are affected |
+| WorkOS API Keys .NET SDK incomplete | Fall back to DIY keys with same wire format. Interceptor doesn't change. |
+| WorkOS outage blocks login | Existing sessions continue (refresh tokens are local). API keys work independently. Only new logins blocked. |
+| OS credential store unavailable | Fall back to encrypted file in `~/.repoql/`. Warn user. |
+| Refresh token stolen from disk | OS credential store encrypts at rest. Token is per-user, revocable from WorkOS dashboard. |
+| Browser-based login fails (SSH/headless) | `repoql login --device-code` for device authorization flow. Or use API key. |
 
 ## Extension Points
 
 | Point | What it enables |
 |-------|----------------|
 | `AuthIdentity.OrgId` | Organization-based access control, usage quotas per org |
-| `scopes` array | Granular permissions (embedding-only keys, read-only keys) |
-| WorkOS API Keys widget | Self-service key management UI without building a dashboard |
-| Firestore key metadata | Per-key rate limits, expiration dates, usage caps |
-| Additional token types | Future discriminator patterns (e.g., `rql_temp_` for temporary keys) |
+| WorkOS Organizations | Multi-tenant billing, team management |
+| WorkOS SSO | Enterprise customers federate identity ($125/connection when justified) |
+| WorkOS API Keys widget | Embeddable self-service key management in dashboard |
+| `repoql login --device-code` | Headless/SSH environments |
 
 ## Phasing
 
-**Phase 1 — Dynamic API keys (immediate):**
-- Firestore-backed key store with real-time cache
-- Extend interceptor for Firestore lookup
-- Admin endpoint or command for key CRUD
-- Usage tracking per key
-- Remove static `ApiKeyHashes` config dependency
-
-**Phase 2 — WorkOS identity (when dashboard exists):**
-- WorkOS integration for user login
+**Phase 1 — Login flow + JWT auth:**
+- WorkOS integration for `repoql login`
 - JWT validation in interceptor
-- Session management for dashboard
-- CLI `repoql login` flow
+- Silent token refresh in gRPC client
+- OS credential store for refresh tokens
+- `repoql logout` and `repoql whoami`
+- Existing `Cloud.ApiKey` continues to work (backward compat)
 
-**Phase 3 — Self-service (when orgs exist):**
+**Phase 2 — WorkOS API Keys:**
+- Webhook endpoint for key lifecycle events
+- Firestore cache for key hashes
+- `repoql keys create/list/revoke` commands
+- Deprecate static `ApiKeyHashes` config
+
+**Phase 3 — Organizations + billing:**
 - WorkOS organizations for multi-tenancy
-- WorkOS API Keys widget or custom key management UI
-- Per-org usage quotas and billing
+- Per-org usage quotas
+- WorkOS API Keys widget in dashboard
+- SSO for enterprise customers
