@@ -183,7 +183,35 @@ jobs:
             return [System.IO.File]::ReadAllText($path)
           }
 
-          function Stop-RepoQlHost([string]$repoRoot) {
+          function Stop-RepoQlHost([string]$repoRoot, [string]$binaryPath) {
+            try {
+              $stopStdoutFile = Join-Path $repoRoot 'host.stop.stdout.log'
+              $stopStderrFile = Join-Path $repoRoot 'host.stop.stderr.log'
+              $stopProcess = Start-Process `
+                -FilePath $binaryPath `
+                -ArgumentList @('command', 'host.stop') `
+                -WorkingDirectory $repoRoot `
+                -RedirectStandardOutput $stopStdoutFile `
+                -RedirectStandardError $stopStderrFile `
+                -PassThru
+
+              if (-not $stopProcess.WaitForExit(30000)) {
+                try { Stop-Process -Id $stopProcess.Id -Force -ErrorAction Stop } catch {}
+                throw "host.stop timed out after 30 seconds."
+              }
+
+              if ($stopProcess.ExitCode -eq 0) {
+                return
+              }
+
+              $stopStdout = Read-TextFile $stopStdoutFile
+              $stopStderr = Read-TextFile $stopStderrFile
+              throw "host.stop exited with code $($stopProcess.ExitCode). stdout: $stopStdout stderr: $stopStderr"
+            }
+            catch {
+              Write-Host "Host stop command warning: $($_.Exception.Message)"
+            }
+
             $lockPath = Join-Path $repoRoot ".repoql/host.lock"
             if (-not (Test-Path $lockPath)) {
               return
@@ -256,7 +284,7 @@ jobs:
             }
           }
           finally {
-            Stop-RepoQlHost $repoRoot
+            Stop-RepoQlHost $repoRoot $binaryPath
 
             $stdout = if ([string]::IsNullOrWhiteSpace($stdout)) { Read-TextFile $stdoutFile } else { $stdout }
             $stderr = if ([string]::IsNullOrWhiteSpace($stderr)) { Read-TextFile $stderrFile } else { $stderr }

@@ -25,6 +25,7 @@ List all registered commands. Quick way to discover what's available.
     ::diagnostics.fast Run quick health checks
     ::diagnostics.memory Show host memory breakdown
     ::diagnostics.memory.heap Show top managed heap types in the host (expensive)
+    ::host.stop        Stop the repository host
     ::host.restart     Restart the repository host
     ::reindex          Reindex files, optionally scoped to a URI pattern
     ::repo             Switch to a different repository

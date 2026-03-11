@@ -33,6 +33,7 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
         `diagnostics.memory` | Host memory breakdown
         `diagnostics.memory.heap` | Top managed heap types (expensive)
         `config` | View/change configuration
+        `host.stop` | Stop the repoql host
         `host.restart` | Restart the repoql host
         `queue.cancel` | Cancel one file at next stage boundary
         `queue.skip` | Persistently skip one file
