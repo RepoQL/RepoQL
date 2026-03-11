@@ -88,10 +88,10 @@ public sealed class RepoQlConfig
 #if DEBUG
         [Setting("gRPC endpoint URL for the remote embedding service",
             RequiresRestart = true,
-            DefaultValue = "https://repoql-embedding-4dl6e6infa-uc.a.run.app")]
-        public string? Url { get; set; } = "https://repoql-embedding-4dl6e6infa-uc.a.run.app";
+            DefaultValue = "https://api.repoql.ai")]
+        public string? Url { get; set; } = "https://api.repoql.ai";
 #else
-        public string? Url { get; } = "https://repoql-embedding-s3lststjqa-uc.a.run.app";
+        public string? Url { get; } = "https://api.repoql.ai";
 #endif
 
         [Setting("Request timeout in seconds",
@@ -166,10 +166,10 @@ public sealed class RepoQlConfig
 #if DEBUG
         [Setting("Inference service gRPC URL",
             RequiresRestart = true,
-            DefaultValue = "https://repoql-inference-4dl6e6infa-uc.a.run.app")]
-        public string? ServiceUrl { get; set; } = "https://repoql-inference-4dl6e6infa-uc.a.run.app";
+            DefaultValue = "https://api.repoql.ai")]
+        public string? ServiceUrl { get; set; } = "https://api.repoql.ai";
 #else
-        public string? ServiceUrl { get; } = "https://repoql-inference-s3lststjqa-uc.a.run.app";
+        public string? ServiceUrl { get; } = "https://api.repoql.ai";
 #endif
 
         [Setting("Default tool token budget for explain",
