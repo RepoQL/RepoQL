@@ -84,7 +84,12 @@ gcloud beta services identity create \
   --project="${PROJECT}"
 
 echo ""
+echo "Enabling Firestore API..."
+gcloud services enable \
+  firestore.googleapis.com \
+  --project="${PROJECT}"
+
+echo ""
 echo "Bootstrap complete. You can now run:"
 echo "  1. deploy-cloud-cache-infra workflow (Pulumi)"
-echo "  2. deploy-embedding-service workflow"
-echo "  3. deploy-embedding-writer workflow"
+echo "  2. deploy-cloud-service workflow"
