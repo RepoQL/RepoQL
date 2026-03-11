@@ -387,6 +387,7 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         // Auth remains at the application layer (ApiKeyAuthInterceptor).
 
         var domain = config.Get("domain") ?? "repoql.ai";
+        var cloudServiceOrigin = config.Require("cloudServiceOrigin");
 
         var zone = Cloudflare.GetZone.Invoke(new Cloudflare.GetZoneInvokeArgs
         {
@@ -399,17 +400,30 @@ internal sealed class CloudCacheInfrastructureStack : Stack
 
         var zoneId = zone.Apply(z => z.Id);
 
-        // CNAME to Google Hosted Services — Cloud Run domain mapping provisions a
-        // Google-managed TLS certificate for api.repoql.ai. Not proxied through Cloudflare
-        // (gRPC proxying requires Pro plan).
+        // Zone settings — SSL Full (Cloud Run presents valid *.run.app cert),
+        // gRPC enabled (Pro plan, proxies HTTP/2 gRPC through the edge).
+        _ = new Cloudflare.ZoneSetting("sslSetting", new Cloudflare.ZoneSettingArgs
+        {
+            ZoneId = zoneId,
+            SettingId = "ssl",
+            Value = "full",
+        });
+
+        _ = new Cloudflare.ZoneSetting("grpcSetting", new Cloudflare.ZoneSettingArgs
+        {
+            ZoneId = zoneId,
+            SettingId = "grpc",
+            Value = "on",
+        });
+
+        // Proxied CNAME — Cloudflare terminates TLS, provides WAF/DDoS, proxies gRPC.
         var apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
         {
             ZoneId = zoneId,
             Name = "api",
             Type = "CNAME",
-            Content = "ghs.googlehosted.com",
-            Ttl = 300,
-            Proxied = false,
+            Content = cloudServiceOrigin,
+            Proxied = true,
         });
 
         // --- Outputs ---
