@@ -101,6 +101,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.1xx'
+      - name: Install system protoc for linux-arm64
+        if: matrix.rid == 'linux-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          echo "PROTOBUF_PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
       - name: Restore
         run: dotnet restore
       - name: Publish ${{ matrix.rid }} binary
@@ -155,11 +163,24 @@ jobs:
           }
 
           function Read-TextFile([string]$path) {
-            if (Test-Path $path) {
-              return [System.IO.File]::ReadAllText($path)
+            if (-not (Test-Path $path)) {
+              return ""
             }
 
-            return ""
+            for ($attempt = 0; $attempt -lt 20; $attempt++) {
+              try {
+                return [System.IO.File]::ReadAllText($path)
+              }
+              catch [System.IO.IOException] {
+                if ($attempt -eq 19) {
+                  throw
+                }
+
+                Start-Sleep -Milliseconds 250
+              }
+            }
+
+            return [System.IO.File]::ReadAllText($path)
           }
 
           function Stop-RepoQlHost([string]$repoRoot) {
