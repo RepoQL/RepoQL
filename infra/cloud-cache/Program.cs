@@ -387,7 +387,6 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         // Auth remains at the application layer (ApiKeyAuthInterceptor).
 
         var domain = config.Get("domain") ?? "repoql.ai";
-        var cloudServiceOrigin = config.Get("cloudServiceOrigin") ?? "";
 
         var zone = Cloudflare.GetZone.Invoke(new Cloudflare.GetZoneInvokeArgs
         {
@@ -400,27 +399,22 @@ internal sealed class CloudCacheInfrastructureStack : Stack
 
         var zoneId = zone.Apply(z => z.Id);
 
-        // DNS-only CNAME — Cloud Run provides TLS and DDoS protection natively.
-        // gRPC proxying requires Cloudflare Pro ($20/mo) so we skip it.
-        Cloudflare.DnsRecord? apiDns = null;
-        if (!string.IsNullOrEmpty(cloudServiceOrigin))
+        // CNAME to Google Hosted Services — Cloud Run domain mapping provisions a
+        // Google-managed TLS certificate for api.repoql.ai. Not proxied through Cloudflare
+        // (gRPC proxying requires Pro plan).
+        var apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
         {
-            apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
-            {
-                ZoneId = zoneId,
-                Name = "api",
-                Type = "CNAME",
-                Content = cloudServiceOrigin,
-                Ttl = 300,
-                Proxied = false,
-            });
-        }
+            ZoneId = zoneId,
+            Name = "api",
+            Type = "CNAME",
+            Content = "ghs.googlehosted.com",
+            Ttl = 300,
+            Proxied = false,
+        });
 
         // --- Outputs ---
 
-        CloudServiceUrl = apiDns is not null
-            ? apiDns.Name.Apply(n => $"https://{n}.{domain}")
-            : Output.Create("(not configured — set cloudServiceOrigin)");
+        CloudServiceUrl = apiDns.Name.Apply(n => $"https://{n}.{domain}");
         EmbeddingsBucketName = embeddingsBucket.Name;
         StagingBucketName = stagingBucket.Name;
         CompactionSchedulerName = compactionScheduler.Name;
