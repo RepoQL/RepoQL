@@ -187,7 +187,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     /// Environment variables:
     /// <list type="bullet">
     ///   <item><c>DUCKDB_MEMORY_LIMIT</c> - Max memory (default: 60% of RAM, capped at 16GB)</item>
-    ///   <item><c>DUCKDB_THREADS</c> - Worker threads (default: physical cores estimate, capped at 8)</item>
+    ///   <item><c>DUCKDB_THREADS</c> - Worker threads (default: 1)</item>
     ///   <item><c>DUCKDB_TEMP_DIRECTORY</c> - Spill directory (default: next to database file)</item>
     /// </list>
     /// </remarks>

@@ -8,13 +8,12 @@ internal static class DuckDbDefaults
 {
     public static string GetDefaultThreads()
     {
-        var logicalCores = Environment.ProcessorCount;
-        var estimatedPhysicalCores = logicalCores > 4 ? logicalCores / 2 : logicalCores;
-        var threads = estimatedPhysicalCores > 2
-            ? Math.Min(estimatedPhysicalCores - 1, 8)
-            : estimatedPhysicalCores;
-
-        return Math.Max(1, threads).ToString();
+        // Single thread: RepoQL's tables are small enough (~50K rows) that intra-query
+        // parallelism adds no measurable benefit. 1 thread minimizes native buffer overhead
+        // and leaves maximum memory headroom for the .NET managed heap.
+        // Concurrent read queries from multiple gRPC clients still work at the connection level.
+        // Overridable via DUCKDB_THREADS setting.
+        return "1";
     }
 
     public static string GetDefaultMemoryLimit()
@@ -40,17 +39,7 @@ internal static class DuckDbDefaults
 
     public static (string threads, string memory) GetOptimalConfig()
     {
-        var threads = int.Parse(GetDefaultThreads());
-        var memoryStr = GetDefaultMemoryLimit();
-        var memoryMb = ParseMemoryMb(memoryStr);
-
-        var memoryPerThread = memoryMb / threads;
-        if (memoryPerThread < 1024)
-        {
-            threads = Math.Max(1, (int)(memoryMb / 1024));
-        }
-
-        return (threads.ToString(), $"{memoryMb}MB");
+        return (GetDefaultThreads(), GetDefaultMemoryLimit());
     }
 
     public static long ParseMemoryMb(string memoryStr)
