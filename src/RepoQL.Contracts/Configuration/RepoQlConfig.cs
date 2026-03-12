@@ -256,7 +256,7 @@ public sealed class RepoQlConfig
         public int? RpcHangThresholdMs { get; set; }
 
         [Setting("Maximum concurrent gRPC queries (query/explore/read)",
-            DefaultValue = "4")]
+            DefaultValue = "15")]
         public int? MaxConcurrentQueries { get; set; }
     }
 

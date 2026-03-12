@@ -182,7 +182,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _inferenceSettings = config.Inference;
         _dashboardQueryActivity = dashboardQueryActivity;
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
-        var maxConcurrent = Math.Clamp(_hostSettings.MaxConcurrentQueries ?? 4, 1, 16);
+        var maxConcurrent = Math.Clamp(_hostSettings.MaxConcurrentQueries ?? 15, 1, 64);
         _queryConcurrency = new SemaphoreSlim(maxConcurrent, maxConcurrent);
     }
 
