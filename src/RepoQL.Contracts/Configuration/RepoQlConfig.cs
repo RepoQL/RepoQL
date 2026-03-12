@@ -254,6 +254,10 @@ public sealed class RepoQlConfig
             DefaultValue = "30000",
             LegacyEnvVar = "REPOQL_RPC_HANG_THRESHOLD_MS")]
         public int? RpcHangThresholdMs { get; set; }
+
+        [Setting("Maximum concurrent gRPC queries (query/explore/read)",
+            DefaultValue = "4")]
+        public int? MaxConcurrentQueries { get; set; }
     }
 
     public sealed class McpSettings

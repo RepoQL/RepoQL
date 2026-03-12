@@ -52,6 +52,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly RepoQlConfig.InferenceSettings _inferenceSettings;
     private readonly DashboardQueryActivityTracker? _dashboardQueryActivity;
     private readonly ILogger<RepoQlServiceImpl> _logger;
+    private readonly SemaphoreSlim _queryConcurrency;
 
     /// <summary>System prompt for the explain synthesis LLM call. Shapes output into Answer/Evidence/Nuance.</summary>
     private const string ExplainSystemPrompt = """
@@ -181,9 +182,24 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _inferenceSettings = config.Inference;
         _dashboardQueryActivity = dashboardQueryActivity;
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
+        var maxConcurrent = Math.Clamp(_hostSettings.MaxConcurrentQueries ?? 4, 1, 16);
+        _queryConcurrency = new SemaphoreSlim(maxConcurrent, maxConcurrent);
     }
 
     public override async Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)
+    {
+        await _queryConcurrency.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await ExecuteRawQueryCore(request, context).ConfigureAwait(false);
+        }
+        finally
+        {
+            _queryConcurrency.Release();
+        }
+    }
+
+    private async Task<RawQueryResponse> ExecuteRawQueryCore(RawQueryRequest request, ServerCallContext context)
     {
         // No barrier - queries execute immediately with whatever data is available.
         // ExploreTool handles "call again to wait" pattern for semantic readiness.
@@ -1300,6 +1316,19 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     public override async Task<ExploreResponse> Explore(ExploreRequest request, ServerCallContext context)
     {
+        await _queryConcurrency.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await ExploreCore(request, context).ConfigureAwait(false);
+        }
+        finally
+        {
+            _queryConcurrency.Release();
+        }
+    }
+
+    private async Task<ExploreResponse> ExploreCore(ExploreRequest request, ServerCallContext context)
+    {
         var sw = Stopwatch.StartNew();
         var activity = _dashboardQueryActivity?.Begin("explore", SummarizeExploreParameters(request), request.TokenBudget);
 
@@ -1380,6 +1409,19 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
 
     public override async Task<ExplainResponse> Explain(ExplainRequest request, ServerCallContext context)
+    {
+        await _queryConcurrency.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await ExplainCore(request, context).ConfigureAwait(false);
+        }
+        finally
+        {
+            _queryConcurrency.Release();
+        }
+    }
+
+    private async Task<ExplainResponse> ExplainCore(ExplainRequest request, ServerCallContext context)
     {
         var sw = Stopwatch.StartNew();
         var activity = _dashboardQueryActivity?.Begin("explain", SummarizeExplainParameters(request), request.TokenBudget);
@@ -1538,6 +1580,19 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     }
 
     public override async Task<ReadResponse> Read(ReadRequest request, ServerCallContext context)
+    {
+        await _queryConcurrency.WaitAsync(context.CancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await ReadCore(request, context).ConfigureAwait(false);
+        }
+        finally
+        {
+            _queryConcurrency.Release();
+        }
+    }
+
+    private async Task<ReadResponse> ReadCore(ReadRequest request, ServerCallContext context)
     {
         var sw = Stopwatch.StartNew();
         var activity = _dashboardQueryActivity?.Begin("read", SummarizeReadParameters(request), request.TokenBudget);
