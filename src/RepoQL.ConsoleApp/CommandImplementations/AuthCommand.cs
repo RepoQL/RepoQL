@@ -51,10 +51,10 @@ internal sealed class AuthCommand(CloudAuthService authService)
             var info = await authService.BeginDeviceCodeAsync(cancel).ConfigureAwait(false);
             return CommandResult.Success(
                 $"""
-                 To authenticate, visit: {info.VerificationUrl}
-                 Enter code: {info.UserCode}
+                 Authenticate here: {info.VerificationUrl}
+                 Confirm code: {info.UserCode}
 
-                 Call auth.login again to complete authentication.
+                 IMMEDIATELY call auth.login again — it will wait for the user to finish authenticating.
                  """);
         }
         catch (Exception ex)
