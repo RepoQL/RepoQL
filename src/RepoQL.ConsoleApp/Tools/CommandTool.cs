@@ -15,16 +15,29 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
     private const string CommandInstructions = """
         <CONCEPT>
         Imperative commands for administration and diagnostics.
-        Use command when you need to DO something (reindex, configure, diagnose)
+        Use command when you need to DO something (reindex, configure, diagnose).
+        Commands use DOT notation for subcommands and BRACKET notation for arguments:
+          command.subcommand[arg1, arg2]
         </CONCEPT>
+
+        <SYNTAX>
+        No arguments:    command(command="diagnostics")
+        Subcommand:      command(command="diagnostics.fast")
+        With arguments:  command(command="config.set[duckdb.threads, 4]")
+        Optional args:   command(command="config.set[key, value, scope]")
+        Help:            command(command="config --help")
+
+        IMPORTANT: Arguments go in BRACKETS after the command name.
+        WRONG: config set key value
+        RIGHT: config.set[key, value]
+        </SYNTAX>
 
         <DISCOVERY>
         List all available commands:
         command(command="?")
 
         Get help for a specific command:
-        command(command="diagnostics --help")
-
+        command(command="config --help")
         </DISCOVERY>
 
         <COMMON>
@@ -32,13 +45,15 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
         `diagnostics.fast` | Quick health checks
         `diagnostics.memory` | Host memory breakdown
         `diagnostics.memory.heap` | Top managed heap types (expensive)
-        `config` | View/change configuration
+        `config` | View current configuration
+        `config.set[key, value]` | Change a setting (e.g. `config.set[duckdb.threads, 4]`)
+        `config.read[key]` | Show details for a specific setting
         `host.stop` | Stop the repoql host
         `host.restart` | Restart the repoql host
-        `queue.cancel` | Cancel one file at next stage boundary
-        `queue.skip` | Persistently skip one file
-        `queue.retry` | Re-enqueue one failed/skipped file
-        `dashboard` | show the user a dashboard of the current state of the database
+        `queue.cancel[uri]` | Cancel one file at next stage boundary
+        `queue.skip[uri]` | Persistently skip one file
+        `queue.retry[uri]` | Re-enqueue one failed/skipped file
+        `dashboard` | Show the user a dashboard of the current state of the database
         `feedback` | Submit feedback about your experience with RepoQL
         </COMMON>
         """;
@@ -46,7 +61,7 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
     [McpServerTool(Name = "command", Title = "Run Command", ReadOnly = false, Idempotent = false, Destructive = false, OpenWorld = false), Description(CommandInstructions)]
     [McpMeta("defer_loading", false)]
     public async Task<CallToolResult> RunAsync(
-        [Description("Command to run (e.g. 'diagnostics', 'diagnostics[fast]', 'config --help', '?')")] string command,
+        [Description("Command to run (e.g. 'diagnostics', 'diagnostics.fast', 'config.set[key, value]', 'config --help', '?')")] string command,
         CancellationToken cancel = default)
     {
         if (string.IsNullOrWhiteSpace(command))
