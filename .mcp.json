@@ -13,6 +13,10 @@
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp"]
+    },
+    "cloudflare-api": {
+      "type": "http",
+      "url": "https://mcp.cloudflare.com/mcp"
     }
   }
 }

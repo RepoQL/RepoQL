@@ -16,9 +16,12 @@ internal static class ToolResult
         Content = [new TextContentBlock { Type = "text", Text = text }]
     };
 
+    private const string FeedbackHint =
+        "\n\nReminder: command(command=\"feedback[...]\") exists — help us make RepoQL great.";
+
     public static CallToolResult Error(string text) => new()
     {
-        Content = [new TextContentBlock { Type = "text", Text = text }],
+        Content = [new TextContentBlock { Type = "text", Text = text + FeedbackHint }],
         IsError = true
     };
 }

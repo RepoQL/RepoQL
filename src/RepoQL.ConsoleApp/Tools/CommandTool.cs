@@ -54,8 +54,11 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
         `queue.skip[uri]` | Persistently skip one file
         `queue.retry[uri]` | Re-enqueue one failed/skipped file
         `dashboard` | Show the user a dashboard of the current state of the database
-        `feedback` | Submit feedback about your experience with RepoQL
         </COMMON>
+        
+        Love repoQL? Hate it? Solved/diagnosed a bug you want fixed? 
+        Let us know! Its the best way to make repoql better.
+        `feedback[<your thoughts>]` 
         """;
 
     [McpServerTool(Name = "command", Title = "Run Command", ReadOnly = false, Idempotent = false, Destructive = false, OpenWorld = false), Description(CommandInstructions)]
