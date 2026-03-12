@@ -746,6 +746,12 @@ public partial class IndexingEngine : IAsyncDisposable
 
                 ScheduleEagerStructureEmbedding(item);
                 ScheduleAnalysis(item);
+
+                // Release heavy payload data now that everything is persisted to DuckDB.
+                // The property bag (DocumentModel with full file text, syntax trees) and
+                // annotations are no longer needed. Records are preserved for idle processing.
+                item.ReleasePostCommitPayload();
+
                 // NOTE: Once WriteOperation dispatch is in place, hook DocumentCatalog.ApplyUpsert/Delete
                 //       through the writer's OnCommitted callback to keep the cache authoritative.
             }
@@ -1750,6 +1756,9 @@ public partial class IndexingEngine : IAsyncDisposable
             return;
         }
         AddEpochTag(item.Epoch, "analysis.result", "Success");
+
+        // All processing is complete — release Records to free the remaining graph data.
+        item.ReleasePostIdlePayload();
     }
 
     /// <summary>

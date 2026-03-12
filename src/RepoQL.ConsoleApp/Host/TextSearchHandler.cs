@@ -356,12 +356,11 @@ internal sealed class TextSearchHandler : IModifierHandler
         var newlinePositions = BuildNewlinePositions(content);
         var matchedLineIndexes = new HashSet<int>();
 
-        foreach (Match match in regex.Matches(content))
+        // Use EnumerateMatches (ValueMatch structs) instead of Matches (Match objects)
+        // to avoid retaining millions of Match objects across documents.
+        foreach (var valueMatch in regex.EnumerateMatches(content))
         {
-            if (!match.Success)
-                continue;
-
-            var lineIndex = GetLineIndexAtCharPosition(newlinePositions, match.Index);
+            var lineIndex = GetLineIndexAtCharPosition(newlinePositions, valueMatch.Index);
             if (lineIndex < 0 || lineIndex >= lines.Length)
                 continue;
 

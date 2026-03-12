@@ -136,6 +136,30 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     }
 
     /// <summary>
+    /// Release heavy payload data after commit to DuckDB.
+    /// The property bag holds DocumentModel (full file text, syntax trees) and other
+    /// processor-specific data that is only needed during hot-path stages. Records and
+    /// lightweight metadata are preserved for idle processing (pruning, embedding, analysis).
+    /// </summary>
+    internal void ReleasePostCommitPayload()
+    {
+        _dictionaryImplementation.Clear();
+        AnnotationsList.Clear();
+        StructureEmbedding = null;
+        ExistingEntry = null;
+    }
+
+    /// <summary>
+    /// Release all remaining heavyweight data after idle processing completes.
+    /// Records are still needed during idle stages (vector refresh, multi-file analysis)
+    /// but can be freed once all idle work is done.
+    /// </summary>
+    internal void ReleasePostIdlePayload()
+    {
+        Records = null;
+    }
+
+    /// <summary>
     ///     Materialized graph records (artifacts, nodes, spans, edges)
     /// </summary>
     public Records? Records { get; set; }

@@ -120,49 +120,25 @@ public sealed class TextMatchUdf(
                 if (maySpanLines)
                 {
                     var content = reader.ReadToEnd();
-                    var newlinePositions = BuildNewlinePositions(content);
-                    var matchedLines = new HashSet<int>();
+                    // EnumerateMatches returns ValueMatch structs (Index + Length only),
+                    // avoiding the 133M+ Match object allocations that caused the 27 GB leak.
+                    var (rows, timedOut) = MatchMultiLine(regex, content, uri, limit - emitted);
 
-                    MatchCollection? matches = null;
-                    string? timeoutWarning = null;
-                    try
+                    foreach (var row in rows)
                     {
-                        matches = regex.Matches(content);
-                    }
-                    catch (RegexMatchTimeoutException)
-                    {
-                        timeoutWarning = $"Regex timed out while scanning {uri}. Simplify the pattern.";
+                        emitted++;
+                        yield return row;
                     }
 
-                    if (timeoutWarning is not null)
+                    if (timedOut)
                     {
-                        yield return new TextMatchRow(uri, 0, "", timeoutWarning);
+                        yield return new TextMatchRow(uri, 0, "", $"Regex timed out while scanning {uri}. Simplify the pattern.");
                         yield break;
                     }
 
-                    foreach (Match match in matches!)
-                    {
-                        if (!match.Success)
-                            continue;
+                    if (emitted > limit)
+                        yield break;
 
-                        var lineIndex = GetLineIndexAtCharPosition(newlinePositions, match.Index);
-                        if (!matchedLines.Add(lineIndex))
-                            continue;
-
-                        var line = GetLineText(content, newlinePositions, lineIndex);
-                        var lineNumber = lineIndex + 1;
-
-                        emitted++;
-                        if (emitted > limit)
-                        {
-                            yield return new TextMatchRow(
-                                uri, lineNumber, line,
-                                $"Truncated at {limit} results. Narrow scope or increase max_results.");
-                            yield break;
-                        }
-
-                        yield return new TextMatchRow(uri, lineNumber, line, null);
-                    }
                     continue;
                 }
 
@@ -218,6 +194,49 @@ public sealed class TextMatchUdf(
                pattern.Contains(@"\s", StringComparison.Ordinal) ||
                pattern.Contains(@"[\s\S]", StringComparison.Ordinal) ||
                pattern.Contains(@"[\S\s]", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Non-iterator helper so we can try/catch around EnumerateMatches.
+    /// Returns extracted rows (just strings and ints, no Match objects retained)
+    /// and whether a timeout occurred.
+    /// </summary>
+    private static (List<TextMatchRow> rows, bool timedOut) MatchMultiLine(
+        Regex regex, string content, string uri, int remaining)
+    {
+        var newlinePositions = BuildNewlinePositions(content);
+        var matchedLines = new HashSet<int>();
+        var rows = new List<TextMatchRow>();
+        var limit = remaining <= 0 ? int.MaxValue : remaining;
+
+        try
+        {
+            foreach (var valueMatch in regex.EnumerateMatches(content))
+            {
+                var lineIndex = GetLineIndexAtCharPosition(newlinePositions, valueMatch.Index);
+                if (!matchedLines.Add(lineIndex))
+                    continue;
+
+                var line = GetLineText(content, newlinePositions, lineIndex);
+                var lineNumber = lineIndex + 1;
+
+                if (rows.Count >= limit)
+                {
+                    rows.Add(new TextMatchRow(
+                        uri, lineNumber, line,
+                        $"Truncated at {limit} results. Narrow scope or increase max_results."));
+                    break;
+                }
+
+                rows.Add(new TextMatchRow(uri, lineNumber, line, null));
+            }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return (rows, timedOut: true);
+        }
+
+        return (rows, timedOut: false);
     }
 
     private static int[] BuildNewlinePositions(string content)
