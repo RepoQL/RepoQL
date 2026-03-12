@@ -8,5 +8,8 @@
     <type fullname="RepoQL.ConsoleApp.CommandImplementations.*" preserve="all" />
     <type fullname="RepoQL.ConsoleApp.Tools.*" preserve="all" />
     <type fullname="RepoQL.ConsoleApp.Host.RepoQlServiceImpl/ExplainReadToolArguments" preserve="all" />
+    <type fullname="RepoQL.ConsoleApp.Auth.CloudAuthService/DeviceAuthorizationResponse" preserve="all" />
+    <type fullname="RepoQL.ConsoleApp.Auth.CloudAuthService/TokenExchangeResponse" preserve="all" />
+    <type fullname="RepoQL.ConsoleApp.Auth.CloudAuthService/WorkOsError" preserve="all" />
   </assembly>
 </linker>

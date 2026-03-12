@@ -179,9 +179,17 @@ internal sealed class CloudAuthService : IDisposable
         return await PersistLoginAsync(tokenResponse, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<LoginResult> LoginWithDeviceCodeAsync(
-        IProgress<AuthProgressUpdate>? progress,
-        CancellationToken cancellationToken)
+    private PendingDeviceFlow? _pendingDeviceFlow;
+
+    /// <summary>Whether a device code flow is in progress and waiting for the user to authenticate.</summary>
+    internal bool HasPendingDeviceFlow => _pendingDeviceFlow is { Expired: false };
+
+    /// <summary>
+    /// Phase 1: Request a device code from the auth server, store it, and return immediately
+    /// with the URL and user code. The caller shows these to the user, then calls
+    /// <see cref="CompleteDeviceCodeAsync"/> to poll for completion.
+    /// </summary>
+    internal async Task<DeviceCodeInfo> BeginDeviceCodeAsync(CancellationToken cancellationToken)
     {
         var clientId = GetClientId();
         using var request = new HttpRequestMessage(HttpMethod.Post, GetDeviceAuthorizationEndpoint())
@@ -215,18 +223,33 @@ internal sealed class CloudAuthService : IDisposable
             throw new InvalidOperationException("Device authorization failed. Response did not include the required verification details.");
         }
 
-        progress?.Report(new AuthProgressUpdate(
-            AuthProgressKind.Info,
-            $"To authenticate, visit: {deviceResponse.VerificationUriComplete}"));
-        progress?.Report(new AuthProgressUpdate(
-            AuthProgressKind.Info,
-            $"Enter code: {deviceResponse.UserCode}"));
-        progress?.Report(new AuthProgressUpdate(AuthProgressKind.Waiting, "Waiting for authentication..."));
+        _pendingDeviceFlow = new PendingDeviceFlow(
+            clientId,
+            deviceResponse.DeviceCode,
+            _timeProvider.GetUtcNow().AddSeconds(Math.Max(deviceResponse.ExpiresIn, 1)),
+            Math.Max(deviceResponse.Interval, 1));
 
-        var expiresAt = _timeProvider.GetUtcNow().AddSeconds(Math.Max(deviceResponse.ExpiresIn, 1));
-        var intervalSeconds = Math.Max(deviceResponse.Interval, 1);
+        return new DeviceCodeInfo(deviceResponse.VerificationUriComplete, deviceResponse.UserCode);
+    }
 
-        while (_timeProvider.GetUtcNow() < expiresAt)
+    /// <summary>
+    /// Phase 2: Poll for completion of a previously started device code flow.
+    /// Returns the login result on success.
+    /// </summary>
+    internal async Task<LoginResult> CompleteDeviceCodeAsync(CancellationToken cancellationToken)
+    {
+        var flow = _pendingDeviceFlow
+            ?? throw new InvalidOperationException("No pending device code flow. Call auth.login first.");
+
+        if (flow.Expired)
+        {
+            _pendingDeviceFlow = null;
+            throw new InvalidOperationException("Code expired. Call auth.login to start a new flow.");
+        }
+
+        var intervalSeconds = flow.IntervalSeconds;
+
+        while (_timeProvider.GetUtcNow() < flow.ExpiresAt)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await Task.Delay(TimeSpan.FromSeconds(intervalSeconds), cancellationToken).ConfigureAwait(false);
@@ -234,7 +257,7 @@ internal sealed class CloudAuthService : IDisposable
             TokenExchangeResponse? tokenResponse;
             try
             {
-                tokenResponse = await PollDeviceCodeAsync(clientId, deviceResponse.DeviceCode, cancellationToken).ConfigureAwait(false);
+                tokenResponse = await PollDeviceCodeAsync(flow.ClientId, flow.DeviceCode, cancellationToken).ConfigureAwait(false);
             }
             catch (DeviceFlowPendingException)
             {
@@ -247,14 +270,46 @@ internal sealed class CloudAuthService : IDisposable
             }
             catch (DeviceFlowExpiredException)
             {
-                throw new InvalidOperationException("Code expired. Run: repoql login --device-code to try again");
+                _pendingDeviceFlow = null;
+                throw new InvalidOperationException("Code expired. Call auth.login to start a new flow.");
             }
 
             if (tokenResponse is not null)
+            {
+                _pendingDeviceFlow = null;
                 return await PersistLoginAsync(tokenResponse, cancellationToken).ConfigureAwait(false);
+            }
         }
 
-        throw new InvalidOperationException("Code expired. Run: repoql login --device-code to try again");
+        _pendingDeviceFlow = null;
+        throw new InvalidOperationException("Code expired. Call auth.login to start a new flow.");
+    }
+
+    /// <summary>
+    /// Combined flow for CLI use: begins the device code flow, reports progress, and polls to completion.
+    /// </summary>
+    private async Task<LoginResult> LoginWithDeviceCodeAsync(
+        IProgress<AuthProgressUpdate>? progress,
+        CancellationToken cancellationToken)
+    {
+        var info = await BeginDeviceCodeAsync(cancellationToken).ConfigureAwait(false);
+
+        progress?.Report(new AuthProgressUpdate(
+            AuthProgressKind.Info,
+            $"To authenticate, visit: {info.VerificationUrl}"));
+        progress?.Report(new AuthProgressUpdate(
+            AuthProgressKind.Info,
+            $"Enter code: {info.UserCode}"));
+        progress?.Report(new AuthProgressUpdate(AuthProgressKind.Waiting, "Waiting for authentication..."));
+
+        return await CompleteDeviceCodeAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    internal sealed record DeviceCodeInfo(string VerificationUrl, string UserCode);
+
+    private sealed record PendingDeviceFlow(string ClientId, string DeviceCode, DateTimeOffset ExpiresAt, int IntervalSeconds)
+    {
+        public bool Expired => TimeProvider.System.GetUtcNow() >= ExpiresAt;
     }
 
     private async Task<TokenExchangeResponse> ExchangeAuthorizationCodeAsync(
@@ -607,6 +662,7 @@ internal sealed class CloudAuthService : IDisposable
     private sealed class DeviceFlowPendingException : Exception;
     private sealed class DeviceFlowSlowDownException : Exception;
     private sealed class DeviceFlowExpiredException : Exception;
+
 }
 
 /// <summary>

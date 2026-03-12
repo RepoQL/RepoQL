@@ -11,23 +11,51 @@ namespace RepoQL.ConsoleApp.CommandImplementations;
 [CommandClass]
 internal sealed class AuthCommand(CloudAuthService authService)
 {
-    [Command("auth.login", Description = "Log in to RepoQL cloud services (defaults to device code flow)")]
+    [Command("auth.login", Description = "Log in to RepoQL cloud services. Call once to get a code, call again to complete.")]
     public async Task<CommandResult> Login(
-        [CommandParam("Pass 'browser' to use browser login instead of device code")] string? mode,
+        [CommandParam("Pass 'browser' for browser login, or omit for device code")] string? mode,
         CancellationToken cancel)
     {
         if (!TryParseMode(mode, out var useDeviceCode, out var error))
             return CommandResult.Error(error!);
 
+        // Browser flow runs synchronously (opens browser, waits for loopback callback)
+        if (!useDeviceCode)
+        {
+            try
+            {
+                var output = new StringBuilder();
+                var progress = new Progress<CloudAuthService.AuthProgressUpdate>(update =>
+                    output.AppendLine(update.Message));
+                var result = await authService.LoginAsync(false, progress, cancel).ConfigureAwait(false);
+                output.AppendLine($"Logged in as {result.DisplayName}");
+                return CommandResult.Success(output.ToString().TrimEnd());
+            }
+            catch (Exception ex)
+            {
+                return CommandResult.Error(ex.Message);
+            }
+        }
+
+        // Device code flow: double-tap pattern
+        // First call → begin flow, return URL + code
+        // Second call → poll for completion
         try
         {
-            var output = new StringBuilder();
-            var progress = new Progress<CloudAuthService.AuthProgressUpdate>(update =>
-                output.AppendLine(update.Message));
+            if (authService.HasPendingDeviceFlow)
+            {
+                var result = await authService.CompleteDeviceCodeAsync(cancel).ConfigureAwait(false);
+                return CommandResult.Success($"Logged in as {result.DisplayName}");
+            }
 
-            var result = await authService.LoginAsync(useDeviceCode, progress, cancel).ConfigureAwait(false);
-            output.AppendLine($"Logged in as {result.DisplayName}");
-            return CommandResult.Success(output.ToString().TrimEnd());
+            var info = await authService.BeginDeviceCodeAsync(cancel).ConfigureAwait(false);
+            return CommandResult.Success(
+                $"""
+                 To authenticate, visit: {info.VerificationUrl}
+                 Enter code: {info.UserCode}
+
+                 Call auth.login again to complete authentication.
+                 """);
         }
         catch (Exception ex)
         {
