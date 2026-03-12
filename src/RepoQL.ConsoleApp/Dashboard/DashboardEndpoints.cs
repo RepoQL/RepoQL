@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading.Channels;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -335,73 +336,44 @@ internal static class DashboardEndpoints
         var lastPeriodicFilesSend = DateTime.UtcNow;
         var tokenCounts = LoadTokenCounts(dataStore);
         var lastTokenRefresh = DateTime.UtcNow;
-
-        await foreach (var evt in aggregator.WatchAsync(cancellationToken))
+        var events = Channel.CreateUnbounded<StatusEvent>(new UnboundedChannelOptions
         {
-            // Map StatusEvent to SSE event type + JSON data.
-            string? eventType = null;
-            string? data = null;
+            SingleReader = true,
+            SingleWriter = true
+        });
 
-            switch (evt.EventCase)
+        await WritePeriodicSnapshots(context.Response, operations, queryActivity, cancellationToken).ConfigureAwait(false);
+
+        using var heartbeat = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
+        var eventPump = PumpStatusEventsAsync(aggregator, events.Writer, cancellationToken);
+        var readTask = events.Reader.WaitToReadAsync(cancellationToken).AsTask();
+        var heartbeatTask = heartbeat.WaitForNextTickAsync(cancellationToken).AsTask();
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var completedTask = await Task.WhenAny(readTask, heartbeatTask).ConfigureAwait(false);
+
+            if (completedTask == readTask)
             {
-                case StatusEvent.EventOneofCase.Pipeline:
-                    eventType = "pipeline";
-                    data = JsonSerializer.Serialize(new
-                    {
-                        reindexing = evt.Pipeline.Reindexing,
-                        writerPending = evt.Pipeline.WriterPending,
-                        ready = evt.Pipeline.Ready,
-                        stages = evt.Pipeline.Stages.Select(s => new
-                        {
-                            name = s.Stage.ToString(),
-                            busy = s.Busy,
-                            queued = s.Queued,
-                            inProgress = s.InProgress,
-                            avgDurationMs = s.AvgDurationMs,
-                            peakDurationMs = s.PeakDurationMs,
-                            processedTotal = s.ProcessedTotal,
-                            throughputPerSec = s.ThroughputPerSec,
-                        }).ToArray(),
-                    }, JsonOptions);
+                if (!await readTask.ConfigureAwait(false))
+                {
                     break;
+                }
 
-                case StatusEvent.EventOneofCase.Activity:
-                    eventType = "activity";
-                    data = JsonSerializer.Serialize(new
-                    {
-                        type = evt.Activity.Type.ToString(),
-                        uri = evt.Activity.Uri,
-                        message = evt.Activity.Message,
-                        queuedCount = evt.Activity.QueuedCount,
-                        processedCount = evt.Activity.ProcessedCount,
-                    }, JsonOptions);
-                    break;
+                while (events.Reader.TryRead(out var evt))
+                {
+                    await WriteStatusEvent(context.Response, evt, cancellationToken).ConfigureAwait(false);
+                }
 
-                case StatusEvent.EventOneofCase.Health:
-                    eventType = "health";
-                    data = JsonSerializer.Serialize(new
-                    {
-                        type = evt.Health.Type.ToString(),
-                        message = evt.Health.Message,
-                        severity = evt.Health.Severity.ToString(),
-                    }, JsonOptions);
-                    break;
-
-                case StatusEvent.EventOneofCase.Stats:
-                    eventType = "stats";
-                    data = JsonSerializer.Serialize(new
-                    {
-                        totalFiles = evt.Stats.TotalFiles,
-                        totalNodes = evt.Stats.TotalNodes,
-                        exploreCoveragePercent = evt.Stats.ExploreCoveragePercent,
-                        embeddingsReady = evt.Stats.EmbeddingsReady,
-                    }, JsonOptions);
-                    break;
+                readTask = events.Reader.WaitToReadAsync(cancellationToken).AsTask();
             }
-
-            if (eventType is not null && data is not null)
+            else if (!await heartbeatTask.ConfigureAwait(false))
             {
-                await WriteSseEvent(context.Response, eventType, data, cancellationToken).ConfigureAwait(false);
+                break;
+            }
+            else
+            {
+                heartbeatTask = heartbeat.WaitForNextTickAsync(cancellationToken).AsTask();
             }
 
             // Adaptive file deltas.
@@ -435,6 +407,98 @@ internal static class DashboardEndpoints
                 await WritePeriodicSnapshots(context.Response, operations, queryActivity, cancellationToken).ConfigureAwait(false);
                 lastPeriodicSend = now;
             }
+        }
+
+        await eventPump.ConfigureAwait(false);
+    }
+
+    private static async Task PumpStatusEventsAsync(
+        StatusEventAggregator aggregator,
+        ChannelWriter<StatusEvent> writer,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (var evt in aggregator.WatchAsync(cancellationToken).ConfigureAwait(false))
+            {
+                await writer.WriteAsync(evt, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            writer.TryComplete();
+        }
+    }
+
+    private static async Task WriteStatusEvent(HttpResponse response, StatusEvent evt, CancellationToken cancellationToken)
+    {
+        // Map StatusEvent to SSE event type + JSON data.
+        string? eventType = null;
+        string? data = null;
+
+        switch (evt.EventCase)
+        {
+            case StatusEvent.EventOneofCase.Pipeline:
+                eventType = "pipeline";
+                data = JsonSerializer.Serialize(new
+                {
+                    reindexing = evt.Pipeline.Reindexing,
+                    writerPending = evt.Pipeline.WriterPending,
+                    ready = evt.Pipeline.Ready,
+                    stages = evt.Pipeline.Stages.Select(s => new
+                    {
+                        name = s.Stage.ToString(),
+                        busy = s.Busy,
+                        queued = s.Queued,
+                        inProgress = s.InProgress,
+                        avgDurationMs = s.AvgDurationMs,
+                        peakDurationMs = s.PeakDurationMs,
+                        processedTotal = s.ProcessedTotal,
+                        throughputPerSec = s.ThroughputPerSec,
+                    }).ToArray(),
+                }, JsonOptions);
+                break;
+
+            case StatusEvent.EventOneofCase.Activity:
+                eventType = "activity";
+                data = JsonSerializer.Serialize(new
+                {
+                    type = evt.Activity.Type.ToString(),
+                    uri = evt.Activity.Uri,
+                    message = evt.Activity.Message,
+                    queuedCount = evt.Activity.QueuedCount,
+                    processedCount = evt.Activity.ProcessedCount,
+                }, JsonOptions);
+                break;
+
+            case StatusEvent.EventOneofCase.Health:
+                eventType = "health";
+                data = JsonSerializer.Serialize(new
+                {
+                    type = evt.Health.Type.ToString(),
+                    message = evt.Health.Message,
+                    severity = evt.Health.Severity.ToString(),
+                }, JsonOptions);
+                break;
+
+            case StatusEvent.EventOneofCase.Stats:
+                eventType = "stats";
+                data = JsonSerializer.Serialize(new
+                {
+                    totalFiles = evt.Stats.TotalFiles,
+                    totalNodes = evt.Stats.TotalNodes,
+                    exploreCoveragePercent = evt.Stats.ExploreCoveragePercent,
+                    embeddingsReady = evt.Stats.EmbeddingsReady,
+                }, JsonOptions);
+                break;
+        }
+
+        if (eventType is not null && data is not null)
+        {
+            await WriteSseEvent(response, eventType, data, cancellationToken).ConfigureAwait(false);
         }
     }
 

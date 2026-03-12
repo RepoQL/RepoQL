@@ -10,4 +10,5 @@ export { QueryActivity } from './QueryActivity';
 export { ConnectionStatus } from './ConnectionStatus';
 export { ClientLeases } from './ClientLeases';
 export { OperationTracker } from './OperationTracker';
+export { PipelinePressure } from './PipelinePressure';
 export { Dashboard } from './Dashboard';

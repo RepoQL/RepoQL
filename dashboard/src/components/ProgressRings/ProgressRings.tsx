@@ -15,6 +15,9 @@ export function ProgressRings(props: ProgressRingsProps) {
   const parsedP = createMemo(() => props.parsed / totalSafe());
   const structP = createMemo(() => props.structEmbedded / totalSafe());
   const fullP = createMemo(() => props.fullEmbedded / totalSafe());
+  const pendingCount = createMemo(() => Math.max(0, props.total - props.parsed));
+  const parsedOnlyCount = createMemo(() => Math.max(0, props.parsed - props.structEmbedded));
+  const readyOnlyCount = createMemo(() => Math.max(0, props.structEmbedded - props.fullEmbedded));
 
   const c65 = 2 * Math.PI * 65;
   const c50 = 2 * Math.PI * 50;
@@ -72,23 +75,30 @@ export function ProgressRings(props: ProgressRingsProps) {
         <div class="rl">
           <span class="rl-left">
             <span class="rl-dot" style={{ background: 'var(--green)' }} />
-            Fully indexed
+            Indexed
           </span>
           <span class="rl-val">{props.fullEmbedded} / {props.total}</span>
         </div>
         <div class="rl">
           <span class="rl-left">
             <span class="rl-dot" style={{ background: 'var(--amber)' }} />
-            Ready
+            Ready only
           </span>
-          <span class="rl-val">{props.structEmbedded} / {props.total}</span>
+          <span class="rl-val">{readyOnlyCount()} files</span>
         </div>
         <div class="rl">
           <span class="rl-left">
             <span class="rl-dot" style={{ background: 'var(--blue)' }} />
-            Parsed
+            Parsed only
           </span>
-          <span class="rl-val">{props.parsed} / {props.total}</span>
+          <span class="rl-val">{parsedOnlyCount()} files</span>
+        </div>
+        <div class="rl">
+          <span class="rl-left">
+            <span class="rl-dot" style={{ background: 'var(--fg3)' }} />
+            Pending
+          </span>
+          <span class="rl-val">{pendingCount()} files</span>
         </div>
       </div>
     </div>

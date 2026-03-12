@@ -137,6 +137,13 @@ export interface PipelineState {
   rate: number;
 }
 
+export interface PipelineStageLoad {
+  name: string;
+  busy: boolean;
+  queued: number;
+  inProgress: number;
+}
+
 /** An entry in the activity stream */
 export interface ActivityEntry {
   id: number;

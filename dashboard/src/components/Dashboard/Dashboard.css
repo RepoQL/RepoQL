@@ -1,18 +1,17 @@
 .dashboard {
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .dashboard-main {
-  flex: 1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto;
   gap: 0;
-  min-height: 0;
-  overflow: hidden;
+  min-height: auto;
+  overflow: visible;
 }
 
 .dashboard-sankey {
@@ -23,9 +22,10 @@
 .dashboard-treemap {
   grid-row: 2 / 3;
   grid-column: 1 / 2;
-  display: flex;
-  min-height: 0;
-  overflow: hidden;
+  display: block;
+  width: 100%;
+  min-height: auto;
+  overflow: visible;
 }
 
 .dashboard-sidebar {
@@ -33,16 +33,41 @@
   grid-column: 2 / 3;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px;
+  gap: 0;
   background: var(--surface);
   border-left: 1px solid var(--border);
-  min-height: 0;
-  overflow-y: auto;
+  min-height: auto;
+  overflow: visible;
+  align-self: start;
+}
+
+.dashboard-sidebar-main {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  min-height: auto;
+  overflow: visible;
+}
+
+.dashboard-sidebar-footer {
+  flex-shrink: 0;
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(14, 20, 32, 0.88), rgba(14, 20, 32, 0.96));
+  backdrop-filter: blur(14px);
+  position: sticky;
+  bottom: 0;
 }
 
 .dashboard-sidebar > * {
   flex-shrink: 0;
+}
+
+.dashboard-sidebar-footer > * {
+  max-height: none;
+  overflow: visible;
 }
 
 /* Completion wash */

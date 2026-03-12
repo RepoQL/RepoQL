@@ -1,0 +1,149 @@
+.pipeline-pressure {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pp-title {
+  color: var(--fg3);
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.pp-headline {
+  margin-top: 4px;
+  color: var(--fg);
+  font-size: 0.82rem;
+}
+
+.pp-overview {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pp-overview-chip {
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.52rem;
+  color: var(--fg2);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.pp-overview-chip.blocked {
+  color: var(--amber);
+  background: rgba(255, 180, 0, 0.12);
+}
+
+.pp-overview-chip.active {
+  color: var(--blue);
+  background: rgba(49, 120, 198, 0.12);
+}
+
+.pp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pp-empty {
+  color: var(--fg3);
+  font-size: 0.68rem;
+}
+
+.pp-row {
+  padding: 7px 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.pp-row.blocked {
+  border-color: rgba(255, 180, 0, 0.16);
+  background: rgba(255, 180, 0, 0.06);
+}
+
+.pp-row.active {
+  border-color: rgba(49, 120, 198, 0.16);
+  background: rgba(49, 120, 198, 0.06);
+}
+
+.pp-row-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.pp-stage {
+  color: var(--fg);
+  font-size: 0.74rem;
+}
+
+.pp-status {
+  color: var(--fg3);
+  font-family: var(--font-mono);
+  font-size: 0.52rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+
+.pp-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.pp-bar-track {
+  height: 5px;
+  flex: 1;
+  min-width: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+  display: flex;
+}
+
+.pp-bar-queued {
+  height: 100%;
+  background: var(--amber);
+}
+
+.pp-bar-running {
+  height: 100%;
+  background: var(--blue);
+}
+
+.pp-metrics {
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  color: var(--fg2);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.pp-footer {
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}

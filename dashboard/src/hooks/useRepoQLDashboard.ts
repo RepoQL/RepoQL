@@ -13,6 +13,7 @@ import type {
   OperationSnapshot,
   OperationState,
   PipelinePhase,
+  PipelineStageLoad,
   QueryEntry,
   QueryState,
   SourceSection,
@@ -98,6 +99,7 @@ interface PipelineEvent {
   stages?: PipelineStageEvent[];
   ready?: boolean;
   reindexing?: boolean;
+  writerPending?: boolean;
 }
 
 interface SnapshotHost {
@@ -485,6 +487,43 @@ export function useRepoQLDashboard(): {
     });
   }
 
+  const queryCache = new Map<number, QueryEntry>();
+
+  function stableQueries(rawQueries: ServerQuery[]): QueryEntry[] {
+    const nextEntries = sortQueries(rawQueries.map(mapServerQuery))
+      .slice(0, MAX_QUERY_ENTRIES)
+      .map((entry) => {
+        const cached = queryCache.get(entry.id);
+        if (
+          cached
+          && cached.tool === entry.tool
+          && cached.state === entry.state
+          && cached.params === entry.params
+          && cached.tokenBudget === entry.tokenBudget
+          && cached.tokensUsed === entry.tokensUsed
+          && cached.resultSummary === entry.resultSummary
+          && cached.timestamp === entry.timestamp
+          && (entry.state === 'running' || cached.elapsed === entry.elapsed)
+        ) {
+          return cached;
+        }
+
+        queryCache.set(entry.id, entry);
+        return entry;
+      });
+
+    if (queryCache.size > nextEntries.length + MAX_QUERY_ENTRIES) {
+      const activeIds = new Set(nextEntries.map((entry) => entry.id));
+      for (const id of queryCache.keys()) {
+        if (!activeIds.has(id)) {
+          queryCache.delete(id);
+        }
+      }
+    }
+
+    return nextEntries;
+  }
+
   function appendActivity(operation: string, path: string, langColor: string, timestamp: number) {
     setActivities((prev) => {
       const latest = prev[0];
@@ -562,7 +601,7 @@ export function useRepoQLDashboard(): {
           setFileMap(map);
 
           setOperations(data.operations.map(mapServerOperation));
-          setQueries(sortQueries((data.queries ?? []).map(mapServerQuery)).slice(0, MAX_QUERY_ENTRIES));
+          setQueries(stableQueries(data.queries ?? []));
 
           const startedAt = Date.parse(data.host.startedAt);
           if (Number.isFinite(startedAt)) {
@@ -648,7 +687,10 @@ export function useRepoQLDashboard(): {
     es.addEventListener('queries', (event) => {
       const parsed = parseJson<ServerQuery[]>((event as MessageEvent).data);
       if (!Array.isArray(parsed)) return;
-      setQueries(sortQueries(parsed.map(mapServerQuery)).slice(0, MAX_QUERY_ENTRIES));
+      setQueries((prev) => {
+        const next = stableQueries(parsed);
+        return sameItems(prev, next) ? prev : next;
+      });
     });
 
     // Delta file updates — merge into map and surface meaningful file progress.
@@ -811,6 +853,7 @@ export function useRepoQLDashboard(): {
     const phase = derivePhaseFromFiles(fd.stateCounts, ready, reindexing);
     const stageRate = (pe?.stages ?? snap?.pipeline?.stages ?? [])
       .reduce((sum, s) => sum + ((s as PipelineStageEvent).throughputPerSec ?? 0), 0);
+    const stages = mapPipelineStages(pe?.stages ?? snap?.pipeline?.stages ?? []);
 
     return {
       title: fd.title,
@@ -832,6 +875,8 @@ export function useRepoQLDashboard(): {
       errors: errors(),
       queries: queries(),
       operations: operations(),
+      stages,
+      writerPending: pe?.writerPending ?? snap?.pipeline?.writerPending ?? false,
       get now() { return now(); },
     };
   });
@@ -865,6 +910,21 @@ function derivePhaseFromFiles(
   if (parsedCount > 0 && fullEmbedded < total) return 'struct_embedding';
 
   return 'idle';
+}
+
+function mapPipelineStages(
+  stages: Array<{ name: string; busy: boolean; queued: number; inProgress: number }> | null | undefined,
+): PipelineStageLoad[] {
+  if (!stages || stages.length === 0) {
+    return [];
+  }
+
+  return stages.map((stage) => ({
+    name: stage.name,
+    busy: stage.busy,
+    queued: stage.queued,
+    inProgress: stage.inProgress,
+  }));
 }
 
 // --- Utilities ---

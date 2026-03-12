@@ -5,6 +5,7 @@ import type {
   LanguageCount,
   OperationSnapshot,
   PipelineState,
+  PipelineStageLoad,
   QueryEntry,
   SourceSection,
 } from '../../types';
@@ -13,7 +14,7 @@ import { ErrorPanel } from '../ErrorPanel';
 import { FileTreemap } from '../FileTreemap';
 import { LanguageSpectrum } from '../LanguageSpectrum';
 import { OperationTracker } from '../OperationTracker';
-import { PipelineSankey } from '../PipelineSankey';
+import { PipelinePressure } from '../PipelinePressure';
 import { ProgressRings } from '../ProgressRings';
 import { QueryActivity } from '../QueryActivity';
 import { StatusHeader } from '../StatusHeader';
@@ -29,6 +30,8 @@ export interface DashboardProps {
   errors: FileError[];
   queries: QueryEntry[];
   operations: OperationSnapshot[];
+  stages: PipelineStageLoad[];
+  writerPending: boolean;
   now: number;
 }
 
@@ -41,7 +44,7 @@ export function Dashboard(props: DashboardProps) {
 
       <div class="dashboard-main">
         <div class="dashboard-sankey">
-          <PipelineSankey pipeline={props.pipeline} />
+          <QueryActivity entries={props.queries} variant="hero" now={props.now} />
         </div>
 
         <div class="dashboard-treemap">
@@ -49,28 +52,35 @@ export function Dashboard(props: DashboardProps) {
             sections={props.sections}
             stats={{
               total: props.pipeline.discovered,
-              classified: props.pipeline.classified,
-              parsed: props.pipeline.parsed,
-              searchable: props.pipeline.structEmbedded,
+              pending: Math.max(0, props.pipeline.total - props.pipeline.parsed),
+              parsed: Math.max(0, props.pipeline.parsed - props.pipeline.structEmbedded),
+              ready: Math.max(0, props.pipeline.structEmbedded - props.pipeline.fullEmbedded),
+              indexed: props.pipeline.fullEmbedded,
+              failed: props.pipeline.failed,
             }}
           />
         </div>
 
         <div class="dashboard-sidebar">
-          <ProgressRings
-            total={props.pipeline.total}
-            parsed={props.pipeline.parsed}
-            structEmbedded={props.pipeline.structEmbedded}
-            fullEmbedded={props.pipeline.fullEmbedded}
-            complete={complete()}
-          />
+          <div class="dashboard-sidebar-main">
+            <ProgressRings
+              total={props.pipeline.total}
+              parsed={props.pipeline.parsed}
+              structEmbedded={props.pipeline.structEmbedded}
+              fullEmbedded={props.pipeline.fullEmbedded}
+              complete={complete()}
+            />
+            <PipelinePressure stages={props.stages} writerPending={props.writerPending} />
+            <ErrorPanel errors={props.errors} />
+            <ActivityStream entries={props.activities} />
+            <LanguageSpectrum languages={props.languages} />
+          </div>
+
           <Show when={props.operations.length > 0}>
-            <OperationTracker operations={props.operations} now={props.now} />
+            <div class="dashboard-sidebar-footer">
+              <OperationTracker operations={props.operations} now={props.now} />
+            </div>
           </Show>
-          <ErrorPanel errors={props.errors} />
-          <QueryActivity entries={props.queries} />
-          <ActivityStream entries={props.activities} />
-          <LanguageSpectrum languages={props.languages} />
         </div>
       </div>
 

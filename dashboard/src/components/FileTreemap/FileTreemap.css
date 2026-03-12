@@ -1,8 +1,9 @@
 .treemap-area {
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
+  width: 100%;
+  min-height: auto;
+  overflow: visible;
   position: relative;
 }
 
@@ -36,6 +37,8 @@
   gap: 16px;
   margin-left: auto;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .tm-stat {
@@ -44,17 +47,25 @@
   color: var(--fg3);
 }
 
+.tm-stat.failed {
+  color: var(--red);
+}
+
 .tm-stat span {
   color: var(--fg2);
 }
 
+.tm-stat.failed span {
+  color: var(--red);
+}
+
 .treemap-body {
-  flex: 1;
   padding: 16px;
-  overflow: hidden;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: auto;
 }
 
 /* Source sections */
@@ -146,6 +157,92 @@
   gap: 2px;
   align-items: center;
   align-content: center;
+}
+
+.dir-tree-host {
+  width: 100%;
+}
+
+.dir-tree {
+  position: relative;
+  width: 100%;
+  min-height: 260px;
+}
+
+.folder-block {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.folder-block.compact {
+  padding: 4px;
+  gap: 3px;
+}
+
+.folder-block.compact .folder-name {
+  font-size: 0.5rem;
+}
+
+.folder-block.compact .folder-meta {
+  font-size: 0.43rem;
+}
+
+.folder-block.compact .folder-files {
+  gap: 1px;
+}
+
+.folder-block.depth-1,
+.folder-block.compact {
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.folder-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.folder-name {
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  color: var(--fg2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.folder-meta {
+  font-family: var(--font-mono);
+  font-size: 0.46rem;
+  color: var(--fg4);
+  flex-shrink: 0;
+}
+
+.folder-children {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+.folder-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+  align-content: flex-start;
+  overflow: hidden;
 }
 
 /* File tile — size set inline based on token count */
