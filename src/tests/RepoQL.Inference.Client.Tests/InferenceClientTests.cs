@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using FakeItEasy;
 using Grpc.Core;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Inference;
 using RepoQL.Inference.Client;
 using ProtoInference = RepoQL.Inference;
@@ -9,6 +10,8 @@ namespace RepoQL.Inference.Client.Tests;
 
 public sealed class InferenceClientTests
 {
+    private static readonly ICloudCredentialProvider StaticProvider = new StubCloudCredentialProvider("secret-token");
+
     [Test]
     public async Task CompleteAsync_MapsProtoRequestAndResponse()
     {
@@ -40,7 +43,7 @@ public sealed class InferenceClientTests
                 }
             }));
 
-        using var client = new InferenceClient(grpcClient, "https://inference.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://inference.example", StaticProvider);
 
         var result = await client.CompleteAsync(new InferenceRequest
         {
@@ -120,7 +123,7 @@ public sealed class InferenceClientTests
                 A<CancellationToken>.Ignored))
             .Returns(CreateDuplexCall(requestWriter, responseReader));
 
-        using var client = new InferenceClient(grpcClient, "https://inference.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://inference.example", StaticProvider);
 
         var observedCalls = new List<ToolCall>();
         var result = await client.CompleteWithToolsAsync(
@@ -202,7 +205,7 @@ public sealed class InferenceClientTests
                 A<CancellationToken>.Ignored))
             .Returns(CreateDuplexCall(requestWriter, responseReader));
 
-        using var client = new InferenceClient(grpcClient, "https://inference.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://inference.example", StaticProvider);
 
         await client.CompleteWithToolsAsync(
             new InferenceRequest { Prompt = "Explain" },
@@ -243,7 +246,7 @@ public sealed class InferenceClientTests
                 A<CancellationToken>.Ignored))
             .Returns(CreateFaultedUnaryCall<ProtoInference.Completion>(rpcException));
 
-        using var client = new InferenceClient(grpcClient, "https://offline.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://offline.example", StaticProvider);
 
         var exception = await Assert.That(async () => await client.CompleteAsync(new InferenceRequest
         {
@@ -266,7 +269,7 @@ public sealed class InferenceClientTests
                 A<CancellationToken>.Ignored))
             .Returns(CreateFaultedUnaryCall<ProtoInference.Completion>(rpcException));
 
-        using var client = new InferenceClient(grpcClient, "https://slow.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://slow.example", StaticProvider);
 
         var exception = await Assert.That(async () => await client.CompleteAsync(new InferenceRequest
         {
@@ -307,7 +310,7 @@ public sealed class InferenceClientTests
                 A<CancellationToken>.Ignored))
             .Returns(CreateDuplexCall(requestWriter, responseReader));
 
-        using var client = new InferenceClient(grpcClient, "https://inference.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://inference.example", StaticProvider);
 
         var result = await client.CompleteWithToolsAsync(
             new InferenceRequest { Prompt = "Explain" },
@@ -375,7 +378,7 @@ public sealed class InferenceClientTests
                 A<CancellationToken>.Ignored))
             .Returns(CreateDuplexCall(requestWriter, responseReader));
 
-        using var client = new InferenceClient(grpcClient, "https://inference.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://inference.example", StaticProvider);
 
         var observedCalls = new List<string>();
         var result = await client.CompleteWithToolsAsync(
@@ -436,7 +439,7 @@ public sealed class InferenceClientTests
                 A<CancellationToken>.Ignored))
             .Returns(CreateDuplexCall(requestWriter, responseReader));
 
-        using var client = new InferenceClient(grpcClient, "https://inference.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://inference.example", StaticProvider);
 
         var exception = await Assert.That(async () => await client.CompleteWithToolsAsync(
             new InferenceRequest { Prompt = "Explain" },
@@ -481,7 +484,7 @@ public sealed class InferenceClientTests
                 A<CancellationToken>.Ignored))
             .Returns(CreateDuplexCall(requestWriter, responseReader));
 
-        using var client = new InferenceClient(grpcClient, "https://inference.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://inference.example", StaticProvider);
 
         var executed = false;
         var result = await client.CompleteWithToolsAsync(
@@ -514,7 +517,7 @@ public sealed class InferenceClientTests
                 A<CancellationToken>.Ignored))
             .Returns(CreateDuplexCall(requestWriter, responseReader));
 
-        using var client = new InferenceClient(grpcClient, "https://inference.example", "secret-token");
+        using var client = new InferenceClient(grpcClient, "https://inference.example", StaticProvider);
 
         var exception = await Assert.That(async () => await client.CompleteWithToolsAsync(
             new InferenceRequest { Prompt = "Explain" },
@@ -606,5 +609,11 @@ public sealed class InferenceClientTests
             Current = _messages.Dequeue();
             return Task.FromResult(true);
         }
+    }
+
+    private sealed class StubCloudCredentialProvider(string token) : ICloudCredentialProvider
+    {
+        public Task<string> GetTokenAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(token);
     }
 }

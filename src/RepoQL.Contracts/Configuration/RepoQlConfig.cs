@@ -147,14 +147,56 @@ public sealed class RepoQlConfig
 
     /// <summary>
     /// Purpose: Shared authentication for all RepoQL cloud services (embedding, inference).
-    /// Complexity: Single API key used by both embedding and inference clients.
-    /// Individual service sections can still override if needed.
+    /// Complexity: Supports legacy API keys plus OAuth access/refresh token configuration for
+    /// client-side credential refresh.
     /// </summary>
     public sealed class CloudSettings
     {
-        [Setting("API key for RepoQL cloud services (embedding, inference)",
+        public const string DefaultWorkOsApiBase = "https://api.workos.com";
+#if DEBUG
+        public const string DefaultAuthKitBase = "https://peaceful-puddle-33-staging.authkit.app";
+        public const string DefaultClientId = "client_01KKDYHCHTDAYE939PAKGFV60D";
+#else
+        public const string DefaultAuthKitBase = "https://seamless-surprise-18.authkit.app";
+        public const string DefaultClientId = "client_01KKDYHD5DF3E3SHDPPN3BMB57";
+#endif
+        public const string DefaultAuthenticateEndpoint = DefaultWorkOsApiBase + "/user_management/authenticate";
+        public const string DefaultAuthorizationEndpoint = DefaultWorkOsApiBase + "/user_management/authorize";
+        public const string DefaultDeviceAuthorizationEndpoint = DefaultWorkOsApiBase + "/user_management/authorize/device";
+
+        [Setting("Legacy API key for RepoQL cloud services (embedding, inference)",
             Sensitive = true, RequiresRestart = true)]
         public string? ApiKey { get; set; }
+
+        [Setting("OAuth client ID for RepoQL cloud token refresh",
+            RequiresRestart = true,
+            DefaultValue = DefaultClientId)]
+        public string? ClientId { get; set; } = DefaultClientId;
+
+#if DEBUG
+        [Setting("WorkOS authenticate endpoint for cloud login and refresh (debug only)",
+            RequiresRestart = true,
+            DefaultValue = DefaultAuthenticateEndpoint)]
+        public string? AuthenticateEndpoint { get; set; } = DefaultAuthenticateEndpoint;
+
+        [Setting("WorkOS authorization endpoint for cloud browser login (debug only)",
+            RequiresRestart = true,
+            DefaultValue = DefaultAuthorizationEndpoint)]
+        public string? AuthorizationEndpoint { get; set; } = DefaultAuthorizationEndpoint;
+
+        [Setting("WorkOS device authorization endpoint for cloud device login (debug only)",
+            RequiresRestart = true,
+            DefaultValue = DefaultDeviceAuthorizationEndpoint)]
+        public string? DeviceAuthorizationEndpoint { get; set; } = DefaultDeviceAuthorizationEndpoint;
+#endif
+
+        [Setting("Current RepoQL cloud access token (JWT)",
+            Sensitive = true, RequiresRestart = true)]
+        public string? AuthToken { get; set; }
+
+        [Setting("Current RepoQL cloud refresh token",
+            Sensitive = true, RequiresRestart = true)]
+        public string? RefreshToken { get; set; }
     }
 
     /// <summary>

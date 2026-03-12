@@ -55,11 +55,11 @@ internal sealed class CommandRegistryTests
     public async Task UnknownUnrelatedCommand_DoesNotIncludeSuggestion()
     {
         var registry = CreateRegistry();
-        var parsed = new ParsedCommand("x", []);
+        var parsed = new ParsedCommand("totally-unrelated-command-name", []);
         var result = await registry.ExecuteAsync(parsed, CancellationToken.None);
 
         result.IsError.Should().BeTrue();
-        result.Text.Should().Contain("Unknown command ::x.");
+        result.Text.Should().Contain("Unknown command ::totally-unrelated-command-name.");
         result.Text.Should().NotContain("Did you mean");
     }
 

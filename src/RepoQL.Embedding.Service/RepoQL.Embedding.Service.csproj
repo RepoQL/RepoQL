@@ -30,6 +30,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\RepoQL.Cloud.Auth\RepoQL.Cloud.Auth.csproj" />
     <ProjectReference Include="..\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" />
     <ProjectReference Include="..\RepoQL.Embedding.Storage\RepoQL.Embedding.Storage.csproj" />
   </ItemGroup>

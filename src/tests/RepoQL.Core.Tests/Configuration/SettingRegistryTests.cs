@@ -15,6 +15,9 @@ internal sealed class SettingRegistryTests
         registry.Settings.Should().ContainKey("duckdb.memory_limit");
         registry.Settings.Should().ContainKey("embedding.mode");
         registry.Settings.Should().ContainKey("cloud.api_key");
+        registry.Settings.Should().ContainKey("cloud.client_id");
+        registry.Settings.Should().ContainKey("cloud.auth_token");
+        registry.Settings.Should().ContainKey("cloud.refresh_token");
         registry.Settings.Should().ContainKey("inference.service_url");
         registry.Settings.Should().ContainKey("host.idle_grace_seconds");
         registry.Settings.Should().ContainKey("cache.size_limit");
@@ -86,6 +89,10 @@ internal sealed class SettingRegistryTests
         apiKey.Should().NotBeNull();
         apiKey!.Sensitive.Should().BeTrue();
 
+        var authToken = registry.TryGet("cloud.auth_token");
+        authToken.Should().NotBeNull();
+        authToken!.Sensitive.Should().BeTrue();
+
         var memLimit = registry.TryGet("duckdb.memory_limit");
         memLimit.Should().NotBeNull();
         memLimit!.Sensitive.Should().BeFalse();
@@ -130,6 +137,9 @@ internal sealed class SettingRegistryTests
     [Arguments("IntraThreads", "intra_threads")]
     [Arguments("IdleGraceSeconds", "idle_grace_seconds")]
     [Arguments("ApiKey", "api_key")]
+    [Arguments("ClientSecret", "client_secret")]
+    [Arguments("AuthToken", "auth_token")]
+    [Arguments("RefreshToken", "refresh_token")]
     [Arguments("IncludeGlobals", "include_globals")]
     [Arguments("StartTimeoutMs", "start_timeout_ms")]
     public void ToSnakeCase_Converts_PascalCase(string input, string expected)

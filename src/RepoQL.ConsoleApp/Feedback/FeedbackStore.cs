@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Configuration;
 using RepoQL.Embedding;
@@ -16,7 +17,10 @@ namespace RepoQL.ConsoleApp.Feedback;
 /// Complexity: gRPC call to the embedding service's SubmitFeedback RPC.
 /// Falls back to local JSONL if cloud is not configured or unreachable.
 /// </summary>
-internal sealed class FeedbackStore(ResolvedConfig config, ILogger<FeedbackStore> logger)
+internal sealed class FeedbackStore(
+    ResolvedConfig config,
+    ILogger<FeedbackStore> logger,
+    ICloudCredentialProvider? credentialProvider = null)
 {
     private static readonly string Version =
         typeof(FeedbackStore).Assembly
@@ -31,13 +35,12 @@ internal sealed class FeedbackStore(ResolvedConfig config, ILogger<FeedbackStore
     {
         var settings = config.Settings;
         var url = settings.Embedding.Remote.Url;
-        var apiKey = settings.Cloud.ApiKey;
 
-        if (!string.IsNullOrWhiteSpace(url) && !string.IsNullOrWhiteSpace(apiKey))
+        if (!string.IsNullOrWhiteSpace(url) && credentialProvider is not null)
         {
             try
             {
-                await SubmitToCloudAsync(url, apiKey, sessionId, feedback, diagnostics, ct);
+                await SubmitToCloudAsync(url, sessionId, feedback, diagnostics, ct);
                 return;
             }
             catch (Exception ex)
@@ -50,14 +53,15 @@ internal sealed class FeedbackStore(ResolvedConfig config, ILogger<FeedbackStore
     }
 
     private async Task SubmitToCloudAsync(
-        string url, string apiKey,
+        string url,
         string sessionId, string feedback, string diagnostics,
         CancellationToken ct)
     {
         using var channel = GrpcChannel.ForAddress(url);
         var client = new EmbeddingService.EmbeddingServiceClient(channel);
 
-        var headers = new Metadata { { "authorization", $"Bearer {apiKey}" } };
+        var token = await credentialProvider!.GetTokenAsync(ct).ConfigureAwait(false);
+        var headers = new Metadata { { "authorization", $"Bearer {token}" } };
 
         var request = new SubmitFeedbackRequest
         {

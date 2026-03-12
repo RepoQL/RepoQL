@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Analysis;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
@@ -14,6 +15,7 @@ using RepoQL.Contracts.Inference;
 using RepoQL.Contracts.Models;
 using RepoQL.Core.Analysis;
 using RepoQL.Core.Analysis.EditorConfig;
+using RepoQL.Core.Cloud;
 using RepoQL.Core.Operations;
 using RepoQL.Core.PlainText;
 using RepoQL.Core.Metrics;
@@ -150,18 +152,20 @@ public static class RepoIndexerServiceCollectionExtensions
             return new EmbeddingModeOptions(embeddingMode);
         });
 
+        services.AddCloudCredentialProvider();
+
         services.AddSingleton<IInferenceProvider>(sp =>
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
             var settings = config.Inference;
-            var apiKey = config.Cloud.ApiKey;
+            var credentialProvider = sp.GetService<ICloudCredentialProvider>();
             if (string.IsNullOrWhiteSpace(settings.ServiceUrl) ||
-                string.IsNullOrWhiteSpace(apiKey))
+                credentialProvider is null)
                 return new DisabledInferenceProvider();
 
             return new RepoQL.Inference.Client.InferenceClient(
                 settings.ServiceUrl,
-                apiKey,
+                credentialProvider,
                 sp.GetService<ILogger<RepoQL.Inference.Client.InferenceClient>>());
         });
 
@@ -181,14 +185,14 @@ public static class RepoIndexerServiceCollectionExtensions
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
             var remote = config.Embedding.Remote;
-            var apiKey = config.Cloud.ApiKey;
-            if (string.IsNullOrWhiteSpace(remote.Url) || string.IsNullOrWhiteSpace(apiKey))
+            var credentialProvider = sp.GetService<ICloudCredentialProvider>();
+            if (string.IsNullOrWhiteSpace(remote.Url) || credentialProvider is null)
                 return null;
 
             var logger = sp.GetService<ILogger<RepoQL.Embedding.Client.GrpcEmbeddingProvider>>();
             var timeout = remote.TimeoutSeconds ?? 30;
             return new RepoQL.Embedding.Client.GrpcEmbeddingProvider(
-                remote.Url, apiKey, timeout, logger)
+                remote.Url, credentialProvider, timeout, logger)
             {
                 Source = ResolveEmbeddingSource(resolvedRoot, logger)
             };

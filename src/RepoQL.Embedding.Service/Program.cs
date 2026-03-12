@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using RepoQL.Cloud.Auth;
 using RepoQL.Embedding.Service;
 using RepoQL.Embedding.Service.Cache;
 using RepoQL.Embedding.Storage;
@@ -25,14 +26,13 @@ builder.Services.AddGrpc(options =>
     options.MaxSendMessageSize = 8 * 1024 * 1024;
     options.ResponseCompressionLevel = System.IO.Compression.CompressionLevel.Optimal;
     options.ResponseCompressionAlgorithm = "gzip";
-    options.Interceptors.Add<ApiKeyAuthInterceptor>();
+    options.Interceptors.Add<AuthInterceptor>();
 });
 
 builder.Services.AddSingleton<VoyageAiClient>();
-builder.Services.AddSingleton<ApiKeyAuthInterceptor>();
 builder.Services.AddHttpClient();
 builder.Services.Configure<EmbeddingServiceOptions>(builder.Configuration.GetSection("Embedding"));
-builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
+builder.Services.AddRepoQlServerAuth(builder.Configuration.GetSection("Auth"));
 builder.Services.Configure<CacheLayerSettings>(builder.Configuration.GetSection("CacheLayer"));
 builder.Services.AddSingleton<IObjectStorageClient>(sp =>
 {

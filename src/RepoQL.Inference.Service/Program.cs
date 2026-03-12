@@ -2,6 +2,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using RepoQL.Cloud.Auth;
 using RepoQL.Inference.Service;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,12 +24,11 @@ builder.Services.AddGrpc(options =>
     options.MaxSendMessageSize = 8 * 1024 * 1024;
     options.ResponseCompressionLevel = System.IO.Compression.CompressionLevel.Optimal;
     options.ResponseCompressionAlgorithm = "gzip";
-    options.Interceptors.Add<ApiKeyAuthInterceptor>();
+    options.Interceptors.Add<AuthInterceptor>();
 });
 
 builder.Services.Configure<InferenceServiceOptions>(builder.Configuration.GetSection("Inference"));
-builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
-builder.Services.AddSingleton<ApiKeyAuthInterceptor>();
+builder.Services.AddRepoQlServerAuth(builder.Configuration.GetSection("Auth"));
 builder.Services.AddSingleton<IXaiChatClient>(sp =>
 {
     var options = sp.GetRequiredService<IOptions<InferenceServiceOptions>>().Value;

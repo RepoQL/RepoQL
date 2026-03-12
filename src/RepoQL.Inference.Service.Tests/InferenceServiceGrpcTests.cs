@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using RepoQL.Cloud.Auth;
 
 namespace RepoQL.Inference.Service.Tests;
 
@@ -69,7 +70,7 @@ public sealed class InferenceServiceGrpcTests
     public async Task Complete_RejectsMissingUnaryAuthorizationHeader()
     {
         var grokClient = A.Fake<IGrokClient>();
-        await using var server = await InferenceTestHost.StartAsync(grokClient, [ComputeHash("expected-token")]);
+        await using var server = await InferenceTestHost.StartAsync(grokClient, [ComputeHash("rql_expected-token")]);
         var client = server.CreateClient();
 
         var exception = await Assert.That(async () => await client.CompleteAsync(new CompleteRequest { Prompt = "hi" }))
@@ -85,9 +86,9 @@ public sealed class InferenceServiceGrpcTests
         A.CallTo(() => grokClient.CompleteAsync(A<GrokCompletionRequest>.Ignored, A<CancellationToken>.Ignored))
             .Returns(CompletionResult("ok"));
 
-        await using var server = await InferenceTestHost.StartAsync(grokClient, [ComputeHash("expected-token")]);
+        await using var server = await InferenceTestHost.StartAsync(grokClient, [ComputeHash("rql_expected-token")]);
         var client = server.CreateClient();
-        var headers = new Metadata { { "authorization", "Bearer expected-token" } };
+        var headers = new Metadata { { "authorization", "Bearer rql_expected-token" } };
 
         var response = await client.CompleteAsync(new CompleteRequest { Prompt = "hi" }, headers);
 
@@ -98,7 +99,7 @@ public sealed class InferenceServiceGrpcTests
     public async Task CompleteWithTools_RejectsMissingStreamingAuthorizationHeader()
     {
         var grokClient = A.Fake<IGrokClient>();
-        await using var server = await InferenceTestHost.StartAsync(grokClient, [ComputeHash("expected-token")]);
+        await using var server = await InferenceTestHost.StartAsync(grokClient, [ComputeHash("rql_expected-token")]);
         var client = server.CreateClient();
 
         var exception = await Assert.That(async () => await InvokeStreamingAsync(client, null))
@@ -759,8 +760,11 @@ public sealed class InferenceServiceGrpcTests
                 webBuilder.UseTestServer();
                 webBuilder.ConfigureServices(services =>
                 {
-                    services.AddGrpc(options => options.Interceptors.Add<ApiKeyAuthInterceptor>());
-                    services.AddSingleton<ApiKeyAuthInterceptor>();
+                    services.AddGrpc(options => options.Interceptors.Add<AuthInterceptor>());
+                    services.AddHttpClient(nameof(AuthValidationService));
+                    services.AddSingleton<AuthInterceptor>();
+                    services.AddSingleton<AuthValidationService>();
+                    services.AddSingleton<IHostedService, JwksWarmupHostedService>();
                     services.Configure<AuthOptions>(options => options.ApiKeyHashes = hashes);
                     services.Configure<InferenceServiceOptions>(options =>
                     {

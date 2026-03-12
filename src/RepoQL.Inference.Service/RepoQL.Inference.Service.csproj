@@ -26,6 +26,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\RepoQL.Cloud.Auth\RepoQL.Cloud.Auth.csproj" />
     <ProjectReference Include="..\RepoQL.Inference.Proto\RepoQL.Inference.Proto.csproj" />
   </ItemGroup>
 

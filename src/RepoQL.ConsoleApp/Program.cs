@@ -185,6 +185,9 @@ static void WriteRootHelp()
         "  read       Read repository content with budget control.\n" +
         "  import     Import or remove an external repository.\n" +
         "  install    Install RepoQL as an MCP server for AI agents.\n" +
+        "  login      Log in to RepoQL cloud services.\n" +
+        "  logout     Clear the locally stored RepoQL session.\n" +
+        "  whoami     Show the current RepoQL authentication identity.\n" +
         "\n" +
         "Flags:\n" +
         "  -h, --help     Show this help message.\n" +

@@ -13,10 +13,12 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <PackageReference Include="FakeItEasy" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\RepoQL.Embedding.Client\RepoQL.Embedding.Client.csproj" />
+    <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

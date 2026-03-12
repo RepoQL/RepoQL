@@ -1,6 +1,7 @@
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Embeddings;
 using ProtoRerank = RepoQL.Embedding.RerankDocument;
 
@@ -15,7 +16,7 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
 {
     private readonly GrpcChannel _channel;
     private readonly EmbeddingService.EmbeddingServiceClient _client;
-    private readonly string _apiKey;
+    private readonly ICloudCredentialProvider _credentialProvider;
     private readonly ILogger<GrpcEmbeddingProvider>? _logger;
 
     private string? _model;
@@ -24,11 +25,11 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
 
     public GrpcEmbeddingProvider(
         string url,
-        string apiKey,
+        ICloudCredentialProvider credentialProvider,
         int timeoutSeconds,
         ILogger<GrpcEmbeddingProvider>? logger)
     {
-        _apiKey = apiKey;
+        _credentialProvider = credentialProvider ?? throw new ArgumentNullException(nameof(credentialProvider));
         _logger = logger;
 
         var handler = new SocketsHttpHandler
@@ -46,6 +47,18 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
         });
 
         _client = new EmbeddingService.EmbeddingServiceClient(_channel);
+    }
+
+    internal GrpcEmbeddingProvider(
+        EmbeddingService.EmbeddingServiceClient client,
+        ICloudCredentialProvider credentialProvider,
+        ILogger<GrpcEmbeddingProvider>? logger = null,
+        GrpcChannel? channel = null)
+    {
+        _client = client ?? throw new ArgumentNullException(nameof(client));
+        _credentialProvider = credentialProvider ?? throw new ArgumentNullException(nameof(credentialProvider));
+        _logger = logger;
+        _channel = channel ?? GrpcChannel.ForAddress("https://unused.invalid");
     }
 
     public string Model => _model ?? "unknown";
@@ -85,7 +98,7 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
         {
             response = await _client.EmbedChunksAsync(
                 request,
-                headers: AuthHeaders(),
+                headers: await GetAuthHeadersAsync(cancellationToken).ConfigureAwait(false),
                 cancellationToken: cancellationToken);
         }
         catch (RpcException rpcEx)
@@ -141,7 +154,7 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
 
         var response = await _client.EmbedQueryAsync(
             new EmbedQueryRequest { Text = text },
-            headers: AuthHeaders(),
+            headers: await GetAuthHeadersAsync(cancellationToken).ConfigureAwait(false),
             cancellationToken: cancellationToken);
 
         return response.Vector.Count > 0 ? response.Vector.ToArray() : null;
@@ -172,7 +185,7 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
         {
             response = await _client.RerankAsync(
                 request,
-                headers: AuthHeaders(),
+                headers: await GetAuthHeadersAsync(cancellationToken).ConfigureAwait(false),
                 cancellationToken: cancellationToken);
         }
         catch (RpcException rpcEx)
@@ -201,7 +214,7 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
 
         var info = await _client.GetModelInfoAsync(
             new GetModelInfoRequest(),
-            headers: AuthHeaders(),
+            headers: await GetAuthHeadersAsync(ct).ConfigureAwait(false),
             cancellationToken: ct);
 
         _model = info.Model;
@@ -213,11 +226,11 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
             _model, _dimension);
     }
 
-    private Metadata AuthHeaders()
+    private async Task<Metadata> GetAuthHeadersAsync(CancellationToken cancellationToken)
     {
         return new Metadata
         {
-            { "authorization", $"Bearer {_apiKey}" }
+            { "authorization", $"Bearer {await _credentialProvider.GetTokenAsync(cancellationToken).ConfigureAwait(false)}" }
         };
     }
 

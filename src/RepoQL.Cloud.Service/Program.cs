@@ -2,8 +2,8 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using RepoQL.Cloud.Auth;
 using RepoQL.Cloud.Service.Analytics;
-using RepoQL.Cloud.Service.Auth;
 using RepoQL.Cloud.Service.Embedding;
 using RepoQL.Cloud.Service.Embedding.Cache;
 using RepoQL.Cloud.Service.Inference;
@@ -34,13 +34,12 @@ builder.Services.AddGrpc(options =>
     options.MaxSendMessageSize = 8 * 1024 * 1024;
     options.ResponseCompressionLevel = System.IO.Compression.CompressionLevel.Optimal;
     options.ResponseCompressionAlgorithm = "gzip";
-    options.Interceptors.Add<ApiKeyAuthInterceptor>();
+    options.Interceptors.Add<AuthInterceptor>();
 });
 
 // --- Auth (shared) ---
 
-builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
-builder.Services.AddSingleton<ApiKeyAuthInterceptor>();
+builder.Services.AddRepoQlServerAuth(builder.Configuration.GetSection("Auth"));
 
 // --- Embedding domain ---
 

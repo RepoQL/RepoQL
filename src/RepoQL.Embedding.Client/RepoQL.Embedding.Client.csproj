@@ -9,4 +9,8 @@
     <ProjectReference Include="..\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="RepoQL.Embedding.Client.Tests" />
+  </ItemGroup>
+
 </Project>

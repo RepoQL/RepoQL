@@ -1,14 +1,17 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoQL.Commands;
+using RepoQL.ConsoleApp.Auth;
 using RepoQL.ConsoleApp.Diagnostics;
 using RepoQL.ConsoleApp.Feedback;
 using RepoQL.ConsoleApp.Formatters;
 using RepoQL.ConsoleApp.Resources;
 using RepoQL.ConsoleApp.Tools;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Inference;
+using RepoQL.Core.Cloud;
 using RepoQL.Core.Configuration;
 using RepoQL.Templating;
 using Spectre.Console;
@@ -27,6 +30,7 @@ internal static class ServiceCollectionExtensions
             .AddFormattingServices()
             .AddDiagnosticsServices(includeSessionOrientation: false)
             .AddConfigurationServices(startupRepoRoot)
+            .AddCloudAuthServices()
             .AddCommandServices()
             .AddLiquidTemplateServices();
 
@@ -43,6 +47,7 @@ internal static class ServiceCollectionExtensions
             .AddFormattingServices()
             .AddDiagnosticsServices(includeSessionOrientation: true)
             .AddConfigurationServices(startupRepoRoot, ConfigReloadMode.Poll)
+            .AddCloudAuthServices()
             .AddInferenceServices()
             .AddCommandServices()
             .AddResourceServices()
@@ -99,21 +104,30 @@ internal static class ServiceCollectionExtensions
 
     private static IServiceCollection AddInferenceServices(this IServiceCollection services)
     {
+        services.AddCloudCredentialProvider();
+
         services.AddSingleton<IInferenceProvider>(sp =>
         {
             var config = sp.GetRequiredService<RepoQlConfig>();
             var settings = config.Inference;
-            var apiKey = config.Cloud.ApiKey;
+            var credentialProvider = sp.GetService<ICloudCredentialProvider>();
             if (string.IsNullOrWhiteSpace(settings.ServiceUrl) ||
-                string.IsNullOrWhiteSpace(apiKey))
+                credentialProvider is null)
                 return new DisabledInferenceProvider();
 
             return new RepoQL.Inference.Client.InferenceClient(
                 settings.ServiceUrl,
-                apiKey,
+                credentialProvider,
                 sp.GetService<ILogger<RepoQL.Inference.Client.InferenceClient>>());
         });
 
+        return services;
+    }
+
+    private static IServiceCollection AddCloudAuthServices(this IServiceCollection services)
+    {
+        services.AddSingleton<CloudAuthSessionStore>();
+        services.AddSingleton<CloudAuthService>();
         return services;
     }
 

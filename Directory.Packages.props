@@ -54,6 +54,8 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.1" />
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.1" />
+    <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="6.35.0" />
+    <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="6.35.0" />
     <PackageVersion Include="Microsoft.ML.OnnxRuntime" Version="1.23.2" />
     <PackageVersion Include="Microsoft.ML.Tokenizers" Version="0.22.0" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.1.0" />

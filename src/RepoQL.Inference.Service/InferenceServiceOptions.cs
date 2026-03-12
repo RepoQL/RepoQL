@@ -30,12 +30,3 @@ internal sealed class InferenceServiceOptions
 
     public int DegenerateToolCallLimit { get; set; } = 3;
 }
-
-/// <summary>
-/// Purpose: Bind the accepted client auth key hashes for gRPC requests.
-/// Complexity: Stores the configured SHA-256 digests used by the interceptor.
-/// </summary>
-internal sealed class AuthOptions
-{
-    public string[] ApiKeyHashes { get; set; } = [];
-}

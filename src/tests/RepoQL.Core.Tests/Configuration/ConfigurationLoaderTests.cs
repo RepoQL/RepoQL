@@ -210,6 +210,26 @@ internal sealed class ConfigurationLoaderTests
     }
 
     [Test]
+    public void Load_Handles_Cloud_Auth_Settings()
+    {
+        WriteLocalConfig("""
+        {
+          "cloud": {
+            "client_id": "client_test",
+            "auth_token": "jwt-value",
+            "refresh_token": "refresh-value"
+          }
+        }
+        """);
+
+        var resolved = Load();
+
+        resolved.Settings.Cloud.ClientId.Should().Be("client_test");
+        resolved.Settings.Cloud.AuthToken.Should().Be("jwt-value");
+        resolved.Settings.Cloud.RefreshToken.Should().Be("refresh-value");
+    }
+
+    [Test]
     public void Load_Handles_Long_Settings()
     {
         WriteLocalConfig("""{"cache": {"size_limit": 256}}""");

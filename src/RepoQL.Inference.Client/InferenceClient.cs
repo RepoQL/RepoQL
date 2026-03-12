@@ -1,6 +1,7 @@
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Logging;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Inference;
 using ProtoInference = RepoQL.Inference;
 
@@ -16,18 +17,18 @@ public sealed class InferenceClient : IInferenceProvider, IDisposable
     private const int DefaultConnectTimeoutSeconds = 30;
 
     private readonly string _url;
-    private readonly string _apiKey;
+    private readonly ICloudCredentialProvider _credentialProvider;
     private readonly ILogger<InferenceClient>? _logger;
     private readonly ProtoInference.InferenceService.InferenceServiceClient _client;
     private readonly IDisposable? _ownedResource;
 
     public InferenceClient(
         string url,
-        string apiKey,
+        ICloudCredentialProvider credentialProvider,
         ILogger<InferenceClient>? logger = null)
     {
         _url = url ?? throw new ArgumentNullException(nameof(url));
-        _apiKey = apiKey ?? throw new ArgumentNullException(nameof(apiKey));
+        _credentialProvider = credentialProvider ?? throw new ArgumentNullException(nameof(credentialProvider));
         _logger = logger;
 
         var handler = new SocketsHttpHandler
@@ -50,13 +51,13 @@ public sealed class InferenceClient : IInferenceProvider, IDisposable
     internal InferenceClient(
         ProtoInference.InferenceService.InferenceServiceClient client,
         string url,
-        string apiKey,
+        ICloudCredentialProvider credentialProvider,
         ILogger<InferenceClient>? logger = null,
         IDisposable? ownedResource = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _url = url ?? throw new ArgumentNullException(nameof(url));
-        _apiKey = apiKey ?? throw new ArgumentNullException(nameof(apiKey));
+        _credentialProvider = credentialProvider ?? throw new ArgumentNullException(nameof(credentialProvider));
         _logger = logger;
         _ownedResource = ownedResource;
     }
@@ -73,7 +74,7 @@ public sealed class InferenceClient : IInferenceProvider, IDisposable
         {
             var response = await _client.CompleteAsync(
                 MapRequest(request),
-                headers: AuthHeaders(),
+                headers: await GetAuthHeadersAsync(ct).ConfigureAwait(false),
                 cancellationToken: ct).ConfigureAwait(false);
 
             return MapResult(response);
@@ -100,7 +101,9 @@ public sealed class InferenceClient : IInferenceProvider, IDisposable
 
         try
         {
-            using var call = _client.CompleteWithTools(headers: AuthHeaders(), cancellationToken: ct);
+            using var call = _client.CompleteWithTools(
+                headers: await GetAuthHeadersAsync(ct).ConfigureAwait(false),
+                cancellationToken: ct);
 
             await call.RequestStream.WriteAsync(new ProtoInference.ClientMessage
             {
@@ -258,10 +261,10 @@ public sealed class InferenceClient : IInferenceProvider, IDisposable
             ToolTokens = completion.Usage?.ToolTokens ?? 0
         };
 
-    private Metadata AuthHeaders()
+    private async Task<Metadata> GetAuthHeadersAsync(CancellationToken cancellationToken)
         => new()
         {
-            { "authorization", $"Bearer {_apiKey}" }
+            { "authorization", $"Bearer {await _credentialProvider.GetTokenAsync(cancellationToken).ConfigureAwait(false)}" }
         };
 
     private Exception MapRpcException(string operation, RpcException rpcEx)
