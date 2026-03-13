@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Microsoft.Extensions.Logging;
 using RepoQL.ConsoleApp.Auth;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Cloud;
 using RepoQL.Core.Configuration;
 
@@ -40,14 +41,22 @@ internal sealed class CloudAuthServiceTests
         using var tempDir = new TempDir();
         var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: tempDir.Path);
         resolved.Settings.Cloud.ClientId = "client_test";
+#if DEBUG
         resolved.Settings.Cloud.AuthorizationEndpoint = "https://auth.example.test/custom/authorize";
         resolved.Settings.Cloud.DeviceAuthorizationEndpoint = "https://auth.example.test/custom/device";
         resolved.Settings.Cloud.AuthenticateEndpoint = "https://auth.example.test/custom/authenticate";
+#endif
         using var service = CreateService(resolved);
 
+#if DEBUG
         service.GetAuthorizationEndpoint().ToString().Should().Be("https://auth.example.test/custom/authorize");
         service.GetDeviceAuthorizationEndpoint().ToString().Should().Be("https://auth.example.test/custom/device");
         service.GetAuthenticateEndpoint().ToString().Should().Be("https://auth.example.test/custom/authenticate");
+#else
+        service.GetAuthorizationEndpoint().ToString().Should().Be(RepoQlConfig.CloudSettings.DefaultAuthorizationEndpoint);
+        service.GetDeviceAuthorizationEndpoint().ToString().Should().Be(RepoQlConfig.CloudSettings.DefaultDeviceAuthorizationEndpoint);
+        service.GetAuthenticateEndpoint().ToString().Should().Be(RepoQlConfig.CloudSettings.DefaultAuthenticateEndpoint);
+#endif
     }
 
     [Test]
