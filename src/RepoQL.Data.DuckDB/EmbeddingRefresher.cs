@@ -942,15 +942,21 @@ public sealed class EmbeddingRefresher
         return CombineSegments(new[] { headline, structure }, MaxEmbeddingPayloadChars);
     }
 
+    // Preamble is the contextual embedding context — it must leave room for chunks.
+    // Half the group budget keeps the split ratio reasonable.
+    private const int MaxPreambleChars = MaxContextualGroupChars / 2;
+
     private static string BuildPreamble(TextDocumentEmbeddingRow doc)
     {
-        // Build a short preamble from x-ray fields for context in each chunk.
-        var parts = new List<string>(2);
-        if (!string.IsNullOrWhiteSpace(doc.Headline))
-            parts.Add(doc.Headline);
-        if (!string.IsNullOrWhiteSpace(doc.Summary))
-            parts.Add(doc.Summary);
-        return string.Join("\n", parts);
+        // Build preamble from x-ray fields for contextual embedding context.
+        // Structure is the richest field — it tells the model what the document contains
+        // (class hierarchy, method signatures, etc.) so each chunk is embedded with
+        // awareness of its surrounding document shape.
+        // Ordered by density: headline (one-liner) → summary (paragraph) → structure (full outline).
+        // CombineSegments truncates at MaxPreambleChars to guarantee chunk room.
+        return CombineSegments(
+            new[] { doc.Headline, doc.Summary, doc.Structure },
+            MaxPreambleChars);
     }
 
     private static List<(int StartChar, int EndChar)> ChunkRanges(string text, int chunkSize, int overlap)

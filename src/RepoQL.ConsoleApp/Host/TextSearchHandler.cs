@@ -81,6 +81,12 @@ internal sealed class TextSearchHandler : IModifierHandler
             }
         }
 
+        // Split grep pattern on " OR " so agents can write `grep: error OR fail OR exception`.
+        // Each term is matched independently as a literal, case-insensitive substring.
+        var grepTerms = regexMode
+            ? [pattern]
+            : pattern.Split([" OR "], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
         var consultedUris = ExtractConsultedUris(documents);
         if (consultedUris.Count == 0)
         {
@@ -127,20 +133,7 @@ internal sealed class TextSearchHandler : IModifierHandler
             }
             else
             {
-                var lines = doc.TextContent.Split('\n');
-                for (var i = 0; i < lines.Length; i++)
-                {
-                    var currentLine = lines[i].TrimEnd('\r');
-                    var isMatch = currentLine.Contains(pattern, StringComparison.OrdinalIgnoreCase);
-                    if (!isMatch)
-                        continue;
-
-                    var lineNumber = i + 1;
-                    var before = i > 0 ? lines[i - 1].TrimEnd('\r') : null;
-                    var after = i + 1 < lines.Length ? lines[i + 1].TrimEnd('\r') : null;
-                    matches.Add(new LineMatch(doc.Uri, lineNumber, currentLine, before, after));
-                    filesWithMatches.Add(doc.Uri);
-                }
+                AddGrepMatches(doc, grepTerms, matches, filesWithMatches);
             }
         }
 
@@ -340,6 +333,37 @@ internal sealed class TextSearchHandler : IModifierHandler
         }
 
         return sb.ToString();
+    }
+
+    private static void AddGrepMatches(
+        SearchDocument doc,
+        string[] terms,
+        List<LineMatch> matches,
+        HashSet<string> filesWithMatches)
+    {
+        var lines = doc.TextContent.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var currentLine = lines[i].TrimEnd('\r');
+            var isMatch = false;
+            foreach (var term in terms)
+            {
+                if (currentLine.Contains(term, StringComparison.OrdinalIgnoreCase))
+                {
+                    isMatch = true;
+                    break;
+                }
+            }
+
+            if (!isMatch)
+                continue;
+
+            var lineNumber = i + 1;
+            var before = i > 0 ? lines[i - 1].TrimEnd('\r') : null;
+            var after = i + 1 < lines.Length ? lines[i + 1].TrimEnd('\r') : null;
+            matches.Add(new LineMatch(doc.Uri, lineNumber, currentLine, before, after));
+            filesWithMatches.Add(doc.Uri);
+        }
     }
 
     private static void AddRegexMatches(
