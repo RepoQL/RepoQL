@@ -1403,7 +1403,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         if (_isInMemory || !_databaseFileExisted)
             return;
 
-        var storedVersion = TryReadMetadataValue(MetadataKeySchemaVersion);
+        var storedVersion = TryReadMetadataValue(_connection, MetadataKeySchemaVersion);
         var expectedVersion = SchemaVersion.ToString(CultureInfo.InvariantCulture);
 
         if (string.IsNullOrWhiteSpace(storedVersion))
@@ -1600,7 +1600,26 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     /// <summary>
     /// Read a metadata value by key. Returns null if the key or table doesn't exist.
     /// </summary>
-    public string? ReadMetadataValue(string key) => TryReadMetadataValue(key);
+    public string? ReadMetadataValue(string key)
+    {
+        EnsureSchema();
+
+        if (_databaseInvalidated)
+        {
+            CheckAndRecoverIfNeeded();
+        }
+
+        EnterExclusiveSection();
+        try
+        {
+            var conn = IsReentrantExclusiveEntry ? GetReentrantConnection() : _connection;
+            return TryReadMetadataValue(conn, key);
+        }
+        finally
+        {
+            ExitExclusiveSection();
+        }
+    }
 
     /// <summary>
     /// Writes a metadata key/value pair transactionally.
@@ -1618,11 +1637,11 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         });
     }
 
-    private string? TryReadMetadataValue(string key)
+    private static string? TryReadMetadataValue(DuckDBConnection connection, string key)
     {
         try
         {
-            using var cmd = _connection.CreateCommand();
+            using var cmd = connection.CreateCommand();
             cmd.CommandText = "SELECT value FROM metadata WHERE key = $1";
             cmd.Parameters.Add(new DuckDBParameter { Value = key });
             return cmd.ExecuteScalar() as string;
