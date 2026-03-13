@@ -18,7 +18,11 @@ internal sealed class SettingRegistryTests
         registry.Settings.Should().ContainKey("cloud.client_id");
         registry.Settings.Should().ContainKey("cloud.auth_token");
         registry.Settings.Should().ContainKey("cloud.refresh_token");
+#if DEBUG
         registry.Settings.Should().ContainKey("inference.service_url");
+#else
+        registry.Settings.Should().NotContainKey("inference.service_url");
+#endif
         registry.Settings.Should().ContainKey("host.idle_grace_seconds");
         registry.Settings.Should().ContainKey("cache.size_limit");
         registry.Settings.Should().ContainKey("find.initial_candidate_limit");

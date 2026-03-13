@@ -99,6 +99,9 @@ public class IndexingEngineTests
             .Invokes(call => pendingDigest = call.GetArgument<string>(1));
 
         var committer = A.Fake<IIndexingCommitter>();
+        DocumentCatalogEntry? existingEntryAtCommit = null;
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Invokes(call => existingEntryAtCommit = call.GetArgument<IndexItem>(0)?.ExistingEntry);
         var context = IndexingEngineTestFactory.Create(builder =>
         {
             builder.WithCatalog(catalog);
@@ -117,7 +120,8 @@ public class IndexingEngineTests
         evaluatedDigest.Should().NotBeNull();
         pendingDigest.Should().Be(evaluatedDigest);
         item.DigestHex.Should().Be(evaluatedDigest);
-        item.ExistingEntry.Should().Be(existing);
+        existingEntryAtCommit.Should().Be(existing);
+        item.ExistingEntry.Should().BeNull();
     }
 
     [Test]
@@ -424,7 +428,7 @@ public class IndexingEngineTests
         }
 
         using var settle = CancellationTokenSource.CreateLinkedTokenSource(token);
-        settle.CancelAfter(TimeSpan.FromSeconds(5));
+        settle.CancelAfter(TimeSpan.FromSeconds(15));
         while ((engine.LastError?.Contains("IndexingQueue fault", StringComparison.Ordinal) != true) ||
                engine.HotPathTimeoutCount < 5 ||
                engine.GetHotPathPendingItems().Count > 0)

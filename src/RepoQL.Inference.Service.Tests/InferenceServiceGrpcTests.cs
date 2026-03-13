@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Net.Http.Headers;
 using AwesomeAssertions;
 using FakeItEasy;
 using Grpc.Core;
@@ -15,6 +16,8 @@ namespace RepoQL.Inference.Service.Tests;
 
 public sealed class InferenceServiceGrpcTests
 {
+    private const string TestAuthToken = "rql_expected-token";
+
     [Test]
     public async Task Complete_UsesDefaultSystemPromptAndIgnoresUnaryTools()
     {
@@ -71,7 +74,7 @@ public sealed class InferenceServiceGrpcTests
     {
         var grokClient = A.Fake<IGrokClient>();
         await using var server = await InferenceTestHost.StartAsync(grokClient, [ComputeHash("rql_expected-token")]);
-        var client = server.CreateClient();
+        var client = server.CreateClient(authenticated: false);
 
         var exception = await Assert.That(async () => await client.CompleteAsync(new CompleteRequest { Prompt = "hi" }))
             .Throws<RpcException>();
@@ -87,7 +90,7 @@ public sealed class InferenceServiceGrpcTests
             .Returns(CompletionResult("ok"));
 
         await using var server = await InferenceTestHost.StartAsync(grokClient, [ComputeHash("rql_expected-token")]);
-        var client = server.CreateClient();
+        var client = server.CreateClient(authenticated: false);
         var headers = new Metadata { { "authorization", "Bearer rql_expected-token" } };
 
         var response = await client.CompleteAsync(new CompleteRequest { Prompt = "hi" }, headers);
@@ -100,7 +103,7 @@ public sealed class InferenceServiceGrpcTests
     {
         var grokClient = A.Fake<IGrokClient>();
         await using var server = await InferenceTestHost.StartAsync(grokClient, [ComputeHash("rql_expected-token")]);
-        var client = server.CreateClient();
+        var client = server.CreateClient(authenticated: false);
 
         var exception = await Assert.That(async () => await InvokeStreamingAsync(client, null))
             .Throws<RpcException>();
@@ -765,7 +768,13 @@ public sealed class InferenceServiceGrpcTests
                     services.AddSingleton<AuthInterceptor>();
                     services.AddSingleton<AuthValidationService>();
                     services.AddSingleton<IHostedService, JwksWarmupHostedService>();
-                    services.Configure<AuthOptions>(options => options.ApiKeyHashes = hashes);
+                    services.Configure<AuthOptions>(options =>
+                    {
+                        options.ApiKeyHashes = hashes.Length == 0 ? [ComputeHash(TestAuthToken)] : hashes;
+                        options.JwksUri = string.Empty;
+                        options.ClientId = string.Empty;
+                        options.Issuer = string.Empty;
+                    });
                     services.Configure<InferenceServiceOptions>(options =>
                     {
                         options.GrokApiKey = "test-grok-key";
@@ -786,10 +795,12 @@ public sealed class InferenceServiceGrpcTests
             return new InferenceTestHost { Host = host };
         }
 
-        public InferenceService.InferenceServiceClient CreateClient()
+        public InferenceService.InferenceServiceClient CreateClient(bool authenticated = true)
         {
             var server = Host.GetTestServer();
             var httpClient = server.CreateClient();
+            if (authenticated)
+                httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", TestAuthToken);
             _channel = GrpcChannel.ForAddress("http://localhost", new GrpcChannelOptions
             {
                 HttpClient = httpClient
