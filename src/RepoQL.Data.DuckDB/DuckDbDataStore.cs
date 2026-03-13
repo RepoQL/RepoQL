@@ -888,9 +888,10 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         }
         catch (Exception rollbackEx)
         {
-            // Rollback failed - connection is in inconsistent state, must recover
-            _logger.LogError(rollbackEx, "[DuckDB] Transaction rollback failed - connection corrupted, marking for recovery");
-            _databaseInvalidated = true;
+            // Rollback failed — driver state is stale, not database corruption.
+            // Mark for reconnection (not WAL deletion). Next BeginTransaction will
+            // hit TryClearStaleTransactionState → ReconnectWriteConnection if needed.
+            _logger.LogWarning(rollbackEx, "[DuckDB] Transaction rollback failed — will reconnect on next write");
         }
         finally
         {
@@ -912,8 +913,9 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         }
         catch (Exception disposeEx)
         {
-            _logger.LogError(disposeEx, "[DuckDB] Transaction dispose failed - connection may be corrupted, marking for recovery");
-            _databaseInvalidated = true;
+            // Driver confused, not database corruption. Log and move on —
+            // next BeginTransaction will detect stale state and reconnect.
+            _logger.LogWarning(disposeEx, "[DuckDB] Transaction dispose failed — will reconnect on next write if needed");
         }
     }
 
@@ -985,12 +987,14 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             }
             catch (InvalidOperationException retryEx) when (IsAlreadyInTransactionError(retryEx))
             {
-                _logger.LogError(retryEx,
-                    "[DuckDB] Stale transaction recovery failed during {Operation}. Marking database invalidated and attempting full recovery.",
+                // Driver state is irrecoverably stale — reconnect to reset it.
+                // This is a driver-level problem, NOT database corruption.
+                // Do NOT delete the WAL; DuckDB handles its own WAL recovery on open.
+                _logger.LogWarning(retryEx,
+                    "[DuckDB] Stale transaction recovery failed during {Operation}. Reconnecting write connection.",
                     operation);
 
-                _databaseInvalidated = true;
-                AttemptRecovery();
+                ReconnectWriteConnection();
                 return _connection.BeginTransaction();
             }
         }
@@ -1022,6 +1026,49 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     {
         var field = typeof(DuckDBConnection).GetField("_activeTransaction", BindingFlags.Instance | BindingFlags.NonPublic);
         return field?.GetValue(_connection) as DuckDBTransaction;
+    }
+
+    /// <summary>
+    /// Reconnects the write connection to reset driver-level state (stale transaction references).
+    /// Does NOT delete the WAL — DuckDB handles its own WAL recovery on connection open.
+    /// Re-initializes schema (UDFs, views, macros) since these are connection-local.
+    /// Must be called from within EnterExclusiveSection.
+    /// </summary>
+    private void ReconnectWriteConnection()
+    {
+        var sw = Stopwatch.StartNew();
+        _logger.LogInformation("[DuckDB] Reconnecting write connection to clear stale driver state...");
+
+        try
+        {
+            try { _connection.Close(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error closing stale connection"); }
+            try { _connection.Dispose(); } catch (Exception ex) { _logger.LogDebug(ex, "[DuckDB] Error disposing stale connection"); }
+
+            // Invalidate reentrant connection — it was derived from the old connection
+            lock (_reentrantConnectionLock)
+            {
+                try { _reentrantConnection?.Close(); } catch { }
+                try { _reentrantConnection?.Dispose(); } catch { }
+                _reentrantConnection = null;
+            }
+
+            var connString = _isInMemory ? "Data Source=:memory:" : $"Data Source={_path};ACCESS_MODE=READ_WRITE";
+            _connection = new DuckDBConnection(connString);
+            _connection.Open();
+            ApplyConnectionConfiguration(_connection);
+
+            // Re-register UDFs, views, macros — these are connection-local state
+            _schemaInitialized = false;
+            EnsureSchemaInternal();
+
+            _logger.LogInformation("[DuckDB] Write connection reconnected in {ElapsedMs}ms (WAL preserved)", sw.ElapsedMilliseconds);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[DuckDB] Write connection reconnect failed after {ElapsedMs}ms", sw.ElapsedMilliseconds);
+            _databaseInvalidated = true;
+            throw new InvalidOperationException($"Failed to reconnect write connection: {ex.Message}", ex);
+        }
     }
 
     private static bool IsAlreadyInTransactionError(InvalidOperationException ex)
@@ -1073,43 +1120,26 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     }
 
     /// <summary>
-    /// Attempts to recover from a fatal database error by recreating connections.
+    /// Attempts to recover from a fatal database error by reconnecting all connections.
+    /// Does NOT delete the WAL — DuckDB handles its own WAL recovery on connection open.
+    /// WAL deletion only happens via explicit RecreateDatabase() calls.
     /// </summary>
     private void AttemptRecovery()
     {
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        _logger.LogInformation("[DuckDB] Starting database recovery...");
+        var sw = Stopwatch.StartNew();
+        _logger.LogInformation("[DuckDB] Starting database recovery (preserving WAL)...");
 
         try
         {
-            _logger.LogDebug("[DuckDB] Closing existing connection...");
+            _logger.LogDebug("[DuckDB] Closing existing connections...");
             CloseConnections();
 
-            // For file-based databases, check if we need to delete corrupted files
-            if (!_isInMemory && _path is not null)
-            {
-                var walPath = _path + ".wal";
-                if (File.Exists(walPath))
-                {
-                    _logger.LogWarning("[DuckDB] Deleting WAL file that may be corrupted: {WalPath}", walPath);
-                    try
-                    {
-                        File.Delete(walPath);
-                        _logger.LogInformation("[DuckDB] WAL file deleted successfully");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "[DuckDB] Failed to delete WAL file");
-                    }
-                }
-            }
-
-            // Reinitialize connections
+            // Reinitialize connections — DuckDB will replay WAL automatically on open
             _logger.LogDebug("[DuckDB] Reinitializing connections...");
             _schemaInitialized = false;
             InitializeConnections();
 
-            // Re-initialize schema
+            // Re-initialize schema (views, macros, UDFs — these aren't persisted in the WAL)
             _logger.LogDebug("[DuckDB] Re-initializing schema...");
             EnsureSchemaInternal();
 
@@ -1117,14 +1147,12 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             _consecutiveFailures = 0;
             _recoveredAtUtc = DateTime.UtcNow;
             RecoveryOccurred = true;
-            _logger.LogInformation("[DuckDB] Database recovery completed successfully in {ElapsedMs}ms", sw.ElapsedMilliseconds);
-            _logger.LogWarning("[DuckDB] Data may have been lost during recovery. A full reindex is recommended.");
+            _logger.LogInformation("[DuckDB] Database recovery completed in {ElapsedMs}ms (WAL preserved, data intact)", sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[DuckDB] Database recovery failed after {ElapsedMs}ms", sw.ElapsedMilliseconds);
 
-            // If recovery fails and we're file-based, consider deleting the database
             if (!_isInMemory && _path is not null && _consecutiveFailures >= MaxConsecutiveFailuresBeforeRecovery)
             {
                 _logger.LogWarning("[DuckDB] Multiple recovery attempts failed. Database may need to be deleted manually: {Path}", _path);
@@ -1233,30 +1261,16 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             _logger.LogWarning(ex, "[DuckDB] Startup checkpoint failed");
         }
 
-        // After checkpoint, WAL should be minimal (just headers, typically < 4KB)
-        // If it's still substantial, the WAL has problematic entries that can't be cleanly applied
-        // Delete it to prevent read conflicts from "applying buffered appends"
+        // After checkpoint, WAL should be minimal (just headers, typically < 4KB).
+        // If it's still substantial, log it but do NOT delete — the WAL contains data
+        // that DuckDB couldn't flush, and deleting it causes data loss.
         walInfo.Refresh();
         if (walInfo.Exists && walInfo.Length > 4096)
         {
             _logger.LogWarning(
                 "[DuckDB] WAL still has {Size:N0} bytes after checkpoint. " +
-                "Deleting to prevent read conflicts. Some data may be lost.",
+                "DuckDB will manage WAL replay on subsequent operations.",
                 walInfo.Length);
-
-            // Close connection, delete WAL, reinitialize
-            try { _connection.Close(); } catch { /* ignore */ }
-            try { _connection.Dispose(); } catch { /* ignore */ }
-
-            File.Delete(walPath);
-
-            // Reinitialize connection
-            _connection = new DuckDBConnection($"Data Source={_path};ACCESS_MODE=READ_WRITE");
-            _connection.Open();
-            ApplyConnectionConfiguration(_connection);
-            RecoveryOccurred = true;
-
-            _logger.LogInformation("[DuckDB] Reinitialized connection after WAL cleanup");
         }
         else
         {
@@ -1353,8 +1367,8 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         // The exclusive section guarantees only one writer at a time.
         _databaseInvalidated = true;
 
-        // If corruption recurs immediately after WAL recovery, the .duckdb file is corrupt.
-        // Escalate from WAL cleanup (AttemptRecovery) to full database rebuild (RecreateDatabase).
+        // If corruption recurs immediately after connection recovery, the .duckdb file is corrupt.
+        // Escalate from connection recovery (AttemptRecovery) to full database rebuild (RecreateDatabase).
         if (_recoveredAtUtc is not null &&
             DateTime.UtcNow - _recoveredAtUtc.Value < PostRecoveryEscalationWindow)
         {
