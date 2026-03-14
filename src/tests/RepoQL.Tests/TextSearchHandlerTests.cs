@@ -120,6 +120,26 @@ internal sealed class TextSearchHandlerTests
     }
 
     [Test]
+    [DisplayName("TextSearchHandler grep mode suggests regex when pattern looks like regex")]
+    public async Task TextSearchHandler_Grep_SuggestsRegex_WhenPatternLooksLikeRegex()
+    {
+        var handler = new TextSearchHandler();
+        handler.CanHandle("grep").Should().BeTrue();
+
+        var result = await handler.ExecuteAsync(
+            [
+                new ReadDocument("file:///src/Auth.cs", "abc\ndef", "text/plain", null, null, null)
+            ],
+            @"jint|wasmtime|wasm",
+            2000,
+            CancellationToken.None);
+
+        result.Content.Should().Contain("No matches for");
+        result.Content.Should().Contain("This looks like a regex pattern");
+        result.Content.Should().Contain("=> regex:");
+    }
+
+    [Test]
     [DisplayName("TextSearchHandler grep mode includes line fragments across files")]
     public async Task TextSearchHandler_Grep_MultipleFiles_IncludeLineFragments()
     {

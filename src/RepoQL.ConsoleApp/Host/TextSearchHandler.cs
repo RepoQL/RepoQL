@@ -139,8 +139,12 @@ internal sealed class TextSearchHandler : IModifierHandler
 
         if (matches.Count == 0)
         {
+            var noMatchMessage = $"No matches for '{pattern}' in {searchable.Count.ToString(CultureInfo.InvariantCulture)} files.";
+            if (!regexMode && LooksLikeRegex(pattern))
+                noMatchMessage += $" This looks like a regex pattern — try `=> regex: {pattern}`";
+
             return Task.FromResult(BuildSimpleResult(
-                $"No matches for '{pattern}' in {searchable.Count.ToString(CultureInfo.InvariantCulture)} files.",
+                noMatchMessage,
                 filesConsulted: consultedUris,
                 tokenBudget: tokenBudget));
         }
@@ -429,6 +433,28 @@ internal sealed class TextSearchHandler : IModifierHandler
         }
 
         return low;
+    }
+
+    /// <summary>
+    /// Detects patterns that look like regex rather than literal text,
+    /// so we can suggest <c>=> regex:</c> when grep finds no matches.
+    /// </summary>
+    private static bool LooksLikeRegex(string pattern)
+    {
+        // Alternation (foo|bar), character classes ([abc]), quantifiers (\w+, \d*),
+        // anchors (^start, end$), groups ((foo)), escapes (\s, \b)
+        foreach (var c in pattern)
+        {
+            if (c is '|' or '[' or ']' or '(' or ')' or '^' or '$' or '+' or '*' or '?')
+                return true;
+
+            // Backslash followed by a regex metacharacter (e.g. \w, \d, \s)
+            // We just check for backslash presence — literal backslashes in grep searches are rare
+            if (c == '\\')
+                return true;
+        }
+
+        return false;
     }
 
     private sealed record SearchDocument(string Uri, string TextContent);
