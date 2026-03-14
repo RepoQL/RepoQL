@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Diagnostics;
 using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Hosting;
 
@@ -19,6 +20,8 @@ namespace RepoQL.ConsoleApp.Dashboard;
 /// </summary>
 internal static class DashboardEndpoints
 {
+    private const double SlowItemThresholdMs = 15_000;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -40,7 +43,8 @@ internal static class DashboardEndpoints
         UriRegistry uriRegistry,
         HostState hostState,
         DuckDbDataStore dataStore,
-        DashboardQueryActivityTracker queryActivity)
+        DashboardQueryActivityTracker queryActivity,
+        IIndexingDiagnosticsProvider diagnostics)
     {
         var pipelineStatus = coordinator.GetPipelineStatus();
         var leases = LeaseRegistry.Snapshot();
@@ -91,6 +95,7 @@ internal static class DashboardEndpoints
                 },
             }).ToArray(),
             queries = SnapshotQueries(queryActivity),
+            indexing = SnapshotIndexing(diagnostics),
             files = SnapshotFiles(uriRegistry, tokenCounts),
         };
 
@@ -320,6 +325,7 @@ internal static class DashboardEndpoints
         IOperationManager operations,
         DuckDbDataStore dataStore,
         DashboardQueryActivityTracker queryActivity,
+        IIndexingDiagnosticsProvider diagnostics,
         CancellationToken cancellationToken)
     {
         // Disable response buffering for real-time streaming.
@@ -342,7 +348,7 @@ internal static class DashboardEndpoints
             SingleWriter = true
         });
 
-        await WritePeriodicSnapshots(context.Response, operations, queryActivity, cancellationToken).ConfigureAwait(false);
+        await WritePeriodicSnapshots(context.Response, operations, queryActivity, diagnostics, cancellationToken).ConfigureAwait(false);
 
         using var heartbeat = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
         var eventPump = PumpStatusEventsAsync(aggregator, events.Writer, cancellationToken);
@@ -404,7 +410,7 @@ internal static class DashboardEndpoints
             // Periodic snapshots: leases and operations.
             if (now - lastPeriodicSend >= periodicSnapshotInterval)
             {
-                await WritePeriodicSnapshots(context.Response, operations, queryActivity, cancellationToken).ConfigureAwait(false);
+                await WritePeriodicSnapshots(context.Response, operations, queryActivity, diagnostics, cancellationToken).ConfigureAwait(false);
                 lastPeriodicSend = now;
             }
         }
@@ -576,11 +582,64 @@ internal static class DashboardEndpoints
         HttpResponse response,
         IOperationManager operations,
         DashboardQueryActivityTracker queryActivity,
+        IIndexingDiagnosticsProvider diagnostics,
         CancellationToken ct)
     {
         await WriteLeaseSnapshot(response, ct).ConfigureAwait(false);
         await WriteOperationsSnapshot(response, operations, ct).ConfigureAwait(false);
         await WriteQuerySnapshot(response, queryActivity, ct).ConfigureAwait(false);
+        await WriteIndexingSnapshot(response, diagnostics, ct).ConfigureAwait(false);
+    }
+
+    private static object SnapshotIndexing(IIndexingDiagnosticsProvider diagnostics)
+    {
+        var snapshot = diagnostics.GetSnapshot();
+        var stuckItems = diagnostics.GetQueuedItems()
+            .Where(item =>
+                item.DeferredRetry
+                || item.TimeoutAttempts > 0
+                || (item.ElapsedMs ?? 0) >= SlowItemThresholdMs)
+            .OrderByDescending(item => item.ElapsedMs ?? (DateTimeOffset.UtcNow - item.EnqueuedAt).TotalMilliseconds)
+            .Take(8)
+            .Select(item => new
+            {
+                uri = item.Uri,
+                name = item.Name,
+                stage = item.Stage,
+                status = item.Status,
+                enqueuedAt = item.EnqueuedAt,
+                startedAt = item.StartedAt,
+                elapsedMs = item.ElapsedMs,
+                workerId = item.WorkerId,
+                timeoutAttempts = item.TimeoutAttempts,
+                deferredRetry = item.DeferredRetry,
+                size = item.Size,
+                mimeType = item.MimeType,
+            })
+            .ToArray();
+
+        return new
+        {
+            hotPathTimeouts = snapshot.HotPathTimeouts,
+            analysisTimeouts = snapshot.AnalysisTimeouts,
+            deferredRetryTimeouts = snapshot.DeferredRetryTimeouts,
+            deferredRetryPending = snapshot.DeferredRetryPending,
+            deferredRetryActive = snapshot.DeferredRetryActive,
+            deferredToIdleCount = snapshot.DeferredToIdleCount,
+            activeWorkers = snapshot.ActiveWorkers.Select(worker => new
+            {
+                queue = worker.Queue,
+                workerId = worker.WorkerId,
+                uri = worker.Uri,
+                name = worker.Name,
+                stage = worker.Stage,
+                startedAt = worker.StartedAt,
+                elapsedMs = worker.ElapsedMs,
+                timeoutAttempts = worker.TimeoutAttempts,
+                deferredRetry = worker.DeferredRetry,
+            }).ToArray(),
+            stuckItems,
+        };
     }
 
     private static async Task WriteLeaseSnapshot(HttpResponse response, CancellationToken ct)
@@ -609,6 +668,18 @@ internal static class DashboardEndpoints
             response,
             "queries",
             JsonSerializer.Serialize(SnapshotQueries(queryActivity), JsonOptions),
+            ct).ConfigureAwait(false);
+    }
+
+    private static async Task WriteIndexingSnapshot(
+        HttpResponse response,
+        IIndexingDiagnosticsProvider diagnostics,
+        CancellationToken ct)
+    {
+        await WriteSseEvent(
+            response,
+            "indexing",
+            JsonSerializer.Serialize(SnapshotIndexing(diagnostics), JsonOptions),
             ct).ConfigureAwait(false);
     }
     private static async Task WriteOperationsSnapshot(

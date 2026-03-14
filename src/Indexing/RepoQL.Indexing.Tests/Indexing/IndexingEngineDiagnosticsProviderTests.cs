@@ -57,4 +57,50 @@ public sealed class IndexingEngineDiagnosticsProviderTests
         releaseClassifier.TrySetResult(true);
         await engine.WaitForAsync(IndexingState.AllIdle, token);
     }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("Active worker diagnostics include URI, stage, worker id, and elapsed time")]
+    public async Task Given_InFlightHotPathItem_When_SnapshotQueried_Then_ActiveWorkerDetailsAreReported(CancellationToken token)
+    {
+        var classifierEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseClassifier = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var classifier = A.Fake<ClassificationPipeline>();
+        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async _ =>
+            {
+                classifierEntered.TrySetResult(true);
+                await releaseClassifier.Task.ConfigureAwait(false);
+                return PipelineResult.Success;
+            });
+
+        var context = IndexingEngineTestFactory.Create(builder => builder.WithClassifier(classifier));
+        await using var engine = context.Engine;
+
+        await engine.EnqueueItemAsync(
+            IndexingTestItemFactory.CreateRawArtifact("file:///repo/worker-details.cs"),
+            IndexItemOptions.Default,
+            token);
+
+        await classifierEntered.Task.WaitAsync(token);
+
+        var diagnostics = new IndexingEngineDiagnosticsProvider(engine);
+        var snapshot = diagnostics.GetSnapshot();
+        var worker = snapshot.ActiveWorkers.Should().ContainSingle().Subject;
+
+        worker.Queue.Should().Be("HotPath");
+        worker.Uri.Should().Be("file:///repo/worker-details.cs");
+        worker.Stage.Should().Be("classification");
+        worker.WorkerId.Should().Be(0);
+        worker.ElapsedMs.Should().BeGreaterThan(0);
+
+        var queued = diagnostics.GetQueuedItems().Single(x => x.Uri == "file:///repo/worker-details.cs");
+        queued.Status.Should().Be("processing");
+        queued.WorkerId.Should().Be(0);
+        queued.ElapsedMs.Should().BeGreaterThan(0);
+
+        releaseClassifier.TrySetResult(true);
+        await engine.WaitForAsync(IndexingState.AllIdle, token);
+    }
 }

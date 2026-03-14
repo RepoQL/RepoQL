@@ -49,20 +49,22 @@ namespace RepoQL.Indexing;
 /// <para><strong>Per-Item Timeout (FM-001 Mitigation)</strong></para>
 /// <para>
 /// Configurable timeout per item prevents stuck items from blocking the pipeline indefinitely.
-/// When timeout fires, the item is logged, marked as timed out via <see cref="OnItemTimeout"/>,
-/// and processing continues. This ensures epoch counters remain balanced and idle processing
-/// can proceed.
+/// Timeout detection runs independently from the worker, so non-cooperative work is still marked
+/// timed out and released from queue ownership even if it never unwinds. The worker thread stays
+/// occupied until the work returns, which bounds damage to the configured worker pool instead of
+/// allowing hidden orphan work on the shared thread pool.
 /// </para>
 ///
 /// <para><strong>Concurrent Workers</strong></para>
 /// <para>
 /// Configurable worker count (typically <see cref="Environment.ProcessorCount"/>).
-/// Each worker pulls from channel and calls <c>processItem</c> delegate.
+/// Each worker is a dedicated background thread that pulls from the bounded channel and runs
+/// <c>processItem</c>. This isolates risky indexing work from ASP.NET and gRPC thread-pool usage.
 /// </para>
 ///
 /// <para><strong>Idle Detection</strong></para>
 /// <para>
-/// <see cref="WhenIdleAsync"/> completes when queue drains (depth reaches zero).
+/// <see cref="WhenIdleAsync"/> completes when queue ownership drains (depth reaches zero).
 /// Returns new <see cref="Task"/> each time (not reusable - create fresh wait after each idle).
 /// </para>
 ///
@@ -81,7 +83,10 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     private readonly Channel<T> _channel;
     private readonly ConcurrentDictionary<T, byte> _waitSet;
     private readonly ConcurrentDictionary<int, InFlightItem> _inFlightItems = new();
-    private readonly Task[] _readers;
+    private readonly Thread[] _workers;
+    private readonly Func<T, CancellationToken, Task> _processItem;
+    private readonly CancellationTokenSource _lifetimeCts;
+    private readonly Task _timeoutMonitor;
     private readonly IEqualityComparer<T> _comparer;
     private readonly TimeSpan? _itemTimeout;
     private readonly ILogger _logger;
@@ -89,7 +94,6 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     private int _depth;
     private int _busy;
     private int _timeoutCount;
-    private int _orphanedTasks;
     private readonly int _readerCount;
     private readonly object _queueStateLock = new();
     private Exception? _fatalError;
@@ -117,6 +121,11 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     /// Invoked once when the queue enters a terminal faulted state.
     /// </summary>
     public Action<Exception>? OnQueueFault { get; set; }
+
+    /// <summary>
+    /// Invoked after an item fully leaves the queue's ownership (removed from dedupe set and depth).
+    /// </summary>
+    public Action<T>? OnItemCompleted { get; set; }
 
     /// <summary>
     /// Creates a new work queue with concurrent workers.
@@ -150,6 +159,8 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         _waitSet = new ConcurrentDictionary<T, byte>(_comparer);
         _itemTimeout = itemTimeout;
         _logger = logger ?? NullLogger.Instance;
+        _processItem = processItem;
+        _lifetimeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         meter ??= new Meter($"RepoQL.WorkQueue.{name}");
         QueueDepth = meter.CreateObservableGauge(
@@ -172,11 +183,6 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             () => Volatile.Read(ref _timeoutCount),
             unit: "items",
             description: "Number of items that timed out during processing");
-        OrphanedTasks = meter.CreateObservableGauge(
-            $"repoql.queue.{name}.orphaned",
-            () => Volatile.Read(ref _orphanedTasks),
-            unit: "tasks",
-            description: "Number of timed-out tasks still holding thread pool threads");
 
         MaxDepth = capacity;
         _readerCount = Math.Max(1, readers);
@@ -187,108 +193,139 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             SingleReader = _readerCount == 1
         });
 
-        _readers = Enumerable.Range(0, _readerCount).Select(workerIndex => Task.Run(async () =>
+        _workers = Enumerable.Range(0, _readerCount).Select(workerIndex =>
         {
-            var startedNow = Interlocked.Increment(ref _startedReaders);
-            if (startedNow == _readerCount)
-                _workersReadyTcs.TrySetResult(true);
-
-            await foreach (var item in _channel.Reader.ReadAllAsync(cancellationToken))
+            var worker = new Thread(() => WorkerLoop(workerIndex))
             {
-                Interlocked.Increment(ref _busy);
-                var startTime = Stopwatch.GetTimestamp();
-                var inFlightInfo = new InFlightItem(item, startTime);
-                _inFlightItems[workerIndex] = inFlightInfo;
+                IsBackground = true,
+                Name = $"RepoQL.WorkQueue.{name}.{workerIndex}"
+            };
+            worker.Start();
+            return worker;
+        }).ToArray();
 
-                try
-                {
-                    await ProcessItemWithTimeoutAsync(item, processItem, cancellationToken, startTime).ConfigureAwait(false);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    // FM-006 mitigation: catch unhandled exceptions to prevent worker death
-                    _logger.LogError(ex, "WorkQueue {QueueName} worker caught unhandled exception processing item", _name);
-                }
-                finally
-                {
-                    _inFlightItems.TryRemove(workerIndex, out _);
-                    Interlocked.Decrement(ref _busy);
-                    Complete(item);
-                }
-            }
-        }, cancellationToken)).ToArray();
+        _timeoutMonitor = _itemTimeout is null
+            ? Task.CompletedTask
+            : Task.Run(() => MonitorTimeoutsAsync(_lifetimeCts.Token), CancellationToken.None);
     }
 
     /// <summary>
-    /// Maximum orphaned tasks (timed-out but still holding thread pool threads) before
-    /// the queue enters a terminal fault. Prevents uncapped thread pool growth.
+    /// Worker loop runs on a dedicated thread so risky synchronous or native work cannot starve the shared thread pool.
     /// </summary>
-    private int MaxOrphanedTasks => _readerCount * 2;
-
-    /// <summary>
-    /// Processes an item with optional timeout.
-    /// When orphaned tasks accumulate (thread pool starvation risk), the queue fails fast
-    /// and abandons pending items through the normal timeout cleanup path.
-    /// </summary>
-    private async Task ProcessItemWithTimeoutAsync(
-        T item,
-        Func<T, CancellationToken, Task> processItem,
-        CancellationToken cancellationToken,
-        long startTimestamp)
+    private void WorkerLoop(int workerIndex)
     {
-        if (_itemTimeout is null)
-        {
-            // No timeout configured - original behavior
-            await processItem(item, cancellationToken).ConfigureAwait(false);
-            return;
-        }
+        var startedNow = Interlocked.Increment(ref _startedReaders);
+        if (startedNow == _readerCount)
+            _workersReadyTcs.TrySetResult(true);
 
-        if (TryGetFatalError(out _))
+        while (true)
         {
-            HandleItemTimeout(item, startTimestamp, QueueFaultDisposition);
-            return;
-        }
+            T item;
+            try
+            {
+                item = _channel.Reader.ReadAsync(_lifetimeCts.Token).AsTask().GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (ChannelClosedException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                TryEnterTerminalFault(ex);
+                break;
+            }
 
-        // If too many orphaned tasks are holding thread pool threads, fail the queue
-        // and abandon pending items through the normal timeout cleanup path.
-        if (Volatile.Read(ref _orphanedTasks) >= MaxOrphanedTasks)
-        {
-            var fatalError = new InvalidOperationException(
-                $"WorkQueue {_name} entered terminal fault after reaching orphan pressure " +
-                $"({Volatile.Read(ref _orphanedTasks)} orphaned tasks, limit {MaxOrphanedTasks}).");
-            TryEnterTerminalFault(fatalError);
-            HandleItemTimeout(item, startTimestamp, QueueFaultDisposition);
-            return;
-        }
+            Interlocked.Increment(ref _busy);
+            var startTime = Stopwatch.GetTimestamp();
+            using var itemCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+            var inFlightInfo = new InFlightItem(item, workerIndex, DateTimeOffset.UtcNow, startTime, itemCts);
+            _inFlightItems[workerIndex] = inFlightInfo;
 
-        // Normal path: process on a separate Task.Run so the worker can move on after timeout.
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var processingTask = Task.Run(() => processItem(item, timeoutCts.Token), CancellationToken.None);
+            try
+            {
+                if (TryGetFatalError(out _))
+                {
+                    HandleItemTimeout(item, startTime, QueueFaultDisposition);
+                    Complete(item, inFlightInfo);
+                    continue;
+                }
 
-        try
-        {
-            await processingTask.WaitAsync(_itemTimeout.Value, cancellationToken).ConfigureAwait(false);
+                _processItem(item, itemCts.Token).GetAwaiter().GetResult();
+            }
+            catch (OperationCanceledException) when (inFlightInfo.IsTimedOut)
+            {
+                // Timed-out work is already accounted for by the monitor.
+            }
+            catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "WorkQueue {QueueName} worker caught unhandled exception processing item", _name);
+            }
+            finally
+            {
+                _inFlightItems.TryRemove(workerIndex, out _);
+                Interlocked.Decrement(ref _busy);
+                Complete(item, inFlightInfo);
+            }
         }
-        catch (TimeoutException)
+    }
+
+    private async Task MonitorTimeoutsAsync(CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(_itemTimeout);
+
+        var pollInterval = TimeSpan.FromMilliseconds(Math.Clamp(_itemTimeout.Value.TotalMilliseconds / 4, 50, 250));
+
+        while (!cancellationToken.IsCancellationRequested)
         {
-            timeoutCts.Cancel();
-            HandleItemTimeout(item, startTimestamp, TimedOutDisposition);
-            TrackOrphanedTask(processingTask, item);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            timeoutCts.Cancel();
-            TrackOrphanedTask(processingTask, item);
-            throw;
+            try
+            {
+                await Task.Delay(pollInterval, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
+            var now = Stopwatch.GetTimestamp();
+            foreach (var inFlight in _inFlightItems.Values)
+            {
+                if (inFlight.IsTimedOut)
+                    continue;
+
+                var elapsed = Stopwatch.GetElapsedTime(inFlight.StartTimestamp, now);
+                if (elapsed < _itemTimeout.Value)
+                    continue;
+
+                if (!inFlight.TryMarkTimedOut())
+                    continue;
+
+                try
+                {
+                    inFlight.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+
+                HandleItemTimeout(inFlight.Item, inFlight.StartTimestamp, TimedOutDisposition);
+                Complete(inFlight.Item, inFlight);
+            }
         }
     }
 
     private void HandleItemTimeout(T item, long startTimestamp, string disposition)
     {
         var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
-
         _logger.LogWarning(
-            "WorkQueue {QueueName} item {Disposition} after {ElapsedSeconds:F1}s (timeout={TimeoutSeconds:F0}s). Item: {Item}",
+            "WorkQueue {QueueName} item {Disposition} after {ElapsedSeconds:F1}s (timeout={TimeoutSeconds:F1}s). Item: {Item}",
             _name,
             disposition,
             elapsed.TotalSeconds,
@@ -310,30 +347,10 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         Interlocked.Increment(ref _timeoutCount);
     }
 
-    /// <summary>
-    /// Tracks an orphaned task (timed out but still running, holding a thread pool thread).
-    /// When the task eventually completes, decrements the orphan counter.
-    /// </summary>
-    private void TrackOrphanedTask(Task processingTask, T item)
-    {
-        Interlocked.Increment(ref _orphanedTasks);
-        _ = processingTask.ContinueWith(
-            t =>
-            {
-                Interlocked.Decrement(ref _orphanedTasks);
-                if (t.IsFaulted)
-                    _logger.LogDebug(t.Exception, "WorkQueue {QueueName} orphaned task faulted. Item: {Item}", _name, item);
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
     public ObservableGauge<int> WorkersActive { get; }
     public ObservableGauge<int> QueueCapacity { get; }
     public ObservableGauge<int> QueueDepth { get; }
     public ObservableGauge<int> ItemTimeouts { get; }
-    public ObservableGauge<int> OrphanedTasks { get; }
 
     /// <summary>Enqueue an item if not already pending. Removes on failure to allow retries.</summary>
     public async ValueTask<bool> EnqueueAsync(T item, CancellationToken ct)
@@ -371,18 +388,31 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         return true;
     }
 
-    /// <summary>Mark the item as processed so it may be re-enqueued later.</summary>
-    private void Complete(T item)
+    /// <summary>Mark the item as logically complete so it may be re-enqueued later.</summary>
+    private void Complete(T item, InFlightItem? inFlight = null)
     {
+        if (inFlight is not null && !inFlight.TryMarkLogicallyCompleted())
+            return;
+
         if (_waitSet.TryRemove(item, out _))
         {
             lock (_queueStateLock)
             {
-                _depth--;
+                if (_depth > 0)
+                    _depth--;
                 if (_depth == 0)
                 {
                     _idleTcs.TrySetResult(true);
                 }
+            }
+
+            try
+            {
+                OnItemCompleted?.Invoke(item);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "WorkQueue {QueueName} OnItemCompleted callback threw exception", _name);
             }
         }
     }
@@ -390,18 +420,36 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     public async ValueTask DisposeAsync()
     {
         try { _channel.Writer.Complete(); } catch { }
+        try { _lifetimeCts.Cancel(); } catch { }
 
-        // Wait up to 2 seconds for readers to finish gracefully, then give up
-        // The cancellation token should have already been triggered, so readers
-        // should exit quickly. If they're stuck in a long operation, we don't
-        // want to block shutdown indefinitely.
-        var allReaders = Task.WhenAll(_readers);
-        var completed = await Task.WhenAny(allReaders, Task.Delay(TimeSpan.FromSeconds(2))).ConfigureAwait(false);
-        if (completed != allReaders)
+        var deadline = Stopwatch.StartNew();
+        foreach (var worker in _workers)
         {
-            // Readers didn't finish in time - log but don't block shutdown
-            // The process is exiting anyway, so orphaned tasks will be cleaned up
+            var remaining = TimeSpan.FromSeconds(2) - deadline.Elapsed;
+            if (remaining <= TimeSpan.Zero)
+                break;
+
+            try
+            {
+                worker.Join(remaining);
+            }
+            catch (ThreadStateException)
+            {
+            }
         }
+
+        try
+        {
+            await _timeoutMonitor.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        _lifetimeCts.Dispose();
     }
 
     /// <summary>Completes the next time the queue has no pending or in-flight items.</summary>
@@ -456,12 +504,31 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
 
             _fatalError = fatalError;
             callback = OnQueueFault;
+            _waitSet.Clear();
+            _depth = 0;
+            _idleTcs.TrySetResult(true);
         }
 
         _logger.LogCritical(
             fatalError,
             "WorkQueue {QueueName} entered terminal fault. Pending items will be abandoned while the queue drains.",
             _name);
+
+        try
+        {
+            _channel.Writer.TryComplete(fatalError);
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            _lifetimeCts.Cancel();
+        }
+        catch
+        {
+        }
 
         if (callback is null)
             return;
@@ -483,29 +550,71 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
     }
 
     /// <summary>
-    /// Gets all items currently in the queue (including those being processed).
+    /// Gets items currently queued for workers, excluding those already being processed.
     /// </summary>
-    public IReadOnlyList<T> GetPendingItems() => _waitSet.Keys.ToList();
+    public IReadOnlyList<T> GetPendingItems()
+    {
+        var inFlight = new HashSet<T>(_inFlightItems.Values.Select(info => info.Item), _comparer);
+        return _waitSet.Keys.Where(item => !inFlight.Contains(item)).ToList();
+    }
 
     /// <summary>
     /// Gets items currently being processed by workers with their durations.
     /// Useful for diagnosing stuck items.
     /// </summary>
-    public IReadOnlyList<(T Item, TimeSpan Duration)> GetInFlightItems()
+    public IReadOnlyList<WorkQueueInFlightItem<T>> GetInFlightItems()
     {
         var now = Stopwatch.GetTimestamp();
         return _inFlightItems.Values
-            .Select(info => (info.Item, Stopwatch.GetElapsedTime(info.StartTimestamp, now)))
+            .OrderBy(info => info.WorkerId)
+            .Select(info => new WorkQueueInFlightItem<T>(
+                info.WorkerId,
+                info.Item,
+                info.StartedAtUtc,
+                Stopwatch.GetElapsedTime(info.StartTimestamp, now)))
             .ToList();
     }
 
     /// <summary>
     /// Represents an item currently being processed by a worker.
     /// </summary>
-    private readonly record struct InFlightItem(T Item, long StartTimestamp);
+    /// <summary>
+    /// Mutable per-worker execution record so timeout monitoring and worker unwind can coordinate idempotently.
+    /// </summary>
+    private sealed class InFlightItem
+    {
+        private int _timedOut;
+        private int _logicallyCompleted;
+
+        public InFlightItem(T item, int workerId, DateTimeOffset startedAtUtc, long startTimestamp, CancellationTokenSource itemCancellation)
+        {
+            Item = item;
+            WorkerId = workerId;
+            StartedAtUtc = startedAtUtc;
+            StartTimestamp = startTimestamp;
+            ItemCancellation = itemCancellation;
+        }
+
+        public T Item { get; }
+        public int WorkerId { get; }
+        public DateTimeOffset StartedAtUtc { get; }
+        public long StartTimestamp { get; }
+        public CancellationTokenSource ItemCancellation { get; }
+        public bool IsTimedOut => Volatile.Read(ref _timedOut) == 1;
+        public bool TryMarkTimedOut() => Interlocked.Exchange(ref _timedOut, 1) == 0;
+        public bool TryMarkLogicallyCompleted() => Interlocked.Exchange(ref _logicallyCompleted, 1) == 0;
+
+        public void Cancel() => ItemCancellation.Cancel();
+    }
 }
 
 public readonly record struct WorkQueueSnapshot(int Depth, int InProgress, int MaxDepth)
 {
     public int Queued => Math.Max(0, Depth - InProgress);
 }
+
+public readonly record struct WorkQueueInFlightItem<T>(
+    int WorkerId,
+    T Item,
+    DateTimeOffset StartedAtUtc,
+    TimeSpan Duration);

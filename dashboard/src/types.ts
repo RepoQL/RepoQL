@@ -144,6 +144,44 @@ export interface PipelineStageLoad {
   inProgress: number;
 }
 
+export interface IndexingWorkerEntry {
+  queue: string;
+  workerId: number;
+  uri: string;
+  name: string;
+  stage: string;
+  startedAt: number;
+  elapsedMs: number;
+  timeoutAttempts: number;
+  deferredRetry: boolean;
+}
+
+export interface StuckItemEntry {
+  uri: string;
+  name: string;
+  stage: string;
+  status: string;
+  enqueuedAt: number;
+  startedAt: number | null;
+  elapsedMs: number | null;
+  workerId: number | null;
+  timeoutAttempts: number;
+  deferredRetry: boolean;
+  size: number;
+  mimeType: string | null;
+}
+
+export interface IndexingDiagnosticsState {
+  hotPathTimeouts: number;
+  analysisTimeouts: number;
+  deferredRetryTimeouts: number;
+  deferredRetryPending: number;
+  deferredRetryActive: number;
+  deferredToIdleCount: number;
+  activeWorkers: IndexingWorkerEntry[];
+  stuckItems: StuckItemEntry[];
+}
+
 /** An entry in the activity stream */
 export interface ActivityEntry {
   id: number;

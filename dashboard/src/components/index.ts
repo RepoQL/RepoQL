@@ -7,6 +7,7 @@ export { ActivityStream } from './ActivityStream';
 export { PipelineSankey } from './PipelineSankey';
 export { ErrorPanel } from './ErrorPanel';
 export { QueryActivity } from './QueryActivity';
+export { StuckItems } from './StuckItems';
 export { ConnectionStatus } from './ConnectionStatus';
 export { ClientLeases } from './ClientLeases';
 export { OperationTracker } from './OperationTracker';

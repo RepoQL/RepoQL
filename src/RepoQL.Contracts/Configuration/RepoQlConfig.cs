@@ -14,6 +14,7 @@ public sealed class RepoQlConfig
     public InferenceSettings Inference { get; set; } = new();
     public CloudSettings Cloud { get; set; } = new();
     public HostSettings Host { get; set; } = new();
+    public IndexingSettings Indexing { get; set; } = new();
     public McpSettings Mcp { get; set; } = new();
     public DotnetSettings Dotnet { get; set; } = new();
     public CacheSettings Cache { get; set; } = new();
@@ -260,6 +261,24 @@ public sealed class RepoQlConfig
         public int? MaxConcurrentQueries { get; set; }
     }
 
+    public sealed class IndexingSettings
+    {
+        [Setting("Concurrent hot-path indexing workers",
+            DefaultValue = "processor count",
+            LegacyEnvVar = "REPOQL_INDEXING_WORKERS")]
+        public int? Workers { get; set; }
+
+        [Setting("Concurrent idle analysis workers",
+            DefaultValue = "min(processor count, 8)",
+            LegacyEnvVar = "REPOQL_ANALYSIS_WORKERS")]
+        public int? AnalysisWorkers { get; set; }
+
+        [Setting("Hot-path item timeout in seconds",
+            DefaultValue = "45",
+            LegacyEnvVar = "REPOQL_HOT_PATH_TIMEOUT_SECONDS")]
+        public int? HotPathTimeoutSeconds { get; set; }
+    }
+
     public sealed class McpSettings
     {
         [Setting("Load global agent MCP configs",
@@ -382,3 +401,4 @@ public sealed class RepoQlConfig
     }
 }
 #pragma warning restore CA1034
+

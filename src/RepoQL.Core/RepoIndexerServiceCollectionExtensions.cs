@@ -124,7 +124,16 @@ public static class RepoIndexerServiceCollectionExtensions
 
         var dbFileFullPath = Path.Combine(resolvedRoot, dbRelPath);
 
-        services.AddOptions<IndexingEngineOptions>();
+        services.AddOptions<IndexingEngineOptions>()
+            .Configure<RepoQlConfig>((options, config) =>
+            {
+                var settings = config.Indexing;
+                options.IndexingWorkers = settings.Workers ?? Math.Max(1, Environment.ProcessorCount);
+                options.AnalysisWorkers = settings.AnalysisWorkers ?? Math.Max(1, Math.Min(Environment.ProcessorCount, 8));
+                options.HotPathItemTimeout = settings.HotPathTimeoutSeconds is > 0
+                    ? TimeSpan.FromSeconds(settings.HotPathTimeoutSeconds.Value)
+                    : TimeSpan.FromSeconds(45);
+            });
         services.AddOptions<RepoqlHostOptions>();
         services.AddSingleton<IMemoryCache>(sp =>
         {

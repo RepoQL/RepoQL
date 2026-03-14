@@ -110,13 +110,13 @@ internal class WorkQueueTests
     }
 
     [Test]
-    [DisplayName("FM-001: Non-cooperative timeout does not block subsequent items")]
-    public async Task Given_ItemIgnoresCancellation_When_ItemTimesOut_Then_WorkerContinues()
+    [DisplayName("FM-001: Non-cooperative item times out independently and stays bounded to its worker")]
+    public async Task Given_ItemIgnoresCancellation_When_TimeoutExpires_Then_TimeoutIsObservedWithoutWorkerReplacement()
     {
-        // Arrange
         var processedItems = new List<int>();
-        var timedOutItems = new List<int>();
         var neverCompletes = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var timedOutItems = new List<(int Item, TimeSpan Elapsed)>();
 
         await using var queue = new WorkQueue<int>(
             "non_cooperative_timeout_test",
@@ -126,7 +126,7 @@ internal class WorkQueueTests
             {
                 if (item == 2)
                 {
-                    // Simulate non-cooperative processor: ignores cancellation and never returns.
+                    started.TrySetResult(true);
                     await neverCompletes.Task.ConfigureAwait(false);
                     return;
                 }
@@ -137,21 +137,65 @@ internal class WorkQueueTests
             itemTimeout: TimeSpan.FromMilliseconds(100),
             logger: NullLogger.Instance)
         {
-            OnItemTimeout = (item, _) => timedOutItems.Add(item)
+            OnItemTimeout = (item, elapsed) => timedOutItems.Add((item, elapsed))
         };
 
-        // Act
         await queue.EnqueueAsync(1, CancellationToken.None);
         await queue.EnqueueAsync(2, CancellationToken.None);
         await queue.EnqueueAsync(3, CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await Task.Delay(250);
+
+        processedItems.Should().Contain(1);
+        processedItems.Should().NotContain(2);
+        processedItems.Should().NotContain(3, "the worker should remain occupied by the stuck item");
+        queue.TimeoutCount.Should().Be(1);
+        timedOutItems.Should().ContainSingle();
+        timedOutItems[0].Item.Should().Be(2);
+        queue.GetPendingItems().Should().Contain(3);
+        queue.GetInFlightItems().Should().ContainSingle();
+        queue.GetInFlightItems().Single().Item.Should().Be(2);
+        queue.WhenIdleAsync().IsCompleted.Should().BeFalse("queued work remains behind the wedged worker");
+
+        neverCompletes.TrySetResult(true);
+        await queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        processedItems.Should().Contain(3);
+    }
+
+    [Test]
+    [DisplayName("FM-001: Timed-out non-cooperative item releases queue ownership once it is the only logical work left")]
+    public async Task Given_NonCooperativeTimeoutWithoutFollowers_When_TimeoutExpires_Then_WhenIdleCompletesWhileWorkerRemainsVisible()
+    {
+        var neverCompletes = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        await using var queue = new WorkQueue<int>(
+            "non_cooperative_logical_idle",
+            capacity: 4,
+            readers: 1,
+            async (item, _) =>
+            {
+                if (item != 1)
+                    return;
+
+                started.TrySetResult(true);
+                await neverCompletes.Task.ConfigureAwait(false);
+            },
+            CancellationToken.None,
+            itemTimeout: TimeSpan.FromMilliseconds(100),
+            logger: NullLogger.Instance);
+
+        await queue.EnqueueAsync(1, CancellationToken.None);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
         await queue.WhenIdleAsync().WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Assert
-        processedItems.Should().Contain(1);
-        processedItems.Should().Contain(3);
-        processedItems.Should().NotContain(2);
-        timedOutItems.Should().ContainSingle().Which.Should().Be(2);
         queue.TimeoutCount.Should().Be(1);
+        queue.Depth.Should().Be(0);
+        queue.GetInFlightItems().Should().ContainSingle();
+        queue.GetInFlightItems().Single().Item.Should().Be(1);
+
+        neverCompletes.TrySetResult(true);
     }
 
     [Test]
@@ -204,52 +248,44 @@ internal class WorkQueueTests
 
     [Test]
     [Timeout(15_000)]
-    [DisplayName("Orphan pressure faults the queue and abandons remaining items")]
-    public async Task Given_OrphanPressure_When_LimitReached_Then_QueueFaultsAndFutureEnqueueFails(CancellationToken token)
+    [DisplayName("GetPendingItems excludes in-flight items while GetInFlightItems reports worker ownership")]
+    public async Task Given_InFlightAndQueuedItems_When_QueryingDiagnostics_Then_WorkIsSeparated(CancellationToken token)
     {
-        var processedItems = new ConcurrentBag<int>();
-        var timedOutItems = new ConcurrentBag<int>();
-        var queueFaults = new ConcurrentBag<Exception>();
-        var neverCompletes = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await using var queue = new WorkQueue<int>(
-            "orphan_pressure",
+            "worker_visibility",
             capacity: 16,
             readers: 1,
-            async (item, _) =>
+            async (item, ct) =>
             {
-                if (item is 2 or 3)
+                if (item == 1)
                 {
-                    await neverCompletes.Task.ConfigureAwait(false);
-                    return;
+                    started.TrySetResult(true);
+                    await release.Task.WaitAsync(ct).ConfigureAwait(false);
                 }
-
-                processedItems.Add(item);
             },
             CancellationToken.None,
-            itemTimeout: TimeSpan.FromMilliseconds(100),
+            itemTimeout: TimeSpan.FromSeconds(5),
             logger: NullLogger.Instance)
-        {
-            OnItemTimeout = (item, _) => timedOutItems.Add(item),
-            OnQueueFault = ex => queueFaults.Add(ex)
-        };
+        ;
 
-        foreach (var item in Enumerable.Range(1, 6))
-        {
-            await queue.EnqueueAsync(item, token);
-        }
+        await queue.EnqueueAsync(1, token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+        await queue.EnqueueAsync(2, token);
 
+        var pending = queue.GetPendingItems();
+        var inFlight = queue.GetInFlightItems();
+
+        pending.Should().ContainSingle().Which.Should().Be(2);
+        inFlight.Should().ContainSingle();
+        inFlight[0].WorkerId.Should().Be(0);
+        inFlight[0].Item.Should().Be(1);
+        inFlight[0].Duration.Should().BeGreaterThan(TimeSpan.Zero);
+
+        release.TrySetResult(true);
         await queue.WhenIdleAsync().WaitAsync(token);
-
-        processedItems.Should().Contain(1);
-        queueFaults.Should().ContainSingle();
-        queueFaults.Single().Message.Should().Contain("terminal fault");
-        timedOutItems.Should().BeEquivalentTo([2, 3, 4, 5, 6]);
-        queue.TimeoutCount.Should().Be(5);
-
-        Func<Task> act = async () => await queue.EnqueueAsync(99, token);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*terminal fault*");
     }
 
     [Test]

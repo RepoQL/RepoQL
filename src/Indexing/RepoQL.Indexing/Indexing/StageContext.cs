@@ -65,7 +65,11 @@ internal static class StageContextExtensions
         updateState(stage.BusyFlag, stage.IdleFlag, true);
         try
         {
-            return await stage.Processor(item, cancellationToken).ConfigureAwait(false);
+            var result = await stage.Processor(item, cancellationToken).ConfigureAwait(false);
+            if (result == PipelineResult.Cancelled && cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException(cancellationToken);
+
+            return result;
         }
         finally
         {

@@ -268,14 +268,61 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
-    [DisplayName("FM-001: Timeout clears pending catalog digest for non-cooperative hot-path item")]
-    public async Task Given_NonCooperativeHotPathTimeout_When_ItemTimesOut_Then_CatalogPendingDigestIsCleared(CancellationToken token)
+    [DisplayName("FM-001: Cancelled pipeline results caused by timeout still defer to idle retry")]
+    public async Task Given_StageReturnsCancelledOnTimeout_When_ItemTimesOut_Then_DeferredRetryStillRuns(CancellationToken token)
+    {
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1,
+                HotPathItemTimeout = TimeSpan.FromMilliseconds(200)
+            });
+        });
+
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async call =>
+            {
+                var ct = call.GetArgument<CancellationToken>(1);
+                try
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return PipelineResult.Cancelled;
+                }
+
+                return PipelineResult.Success;
+            });
+
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/cancelled-timeout.md"), IndexItemOptions.Default, token);
+
+        using var timeoutWait = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeoutWait.CancelAfter(TimeSpan.FromSeconds(5));
+        while (engine.HotPathTimeoutCount == 0 ||
+               (engine.GetPendingDeferredRetryItems().Count == 0 && engine.GetDeferredRetryInFlightItems().Count == 0))
+        {
+            await Task.Delay(25, timeoutWait.Token);
+        }
+
+        engine.HotPathTimeoutCount.Should().Be(1);
+        engine.DeferredToIdleCount.Should().Be(1);
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("FM-001: Timeout hands pending catalog state off cleanly to deferred retry")]
+    public async Task Given_CooperativeHotPathTimeout_When_ItemTimesOut_Then_CatalogPendingDigestTransfersToDeferredRetry(CancellationToken token)
     {
         var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
         await catalog.EnsureInitializedAsync(token);
 
         var classifierEntered = NewTaskCompletionSource<bool>();
-        var neverCompletes = NewTaskCompletionSource<bool>();
 
         var context = IndexingEngineTestFactory.Create(builder =>
         {
@@ -291,10 +338,11 @@ public class IndexingEngineTests
         });
 
         A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .ReturnsLazily(async _ =>
+            .ReturnsLazily(async call =>
             {
                 classifierEntered.TrySetResult(true);
-                await neverCompletes.Task.ConfigureAwait(false);
+                var ct = call.GetArgument<CancellationToken>(1);
+                await Task.Delay(TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
                 return PipelineResult.Success;
             });
 
@@ -311,26 +359,25 @@ public class IndexingEngineTests
             await Task.Delay(25, timeoutWait.Token);
         }
 
+        while (engine.GetPendingDeferredRetryItems().Count == 0 && engine.GetDeferredRetryInFlightItems().Count == 0)
+        {
+            await Task.Delay(25, timeoutWait.Token);
+        }
+
         engine.HotPathTimeoutCount.Should().Be(1, "item should be marked timed out");
-        catalog.PendingDigestCount.Should().Be(0, "timeout handling should clear pending digest state");
+        engine.DeferredToIdleCount.Should().Be(1, "the timed-out item should be handed off to idle retry");
+        catalog.PendingDigestCount.Should().BeLessThanOrEqualTo(1, "timeout cleanup should clear the original pending digest and only re-register it once the deferred retry actually runs");
     }
 
     [Test]
     [Timeout(15_000)]
-    [DisplayName("FM-001: Timed-out hot-path item cannot commit after late stage completion")]
-    public async Task Given_TimedOutItem_When_NonCooperativeStageLaterReturns_Then_CommitAndAnalysisAreSkipped(CancellationToken token)
+    [DisplayName("FM-001: Timed-out hot-path item is deferred to idle retry without blocking later work")]
+    public async Task Given_HotPathTimeout_When_ItemTimesOut_Then_ItemIsDeferredToIdleRetry(CancellationToken token)
     {
-        var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
-        await catalog.EnsureInitializedAsync(token);
-
-        var classifierEntered = NewTaskCompletionSource<bool>();
-        var releaseClassifier = NewTaskCompletionSource<bool>();
-        var committer = A.Fake<IIndexingCommitter>();
+        var fastItemProcessed = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var context = IndexingEngineTestFactory.Create(builder =>
         {
-            builder.WithCatalog(catalog);
-            builder.WithCommitter(committer);
             builder.WithOptions(new IndexingEngineOptions
             {
                 IndexingQueueSize = 32,
@@ -342,51 +389,52 @@ public class IndexingEngineTests
         });
 
         A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
-            .ReturnsLazily(async _ =>
+            .ReturnsLazily(async call =>
             {
-                classifierEntered.TrySetResult(true);
-                await releaseClassifier.Task.ConfigureAwait(false);
+                var item = call.GetArgument<IndexItem>(0);
+                var ct = call.GetArgument<CancellationToken>(1);
+                if (item.Uri.ToString().Contains("slow", StringComparison.Ordinal))
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    fastItemProcessed.TrySetResult(true);
+                }
                 return PipelineResult.Success;
             });
 
         await using var engine = context.Engine;
-        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/timeout-late-resume.md"), IndexItemOptions.Default, token);
-
-        await classifierEntered.Task.WaitAsync(token);
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/slow-timeout.md"), IndexItemOptions.Default, token);
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/fast-after-timeout.md"), IndexItemOptions.Default, token);
 
         using var timeoutWait = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeoutWait.CancelAfter(TimeSpan.FromSeconds(5));
-        while (engine.HotPathTimeoutCount == 0)
+        while (
+            engine.HotPathTimeoutCount == 0 ||
+            (engine.GetPendingDeferredRetryItems().Count == 0 && engine.GetDeferredRetryInFlightItems().Count == 0))
         {
             await Task.Delay(25, timeoutWait.Token);
         }
 
-        using var idleWait = CancellationTokenSource.CreateLinkedTokenSource(token);
-        idleWait.CancelAfter(TimeSpan.FromSeconds(2));
-        var reachedIdle = await engine.WaitForAsync(IndexingState.AllIdle, idleWait.Token);
-        reachedIdle.Should().BeTrue("timeout cleanup should release hot-path stage state");
-
-        releaseClassifier.TrySetResult(true);
-        await Task.Delay(250, token);
-
-        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._)).MustNotHaveHappened();
-        A.CallTo(() => context.MultiFileAnalyzer.ProcessItemAsync(A<IAnnotatedArtifact>._, A<CancellationToken>._)).MustNotHaveHappened();
+        await fastItemProcessed.Task.WaitAsync(timeoutWait.Token);
+        engine.DeferredToIdleCount.Should().Be(1);
+        engine.GetPendingDeferredRetryItems()
+            .Concat(engine.GetDeferredRetryInFlightItems().Select(info => info.Item))
+            .Should()
+            .ContainSingle(item => item.Uri.ToString().Contains("slow-timeout", StringComparison.Ordinal));
     }
 
     [Test]
     [Timeout(15_000)]
-    [DisplayName("Hot-path queue faults on orphan pressure without leaking idle or catalog state")]
-    public async Task Given_HotPathOrphanPressure_When_QueueFaults_Then_EngineFailsFastAndDrains(CancellationToken token)
+    [DisplayName("FM-001: Non-cooperative hot-path work still times out and hands off to deferred retry")]
+    public async Task Given_HotPathWorkIgnoresCancellation_When_TimeoutExpires_Then_DeferredRetryStillStarts(CancellationToken token)
     {
-        var catalog = new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
-        await catalog.EnsureInitializedAsync(token);
-
-        var classifierStarted = new ConcurrentBag<string>();
-        var neverCompletes = NewTaskCompletionSource<bool>();
+        var neverCompletes = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deferredStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var context = IndexingEngineTestFactory.Create(builder =>
         {
-            builder.WithCatalog(catalog);
             builder.WithOptions(new IndexingEngineOptions
             {
                 IndexingQueueSize = 32,
@@ -400,59 +448,142 @@ public class IndexingEngineTests
         A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
             .ReturnsLazily(async call =>
             {
-                var item = call.GetArgument<IndexItem>(0)!;
-                var uri = item.Uri.ToString();
-                classifierStarted.Add(uri);
-
-                if (uri.Contains("stuck-", StringComparison.Ordinal))
+                var item = call.GetArgument<IndexItem>(0);
+                if (!item.IsDeferredRetry)
                 {
                     await neverCompletes.Task.ConfigureAwait(false);
+                    return PipelineResult.Success;
+                }
+
+                deferredStarted.TrySetResult(true);
+                return PipelineResult.Success;
+            });
+
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/non-cooperative-timeout.md"), IndexItemOptions.Default, token);
+
+        using var settle = CancellationTokenSource.CreateLinkedTokenSource(token);
+        settle.CancelAfter(TimeSpan.FromSeconds(5));
+        while (engine.HotPathTimeoutCount == 0 || engine.DeferredToIdleCount == 0)
+        {
+            await Task.Delay(25, settle.Token);
+        }
+
+        await deferredStarted.Task.WaitAsync(settle.Token);
+        engine.HotPathTimeoutCount.Should().Be(1);
+        engine.DeferredToIdleCount.Should().Be(1);
+
+        neverCompletes.TrySetResult(true);
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("FM-001: Deferred retry ownership blocks duplicate hot-path enqueue for the same URI")]
+    public async Task Given_DeferredRetryPending_When_SameUriEnqueuedAgain_Then_FreshHotPathEnqueueIsRejected(CancellationToken token)
+    {
+        var releaseDeferred = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deferredStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var uri = "file:///repo/dedup-timeout.md";
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1,
+                HotPathItemTimeout = TimeSpan.FromMilliseconds(100)
+            });
+        });
+
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async call =>
+            {
+                var item = call.GetArgument<IndexItem>(0);
+                var ct = call.GetArgument<CancellationToken>(1);
+
+                if (!item.IsDeferredRetry)
+                {
+                    await Task.Delay(TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    deferredStarted.TrySetResult(true);
+                    await releaseDeferred.Task.WaitAsync(ct).ConfigureAwait(false);
                 }
 
                 return PipelineResult.Success;
             });
 
         await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(CreateRawArtifact(uri), IndexItemOptions.Default, token);
 
-        foreach (var uri in new[]
+        using var timeoutWait = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeoutWait.CancelAfter(TimeSpan.FromSeconds(5));
+        while (engine.HotPathTimeoutCount == 0 ||
+               (engine.GetPendingDeferredRetryItems().Count == 0 && engine.GetDeferredRetryInFlightItems().Count == 0))
         {
-            "file:///repo/ok.md",
-            "file:///repo/stuck-1.md",
-            "file:///repo/stuck-2.md",
-            "file:///repo/after-1.md",
-            "file:///repo/after-2.md",
-            "file:///repo/after-3.md"
-        })
-        {
-            await engine.EnqueueItemAsync(CreateRawArtifact(uri), IndexItemOptions.Default, token);
+            await Task.Delay(25, timeoutWait.Token);
         }
+
+        var duplicate = await engine.EnqueueIndexItemAsync(
+            new IndexItem(CreateRawArtifact(uri), IndexItemOptions.Default),
+            timeoutWait.Token);
+
+        duplicate.Should().BeFalse();
+
+        releaseDeferred.TrySetResult(true);
+        await deferredStarted.Task.WaitAsync(timeoutWait.Token);
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("FM-001: Second timeout during idle retry marks the file failed")]
+    public async Task Given_DeferredRetryTimeout_When_ItemTimesOutAgain_Then_FileIsMarkedFailed(CancellationToken token)
+    {
+        var registry = new UriRegistry();
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithUriRegistry(registry);
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1,
+                HotPathItemTimeout = TimeSpan.FromMilliseconds(100),
+                AnalysisItemTimeout = TimeSpan.FromMilliseconds(150)
+            });
+        });
+
+        A.CallTo(() => context.Classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async call =>
+            {
+                var ct = call.GetArgument<CancellationToken>(1);
+                await Task.Delay(TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
+                return PipelineResult.Success;
+            });
+
+        await using var engine = context.Engine;
+        var uri = CreateRawArtifact("file:///repo/retry-timeout.md").Uri;
+        registry.TryRegisterDiscovered(uri);
+        await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/retry-timeout.md"), IndexItemOptions.Default, token);
 
         using var settle = CancellationTokenSource.CreateLinkedTokenSource(token);
         settle.CancelAfter(TimeSpan.FromSeconds(15));
-        while ((engine.LastError?.Contains("IndexingQueue fault", StringComparison.Ordinal) != true) ||
-               engine.HotPathTimeoutCount < 5 ||
-               engine.GetHotPathPendingItems().Count > 0)
+        while (engine.DeferredRetryTimeoutCount == 0 ||
+               !registry.TryGetValue(uri, out var entry) ||
+               entry.Status != UriStatus.Failed)
         {
             await Task.Delay(25, settle.Token);
         }
 
-        var reachedIdle = await engine.WaitForAsync(IndexingState.AllIdle, token);
-        reachedIdle.Should().BeTrue();
-
-        engine.GetPendingIdleProcessingCount().Should().Be(0);
-        engine.LastError.Should().Contain("IndexingQueue fault");
-        engine.HotPathTimeoutCount.Should().Be(5);
-        catalog.PendingDigestCount.Should().Be(0);
-        classifierStarted.Should().Contain(uri => uri.EndsWith("ok.md", StringComparison.Ordinal));
-        classifierStarted.Should().Contain(uri => uri.EndsWith("stuck-1.md", StringComparison.Ordinal));
-        classifierStarted.Should().Contain(uri => uri.EndsWith("stuck-2.md", StringComparison.Ordinal));
-        classifierStarted.Should().NotContain(uri => uri.EndsWith("after-1.md", StringComparison.Ordinal));
-        classifierStarted.Should().NotContain(uri => uri.EndsWith("after-2.md", StringComparison.Ordinal));
-        classifierStarted.Should().NotContain(uri => uri.EndsWith("after-3.md", StringComparison.Ordinal));
-
-        Func<Task> act = async () => await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/post-fault.md"), IndexItemOptions.Default, token);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*terminal fault*");
+        engine.HotPathTimeoutCount.Should().Be(1);
+        engine.DeferredToIdleCount.Should().Be(1);
+        engine.DeferredRetryTimeoutCount.Should().Be(1);
+        registry[uri].Error.Should().Contain("idle retry timed out");
     }
 
     [Test]
@@ -1121,10 +1252,15 @@ public class IndexingEngineTests
         // Wait for everything to settle
         await engine.WaitForAsync(IndexingState.AllIdle, token);
 
-        // FM-005 fix verification: GetPendingIdleProcessingCount should be 0
-        // Without the fix, epoch 0's items would remain orphaned and this would be > 0
-        // Give a brief moment for idle processing to complete
-        await Task.Delay(200, token);
+        // FM-005 fix verification: GetPendingIdleProcessingCount should eventually reach 0.
+        // Without the fix, epoch 0's items would remain orphaned permanently.
+        using var settle = CancellationTokenSource.CreateLinkedTokenSource(token);
+        settle.CancelAfter(TimeSpan.FromSeconds(5));
+        while (engine.GetPendingIdleProcessingCount() != 0)
+        {
+            await Task.Delay(25, settle.Token);
+        }
+
         engine.GetPendingIdleProcessingCount().Should().Be(0,
             "all epochs should be processed including orphaned epoch 0 (FM-005 fix)");
     }

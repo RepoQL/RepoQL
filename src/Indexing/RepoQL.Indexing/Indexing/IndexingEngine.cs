@@ -29,44 +29,45 @@ public class IndexingEngineOptions
 {
     /// <summary>
     /// Number of concurrent workers for hot-path processing (Classification → Parsing → Analysis → Commit).
-    /// Default: <see cref="Environment.ProcessorCount"/> × 2.
+    /// Default: <see cref="Environment.ProcessorCount"/>.
     /// </summary>
-    public int IndexingWorkers { get; init; } = Environment.ProcessorCount * 2;
+    public int IndexingWorkers { get; set; } = Math.Max(1, Environment.ProcessorCount);
 
     /// <summary>
     /// Maximum capacity of the hot-path work queue. Backpressure applied when full.
     /// Default: 10,000 items.
     /// </summary>
-    public int IndexingQueueSize {  get; init; } = 10_000;
+    public int IndexingQueueSize {  get; set; } = 10_000;
 
     /// <summary>
     /// Number of concurrent workers for idle processing (Multi-file Analysis, Index Rebuild).
-    /// Default: <see cref="Environment.ProcessorCount"/>.
+    /// Default: min(<see cref="Environment.ProcessorCount"/>, 8).
     /// </summary>
-    public int AnalysisWorkers { get; init; } = Environment.ProcessorCount;
+    public int AnalysisWorkers { get; set; } = Math.Max(1, Math.Min(Environment.ProcessorCount, 8));
 
     /// <summary>
     /// Maximum capacity of the idle-processing work queue. Larger than hot-path because
     /// multi-file operations can spawn many items per batch.
     /// Default: 100,000 items.
     /// </summary>
-    public int AnalysisQueueSize {  get; init; } = 100_000;
+    public int AnalysisQueueSize {  get; set; } = 100_000;
 
     /// <summary>
     /// Maximum time allowed for processing a single item in the hot-path queue.
     /// If an item exceeds this duration, it is considered timed out and skipped.
     /// This prevents stuck items from blocking the entire pipeline (FM-001 mitigation).
-    /// Default: 5 minutes (sufficient for most Roslyn compilations, TypeScript parsing, etc.).
+    /// Default: 45 seconds. Files that cannot complete within this window are deferred out of
+    /// the hot path so the host remains responsive.
     /// Set to null to disable per-item timeout (not recommended).
     /// </summary>
-    public TimeSpan? HotPathItemTimeout { get; init; } = TimeSpan.FromMinutes(5);
+    public TimeSpan? HotPathItemTimeout { get; set; } = TimeSpan.FromSeconds(45);
 
     /// <summary>
     /// Maximum time allowed for processing a single item in the analysis queue.
     /// Analysis items typically involve multi-file operations and may take longer.
     /// Default: 10 minutes. Set to null to disable timeout.
     /// </summary>
-    public TimeSpan? AnalysisItemTimeout { get; init; } = TimeSpan.FromMinutes(10);
+    public TimeSpan? AnalysisItemTimeout { get; set; } = TimeSpan.FromMinutes(10);
 }
 
 /// <summary>
@@ -116,6 +117,11 @@ public class IndexingEngineOptions
 public partial class IndexingEngine : IAsyncDisposable
 {
     private const string TelemetrySourceName = "RepoQL.Indexing";
+    private const int DeferredRetryWorkers = 1;
+    private static readonly IndexingState HotPathBusyMask =
+        IndexingState.ClassificationBusy |
+        IndexingState.ParsingBusy |
+        IndexingState.SingleFileAnalysisBusy;
     internal static readonly ActivitySource ActivitySource = new(TelemetrySourceName);
     internal static readonly Meter Meter = new(TelemetrySourceName);
     private const IndexingState BusyMask =
@@ -151,6 +157,8 @@ public partial class IndexingEngine : IAsyncDisposable
     private readonly object _structureEmbeddingLock = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingAnalysis = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingStructureEmbeddings = new();  // Separate from analysis - includes read-only items
+    private readonly Queue<IndexItem> _pendingDeferredHotPathRetries = new();
+    private readonly ConcurrentDictionary<string, byte> _deferredRetryOwnership = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<long, int> _pendingEagerStructureEmbeddings = new();
     private readonly Dictionary<long, TaskCompletionSource<bool>> _structureEmbeddingEpochCompletion = new();
     private readonly ConcurrentDictionary<string, IndexItemOptions> _requeueRequested = new(StringComparer.OrdinalIgnoreCase);
@@ -173,6 +181,9 @@ public partial class IndexingEngine : IAsyncDisposable
     private int _readyLogged;
     private int _indexerQueueFaulted;
     private int _analysisQueueFaulted;
+    private int _deferredRetryQueueFaulted;
+    private int _deferredToIdleCount;
+    private int _deferredRetryWakeScheduled;
 
     /// <summary>
     /// Optional callback invoked at each lifecycle milestone during idle processing.
@@ -192,19 +203,24 @@ public partial class IndexingEngine : IAsyncDisposable
     internal long CurrentEpoch => _epochTracker.CurrentEpoch;
     internal int HotPathTimeoutCount => IndexerQueue.TimeoutCount;
     internal int AnalysisTimeoutCount => AnalysisQueue.TimeoutCount;
+    internal int DeferredRetryTimeoutCount => DeferredRetryQueue.TimeoutCount;
+    internal int DeferredToIdleCount => Volatile.Read(ref _deferredToIdleCount);
 
     /// <summary>
     /// Gets items currently being processed in the hot-path queue with their durations.
     /// Useful for diagnosing potentially stuck items.
     /// </summary>
-    internal IReadOnlyList<(IndexItem Item, TimeSpan Duration)> GetHotPathInFlightItems()
+    internal IReadOnlyList<WorkQueueInFlightItem<IndexItem>> GetHotPathInFlightItems()
         => IndexerQueue.GetInFlightItems();
 
     /// <summary>
     /// Gets items currently being processed in the analysis queue with their durations.
     /// </summary>
-    internal IReadOnlyList<(IndexItem Item, TimeSpan Duration)> GetAnalysisInFlightItems()
+    internal IReadOnlyList<WorkQueueInFlightItem<IndexItem>> GetAnalysisInFlightItems()
         => AnalysisQueue.GetInFlightItems();
+
+    internal IReadOnlyList<WorkQueueInFlightItem<IndexItem>> GetDeferredRetryInFlightItems()
+        => DeferredRetryQueue.GetInFlightItems();
 
     internal bool HasPendingAnalysis(long epoch)
     {
@@ -237,6 +253,8 @@ public partial class IndexingEngine : IAsyncDisposable
             {
                 count += backlog.Count;
             }
+            count += _pendingDeferredHotPathRetries.Count;
+            count += DeferredRetryQueue.Depth;
             return count;
         }
     }
@@ -257,6 +275,16 @@ public partial class IndexingEngine : IAsyncDisposable
         }
     }
 
+    internal IReadOnlyList<IndexItem> GetPendingDeferredRetryItems()
+    {
+        lock (_analysisLock)
+        {
+            var pending = _pendingDeferredHotPathRetries.ToList();
+            pending.AddRange(DeferredRetryQueue.GetPendingItems());
+            return pending;
+        }
+    }
+
     public async Task EnqueueItemAsync(RawArtifact artifact, IndexItemOptions options = IndexItemOptions.Default, CancellationToken cancellationToken = default)
     {
         var indexItem = new IndexItem(artifact, options);
@@ -267,10 +295,17 @@ public partial class IndexingEngine : IAsyncDisposable
     {
         var epoch = _epochTracker.CurrentEpoch;
         indexItem.SetEpoch(epoch);
+        var key = GetQueueKey(indexItem.Uri);
 
         var incremented = false;
         try
         {
+            if (_deferredRetryOwnership.ContainsKey(key))
+            {
+                MarkRequeue(indexItem);
+                return false;
+            }
+
             var enqueued = await IndexerQueue.EnqueueAsync(indexItem, cancellationToken).ConfigureAwait(false);
             if (!enqueued)
             {
@@ -314,7 +349,13 @@ public partial class IndexingEngine : IAsyncDisposable
     private void TryRequeue(IndexItem completedItem)
     {
         var key = GetQueueKey(completedItem.Uri);
-        if (!_requeueRequested.TryRemove(key, out var options))
+        if (!_requeueRequested.TryGetValue(key, out var options))
+            return;
+
+        if (_deferredRetryOwnership.ContainsKey(key))
+            return;
+
+        if (!_requeueRequested.TryRemove(key, out options))
             return;
 
         _ = Task.Run(async () =>
@@ -386,7 +427,8 @@ public partial class IndexingEngine : IAsyncDisposable
             logger: Logger)
         {
             OnItemTimeout = HandleHotPathItemTimeout,
-            OnQueueFault = HandleIndexerQueueFault
+            OnQueueFault = HandleIndexerQueueFault,
+            OnItemCompleted = _ => ScheduleDeferredRetryDrain()
         };
         AnalysisQueue = new WorkQueue<IndexItem>(
             "AnalysisQueue",
@@ -403,6 +445,18 @@ public partial class IndexingEngine : IAsyncDisposable
             logger: Logger);
         AnalysisQueue.OnItemTimeout = HandleAnalysisItemTimeout;
         AnalysisQueue.OnQueueFault = HandleAnalysisQueueFault;
+        DeferredRetryQueue = new WorkQueue<IndexItem>(
+            "DeferredRetryQueue",
+            Options.AnalysisQueueSize,
+            DeferredRetryWorkers,
+            async (item, c) => { await IndexItemAsync(item, c); },
+            Shutdown.Token,
+            itemTimeout: Options.AnalysisItemTimeout,
+            meter: null,
+            comparer: new IndexItemComparer(),
+            logger: Logger);
+        DeferredRetryQueue.OnItemTimeout = HandleDeferredRetryItemTimeout;
+        DeferredRetryQueue.OnQueueFault = HandleDeferredRetryQueueFault;
         if (StructureEmbeddingsEnabled)
         {
             _structureEmbeddingChannel = Channel.CreateBounded<IndexItem>(
@@ -504,6 +558,8 @@ public partial class IndexingEngine : IAsyncDisposable
 
     public WorkQueue<IndexItem> AnalysisQueue { get; }
 
+    internal WorkQueue<IndexItem> DeferredRetryQueue { get; }
+
     internal WorkQueueSnapshot GetHotPathQueueSnapshot() => IndexerQueue.CaptureSnapshot();
 
     internal WorkQueueSnapshot GetAnalysisQueueSnapshot() => AnalysisQueue.CaptureSnapshot();
@@ -545,6 +601,12 @@ public partial class IndexingEngine : IAsyncDisposable
         try
         {
             await AnalysisQueue.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }
+
+        try
+        {
+            await DeferredRetryQueue.DisposeAsync().ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }
 
@@ -613,6 +675,7 @@ public partial class IndexingEngine : IAsyncDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             currentStage = "filter";
+            item.SetCurrentOperation(currentStage);
             if (item.Options.HasFlag(IndexItemOptions.OnlyIfNotExcluded) && !Filter.IncludeFile(item.Uri))
             {
                 RecordResult(item.Epoch, PipelineResult.Filtered);
@@ -627,12 +690,14 @@ public partial class IndexingEngine : IAsyncDisposable
 
             // FM-002 mitigation: Track per-operation timing for slow operation detection
             currentStage = "catalog_init";
+            item.SetCurrentOperation(currentStage);
             var catalogTimer = Stopwatch.StartNew();
             await DocumentCatalog.EnsureInitializedAsync(cancellationToken).ConfigureAwait(false);
             catalogTimer.Stop();
             RecordOperationDuration("catalog_init", catalogTimer.Elapsed, item);
 
             currentStage = "digest";
+            item.SetCurrentOperation(currentStage);
             var digestTimer = Stopwatch.StartNew();
             var digestHex = await item.RawArtifact.Digest.WithCancellation(cancellationToken).ConfigureAwait(false);
             digestTimer.Stop();
@@ -682,7 +747,11 @@ public partial class IndexingEngine : IAsyncDisposable
                 catalogRegistered = true;
 
                 currentStage = "pipeline";
+                item.SetCurrentOperation(currentStage);
                 var result = await ApplyIndexerPipeline(item, cancellationToken);
+                if (result == PipelineResult.Cancelled && cancellationToken.IsCancellationRequested && !Shutdown.IsCancellationRequested)
+                    throw new OperationCanceledException(cancellationToken);
+
                 mime = item.MediaType?.ToString() ?? mime;
                 status = result.ToString();
                 RecordResult(item.Epoch, result);
@@ -706,6 +775,7 @@ public partial class IndexingEngine : IAsyncDisposable
                 }
 
                 currentStage = "commit";
+                item.SetCurrentOperation(currentStage);
                 var commitTimer = Stopwatch.StartNew();
                 var commitResult = await Committer.CommitAsync(item, cancellationToken).ConfigureAwait(false);
                 commitTimer.Stop();
@@ -761,6 +831,12 @@ public partial class IndexingEngine : IAsyncDisposable
                     DocumentCatalog.CompleteProcessing(item.Uri);
             }
         }
+        catch (OperationCanceledException) when (!Shutdown.IsCancellationRequested)
+        {
+            status = "timed_out";
+            item.MarkSkipEpochCompletion();
+            throw;
+        }
         catch (OperationCanceledException)
         {
             status = "cancelled";
@@ -798,6 +874,12 @@ public partial class IndexingEngine : IAsyncDisposable
         }
         finally
         {
+            if (item.IsDeferredRetry)
+            {
+                _deferredRetryOwnership.TryRemove(GetQueueKey(item.Uri), out _);
+            }
+
+            item.SetCurrentOperation(null);
             overallTimer.Stop();
             Metrics?.HotPathDuration.Record(overallTimer.Elapsed.TotalMilliseconds, new TagList
             {
@@ -807,7 +889,7 @@ public partial class IndexingEngine : IAsyncDisposable
             });
             Metrics?.RecordFileProcessed(mime, status, fileSize, overallTimer.Elapsed.TotalMilliseconds);
             AddEpochTag(item.Epoch, "index.result", status);
-            if (item.TryMarkEpochComplete())
+            if (!item.SkipEpochCompletion && item.TryMarkEpochComplete())
             {
                 var epochBecameIdle = _epochTracker.Decrement(item.Epoch);
                 if (epochBecameIdle)
@@ -1185,12 +1267,22 @@ public partial class IndexingEngine : IAsyncDisposable
         // This handles the race condition where epoch N completes while epoch N+1 is processing,
         // causing HotPathIdle to be skipped for epoch N. By enqueuing all pending epochs here,
         // we ensure no epoch is orphaned.
+        var epochsToRelease = new HashSet<long> { args.Epoch };
         lock (_analysisLock)
         {
             foreach (var epoch in _pendingStructureEmbeddings.Keys)
-            {
-                EnqueueIdleEpoch(epoch);
-            }
+                epochsToRelease.Add(epoch);
+
+            foreach (var epoch in _pendingAnalysis.Keys)
+                epochsToRelease.Add(epoch);
+
+            if (_pendingDeferredHotPathRetries.Count > 0)
+                epochsToRelease.Add(args.Epoch);
+        }
+
+        foreach (var epoch in epochsToRelease)
+        {
+            EnqueueIdleEpoch(epoch);
         }
 
         // Start a fresh epoch so subsequent work participates in idle post-processing again.
@@ -1340,7 +1432,8 @@ public partial class IndexingEngine : IAsyncDisposable
                     }
                 }
 
-                var hasWork = consolidatedStructureItems.Count > 0 || consolidatedAnalysisItems.Count > 0;
+                var hasWork = consolidatedStructureItems.Count > 0
+                    || consolidatedAnalysisItems.Count > 0;
                 if (hasWork)
                 {
                     Interlocked.Increment(ref _activeIdleProcessingCount);
@@ -1492,6 +1585,7 @@ public partial class IndexingEngine : IAsyncDisposable
                 });
 
             }
+
         }
         catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
         {
@@ -1641,6 +1735,7 @@ public partial class IndexingEngine : IAsyncDisposable
                    ?? "unknown";
 
         // Classification stage
+        item.SetCurrentOperation("classification");
         var classifyTimer = Stopwatch.StartNew();
         var pipelineResult = await RunHotPathStageAsync(item, _classificationStage, cancellationToken).ConfigureAwait(false);
         classifyTimer.Stop();
@@ -1663,6 +1758,7 @@ public partial class IndexingEngine : IAsyncDisposable
         item.IsLightweight = IndexItem.MatchesLightweightPattern(item.Uri.ToString());
 
         // Parsing stage
+        item.SetCurrentOperation("parsing");
         var parseTimer = Stopwatch.StartNew();
         pipelineResult = await RunHotPathStageAsync(item, _parsingStage, cancellationToken).ConfigureAwait(false);
         parseTimer.Stop();
@@ -1686,6 +1782,7 @@ public partial class IndexingEngine : IAsyncDisposable
         }
 
         // Single-file analysis stage
+        item.SetCurrentOperation("single_file_analysis");
         var analysisTimer = Stopwatch.StartNew();
         pipelineResult = await RunHotPathStageAsync(item, _singleFileStage, cancellationToken).ConfigureAwait(false);
         analysisTimer.Stop();
@@ -1739,10 +1836,15 @@ public partial class IndexingEngine : IAsyncDisposable
     {
         try
         {
+            item.SetCurrentOperation(item.IsDeferredRetry ? "idle_retry_analysis" : "analysis");
             var multiFileTask = _multiFileStage.RunAsync(item, cancellationToken, UpdateStateFlags);
             var rebuildTask = _indexRebuildStage.RunAsync(item, cancellationToken, UpdateStateFlags);
             // Format-specific multi-file analyzers will be plugged into MultiFileAnalyzer; they remain parallel to rebuild.
             await Task.WhenAll(multiFileTask, rebuildTask).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!Shutdown.IsCancellationRequested)
+        {
+            throw;
         }
         catch (OperationCanceledException)
         {
@@ -1759,6 +1861,17 @@ public partial class IndexingEngine : IAsyncDisposable
 
         // All processing is complete — release Records to free the remaining graph data.
         item.ReleasePostIdlePayload();
+        item.SetCurrentOperation(null);
+    }
+
+    private IndexItem CreateDeferredRetryItem(IndexItem item)
+    {
+        var retryItem = new IndexItem(item.RawArtifact, item.Options);
+        retryItem.SetEpoch(item.Epoch);
+        retryItem.MarkDeferredRetry();
+        retryItem.IncrementTimeoutAttempts();
+        retryItem.SetCurrentOperation(item.CurrentOperation);
+        return retryItem;
     }
 
     /// <summary>
@@ -1770,22 +1883,24 @@ public partial class IndexingEngine : IAsyncDisposable
         var mime = item.MediaType?.ToString()
                    ?? item.RawArtifact.ProvisionalMediaType.Value?.ToString()
                    ?? "unknown";
+        var stage = string.IsNullOrWhiteSpace(item.CurrentOperation) ? "hot_path" : item.CurrentOperation;
 
         // Record timeout in metrics
         Metrics?.FilesErrored.Add(1, new TagList
         {
             { "mime_type", mime },
             { "error_type", "TimeoutException" },
-            { "stage", "timeout" }
+            { "stage", stage }
         });
 
         // Store last error for diagnostics unless the queue has already entered a terminal fault.
         if (Volatile.Read(ref _indexerQueueFaulted) == 0)
         {
-            Volatile.Write(ref _lastError, $"{item.Uri}: Timed out after {elapsed.TotalSeconds:F1}s");
+            Volatile.Write(ref _lastError, $"{item.Uri}: Timed out in {stage} after {elapsed.TotalSeconds:F1}s");
         }
 
         item.TryMarkTimedOut();
+        item.IncrementTimeoutAttempts();
 
         if (item.TryClaimHotPathStageCleanup(out var busyFlag, out var idleFlag))
         {
@@ -1800,7 +1915,75 @@ public partial class IndexingEngine : IAsyncDisposable
         // Add epoch tag for tracing
         AddEpochTag(item.Epoch, "index.result", "timeout");
         AddEpochTag(item.Epoch, "index.timeout_duration_ms", elapsed.TotalMilliseconds);
+        AddEpochTag(item.Epoch, "index.timeout_stage", stage);
 
+        QueueDeferredRetry(item, elapsed, stage);
+        ReleaseEpochAfterHotPathTimeout(item);
+
+        LogItemTimedOut(Logger, item.Uri, elapsed.TotalSeconds);
+    }
+
+    private void QueueDeferredRetry(IndexItem item, TimeSpan elapsed, string stage)
+    {
+        if (item.IsDeferredRetry)
+        {
+            UriRegistry?.SetFailed(item.Uri, $"idle retry timed out in {stage} after {elapsed.TotalSeconds:F1}s");
+            return;
+        }
+
+        if (Volatile.Read(ref _deferredRetryQueueFaulted) == 1)
+        {
+            UriRegistry?.SetFailed(item.Uri, $"hot-path timeout in {stage} after {elapsed.TotalSeconds:F1}s (deferred retry unavailable)");
+            return;
+        }
+
+        var retryItem = CreateDeferredRetryItem(item);
+        _deferredRetryOwnership[GetQueueKey(item.Uri)] = 0;
+        lock (_analysisLock)
+        {
+            _pendingDeferredHotPathRetries.Enqueue(retryItem);
+        }
+
+        Interlocked.Increment(ref _deferredToIdleCount);
+        ScheduleDeferredRetryDrain();
+    }
+
+    private void HandleAnalysisItemTimeout(IndexItem item, TimeSpan elapsed)
+    {
+        if (Volatile.Read(ref _analysisQueueFaulted) == 0)
+        {
+            Volatile.Write(ref _lastError, $"Analysis {item.Uri}: Timed out after {elapsed.TotalSeconds:F1}s");
+        }
+
+        AddEpochTag(item.Epoch, "analysis.result", "timeout");
+        AddEpochTag(item.Epoch, "analysis.timeout_duration_ms", elapsed.TotalMilliseconds);
+
+        Logger.LogWarning(
+            "Analysis item {Uri} timed out after {ElapsedSeconds:F1}s",
+            item.Uri,
+            elapsed.TotalSeconds);
+    }
+
+    private void HandleDeferredRetryItemTimeout(IndexItem item, TimeSpan elapsed)
+    {
+        if (Volatile.Read(ref _deferredRetryQueueFaulted) == 0)
+        {
+            Volatile.Write(ref _lastError, $"Deferred retry {item.Uri}: timed out after {elapsed.TotalSeconds:F1}s");
+        }
+
+        AddEpochTag(item.Epoch, "idle_retry.result", "timeout");
+        AddEpochTag(item.Epoch, "idle_retry.timeout_duration_ms", elapsed.TotalMilliseconds);
+        UriRegistry?.SetFailed(item.Uri, $"idle retry timed out after {elapsed.TotalSeconds:F1}s");
+        _deferredRetryOwnership.TryRemove(GetQueueKey(item.Uri), out _);
+
+        Logger.LogWarning(
+            "Deferred retry item {Uri} timed out after {ElapsedSeconds:F1}s",
+            item.Uri,
+            elapsed.TotalSeconds);
+    }
+
+    private void ReleaseEpochAfterHotPathTimeout(IndexItem item)
+    {
         // CRITICAL: Decrement epoch counter to prevent epoch imbalance (FM-003)
         // The item was incremented when enqueued, and normally decremented in IndexItemAsync's finally block.
         // Since IndexItemAsync was cancelled mid-processing, we must decrement here.
@@ -1826,24 +2009,6 @@ public partial class IndexingEngine : IAsyncDisposable
                 }
             }
         }
-
-        LogItemTimedOut(Logger, item.Uri, elapsed.TotalSeconds);
-    }
-
-    private void HandleAnalysisItemTimeout(IndexItem item, TimeSpan elapsed)
-    {
-        if (Volatile.Read(ref _analysisQueueFaulted) == 0)
-        {
-            Volatile.Write(ref _lastError, $"Analysis {item.Uri}: Timed out after {elapsed.TotalSeconds:F1}s");
-        }
-
-        AddEpochTag(item.Epoch, "analysis.result", "timeout");
-        AddEpochTag(item.Epoch, "analysis.timeout_duration_ms", elapsed.TotalMilliseconds);
-
-        Logger.LogWarning(
-            "Analysis item {Uri} timed out after {ElapsedSeconds:F1}s",
-            item.Uri,
-            elapsed.TotalSeconds);
     }
 
     private void HandleIndexerQueueFault(Exception ex)
@@ -1857,8 +2022,14 @@ public partial class IndexingEngine : IAsyncDisposable
         // pending collections, causing GetPendingIdleProcessingCount() to report stale counts.
         lock (_analysisLock)
         {
+            foreach (var pendingItem in _pendingDeferredHotPathRetries)
+            {
+                _deferredRetryOwnership.TryRemove(GetQueueKey(pendingItem.Uri), out _);
+            }
+
             _pendingAnalysis.Clear();
             _pendingStructureEmbeddings.Clear();
+            _pendingDeferredHotPathRetries.Clear();
         }
     }
 
@@ -1875,6 +2046,90 @@ public partial class IndexingEngine : IAsyncDisposable
             _pendingAnalysis.Clear();
             _pendingStructureEmbeddings.Clear();
         }
+    }
+
+    private void HandleDeferredRetryQueueFault(Exception ex)
+    {
+        Volatile.Write(ref _deferredRetryQueueFaulted, 1);
+        Volatile.Write(ref _lastError, $"DeferredRetryQueue fault: {ex.Message}");
+        Logger.LogCritical(ex, "Deferred retry queue entered a terminal fault.");
+
+        lock (_analysisLock)
+        {
+            foreach (var pendingItem in _pendingDeferredHotPathRetries)
+            {
+                _deferredRetryOwnership.TryRemove(GetQueueKey(pendingItem.Uri), out _);
+            }
+
+            _pendingDeferredHotPathRetries.Clear();
+        }
+    }
+
+    private bool CanDispatchDeferredRetries()
+    {
+        var hotPathSnapshot = IndexerQueue.CaptureSnapshot();
+        return hotPathSnapshot.Depth == 0
+            && (State & HotPathBusyMask) == 0;
+    }
+
+    private void ScheduleDeferredRetryDrain()
+    {
+        if (Interlocked.Exchange(ref _deferredRetryWakeScheduled, 1) == 1)
+            return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await IndexerQueue.WhenIdleAsync().WaitAsync(Shutdown.Token).ConfigureAwait(false);
+                if (Shutdown.IsCancellationRequested)
+                    return;
+
+                if (!CanDispatchDeferredRetries())
+                    return;
+
+                IndexItem[] deferredItems;
+                lock (_analysisLock)
+                {
+                    if (_pendingDeferredHotPathRetries.Count == 0)
+                        return;
+
+                    deferredItems = _pendingDeferredHotPathRetries.ToArray();
+                    _pendingDeferredHotPathRetries.Clear();
+                }
+
+                using (ActivitySource.StartActivity("deferred_retry_phase", ActivityKind.Internal))
+                {
+                    var deferredTimer = Stopwatch.StartNew();
+                    foreach (var item in deferredItems)
+                    {
+                        await DeferredRetryQueue.EnqueueAsync(item, Shutdown.Token).ConfigureAwait(false);
+                    }
+
+                    await DeferredRetryQueue.WhenIdleAsync().ConfigureAwait(false);
+                    deferredTimer.Stop();
+                    Metrics?.IdlePhaseDuration.Record(deferredTimer.Elapsed.TotalMilliseconds, new TagList
+                    {
+                        { "phase", "deferred_retry" }
+                    });
+                    RecordMilestone("deferred_retry", $"{deferredItems.Length} items, {deferredTimer.Elapsed.TotalMilliseconds:F1}ms");
+                }
+            }
+            catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
+            {
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _deferredRetryWakeScheduled, 0);
+                lock (_analysisLock)
+                {
+                    if (_pendingDeferredHotPathRetries.Count > 0 && !Shutdown.IsCancellationRequested)
+                    {
+                        ScheduleDeferredRetryDrain();
+                    }
+                }
+            }
+        });
     }
 
     public IndexingState State { get; private set; } = IndexingState.AllIdle;

@@ -2,6 +2,7 @@ import { Show } from 'solid-js';
 import type {
   ActivityEntry,
   FileError,
+  IndexingDiagnosticsState,
   LanguageCount,
   OperationSnapshot,
   PipelineState,
@@ -17,6 +18,7 @@ import { OperationTracker } from '../OperationTracker';
 import { PipelinePressure } from '../PipelinePressure';
 import { ProgressRings } from '../ProgressRings';
 import { QueryActivity } from '../QueryActivity';
+import { StuckItems } from '../StuckItems';
 import { StatusHeader } from '../StatusHeader';
 import './Dashboard.css';
 
@@ -32,6 +34,7 @@ export interface DashboardProps {
   operations: OperationSnapshot[];
   stages: PipelineStageLoad[];
   writerPending: boolean;
+  indexing: IndexingDiagnosticsState;
   now: number;
 }
 
@@ -71,6 +74,7 @@ export function Dashboard(props: DashboardProps) {
               complete={complete()}
             />
             <PipelinePressure stages={props.stages} writerPending={props.writerPending} />
+            <StuckItems indexing={props.indexing} now={props.now} />
             <ErrorPanel errors={props.errors} />
             <ActivityStream entries={props.activities} />
             <LanguageSpectrum languages={props.languages} />

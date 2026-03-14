@@ -53,9 +53,13 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     private readonly IDictionary<string, object> _dictionaryImplementation =  new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
     private int _epochCompletionState;
     private int _timedOutState;
+    private int _timeoutAttempts;
     private int _activeHotPathStageCleanupState = 1;
     private int _activeHotPathBusyFlag;
     private int _activeHotPathIdleFlag;
+    private int _skipEpochCompletionState;
+    private int _deferredRetryState;
+    private string? _currentOperation;
 
     /// <summary>
     ///     The status of the item. Anything besides null is considered a final, terminal state
@@ -107,6 +111,28 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     internal bool IsTimedOut => Volatile.Read(ref _timedOutState) == 1;
 
     internal bool TryMarkTimedOut() => Interlocked.Exchange(ref _timedOutState, 1) == 0;
+
+    internal int TimeoutAttempts => Volatile.Read(ref _timeoutAttempts);
+
+    internal int IncrementTimeoutAttempts() => Interlocked.Increment(ref _timeoutAttempts);
+
+    internal bool SkipEpochCompletion => Volatile.Read(ref _skipEpochCompletionState) == 1;
+
+    internal bool IsDeferredRetry => Volatile.Read(ref _deferredRetryState) == 1;
+
+    internal string CurrentOperation => Volatile.Read(ref _currentOperation) ?? string.Empty;
+
+    internal void SetCurrentOperation(string? operation)
+        => Volatile.Write(ref _currentOperation, operation);
+
+    internal void MarkDeferredRetry()
+    {
+        Volatile.Write(ref _deferredRetryState, 1);
+        Volatile.Write(ref _skipEpochCompletionState, 1);
+    }
+
+    internal void MarkSkipEpochCompletion()
+        => Volatile.Write(ref _skipEpochCompletionState, 1);
 
     internal void TrackHotPathStage(IndexingState busyFlag, IndexingState idleFlag)
     {

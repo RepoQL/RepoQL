@@ -7,6 +7,8 @@ import type {
   FileError,
   FileGroup,
   FileState,
+  IndexingDiagnosticsState,
+  IndexingWorkerEntry,
   Language,
   LanguageCount,
   OperationKind,
@@ -16,6 +18,7 @@ import type {
   PipelineStageLoad,
   QueryEntry,
   QueryState,
+  StuckItemEntry,
   SourceSection,
   ToolName,
 } from '../types';
@@ -83,7 +86,42 @@ interface SnapshotResponse {
     };
   }>;
   queries: ServerQuery[];
+  indexing?: SnapshotIndexing;
   files: ServerFile[];
+}
+
+interface SnapshotIndexing {
+  hotPathTimeouts?: number | null;
+  analysisTimeouts?: number | null;
+  deferredRetryTimeouts?: number | null;
+  deferredRetryPending?: number | null;
+  deferredRetryActive?: number | null;
+  deferredToIdleCount?: number | null;
+  activeWorkers?: Array<{
+    queue?: string | null;
+    workerId?: number | null;
+    uri?: string | null;
+    name?: string | null;
+    stage?: string | null;
+    startedAt?: string | null;
+    elapsedMs?: number | null;
+    timeoutAttempts?: number | null;
+    deferredRetry?: boolean | null;
+  }> | null;
+  stuckItems?: Array<{
+    uri?: string | null;
+    name?: string | null;
+    stage?: string | null;
+    status?: string | null;
+    enqueuedAt?: string | null;
+    startedAt?: string | null;
+    elapsedMs?: number | null;
+    workerId?: number | null;
+    timeoutAttempts?: number | null;
+    deferredRetry?: boolean | null;
+    size?: number | null;
+    mimeType?: string | null;
+  }> | null;
 }
 
 interface PipelineStageEvent {
@@ -114,6 +152,8 @@ interface SnapshotPipeline {
   reindexing?: boolean | null;
   writerPending?: boolean | null;
 }
+
+interface IndexingEvent extends SnapshotIndexing {}
 
 interface ActivityEvent {
   type?: string;
@@ -258,6 +298,50 @@ function inferOperationKind(description: string | null | undefined): OperationKi
   return 'startup';
 }
 
+function mapIndexingState(raw: SnapshotIndexing | null | undefined): IndexingDiagnosticsState {
+  return {
+    hotPathTimeouts: raw?.hotPathTimeouts ?? 0,
+    analysisTimeouts: raw?.analysisTimeouts ?? 0,
+    deferredRetryTimeouts: raw?.deferredRetryTimeouts ?? 0,
+    deferredRetryPending: raw?.deferredRetryPending ?? 0,
+    deferredRetryActive: raw?.deferredRetryActive ?? 0,
+    deferredToIdleCount: raw?.deferredToIdleCount ?? 0,
+    activeWorkers: (raw?.activeWorkers ?? []).map(mapIndexingWorker),
+    stuckItems: (raw?.stuckItems ?? []).map(mapStuckItem),
+  };
+}
+
+function mapIndexingWorker(raw: NonNullable<SnapshotIndexing['activeWorkers']>[number]): IndexingWorkerEntry {
+  return {
+    queue: raw.queue ?? 'unknown',
+    workerId: raw.workerId ?? -1,
+    uri: raw.uri ?? '',
+    name: raw.name ?? raw.uri ?? 'item',
+    stage: raw.stage ?? 'unknown',
+    startedAt: Date.parse(raw.startedAt ?? '') || Date.now(),
+    elapsedMs: raw.elapsedMs ?? 0,
+    timeoutAttempts: raw.timeoutAttempts ?? 0,
+    deferredRetry: raw.deferredRetry ?? false,
+  };
+}
+
+function mapStuckItem(raw: NonNullable<SnapshotIndexing['stuckItems']>[number]): StuckItemEntry {
+  return {
+    uri: raw.uri ?? '',
+    name: raw.name ?? raw.uri ?? 'item',
+    stage: raw.stage ?? 'unknown',
+    status: raw.status ?? 'queued',
+    enqueuedAt: Date.parse(raw.enqueuedAt ?? '') || Date.now(),
+    startedAt: raw.startedAt ? (Date.parse(raw.startedAt) || null) : null,
+    elapsedMs: raw.elapsedMs ?? null,
+    workerId: raw.workerId ?? null,
+    timeoutAttempts: raw.timeoutAttempts ?? 0,
+    deferredRetry: raw.deferredRetry ?? false,
+    size: raw.size ?? 0,
+    mimeType: raw.mimeType ?? null,
+  };
+}
+
 // --- Map server queries to client type ---
 
 function coerceToolName(value: string | null | undefined): ToolName {
@@ -336,6 +420,7 @@ function normalizeSnapshot(raw: SnapshotResponse): SnapshotResponse {
     },
     operations: Array.isArray(raw?.operations) ? raw.operations : [],
     queries: Array.isArray(raw?.queries) ? raw.queries : [],
+    indexing: raw?.indexing ?? {},
     files: Array.isArray(raw?.files) ? raw.files : [],
   };
 }
@@ -427,6 +512,7 @@ export function useRepoQLDashboard(): {
   const [error, setError] = createSignal<string | null>(null);
   const [snapshot, setSnapshot] = createSignal<SnapshotResponse | null>(null);
   const [pipelineEvent, setPipelineEvent] = createSignal<PipelineEvent | null>(null);
+  const [indexingEvent, setIndexingEvent] = createSignal<IndexingEvent | null>(null);
   const [activities, setActivities] = createSignal<ActivityEntry[]>([]);
   const [queries, setQueries] = createSignal<QueryEntry[]>([]);
   const [fileMap, setFileMap] = createSignal<Map<string, ServerFile>>(new Map());
@@ -693,6 +779,12 @@ export function useRepoQLDashboard(): {
       });
     });
 
+    es.addEventListener('indexing', (event) => {
+      const parsed = parseJson<IndexingEvent>((event as MessageEvent).data);
+      if (!parsed) return;
+      setIndexingEvent(parsed);
+    });
+
     // Delta file updates — merge into map and surface meaningful file progress.
     es.addEventListener('file_updates', (event) => {
       const parsed = parseJson<ServerFile[]>((event as MessageEvent).data);
@@ -848,6 +940,7 @@ export function useRepoQLDashboard(): {
 
     const snap = snapshot();
     const pe = pipelineEvent();
+    const ie = indexingEvent();
     const ready = pe?.ready ?? snap?.host?.initialIndexingCompleted ?? false;
     const reindexing = pe?.reindexing ?? snap?.pipeline?.reindexing ?? false;
     const phase = derivePhaseFromFiles(fd.stateCounts, ready, reindexing);
@@ -877,6 +970,7 @@ export function useRepoQLDashboard(): {
       operations: operations(),
       stages,
       writerPending: pe?.writerPending ?? snap?.pipeline?.writerPending ?? false,
+      indexing: mapIndexingState(ie ?? snap?.indexing),
       get now() { return now(); },
     };
   });

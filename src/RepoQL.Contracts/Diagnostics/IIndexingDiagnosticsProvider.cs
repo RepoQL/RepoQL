@@ -23,6 +23,24 @@ public record QueuedItemInfo
     public required string? MimeType { get; init; }
     public required long Size { get; init; }
     public required bool ReadOnly { get; init; }
+    public int? WorkerId { get; init; }
+    public DateTimeOffset? StartedAt { get; init; }
+    public double? ElapsedMs { get; init; }
+    public int TimeoutAttempts { get; init; }
+    public bool DeferredRetry { get; init; }
+}
+
+public record IndexingWorkerInfo
+{
+    public required string Queue { get; init; }
+    public required int WorkerId { get; init; }
+    public required string Uri { get; init; }
+    public required string Name { get; init; }
+    public required string Stage { get; init; }
+    public required DateTimeOffset StartedAt { get; init; }
+    public required double ElapsedMs { get; init; }
+    public required int TimeoutAttempts { get; init; }
+    public required bool DeferredRetry { get; init; }
 }
 
 /// <summary>
@@ -54,6 +72,24 @@ public record IndexingDiagnosticsSnapshot
     /// <summary>Number of workers currently processing analysis items.</summary>
     public required int AnalysisActive { get; init; }
 
+    /// <summary>Number of deferred hot-path retry items waiting for idle processing.</summary>
+    public required int DeferredRetryPending { get; init; }
+
+    /// <summary>Number of deferred hot-path retry workers currently active.</summary>
+    public required int DeferredRetryActive { get; init; }
+
+    /// <summary>Total hot-path items deferred to idle retry since startup.</summary>
+    public required int DeferredToIdleCount { get; init; }
+
+    /// <summary>Number of hot-path timeouts observed since startup.</summary>
+    public required int HotPathTimeouts { get; init; }
+
+    /// <summary>Number of analysis timeouts observed since startup.</summary>
+    public required int AnalysisTimeouts { get; init; }
+
+    /// <summary>Number of deferred retry timeouts observed since startup.</summary>
+    public required int DeferredRetryTimeouts { get; init; }
+
     /// <summary>Number of write operations pending in writer queue.</summary>
     public required int WriterPending { get; init; }
 
@@ -68,6 +104,9 @@ public record IndexingDiagnosticsSnapshot
 
     /// <summary>Last error message from indexing, or null if no recent error.</summary>
     public required string? LastError { get; init; }
+
+    /// <summary>Current worker-owned items with elapsed time and stage details.</summary>
+    public required IReadOnlyList<IndexingWorkerInfo> ActiveWorkers { get; init; }
 }
 
 /// <summary>
@@ -106,6 +145,12 @@ public static class IndexingDiagnostics
             $"idle_active: {snapshot.IdleActive}",
             $"analysis_depth: {snapshot.AnalysisDepth}",
             $"analysis_active: {snapshot.AnalysisActive}",
+            $"deferred_retry_pending: {snapshot.DeferredRetryPending}",
+            $"deferred_retry_active: {snapshot.DeferredRetryActive}",
+            $"deferred_to_idle_count: {snapshot.DeferredToIdleCount}",
+            $"hot_path_timeouts: {snapshot.HotPathTimeouts}",
+            $"analysis_timeouts: {snapshot.AnalysisTimeouts}",
+            $"deferred_retry_timeouts: {snapshot.DeferredRetryTimeouts}",
             $"writer_pending: {snapshot.WriterPending}",
             $"writer_total: {snapshot.WriterTotal}",
             $"embed_mode: {snapshot.EmbedMode}",
