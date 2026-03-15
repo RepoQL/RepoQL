@@ -54,4 +54,36 @@ internal sealed class QueryExecutor
             result.Summarized,
             result.OriginalRowCount);
     }
+
+    public async Task<QueryExecutionResult> ExecuteCodeAsync(
+        string code,
+        string intent,
+        int tokenBudget,
+        int timeoutMs,
+        ResultFormat format,
+        string? input = null,
+        CancellationToken cancellationToken = default)
+    {
+        var client = await _clientProvider.GetClientAsync(cancellationToken).ConfigureAwait(false);
+        var result = await client.ExecuteAsync(code, intent, tokenBudget, timeoutMs, input, cancellationToken).ConfigureAwait(false);
+
+        var formatter = _formatterFactory.GetFormatter(format);
+        var lines = await formatter.FormatAsync(result, 100, result.RowCount, cancellationToken).ConfigureAwait(false);
+
+        return new QueryExecutionResult(
+            lines,
+            result.RowCount,
+            result.ExecutionTimeMs,
+            result.IndexPending,
+            result.IndexTotal,
+            result.IndexFailed,
+            result.IndexStale,
+            result.SemanticEnabled,
+            result.SemanticReady,
+            result.SemanticPercent,
+            result.Summarized,
+            result.OriginalRowCount,
+            result.SandboxError,
+            result.RawJsOutput);
+    }
 }

@@ -561,7 +561,6 @@ public static class RepoIndexerServiceCollectionExtensions
 
         // Operations - tracks indexing work batches for observability
         services.AddSingleton<IOperationManager, OperationManager>();
-
         // Unified database - DuckDbDataStore handles all reads and writes
         services.AddSingleton<DuckDbDataStore>(sp =>
         {

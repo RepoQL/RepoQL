@@ -12,4 +12,6 @@ internal readonly record struct QueryExecutionResult(
     bool SemanticReady,
     int SemanticPercent,
     bool Summarized = false,
-    long OriginalRowCount = 0);
+    long OriginalRowCount = 0,
+    bool SandboxError = false,
+    string? RawJsOutput = null);

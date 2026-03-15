@@ -32,6 +32,7 @@ using RepoQL.Data.DuckDB;
 using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
 using RepoQL.Explore;
+using RepoQL.Sandbox;
 using RepoQL.Read;
 using RepoQL.Explore.Search;
 using Serilog;
@@ -155,6 +156,7 @@ internal class HostCommands(IAnsiConsole console)
             var startupConfig = ConfigurationLoader.Load(SettingRegistry.Build(), repo);
             var dbInit = DatabaseInitCoordinator.Prepare(repo, serilogLogger, startupConfig.Settings.DuckDb);
             builder.Services.AddSingleton(dbInit.Options);
+            builder.Services.AddSingleton<IModuleRegistry>(_ => new FileBasedModuleRegistry(repo));
             builder.Services.AddRepoIndexer(repo);
             // Search services for ExploreOrchestrator (server-side, using DuckDbDataStore directly)
             builder.Services.AddSingleton<IDocumentSearchService, DocumentSearchService>();
@@ -198,6 +200,42 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton<StatusEventAggregator>();
             builder.Services.AddSingleton<DashboardQueryActivityTracker>();
             builder.Services.AddHostedService<PipelineHealthPublisher>();
+
+            // WASM sandbox for the execute tool
+            try
+            {
+                var wasmSandbox = new WasmtimeSandbox();
+                builder.Services.AddSingleton<IWasmSandbox>(wasmSandbox);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"WASM sandbox unavailable: {ex.Message}");
+            }
+
+            // Graphviz WASM renderer
+            try
+            {
+                var graphviz = new GraphvizRenderer();
+                builder.Services.AddSingleton(graphviz);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Graphviz renderer unavailable: {ex.Message}");
+            }
+
+            // SVG → PNG renderer (SkiaSharp — uses system fonts)
+            builder.Services.AddSingleton<SvgRenderer>();
+
+            // Pandoc WASM renderer
+            try
+            {
+                var pandoc = new PandocRenderer();
+                builder.Services.AddSingleton(pandoc);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Pandoc renderer unavailable: {ex.Message}");
+            }
 
             var app = builder.Build();
 

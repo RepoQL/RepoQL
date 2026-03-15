@@ -27,11 +27,18 @@ public sealed class QueueObservabilityUdfTests : IDisposable
         IdleActive = 0,
         AnalysisDepth = 0,
         AnalysisActive = 0,
+        DeferredRetryPending = 0,
+        DeferredRetryActive = 0,
+        DeferredToIdleCount = 0,
+        HotPathTimeouts = 0,
+        AnalysisTimeouts = 0,
+        DeferredRetryTimeouts = 0,
         WriterPending = 0,
         WriterTotal = 0,
         EmbedMode = "None",
         EmbedLastEpoch = 0,
-        LastError = null
+        LastError = null,
+        ActiveWorkers = Array.Empty<IndexingWorkerInfo>()
     };
 
     public QueueObservabilityUdfTests()
@@ -222,11 +229,18 @@ public sealed class QueueObservabilityUdfTests : IDisposable
             IdleActive = 1,
             AnalysisDepth = 4,
             AnalysisActive = 2,
+            DeferredRetryPending = 0,
+            DeferredRetryActive = 0,
+            DeferredToIdleCount = 0,
+            HotPathTimeouts = 0,
+            AnalysisTimeouts = 0,
+            DeferredRetryTimeouts = 0,
             WriterPending = 0,
             WriterTotal = 0,
             EmbedMode = "Full",
             EmbedLastEpoch = 11,
-            LastError = "oops"
+            LastError = "oops",
+            ActiveWorkers = Array.Empty<IndexingWorkerInfo>()
         };
 
         var rows = _db.Read(

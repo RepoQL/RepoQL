@@ -13,6 +13,7 @@ using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Inference;
 using RepoQL.Core.Cloud;
 using RepoQL.Core.Configuration;
+using RepoQL.Sandbox;
 using RepoQL.Templating;
 using Spectre.Console;
 
@@ -31,6 +32,7 @@ internal static class ServiceCollectionExtensions
             .AddDiagnosticsServices(includeSessionOrientation: false)
             .AddConfigurationServices(startupRepoRoot)
             .AddCloudAuthServices()
+            .AddSandboxServices()
             .AddCommandServices()
             .AddLiquidTemplateServices();
 
@@ -49,6 +51,7 @@ internal static class ServiceCollectionExtensions
             .AddConfigurationServices(startupRepoRoot, ConfigReloadMode.Poll)
             .AddCloudAuthServices()
             .AddInferenceServices()
+            .AddSandboxServices()
             .AddCommandServices()
             .AddResourceServices()
             .AddLiquidTemplateServices();
@@ -99,6 +102,7 @@ internal static class ServiceCollectionExtensions
     {
         services.AddResolvedConfig(startupRepoRoot, reloadMode: reloadMode);
         services.AddScoped<EnvironmentContext>();
+        services.AddSingleton<IModuleRegistry>(_ => new FileBasedModuleRegistry(startupRepoRoot));
         return services;
     }
 
@@ -128,6 +132,23 @@ internal static class ServiceCollectionExtensions
     {
         services.AddSingleton<CloudAuthSessionStore>();
         services.AddSingleton<CloudAuthService>();
+        return services;
+    }
+
+    private static IServiceCollection AddSandboxServices(this IServiceCollection services)
+    {
+        // WASM sandbox — eagerly construct so failures are caught at startup, not at resolve time.
+        // If it fails (missing native lib, missing .wasm), the execute tool returns "unavailable".
+        try
+        {
+            var sandbox = new WasmtimeSandbox();
+            services.AddSingleton<IWasmSandbox>(sandbox);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"WASM sandbox unavailable: {ex.Message}");
+        }
+
         return services;
     }
 

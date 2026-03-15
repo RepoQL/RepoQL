@@ -56,6 +56,10 @@ service RepoQL {
   // Read repository content with token-budget-aware representation selection.
   rpc Read(ReadRequest) returns (ReadResponse);
 
+  // Execute sandboxed JavaScript and return structured results.
+  // Budget overflow uses intent for LLM summarization (same as query).
+  rpc Execute(ExecuteRequest) returns (RawQueryResponse);
+
 }
 
 // ----- Raw query -----
@@ -113,6 +117,11 @@ message RawQueryResponse {
   int32 index_stale = 13;
   // Percentage of embedding-applicable files that are embedded.
   int32 semantic_percent = 14;
+  // True when the response represents a sandbox execution error (syntax, runtime, timeout).
+  // Only set by the Execute RPC. Signals to tool handlers that this should be returned as isError.
+  bool sandbox_error = 15;
+  // Raw JSON output from sandbox JS execution. Used to chain results between execute calls.
+  string raw_js_output = 16;
 }
 
 message RawQueryRow {
@@ -618,6 +627,19 @@ message ReadRequest {
   string uri = 1;
   // Token budget - determines representation depth (full/structure/headline).
   int32 token_budget = 2;
+}
+
+message ExecuteRequest {
+  // JavaScript source code to execute in the WASM sandbox.
+  string code = 1;
+  // What the agent is trying to accomplish — used for LLM summarization when results exceed budget.
+  string intent = 2;
+  // Token budget for the response. 0 = unlimited.
+  int32 token_budget = 3;
+  // Execution timeout in milliseconds. 0 = server default.
+  int32 timeout_ms = 4;
+  // JSON input from the previous execution result. Available as `input` global in JS.
+  string input = 5;
 }
 
 message ReadResponse {

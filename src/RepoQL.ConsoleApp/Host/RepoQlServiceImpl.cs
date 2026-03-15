@@ -18,12 +18,14 @@ using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Inference;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
+using RepoQL.FileSystem.Physical;
 using RepoQL.Indexing.FileSystems;
 using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
 using RepoQL.Sarif;
 using RepoQL.Explore;
 using RepoQL.Read;
+using RepoQL.Sandbox;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoStageStatus = RepoQL.Contracts.StageStatus;
@@ -45,11 +47,18 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly EmbeddingMode _embeddingMode;
     private readonly ExploreOrchestrator _exploreOrchestrator;
     private readonly ReadOrchestrator _readOrchestrator;
+    private readonly IReadContentProvider _readContentProvider;
+    private readonly IWasmSandbox? _wasmSandbox;
+    private readonly GraphvizRenderer? _graphvizRenderer;
+    private readonly PandocRenderer? _pandocRenderer;
+    private readonly SvgRenderer? _svgRenderer;
+    private readonly IModuleRegistry? _moduleRegistry;
     private readonly UriRegistry? _uriRegistry;
     private readonly QueueCommandService? _queueCommandService;
     private readonly RepoQlConfig.HostSettings _hostSettings;
     private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
     private readonly RepoQlConfig.InferenceSettings _inferenceSettings;
+    private readonly RepoQlConfig.SandboxSettings _sandboxSettings;
     private readonly DashboardQueryActivityTracker? _dashboardQueryActivity;
     private readonly ILogger<RepoQlServiceImpl> _logger;
     private readonly SemaphoreSlim _queryConcurrency;
@@ -153,10 +162,16 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         IHostApplicationLifetime hostLifetime,
         ExploreOrchestrator exploreOrchestrator,
         ReadOrchestrator readOrchestrator,
+        IReadContentProvider readContentProvider,
         RepoQlConfig config,
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
         IInferenceProvider? inferenceProvider = null,
+        IWasmSandbox? wasmSandbox = null,
+        GraphvizRenderer? graphvizRenderer = null,
+        PandocRenderer? pandocRenderer = null,
+        SvgRenderer? svgRenderer = null,
+        IModuleRegistry? moduleRegistry = null,
         UriRegistry? uriRegistry = null,
         QueueCommandService? queueCommandService = null,
         DashboardQueryActivityTracker? dashboardQueryActivity = null,
@@ -166,6 +181,11 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         this.repoConfig = repoConfig ?? throw new ArgumentNullException(nameof(repoConfig));
         _embeddingProvider = embeddingProvider;
         _inferenceProvider = inferenceProvider;
+        _wasmSandbox = wasmSandbox;
+        _graphvizRenderer = graphvizRenderer;
+        _pandocRenderer = pandocRenderer;
+        _svgRenderer = svgRenderer;
+        _moduleRegistry = moduleRegistry;
         _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
@@ -175,11 +195,13 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
         _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
         _readOrchestrator = readOrchestrator ?? throw new ArgumentNullException(nameof(readOrchestrator));
+        _readContentProvider = readContentProvider ?? throw new ArgumentNullException(nameof(readContentProvider));
         _uriRegistry = uriRegistry;
         _queueCommandService = queueCommandService;
         _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
         _embeddingSettings = config.Embedding;
         _inferenceSettings = config.Inference;
+        _sandboxSettings = config.Sandbox;
         _dashboardQueryActivity = dashboardQueryActivity;
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
         var maxConcurrent = Math.Clamp(_hostSettings.MaxConcurrentQueries ?? 15, 1, 64);
@@ -242,48 +264,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             resp.Truncated = limited && rows.Count > request.Limit;
 
             // Check token budget and potentially summarize
-            if (request.TokenBudget > 0 && resp.Rows.Count > 0)
-            {
-                var formatted = FormatResponseForTokenEstimation(resp);
-                var estimatedTokens = TokenEstimator.EstimateTokens(formatted);
-
-                if (estimatedTokens > request.TokenBudget)
-                {
-                    var intent = ExtractSqlComment(request.Sql);
-
-                    if (!string.IsNullOrWhiteSpace(intent) && _inferenceProvider is { Available: true })
-                    {
-                        try
-                        {
-                            var originalRowCount = resp.RowCount;
-                            var summary = await _inferenceProvider.CompleteAsync(
-                                new InferenceRequest
-                                {
-                                    Context = formatted,
-                                    Prompt = intent,
-                                    MaxTokens = request.TokenBudget
-                                },
-                                context.CancellationToken).ConfigureAwait(false);
-
-                            // Replace response with summarized version
-                            resp.Rows.Clear();
-                            resp.Columns.Clear();
-                            resp.Columns.Add(new ColumnSchema { Name = "summary", DbType = "VARCHAR" });
-                            var summaryRow = new RowData();
-                            summaryRow.Values.Add(Value.ForString(summary.Content));
-                            resp.Rows.Add(summaryRow);
-                            resp.RowCount = 1;
-                            resp.Summarized = true;
-                            resp.OriginalRowCount = originalRowCount;
-                        }
-                        catch (Exception ex)
-                        {
-                            // LLM failed - log and return original response
-                            _logger.LogWarning(ex, "LLM summarization failed, returning original response");
-                        }
-                    }
-                }
-            }
+            await TryBudgetSummarize(resp, request.TokenBudget, ExtractSqlComment(request.Sql), context.CancellationToken)
+                .ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
@@ -351,6 +333,448 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Check token budget and LLM-summarize the response if it exceeds the budget and intent is available.
+    /// Shared by ExecuteRawQueryCore and Execute.
+    /// </summary>
+    private async Task TryBudgetSummarize(RawQueryResponse resp, int tokenBudget, string? intent, CancellationToken ct)
+    {
+        if (tokenBudget <= 0 || resp.Rows.Count == 0)
+            return;
+
+        var formatted = FormatResponseForTokenEstimation(resp);
+        var estimatedTokens = TokenEstimator.EstimateTokens(formatted);
+
+        if (estimatedTokens <= tokenBudget)
+            return;
+
+        if (string.IsNullOrWhiteSpace(intent) || _inferenceProvider is not { Available: true })
+            return;
+
+        try
+        {
+            var originalRowCount = resp.RowCount;
+            var summary = await _inferenceProvider.CompleteAsync(
+                new InferenceRequest
+                {
+                    Context = formatted,
+                    Prompt = intent,
+                    MaxTokens = tokenBudget
+                },
+                ct).ConfigureAwait(false);
+
+            resp.Rows.Clear();
+            resp.Columns.Clear();
+            resp.Columns.Add(new ColumnSchema { Name = "summary", DbType = "VARCHAR" });
+            var summaryRow = new RowData();
+            summaryRow.Values.Add(Value.ForString(summary.Content));
+            resp.Rows.Add(summaryRow);
+            resp.RowCount = 1;
+            resp.Summarized = true;
+            resp.OriginalRowCount = originalRowCount;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LLM summarization failed, returning original response");
+        }
+    }
+
+    public override async Task<RawQueryResponse> Execute(ExecuteRequest request, ServerCallContext context)
+    {
+        var sw = Stopwatch.StartNew();
+        var activity = _dashboardQueryActivity?.Begin("execute",
+            SummarizeDashboardText(request.Code, 60), request.TokenBudget);
+
+        try
+        {
+            if (_wasmSandbox is null)
+            {
+                activity?.Cancel("Sandbox unavailable");
+                throw new RpcException(new Status(StatusCode.Unavailable,
+                    "WASM sandbox is not available. Ensure the QuickJS WASM module is built and embedded."));
+            }
+
+            var timeoutMs = request.TimeoutMs > 0 ? request.TimeoutMs : 300_000;
+            var scopeEnforcer = new SandboxScopeEnforcer(
+                ParseSandboxScopes(_sandboxSettings.ReadScopes),
+                ParseSandboxScopes(_sandboxSettings.WriteScopes),
+                ParseSandboxScopes(_sandboxSettings.DeleteScopes));
+            var capabilities = new SandboxCapabilities
+            {
+                QueryHandler = sql =>
+                {
+                    var rows = _db.Query(sql, context.CancellationToken);
+                    return System.Text.Json.JsonSerializer.Serialize(rows);
+                },
+                ReadHandler = (uri, budget) =>
+                {
+                    try
+                    {
+                        scopeEnforcer.EnforceRead(uri);
+
+                        var documents = _readContentProvider
+                            .FetchGlobAsync(uri, context.CancellationToken)
+                            .GetAwaiter()
+                            .GetResult();
+
+                        var content = RenderSandboxReadContent(uri, documents);
+                        var tokensUsed = TokenEstimator.EstimateTokens(content);
+
+                        // Use JsonObject instead of anonymous types — anonymous types
+                        // are stripped by the IL trimmer in Release builds, causing
+                        // JsonSerializer.Serialize to produce "{}".
+                        var result = new System.Text.Json.Nodes.JsonObject
+                        {
+                            ["content"] = content,
+                            ["representation"] = "full",
+                            ["tokensUsed"] = tokensUsed
+                        };
+                        return result.ToJsonString();
+                    }
+                    catch (Exception ex)
+                    {
+                        var error = new System.Text.Json.Nodes.JsonObject
+                        {
+                            ["__repoqlReadError"] = ex.Message
+                        };
+                        return error.ToJsonString();
+                    }
+                },
+                WriteHandler = (uri, content) =>
+                {
+                    try
+                    {
+                        scopeEnforcer.EnforceWrite(uri);
+                        var path = ResolveSandboxFilePath(uri);
+                        var directory = Path.GetDirectoryName(path);
+                        if (!string.IsNullOrWhiteSpace(directory))
+                            Directory.CreateDirectory(directory);
+
+                        File.WriteAllText(path, content, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                        return null;
+                    }
+                    catch (SandboxScopeException ex)
+                    {
+                        return ex.Message;
+                    }
+                    catch (Exception ex)
+                    {
+                        return ex.Message;
+                    }
+                },
+                DeleteHandler = uri =>
+                {
+                    try
+                    {
+                        scopeEnforcer.EnforceDelete(uri);
+                        var path = ResolveSandboxFilePath(uri);
+                        File.Delete(path);
+                        return null;
+                    }
+                    catch (SandboxScopeException ex)
+                    {
+                        return ex.Message;
+                    }
+                    catch (Exception ex)
+                    {
+                        return ex.Message;
+                    }
+                },
+                ModuleLoaderHandler = specifier =>
+                {
+                    var builtinSource = BuiltinModuleProvider.Load(specifier);
+                    if (builtinSource is not null) return builtinSource;
+
+                    if (_moduleRegistry is null) return null;
+                    return _moduleRegistry.LoadSource(specifier);
+                },
+                FfmpegHandler = new FfmpegProcessRunner(
+                    _sandboxSettings.FfmpegPath,
+                    ResolveSandboxFilePath,
+                    scopeEnforcer.EnforceRead,
+                    scopeEnforcer.EnforceWrite,
+                    _sandboxSettings.FfmpegTimeoutMs ?? 300_000).Execute,
+                GraphvizHandler = _graphvizRenderer is not null
+                    ? (dot, engine, format) => _graphvizRenderer.Render(dot, engine, format)
+                    : null,
+                PandocHandler = _pandocRenderer is not null
+                    ? argsJson => ExecutePandocFromJson(argsJson)
+                    : null,
+                SvgToPngHandler = _svgRenderer is not null
+                    ? (svg, width) =>
+                    {
+                        // width param is scale factor: 0 or 1 = native, 2 = 2x, etc.
+                        var scale = width > 0 ? (float)width : 2.0f;
+                        return Convert.ToBase64String(_svgRenderer.RenderToPng(svg, scale));
+                    }
+                    : null
+            };
+            var input = string.IsNullOrEmpty(request.Input) ? null : request.Input;
+            var result = _wasmSandbox.Execute(request.Code, input, timeoutMs, capabilities, context.CancellationToken);
+
+            RawQueryResponse resp;
+            if (!result.Success)
+            {
+                resp = new RawQueryResponse { SandboxError = true };
+                resp.Columns.Add(new ColumnSchema { Name = "error", DbType = "VARCHAR" });
+                var errorRow = new RowData();
+                var errorMsg = FormatSandboxError(result, request.Code);
+                errorRow.Values.Add(Value.ForString(errorMsg));
+                resp.Rows.Add(errorRow);
+                resp.RowCount = 1;
+            }
+            else
+            {
+                resp = JsonResultMapper.MapToResponse(result.JsonOutput);
+                resp.RawJsOutput = result.JsonOutput ?? string.Empty;
+            }
+
+            sw.Stop();
+            resp.ExecutionTimeMs = sw.ElapsedMilliseconds;
+
+            // Budget overflow — same path as query
+            await TryBudgetSummarize(resp, request.TokenBudget, request.Intent, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            // Trust signal
+            var trustSignal = GetTrustSignal(resp.ExecutionTimeMs, context.CancellationToken);
+            resp.IndexPending = trustSignal.IndexPending;
+            resp.IndexTotal = trustSignal.IndexTotal;
+            resp.IndexFailed = trustSignal.IndexFailed;
+            resp.IndexStale = trustSignal.IndexStale;
+            resp.SemanticEnabled = trustSignal.SemanticEnabled;
+            resp.SemanticReady = trustSignal.SemanticReady;
+            resp.SemanticPercent = trustSignal.SemanticPercent;
+
+            return activity?.Complete(resp, BuildQueryActivitySummary(resp), EstimateQueryActivityTokens(resp)) ?? resp;
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            activity?.Cancel("Cancelled");
+            throw new RpcException(new Status(StatusCode.Cancelled, "Execute request was canceled."));
+        }
+        catch (RpcException)
+        {
+            throw; // Re-throw gRPC errors (like our "unavailable" above)
+        }
+        catch (Exception ex)
+        {
+            activity?.Cancel(SummarizeDashboardText(ex.Message));
+            throw new RpcException(new Status(StatusCode.Internal, ex.Message));
+        }
+    }
+
+    private static IReadOnlyList<string>? ParseSandboxScopes(string? configValue)
+    {
+        if (string.IsNullOrWhiteSpace(configValue))
+            return null;
+
+        var scopes = configValue
+            .Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static scope => !string.IsNullOrWhiteSpace(scope))
+            .ToArray();
+
+        return scopes.Length == 0 ? null : scopes;
+    }
+
+    private static string RenderSandboxReadContent(string requestedUri, IReadOnlyList<ReadDocument> documents)
+    {
+        if (documents.Count == 0)
+            throw new InvalidOperationException($"No content found for '{requestedUri}'.");
+
+        if (documents.Count == 1)
+        {
+            var singleContent = documents[0].TextContent;
+            if (string.IsNullOrEmpty(singleContent))
+                throw new InvalidOperationException($"No text content available for '{documents[0].Uri}'.");
+
+            return singleContent;
+        }
+
+        var builder = new StringBuilder();
+        var included = 0;
+        foreach (var document in documents)
+        {
+            if (string.IsNullOrEmpty(document.TextContent))
+                continue;
+
+            if (builder.Length > 0)
+                builder.Append("\n\n");
+
+            builder.AppendLine($"--- {document.Uri} ---");
+            builder.Append(document.TextContent);
+            included++;
+        }
+
+        if (included == 0)
+            throw new InvalidOperationException($"No text content available for '{requestedUri}'.");
+
+        return builder.ToString();
+    }
+
+    private string ResolveSandboxFilePath(string uri)
+    {
+        var canonicalUri = CanonicalizeSandboxFileUri(uri);
+        if (!RepoUri.TryParse(canonicalUri, out var repoUri))
+            throw new InvalidOperationException($"Invalid URI: {uri}");
+
+        return FileUriPathResolver.ToAbsolutePath(repoConfig.Path, repoUri);
+    }
+
+    private static string FormatSandboxError(WasmExecutionResult result, string sourceCode)
+    {
+        var kind = result.ErrorKind ?? "runtime";
+        var message = result.ErrorMessage ?? "Unknown error";
+
+        // Drop the generic suggestion — it's noise. Only keep genuinely helpful suggestions.
+        var genericSuggestion = "Check your JavaScript syntax and logic";
+        var suggestion = result.ErrorSuggestion;
+        if (string.Equals(suggestion, genericSuggestion, StringComparison.Ordinal))
+            suggestion = null;
+
+        // Provide context-specific guidance based on error content
+        if (suggestion is null)
+        {
+            if (kind == "syntax")
+                suggestion = "Fix the JavaScript syntax error above";
+            else if (kind == "timeout")
+                suggestion = "Simplify the script or increase the timeout";
+            else if (kind == "memory")
+                suggestion = "Reduce data size or process in smaller chunks";
+            else if (kind == "cancelled")
+                suggestion = "Retry the request";
+            else if (message.Contains("not defined", StringComparison.Ordinal))
+                suggestion = "Check variable and function names";
+            else if (message.Contains("not a function", StringComparison.Ordinal))
+                suggestion = "The value is not callable — check the type";
+            else if (message.Contains("No content found", StringComparison.Ordinal))
+                suggestion = "Use explore to find the correct URI, or check that the file exists";
+            else if (message.Contains("denied", StringComparison.OrdinalIgnoreCase))
+                suggestion = "Adjust scopes via ::config.set";
+            else if (message.Contains("ffmpeg", StringComparison.OrdinalIgnoreCase))
+                suggestion = "Check ffmpeg arguments and file paths";
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append(message);
+
+        // Show the source line with ^ indicator (like DuckDB errors)
+        if (!string.IsNullOrEmpty(result.ErrorStack) && !string.IsNullOrEmpty(sourceCode))
+        {
+            var (line, col) = ParseStackLocation(result.ErrorStack);
+            if (line > 0)
+            {
+                var lines = sourceCode.Split('\n');
+                if (line <= lines.Length)
+                {
+                    var sourceLine = lines[line - 1].TrimEnd('\r');
+                    sb.Append("\n\nLINE ").Append(line).Append(": ").Append(sourceLine);
+                    if (col > 0 && col <= sourceLine.Length + 1)
+                    {
+                        sb.Append('\n').Append(' ', "LINE : ".Length + line.ToString().Length);
+                        sb.Append(' ', col - 1).Append('^');
+                    }
+                }
+            }
+        }
+
+        if (suggestion is not null)
+        {
+            sb.Append("\n\n> ");
+            sb.Append(suggestion);
+        }
+
+        // Include diagnostics (console.log/warn/error output) if any
+        if (result.Diagnostics.Count > 0)
+        {
+            sb.Append("\n\nDiagnostics:\n");
+            foreach (var diag in result.Diagnostics)
+            {
+                var prefix = diag.Level switch
+                {
+                    "warn" => "[warn] ",
+                    "error" => "[error] ",
+                    _ => ""
+                };
+                sb.Append(prefix).AppendLine(diag.Message);
+            }
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Parse the first source location from a QuickJS stack trace.
+    /// Format: "at funcName (<eval>:LINE:COL)"
+    /// </summary>
+    private static (int line, int col) ParseStackLocation(string stack)
+    {
+        // Match patterns like "<eval>:3:22" or "(<eval>:5:1)"
+        var match = System.Text.RegularExpressions.Regex.Match(stack, @"<eval>:(\d+):(\d+)");
+        if (match.Success &&
+            int.TryParse(match.Groups[1].Value, out var line) &&
+            int.TryParse(match.Groups[2].Value, out var col))
+        {
+            return (line, col);
+        }
+        return (0, 0);
+    }
+
+    private string ExecutePandocFromJson(string argsJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(argsJson);
+            var root = doc.RootElement;
+
+            var input = root.TryGetProperty("input", out var inputProp) ? inputProp.GetString() ?? "" : "";
+            var from = root.TryGetProperty("from", out var fromProp) ? fromProp.GetString() ?? "markdown" : "markdown";
+            var to = root.TryGetProperty("to", out var toProp) ? toProp.GetString() ?? "html" : "html";
+
+            List<string>? extraArgs = null;
+            if (root.TryGetProperty("args", out var argsProp) && argsProp.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                extraArgs = [];
+                foreach (var arg in argsProp.EnumerateArray())
+                    if (arg.ValueKind == System.Text.Json.JsonValueKind.String)
+                        extraArgs.Add(arg.GetString()!);
+            }
+
+            var output = _pandocRenderer!.Convert(input, from, to, extraArgs);
+
+            var result = new System.Text.Json.Nodes.JsonObject
+            {
+                ["output"] = output,
+                ["from"] = from,
+                ["to"] = to
+            };
+            return result.ToJsonString();
+        }
+        catch (Exception ex)
+        {
+            return "{\"__repoqlPandocError\":" + System.Text.Json.JsonSerializer.Serialize(ex.Message) + "}";
+        }
+    }
+
+    private string CanonicalizeSandboxFileUri(string uri)
+    {
+        var trimmed = uri.Trim();
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var parsed) ||
+            !string.Equals(parsed.Scheme, "file", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed;
+        }
+
+        var canonical = trimmed;
+        if (!string.IsNullOrWhiteSpace(parsed.Host))
+        {
+            var normalizedPath = $"{parsed.Host.Trim('/')}{parsed.AbsolutePath}".Replace('\\', '/');
+            canonical = $"file:///{normalizedPath.TrimStart('/')}";
+        }
+
+        return CanonicalizeRepositoryUri(canonical, repoConfig.Path);
     }
 
     public override async Task<ClientLeaseSummary> HoldClientLease(IAsyncStreamReader<ClientLeaseBeat> requestStream, ServerCallContext context)
@@ -2039,5 +2463,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     private sealed record ExplainReadToolArguments(string? UriGlob, int TokenBudget);
 }
+
 
 

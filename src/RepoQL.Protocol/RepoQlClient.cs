@@ -1083,6 +1083,28 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
             return response;
         }, cancellationToken);
 
+    public Task<RawQueryResponse> ExecuteAsync(
+        string code,
+        string intent,
+        int tokenBudget = 0,
+        int timeoutMs = 0,
+        string? input = null,
+        CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            var request = new Contracts.ExecuteRequest
+            {
+                Code = code ?? string.Empty,
+                Intent = intent ?? string.Empty,
+                TokenBudget = tokenBudget,
+                TimeoutMs = timeoutMs,
+                Input = input ?? string.Empty
+            };
+
+            var response = await client.ExecuteAsync(request, deadline: ComputeDeadline(), cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+            return response;
+        }, cancellationToken);
+
     public Task<int> ShutdownHostAsync(CancellationToken cancellationToken = default)
         => InvokeWithReconnectAsync(async (client, ct) =>
         {

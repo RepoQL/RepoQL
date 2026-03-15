@@ -168,6 +168,16 @@ public interface IRepoQlClient : IAsyncDisposable
         int tokenBudget,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Execute JavaScript in a WASM sandbox and return structured results.
+    /// </summary>
+    Task<RawQueryResponse> ExecuteAsync(
+        string code,
+        string intent,
+        int tokenBudget = 0,
+        int timeoutMs = 0,
+        string? input = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Request the host process to shut down gracefully.

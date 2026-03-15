@@ -108,6 +108,7 @@ internal class McpCommands
                 .WithTools<ReadTool>()
                 .WithTools<ImportTool>()
                 .WithTools<CommandTool>()
+                .WithTools<ExecuteTool>()
                 .WithListResourceTemplatesHandler((ctx, ct) =>
                 {
                     ArgumentNullException.ThrowIfNull(ctx.Services);

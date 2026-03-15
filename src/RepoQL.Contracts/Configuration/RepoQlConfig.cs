@@ -16,6 +16,7 @@ public sealed class RepoQlConfig
     public HostSettings Host { get; set; } = new();
     public IndexingSettings Indexing { get; set; } = new();
     public McpSettings Mcp { get; set; } = new();
+    public SandboxSettings Sandbox { get; set; } = new();
     public DotnetSettings Dotnet { get; set; } = new();
     public CacheSettings Cache { get; set; } = new();
     public SearchSettings Search { get; set; } = new();
@@ -291,6 +292,45 @@ public sealed class RepoQlConfig
         public string? EnabledAgents { get; set; }
     }
 
+    public sealed class SandboxSettings
+    {
+        [Setting("Enable the JavaScript sandbox",
+            DefaultValue = "true")]
+        public bool? Enabled { get; set; }
+
+        [Setting("JavaScript sandbox timeout in milliseconds",
+            DefaultValue = "2000")]
+        public int? TimeoutMs { get; set; }
+
+        [Setting("JavaScript sandbox memory limit in bytes",
+            DefaultValue = "134217728")]
+        public int? MemoryLimitBytes { get; set; }
+
+        [Setting("Maximum JavaScript statements per execution",
+            DefaultValue = "10000")]
+        public int? MaxStatements { get; set; }
+
+        [Setting("URI patterns for allowed sandbox reads (comma-separated globs)",
+            DefaultValue = "")]
+        public string? ReadScopes { get; set; }
+
+        [Setting("URI patterns for allowed sandbox writes (comma-separated globs)",
+            DefaultValue = "")]
+        public string? WriteScopes { get; set; }
+
+        [Setting("URI patterns for allowed sandbox deletes (comma-separated globs)",
+            DefaultValue = "")]
+        public string? DeleteScopes { get; set; }
+
+        [Setting("Path to ffmpeg binary (searches PATH if not set)",
+            DefaultValue = "")]
+        public string? FfmpegPath { get; set; }
+
+        [Setting("FFmpeg operation timeout in milliseconds",
+            DefaultValue = "300000")]
+        public int? FfmpegTimeoutMs { get; set; }
+    }
+
     public sealed class DotnetSettings
     {
         [Setting("Enable deep Roslyn analysis (expensive)",
@@ -401,4 +441,3 @@ public sealed class RepoQlConfig
     }
 }
 #pragma warning restore CA1034
-
