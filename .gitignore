@@ -37,5 +37,7 @@ src/tests/RepoQL.Sarif.Tests/Fixtures/generated/
 sandbox/wasm/toolchain/
 sandbox/wasm/quickjs/
 sandbox/wasm/graphviz-obj/
+sandbox/wasm/graphviz-build/
 sandbox/wasm/resvg-wasi/target/
+sandbox/wasm/dist/pandoc.wasm
 .claude/Skills/Skills.zip
