@@ -1,7 +1,7 @@
-using System.ComponentModel;
-using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Linq;
+using CliWrap;
+using CliWrap.Buffered;
+using CliWrap.Exceptions;
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
@@ -232,7 +232,7 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             await RunGitAsync(["checkout", spec.Ref!], targetRoot, ct).ConfigureAwait(false);
 
             // Pull latest changes only when on a branch
-            if (IsOnBranch(targetRoot))
+            if (await IsOnBranchAsync(targetRoot, ct).ConfigureAwait(false))
             {
                 await FetchShallowWithFallbackAsync(["pull", "--shallow-since=1 year ago"],
                     ["pull", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
@@ -248,7 +248,7 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             _logger.LogInformation("[GitHub] Pulling latest changes on current branch");
             await FetchShallowWithFallbackAsync(["fetch", "origin", "--shallow-since=1 year ago"],
                 ["fetch", "origin", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
-            if (IsOnBranch(targetRoot))
+            if (await IsOnBranchAsync(targetRoot, ct).ConfigureAwait(false))
             {
                 await FetchShallowWithFallbackAsync(["pull", "--shallow-since=1 year ago"],
                     ["pull", "--depth=1"], targetRoot, ct).ConfigureAwait(false);
@@ -288,46 +288,29 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         }
     }
 
-    private bool IsOnBranch(string targetRoot)
+    private async Task<bool> IsOnBranchAsync(string targetRoot, CancellationToken ct)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "git",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            WorkingDirectory = targetRoot
-        };
-        startInfo.ArgumentList.Add("symbolic-ref");
-        startInfo.ArgumentList.Add("HEAD");
-
         try
         {
-            using var process = Process.Start(startInfo);
-            if (process is null)
+            var result = await Cli.Wrap("git")
+                .WithArguments(["symbolic-ref", "HEAD"])
+                .WithWorkingDirectory(targetRoot)
+                .WithValidation(CommandResultValidation.None)
+                .ExecuteBufferedAsync(ct).ConfigureAwait(false);
+
+            if (result.ExitCode != 0)
             {
-                _logger.LogWarning("[GitHub] Failed to start git to determine branch state at {Path}", targetRoot);
+                if (!string.IsNullOrWhiteSpace(result.StandardError))
+                    _logger.LogDebug("[GitHub] git symbolic-ref HEAD failed: {Stderr}", result.StandardError.Trim());
                 return false;
             }
 
-            process.WaitForExit();
-            var stdout = process.StandardOutput.ReadToEnd();
-            var stderr = process.StandardError.ReadToEnd();
-
-            if (process.ExitCode != 0)
-            {
-                if (!string.IsNullOrWhiteSpace(stderr))
-                {
-                    _logger.LogDebug("[GitHub] git symbolic-ref HEAD failed: {Stderr}", stderr.Trim());
-                }
-                return false;
-            }
-
-            if (!string.IsNullOrWhiteSpace(stdout))
-                _logger.LogDebug("[GitHub] git symbolic-ref HEAD returned: {Stdout}", stdout.Trim());
+            if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+                _logger.LogDebug("[GitHub] git symbolic-ref HEAD returned: {Stdout}", result.StandardOutput.Trim());
 
             return true;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogWarning(ex, "[GitHub] Failed to determine branch state at {Path}", targetRoot);
             return false;
@@ -405,102 +388,41 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         await RunGitAsync(depthArgs, _primary.RootPath, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Executes a git command.</summary>
-    private async Task RunGitAsync(
+    private Task RunGitAsync(IReadOnlyList<string> arguments, string workingDirectory, CancellationToken ct)
+        => RunCliAsync("git", arguments, workingDirectory, ct);
+
+    private Task RunGhAsync(IReadOnlyList<string> arguments, string workingDirectory, CancellationToken ct)
+        => RunCliAsync(GhExecutableName, arguments, workingDirectory, ct);
+
+    /// <summary>
+    /// Purpose: Execute a CLI command with proper stream handling.
+    /// Complexity: Uses CliWrap to avoid the classic Process deadlock where stdout/stderr
+    /// pipe buffers fill before the process is awaited.
+    /// </summary>
+    private async Task RunCliAsync(
+        string executable,
         IReadOnlyList<string> arguments,
         string workingDirectory,
         CancellationToken cancellationToken)
     {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = "git",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            WorkingDirectory = workingDirectory
-        };
+        _logger.LogDebug("Running {Executable} {Args}", executable, string.Join(' ', arguments));
 
-        foreach (var arg in arguments)
+        try
         {
-            startInfo.ArgumentList.Add(arg);
+            var result = await Cli.Wrap(executable)
+                .WithArguments(arguments)
+                .WithWorkingDirectory(workingDirectory)
+                .ExecuteBufferedAsync(cancellationToken).ConfigureAwait(false);
+
+            if (!string.IsNullOrWhiteSpace(result.StandardOutput))
+                _logger.LogDebug("{Stdout}", result.StandardOutput.Trim());
+            if (!string.IsNullOrWhiteSpace(result.StandardError))
+                _logger.LogDebug("{Stderr}", result.StandardError.Trim());
         }
-
-        using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        process.Exited += (_, _) => tcs.TrySetResult(true);
-
-        _logger.LogDebug("Running git {Args}", string.Join(' ', arguments));
-        if (!process.Start())
-            throw new InvalidOperationException("Failed to start git.");
-
-        using var registration = cancellationToken.Register(() =>
+        catch (CommandExecutionException ex)
         {
-            try { if (!process.HasExited) process.Kill(); }
-            catch { /* ignore */ }
-            tcs.TrySetCanceled(cancellationToken);
-        });
-
-        await tcs.Task.ConfigureAwait(false);
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"git exited with {process.ExitCode}: {stderr}");
+            throw new InvalidOperationException($"{executable} exited with {ex.ExitCode}: {ex.Message}", ex);
         }
-
-        if (!string.IsNullOrWhiteSpace(stdout))
-            _logger.LogDebug("{Stdout}", stdout.Trim());
-        if (!string.IsNullOrWhiteSpace(stderr))
-            _logger.LogDebug("{Stderr}", stderr.Trim());
-    }
-
-    /// <summary>Executes a GitHub CLI command and surfaces stdout/stderr for diagnostics.</summary>
-    private async Task RunGhAsync(
-        IReadOnlyList<string> arguments,
-        string workingDirectory,
-        CancellationToken cancellationToken)
-    {
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = GhExecutableName,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            WorkingDirectory = workingDirectory
-        };
-
-        foreach (var arg in arguments)
-        {
-            startInfo.ArgumentList.Add(arg);
-        }
-
-        using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        process.Exited += (_, _) => tcs.TrySetResult(true);
-
-        _logger.LogInformation("Running gh {Args}", string.Join(' ', arguments));
-        if (!process.Start())
-            throw new InvalidOperationException("Failed to start GitHub CLI (gh).");
-
-        using var registration = cancellationToken.Register(() =>
-        {
-            try { if (!process.HasExited) process.Kill(); }
-            catch { /* ignore */ }
-            tcs.TrySetCanceled(cancellationToken);
-        });
-
-        await tcs.Task.ConfigureAwait(false);
-        var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-        var stderr = await process.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"GitHub CLI (gh) exited with {process.ExitCode}: {stderr}");
-        }
-
-        if (!string.IsNullOrWhiteSpace(stdout))
-            _logger.LogDebug("{Stdout}", stdout.Trim());
-        if (!string.IsNullOrWhiteSpace(stderr))
-            _logger.LogDebug("{Stderr}", stderr.Trim());
     }
 
     /// <summary>Normalizes a GitHub URI (custom scheme or https) into a repository specification.</summary>
@@ -583,12 +505,15 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
         return reference.Length == 0 ? null : reference;
     }
 
+    private static readonly string GhNotFoundMessage =
+        $"GitHub CLI ({GhExecutableName}) is required for imports but was not found. Install it from https://cli.github.com/ and ensure it is on PATH.";
+
     private static void EnsureGhAvailable()
     {
         if (_ghChecked)
         {
             if (!_ghAvailable)
-                throw new InvalidOperationException("GitHub CLI (gh) is required for imports but was not found. Install it from https://cli.github.com/ and ensure it is on PATH.");
+                throw new InvalidOperationException(GhNotFoundMessage);
             return;
         }
 
@@ -597,34 +522,27 @@ public sealed class GithubRepositoryImporter : IVirtualFileSystemImporter
             if (_ghChecked)
             {
                 if (!_ghAvailable)
-                    throw new InvalidOperationException("GitHub CLI (gh) is required for imports but was not found. Install it from https://cli.github.com/ and ensure it is on PATH.");
+                    throw new InvalidOperationException(GhNotFoundMessage);
                 return;
             }
 
             try
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = GhExecutableName,
-                    RedirectStandardError = true,
-                    RedirectStandardOutput = true
-                };
-                psi.ArgumentList.Add("--version");
-                using var process = Process.Start(psi);
-                if (process is null)
-                    throw new InvalidOperationException("Failed to start GitHub CLI (gh).");
-                process.WaitForExit();
-                if (process.ExitCode != 0)
-                {
-                    var stderr = process.StandardError.ReadToEnd();
-                    throw new InvalidOperationException($"GitHub CLI (gh) invocation failed: {stderr}");
-                }
-                _ghAvailable = true;
+                // Synchronous one-shot check — no async needed, result is cached forever.
+                var result = Cli.Wrap(GhExecutableName)
+                    .WithArguments(["--version"])
+                    .WithValidation(CommandResultValidation.None)
+                    .ExecuteBufferedAsync()
+                    .GetAwaiter().GetResult();
+
+                _ghAvailable = result.ExitCode == 0;
+                if (!_ghAvailable)
+                    throw new InvalidOperationException(GhNotFoundMessage);
             }
-            catch (Exception ex) when (ex is Win32Exception or FileNotFoundException)
+            catch (Exception ex) when (ex is not InvalidOperationException)
             {
                 _ghAvailable = false;
-                throw new InvalidOperationException("GitHub CLI (gh) is required for imports but was not found. Install it from https://cli.github.com/ and ensure it is on PATH.", ex);
+                throw new InvalidOperationException(GhNotFoundMessage, ex);
             }
             finally
             {

@@ -18,6 +18,7 @@
     </ItemGroup>
 
     <ItemGroup>
+      <PackageReference Include="CliWrap" />
       <PackageReference Include="DotNext.Threading" />
       <PackageReference Include="DuckDB.NET.Data.Full" />
       <PackageReference Include="LibGit2Sharp" />
