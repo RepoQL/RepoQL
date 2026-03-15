@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <Version>1.5.0</Version>
+        <Version>1.5.1</Version>
         <TargetFramework>net10.0</TargetFramework>
         <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
         <OutputType>Exe</OutputType>
@@ -154,6 +154,7 @@
     <ProjectReference Include="..\RepoQL.Read\RepoQL.Read.csproj" />
     <ProjectReference Include="..\RepoQL.Commands\RepoQL.Commands.csproj" />
     <ProjectReference Include="..\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" />
+    <ProjectReference Include="..\RepoQL.Sandbox\RepoQL.Sandbox.csproj" />
   </ItemGroup>
 
     
