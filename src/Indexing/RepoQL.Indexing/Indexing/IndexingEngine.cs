@@ -358,13 +358,23 @@ public partial class IndexingEngine : IAsyncDisposable
         if (!_requeueRequested.TryRemove(key, out options))
             return;
 
+        CancellationToken shutdownToken;
+        try
+        {
+            shutdownToken = Shutdown.Token;
+        }
+        catch (ObjectDisposedException)
+        {
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             try
             {
-                await EnqueueIndexItemAsync(new IndexItem(completedItem.RawArtifact, options), Shutdown.Token).ConfigureAwait(false);
+                await EnqueueIndexItemAsync(new IndexItem(completedItem.RawArtifact, options), shutdownToken).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
+            catch (OperationCanceledException) when (shutdownToken.IsCancellationRequested)
             {
             }
             catch (Exception ex)

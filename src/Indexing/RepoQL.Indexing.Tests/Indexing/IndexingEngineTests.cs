@@ -482,7 +482,7 @@ public class IndexingEngineTests
     public async Task Given_DeferredRetryPending_When_SameUriEnqueuedAgain_Then_FreshHotPathEnqueueIsRejected(CancellationToken token)
     {
         var releaseDeferred = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var deferredStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deferredCompleted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var uri = "file:///repo/dedup-timeout.md";
 
         var context = IndexingEngineTestFactory.Create(builder =>
@@ -509,8 +509,14 @@ public class IndexingEngineTests
                 }
                 else
                 {
-                    deferredStarted.TrySetResult(true);
-                    await releaseDeferred.Task.WaitAsync(ct).ConfigureAwait(false);
+                    try
+                    {
+                        await releaseDeferred.Task.WaitAsync(ct).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        deferredCompleted.TrySetResult(true);
+                    }
                 }
 
                 return PipelineResult.Success;
@@ -534,7 +540,7 @@ public class IndexingEngineTests
         duplicate.Should().BeFalse();
 
         releaseDeferred.TrySetResult(true);
-        await deferredStarted.Task.WaitAsync(timeoutWait.Token);
+        await deferredCompleted.Task.WaitAsync(timeoutWait.Token);
     }
 
     [Test]
