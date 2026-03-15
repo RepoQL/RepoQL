@@ -71,6 +71,7 @@ interface SnapshotResponse {
     stages: Array<{ name: string; busy: boolean; queued: number; inProgress: number }>;
     reindexing: boolean;
     writerPending: boolean;
+    idleProcessing?: IdleProcessingEvent | null;
   };
   operations: Array<{
     id: string;
@@ -138,6 +139,7 @@ interface PipelineEvent {
   ready?: boolean;
   reindexing?: boolean;
   writerPending?: boolean;
+  idleProcessing?: IdleProcessingEvent | null;
 }
 
 interface SnapshotHost {
@@ -151,6 +153,27 @@ interface SnapshotPipeline {
   stages?: Array<{ name: string; busy: boolean; queued: number; inProgress: number }> | null;
   reindexing?: boolean | null;
   writerPending?: boolean | null;
+  idleProcessing?: IdleProcessingEvent | null;
+}
+
+interface IdleProcessingStageEvent {
+  name: string;
+  busy: boolean;
+  processedTotal?: number;
+  avgDurationMs?: number;
+  peakDurationMs?: number;
+}
+
+interface IdleProcessingEvent {
+  active?: boolean;
+  currentPhase?: string | null;
+  progress?: number;
+  total?: number;
+  avgDurationMs?: number;
+  lastRun?: string | null;
+  lastRunDurationSec?: number;
+  lastRunItems?: number;
+  stages?: IdleProcessingStageEvent[];
 }
 
 interface IndexingEvent extends SnapshotIndexing {}
@@ -946,7 +969,10 @@ export function useRepoQLDashboard(): {
     const phase = derivePhaseFromFiles(fd.stateCounts, ready, reindexing);
     const stageRate = (pe?.stages ?? snap?.pipeline?.stages ?? [])
       .reduce((sum, s) => sum + ((s as PipelineStageEvent).throughputPerSec ?? 0), 0);
-    const stages = mapPipelineStages(pe?.stages ?? snap?.pipeline?.stages ?? []);
+    const stages = mapPipelineStages(
+      pe?.stages ?? snap?.pipeline?.stages ?? [],
+      pe?.idleProcessing ?? snap?.pipeline?.idleProcessing ?? null,
+    );
 
     return {
       title: fd.title,
@@ -1007,18 +1033,64 @@ function derivePhaseFromFiles(
 }
 
 function mapPipelineStages(
-  stages: Array<{ name: string; busy: boolean; queued: number; inProgress: number }> | null | undefined,
+  stages: Array<{
+    name: string;
+    busy: boolean;
+    queued: number;
+    inProgress: number;
+    processedTotal?: number;
+    throughputPerSec?: number;
+  }> | null | undefined,
+  idleProcessing: IdleProcessingEvent | null,
 ): PipelineStageLoad[] {
-  if (!stages || stages.length === 0) {
-    return [];
+  const mapped = (stages ?? [])
+    .filter((stage) => stage.name.toLowerCase() !== 'writer')
+    .map((stage) => ({
+      name: stage.name,
+      busy: stage.busy,
+      queued: stage.queued,
+      inProgress: stage.inProgress,
+      processedTotal: stage.processedTotal,
+      throughputPerSec: stage.throughputPerSec,
+    }));
+
+  const writerStage = (stages ?? []).find((stage) => stage.name.toLowerCase() === 'writer');
+  if (writerStage || idleProcessing) {
+    const idleProcessedTotal = (idleProcessing?.stages ?? []).reduce(
+      (sum, stage) => sum + (stage.processedTotal ?? 0),
+      0,
+    );
+
+    mapped.push({
+      name: 'IdleProcessing',
+      label: formatIdleProcessingLabel(idleProcessing?.currentPhase),
+      busy: idleProcessing?.active ?? writerStage?.busy ?? false,
+      queued: writerStage?.queued ?? Math.max(0, (idleProcessing?.total ?? 0) - (idleProcessing?.progress ?? 0)),
+      inProgress: writerStage?.inProgress ?? (idleProcessing?.active ? 1 : 0),
+      processedTotal: idleProcessedTotal || writerStage?.processedTotal,
+      throughputPerSec: writerStage?.throughputPerSec,
+      phase: idleProcessing?.currentPhase ?? null,
+      progress: idleProcessing?.progress ?? null,
+      total: idleProcessing?.total ?? null,
+    });
   }
 
-  return stages.map((stage) => ({
-    name: stage.name,
-    busy: stage.busy,
-    queued: stage.queued,
-    inProgress: stage.inProgress,
-  }));
+  return mapped;
+}
+
+function formatIdleProcessingLabel(phase: string | null | undefined): string {
+  switch ((phase ?? '').toLowerCase()) {
+    case 'prune':
+      return 'Pruning';
+    case 'structure_embedding':
+      return 'Structure embedding';
+    case 'vector_refresh':
+      return 'Vector refresh';
+    case 'multi_file_analysis':
+      return 'Multi-file analysis';
+    default:
+      return 'Idle processing';
+  }
 }
 
 // --- Utilities ---

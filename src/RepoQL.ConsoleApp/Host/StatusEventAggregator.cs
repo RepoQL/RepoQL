@@ -222,8 +222,9 @@ public sealed class StatusEventAggregator : IDisposable
         // Legacy stages for backward compatibility
         foreach (var stage in snapshot.Stages)
         {
-            var metricName = MapStageToMetricName(stage.Stage);
-            var metrics = _stageMetrics.GetSnapshot(metricName, stage.Queued, stage.InProgress);
+            var metrics = stage.Stage == CoordinatorPipelineStage.Writer
+                ? BuildIdleAggregateMetrics(idleProcessing, stage)
+                : _stageMetrics.GetSnapshot(MapStageToMetricName(stage.Stage), stage.Queued, stage.InProgress);
 
             var status = new StageStatus
             {
@@ -253,6 +254,31 @@ public sealed class StatusEventAggregator : IDisposable
         }
 
         return evt;
+    }
+
+    private static StageMetricsListener.StageSnapshot BuildIdleAggregateMetrics(
+        StageMetricsListener.IdleProcessingSnapshot idleProcessing,
+        PipelineStageStatusSnapshot stage)
+    {
+        var processedTotal = idleProcessing.Stages.Sum(s => s.ProcessedTotal);
+        var peakDurationMs = idleProcessing.Stages.Max(s => s.PeakDurationMs);
+        var currentPhase = idleProcessing.Stages.FirstOrDefault(s => s.Busy);
+        var throughputPerSec = idleProcessing.Active && idleProcessing.LastRunDurationSec > 0
+            ? Math.Max(0, idleProcessing.Progress) / Math.Max(0.1, idleProcessing.LastRunDurationSec)
+            : 0;
+
+        return new StageMetricsListener.StageSnapshot
+        {
+            AvgDurationMs = currentPhase?.AvgDurationMs ?? idleProcessing.AvgDurationMs,
+            PeakDurationMs = peakDurationMs,
+            ProcessedTotal = processedTotal,
+            ThroughputPerSec = throughputPerSec,
+            LastActive = idleProcessing.LastRun,
+            LastRunDurationSec = idleProcessing.LastRunDurationSec,
+            LastRunItems = idleProcessing.LastRunItems,
+            LatencySamples = [],
+            QueueSamples = [(uint)Math.Max(0, stage.Queued)],
+        };
     }
 
     private static HotPathStatus MapHotPath(StageMetricsListener.HotPathSnapshot snapshot)

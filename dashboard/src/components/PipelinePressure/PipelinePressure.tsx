@@ -13,6 +13,10 @@ interface StageStatus {
   queued: number;
   inProgress: number;
   busy: boolean;
+  processedTotal: number;
+  phase: string | null;
+  progress: number | null;
+  totalItems: number | null;
   total: number;
   tone: 'blocked' | 'active' | 'idle';
 }
@@ -29,10 +33,14 @@ export function PipelinePressure(props: PipelinePressureProps) {
 
         return {
           name: stage.name,
-          label: formatStageName(stage.name),
+          label: stage.label ?? formatStageName(stage.name),
           queued: stage.queued,
           inProgress: stage.inProgress,
           busy: stage.busy,
+          processedTotal: stage.processedTotal ?? 0,
+          phase: stage.phase ?? null,
+          progress: stage.progress ?? null,
+          totalItems: stage.total ?? null,
           total,
           tone,
         };
@@ -134,6 +142,16 @@ function toneRank(tone: StageStatus['tone']): number {
 }
 
 function describeStage(stage: StageStatus): string {
+  if (stage.name === 'IdleProcessing') {
+    if (stage.phase && stage.progress !== null && stage.totalItems !== null && stage.totalItems > 0) {
+      return `${formatIdlePhase(stage.phase)} ${stage.progress}/${stage.totalItems}`;
+    }
+
+    if (stage.phase) {
+      return formatIdlePhase(stage.phase);
+    }
+  }
+
   if (stage.queued > 0) {
     return `${stage.queued} queued`;
   }
@@ -165,9 +183,26 @@ function formatStageName(name: string): string {
       return 'Hot path';
     case 'analysis':
       return 'Analysis';
+    case 'idleprocessing':
+      return 'Idle processing';
     case 'writer':
-      return 'Writer';
+      return 'Idle processing';
     default:
       return name;
+  }
+}
+
+function formatIdlePhase(phase: string): string {
+  switch (phase.toLowerCase()) {
+    case 'prune':
+      return 'pruning';
+    case 'structure_embedding':
+      return 'structure embedding';
+    case 'vector_refresh':
+      return 'vector refresh';
+    case 'multi_file_analysis':
+      return 'multi-file analysis';
+    default:
+      return phase.replace(/_/g, ' ').toLowerCase();
   }
 }

@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http.Features;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Diagnostics;
+using RepoQL.Core.Metrics;
 using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Hosting;
 
@@ -44,11 +45,16 @@ internal static class DashboardEndpoints
         HostState hostState,
         DuckDbDataStore dataStore,
         DashboardQueryActivityTracker queryActivity,
-        IIndexingDiagnosticsProvider diagnostics)
+        IIndexingDiagnosticsProvider diagnostics,
+        StageMetricsListener stageMetrics)
     {
         var pipelineStatus = coordinator.GetPipelineStatus();
         var leases = LeaseRegistry.Snapshot();
         var activeOps = operations.ActiveOperations;
+        var parsingStage = pipelineStatus.Stages.FirstOrDefault(s => s.Stage == CoordinatorPipelineStage.Parsing);
+        var writerStage = pipelineStatus.Stages.FirstOrDefault(s => s.Stage == CoordinatorPipelineStage.Writer);
+        var hotPath = stageMetrics.GetHotPathSnapshot(parsingStage?.Queued ?? 0, parsingStage?.InProgress ?? 0);
+        var idleProcessing = stageMetrics.GetIdleProcessingSnapshot(writerStage?.InProgress ?? 0, writerStage?.Queued ?? 0);
 
         // Load token counts from artifact table — keyed by node URI.
         var tokenCounts = LoadTokenCounts(dataStore);
@@ -73,6 +79,34 @@ internal static class DashboardEndpoints
                 }).ToArray(),
                 reindexing = pipelineStatus.IsReindexing,
                 writerPending = pipelineStatus.WriterPending,
+                hotPath = new
+                {
+                    active = hotPath.Active,
+                    queued = hotPath.Queued,
+                    inProgress = hotPath.InProgress,
+                    throughputPerSec = hotPath.ThroughputPerSec,
+                },
+                idleProcessing = new
+                {
+                    active = idleProcessing.Active,
+                    currentPhase = idleProcessing.CurrentPhase,
+                    progress = idleProcessing.Progress,
+                    total = idleProcessing.Total,
+                    avgDurationMs = idleProcessing.AvgDurationMs,
+                    lastRun = idleProcessing.LastRun == default
+                        ? (DateTimeOffset?)null
+                        : idleProcessing.LastRun,
+                    lastRunDurationSec = idleProcessing.LastRunDurationSec,
+                    lastRunItems = idleProcessing.LastRunItems,
+                    stages = idleProcessing.Stages.Select(stage => new
+                    {
+                        name = stage.Stage,
+                        busy = stage.Busy,
+                        processedTotal = stage.ProcessedTotal,
+                        avgDurationMs = stage.AvgDurationMs,
+                        peakDurationMs = stage.PeakDurationMs,
+                    }).ToArray(),
+                },
             },
             leases = leases.Select(l => new
             {
@@ -465,6 +499,32 @@ internal static class DashboardEndpoints
                         processedTotal = s.ProcessedTotal,
                         throughputPerSec = s.ThroughputPerSec,
                     }).ToArray(),
+                    hotPath = new
+                    {
+                        active = evt.Pipeline.HotPath.Active,
+                        queued = evt.Pipeline.HotPath.Queued,
+                        inProgress = evt.Pipeline.HotPath.InProgress,
+                        throughputPerSec = evt.Pipeline.HotPath.ThroughputPerSec,
+                    },
+                    idleProcessing = new
+                    {
+                        active = evt.Pipeline.IdleProcessing.Active,
+                        currentPhase = evt.Pipeline.IdleProcessing.CurrentPhase,
+                        progress = evt.Pipeline.IdleProcessing.Progress,
+                        total = evt.Pipeline.IdleProcessing.Total,
+                        avgDurationMs = evt.Pipeline.IdleProcessing.AvgDurationMs,
+                        lastRun = evt.Pipeline.IdleProcessing.LastRun?.ToDateTimeOffset(),
+                        lastRunDurationSec = evt.Pipeline.IdleProcessing.LastRunDurationSec,
+                        lastRunItems = evt.Pipeline.IdleProcessing.LastRunItems,
+                        stages = evt.Pipeline.IdleProcessing.Stages.Select(s => new
+                        {
+                            name = s.Stage.ToString(),
+                            busy = s.Busy,
+                            processedTotal = s.ProcessedTotal,
+                            avgDurationMs = s.AvgDurationMs,
+                            peakDurationMs = s.PeakDurationMs,
+                        }).ToArray(),
+                    },
                 }, JsonOptions);
                 break;
 

@@ -60,6 +60,7 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     private int _skipEpochCompletionState;
     private int _deferredRetryState;
     private string? _currentOperation;
+    private string? _failureDetail;
 
     /// <summary>
     ///     The status of the item. Anything besides null is considered a final, terminal state
@@ -121,9 +122,16 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
     internal bool IsDeferredRetry => Volatile.Read(ref _deferredRetryState) == 1;
 
     internal string CurrentOperation => Volatile.Read(ref _currentOperation) ?? string.Empty;
+    internal string FailureDetail => Volatile.Read(ref _failureDetail) ?? string.Empty;
 
     internal void SetCurrentOperation(string? operation)
         => Volatile.Write(ref _currentOperation, operation);
+
+    internal void SetFailureDetail(string? detail)
+        => Volatile.Write(ref _failureDetail, detail);
+
+    internal void ClearFailureDetail()
+        => Volatile.Write(ref _failureDetail, null);
 
     internal void MarkDeferredRetry()
     {

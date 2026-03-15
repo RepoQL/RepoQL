@@ -11,6 +11,7 @@ using RepoQL.Indexing.Indexing.Commit;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.Pipelines.Analysis;
 using RepoQL.Indexing.Indexing.Pipelines.Classification;
+using RepoQL.Indexing.Indexing.Pipelines.Parsing;
 using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Indexing.Indexing.State;
 using Microsoft.Extensions.FileProviders;
@@ -431,7 +432,9 @@ public class IndexingEngineTests
     public async Task Given_HotPathWorkIgnoresCancellation_When_TimeoutExpires_Then_DeferredRetryStillStarts(CancellationToken token)
     {
         var neverCompletes = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDeferred = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var deferredStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var deferredCompleted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var context = IndexingEngineTestFactory.Create(builder =>
         {
@@ -449,6 +452,7 @@ public class IndexingEngineTests
             .ReturnsLazily(async call =>
             {
                 var item = call.GetArgument<IndexItem>(0);
+                var ct = call.GetArgument<CancellationToken>(1);
                 if (!item.IsDeferredRetry)
                 {
                     await neverCompletes.Task.ConfigureAwait(false);
@@ -456,6 +460,15 @@ public class IndexingEngineTests
                 }
 
                 deferredStarted.TrySetResult(true);
+                try
+                {
+                    await releaseDeferred.Task.WaitAsync(ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    deferredCompleted.TrySetResult(true);
+                }
+
                 return PipelineResult.Success;
             });
 
@@ -463,17 +476,25 @@ public class IndexingEngineTests
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/non-cooperative-timeout.md"), IndexItemOptions.Default, token);
 
         using var settle = CancellationTokenSource.CreateLinkedTokenSource(token);
-        settle.CancelAfter(TimeSpan.FromSeconds(5));
-        while (engine.HotPathTimeoutCount == 0 || engine.DeferredToIdleCount == 0)
+        settle.CancelAfter(TimeSpan.FromSeconds(10));
+        try
         {
-            await Task.Delay(25, settle.Token);
+            while (engine.HotPathTimeoutCount == 0 || engine.DeferredToIdleCount == 0)
+            {
+                await Task.Delay(25, settle.Token);
+            }
+
+            await deferredStarted.Task.WaitAsync(settle.Token);
+            engine.HotPathTimeoutCount.Should().Be(1);
+            engine.DeferredToIdleCount.Should().Be(1);
         }
-
-        await deferredStarted.Task.WaitAsync(settle.Token);
-        engine.HotPathTimeoutCount.Should().Be(1);
-        engine.DeferredToIdleCount.Should().Be(1);
-
-        neverCompletes.TrySetResult(true);
+        finally
+        {
+            releaseDeferred.TrySetResult(true);
+            neverCompletes.TrySetResult(true);
+            if (deferredStarted.Task.IsCompleted)
+                await deferredCompleted.Task.WaitAsync(token).ConfigureAwait(false);
+        }
     }
 
     [Test]
@@ -1729,6 +1750,45 @@ public class IndexingEngineTests
         registry.Should().ContainKey(fileUri);
         registry[fileUri].Status.Should().Be(UriStatus.Failed);
         registry[fileUri].Error.Should().Contain("classification");
+    }
+
+    [Test]
+    [Timeout(10_000)]
+    [DisplayName("UriRegistry preserves stage failure detail when pipeline returns error")]
+    public async Task Given_PipelineReturnsErrorWithFailureDetail_When_IndexingFails_Then_RegistryShowsSpecificMessage(CancellationToken token)
+    {
+        var registry = new UriRegistry();
+        const string fileUriStr = "file:///repo/failing-parser.md";
+        var fileUri = CreateUri(fileUriStr);
+
+        var parser = new ParsingPipeline(
+            [new ThrowingParser("front matter was malformed")],
+            NullLogger<ParsingPipeline>.Instance);
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithUriRegistry(registry);
+            builder.WithParser(parser);
+        });
+
+        var item = IndexingTestItemFactory.CreateIndexItem(uri: fileUriStr);
+
+        await context.Engine.IndexItemAsync(item, token);
+
+        registry.Should().ContainKey(fileUri);
+        registry[fileUri].Status.Should().Be(UriStatus.Failed);
+        registry[fileUri].Error.Should().Be("Parsing: front matter was malformed");
+    }
+
+    private sealed class ThrowingParser(string message) : IAsyncPipeline<IClassifiedArtifact, Records?>
+    {
+        public Task<(Records? Result, PipelineResult PipelineStatus)> ProcessAsync(
+            IClassifiedArtifact item,
+            CallNextPipeline<IClassifiedArtifact, Records?> next,
+            CancellationToken cancellationToken)
+        {
+            throw new InvalidOperationException(message);
+        }
     }
 
     private static AnalysisHarness CreateAnalysisHarness(bool gateParsing = false) =>

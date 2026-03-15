@@ -83,6 +83,8 @@ public class ParsingPipeline(IEnumerable<IAsyncPipeline<IClassifiedArtifact, Rec
             catch (Exception ex)
             {
                 Logger.LogError(ex, "{Uri} failed during lightweight parsing", item.Uri);
+                if (item is IndexItem failedItem)
+                    failedItem.SetFailureDetail($"Parsing: {ex.Message}");
                 return PipelineResult.Error;
             }
         }

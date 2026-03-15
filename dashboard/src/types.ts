@@ -139,9 +139,15 @@ export interface PipelineState {
 
 export interface PipelineStageLoad {
   name: string;
+  label?: string;
   busy: boolean;
   queued: number;
   inProgress: number;
+  processedTotal?: number;
+  throughputPerSec?: number;
+  phase?: string | null;
+  progress?: number | null;
+  total?: number | null;
 }
 
 export interface IndexingWorkerEntry {

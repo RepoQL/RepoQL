@@ -758,6 +758,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
                 currentStage = "pipeline";
                 item.SetCurrentOperation(currentStage);
+                item.ClearFailureDetail();
                 var result = await ApplyIndexerPipeline(item, cancellationToken);
                 if (result == PipelineResult.Cancelled && cancellationToken.IsCancellationRequested && !Shutdown.IsCancellationRequested)
                     throw new OperationCanceledException(cancellationToken);
@@ -766,7 +767,7 @@ public partial class IndexingEngine : IAsyncDisposable
                 status = result.ToString();
                 RecordResult(item.Epoch, result);
                 if (result == PipelineResult.Error)
-                    UriRegistry?.SetFailed(item.Uri, $"pipeline: {currentStage} returned {result}");
+                    UriRegistry?.SetFailed(item.Uri, BuildPipelineFailureMessage(item, currentStage, result));
                 if (result != PipelineResult.Success)
                     return;
 
@@ -1804,6 +1805,18 @@ public partial class IndexingEngine : IAsyncDisposable
         });
 
         return pipelineResult;
+    }
+
+    private static string BuildPipelineFailureMessage(IndexItem item, string currentStage, PipelineResult result)
+    {
+        if (!string.IsNullOrWhiteSpace(item.FailureDetail))
+            return item.FailureDetail;
+
+        var stage = string.IsNullOrWhiteSpace(item.CurrentOperation) || item.CurrentOperation == "pipeline"
+            ? currentStage
+            : item.CurrentOperation;
+
+        return $"{stage}: returned {result}";
     }
 
     private bool ShouldAbortAtStageBoundary(RepoUri uri, out UriStatus status)

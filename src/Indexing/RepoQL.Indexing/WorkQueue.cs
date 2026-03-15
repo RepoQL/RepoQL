@@ -218,14 +218,16 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
         if (startedNow == _readerCount)
             _workersReadyTcs.TrySetResult(true);
 
+        var lifetimeToken = _lifetimeCts.Token;
+
         while (true)
         {
             T item;
             try
             {
-                item = _channel.Reader.ReadAsync(_lifetimeCts.Token).AsTask().GetAwaiter().GetResult();
+                item = _channel.Reader.ReadAsync(lifetimeToken).AsTask().GetAwaiter().GetResult();
             }
-            catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+            catch (OperationCanceledException) when (lifetimeToken.IsCancellationRequested)
             {
                 break;
             }
@@ -241,7 +243,7 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
 
             Interlocked.Increment(ref _busy);
             var startTime = Stopwatch.GetTimestamp();
-            using var itemCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCts.Token);
+            using var itemCts = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
             var inFlightInfo = new InFlightItem(item, workerIndex, DateTimeOffset.UtcNow, startTime, itemCts);
             _inFlightItems[workerIndex] = inFlightInfo;
 
@@ -260,7 +262,7 @@ public sealed class WorkQueue<T> : IAsyncDisposable where T : notnull
             {
                 // Timed-out work is already accounted for by the monitor.
             }
-            catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
+            catch (OperationCanceledException) when (lifetimeToken.IsCancellationRequested)
             {
                 break;
             }

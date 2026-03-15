@@ -61,7 +61,10 @@ public abstract class PipelinePhase<TInput, TResult> where TInput : IDiscoveredA
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "{Uri} failed during the {}", item.Uri);
+            if (item is IndexItem indexItem)
+                indexItem.SetFailureDetail($"{Name}: {ex.Message}");
+
+            Logger.LogError(ex, "[{Phase}] {Uri} failed", Name, item.Uri);
             return PipelineResult.Error;
         }
         finally
