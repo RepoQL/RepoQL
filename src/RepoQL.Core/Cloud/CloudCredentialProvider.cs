@@ -133,14 +133,49 @@ public sealed class CloudCredentialProvider : ICloudCredentialProvider, IDisposa
                 }
             }
 
-            var refreshed = await RefreshTokenWithLockAsync(cancellationToken).ConfigureAwait(false);
-            _cachedToken = refreshed;
-            return refreshed.AccessToken;
+            return await RefreshOrFallbackAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             _refreshGate.Release();
         }
+    }
+
+    private async Task<string> RefreshOrFallbackAsync(CancellationToken cancellationToken)
+    {
+        if (await HasCredentialMaterialAsync(cancellationToken).ConfigureAwait(false))
+        {
+            try
+            {
+                var refreshed = await RefreshTokenWithLockAsync(cancellationToken).ConfigureAwait(false);
+                _cachedToken = refreshed;
+                return refreshed.AccessToken;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // OAuth material exists but refresh failed (stale session, revoked token, etc.).
+                // Fall through to API key if available rather than locking the user out.
+                var apiKey = _config.Settings.Cloud.ApiKey;
+                if (!string.IsNullOrWhiteSpace(apiKey))
+                {
+                    _logger.LogDebug(ex, "OAuth refresh failed; falling back to cloud.api_key.");
+                    return apiKey.Trim();
+                }
+
+                throw;
+            }
+        }
+
+        // No OAuth credentials at all — fall back to legacy API key.
+        var fallbackKey = _config.Settings.Cloud.ApiKey;
+        if (!string.IsNullOrWhiteSpace(fallbackKey))
+            return fallbackKey.Trim();
+
+        throw new InvalidOperationException(NotAuthenticatedMessage);
     }
 
     internal async Task<bool> HasCredentialMaterialAsync(CancellationToken cancellationToken = default)
@@ -478,18 +513,9 @@ public sealed class CloudCredentialProvider : ICloudCredentialProvider, IDisposa
 }
 
 /// <summary>
-/// Purpose: Provide the legacy static bearer token path while cloud clients migrate to OAuth credentials.
-/// Complexity: Single immutable token string.
-/// </summary>
-public sealed class StaticCloudCredentialProvider(string token) : ICloudCredentialProvider
-{
-    public Task<string> GetTokenAsync(CancellationToken cancellationToken = default)
-        => Task.FromResult(token);
-}
-
-/// <summary>
 /// Purpose: Register a shared cloud credential provider for RepoQL client-side cloud services.
-/// Complexity: Chooses between dynamic OAuth credentials and the legacy API key fallback.
+/// Complexity: Always registers CloudCredentialProvider which evaluates credentials lazily —
+/// OAuth session is preferred at call time, with API key as fallback.
 /// </summary>
 public static class CloudCredentialServiceCollectionExtensions
 {
@@ -497,17 +523,10 @@ public static class CloudCredentialServiceCollectionExtensions
     {
         services.TryAddSingleton<CloudAuthSessionStore>();
         services.TryAddSingleton<ICloudCredentialProvider?>(sp =>
-        {
-            var resolvedConfig = sp.GetRequiredService<ResolvedConfig>();
-            var apiKey = resolvedConfig.Settings.Cloud.ApiKey;
-            if (!string.IsNullOrWhiteSpace(apiKey))
-                return new StaticCloudCredentialProvider(apiKey.Trim());
-
-            return new CloudCredentialProvider(
-                resolvedConfig,
+            new CloudCredentialProvider(
+                sp.GetRequiredService<ResolvedConfig>(),
                 sp.GetRequiredService<CloudAuthSessionStore>(),
-                sp.GetService<ILogger<CloudCredentialProvider>>());
-        });
+                sp.GetService<ILogger<CloudCredentialProvider>>()));
 
         return services;
     }
