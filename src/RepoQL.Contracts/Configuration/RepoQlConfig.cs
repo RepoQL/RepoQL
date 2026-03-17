@@ -72,7 +72,7 @@ public sealed class RepoQlConfig
             LegacyEnvVar = "REPOQL_EMBED_BATCH_SIZE")]
         public int? BatchSize { get; set; }
 
-        [Setting("Concurrency for vector indexing",
+        [Setting("Concurrency for embedding refresh",
             LegacyEnvVar = "REPOQL_EMBED_CONCURRENCY")]
         public int? Concurrency { get; set; }
 

@@ -122,7 +122,7 @@ public static class IndexingAssertionExtensions
         }
     }
 
-    public static void ShouldHaveAppliedVectorDeletes(this IVectorIndexCoordinator coordinator, IReadOnlyList<RepoUri> uris)
+    public static void ShouldHaveAppliedEmbeddingDeletes(this IEmbeddingCoordinator coordinator, IReadOnlyList<RepoUri> uris)
     {
         ArgumentNullException.ThrowIfNull(coordinator);
         ArgumentNullException.ThrowIfNull(uris);
@@ -136,7 +136,7 @@ public static class IndexingAssertionExtensions
             .MustHaveHappenedOnceExactly();
     }
 
-    public static void ShouldHaveAppliedVectors(this IVectorIndexCoordinator coordinator, InvocationExpectation expectation)
+    public static void ShouldHaveAppliedEmbeddings(this IEmbeddingCoordinator coordinator, InvocationExpectation expectation)
     {
         ArgumentNullException.ThrowIfNull(coordinator);
 

@@ -47,12 +47,12 @@ Each pipeline stage is wrapped by `StageContext`, which accepts `(busyFlag, idle
 | --- | --- | --- |
 | 1. Prune | `IArtifactPruner` | Works on the batch of pending `IndexItem`s. Should be fast; avoid hitting disk per file. |
 | 2. Delete stale docs | `DeleteStaleDocumentsAsync` | Writes `WriteOperationType.DeleteDocument`. `OnCommitted` updates catalog. |
-| 3. Vector refresh | `IVectorIndexCoordinator` | Always apply deletes before inserts/updates. `document_embedding` table no longer uses FK constraints; deletes must proactively clear rows. |
+| 3. Embedding refresh | `IEmbeddingCoordinator` | Always apply deletes before inserts/updates. `document_embedding` table no longer uses FK constraints; deletes must proactively clear rows. |
 | 4. Multi-file analysis | `MultiFileAnalysisPipeline` | Runs in parallel with `IndexRebuildPipeline`; keep processors side-effect free. |
 
 **Guidance**
-- Pruners should return canonical `RepoUri`s so vector/writer delete operate on the same identity.
-- Vector refresh must serially wait for delete completion; this prevents stale embeddings.
+- Pruners should return canonical `RepoUri`s so embedding refresh and writer delete operate on the same identity.
+- Embedding refresh must serially wait for delete completion; this prevents stale embeddings.
 - Multi-file analyzers must tolerate out-of-order batches (epochs are monotonically increasing but analysis may run after a newer epoch has started).
 
 ## 5. Events and Telemetry
@@ -73,7 +73,7 @@ Each pipeline stage is wrapped by `StageContext`, which accepts `(busyFlag, idle
 
 ## 7. Extension Points
 - **New single-file analyzers**: extend `SingleFileAnalysisPipeline` constructor, register processors in DI, add harness tests.
-- **New post-index operations**: insert after vector refresh, before multi-file, and provide tests verifying they run once per idle epoch.
+- **New post-index operations**: insert after embedding refresh, before multi-file, and provide tests verifying they run once per idle epoch.
 - **State bits**: update `IndexingState`, `PipelineInvocationPlan`, and tests to keep observability consistent.
 
 For deeper narrative explanations, read [`docs/IndexingProcess.md`](../../../../docs/IndexingProcess.md) and the knowledge capsules on format excellence.

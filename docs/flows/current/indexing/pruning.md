@@ -84,9 +84,9 @@ Deletion cascades through all tables:
 - `span` (location references)
 - `annotation` (lint, metrics)
 
-### 5. Vector Deletion
+### 5. Embedding Deletion
 
-**Actor**: VectorIndexCoordinator
+**Actor**: EmbeddingCoordinator
 **Action**: `ApplyDeletesAsync(deletedArtifacts)` marks embeddings for removal
 **Output**: `_needsRefresh = true` signals embedding refresh needed
 **Failure**: Logged, continues
@@ -95,7 +95,7 @@ Deletion cascades through all tables:
 if (pruningResult.DeletedArtifacts.Count > 0)
 {
     await DeleteStaleDocumentsAsync(pruningResult.DeletedArtifacts, ct);
-    await VectorCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, ct);
+    await EmbeddingCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, ct);
 }
 ```
 
@@ -110,7 +110,7 @@ if (pruningResult.DeletedArtifacts.Count > 0)
 
 Flow completes when:
 - No stale documents found → immediate return
-- All stale documents removed from DB, vectors, and catalog
+- All stale documents removed from DB, embeddings, and catalog
 
 ## Flow Diagram
 
@@ -165,18 +165,18 @@ Pruning requires full enumeration to build the live set. File watcher flow doesn
 
 ## Key Invariant
 
-**Pruner runs BEFORE embedding generation.**
+**Pruner runs BEFORE embedding refresh.**
 
 Deleting stale embeddings before generating new ones ensures:
-- No embeddings for deleted files in vector index
-- Vector refresh sees clean state
+- No embeddings for deleted files remain in semantic search input
+- Embedding refresh sees clean state
 - No orphaned embeddings accumulate
 
 ```csharp
 // In ReleaseAnalysisAsync - order matters
 await ArtifactPruner.PruneAsync(items, ct);           // 1. Prune
-await VectorCoordinator.ApplyDeletesAsync(deleted, ct); // 2. Delete vectors
-await VectorCoordinator.GenerateStructureEmbeddingsAsync(items, ct);  // 3. Generate
+await EmbeddingCoordinator.ApplyDeletesAsync(deleted, ct); // 2. Mark embeddings stale
+await EmbeddingCoordinator.GenerateStructureEmbeddingsAsync(items, ct);  // 3. Generate
 ```
 
 ## Metrics
@@ -193,7 +193,7 @@ await VectorCoordinator.GenerateStructureEmbeddingsAsync(items, ct);  // 3. Gene
 |-------|-----------|
 | DB query fails | Exception propagates, epoch fails |
 | DB delete fails | Exception propagates |
-| Vector delete fails | Logged, continues |
+| Embedding delete fails | Logged, continues |
 | Empty live set | All documents would be stale - likely indicates enumeration failure |
 
 ## Key Files
@@ -202,7 +202,7 @@ await VectorCoordinator.GenerateStructureEmbeddingsAsync(items, ct);  // 3. Gene
 |------|------|
 | `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/StorageBackedArtifactPruner.cs` | Stale detection |
 | `src/Indexing/RepoQL.Indexing/Indexing/IndexingEngine.cs` | `ReleaseAnalysisAsync()`, `DeleteStaleDocumentsAsync()` |
-| `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/VectorIndexCoordinator.cs` | `ApplyDeletesAsync()` |
+| `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/EmbeddingCoordinator.cs` | `ApplyDeletesAsync()` |
 
 ## Related
 

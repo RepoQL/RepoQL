@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts.Configuration;
@@ -8,10 +8,10 @@ using RepoQL.Data.DuckDB;
 namespace RepoQL.Indexing.Indexing.PostProcessing;
 
 /// <summary>
-/// Refreshes the DuckDB-backed vector index by delegating to <see cref="EmbeddingRefresher"/>.
-/// Uses pipelined producer-consumer pattern for optimal throughput.
+/// Runs DuckDB-backed content embedding refreshes by delegating to <see cref="EmbeddingRefresher"/>.
+/// Uses pipelined producer-consumer batching for throughput.
 /// </summary>
-public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
+public sealed class DuckDbEmbeddingRefreshRunner : IEmbeddingRefreshRunner
 {
     private readonly EmbeddingRefresher _refresher;
     private readonly IEmbeddingProvider _embeddingProvider;
@@ -19,7 +19,7 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
     private readonly EmbeddingMode _embeddingMode;
     private readonly ILogger _logger;
 
-    public DuckDbVectorIndexRefresher(
+    public DuckDbEmbeddingRefreshRunner(
         DuckDbDataStore dataStore,
         IEmbeddingProvider embeddingProvider,
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
@@ -31,7 +31,7 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
         _embeddingProvider = embeddingProvider ?? throw new ArgumentNullException(nameof(embeddingProvider));
         _contextualProvider = contextualProvider;
         _embeddingMode = embeddingMode;
-        _logger = logger ?? NullLogger<DuckDbVectorIndexRefresher>.Instance;
+        _logger = logger ?? NullLogger<DuckDbEmbeddingRefreshRunner>.Instance;
         _refresher = new EmbeddingRefresher(dataStore, embeddingMode, logger, embeddingSettings, contextualProvider);
     }
 
@@ -79,14 +79,12 @@ public sealed class DuckDbVectorIndexRefresher : IVectorIndexRefresher
 
     private bool CanRunRefresh()
     {
-        // Full embeddings require Full or Hybrid mode
         if (!_embeddingMode.IncludesFull() && !_embeddingMode.IsHybrid())
         {
             _logger.LogDebug("Full embedding refresh skipped - mode={Mode}", _embeddingMode);
             return false;
         }
 
-        // Either provider being available is sufficient
         if (_contextualProvider is { Enabled: true })
             return true;
 

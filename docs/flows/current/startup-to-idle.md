@@ -16,9 +16,8 @@ stateDiagram-v2
 
     state "Idle Processing" as IdleProc {
         Pruning --> StructureEmbedding: pruned
-        StructureEmbedding --> VectorRefresh: embedded
-        VectorRefresh --> VssIndex: refreshed
-        VssIndex --> MultiFileAnalysis: indexed
+        StructureEmbedding --> EmbeddingRefresh: embedded
+        EmbeddingRefresh --> MultiFileAnalysis: refreshed
     }
 
     AllIdle --> HotPath: file enqueued
@@ -670,7 +669,7 @@ flowchart TD
 | `SingleFileAnalysisPipeline` | Records → Annotations | `Pipelines/Analysis/` |
 | `IndexingCommitter` | Batch writes to DuckDB | `Commit/IndexingCommitter.cs` |
 | `DocumentCatalog` | Digest-based change detection | `State/DocumentCatalog.cs` |
-| `VectorIndexCoordinator` | Embedding generation/refresh | `PostProcessing/VectorIndexCoordinator.cs` |
+| `EmbeddingCoordinator` | Embedding generation/refresh | `PostProcessing/EmbeddingCoordinator.cs` |
 | `ArtifactPruner` | Stale document detection | `PostProcessing/StorageBackedArtifactPruner.cs` |
 | `WorkQueue<T>` | Bounded channel with workers | (utility) |
 | `EpochTracker` | Batch coordination | `IndexingEngine.cs` (inner class) |

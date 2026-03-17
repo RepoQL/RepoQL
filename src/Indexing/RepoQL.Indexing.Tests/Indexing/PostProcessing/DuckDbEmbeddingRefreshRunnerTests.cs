@@ -11,7 +11,7 @@ using ArtifactModel = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Indexing.Tests.Indexing.PostProcessing;
 
-internal class DuckDbVectorIndexRefresherTests
+internal class DuckDbEmbeddingRefreshRunnerTests
 {
     [Test]
     [DisplayName("Refresh computes embeddings for stored documents")]
@@ -34,7 +34,7 @@ internal class DuckDbVectorIndexRefresherTests
         {
             Id = Guid.NewGuid(),
             Kind = "document",
-            Uri = RepoUri.Parse("file:///repo/vector-doc.md"),
+            Uri = RepoUri.Parse("file:///repo/embedding-doc.md"),
             ArtifactId = artifact.Id,
             Props = new System.Text.Json.Nodes.JsonObject(),
             CreatedAt = DateTimeOffset.UtcNow,
@@ -52,7 +52,7 @@ internal class DuckDbVectorIndexRefresherTests
 
         database.IndexArtifact(documentNode.Uri, parsedArtifact);
 
-        var refresher = new DuckDbVectorIndexRefresher(database, provider, logger: NullLogger<DuckDbVectorIndexRefresher>.Instance);
+        var refresher = new DuckDbEmbeddingRefreshRunner(database, provider, logger: NullLogger<DuckDbEmbeddingRefreshRunner>.Instance);
 
         await refresher.RefreshAsync(CancellationToken.None);
 
@@ -69,7 +69,7 @@ internal class DuckDbVectorIndexRefresherTests
         var first = SeedDocument(database, "file:///repo/first.md", "first doc text");
         var second = SeedDocument(database, "file:///repo/second.md", "second doc text");
 
-        var refresher = new DuckDbVectorIndexRefresher(database, provider, logger: NullLogger<DuckDbVectorIndexRefresher>.Instance);
+        var refresher = new DuckDbEmbeddingRefreshRunner(database, provider, logger: NullLogger<DuckDbEmbeddingRefreshRunner>.Instance);
 
         await refresher.RefreshAsync([first.Id], CancellationToken.None);
 
@@ -127,7 +127,7 @@ internal class DuckDbVectorIndexRefresherTests
 
         database.IndexArtifact(documentNode.Uri, parsedArtifact);
 
-        var refresher = new DuckDbVectorIndexRefresher(database, provider, logger: NullLogger<DuckDbVectorIndexRefresher>.Instance);
+        var refresher = new DuckDbEmbeddingRefreshRunner(database, provider, logger: NullLogger<DuckDbEmbeddingRefreshRunner>.Instance);
         await refresher.RefreshAsync(CancellationToken.None);
 
         // Chunking uses chunkSize=1500, overlap=150 => stride=1350 => 3 chunks for 3000 chars.
@@ -207,7 +207,7 @@ internal class DuckDbVectorIndexRefresherTests
 
         database.IndexArtifact(documentNode.Uri, parsedArtifact);
 
-        var refresher = new DuckDbVectorIndexRefresher(database, provider, logger: NullLogger<DuckDbVectorIndexRefresher>.Instance);
+        var refresher = new DuckDbEmbeddingRefreshRunner(database, provider, logger: NullLogger<DuckDbEmbeddingRefreshRunner>.Instance);
         await refresher.RefreshAsync(CancellationToken.None);
 
         provider.EmbedCount.Should().Be(1);

@@ -1,6 +1,6 @@
 # Embedding Generation Flow
 
-Generates vector embeddings for semantic search capabilities.
+Generates embeddings for semantic search capabilities.
 
 ## Why This Matters
 
@@ -18,7 +18,7 @@ After pruning completes in `ReleaseAnalysisAsync(epoch)`.
 
 ### 1. Mode Check
 
-**Actor**: VectorIndexCoordinator
+**Actor**: EmbeddingCoordinator
 **Action**: Check `_embeddingMode` configuration
 **Output**: Skip if embeddings disabled
 **Failure**: N/A
@@ -38,21 +38,21 @@ Embedding modes:
 
 ### 2. Structure Embedding Generation
 
-**Actor**: VectorIndexCoordinator
+**Actor**: EmbeddingCoordinator
 **Action**: `GenerateStructureEmbeddingsAsync(items)` for ALL items including read-only imports
 **Output**: Vector embeddings for headline + structure text
 **Failure**: Provider failure logged, continues
 
 ```csharp
 // Structure embeddings include ALL items, even read-only imports
-await VectorCoordinator.GenerateStructureEmbeddingsAsync(structureEmbedItems, ct);
+await EmbeddingCoordinator.GenerateStructureEmbeddingsAsync(structureEmbedItems, ct);
 ```
 
 Structure embeddings enable fast semantic search without reading file content.
 
 ### 3. Payload Construction
 
-**Actor**: VectorIndexCoordinator
+**Actor**: EmbeddingCoordinator
 **Action**: Build embedding payload from artifact metadata
 **Output**: Text payload for embedding provider
 **Failure**: Empty payload → skip item
@@ -84,9 +84,9 @@ UserService.cs | UserService : IUserService | CreateAsync, GetById
 
 ### 4. Batch Processing
 
-**Actor**: VectorIndexCoordinator
+**Actor**: EmbeddingCoordinator
 **Action**: Process in batches of 100, call embedding provider
-**Output**: `float[][]` vectors from provider
+**Output**: `float[][]` embeddings from provider
 **Failure**: Batch failure logged, continue with next batch
 
 ```csharp
@@ -127,7 +127,7 @@ _db.WriteEmbeddings(documentEmbeddings);
 
 ### 6. Full-Text Refresh
 
-**Actor**: VectorIndexCoordinator
+**Actor**: EmbeddingCoordinator
 **Action**: `ApplyAsync(latestItem)` triggers full-text embedding refresh
 **Output**: Full document content embedded
 **Failure**: Logged, continues
@@ -135,29 +135,25 @@ _db.WriteEmbeddings(documentEmbeddings);
 ```csharp
 if (pendingItems.Length > 0)
 {
-    await VectorCoordinator.ApplyAsync(latest, ct);
+    await EmbeddingCoordinator.ApplyAsync(latest, ct);
 }
 ```
 
 Full-text embeddings enable deeper semantic search but are more expensive.
 
-### 7. VSS Index Refresh
+### 7. Search Readiness
 
-**Actor**: VectorIndexCoordinator
-**Action**: `RefreshVssIndexAsync()` rebuilds HNSW indexes
-**Output**: In-memory vector indexes ready for fast search
-**Failure**: Warning logged, continues
-
-```csharp
-await VectorCoordinator.RefreshVssIndexAsync(ct);
-```
+**Actor**: Search macros over `document_embedding`
+**Action**: semantic search reads refreshed embeddings directly
+**Output**: exact linear cosine similarity over current embeddings
+**Failure**: missing embeddings reduce recall until next refresh
 
 ## Termination
 
 Flow completes when:
 - All structure embeddings generated and stored
 - Full-text refresh triggered
-- VSS indexes rebuilt
+- refreshed embeddings available for semantic search
 
 ## Flow Diagram
 
@@ -180,8 +176,7 @@ flowchart TD
     MoreBatches -->|Yes| Batch
     MoreBatches -->|No| FullText[Full-text refresh phase]:::info
 
-    FullText --> VSS[VSS index refresh]
-    VSS --> Continue([Continue to multi-file analysis]):::success
+    FullText --> Continue([Continue to multi-file analysis]):::success
 
     classDef success fill:#90EE90,stroke:#2E7D32,color:#000
     classDef info fill:#81D4FA,stroke:#0277BD,color:#000
@@ -255,7 +250,7 @@ Structure embeddings: 5/12 (41%) - 100 items in 2.3s, ETA 5s
 | Provider unavailable | Skip embeddings, log debug |
 | Batch embedding fails | Log error, continue with next batch |
 | DB write fails | Exception propagates |
-| VSS refresh fails | Warning logged, continues |
+| Full refresh fails | Warning logged, continues |
 
 ## Configuration
 
@@ -268,8 +263,8 @@ Structure embeddings: 5/12 (41%) - 100 items in 2.3s, ETA 5s
 
 | File | Role |
 |------|------|
-| `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/VectorIndexCoordinator.cs` | Orchestration |
-| `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/DuckDbVectorIndexRefresher.cs` | Full-text refresh |
+| `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/EmbeddingCoordinator.cs` | Orchestration |
+| `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/DuckDbEmbeddingRefreshRunner.cs` | Full-text refresh |
 | `src/Data/RepoQL.Data.DuckDB/DuckDbDataStore.cs` | `WriteEmbeddings()` |
 
 ## Related

@@ -21,7 +21,7 @@ Embedding generation phase begins — after pruning completes in `ReleaseAnalysi
 
 ### 1. Payload Construction
 
-**Actor**: VectorIndexCoordinator
+**Actor**: EmbeddingCoordinator
 **Action**: Build embedding text payloads from artifact metadata (unchanged from current flow)
 **Output**: List of `(docId, nodeId, uri, text)` tuples ready for embedding
 **Failure**: Empty payload → skip item (unchanged)
@@ -138,8 +138,8 @@ Both cache hits and newly computed vectors are written to the repo's DuckDB as b
 
 ### 8. VSS Index Refresh
 
-**Actor**: VectorIndexCoordinator
-**Action**: Rebuild HNSW indexes (unchanged from current flow)
+**Actor**: EmbeddingCoordinator
+**Action**: Refresh content embeddings (unchanged from current flow)
 **Output**: In-memory vector indexes ready for search
 **Failure**: Warning logged, continues (unchanged)
 
@@ -265,7 +265,7 @@ No explicit purge needed. A model upgrade means all new hashes include the new m
 | Existing component | Change |
 |--------------------|--------|
 | `IEmbeddingProvider` | No change — cache wraps it as a decorator |
-| `VectorIndexCoordinator` | No change — receives vectors as before |
+| `EmbeddingCoordinator` | No change — receives embeddings as before |
 | `DuckDbDataStore` | No change — writes `DocumentEmbedding` as before |
 | `EmbeddingRefresher` | Staleness check unchanged — cache is upstream of DB |
 | Configuration | New `embeddingCache` section with `paths` and `maxSizeMb` |

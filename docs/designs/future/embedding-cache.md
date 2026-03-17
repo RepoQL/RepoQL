@@ -31,7 +31,7 @@ A content-addressed cache eliminates this waste. The same content with the same 
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│              VectorIndexCoordinator                       │
+│               EmbeddingCoordinator                        │
 │  (unchanged — calls IEmbeddingProvider as before)         │
 └───────────────────────────────────────────────────────────┘
                             │
@@ -62,7 +62,7 @@ A content-addressed cache eliminates this waste. The same content with the same 
 └─────────────────────────────────────────────────────────┘
 ```
 
-The decorator is the only new component visible to the rest of the system. `VectorIndexCoordinator`, `DuckDbDataStore`, and all consumers of `IEmbeddingProvider` are unchanged.
+The decorator is the only new component visible to the rest of the system. `EmbeddingCoordinator`, `DuckDbDataStore`, and all consumers of `IEmbeddingProvider` are unchanged.
 
 ---
 
@@ -378,7 +378,7 @@ Same pattern for the `"local"` keyed provider — resolve the same `EmbeddingCac
 |-------|------|---------|
 | Parquet directory | DuckDB file | Multiple concurrent hosts need concurrent writes. DuckDB is single-writer. Parquet files are independent. |
 | Parquet directory | SQLite | DuckDB reads parquet natively. No new dependency. Parquet is the lingua franca for columnar data. |
-| Decorator pattern | Modified provider | Zero changes to existing code. VectorIndexCoordinator, DuckDbDataStore, all consumers unchanged. |
+| Decorator pattern | Modified provider | Zero changes to existing code. EmbeddingCoordinator, DuckDbDataStore, all consumers unchanged. |
 | SHA256 | Shorter hash | 32 bytes per entry is negligible. Collision resistance matters for a cache that grows across repos. |
 | Full-dim storage | Per-dim entries | One entry serves all consumers. Matryoshka truncation is trivial. 3× space savings. |
 | Model in hash key | Separate invalidation | Model changes invalidate naturally. No purge command, no migration, no version tracking. |

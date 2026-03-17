@@ -420,9 +420,9 @@ stateDiagram-v2
     state PostProcessing {
         [*] --> Pruning
         Pruning --> Deleting
-        Deleting --> VectorRefresh
-        VectorRefresh --> MultiFileAnalysis
-        VectorRefresh --> IndexRebuild
+        Deleting --> EmbeddingRefresh
+        EmbeddingRefresh --> MultiFileAnalysis
+        EmbeddingRefresh --> IndexRebuild
         MultiFileAnalysis --> [*]
         IndexRebuild --> [*]
     }

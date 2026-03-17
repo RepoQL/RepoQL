@@ -24,4 +24,8 @@
       <PackageReference Include="LibGit2Sharp" />
     </ItemGroup>
 
+    <ItemGroup>
+      <Folder Include="Extensions\" />
+    </ItemGroup>
+
 </Project>

@@ -629,11 +629,11 @@ public static class RepoIndexerServiceCollectionExtensions
             Func<bool> isReindexing = () => coordinatorLazy.Value.IsReindexing;
             return new StorageBackedArtifactPruner(store, isReindexing, logger);
         });
-        services.AddSingleton<IVectorIndexCoordinator>(sp => new VectorIndexCoordinator(
+        services.AddSingleton<IEmbeddingCoordinator>(sp => new EmbeddingCoordinator(
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IEmbeddingProvider>(),
             sp.GetRequiredService<EmbeddingModeOptions>().Mode,
-            sp.GetService<ILogger<VectorIndexCoordinator>>(),
+            sp.GetService<ILogger<EmbeddingCoordinator>>(),
             sp.GetService<UriRegistry>(),
             sp.GetRequiredService<RepoQlConfig>().Embedding,
             sp.GetService<IContextualEmbeddingProvider>()));
@@ -681,7 +681,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 sp.GetRequiredService<IDocumentCatalog>(),
                 sp.GetRequiredService<IIndexingCommitter>(),
                 sp.GetRequiredService<IArtifactPruner>(),
-                sp.GetRequiredService<IVectorIndexCoordinator>(),
+                sp.GetRequiredService<IEmbeddingCoordinator>(),
                 sp.GetService<IOptions<IndexingEngineOptions>>()?.Value,
                 sp.GetService<ILogger<IndexingEngine>>(),
                 sp.GetRequiredService<IndexingMetrics>(),

@@ -246,10 +246,10 @@ var payload = $"{relativePath}\n\n{headline}\n\n{structure}";
 **Depth**
 - Structure embeddings: Fast path for immediate search
 - Full-text embeddings: Chunked content for deeper semantic search
-- VSS refresh: Rebuild HNSW indexes after embedding changes
+- Semantic search reads directly from `document_embedding`
 - Batch size: 100 items per embedding batch
 
-**Location**: `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/VectorIndexCoordinator.cs`
+**Location**: `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/EmbeddingCoordinator.cs`
 
 ---
 
@@ -342,7 +342,7 @@ await engine.WaitForAsync(IndexingState.AllIdle, cancellationToken);
 | IndexingEngine | `IndexingWorkers` | `ProcessorCount × 2` |
 | IndexingEngine | `AnalysisWorkers` | `ProcessorCount` |
 | IndexingEngine | `IndexingQueueSize` | 10,000 |
-| VectorCoordinator | `REPOQL_EMBED_CONCURRENCY` | 2 |
+| EmbeddingCoordinator | `REPOQL_EMBED_CONCURRENCY` | 2 |
 
 ---
 
@@ -354,7 +354,7 @@ await engine.WaitForAsync(IndexingState.AllIdle, cancellationToken);
 | Engine | `src/Indexing/RepoQL.Indexing/Indexing/IndexingEngine.cs` |
 | IndexItem | `src/Indexing/RepoQL.Indexing/Indexing/Pipelines/IndexItem.cs` |
 | Catalog | `src/Indexing/RepoQL.Indexing/Indexing/State/DocumentCatalog.cs` |
-| VectorCoordinator | `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/VectorIndexCoordinator.cs` |
+| EmbeddingCoordinator | `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/EmbeddingCoordinator.cs` |
 | Committer | `src/Indexing/RepoQL.Indexing/Indexing/Commit/IndexingCommitter.cs` |
 
 ---

@@ -53,7 +53,7 @@ public sealed class StageMetricsListener : IDisposable
             "repoql.hotpath.duration" => "hotpath",                  // End-to-end timing
             "repoql.embed.duration" => "embedding",                  // Embedding timing
             "repoql.batch.duration" => "batch",                      // Batch commit timing
-            "repoql.idle.phase.duration" => ExtractTag(tags, "phase"), // structure_embedding, vector_refresh, etc.
+            "repoql.idle.phase.duration" => ExtractTag(tags, "phase"), // structure_embedding, embedding_refresh, etc.
             _ => null
         };
 
@@ -147,7 +147,7 @@ public sealed class StageMetricsListener : IDisposable
     {
         var prune = GetSnapshot("prune", 0, 0);
         var structEmbed = GetSnapshot("structure_embedding", 0, 0);
-        var vectorRefresh = GetSnapshot("vector_refresh", 0, 0);
+        var embeddingRefresh = GetSnapshot("embedding_refresh", 0, 0);
         var analysis = GetSnapshot("multi_file_analysis", 0, 0);
 
         var active = activeIdleProcessing > 0 || pendingIdleProcessing > 0;
@@ -161,13 +161,13 @@ public sealed class StageMetricsListener : IDisposable
             currentPhase = "prune";
         else if (structEmbed.LastActive != default && now - structEmbed.LastActive < recentThreshold)
             currentPhase = "structure_embedding";
-        else if (vectorRefresh.LastActive != default && now - vectorRefresh.LastActive < recentThreshold)
-            currentPhase = "vector_refresh";
+        else if (embeddingRefresh.LastActive != default && now - embeddingRefresh.LastActive < recentThreshold)
+            currentPhase = "embedding_refresh";
         else if (analysis.LastActive != default && now - analysis.LastActive < recentThreshold)
             currentPhase = "multi_file_analysis";
 
         // Find the most recent last run
-        var allPhases = new[] { prune, structEmbed, vectorRefresh, analysis };
+        var allPhases = new[] { prune, structEmbed, embeddingRefresh, analysis };
         var lastRun = allPhases.Where(p => p.LastActive != default).MaxBy(p => p.LastActive)?.LastActive ?? default;
         var lastRunDuration = allPhases.Where(p => p.LastRunDurationSec > 0).Sum(p => p.LastRunDurationSec);
         var lastRunItems = allPhases.Sum(p => p.LastRunItems);
@@ -186,7 +186,7 @@ public sealed class StageMetricsListener : IDisposable
             [
                 new StageMetrics { Stage = "prune", AvgDurationMs = prune.AvgDurationMs, PeakDurationMs = prune.PeakDurationMs, ProcessedTotal = prune.ProcessedTotal, Busy = currentPhase == "prune" },
                 new StageMetrics { Stage = "structure_embedding", AvgDurationMs = structEmbed.AvgDurationMs, PeakDurationMs = structEmbed.PeakDurationMs, ProcessedTotal = structEmbed.ProcessedTotal, Busy = currentPhase == "structure_embedding" },
-                new StageMetrics { Stage = "vector_refresh", AvgDurationMs = vectorRefresh.AvgDurationMs, PeakDurationMs = vectorRefresh.PeakDurationMs, ProcessedTotal = vectorRefresh.ProcessedTotal, Busy = currentPhase == "vector_refresh" },
+                new StageMetrics { Stage = "embedding_refresh", AvgDurationMs = embeddingRefresh.AvgDurationMs, PeakDurationMs = embeddingRefresh.PeakDurationMs, ProcessedTotal = embeddingRefresh.ProcessedTotal, Busy = currentPhase == "embedding_refresh" },
                 new StageMetrics { Stage = "multi_file_analysis", AvgDurationMs = analysis.AvgDurationMs, PeakDurationMs = analysis.PeakDurationMs, ProcessedTotal = analysis.ProcessedTotal, Busy = currentPhase == "multi_file_analysis" }
             ]
         };

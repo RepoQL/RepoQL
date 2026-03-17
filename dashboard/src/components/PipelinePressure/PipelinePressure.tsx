@@ -198,8 +198,8 @@ function formatIdlePhase(phase: string): string {
       return 'pruning';
     case 'structure_embedding':
       return 'structure embedding';
-    case 'vector_refresh':
-      return 'vector refresh';
+    case 'embedding_refresh':
+      return 'embedding refresh';
     case 'multi_file_analysis':
       return 'multi-file analysis';
     default:

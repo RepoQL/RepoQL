@@ -988,7 +988,7 @@ Individual batch failures are silently handled - those items get null embeddings
 
 **Complete failure (provider-level):**
 ```csharp
-// VectorIndexCoordinator.cs:107-111 - Rethrows!
+// EmbeddingCoordinator.cs - Rethrows refresh failures
 catch (Exception ex)
 {
     _logger.LogError(ex, "Vector index refresh failed");
@@ -1004,7 +1004,7 @@ OpenRouter API returns 429 Rate Limited
     └── HttpRequestException thrown in CallApiAsync
         └── Not caught by ProcessSingleBatchAsync (timing issue or pre-batch failure)
             └── Propagates through EmbedBatchCoreAsync
-                └── Caught by VectorIndexCoordinator.RefreshEmbeddingsAsync
+                └── Caught by EmbeddingCoordinator.RefreshEmbeddingsAsync
                     └── Logged, then RETHROWN
                         └── ReleaseAnalysisAsync catch block (line 889)
                             └── Error logged, epoch marked as failure
@@ -1098,7 +1098,7 @@ private const int DefaultTimeoutSeconds = 120;
 
 5. **Individual item error handling in structure embedding**:
    ```csharp
-   // VectorIndexCoordinator.cs - Wrap batch processing
+   // EmbeddingCoordinator.cs - Wrap batch processing
    foreach (var batch in batches) {
        try {
            await EmbedStructureBatchAsync(batch, ...);
@@ -1175,7 +1175,7 @@ ProcessIdleEpochsAsync (single-threaded):
     └── ReleaseAnalysisAsync(epoch 1) - SLOW (embedding)
          └── GenerateStructureEmbeddingsAsync - API calls
          └── RefreshEmbeddingsAsync - more API calls
-         └── RefreshVssIndexAsync - rebuild indexes
+         └── ApplyAsync / startup catch-up - refresh embeddings
 
 Meanwhile, _analysisEpochChannel accumulates:
     [epoch 2] [epoch 3] [epoch 4] ... [epoch N]

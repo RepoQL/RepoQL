@@ -72,8 +72,7 @@ Design pattern: `DropOldest` for non-critical event streams, `Wait` for work tha
 |----------|------|---------|
 | `DuckDbDataStore._lock` | (1,1) | Primary DB connection serialization |
 | `DuckDbDataStore._readPoolSlots` | (N,N) | Read pool capacity |
-| `VectorIndexCoordinator._refreshGate` | (N,N) | Embedding refresh concurrency limit |
-| `VectorIndexCoordinator._vssRefreshSignal` | (0) | Signal-based wake for VSS worker |
+| `EmbeddingCoordinator._refreshGate` | (N,N) | Embedding refresh concurrency limit |
 | `DocumentCatalog._initializationGate` | (1,1) | One-time initialization |
 | `RepoQlClient._connectLock` | (1,1) | Connection establishment |
 | `CSharpWorkspaceHost` (x4) | Various | Roslyn compilation serialization |
@@ -468,7 +467,7 @@ catch (OperationCanceledException)
 - **WorkQueue timeout**: `CancellationTokenSource.CreateLinkedTokenSource` + `Task.WaitAsync(_itemTimeout)` for per-item timeouts
 - **IndexingEngine shutdown**: Central `Shutdown` CTS with `Register(() => channel.Writer.TryComplete())` for channel cleanup
 - **DuckDB command cancellation**: `cancellationToken.Register(cmd.Cancel)` bridges cooperative cancellation to DuckDB's command API
-- **VectorIndexCoordinator**: Separate `_vssRefreshShutdown` CTS for independent shutdown control
+- **EmbeddingCoordinator**: Uses a shutdown CTS for startup catch-up and refresh coordination
 
 ### Best Practices
 

@@ -104,9 +104,9 @@ stateDiagram-v2
     state "Idle Processing" as IdleProc {
         [*] --> Pruning
         Pruning --> Deleting
-        Deleting --> VectorRefresh
-        VectorRefresh --> MultiFile
-        VectorRefresh --> IndexRebuild
+        Deleting --> EmbeddingRefresh
+        EmbeddingRefresh --> MultiFile
+        EmbeddingRefresh --> IndexRebuild
         MultiFile --> [*]
         IndexRebuild --> [*]
     }

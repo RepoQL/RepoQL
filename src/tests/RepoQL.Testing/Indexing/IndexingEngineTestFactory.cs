@@ -44,7 +44,7 @@ public sealed class IndexingEngineTestBuilder
     private IDocumentCatalog? _catalog;
     private IIndexingCommitter? _committer;
     private IArtifactPruner? _artifactPruner;
-    private IVectorIndexCoordinator? _vectorCoordinator;
+    private IEmbeddingCoordinator? _embeddingCoordinator;
     private IndexingEngineOptions? _options;
     private ILogger<IndexingEngine>? _logger;
     private UriRegistry? _uriRegistry;
@@ -111,9 +111,9 @@ public sealed class IndexingEngineTestBuilder
         return this;
     }
 
-    public IndexingEngineTestBuilder WithVectorCoordinator(IVectorIndexCoordinator coordinator)
+    public IndexingEngineTestBuilder WithEmbeddingCoordinator(IEmbeddingCoordinator coordinator)
     {
-        _vectorCoordinator = coordinator;
+        _embeddingCoordinator = coordinator;
         return this;
     }
 
@@ -203,7 +203,7 @@ public sealed class IndexingEngineTestBuilder
         }
 
         var artifactPruner = _artifactPruner ?? NullArtifactPruner.Instance;
-        var vectorCoordinator = _vectorCoordinator ?? NullVectorIndexCoordinator.Instance;
+        var embeddingCoordinator = _embeddingCoordinator ?? NullEmbeddingCoordinator.Instance;
         var options = _options ?? new IndexingEngineOptions
         {
             IndexingQueueSize = 32,
@@ -226,7 +226,7 @@ public sealed class IndexingEngineTestBuilder
             documentCatalog: catalog,
             committer: committer,
             artifactPruner: artifactPruner,
-            vectorCoordinator: vectorCoordinator,
+            embeddingCoordinator: embeddingCoordinator,
             options: options,
             logger: logger,
             uriRegistry: uriRegistry,
@@ -245,7 +245,7 @@ public sealed class IndexingEngineTestBuilder
             committer,
             _dataStore,
             artifactPruner,
-            vectorCoordinator,
+            embeddingCoordinator,
             options,
             logger,
             uriRegistry);
@@ -266,7 +266,7 @@ public sealed class IndexingEngineTestContext
         IIndexingCommitter committer,
         DuckDbDataStore? database,
         IArtifactPruner artifactPruner,
-        IVectorIndexCoordinator vectorCoordinator,
+        IEmbeddingCoordinator embeddingCoordinator,
         IndexingEngineOptions options,
         ILogger<IndexingEngine> logger,
         UriRegistry? uriRegistry)
@@ -282,7 +282,7 @@ public sealed class IndexingEngineTestContext
         Committer = committer;
         DataStore = database;
         ArtifactPruner = artifactPruner;
-        VectorCoordinator = vectorCoordinator;
+        EmbeddingCoordinator = embeddingCoordinator;
         Options = options;
         Logger = logger;
         UriRegistry = uriRegistry;
@@ -299,7 +299,7 @@ public sealed class IndexingEngineTestContext
     public IIndexingCommitter Committer { get; }
     public DuckDbDataStore? DataStore { get; }
     public IArtifactPruner ArtifactPruner { get; }
-    public IVectorIndexCoordinator VectorCoordinator { get; }
+    public IEmbeddingCoordinator EmbeddingCoordinator { get; }
     public IndexingEngineOptions Options { get; }
     public ILogger<IndexingEngine> Logger { get; }
     public UriRegistry? UriRegistry { get; }

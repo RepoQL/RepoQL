@@ -219,7 +219,7 @@ public sealed class IndexedRepoBuilder : IAsyncDisposable
                 catalog,
                 committer,
                 artifactPruner,
-                NullVectorIndexCoordinator.Instance,
+                NullEmbeddingCoordinator.Instance,
                 options.EngineOptions,
                 loggerFactory.CreateLogger<IndexingEngine>());
 

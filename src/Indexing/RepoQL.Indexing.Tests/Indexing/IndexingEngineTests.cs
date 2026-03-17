@@ -793,8 +793,8 @@ public class IndexingEngineTests
 
         var embedEntered = NewTaskCompletionSource<bool>();
         var releaseEmbedding = NewTaskCompletionSource<bool>();
-        var vectorCoordinator = A.Fake<IVectorIndexCoordinator>();
-        A.CallTo(() => vectorCoordinator.GenerateStructureEmbeddingsAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
+        var embeddingCoordinator = A.Fake<IEmbeddingCoordinator>();
+        A.CallTo(() => embeddingCoordinator.GenerateStructureEmbeddingsAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .ReturnsLazily(async _ =>
             {
                 embedEntered.TrySetResult(true);
@@ -805,7 +805,7 @@ public class IndexingEngineTests
         var context = IndexingEngineTestFactory.Create(builder =>
         {
             builder.WithCommitter(committer);
-            builder.WithVectorCoordinator(vectorCoordinator);
+            builder.WithEmbeddingCoordinator(embeddingCoordinator);
             builder.WithEmbeddingProvider(embeddingProvider);
             builder.WithEmbeddingMode(EmbeddingMode.StructureOnly);
         });
@@ -831,16 +831,14 @@ public class IndexingEngineTests
         var releaseEmbedding = NewTaskCompletionSource<bool>();
         var analysisSignal = NewTaskCompletionSource<bool>();
 
-        var vectorCoordinator = A.Fake<IVectorIndexCoordinator>();
-        A.CallTo(() => vectorCoordinator.GenerateStructureEmbeddingsAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
+        var embeddingCoordinator = A.Fake<IEmbeddingCoordinator>();
+        A.CallTo(() => embeddingCoordinator.GenerateStructureEmbeddingsAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .ReturnsLazily(async _ =>
             {
                 embedEntered.TrySetResult(true);
                 await releaseEmbedding.Task.ConfigureAwait(false);
             });
-        A.CallTo(() => vectorCoordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
-            .Returns(Task.CompletedTask);
-        A.CallTo(() => vectorCoordinator.RefreshVssIndexAsync(A<CancellationToken>._))
+        A.CallTo(() => embeddingCoordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .Returns(Task.CompletedTask);
 
         var context = IndexingEngineTestFactory.Create(builder =>
@@ -852,7 +850,7 @@ public class IndexingEngineTests
                 AnalysisQueueSize = 32,
                 AnalysisWorkers = 1
             });
-            builder.WithVectorCoordinator(vectorCoordinator);
+            builder.WithEmbeddingCoordinator(embeddingCoordinator);
             builder.WithEmbeddingProvider(new DeterministicEmbeddingProvider());
             builder.WithEmbeddingMode(EmbeddingMode.StructureOnly);
         });
@@ -888,8 +886,8 @@ public class IndexingEngineTests
         var structureAttempts = 0;
         var targetUri = CreateUri("file:///repo/eager-retry.md");
 
-        var vectorCoordinator = A.Fake<IVectorIndexCoordinator>();
-        A.CallTo(() => vectorCoordinator.GenerateStructureEmbeddingsAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
+        var embeddingCoordinator = A.Fake<IEmbeddingCoordinator>();
+        A.CallTo(() => embeddingCoordinator.GenerateStructureEmbeddingsAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .ReturnsLazily(call =>
             {
                 var items = call.GetArgument<IReadOnlyList<IndexItem>>(0);
@@ -907,9 +905,7 @@ public class IndexingEngineTests
                 retryCompleted.TrySetResult(true);
                 return Task.CompletedTask;
             });
-        A.CallTo(() => vectorCoordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
-            .Returns(Task.CompletedTask);
-        A.CallTo(() => vectorCoordinator.RefreshVssIndexAsync(A<CancellationToken>._))
+        A.CallTo(() => embeddingCoordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .Returns(Task.CompletedTask);
 
         var context = IndexingEngineTestFactory.Create(builder =>
@@ -921,7 +917,7 @@ public class IndexingEngineTests
                 AnalysisQueueSize = 32,
                 AnalysisWorkers = 1
             });
-            builder.WithVectorCoordinator(vectorCoordinator);
+            builder.WithEmbeddingCoordinator(embeddingCoordinator);
             builder.WithEmbeddingProvider(new DeterministicEmbeddingProvider());
             builder.WithEmbeddingMode(EmbeddingMode.StructureOnly);
             builder.WithUriRegistry(registry);
@@ -1342,7 +1338,7 @@ public class IndexingEngineTests
             parsingGate: null,
             multiFileSignal: analysisSignal,
             pruner: pruner,
-            vectorCoordinator: NullVectorIndexCoordinator.Instance);
+            embeddingCoordinator: NullEmbeddingCoordinator.Instance);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/prune-first.md"), IndexItemOptions.Default, token);
 
@@ -1374,7 +1370,7 @@ public class IndexingEngineTests
             parsingGate: null,
             multiFileSignal: analysisSignal,
             pruner: pruner,
-            vectorCoordinator: NullVectorIndexCoordinator.Instance);
+            embeddingCoordinator: NullEmbeddingCoordinator.Instance);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/prune-retry.md"), IndexItemOptions.Default, token);
 
@@ -1391,8 +1387,8 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
-    [DisplayName("Vector index updates run before enqueuing analysis work")]
-    public async Task Given_VectorCoordinator_When_PostProcessing_Then_VectorRunsBeforeAnalysis(CancellationToken token)
+    [DisplayName("Embedding refresh runs before enqueuing analysis work")]
+    public async Task Given_EmbeddingCoordinator_When_PostProcessing_Then_EmbeddingRefreshRunsBeforeAnalysis(CancellationToken token)
     {
         var deletedUri = CreateUri("file:///repo/deleted.md");
         var pruneResult = new PruningResult(new[] { deletedUri });
@@ -1401,19 +1397,19 @@ public class IndexingEngineTests
             .Returns(Task.FromResult(pruneResult));
 
         var deleteApplied = NewTaskCompletionSource<bool>();
-        var vectorApplied = NewTaskCompletionSource<bool>();
-        var vector = A.Fake<IVectorIndexCoordinator>();
-        A.CallTo(() => vector.ApplyDeletesAsync(pruneResult.DeletedArtifacts, A<CancellationToken>._))
+        var embeddingsApplied = NewTaskCompletionSource<bool>();
+        var embeddingCoordinator = A.Fake<IEmbeddingCoordinator>();
+        A.CallTo(() => embeddingCoordinator.ApplyDeletesAsync(pruneResult.DeletedArtifacts, A<CancellationToken>._))
             .ReturnsLazily(_ =>
             {
                 deleteApplied.TrySetResult(true);
                 return Task.CompletedTask;
             });
-        A.CallTo(() => vector.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
+        A.CallTo(() => embeddingCoordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .ReturnsLazily(async _ =>
             {
                 await deleteApplied.Task.WaitAsync(token);
-                vectorApplied.TrySetResult(true);
+                embeddingsApplied.TrySetResult(true);
             });
 
         var analysisSignal = NewTaskCompletionSource<bool>();
@@ -1421,27 +1417,27 @@ public class IndexingEngineTests
             parsingGate: null,
             multiFileSignal: analysisSignal,
             pruner: pruner,
-            vectorCoordinator: vector);
+            embeddingCoordinator: embeddingCoordinator);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/vector-upsert.md"), IndexItemOptions.Default, token);
 
         await analysisSignal.Task.WaitAsync(token);
-        vectorApplied.Task.IsCompleted.Should().BeTrue("Vector updates should complete before analysis starts.");
-        vector.ShouldHaveAppliedVectorDeletes(pruneResult.DeletedArtifacts);
-        vector.ShouldHaveAppliedVectors(InvocationExpectation.AtLeastOnce);
+        embeddingsApplied.Task.IsCompleted.Should().BeTrue("Embedding refresh should complete before analysis starts.");
+        embeddingCoordinator.ShouldHaveAppliedEmbeddingDeletes(pruneResult.DeletedArtifacts);
+        embeddingCoordinator.ShouldHaveAppliedEmbeddings(InvocationExpectation.AtLeastOnce);
     }
 
     [Test]
     [Timeout(15_000)]
-    [DisplayName("New work after idle runs in a new epoch so vectors refresh again")]
-    public async Task Given_SubsequentWork_When_PreviousEpochCompleted_Then_VectorRefreshesAgain(CancellationToken token)
+    [DisplayName("New work after idle runs in a new epoch so embeddings refresh again")]
+    public async Task Given_SubsequentWork_When_PreviousEpochCompleted_Then_EmbeddingRefreshRunsAgain(CancellationToken token)
     {
-        var firstVector = NewTaskCompletionSource<bool>();
-        var secondVector = NewTaskCompletionSource<bool>();
+        var firstRefresh = NewTaskCompletionSource<bool>();
+        var secondRefresh = NewTaskCompletionSource<bool>();
         var observedEpochs = new List<long>();
 
-        var vector = A.Fake<IVectorIndexCoordinator>();
-        A.CallTo(() => vector.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
+        var embeddingCoordinator = A.Fake<IEmbeddingCoordinator>();
+        A.CallTo(() => embeddingCoordinator.ApplyAsync(A<IReadOnlyList<IndexItem>>._, A<CancellationToken>._))
             .ReturnsLazily(call =>
             {
                 var items = call.GetArgument<IReadOnlyList<IndexItem>>(0)!;
@@ -1451,11 +1447,11 @@ public class IndexingEngineTests
                     observedEpochs.Add(epoch);
                     if (observedEpochs.Count == 1)
                     {
-                        firstVector.TrySetResult(true);
+                        firstRefresh.TrySetResult(true);
                     }
                     else if (observedEpochs.Count == 2)
                     {
-                        secondVector.TrySetResult(true);
+                        secondRefresh.TrySetResult(true);
                     }
                 }
 
@@ -1466,14 +1462,14 @@ public class IndexingEngineTests
         await using var engine = CreateEngineForAnalysisTests(
             parsingGate: null,
             multiFileSignal: analysisSignal,
-            vectorCoordinator: vector);
+            embeddingCoordinator: embeddingCoordinator);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/vector-epoch-a.md"), IndexItemOptions.Default, token);
-        await firstVector.Task.WaitAsync(token);
+        await firstRefresh.Task.WaitAsync(token);
         await engine.AnalysisQueue.WhenIdleAsync().WaitAsync(token);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/vector-epoch-b.md"), IndexItemOptions.Default, token);
-        await secondVector.Task.WaitAsync(token);
+        await secondRefresh.Task.WaitAsync(token);
         await engine.AnalysisQueue.WhenIdleAsync().WaitAsync(token);
 
         observedEpochs.Should().HaveCount(2);
@@ -1515,13 +1511,13 @@ public class IndexingEngineTests
         A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<IndexItem>>._, A<CancellationToken>._))
             .Returns(Task.FromResult(new PruningResult(new[] { deleteUri })));
 
-        var vector = NullVectorIndexCoordinator.Instance;
+        var embeddingCoordinator = NullEmbeddingCoordinator.Instance;
         var analysisSignal = NewTaskCompletionSource<bool>();
         await using var engine = CreateEngineForAnalysisTests(
             parsingGate: null,
             multiFileSignal: analysisSignal,
             pruner: pruner,
-            vectorCoordinator: vector,
+            embeddingCoordinator: embeddingCoordinator,
             dataStore: db);
 
         await engine.EnqueueItemAsync(CreateRawArtifact("file:///repo/live.md"), IndexItemOptions.Default, token);
@@ -1543,7 +1539,7 @@ public class IndexingEngineTests
     private static IndexingEngine CreateEngineForIdleTests(
         TaskCompletionSource<bool>? parsingGate = null,
         IArtifactPruner? pruner = null,
-        IVectorIndexCoordinator? vectorCoordinator = null)
+        IEmbeddingCoordinator? embeddingCoordinator = null)
     {
         var context = IndexingEngineTestFactory.Create(builder =>
         {
@@ -1552,9 +1548,9 @@ public class IndexingEngineTests
                 builder.WithArtifactPruner(pruner);
             }
 
-            if (vectorCoordinator is not null)
+            if (embeddingCoordinator is not null)
             {
-                builder.WithVectorCoordinator(vectorCoordinator);
+                builder.WithEmbeddingCoordinator(embeddingCoordinator);
             }
         });
 
@@ -1586,7 +1582,7 @@ public class IndexingEngineTests
         TaskCompletionSource<bool>? parsingGate,
         TaskCompletionSource<bool> multiFileSignal,
         IArtifactPruner? pruner = null,
-        IVectorIndexCoordinator? vectorCoordinator = null,
+        IEmbeddingCoordinator? embeddingCoordinator = null,
         DuckDbDataStore? dataStore = null)
     {
         var context = IndexingEngineTestFactory.Create(builder =>
@@ -1604,9 +1600,9 @@ public class IndexingEngineTests
                 builder.WithArtifactPruner(pruner);
             }
 
-            if (vectorCoordinator is not null)
+            if (embeddingCoordinator is not null)
             {
-                builder.WithVectorCoordinator(vectorCoordinator);
+                builder.WithEmbeddingCoordinator(embeddingCoordinator);
             }
 
             if (dataStore is not null)

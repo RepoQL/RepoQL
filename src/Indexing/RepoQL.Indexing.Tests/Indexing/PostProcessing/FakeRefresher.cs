@@ -2,7 +2,7 @@
 
 namespace RepoQL.Indexing.Tests.Indexing.PostProcessing;
 
-internal sealed class FakeRefresher : IVectorIndexRefresher
+internal sealed class FakeRefresher : IEmbeddingRefreshRunner
 {
     public int Invocations { get; private set; }
     public int TargetedInvocations { get; private set; }

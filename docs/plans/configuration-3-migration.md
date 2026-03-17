@@ -46,7 +46,7 @@ Zero direct `Environment.GetEnvironmentVariable()` calls for settings. Every con
 
 - `AddRepoIndexer()` shall read `RepoQlConfig.Embedding` instead of `REPOQL_EMBED_MODE`, `REPOQL_EMBED_ENABLED`, `REPOQL_EMBED_DIM`, `REPOQL_EMBED_MAX_TOKENS`, `REPOQL_EMBED_MODEL_PATH`
 - `EmbeddingRefresher` shall read batch size from `RepoQlConfig.Embedding.BatchSize`
-- `VectorIndexCoordinator` shall read concurrency from `RepoQlConfig.Embedding.Concurrency`
+- `EmbeddingCoordinator` shall read concurrency from `RepoQlConfig.Embedding.Concurrency`
 - The `REPOQL_EMBED_ENABLED` legacy env var shall be removed — `embedding.mode = none` replaces it
 
 ### ONNX Configuration
@@ -111,7 +111,7 @@ Zero direct `Environment.GetEnvironmentVariable()` calls for settings. Every con
   - `src/RepoQL.Protocol/RepoQlClient.cs`
   - `src/Formats/RepoQL.Formats.DotNet/CSharpLoader.cs`
   - `src/Formats/RepoQL.Formats.DotNet/CSharpWorkspaceHost.cs`
-  - `src/Indexing/RepoQL.Indexing/PostProcessing/VectorIndexCoordinator.cs`
+  - `src/Indexing/RepoQL.Indexing/PostProcessing/EmbeddingCoordinator.cs`
   - `src/Indexing/RepoQL.Indexing/PostProcessing/EmbeddingRefresher.cs`
 
 ## Error Policy

@@ -1748,6 +1748,30 @@ public class DuckDbDataStoreTests
         results.Should().HaveCount(1);
     }
 
+    [Test]
+    [DisplayName("Write conflict escalation ignores read paths")]
+    public void ShouldEscalateWriteConflictToFullRebuild_ReturnsFalse_ForReadPaths()
+    {
+        var now = DateTime.UtcNow;
+
+        DuckDbDataStore.ShouldEscalateWriteConflictToFullRebuild(
+            allowFullRebuildEscalation: false,
+            recoveredAtUtc: now.AddSeconds(-5),
+            utcNow: now).Should().BeFalse();
+    }
+
+    [Test]
+    [DisplayName("Write conflict escalation only triggers for recent write-path recovery")]
+    public void ShouldEscalateWriteConflictToFullRebuild_ReturnsTrue_ForRecentWriteRecovery()
+    {
+        var now = DateTime.UtcNow;
+
+        DuckDbDataStore.ShouldEscalateWriteConflictToFullRebuild(
+            allowFullRebuildEscalation: true,
+            recoveredAtUtc: now.AddSeconds(-5),
+            utcNow: now).Should().BeTrue();
+    }
+
     #endregion
 
     #region IndexArtifactBatchIsolated Tests

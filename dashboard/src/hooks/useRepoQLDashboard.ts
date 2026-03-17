@@ -1084,8 +1084,8 @@ function formatIdleProcessingLabel(phase: string | null | undefined): string {
       return 'Pruning';
     case 'structure_embedding':
       return 'Structure embedding';
-    case 'vector_refresh':
-      return 'Vector refresh';
+    case 'embedding_refresh':
+      return 'Embedding refresh';
     case 'multi_file_analysis':
       return 'Multi-file analysis';
     default:

@@ -1,9 +1,6 @@
-﻿-- Search debugging and diagnostic macros.
--- Use these to understand search behavior, benchmark components, and verify HNSW usage.
+-- Search debugging and diagnostic macros.
+-- Use these to understand semantic search behavior and benchmark the linear path.
 
--- Check which search path will be used for semantic search.
--- Returns: query_dim, vss_384_count, vss_768_count, vss_1024_count, search_path
--- Uses embed_query() which handles E5 model prefixes automatically.
 CREATE OR REPLACE MACRO _search_semantic_explain(q) AS TABLE (
     WITH
     query_vec AS (
@@ -15,78 +12,20 @@ CREATE OR REPLACE MACRO _search_semantic_explain(q) AS TABLE (
             COALESCE(array_length(vec::FLOAT[]), 0) AS query_dim
         FROM query_vec
     ),
-    vss_counts AS (
+    embedding_counts AS (
         SELECT
-            (SELECT COUNT(*) FROM _vss_index_384) AS cnt_384,
-            (SELECT COUNT(*) FROM _vss_index_768) AS cnt_768,
-            (SELECT COUNT(*) FROM _vss_index_1024) AS cnt_1024,
-            COALESCE(
-                (
-                    SELECT LOWER(TRIM(value)) = 'true'
-                    FROM metadata
-                    WHERE key = 'vss_structure_ready'
-                    LIMIT 1
-                ),
-                FALSE
-            ) AS structure_ready
+            (SELECT COUNT(*) FROM document_embedding WHERE scope = 'document' AND embedding_type = 'structure') AS structure_embeddings,
+            (SELECT COUNT(*) FROM document_embedding WHERE scope = 'document' AND embedding_type = 'full') AS full_embeddings
     )
     SELECT
         di.query_dim,
-        vc.cnt_384 AS vss_384_count,
-        vc.cnt_768 AS vss_768_count,
-        vc.cnt_1024 AS vss_1024_count,
-        vc.structure_ready AS vss_structure_ready,
-        CASE
-            WHEN di.query_dim = 384 AND vc.cnt_384 > 0 AND vc.structure_ready = TRUE THEN 'HNSW_384'
-            WHEN di.query_dim = 768 AND vc.cnt_768 > 0 THEN 'HNSW_768'
-            WHEN di.query_dim = 1024 AND vc.cnt_1024 > 0 THEN 'HNSW_1024'
-            ELSE 'LINEAR_SCAN'
-        END AS search_path
-    FROM dim_info di, vss_counts vc
-);
-
--- Get VSS index status for all dimensions.
-CREATE OR REPLACE MACRO _vss_status() AS TABLE (
-    SELECT
-        '_vss_index_384' AS index_name,
-        384 AS dimension,
-        (SELECT COUNT(*) FROM _vss_index_384) AS row_count,
-        (SELECT COUNT(DISTINCT embedding_type) FROM _vss_index_384) AS embedding_types
-    UNION ALL
-    SELECT
-        '_vss_index_768',
-        768,
-        (SELECT COUNT(*) FROM _vss_index_768),
-        (SELECT COUNT(DISTINCT embedding_type) FROM _vss_index_768)
-    UNION ALL
-    SELECT
-        '_vss_index_1024',
-        1024,
-        (SELECT COUNT(*) FROM _vss_index_1024),
-        (SELECT COUNT(DISTINCT embedding_type) FROM _vss_index_1024)
-);
-
--- Test HNSW search directly (bypasses search macro).
--- Use this to verify HNSW is working and measure its performance.
--- Uses embed_query() which handles E5 model prefixes automatically.
-CREATE OR REPLACE MACRO _search_hnsw_direct(q, k := 10) AS TABLE (
-    WITH
-    query_vec AS (
-        SELECT embed_query(q)::FLOAT[384] AS vec
-    )
-    SELECT
-        v.doc_id,
-        v.node_id,
-        v.embedding_type,
-        1.0 - array_cosine_distance(v.vec, qv.vec) AS score
-    FROM query_vec qv, _vss_index_384 v
-    WHERE v.embedding_type = 'structure'
-    ORDER BY array_cosine_distance(v.vec, qv.vec)
-    LIMIT k
+        ec.structure_embeddings,
+        ec.full_embeddings,
+        'LINEAR_SCAN' AS search_path
+    FROM dim_info di, embedding_counts ec
 );
 
 -- Test linear scan search directly (bypasses search macro).
--- Use this for comparison with HNSW.
 -- Uses embed_query() which handles E5 model prefixes automatically.
 CREATE OR REPLACE MACRO _search_linear_direct(q, k := 10) AS TABLE (
     WITH
@@ -107,34 +46,6 @@ CREATE OR REPLACE MACRO _search_linear_direct(q, k := 10) AS TABLE (
     LIMIT k
 );
 
--- Compare HNSW vs linear results for a query.
--- Helps verify HNSW is returning correct results.
-CREATE OR REPLACE MACRO _search_compare_paths(q, k := 10) AS TABLE (
-    WITH
-    hnsw AS (
-        SELECT node_id, score, 'HNSW' AS source
-        FROM _search_hnsw_direct(q, k)
-    ),
-    linear AS (
-        SELECT node_id, score, 'LINEAR' AS source
-        FROM _search_linear_direct(q, k)
-    )
-    SELECT
-        COALESCE(h.node_id, l.node_id) AS node_id,
-        h.score AS hnsw_score,
-        l.score AS linear_score,
-        ABS(COALESCE(h.score, 0) - COALESCE(l.score, 0)) AS score_diff,
-        CASE
-            WHEN h.node_id IS NOT NULL AND l.node_id IS NOT NULL THEN 'BOTH'
-            WHEN h.node_id IS NOT NULL THEN 'HNSW_ONLY'
-            ELSE 'LINEAR_ONLY'
-        END AS presence
-    FROM hnsw h
-    FULL OUTER JOIN linear l ON h.node_id = l.node_id
-    ORDER BY COALESCE(h.score, l.score) DESC
-);
-
--- Get embedding statistics for diagnostics.
 CREATE OR REPLACE MACRO _embedding_stats() AS TABLE (
     SELECT
         scope,
@@ -142,7 +53,6 @@ CREATE OR REPLACE MACRO _embedding_stats() AS TABLE (
         dim,
         model,
         COUNT(*) AS count,
-        -- Use approx_count_distinct for doc_id (high cardinality) - exact count unnecessary for diagnostics
         approx_count_distinct(doc_id) AS unique_docs,
         MIN(updated_at) AS oldest,
         MAX(updated_at) AS newest

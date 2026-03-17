@@ -86,7 +86,7 @@ public class IndexingEngineOptions
 /// <para>
 /// Files enqueued together receive the same epoch number. When the last item in an epoch completes
 /// and the hot path is idle, the <see cref="HotPathIdle"/> event fires, triggering batch post-processing
-/// (pruning, vector refresh, multi-file analysis).
+/// (pruning, embedding refresh, multi-file analysis).
 /// </para>
 ///
 /// <para><strong>Threading Model</strong></para>
@@ -108,7 +108,7 @@ public class IndexingEngineOptions
 /// <item><description>Database writer is ALWAYS single-threaded</description></item>
 /// <item><description>DocumentCatalog updates ONLY via OnCommitted callbacks</description></item>
 /// <item><description>Epochs are monotonically increasing (never reused)</description></item>
-/// <item><description>Pruner runs BEFORE vector refresh</description></item>
+/// <item><description>Pruner runs BEFORE embedding refresh</description></item>
 /// <item><description>Analysis sees ONLY committed graph state</description></item>
 /// </list>
 ///
@@ -191,7 +191,7 @@ public partial class IndexingEngine : IAsyncDisposable
     /// </summary>
     public Action<string, string?>? MilestoneCallback { get; set; }
     private IArtifactPruner ArtifactPruner { get; }
-    internal IVectorIndexCoordinator VectorCoordinator { get; }
+    internal IEmbeddingCoordinator EmbeddingCoordinator { get; }
     private UriRegistry? UriRegistry { get; }
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly EmbeddingMode _embeddingMode;
@@ -397,7 +397,7 @@ public partial class IndexingEngine : IAsyncDisposable
         IDocumentCatalog? documentCatalog = null,
         IIndexingCommitter? committer = null,
         IArtifactPruner? artifactPruner = null,
-        IVectorIndexCoordinator? vectorCoordinator = null,
+        IEmbeddingCoordinator? embeddingCoordinator = null,
         IndexingEngineOptions? options = null,
         ILogger<IndexingEngine>? logger = null,
         IndexingMetrics? metrics = null,
@@ -416,7 +416,7 @@ public partial class IndexingEngine : IAsyncDisposable
         DocumentCatalog = documentCatalog ?? new DocumentCatalog(NullDocumentCatalogDataSource.Instance);
         Committer = committer ?? NullIndexingCommitter.Instance;
         ArtifactPruner = artifactPruner ?? NullArtifactPruner.Instance;
-        VectorCoordinator = vectorCoordinator ?? NullVectorIndexCoordinator.Instance;
+        EmbeddingCoordinator = embeddingCoordinator ?? NullEmbeddingCoordinator.Instance;
         Options = options ??  new IndexingEngineOptions();
         Logger = logger ?? NullLogger<IndexingEngine>.Instance;
         Metrics = metrics;
@@ -1054,7 +1054,7 @@ public partial class IndexingEngine : IAsyncDisposable
                     if (Options.AnalysisItemTimeout.HasValue)
                         batchCts.CancelAfter(Options.AnalysisItemTimeout.Value);
 
-                    await VectorCoordinator.GenerateStructureEmbeddingsAsync(batch, batchCts.Token).ConfigureAwait(false);
+                    await EmbeddingCoordinator.GenerateStructureEmbeddingsAsync(batch, batchCts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
@@ -1499,7 +1499,7 @@ public partial class IndexingEngine : IAsyncDisposable
                 if (pruningResult.DeletedArtifacts.Count > 0)
                 {
                     await DeleteStaleDocumentsAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
-                    await VectorCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
+                    await EmbeddingCoordinator.ApplyDeletesAsync(pruningResult.DeletedArtifacts, Shutdown.Token).ConfigureAwait(false);
                 }
 
                 RecordMilestone("prune", $"{prunedCount} removed, {pruneTimer.Elapsed.TotalMilliseconds:F1}ms");
@@ -1519,7 +1519,7 @@ public partial class IndexingEngine : IAsyncDisposable
                     {
                         // Safety net: rerun structure embedding in idle for items still not embedded
                         // after eager execution (for example, transient provider/queue failures).
-                        await VectorCoordinator.GenerateStructureEmbeddingsAsync(catchupItems, Shutdown.Token).ConfigureAwait(false);
+                        await EmbeddingCoordinator.GenerateStructureEmbeddingsAsync(catchupItems, Shutdown.Token).ConfigureAwait(false);
                     }
                     structureTimer.Stop();
                     Metrics?.IdlePhaseDuration.Record(structureTimer.Elapsed.TotalMilliseconds, new TagList
@@ -1536,49 +1536,28 @@ public partial class IndexingEngine : IAsyncDisposable
                 Logger.LogError(ex, "Structure embedding failed for {Count} items. Items will proceed without embeddings.", structureEmbedItems.Length);
             }
 
-            // Full-text vector refresh phase
+            // Full-text embedding refresh phase
             try
             {
-                using (ActivitySource.StartActivity("vector_refresh_phase", ActivityKind.Internal))
+                using (ActivitySource.StartActivity("embedding_refresh_phase", ActivityKind.Internal))
                 {
-                    var vectorTimer = Stopwatch.StartNew();
+                    var embeddingTimer = Stopwatch.StartNew();
                     if (pendingItems.Length > 0)
                     {
-                        await VectorCoordinator.ApplyAsync(pendingItems, Shutdown.Token).ConfigureAwait(false);
+                        await EmbeddingCoordinator.ApplyAsync(pendingItems, Shutdown.Token).ConfigureAwait(false);
                     }
-                    vectorTimer.Stop();
-                    Metrics?.IdlePhaseDuration.Record(vectorTimer.Elapsed.TotalMilliseconds, new TagList
+                    embeddingTimer.Stop();
+                    Metrics?.IdlePhaseDuration.Record(embeddingTimer.Elapsed.TotalMilliseconds, new TagList
                     {
-                        { "phase", "vector_refresh" }
+                        { "phase", "embedding_refresh" }
                     });
 
-                    RecordMilestone("vector_refresh", $"{pendingItems.Length} items, {vectorTimer.Elapsed.TotalMilliseconds:F1}ms");
+                    RecordMilestone("embedding_refresh", $"{pendingItems.Length} items, {embeddingTimer.Elapsed.TotalMilliseconds:F1}ms");
                 }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                Logger.LogError(ex, "Vector refresh failed. Full-text search may be incomplete until next refresh.");
-            }
-
-            // VSS HNSW index refresh phase
-            try
-            {
-                using (ActivitySource.StartActivity("vss_index_phase", ActivityKind.Internal))
-                {
-                    var vssTimer = Stopwatch.StartNew();
-                    await VectorCoordinator.RefreshVssIndexAsync(Shutdown.Token).ConfigureAwait(false);
-                    vssTimer.Stop();
-                    Metrics?.IdlePhaseDuration.Record(vssTimer.Elapsed.TotalMilliseconds, new TagList
-                    {
-                        { "phase", "vss_index" }
-                    });
-
-                    RecordMilestone("vss_index", $"{vssTimer.Elapsed.TotalMilliseconds:F1}ms");
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Logger.LogError(ex, "VSS index refresh failed. Semantic search may be degraded until next refresh.");
+                Logger.LogError(ex, "Embedding refresh failed. Full-text search may be incomplete until next refresh.");
             }
 
             // Multi-file analysis enqueue phase

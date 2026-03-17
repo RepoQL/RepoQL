@@ -525,8 +525,9 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         }
         catch (DuckDBException ex) when (IsWriteConflictError(ex))
         {
-            // Write conflicts can occur during reads when DuckDB applies WAL entries
-            HandleWriteConflict(ex, "Read");
+            // Read-side conflicts can surface while DuckDB replays WAL or a connection is stale.
+            // Recover the connection state, but do not treat this as proof that the file must be rebuilt.
+            HandleWriteConflict(ex, "Read", allowFullRebuildEscalation: false);
             throw;
         }
         finally
@@ -627,7 +628,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             catch (DuckDBException ex) when (IsWriteConflictError(ex))
             {
                 DisablePooledReads(ex, "write conflict while executing pooled untrusted read");
-                HandleWriteConflict(ex, "ReadUntrusted(Pooled)");
+                HandleWriteConflict(ex, "ReadUntrusted(Pooled)", allowFullRebuildEscalation: false);
                 throw;
             }
             catch (Exception ex)
@@ -680,7 +681,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         }
         catch (DuckDBException ex) when (IsWriteConflictError(ex))
         {
-            HandleWriteConflict(ex, "ReadUntrusted");
+            HandleWriteConflict(ex, "ReadUntrusted", allowFullRebuildEscalation: false);
             throw;
         }
         finally
@@ -769,7 +770,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         }
         catch (DuckDBException ex) when (IsWriteConflictError(ex))
         {
-            HandleWriteConflict(ex, "ReadScalar");
+            HandleWriteConflict(ex, "ReadScalar", allowFullRebuildEscalation: false);
             throw;
         }
         finally
@@ -1343,11 +1344,10 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     }
 
     /// <summary>
-    /// Handles a write-write conflict error. Under the single-writer model
-    /// (EnterExclusiveSection), any write-write conflict indicates database
-    /// corruption — always invalidates for recovery.
+    /// Handles a write-write conflict error. Always invalidates the current connection state so the
+    /// next operation will recover, but only write-path conflicts are allowed to escalate to a full rebuild.
     /// </summary>
-    internal void HandleWriteConflict(DuckDBException ex, string operation)
+    internal void HandleWriteConflict(DuckDBException ex, string operation, bool allowFullRebuildEscalation = true)
     {
         var failures = Interlocked.Increment(ref _consecutiveFailures);
 
@@ -1355,24 +1355,25 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
         var message = ex.Message ?? "";
         var keyMatch = System.Text.RegularExpressions.Regex.Match(message, @"conflict on key: ""([^""]+)""");
         var conflictingKey = keyMatch.Success ? keyMatch.Groups[1].Value : "unknown";
+        var escalationPolicy = allowFullRebuildEscalation
+            ? "Write path conflict under single-writer invariants."
+            : "Read path conflict; recovering connection state without auto-rebuild.";
 
         _logger.LogError(ex,
             "[DuckDB] WRITE-WRITE CONFLICT during {Operation} (consecutive failures: {Failures}). " +
             "Conflicting key: {ConflictingKey}. " +
-            "This indicates database corruption (impossible under single-writer model). " +
-            "Database marked for recovery.",
-            operation, failures, conflictingKey);
+            "{EscalationPolicy} Database marked for recovery.",
+            operation, failures, conflictingKey, escalationPolicy);
 
-        // Single-writer model makes any write-write conflict a corruption signal.
-        // The exclusive section guarantees only one writer at a time.
+        // Always invalidate so the next operation reconnects and lets DuckDB replay WAL as needed.
         _databaseInvalidated = true;
 
-        // If corruption recurs immediately after connection recovery, the .duckdb file is corrupt.
-        // Escalate from connection recovery (AttemptRecovery) to full database rebuild (RecreateDatabase).
-        if (_recoveredAtUtc is not null &&
-            DateTime.UtcNow - _recoveredAtUtc.Value < PostRecoveryEscalationWindow)
+        // Only repeated write-path conflicts justify deleting the database file.
+        var recoveredAtUtc = _recoveredAtUtc;
+        var now = DateTime.UtcNow;
+        if (ShouldEscalateWriteConflictToFullRebuild(allowFullRebuildEscalation, recoveredAtUtc, now))
         {
-            var elapsed = DateTime.UtcNow - _recoveredAtUtc.Value;
+            var elapsed = now - recoveredAtUtc!.Value;
             _logger.LogError(
                 "[DuckDB] Write-write conflict {Seconds:F1}s after WAL recovery. " +
                 "Database file is corrupted. Escalating to full rebuild.",
@@ -1395,6 +1396,17 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
                 }
             }
         }
+    }
+
+    internal static bool ShouldEscalateWriteConflictToFullRebuild(
+        bool allowFullRebuildEscalation,
+        DateTime? recoveredAtUtc,
+        DateTime utcNow)
+    {
+        if (!allowFullRebuildEscalation || recoveredAtUtc is null)
+            return false;
+
+        return utcNow - recoveredAtUtc.Value < PostRecoveryEscalationWindow;
     }
 
     private void EnsureSchema()
@@ -1461,19 +1473,6 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
                 _logger.LogDebug("[DuckDB] Framework UDF macros applied");
             }
 
-            // Load VSS extension for HNSW vector similarity search
-            // This must happen AFTER UDF registration to avoid conflicts with DuckDB's internal function registration
-            try
-            {
-                _connection.Execute("INSTALL vss;");
-                _connection.Execute("LOAD vss;");
-                _logger.LogDebug("[DuckDB] VSS extension loaded for HNSW search");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "[DuckDB] VSS extension not available - falling back to linear search");
-            }
-
             var schemaScripts = new[]
             {
                 "Tables/metadata.sql",
@@ -1493,7 +1492,6 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
                 // git_status must come before Views/files.sql which uses it
                 "Macros/git_status.sql",
                 "Tables/document_embedding.sql",
-                "Tables/vss_indexes.sql",
                 "Views/files.sql",
                 "Views/types.sql",
                 "Views/functions.sql",
@@ -1534,6 +1532,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             }
             _logger.LogDebug("[DuckDB] Core schema scripts applied ({Count} scripts)", schemaScripts.Length);
 
+            CleanupLegacySemanticArtifacts();
             EnsureSchemaVersion();
 
             foreach (var script in _formatSchemaScripts)
@@ -1602,12 +1601,21 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     }
 
     private const string MetadataKeySchemaVersion = "schema_version";
-    public const string MetadataKeyVssStructureReady = "vss_structure_ready";
 
     private void EnsureSchemaVersion()
     {
         var version = SchemaVersion.ToString(CultureInfo.InvariantCulture);
         UpsertMetadataValue(MetadataKeySchemaVersion, version);
+    }
+
+    private void CleanupLegacySemanticArtifacts()
+    {
+        _connection.Execute("""
+            DROP TABLE IF EXISTS _vss_index_384;
+            DROP TABLE IF EXISTS _vss_index_768;
+            DROP TABLE IF EXISTS _vss_index_1024;
+            DELETE FROM metadata WHERE key = 'vss_structure_ready';
+            """);
     }
 
     /// <summary>

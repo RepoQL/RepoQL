@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Humanizer;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -7,61 +7,45 @@ using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
-using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Data.DuckDB;
+using RepoQL.Indexing.Indexing.Pipelines;
 using static RepoQL.Contracts.Embeddings.EmbeddingModeExtensions;
 
 namespace RepoQL.Indexing.Indexing.PostProcessing;
 
 /// <summary>
-/// Coordinates post-index vector refreshes. The heavy lifting is delegated to an <see cref="IVectorIndexRefresher"/>.
+/// Coordinates post-index embedding generation and refresh work.
 /// </summary>
-/// <remarks>
-/// <para><strong>Configuration:</strong></para>
-/// <list type="bullet">
-///   <item><c>embedding.concurrency</c> - Max concurrent refresh operations (default: 2). Increase to allow parallel embedding batches for higher throughput.</item>
-/// </list>
-/// </remarks>
-public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposable
+public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
 {
     private const int StructureEmbeddingBatchSize = 100;
     internal const int RegistrySyncBatchSize = 256;
-    private static readonly TimeSpan VssRefreshDebounce = TimeSpan.FromMilliseconds(250);
-    private const string MetadataValueTrue = "true";
-    private const string MetadataValueFalse = "false";
-    private readonly IVectorIndexRefresher _refresher;
+
+    private readonly IEmbeddingRefreshRunner _refreshRunner;
     private readonly DuckDbDataStore? _db;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly EmbeddingMode _embeddingMode;
-    private readonly ILogger<VectorIndexCoordinator> _logger;
+    private readonly ILogger<EmbeddingCoordinator> _logger;
     private readonly UriRegistry? _uriRegistry;
-    private readonly Func<IVssIndexManager>? _vssIndexManagerFactory;
     private readonly SemaphoreSlim _refreshGate;
-    private readonly SemaphoreSlim _vssRefreshSignal = new(0);
-    private readonly CancellationTokenSource _vssRefreshShutdown = new();
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly Task? _startupRefreshTask;
     private long _lastRefreshedEpoch = long.MinValue;
     private volatile bool _needsRefresh;
-    private IVssIndexManager? _vssIndexManager;
-    private Task? _vssRefreshWorker;
-    private int _vssWorkerStarted;
-    private int _vssInitialBuildCompleted;
-    private int _vssRefreshRequested;
-    private int _vssStructureReadyState = -1;
-    private int _startupContentRefreshChecked;
 
     private static int ResolveRefreshConcurrency(RepoQlConfig.EmbeddingSettings? settings)
         => settings?.Concurrency is > 0 and var configured ? configured : 2;
 
-    public VectorIndexCoordinator(
+    public EmbeddingCoordinator(
         DuckDbDataStore database,
         IEmbeddingProvider embeddingProvider,
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
-        ILogger<VectorIndexCoordinator>? logger = null,
+        ILogger<EmbeddingCoordinator>? logger = null,
         UriRegistry? uriRegistry = null,
         RepoQlConfig.EmbeddingSettings? embeddingSettings = null,
         IContextualEmbeddingProvider? contextualProvider = null)
         : this(
-            new DuckDbVectorIndexRefresher(
+            new DuckDbEmbeddingRefreshRunner(
                 database,
                 embeddingProvider,
                 embeddingMode,
@@ -73,44 +57,37 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             embeddingMode,
             logger,
             uriRegistry,
-            embeddingSettings: embeddingSettings)
+            embeddingSettings)
     {
     }
 
-    internal VectorIndexCoordinator(
-        IVectorIndexRefresher refresher,
+    internal EmbeddingCoordinator(
+        IEmbeddingRefreshRunner refreshRunner,
         DuckDbDataStore? db = null,
         IEmbeddingProvider? embeddingProvider = null,
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
-        ILogger<VectorIndexCoordinator>? logger = null,
+        ILogger<EmbeddingCoordinator>? logger = null,
         UriRegistry? uriRegistry = null,
-        Func<IVssIndexManager>? vssIndexManagerFactory = null,
         RepoQlConfig.EmbeddingSettings? embeddingSettings = null)
     {
-        _refresher = refresher ?? throw new ArgumentNullException(nameof(refresher));
+        _refreshRunner = refreshRunner ?? throw new ArgumentNullException(nameof(refreshRunner));
         _db = db;
         _embeddingProvider = embeddingProvider;
         _embeddingMode = embeddingMode;
-        _logger = logger ?? NullLogger<VectorIndexCoordinator>.Instance;
+        _logger = logger ?? NullLogger<EmbeddingCoordinator>.Instance;
         _uriRegistry = uriRegistry;
-        _vssIndexManagerFactory = vssIndexManagerFactory;
         var refreshConcurrency = ResolveRefreshConcurrency(embeddingSettings);
         _refreshGate = new SemaphoreSlim(refreshConcurrency, refreshConcurrency);
 
-        // VSS is ephemeral; force semantic fallback until this process completes an in-memory rebuild.
-        SetVssStructureReadyMetadata(isReady: false);
-
-        // VSS indexes are in-memory only; always schedule an initial rebuild after startup.
-        RequestVssRefresh();
+        if (_db is not null)
+            _startupRefreshTask = Task.Run(() => TriggerStartupContentRefreshAsync(_shutdown.Token));
     }
 
     public Task ApplyDeletesAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken)
     {
-        if (deletedArtifacts.Count == 0)
-            return Task.CompletedTask;
+        if (deletedArtifacts.Count > 0)
+            _needsRefresh = true;
 
-        _needsRefresh = true;
-        RequestVssRefresh();
         return Task.CompletedTask;
     }
 
@@ -135,10 +112,9 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             var embeddingsChanged = await RefreshEmbeddingsAsync(targetDocumentIds, forceFullRefresh, cancellationToken).ConfigureAwait(false);
             Interlocked.Exchange(ref _lastRefreshedEpoch, epoch);
             _needsRefresh = false;
+
             if (embeddingsChanged)
-            {
-                RequestVssRefresh();
-            }
+                SyncRegistryEmbeddingStatus(forceFullRefresh ? null : targetDocumentIds);
         }
         finally
         {
@@ -152,43 +128,26 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         CancellationToken cancellationToken)
     {
         var runFullRefresh = forceFullRefresh || targetDocumentIds.Count == 0;
-        _logger.LogDebug("Vector index refresh triggered (mode={Mode}, docs={DocCount})",
+        _logger.LogDebug("Embedding refresh triggered (mode={Mode}, docs={DocCount})",
             runFullRefresh ? "full" : "targeted",
             targetDocumentIds.Count);
 
-        var embeddingsChanged = false;
         try
         {
-            if (runFullRefresh)
-            {
-                embeddingsChanged = await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
-            }
-            else
-            {
-                embeddingsChanged = await _refresher.RefreshAsync(targetDocumentIds, cancellationToken).ConfigureAwait(false);
-            }
+            var embeddingsChanged = runFullRefresh
+                ? await _refreshRunner.RefreshAsync(cancellationToken).ConfigureAwait(false)
+                : await _refreshRunner.RefreshAsync(targetDocumentIds, cancellationToken).ConfigureAwait(false);
 
-            _logger.LogDebug("Vector index refresh completed");
-
-            // Sync UriRegistry with actual embedding counts from the database
-            if (embeddingsChanged)
-            {
-                SyncRegistryEmbeddingStatus(runFullRefresh ? null : targetDocumentIds);
-            }
-
+            _logger.LogDebug("Embedding refresh completed");
             return embeddingsChanged;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Vector index refresh failed");
+            _logger.LogError(ex, "Embedding refresh failed");
             throw;
         }
     }
 
-    /// <summary>
-    /// Syncs the UriRegistry embedding status from the database after full-text embedding refresh.
-    /// This ensures the registry reflects actual embedding counts including chunked documents.
-    /// </summary>
     private void SyncRegistryEmbeddingStatus(IReadOnlyList<Guid>? documentIds)
     {
         if (_uriRegistry is null || _db is null)
@@ -251,9 +210,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
                     continue;
 
                 if (_uriRegistry.TryGetValue(containerUri, out _))
-                {
                     _uriRegistry.SetEmbedded(containerUri, chunkCount);
-                }
             }
 
             _logger.LogDebug("UriRegistry embedding status synced from database");
@@ -336,16 +293,13 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
     }
 
     private static string ToUuidListSql(IReadOnlyList<Guid> ids)
-    {
-        return string.Join(",", ids.Select(id => $"'{id:D}'::UUID"));
-    }
+        => string.Join(",", ids.Select(id => $"'{id:D}'::UUID"));
 
     public async Task GenerateStructureEmbeddingsAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken)
     {
         if (items.Count == 0)
             return;
 
-        // Check embedding mode - structure embeddings require at least StructureOnly mode
         if (!_embeddingMode.IncludesStructure())
         {
             _logger.LogDebug("Structure embedding skipped: mode={Mode}", _embeddingMode);
@@ -362,8 +316,6 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         }
 
         var timer = Stopwatch.StartNew();
-
-        // Pre-count candidates to keep progress reporting accurate.
         var totalWorkItems = CountStructureEmbeddingCandidates(
             items,
             out var withRecords,
@@ -383,7 +335,6 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
         _logger.LogDebug("Generating {Count} structure embeddings...", totalWorkItems);
 
-        // Generate embeddings in batches and write each batch immediately.
         var totalWritten = 0;
         var totalBatches = (totalWorkItems + StructureEmbeddingBatchSize - 1) / StructureEmbeddingBatchSize;
         var batchNum = 0;
@@ -560,7 +511,6 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         var etaStr = eta.HasValue && eta.Value > TimeSpan.Zero
             ? $", ETA {eta.Value.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Second)}"
             : "";
-        // Only log per-batch progress for multi-batch runs; single-batch runs get the completion line
         if (totalBatches > 1)
         {
             _logger.LogInformation("Structure embeddings: {Batch}/{Total} ({Percent}%) - {BatchSize} items in {Time}{Eta}",
@@ -579,7 +529,7 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             documentEmbeddings.Add(new DocumentEmbedding(
                 work.DocId,
                 work.NodeId,
-                ChunkIndex: 0, // structure embeddings are always chunk 0
+                ChunkIndex: 0,
                 DocumentEmbedding.TypeStructure,
                 work.Uri,
                 DocumentEmbedding.ScopeDocument,
@@ -591,18 +541,13 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         if (documentEmbeddings.Count > 0)
         {
             _db!.WriteEmbeddings(documentEmbeddings);
-            RequestVssRefresh();
 
-            // Update UriRegistry for successfully embedded files
             if (_uriRegistry is not null)
             {
                 foreach (var embedding in documentEmbeddings)
                 {
                     if (RepoUri.TryParse(embedding.Uri, out var uri))
-                    {
-                        // Structure embeddings are chunk 0, count as 1 chunk
                         _uriRegistry.SetEmbedded(uri, 1);
-                    }
                 }
             }
         }
@@ -612,7 +557,6 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
 
     internal static string BuildStructurePayload(string uri, string? headline, string? structure)
     {
-        // Build payload: relative uri + headline + structure
         var relativeUri = uri;
         if (relativeUri.StartsWith("file:///", StringComparison.OrdinalIgnoreCase))
             relativeUri = relativeUri[8..];
@@ -633,129 +577,31 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         return string.Concat(relativeUri, "\n\n", headline, "\n\n", structure);
     }
 
-    public Task RefreshVssIndexAsync(CancellationToken cancellationToken)
-    {
-        if (cancellationToken.IsCancellationRequested)
-            return Task.FromCanceled(cancellationToken);
-
-        if (_db is null && _vssIndexManagerFactory is null)
-        {
-            _logger.LogDebug("VSS index refresh skipped: no database");
-            return Task.CompletedTask;
-        }
-
-        // VSS indexes are in-memory only, so always build once after startup.
-        if (Volatile.Read(ref _vssInitialBuildCompleted) == 0)
-            RequestVssRefresh();
-
-        return Task.CompletedTask;
-    }
-
     public void Dispose()
     {
-        _vssRefreshShutdown.Cancel();
+        _shutdown.Cancel();
         try
         {
-            _vssRefreshWorker?.GetAwaiter().GetResult();
+            _startupRefreshTask?.GetAwaiter().GetResult();
         }
         catch (OperationCanceledException)
         {
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "VSS refresh worker stopped with an error during disposal");
+            _logger.LogDebug(ex, "Startup embedding catch-up stopped with an error during disposal");
         }
 
-        _vssRefreshSignal.Dispose();
-        _vssRefreshShutdown.Dispose();
+        _shutdown.Dispose();
         _refreshGate.Dispose();
     }
 
-    /// <summary>
-    /// Gets the last epoch that was refreshed for embeddings.
-    /// </summary>
     public long GetLastRefreshedEpoch() => Interlocked.Read(ref _lastRefreshedEpoch);
 
-    /// <summary>
-    /// Gets whether the coordinator needs a refresh (e.g., due to deletes).
-    /// </summary>
     public bool GetNeedsRefresh() => _needsRefresh;
 
-    /// <summary>
-    /// Gets the current embedding mode.
-    /// </summary>
     public EmbeddingMode GetEmbeddingMode() => _embeddingMode;
 
-    private void RequestVssRefresh()
-    {
-        if (_db is null && _vssIndexManagerFactory is null)
-            return;
-
-        EnsureVssRefreshWorkerStarted();
-        if (Interlocked.Exchange(ref _vssRefreshRequested, 1) == 0)
-        {
-            _vssRefreshSignal.Release();
-        }
-    }
-
-    private void EnsureVssRefreshWorkerStarted()
-    {
-        if (Interlocked.CompareExchange(ref _vssWorkerStarted, 1, 0) != 0)
-            return;
-
-        _vssRefreshWorker = Task.Run(ProcessVssRefreshLoopAsync);
-    }
-
-    private async Task ProcessVssRefreshLoopAsync()
-    {
-        try
-        {
-            while (true)
-            {
-                await _vssRefreshSignal.WaitAsync(_vssRefreshShutdown.Token).ConfigureAwait(false);
-                await Task.Delay(VssRefreshDebounce, _vssRefreshShutdown.Token).ConfigureAwait(false);
-
-                if (Interlocked.Exchange(ref _vssRefreshRequested, 0) == 0)
-                    continue;
-
-                try
-                {
-                    SetVssStructureReadyMetadata(isReady: false);
-                    _vssIndexManager ??= _vssIndexManagerFactory?.Invoke() ?? new VssIndexManager(_db!);
-                    await _vssIndexManager.RefreshIndexesAsync(forceRefresh: true, cancellationToken: _vssRefreshShutdown.Token).ConfigureAwait(false);
-                    Volatile.Write(ref _vssInitialBuildCompleted, 1);
-                    SetVssStructureReadyMetadata(isReady: true);
-
-                    // One-time startup check: if content embeddings are missing but documents
-                    // are indexed, trigger a full content embedding refresh. This covers the case
-                    // where a contextual provider is newly deployed to an already-indexed repo
-                    // (no new items flow through the hot path, so ApplyAsync is never called).
-                    if (Interlocked.Exchange(ref _startupContentRefreshChecked, 1) == 0)
-                    {
-                        _ = Task.Run(() => TriggerStartupContentRefreshAsync(_vssRefreshShutdown.Token));
-                    }
-                }
-                catch (OperationCanceledException) when (_vssRefreshShutdown.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "VSS index refresh failed");
-                    RequestVssRefresh();
-                }
-            }
-        }
-        catch (OperationCanceledException) when (_vssRefreshShutdown.IsCancellationRequested)
-        {
-        }
-    }
-
-    /// <summary>
-    /// Checks whether content embeddings are missing for an already-indexed repo and triggers
-    /// a full refresh if needed. Runs once after the first VSS build on a background task
-    /// so the VSS loop isn't blocked during potentially long-running content embedding generation.
-    /// </summary>
     private async Task TriggerStartupContentRefreshAsync(CancellationToken cancellationToken)
     {
         if (_db is null)
@@ -788,11 +634,9 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
             await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                var embeddingsChanged = await _refresher.RefreshAsync(cancellationToken).ConfigureAwait(false);
+                var embeddingsChanged = await _refreshRunner.RefreshAsync(cancellationToken).ConfigureAwait(false);
                 if (embeddingsChanged)
-                {
-                    RequestVssRefresh();
-                }
+                    SyncRegistryEmbeddingStatus(documentIds: null);
             }
             finally
             {
@@ -808,41 +652,13 @@ public sealed class VectorIndexCoordinator : IVectorIndexCoordinator, IDisposabl
         }
     }
 
-    private void SetVssStructureReadyMetadata(bool isReady)
-    {
-        var next = isReady ? 1 : 0;
-        var previous = Interlocked.Exchange(ref _vssStructureReadyState, next);
-        if (previous == next)
-            return;
-
-        if (_db is null)
-            return;
-
-        try
-        {
-            _db.WriteMetadataValue(
-                DuckDbDataStore.MetadataKeyVssStructureReady,
-                isReady ? MetadataValueTrue : MetadataValueFalse);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Failed to update VSS readiness metadata");
-        }
-    }
-
-    /// <summary>
-    /// Marks all items as NotApplicable for embedding when embeddings are disabled.
-    /// This allows operations tracking these URIs to complete.
-    /// </summary>
     private void MarkItemsAsNotApplicable(IReadOnlyList<IndexItem> items)
     {
         if (_uriRegistry is null)
             return;
 
         foreach (var item in items)
-        {
             _uriRegistry.SetEmbeddingNotApplicable(item.Uri);
-        }
 
         _logger.LogDebug("Marked {Count} items as embedding NotApplicable", items.Count);
     }

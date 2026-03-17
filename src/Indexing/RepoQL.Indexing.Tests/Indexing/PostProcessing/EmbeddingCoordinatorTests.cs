@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
@@ -12,15 +13,15 @@ using ArtifactModel = RepoQL.Contracts.Models.Artifact;
 
 namespace RepoQL.Indexing.Tests.Indexing.PostProcessing;
 
-internal class VectorIndexCoordinatorTests
+internal class EmbeddingCoordinatorTests
 {
     [Test]
-    [DisplayName("Vector refresh only runs once per epoch until invalidated")]
-    public async Task Given_VectorCoordinator_When_ApplyAsyncTwice_Then_RefreshesOnce()
+    [DisplayName("Embedding refresh only runs once per epoch until invalidated")]
+    public async Task Given_EmbeddingCoordinator_When_ApplyAsyncTwice_Then_RefreshesOnce()
     {
         var refresher = new FakeRefresher();
-        var coordinator = new VectorIndexCoordinator(refresher, logger: NullLogger<VectorIndexCoordinator>.Instance);
-        var item = BuildItem("file:///repo/vector.md", includeDocNode: true, includeArtifact: true);
+        var coordinator = new EmbeddingCoordinator(refresher, logger: NullLogger<EmbeddingCoordinator>.Instance);
+        var item = BuildItem("file:///repo/embedding.md", includeDocNode: true, includeArtifact: true);
         item.SetEpoch(0);
 
         await coordinator.ApplyAsync([item], CancellationToken.None);
@@ -35,11 +36,11 @@ internal class VectorIndexCoordinatorTests
     }
 
     [Test]
-    [DisplayName("Vector refresh targets all dirty documents in the idle batch")]
+    [DisplayName("Embedding refresh targets all dirty documents in the idle batch")]
     public async Task Given_BatchOfItems_When_ApplyAsync_Then_TargetsAllDocumentIds()
     {
         var refresher = new FakeRefresher();
-        var coordinator = new VectorIndexCoordinator(refresher, logger: NullLogger<VectorIndexCoordinator>.Instance);
+        var coordinator = new EmbeddingCoordinator(refresher, logger: NullLogger<EmbeddingCoordinator>.Instance);
         var first = BuildItem("file:///repo/first.md", includeDocNode: true, includeArtifact: true);
         var second = BuildItem("file:///repo/second.md", includeDocNode: true, includeArtifact: true);
         first.SetEpoch(3);
@@ -61,12 +62,12 @@ internal class VectorIndexCoordinatorTests
     {
         var provider = new RecordingEmbeddingProvider();
         using var database = new DuckDbDataStore(path: null, embeddingProvider: provider, logger: NullLogger<DuckDbDataStore>.Instance);
-        var coordinator = new VectorIndexCoordinator(
+        var coordinator = new EmbeddingCoordinator(
             new FakeRefresher(),
             database,
             provider,
             EmbeddingMode.StructureOnly,
-            NullLogger<VectorIndexCoordinator>.Instance);
+            NullLogger<EmbeddingCoordinator>.Instance);
 
         var items = new[]
         {
@@ -97,12 +98,12 @@ internal class VectorIndexCoordinatorTests
         registry.TryRegisterDiscovered(alreadyEmbeddedUri);
         registry.SetEmbedded(alreadyEmbeddedUri, 1);
 
-        var coordinator = new VectorIndexCoordinator(
+        var coordinator = new EmbeddingCoordinator(
             new FakeRefresher(),
             database,
             provider,
             EmbeddingMode.StructureOnly,
-            NullLogger<VectorIndexCoordinator>.Instance,
+            NullLogger<EmbeddingCoordinator>.Instance,
             registry);
 
         var items = new[]
@@ -117,94 +118,27 @@ internal class VectorIndexCoordinatorTests
     }
 
     [Test]
-    [DisplayName("VSS refresh runs once on startup then skips when unchanged")]
-    public async Task Given_NoEmbeddingChanges_When_RefreshingVssTwice_Then_SecondCallSkips()
-    {
-        var vss = new FakeVssIndexManager();
-        var coordinator = new VectorIndexCoordinator(
-            new FakeRefresher(),
-            logger: NullLogger<VectorIndexCoordinator>.Instance,
-            vssIndexManagerFactory: () => vss);
-
-        await coordinator.RefreshVssIndexAsync(CancellationToken.None);
-        await coordinator.RefreshVssIndexAsync(CancellationToken.None);
-
-        await WaitForAsync(() => vss.RefreshInvocations >= 1);
-        vss.RefreshInvocations.Should().Be(1);
-    }
-
-    [Test]
-    [DisplayName("VSS refresh reruns after deletes request a rebuild")]
-    public async Task Given_DeletesApplied_When_RefreshingVss_Then_RebuildRunsAgain()
-    {
-        var vss = new FakeVssIndexManager();
-        var coordinator = new VectorIndexCoordinator(
-            new FakeRefresher(),
-            logger: NullLogger<VectorIndexCoordinator>.Instance,
-            vssIndexManagerFactory: () => vss);
-
-        await coordinator.RefreshVssIndexAsync(CancellationToken.None); // startup build
-        await WaitForAsync(() => vss.RefreshInvocations >= 1);
-        await coordinator.ApplyDeletesAsync([RepoUri.Parse("file:///repo/deleted.md")], CancellationToken.None);
-        await coordinator.RefreshVssIndexAsync(CancellationToken.None);
-
-        await WaitForAsync(() => vss.RefreshInvocations >= 2);
-        vss.RefreshInvocations.Should().Be(2);
-    }
-
-    [Test]
-    [DisplayName("VSS readiness metadata stays false during rebuild and flips true after success")]
-    public async Task Given_VssRefreshInFlight_When_CheckingMetadata_Then_ReadyFlagTracksRefreshLifecycle()
+    [DisplayName("Startup content embedding catch-up triggers a full refresh for indexed repositories")]
+    public async Task Given_IndexedDocumentsWithoutContentEmbeddings_When_CoordinatorStarts_Then_StartupCatchUpRefreshesContent()
     {
         using var database = new DuckDbDataStore(path: null, logger: NullLogger<DuckDbDataStore>.Instance);
-        var started = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var coordinator = new VectorIndexCoordinator(
-            new FakeRefresher(),
+        SeedIndexedDocument(database, "file:///repo/startup-catchup.md");
+
+        var refresher = new FakeRefresher();
+        using var coordinator = new EmbeddingCoordinator(
+            refresher,
             db: database,
-            logger: NullLogger<VectorIndexCoordinator>.Instance,
-            vssIndexManagerFactory: () => new FakeVssIndexManager(async cancellationToken =>
-            {
-                started.TrySetResult(true);
-                await release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-            }));
+            logger: NullLogger<EmbeddingCoordinator>.Instance);
 
-        await WaitForAsync(() => started.Task.IsCompleted);
-        database.ReadMetadataValue(DuckDbDataStore.MetadataKeyVssStructureReady).Should().Be("false");
-
-        release.TrySetResult(true);
-        await WaitForAsync(() => string.Equals(
-            database.ReadMetadataValue(DuckDbDataStore.MetadataKeyVssStructureReady),
-            "true",
-            StringComparison.Ordinal),
-            timeoutMs: 3000);
-    }
-
-    [Test]
-    [DisplayName("VSS readiness metadata remains false after refresh failure")]
-    public async Task Given_VssRefreshFails_When_CheckingMetadata_Then_ReadyFlagRemainsFalse()
-    {
-        using var database = new DuckDbDataStore(path: null, logger: NullLogger<DuckDbDataStore>.Instance);
-        var attempted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var coordinator = new VectorIndexCoordinator(
-            new FakeRefresher(),
-            db: database,
-            logger: NullLogger<VectorIndexCoordinator>.Instance,
-            vssIndexManagerFactory: () => new FakeVssIndexManager(_ =>
-            {
-                attempted.TrySetResult(true);
-                throw new InvalidOperationException("simulated vss failure");
-            }));
-
-        await WaitForAsync(() => attempted.Task.IsCompleted);
-        database.ReadMetadataValue(DuckDbDataStore.MetadataKeyVssStructureReady).Should().Be("false");
+        await WaitForAsync(() => refresher.Invocations >= 1);
+        refresher.TargetedInvocations.Should().Be(0);
     }
 
     [Test]
     [DisplayName("Targeted registry sync batches doc ids with bounded query size")]
     public void Given_LargeTargetedDocSet_When_Batching_Then_BatchesAreBoundedAndDeduplicated()
     {
-        var uniqueIds = Enumerable.Range(0, VectorIndexCoordinator.RegistrySyncBatchSize * 2 + 5)
+        var uniqueIds = Enumerable.Range(0, EmbeddingCoordinator.RegistrySyncBatchSize * 2 + 5)
             .Select(_ => Guid.NewGuid())
             .ToArray();
         var inputIds = new List<Guid>(uniqueIds)
@@ -214,11 +148,11 @@ internal class VectorIndexCoordinatorTests
             uniqueIds[^1]
         };
 
-        var batches = VectorIndexCoordinator.BatchDocumentIds(inputIds);
+        var batches = EmbeddingCoordinator.BatchDocumentIds(inputIds);
         var flattened = batches.SelectMany(batch => batch).ToArray();
 
         batches.Should().HaveCount(3);
-        batches.All(batch => batch.Length <= VectorIndexCoordinator.RegistrySyncBatchSize).Should().BeTrue();
+        batches.All(batch => batch.Length <= EmbeddingCoordinator.RegistrySyncBatchSize).Should().BeTrue();
         flattened.Should().HaveCount(uniqueIds.Length);
         flattened.Distinct().Should().HaveCount(uniqueIds.Length);
         foreach (var id in uniqueIds)
@@ -273,25 +207,38 @@ internal class VectorIndexCoordinatorTests
         return item;
     }
 
-    private sealed class FakeVssIndexManager : IVssIndexManager
+    private static void SeedIndexedDocument(DuckDbDataStore database, string uri)
     {
-        private readonly Func<CancellationToken, Task>? _onRefresh;
-
-        public FakeVssIndexManager(Func<CancellationToken, Task>? onRefresh = null)
+        var artifact = new ArtifactModel
         {
-            _onRefresh = onRefresh;
-        }
+            Id = Guid.NewGuid(),
+            Digest = Guid.NewGuid().ToString("N"),
+            Size = 4,
+            MediaType = SemanticMediaType.Parse("text/markdown"),
+            Headline = "Title",
+            Structure = "- Section",
+            Text = "text"
+        };
 
-        public int RefreshInvocations { get; private set; }
-
-        public async Task RefreshIndexesAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
+        var documentNode = new Node
         {
-            RefreshInvocations++;
-            if (_onRefresh is not null)
-            {
-                await _onRefresh(cancellationToken).ConfigureAwait(false);
-            }
-        }
+            Id = Guid.NewGuid(),
+            Kind = "document",
+            Uri = RepoUri.Parse(uri),
+            ArtifactId = artifact.Id,
+            Props = new System.Text.Json.Nodes.JsonObject(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        database.IndexArtifact(documentNode.Uri, new ParsedArtifact
+        {
+            Artifact = artifact,
+            DocumentNode = documentNode,
+            Children = Array.Empty<Node>(),
+            Spans = Array.Empty<Span>(),
+            Edges = Array.Empty<Edge>()
+        });
     }
 
     private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 3000)

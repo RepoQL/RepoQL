@@ -587,7 +587,7 @@ if (pruneResult.StaleUris.Count > 0) {
 ```csharp
 await _vectorCoordinator.ProcessPendingAsync(pending, pruneResult, cancellationToken);
 
-// Inside VectorIndexCoordinator:
+// Inside EmbeddingCoordinator:
 // 1. Apply deletes (none)
 // 2. Compute embeddings for new/changed docs
 var embeddings = await _embeddingService.ComputeEmbeddingsAsync([

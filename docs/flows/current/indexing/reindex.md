@@ -152,7 +152,7 @@ flowchart TD
     HotPath --> Prune[TrackPruningAsync]:::phase
     Prune -->|yields| Progress2[ReindexProgressSnapshot]
 
-    Prune --> Embed[TrackVectorRefreshAsync]:::phase
+    Prune --> Embed[TrackEmbeddingRefreshAsync]:::phase
     Embed -->|yields| Progress3[ReindexProgressSnapshot]
 
     Embed --> Analysis[TrackMultiFileAnalysisAsync]:::phase

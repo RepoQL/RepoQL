@@ -1,271 +1,137 @@
 # Embeddings in RepoQL
 
-This document explains how vector embeddings are generated, stored, and queried in RepoQL to enable semantic search.
+This document explains how embeddings are generated, stored, and queried in RepoQL to enable semantic search.
 
 ## Overview
 
-RepoQL uses embeddings to enable semantic search - finding documents by meaning rather than just keywords. The embedding pipeline:
+RepoQL uses embeddings to enable semantic search by meaning rather than keywords. The embedding pipeline:
 
-1. **Generates** embeddings during indexing (via ONNX local models or OpenRouter API)
-2. **Stores** embeddings in the `document_embedding` table
-3. **Indexes** embeddings using HNSW for fast approximate nearest neighbor search
-4. **Queries** embeddings via the `search()` and `_search_semantic()` macros
+1. Generates structure and full-content embeddings during indexing and idle refresh
+2. Stores them in the `document_embedding` table
+3. Queries them with exact cosine similarity over `document_embedding`
+4. Combines semantic scores with lexical search in `search()`
 
 ## Embedding Providers
 
-RepoQL supports multiple embedding providers via the `IEmbeddingProvider` interface:
+RepoQL supports multiple embedding providers through `IEmbeddingProvider`.
 
-```csharp
-public interface IEmbeddingProvider
-{
-    string Model { get; }
-    int Dimension { get; }
-    bool Enabled { get; }
-    Task<float[]?> EmbedAsync(string text, CancellationToken cancellationToken = default);
-    Task<float[]?[]> EmbedBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default);
-}
-```
-
-### OnnxEmbeddingProvider (Default - Local)
+### OnnxEmbeddingProvider
 
 **File**: `src/RepoQL.Embeddings/OnnxEmbeddingProvider.cs`
 
-- Uses BGE-small-en-v1.5 model (384 dimensions)
-- Runs entirely locally via ONNX Runtime
-- WordPiece tokenization with CLS pooling + L2 normalization
-- Supports batch processing with efficient memory pooling
+- Local ONNX model execution
+- Default provider for developer-laptop usage
+- Batch embedding support
 
-**Environment Variables:**
-- `REPOQL_ORT_PROVIDER` - Execution provider (CPU, CUDA, DML, COREML). Defaults to CPU on Windows.
-- `REPOQL_ORT_INTRA_THREADS` - Intra-op parallelism threads
-- `REPOQL_ORT_INTER_THREADS` - Inter-op parallelism threads
-
-### OpenRouterEmbeddingProvider (Cloud)
+### OpenRouterEmbeddingProvider
 
 **File**: `src/RepoQL.LLM.Client/OpenRouterEmbeddingProvider.cs`
 
-- Uses all-MiniLM-L6-v2 via OpenRouter API (384 dimensions)
-- Activated when `OPENROUTER_API_KEY` environment variable is set
+- Cloud-backed embeddings when configured
 - Parallel batch processing with configurable concurrency
 
-**Environment Variables:**
-- `OPENROUTER_API_KEY` - Required for activation
-- `REPOQL_OPENROUTER_CONCURRENCY` - Max concurrent API calls (default: 4, max: 16)
-
-### HashedEmbeddingProvider (Testing)
+### HashedEmbeddingProvider
 
 **File**: `src/RepoQL.Embeddings/HashedEmbeddingProvider.cs`
 
-- Deterministic hash-based embeddings for testing
-- Fast, no external dependencies
-- Not for production use
+- Deterministic testing provider
+- Not intended for production relevance quality
 
 ## Embedding Storage
 
-### document_embedding Table
+Embeddings are stored in `document_embedding` with:
 
-**File**: `src/RepoQL.Data.DuckDB/Schema/Tables/document_embedding.sql`
+- `embedding_type`: `structure` or `full`
+- `scope`: `document` or `object`
+- `chunk_index`: `0..N` for chunked full embeddings
+- `dim`: embedding dimension for mixed-model safety
 
-```sql
-CREATE TABLE document_embedding (
-    doc_id         UUID NOT NULL,
-    node_id        UUID NOT NULL,
-    chunk_index    INTEGER NOT NULL DEFAULT 0,
-    embedding_type VARCHAR NOT NULL CHECK (embedding_type IN ('structure', 'full')),
-    uri            VARCHAR NOT NULL,
-    scope          VARCHAR NOT NULL CHECK (scope IN ('document', 'object')),
-    model          VARCHAR NOT NULL,
-    dim            INTEGER NOT NULL,
-    embedding      FLOAT[] NOT NULL,
-    start_byte     BIGINT,
-    end_byte       BIGINT,
-    updated_at     TIMESTAMP NOT NULL,
-    PRIMARY KEY (doc_id, node_id, chunk_index, embedding_type)
-);
-```
+Structure embeddings use URI + headline + structure. Full embeddings use document content, chunked when needed.
 
-**Key Fields:**
-- `embedding_type`: `'structure'` (headline+structure summary) or `'full'` (full content chunks)
-- `scope`: `'document'` or `'object'` (functions, classes, etc.)
-- `chunk_index`: 0 for whole content or first chunk; 1+ for subsequent chunks
-- `dim`: Embedding dimension (384, 768, or 1024)
+## Generation Pipeline
 
-### Embedding Types
+### EmbeddingCoordinator
 
-| Type | Content | Use Case |
-|------|---------|----------|
-| `structure` | URI + headline + structure summary | Fast initial ranking |
-| `full` | Full text content (chunked) | Detailed matching |
+**File**: `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/EmbeddingCoordinator.cs`
 
-## Embedding Generation Pipeline
+Coordinates post-index embedding work:
 
-### VectorIndexCoordinator
+1. Generates structure embeddings eagerly and during idle catch-up
+2. Runs targeted or full content embedding refresh via `DuckDbEmbeddingRefreshRunner`
+3. Syncs embedding status back into `UriRegistry`
+4. Performs startup content embedding catch-up for already-indexed repositories
 
-**File**: `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/VectorIndexCoordinator.cs`
+### DuckDbEmbeddingRefreshRunner
 
-Orchestrates embedding generation during indexing:
+**File**: `src/Indexing/RepoQL.Indexing/Indexing/PostProcessing/DuckDbEmbeddingRefreshRunner.cs`
 
-1. **Structure Embeddings**: Generated from `headline` + `structure` fields
-   - Batched (100 items per batch)
-   - Progress reporting with ETA
-   - Written immediately after each batch
-
-2. **Full-text Embeddings**: Generated via `DuckDbVectorIndexRefresher`
-   - Triggered after indexing completes
-   - Only for documents without existing embeddings
-
-**Embedding Mode** (controlled via `REPOQL_EMBEDDING_MODE`):
-- `None` - No embeddings
-- `StructureOnly` - Only structure embeddings
-- `Full` - Both structure and full-text embeddings (default)
+- Refreshes full-content embeddings from DuckDB-backed documents
+- Supports targeted document refresh and full refresh
+- Removes dangling embeddings after refresh
 
 ### Generation Flow
 
-```
-IndexItem → VectorIndexCoordinator.GenerateStructureEmbeddingsAsync()
-         → IEmbeddingProvider.EmbedBatchAsync()
-         → DuckDbDataStore.WriteEmbeddings()
-
-         → VectorIndexCoordinator.RefreshVssIndexAsync()
-         → VssIndexManager.RefreshIndexesAsync()
-```
-
-## Vector Search (HNSW)
-
-### VssIndexManager
-
-**File**: `src/RepoQL.Data.DuckDB/VssIndexManager.cs`
-
-Manages ephemeral HNSW indexes for fast approximate nearest neighbor search:
-
-- Uses DuckDB's VSS extension
-- Creates dimension-specific index tables (`_vss_index_384`, `_vss_index_768`, `_vss_index_1024`)
-- Indexes are rebuilt when embeddings change (with 30-second cooldown)
-- Falls back to linear scan if VSS unavailable
-
-**Performance**: HNSW reduces search from ~15s (linear scan) to <1s (ANN)
-
-### VSS Index Tables
-
-```sql
--- Created by vss_indexes.sql
-CREATE TABLE _vss_index_384 (
-    node_id UUID,
-    doc_id UUID,
-    embedding_type VARCHAR,
-    vec FLOAT[384]
-);
-CREATE INDEX _vss_index_384_hnsw ON _vss_index_384 USING HNSW (vec) WITH (metric = 'cosine');
+```text
+IndexItem
+  -> EmbeddingCoordinator.GenerateStructureEmbeddingsAsync()
+  -> DuckDbDataStore.WriteEmbeddings()
+  -> EmbeddingCoordinator.ApplyAsync()
+  -> DuckDbEmbeddingRefreshRunner.RefreshAsync()
 ```
 
 ## Semantic Search
 
-### _search_semantic Macro
+### `_search_semantic`
 
 **File**: `src/RepoQL.Data.DuckDB/Schema/Macros/search_semantic.sql`
 
-The semantic search component:
+The semantic search macro:
 
-1. **Query Embedding**: Converts query text to embedding via `embed_text()` UDF
-2. **HNSW Fast Path**: Uses VSS index when available (384-dim)
-3. **Linear Fallback**: Direct cosine similarity when HNSW unavailable
-4. **Multi-source Scoring**: Combines structure and full-text embeddings
+1. Embeds the query text
+2. Filters stored embeddings to the matching dimension
+3. Computes exact cosine similarity with `list_cosine_similarity`
+4. Merges structure and full-content scores
+5. Keeps the best chunk match for full embeddings
+6. Calibrates scores before hybrid ranking
 
-**Scoring Logic:**
-- Uses whichever embedding type (structure vs full) scored higher
-- 5% boost when both agree (reinforcement signal)
+There is no ANN or HNSW layer. Semantic search is now exact linear similarity over `document_embedding`.
 
 ### Hybrid Search
 
 **File**: `src/RepoQL.Data.DuckDB/Schema/Macros/search.sql`
 
-Combines lexical and semantic search:
-
-```sql
--- Default weights
-bm25_weight := 0.15,    -- BM25 lexical score
-fuzzy_weight := 0.15,   -- Fuzzy matching
-semantic_weight := 0.70 -- Semantic similarity
-```
-
-**Query Routing:**
-- Empty query → 80% semantic weight (browse mode)
-- Symbol queries → 30% reduction in semantic weight (precision mode)
-- Regular queries → full semantic weight
+`search()` combines lexical and semantic scoring. Semantic results still participate in the same public APIs; only the internal execution path changed.
 
 ## Diagnostics
 
-### Check Embedding Status
+Useful checks:
 
 ```sql
--- Count embeddings by type
-SELECT embedding_type, scope, dim, COUNT(*) as count
+SELECT embedding_type, scope, dim, COUNT(*) AS count
 FROM document_embedding
 GROUP BY embedding_type, scope, dim;
 
--- Check VSS index status
-SELECT * FROM _vss_index_384 LIMIT 1;
-
--- Debug semantic search
-SELECT * FROM _search_semantic('your query', k := 10);
+SELECT * FROM _search_semantic_explain('your query');
+SELECT * FROM _search_linear_direct('your query', k := 10);
 ```
 
-### Verify Embedding Availability
-
-```sql
--- Documents with embeddings
-SELECT COUNT(DISTINCT doc_id) FROM document_embedding WHERE scope = 'document';
-
--- Documents without embeddings
-SELECT COUNT(*) FROM node n
-WHERE n.kind = 'document'
-  AND NOT EXISTS (SELECT 1 FROM document_embedding de WHERE de.doc_id = n.id);
-```
-
-## Configuration Reference
+## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `REPOQL_EMBEDDING_MODE` | `Full` | Embedding mode: None, StructureOnly, Full |
+| `REPOQL_EMBEDDING_MODE` | `Full` | Embedding mode: `None`, `StructureOnly`, `Full` |
 | `REPOQL_EMBED_CONCURRENCY` | `2` | Concurrent embedding refresh operations |
-| `REPOQL_ORT_PROVIDER` | `CPU` (Win) | ONNX execution provider |
-| `OPENROUTER_API_KEY` | - | Enables OpenRouter embeddings |
-| `REPOQL_OPENROUTER_CONCURRENCY` | `4` | Max concurrent OpenRouter API calls |
+| `REPOQL_ORT_PROVIDER` | `CPU` on Windows | ONNX execution provider |
+| `OPENROUTER_API_KEY` | unset | Enables OpenRouter embeddings |
 
-## Architecture Diagram
+## Architecture
 
-```
-┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
-│  IndexingEngine │──────▶│ VectorIndexCoord │──────▶│ IEmbeddingProv  │
-└─────────────────┘      └──────────────────┘      └─────────────────┘
-                                  │                         │
-                                  ▼                         ▼
-                         ┌──────────────────┐      ┌─────────────────┐
-                         │ DuckDbDataStore  │      │ ONNX / OpenRouter│
-                         └──────────────────┘      └─────────────────┘
-                                  │
-                                  ▼
-                         ┌──────────────────┐
-                         │document_embedding│
-                         └──────────────────┘
-                                  │
-                                  ▼
-                         ┌──────────────────┐
-                         │  VssIndexManager │
-                         └──────────────────┘
-                                  │
-                                  ▼
-                         ┌──────────────────┐
-                         │ _vss_index_384   │ (HNSW)
-                         └──────────────────┘
-                                  │
-                                  ▼
-                         ┌──────────────────┐
-                         │ _search_semantic │
-                         └──────────────────┘
-                                  │
-                                  ▼
-                         ┌──────────────────┐
-                         │    search()      │
-                         └──────────────────┘
+```text
+IndexingEngine
+  -> EmbeddingCoordinator
+  -> IEmbeddingProvider
+  -> DuckDbDataStore
+  -> document_embedding
+  -> _search_semantic
+  -> search()
 ```

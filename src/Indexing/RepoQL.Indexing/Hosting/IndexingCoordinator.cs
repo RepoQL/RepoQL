@@ -303,8 +303,8 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
             CoordinatorPipelineStage.Parsing => hotPathSnapshot.Depth + mountIndexing + _engine.GetPendingIdleProcessingCount(),
             CoordinatorPipelineStage.Analysis => hotPathSnapshot.Depth + analysisSnapshot.Depth + mountIndexing + _engine.GetPendingIdleProcessingCount(),
             // Writer stage (SemanticIndexing) must wait for idle post-processing which includes
-            // vector/embedding refresh. Items in _pendingAnalysis haven't yet been processed
-            // through ReleaseAnalysisAsync which triggers VectorCoordinator.ApplyAsync().
+            // embedding refresh. Items in _pendingAnalysis haven't yet been processed
+            // through ReleaseAnalysisAsync which triggers EmbeddingCoordinator.ApplyAsync().
             CoordinatorPipelineStage.Writer => hotPathSnapshot.Depth + analysisSnapshot.Depth + mountIndexing + _engine.GetPendingIdleProcessingCount(),
             _ => 0
         };
@@ -530,7 +530,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
         _db.TryCheckpoint(); // Checkpoint after pruning
 
-        await foreach (var progress in TrackVectorRefreshAsync(epoch, total, cancellationToken).ConfigureAwait(false))
+        await foreach (var progress in TrackEmbeddingRefreshAsync(epoch, total, cancellationToken).ConfigureAwait(false))
         {
             yield return progress;
         }
@@ -680,7 +680,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
     }
 
-    private IAsyncEnumerable<ReindexProgressSnapshot> TrackVectorRefreshAsync(
+    private IAsyncEnumerable<ReindexProgressSnapshot> TrackEmbeddingRefreshAsync(
         long epoch,
         long total,
         CancellationToken cancellationToken)

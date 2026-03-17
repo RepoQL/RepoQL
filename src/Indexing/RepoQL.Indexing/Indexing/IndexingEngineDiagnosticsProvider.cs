@@ -8,23 +8,16 @@ namespace RepoQL.Indexing.Indexing;
 /// <summary>
 /// Provides diagnostics for <see cref="IndexingEngine"/> without polluting the core class.
 /// </summary>
-public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProvider
+public sealed class IndexingEngineDiagnosticsProvider(IndexingEngine engine) : IIndexingDiagnosticsProvider
 {
-    private readonly IndexingEngine _engine;
-
-    public IndexingEngineDiagnosticsProvider(IndexingEngine engine)
-    {
-        _engine = engine;
-    }
-
     public IndexingDiagnosticsSnapshot GetSnapshot()
     {
-        var hotPathSnapshot = _engine.GetHotPathQueueSnapshot();
-        var analysisSnapshot = _engine.GetAnalysisQueueSnapshot();
-        var idlePending = _engine.GetPendingIdleProcessingCount();
-        var idleActive = _engine.ActiveIdleProcessingCount;
-        var deferredPending = _engine.GetPendingDeferredRetryItems().Count;
-        var deferredActive = _engine.GetDeferredRetryInFlightItems().Count;
+        var hotPathSnapshot = engine.GetHotPathQueueSnapshot();
+        var analysisSnapshot = engine.GetAnalysisQueueSnapshot();
+        var idlePending = engine.GetPendingIdleProcessingCount();
+        var idleActive = engine.ActiveIdleProcessingCount;
+        var deferredPending = engine.GetPendingDeferredRetryItems().Count;
+        var deferredActive = engine.GetDeferredRetryInFlightItems().Count;
 
         var status = ComputeStatus(
             hotPathSnapshot,
@@ -37,7 +30,7 @@ public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProv
         return new IndexingDiagnosticsSnapshot
         {
             Status = status,
-            Epoch = _engine.CurrentEpoch,
+            Epoch = engine.CurrentEpoch,
             HotPathDepth = hotPathSnapshot.Depth,
             HotPathActive = hotPathSnapshot.InProgress,
             IdlePending = Math.Max(0, idlePending),
@@ -46,19 +39,19 @@ public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProv
             AnalysisActive = analysisSnapshot.InProgress,
             DeferredRetryPending = deferredPending,
             DeferredRetryActive = deferredActive,
-            DeferredToIdleCount = _engine.DeferredToIdleCount,
-            HotPathTimeouts = _engine.HotPathTimeoutCount,
-            AnalysisTimeouts = _engine.AnalysisTimeoutCount,
-            DeferredRetryTimeouts = _engine.DeferredRetryTimeoutCount,
+            DeferredToIdleCount = engine.DeferredToIdleCount,
+            HotPathTimeouts = engine.HotPathTimeoutCount,
+            AnalysisTimeouts = engine.AnalysisTimeoutCount,
+            DeferredRetryTimeouts = engine.DeferredRetryTimeoutCount,
             WriterPending = 0, // DuckDbDataStore uses synchronous writes
             WriterTotal = 0, // DuckDbDataStore uses synchronous writes
-            EmbedMode = _engine.VectorCoordinator is VectorIndexCoordinator vic
-                ? vic.GetEmbeddingMode().ToString()
+            EmbedMode = engine.EmbeddingCoordinator is EmbeddingCoordinator ec
+                ? ec.GetEmbeddingMode().ToString()
                 : EmbeddingMode.None.ToString(),
-            EmbedLastEpoch = _engine.VectorCoordinator is VectorIndexCoordinator vic2
-                ? vic2.GetLastRefreshedEpoch()
+            EmbedLastEpoch = engine.EmbeddingCoordinator is EmbeddingCoordinator ec2
+                ? ec2.GetLastRefreshedEpoch()
                 : 0,
-            LastError = _engine.LastError,
+            LastError = engine.LastError,
             ActiveWorkers = BuildWorkerSnapshot(),
         };
     }
@@ -67,8 +60,8 @@ public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProv
     {
         var items = new List<QueuedItemInfo>();
 
-        items.AddRange(_engine.GetHotPathPendingItems().Select(item => BuildQueuedItem(item, "HotPath", "queued")));
-        items.AddRange(_engine.GetHotPathInFlightItems().Select(info => BuildQueuedItem(
+        items.AddRange(engine.GetHotPathPendingItems().Select(item => BuildQueuedItem(item, "HotPath", "queued")));
+        items.AddRange(engine.GetHotPathInFlightItems().Select(info => BuildQueuedItem(
             info.Item,
             "HotPath",
             "processing",
@@ -76,8 +69,8 @@ public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProv
             info.StartedAtUtc,
             info.Duration)));
 
-        items.AddRange(_engine.AnalysisQueue.GetPendingItems().Select(item => BuildQueuedItem(item, "Analysis", "queued")));
-        items.AddRange(_engine.GetAnalysisInFlightItems().Select(info => BuildQueuedItem(
+        items.AddRange(engine.AnalysisQueue.GetPendingItems().Select(item => BuildQueuedItem(item, "Analysis", "queued")));
+        items.AddRange(engine.GetAnalysisInFlightItems().Select(info => BuildQueuedItem(
             info.Item,
             "Analysis",
             "processing",
@@ -85,10 +78,10 @@ public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProv
             info.StartedAtUtc,
             info.Duration)));
 
-        items.AddRange(_engine.GetPendingAnalysisItems().Select(item => BuildQueuedItem(item, "IdleProcessing", "queued")));
+        items.AddRange(engine.GetPendingAnalysisItems().Select(item => BuildQueuedItem(item, "IdleProcessing", "queued")));
 
-        items.AddRange(_engine.GetPendingDeferredRetryItems().Select(item => BuildQueuedItem(item, "DeferredRetry", "deferred")));
-        items.AddRange(_engine.GetDeferredRetryInFlightItems().Select(info => BuildQueuedItem(
+        items.AddRange(engine.GetPendingDeferredRetryItems().Select(item => BuildQueuedItem(item, "DeferredRetry", "deferred")));
+        items.AddRange(engine.GetDeferredRetryInFlightItems().Select(info => BuildQueuedItem(
             info.Item,
             "DeferredRetry",
             "retrying",
@@ -103,9 +96,9 @@ public sealed class IndexingEngineDiagnosticsProvider : IIndexingDiagnosticsProv
     {
         var workers = new List<IndexingWorkerInfo>();
 
-        workers.AddRange(_engine.GetHotPathInFlightItems().Select(info => BuildWorkerInfo("HotPath", info)));
-        workers.AddRange(_engine.GetAnalysisInFlightItems().Select(info => BuildWorkerInfo("Analysis", info)));
-        workers.AddRange(_engine.GetDeferredRetryInFlightItems().Select(info => BuildWorkerInfo("DeferredRetry", info)));
+        workers.AddRange(engine.GetHotPathInFlightItems().Select(info => BuildWorkerInfo("HotPath", info)));
+        workers.AddRange(engine.GetAnalysisInFlightItems().Select(info => BuildWorkerInfo("Analysis", info)));
+        workers.AddRange(engine.GetDeferredRetryInFlightItems().Select(info => BuildWorkerInfo("DeferredRetry", info)));
 
         return workers;
     }

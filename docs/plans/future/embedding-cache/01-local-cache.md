@@ -109,7 +109,7 @@ An embedding computed in one repository is immediately available in every other 
 
 - **No new DuckDB tables** — cache is external parquet files, not part of the graph schema (design: schema frozen)
 - **No changes to IEmbeddingProvider** — decorator pattern preserves the existing interface (design: decorator pattern)
-- **No changes to VectorIndexCoordinator or DuckDbDataStore** — cache is invisible downstream (design: single integration point)
+- **No changes to EmbeddingCoordinator or DuckDbDataStore** — cache is invisible downstream (design: single integration point)
 - **Cache failures never prevent embedding** — all cache errors are logged and swallowed (design: acceleration only)
 - **Single cache path in this plan** — multi-path is Plan 03
 

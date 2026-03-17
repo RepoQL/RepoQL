@@ -349,7 +349,7 @@ public sealed class StatusEventAggregator : IDisposable
         "commit" => PipelineStage.Commit,
         "prune" => PipelineStage.Prune,
         "structure_embedding" => PipelineStage.StructEmbed,
-        "vector_refresh" => PipelineStage.VectorRefresh,
+        "embedding_refresh" => PipelineStage.VectorRefresh,
         "multi_file_analysis" => PipelineStage.MultiFileAnalysis,
         _ => PipelineStage.Unspecified
     };
