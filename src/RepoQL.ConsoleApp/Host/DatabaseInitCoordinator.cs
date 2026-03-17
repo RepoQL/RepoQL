@@ -127,8 +127,7 @@ internal static class DatabaseInitCoordinator
                     throw new InvalidOperationException(BuildLockMessage(report));
                 }
 
-                if ((errorType == DatabaseOpenErrorType.Corrupted || errorType == DatabaseOpenErrorType.SchemaMismatch) &&
-                    !recoveryAttempted)
+                if (ShouldAutoRebuildOnOpenFailure(errorType) && !recoveryAttempted)
                 {
                     report.RecoveryOffered = true;
                     recoveryAttempted = true;
@@ -147,6 +146,14 @@ internal static class DatabaseInitCoordinator
                     continue;
                 }
 
+                if (errorType == DatabaseOpenErrorType.Corrupted)
+                {
+                    throw new InvalidOperationException(
+                        $"Database at {report.Path} appears corrupted. " +
+                        "Automatic rebuild is disabled to avoid data loss; delete the database or run a fresh reindex to recreate it.",
+                        ex);
+                }
+
                 if (errorType == DatabaseOpenErrorType.Permission)
                     throw new InvalidOperationException($"Database access denied at {report.Path}.", ex);
 
@@ -157,6 +164,9 @@ internal static class DatabaseInitCoordinator
             }
         }
     }
+
+    internal static bool ShouldAutoRebuildOnOpenFailure(DatabaseOpenErrorType errorType)
+        => errorType == DatabaseOpenErrorType.SchemaMismatch;
 
     private static string BuildLockMessage(DatabaseInitReport report)
     {

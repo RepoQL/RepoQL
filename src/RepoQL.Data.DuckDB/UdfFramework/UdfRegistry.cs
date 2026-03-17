@@ -265,7 +265,7 @@ public class UdfRegistry
                     for (ulong i = 0; i < n; i++) writer.WriteValue(errorJson, i);
                 }
             },
-            isPureFunction: isPure
+            new ScalarFunctionOptions { IsPureFunction = isPure }
         );
     }
 
@@ -341,7 +341,7 @@ public class UdfRegistry
                     for (ulong i = 0; i < n; i++) writer.WriteValue(errorJson, i);
                 }
             },
-            isPureFunction: isPure
+            new ScalarFunctionOptions { IsPureFunction = isPure }
         );
     }
 
@@ -432,7 +432,7 @@ public class UdfRegistry
                     for (ulong i = 0; i < n; i++) writer.WriteValue(errorJson, i);
                 }
             },
-            isPureFunction: isPure
+            new ScalarFunctionOptions { IsPureFunction = isPure }
         );
     }
 
@@ -518,7 +518,7 @@ public class UdfRegistry
                     for (ulong i = 0; i < n; i++) writer.WriteValue(errorJson, i);
                 }
             },
-            isPureFunction: isPure
+            new ScalarFunctionOptions { IsPureFunction = isPure }
         );
     }
 
@@ -635,7 +635,7 @@ public class UdfRegistry
                     for (ulong i = 0; i < n; i++) writer.WriteValue(errorJson, i);
                 }
             },
-            isPureFunction: isPure
+            new ScalarFunctionOptions { IsPureFunction = isPure }
         );
     }
 
