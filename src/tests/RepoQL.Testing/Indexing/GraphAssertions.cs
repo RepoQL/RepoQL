@@ -66,8 +66,8 @@ public sealed class GraphAssertionHarness
         public void ShouldContainEntry(string uri)
         {
             var exists = _store.ReadScalar<long>(
-                $"SELECT count(*) FROM repo_index WHERE uri = '{uri}'");
-            exists.Should().BeGreaterThan(0, $"repo_index row for {uri}");
+                $"SELECT count(*) FROM node WHERE uri = '{uri}'");
+            exists.Should().BeGreaterThan(0, $"node row for {uri}");
         }
     }
 }

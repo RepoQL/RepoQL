@@ -131,8 +131,9 @@ public sealed class FindCandidatesMacroTests : IDisposable
 
         var matchRows = _store.Query("""
             SELECT uri
-            FROM repo_index
-            WHERE matches_glob(uri, 'file:///src/a.cs;file:///src/b.cs') IS TRUE
+            FROM node
+            WHERE kind = 'document'
+              AND matches_glob(uri, 'file:///src/a.cs;file:///src/b.cs') IS TRUE
             ORDER BY uri
             """);
         matchRows.Should().HaveCount(2);

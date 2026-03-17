@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using AwesomeAssertions;
 using FakeItEasy;
 using Microsoft.Extensions.DependencyInjection;
@@ -187,6 +188,49 @@ public sealed class QueueObservabilityUdfTests : IDisposable
 
         rows.Single(r => r.Uri == "file:///repo/failed.cs").Status.Should().Be("Failed");
         rows.Single(r => r.Uri == "file:///repo/embed-failed.cs").Status.Should().Be("Indexed");
+    }
+
+    [Test]
+    [DisplayName("_indexer_status_internal and _indexer_errors_internal include processing_duration_ms")]
+    public void UriRegistryInternalUdfs_IncludeProcessingDuration()
+    {
+        var indexedUri = ParseUri("file:///repo/indexed.cs");
+        var failedUri = ParseUri("file:///repo/failed-duration.cs");
+
+        _registry.TryRegisterDiscovered(indexedUri);
+        _registry.SetIndexed(indexedUri, 10, new Dictionary<RepoUri, SymbolEntry>().AsReadOnly());
+        _registry.SetProcessingDuration(indexedUri, 1234);
+
+        _registry.TryRegisterDiscovered(failedUri);
+        _registry.SetFailed(failedUri, "failed");
+        _registry.SetProcessingDuration(failedUri, 4321);
+
+        var statusJson = _db.Read(
+            "SELECT _indexer_status_internal('all')",
+            r => r.GetString(0))
+            .Single();
+
+        var errorsJson = _db.Read(
+            "SELECT _indexer_errors_internal('all')",
+            r => r.GetString(0))
+            .Single();
+
+        using var statusDoc = JsonDocument.Parse(statusJson);
+        using var errorsDoc = JsonDocument.Parse(errorsJson);
+
+        statusDoc.RootElement
+            .EnumerateArray()
+            .Single(e => e.GetProperty("uri").GetString() == "file:///repo/indexed.cs")
+            .GetProperty("processing_duration_ms")
+            .GetInt64()
+            .Should().Be(1234);
+
+        errorsDoc.RootElement
+            .EnumerateArray()
+            .Single(e => e.GetProperty("uri").GetString() == "file:///repo/failed-duration.cs")
+            .GetProperty("processing_duration_ms")
+            .GetInt64()
+            .Should().Be(4321);
     }
 
     [Test]

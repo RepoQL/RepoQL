@@ -1494,7 +1494,6 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
                 "Macros/git_status.sql",
                 "Tables/document_embedding.sql",
                 "Tables/vss_indexes.sql",
-                "Views/repo_index.sql",
                 "Views/files.sql",
                 "Views/types.sql",
                 "Views/functions.sql",

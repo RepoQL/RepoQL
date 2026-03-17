@@ -561,7 +561,10 @@ public class IndexingEngineTests
         duplicate.Should().BeFalse();
 
         releaseDeferred.TrySetResult(true);
-        await deferredCompleted.Task.WaitAsync(timeoutWait.Token);
+
+        using var cleanupWait = CancellationTokenSource.CreateLinkedTokenSource(token);
+        cleanupWait.CancelAfter(TimeSpan.FromSeconds(10));
+        await deferredCompleted.Task.WaitAsync(cleanupWait.Token);
     }
 
     [Test]

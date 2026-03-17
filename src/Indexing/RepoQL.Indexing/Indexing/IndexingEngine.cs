@@ -892,6 +892,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
             item.SetCurrentOperation(null);
             overallTimer.Stop();
+            UriRegistry?.SetProcessingDuration(item.Uri, overallTimer.ElapsedMilliseconds);
             Metrics?.HotPathDuration.Record(overallTimer.Elapsed.TotalMilliseconds, new TagList
             {
                 { "status", status },

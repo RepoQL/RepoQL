@@ -9,7 +9,7 @@
 | **How do I provide a complete file for my parser?** | Embed the sample file as an `EmbeddedResource` and load it via `ResourceLoader.ReadString("Namespace.Path.sample.md")`. Never hit the file system during tests. |
 | **Should tests write to disk?** | No. Use `IndexingTestItemBuilder` for per-file metadata and `DuckDbTestStore` for persistence; both operate entirely in-memory. |
 | **Where do I assert catalog / commit behavior?** | Use `IndexingEngineTestFactory` plus `CatalogInvocationPlan` / `PipelineInvocationPlan`; they cover incremental catalog decisions without manual mocks. |
-| **How do I verify post-index artifacts (repo_index, embeddings)?** | Seed `DuckDbTestStore`, run the code under test, then assert via `GraphAssertionHarness`. |
+| **How do I verify post-index artifacts (graph, embeddings)?** | Seed `DuckDbTestStore`, run the code under test, then assert via `GraphAssertionHarness`. |
 | **How are multi-file analyzers tested?** | Use the idle pipeline helpers: enqueue work, await `AwaitHotPathIdleAsync()`, then verify multi-file analysis via your fake analyzer or graph assertions. |
 
 ## 3. Format Harness Patterns
@@ -127,7 +127,7 @@ public async Task Engine_Signals_Started_And_Idle()
 ```
 
 ## 5. Post-Index & Graph Tests
-After the hot path drains, formats should prove that repo_index rows and embeddings exist as expected.
+After the hot path drains, formats should prove that graph rows and embeddings exist as expected.
 
 ### 5.1 Prune + Delete + Vector
 ```csharp
@@ -180,7 +180,7 @@ flowchart LR
 - [ ] Format harness tests for success + analyzer warnings.
 - [ ] IndexingEngine tests covering skip + reindex paths.
 - [ ] Post-index tests exercising pruner/vector coordination.
-- [ ] Graph assertions verifying repo_index/embedding output.
+- [ ] Graph assertions verifying graph/embedding output.
 - [ ] No file-system IO in tests.
 
 Use these patterns verbatim when bringing a new format online; extend only when the format introduces new data planes (e.g., additional graph nodes). This keeps every format consistent and ensures the semantic macros light up as soon as the format lands.
