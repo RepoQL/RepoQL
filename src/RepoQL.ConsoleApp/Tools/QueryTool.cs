@@ -188,7 +188,9 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
             _lastBudgetExceededQuery = null;
             var output = result.Lines.Length > 0
                 ? string.Join(Environment.NewLine, result.Lines)
-                : "No results. Try a different query, or explore the docs with: explore(intent=\"Inventory\", uriGlob=\"help://**\")";
+                : "No results. Try a different query, or explore the docs with:\n" +
+                  "  explore(uriGlob=\"help://**\", keywords=\"topic\", tokenBudget=1500)\n" +
+                  "  explain(question=\"your question\", uriGlob=\"help://**\", tokenBudget=2500)";
 
             // Check token budget (even after server summarization - summary might still exceed)
             if (tokenBudget > 0 && !isRepeatRequest)

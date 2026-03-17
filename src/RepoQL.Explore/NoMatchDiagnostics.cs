@@ -66,7 +66,7 @@ public static class NoMatchDiagnostics
         {
             return $"No files matched pattern: {uriPattern}\n" +
                    "Try: read(\"file:///** => tree: folders\", 5000) to see available paths, " +
-                   "or explore(intent=\"Locate\", keywords=\"...\", tokenBudget=1500) to search.";
+                   "or explore(keywords=\"...\", tokenBudget=1500) to search.";
         }
 
         return $"File not found: {uriPattern}\n" +

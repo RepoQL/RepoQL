@@ -56,12 +56,13 @@ public sealed class DocumentPreviewService(
 
             var classificationStage = await RunStageAsync(
                 "Classification",
+                item,
                 ct => _classification.ProcessItemAsync(item, ct),
                 cancellationToken).ConfigureAwait(false);
             stages.Add(classificationStage);
             if (!StageSuccessful(classificationStage))
             {
-                return Failure("Classification failed", stages);
+                return Failure(classificationStage.Error ?? "Classification failed.", stages);
             }
 
             item.MediaType ??= item.RawArtifact.ProvisionalMediaType.Value;
@@ -72,22 +73,24 @@ public sealed class DocumentPreviewService(
 
             var parsingStage = await RunStageAsync(
                 "Parsing",
+                item,
                 ct => _parsing.ProcessItemAsync(item, ct),
                 cancellationToken).ConfigureAwait(false);
             stages.Add(parsingStage);
             if (!StageSuccessful(parsingStage))
             {
-                return Failure("Parsing failed.", stages);
+                return Failure(parsingStage.Error ?? "Parsing failed.", stages);
             }
 
             var analysisStage = await RunStageAsync(
                 "SingleFileAnalysis",
+                item,
                 ct => _singleFile.ProcessItemAsync(item, ct),
                 cancellationToken).ConfigureAwait(false);
             stages.Add(analysisStage);
             if (!StageSuccessful(analysisStage))
             {
-                return Failure("Single-file analysis failed.", stages);
+                return Failure(analysisStage.Error ?? "Single-file analysis failed.", stages);
             }
 
             var digestHex = await item.RawArtifact.Digest.WithCancellation(cancellationToken).ConfigureAwait(false);
@@ -182,6 +185,7 @@ public sealed class DocumentPreviewService(
 
     private async Task<DocumentPreviewStage> RunStageAsync(
         string name,
+        IndexItem item,
         Func<CancellationToken, Task<PipelineResult>> runner,
         CancellationToken cancellationToken)
     {
@@ -190,7 +194,10 @@ public sealed class DocumentPreviewService(
         string? error = null;
         try
         {
+            item.ClearFailureDetail();
             status = await runner(cancellationToken).ConfigureAwait(false);
+            if (status == PipelineResult.Error && !string.IsNullOrEmpty(item.FailureDetail))
+                error = item.FailureDetail;
         }
         catch (Exception ex)
         {

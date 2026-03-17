@@ -976,7 +976,10 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             if (string.IsNullOrEmpty(u.Host))
             {
                 var relOnly = localPath.TrimStart('/', '\\');
-                if (!string.IsNullOrEmpty(relOnly)) return $"file:///{relOnly.Replace('\\', '/')}";
+                // If already repo-relative (no drive letter), return directly.
+                // Absolute Windows paths (e.g. C:/...) must fall through to relativization.
+                if (!string.IsNullOrEmpty(relOnly) && (relOnly.Length < 2 || relOnly[1] != ':'))
+                    return $"file:///{relOnly.Replace('\\', '/')}";
             }
             try
             {

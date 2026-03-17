@@ -87,7 +87,7 @@ internal class McpCommands
                                              read("file://** => tree: folders", 5000)
 
                                            Now you can find things without guessing:
-                                             explore(intent="Locate", uriGlob="help://**", keywords="authentication", tokenBudget=1500)
+                                             explore(uriGlob="help://**", keywords="authentication", tokenBudget=1500)
                                            </START>
 
                                            <HELP>
@@ -97,7 +97,7 @@ internal class McpCommands
                                              explain(question="How do I add a new file format?", uriGlob="help://**", tokenBudget=2500)
 
                                            Find relevant docs:
-                                             explore(intent="Locate", uriGlob="help://**", keywords="views", tokenBudget=1500)
+                                             explore(uriGlob="help://**", keywords="views", tokenBudget=1500)
                                            </HELP>
                                            """;
                 })
