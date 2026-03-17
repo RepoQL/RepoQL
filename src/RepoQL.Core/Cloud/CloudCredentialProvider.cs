@@ -20,7 +20,7 @@ namespace RepoQL.Core.Cloud;
 /// Complexity: Coordinates in-memory cache, access-token disk persistence, refresh-token secure storage,
 /// OAuth refresh, and best-effort cross-process locking.
 /// </summary>
-public sealed class CloudCredentialProvider : ICloudCredentialProvider, IDisposable
+public sealed partial class CloudCredentialProvider : ICloudCredentialProvider, IDisposable
 {
     internal const string NotAuthenticatedMessage = "Not authenticated. Run: repoql login";
     internal const string SessionExpiredMessage = "Session expired. Run: repoql login";
@@ -28,12 +28,6 @@ public sealed class CloudCredentialProvider : ICloudCredentialProvider, IDisposa
 
     private static readonly TimeSpan RefreshWindow = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan DefaultLockTimeout = TimeSpan.FromSeconds(5);
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
-
     private readonly ResolvedConfig _config;
     private readonly CloudAuthSessionStore _sessionStore;
     private readonly HttpClient _httpClient;
@@ -325,7 +319,7 @@ public sealed class CloudCredentialProvider : ICloudCredentialProvider, IDisposa
                 if (!response.IsSuccessStatusCode)
                     throw await CreateRefreshFailureAsync(response.StatusCode, payload, cancellationToken).ConfigureAwait(false);
 
-                var refreshResponse = JsonSerializer.Deserialize<RefreshResponse>(payload, JsonOptions);
+                var refreshResponse = JsonSerializer.Deserialize(payload, CloudCredentialJsonContext.Default.RefreshResponse);
                 if (refreshResponse is null || string.IsNullOrWhiteSpace(refreshResponse.AccessToken))
                     throw new InvalidOperationException("Authentication refresh failed. Response did not include an access token.");
 
@@ -510,6 +504,9 @@ public sealed class CloudCredentialProvider : ICloudCredentialProvider, IDisposa
     }
 
     private sealed class SessionExpiredException : Exception;
+
+    [JsonSerializable(typeof(RefreshResponse))]
+    private sealed partial class CloudCredentialJsonContext : JsonSerializerContext;
 }
 
 /// <summary>
