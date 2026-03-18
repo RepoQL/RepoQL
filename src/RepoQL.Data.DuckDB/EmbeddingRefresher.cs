@@ -49,6 +49,7 @@ public sealed class EmbeddingRefresher
     private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
     private readonly IContextualEmbeddingProvider? _contextualProvider;
     private readonly ILogger _logger;
+    private readonly Lazy<VoyageTokenCounter> _tokenCounter;
 
     public EmbeddingRefresher(
         DuckDbDataStore store,
@@ -62,6 +63,7 @@ public sealed class EmbeddingRefresher
         _embeddingSettings = embeddingSettings ?? new RepoQlConfig.EmbeddingSettings();
         _contextualProvider = contextualProvider is { Enabled: true } ? contextualProvider : null;
         _logger = logger ?? NullLogger<EmbeddingRefresher>.Instance;
+        _tokenCounter = new Lazy<VoyageTokenCounter>(() => new VoyageTokenCounter(logger));
     }
 
     #region Public Methods
@@ -95,6 +97,25 @@ public sealed class EmbeddingRefresher
 
     // Tracks whether the contextual provider has been disabled at runtime due to failures.
     private bool _contextualDisabled;
+
+    /// <summary>
+    /// Connection-level failures disable contextual for the run.
+    /// Payload-level failures (oversized input, validation) only skip the current batch.
+    /// </summary>
+    private static bool IsConnectionFailure(Exception ex)
+    {
+        // Walk the exception chain looking for connection/transport indicators
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is HttpRequestException or System.Net.Sockets.SocketException)
+                return true;
+            // gRPC unavailable/unauthenticated = service-level
+            if (current.GetType().Name == "RpcException" &&
+                current.Message.Contains("Unavailable", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
 
     /// <summary>
     /// Returns the model name and dimension of the active embedding provider.
@@ -311,13 +332,21 @@ public sealed class EmbeddingRefresher
                     {
                         vectors = await EmbedContextualAsync(pendingDocs, allItems.Length, ct).ConfigureAwait(false);
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (IsConnectionFailure(ex))
                     {
-                        // Contextual provider failed (service not running, API error, etc.).
-                        // Disable for remainder of this run and fall back to flat provider.
+                        // Service unreachable, auth failure, etc. — disable for remainder of this run.
                         _contextualDisabled = true;
                         _logger.LogWarning(ex,
-                            "Contextual embedding failed, falling back to local embedding for this run");
+                            "Contextual embedding service unavailable, falling back to local embedding for this run");
+                        vectors = await EmbedFlatAsync(pendingDocs, allItems.Length, provider, progress, ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Payload-level failure (oversized group, API validation, etc.).
+                        // Don't disable contextual — next batch may succeed. Fall back for this batch only.
+                        _logger.LogWarning(ex,
+                            "Contextual embedding failed for this batch ({DocCount} docs), falling back to local embedding",
+                            pendingDocs.Count);
                         vectors = await EmbedFlatAsync(pendingDocs, allItems.Length, provider, progress, ct).ConfigureAwait(false);
                     }
                 }
@@ -802,17 +831,18 @@ public sealed class EmbeddingRefresher
         return distinct;
     }
 
-    // Voyage API context window is 32k tokens per group (context + all chunks).
-    // Conservative estimate: ~3 chars/token for code → 90k chars ≈ 30k tokens.
-    // Documents with many chunks must be split across multiple groups.
-    // Voyage context window is 32K tokens per group. Dense code tokenizes at ~2 chars/token
-    // (worst case: braces, operators, short identifiers). 60K chars ≈ 30K tokens — safe margin.
-    internal const int MaxContextualGroupChars = 60_000;
+    // Voyage API context window is 32K tokens per group (context + all chunks).
+    // We use the actual Voyage tokenizer for accurate counting (via VoyageTokenCounter).
+    // 30K leaves headroom for tokenizer edge cases and API overhead.
+    internal const int MaxContextualGroupTokens = 30_000;
+    // Char-based fallback when tokenizer is unavailable: 2 chars/token is conservative
+    // (overestimates tokens → smaller groups → safe but suboptimal).
+    internal const int MaxContextualGroupChars = MaxContextualGroupTokens * 2;
 
     private async Task<float[]?[]> EmbedContextualAsync(
         List<PendingDocument> pendingDocs, int totalItems, CancellationToken ct)
     {
-        var (groups, groupMeta) = BuildContextualGroups(pendingDocs, MaxContextualGroupChars);
+        var (groups, groupMeta) = BuildContextualGroups(pendingDocs, MaxContextualGroupTokens, _tokenCounter.Value);
 
         _logger.LogInformation(
             "Contextual embedding: {Docs} docs, {Groups} groups (after splitting), {TotalItems} items, {TotalChunks} total chunks",
@@ -833,11 +863,12 @@ public sealed class EmbeddingRefresher
 
     /// <summary>
     /// Builds contextual embedding groups from pending documents, splitting oversized groups.
-    /// Each group's total chars (context + all chunks) must stay under maxGroupChars
-    /// to fit within the Voyage API's per-group context window.
+    /// Each group's total tokens (context + all chunks) must stay under maxGroupTokens
+    /// to fit within the Voyage API's per-group context window (32K tokens).
+    /// Uses the actual Voyage tokenizer for accurate counting when available.
     /// </summary>
     internal static (List<DocumentChunkGroup> Groups, List<(int DocIndex, int ChunkOffset)> GroupMeta)
-        BuildContextualGroups(IReadOnlyList<PendingDocument> pendingDocs, int maxGroupChars)
+        BuildContextualGroups(IReadOnlyList<PendingDocument> pendingDocs, int maxGroupTokens, VoyageTokenCounter? tokenCounter = null)
     {
         var groups = new List<DocumentChunkGroup>();
         var groupMeta = new List<(int DocIndex, int ChunkOffset)>();
@@ -845,12 +876,12 @@ public sealed class EmbeddingRefresher
         for (var d = 0; d < pendingDocs.Count; d++)
         {
             var doc = pendingDocs[d];
-            var contextLen = doc.Context?.Length ?? 0;
-            var totalChars = contextLen;
+            var contextTokens = tokenCounter?.CountTokens(doc.Context) ?? FallbackTokenEstimate(doc.Context);
+            var totalTokens = contextTokens;
             foreach (var chunk in doc.Chunks)
-                totalChars += chunk.Length;
+                totalTokens += tokenCounter?.CountTokens(chunk) ?? FallbackTokenEstimate(chunk);
 
-            if (totalChars <= maxGroupChars)
+            if (totalTokens <= maxGroupTokens)
             {
                 groupMeta.Add((d, 0));
                 groups.Add(new DocumentChunkGroup(doc.Uri, doc.Context, doc.Chunks));
@@ -858,21 +889,22 @@ public sealed class EmbeddingRefresher
             else
             {
                 // Split chunks across multiple groups, each sharing the same context.
-                var maxChunkCharsPerGroup = maxGroupChars - contextLen;
-                if (maxChunkCharsPerGroup < 1) maxChunkCharsPerGroup = 1;
+                var maxChunkTokensPerGroup = maxGroupTokens - contextTokens;
+                if (maxChunkTokensPerGroup < 1) maxChunkTokensPerGroup = 1;
 
                 var chunkStart = 0;
                 while (chunkStart < doc.Chunks.Count)
                 {
                     var subChunks = new List<string>();
-                    var subCharsUsed = 0;
+                    var subTokensUsed = 0;
                     for (var i = chunkStart; i < doc.Chunks.Count; i++)
                     {
+                        var chunkTokens = tokenCounter?.CountTokens(doc.Chunks[i]) ?? FallbackTokenEstimate(doc.Chunks[i]);
                         // Always include at least one chunk per group.
-                        if (subChunks.Count > 0 && subCharsUsed + doc.Chunks[i].Length > maxChunkCharsPerGroup)
+                        if (subChunks.Count > 0 && subTokensUsed + chunkTokens > maxChunkTokensPerGroup)
                             break;
                         subChunks.Add(doc.Chunks[i]);
-                        subCharsUsed += doc.Chunks[i].Length;
+                        subTokensUsed += chunkTokens;
                     }
 
                     groupMeta.Add((d, chunkStart));
@@ -884,6 +916,10 @@ public sealed class EmbeddingRefresher
 
         return (groups, groupMeta);
     }
+
+    /// <summary>Conservative fallback: 2 chars/token overestimates tokens → safe splits.</summary>
+    private static int FallbackTokenEstimate(string? text)
+        => string.IsNullOrEmpty(text) ? 0 : (text.Length + 1) / 2;
 
     /// <summary>
     /// Maps contextual embedding results back to the flat item array.

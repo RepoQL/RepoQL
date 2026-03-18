@@ -17,6 +17,7 @@
     <ItemGroup>
         <EmbeddedResource Include="Schema/**/*.sql" />
         <EmbeddedResource Include="Resources/full-embedding.ignore" />
+        <EmbeddedResource Include="Resources/voyage-tokenizer.json" />
         <!-- IL Linker config to preserve UDF classes during trimming -->
         <EmbeddedResource Include="ILLink.Descriptors.xml" LogicalName="ILLink.Descriptors.xml" />
     </ItemGroup>

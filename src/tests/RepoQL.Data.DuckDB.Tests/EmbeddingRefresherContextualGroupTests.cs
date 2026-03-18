@@ -6,6 +6,9 @@ namespace RepoQL.Data.DuckDB.Tests;
 
 public sealed class EmbeddingRefresherContextualGroupTests
 {
+    // Tests use char-based counting (1 char = 1 token) to preserve existing arithmetic.
+    private static readonly VoyageTokenCounter CharCounter = VoyageTokenCounter.CharBased();
+
     #region BuildContextualGroups
 
     [Test]
@@ -16,7 +19,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
             MakeDoc("file:///a.cs", "context", ["chunk1", "chunk2", "chunk3"])
         };
 
-        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, EmbeddingRefresher.MaxContextualGroupChars);
+        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, EmbeddingRefresher.MaxContextualGroupChars, CharCounter);
 
         groups.Should().HaveCount(1);
         groups[0].Chunks.Should().HaveCount(3);
@@ -34,7 +37,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         var chunks = Enumerable.Range(0, 10).Select(i => new string((char)('A' + i), 500)).ToList();
         var docs = new[] { MakeDoc("file:///big.cs", context, chunks) };
 
-        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, 1600);
+        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, 1600, CharCounter);
 
         // 10 chunks at 500 chars each, 3 per group → ceil(10/3) = 4 groups
         groups.Should().HaveCount(4);
@@ -68,7 +71,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         var docs = new[] { smallDoc, bigDoc, tinyDoc };
 
         // maxGroupChars = 1600 → big doc splits: context(100) + 3*500 = 1600 per group → 2 groups
-        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, 1600);
+        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, 1600, CharCounter);
 
         // small(1) + big(2 split groups) + tiny(1) = 4 groups
         groups.Should().HaveCount(4);
@@ -96,7 +99,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
     {
         var docs = new[] { MakeDoc("file:///a.cs", null, ["chunk1", "chunk2"]) };
 
-        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, EmbeddingRefresher.MaxContextualGroupChars);
+        var (groups, meta) = EmbeddingRefresher.BuildContextualGroups(docs, EmbeddingRefresher.MaxContextualGroupChars, CharCounter);
 
         groups.Should().HaveCount(1);
         groups[0].Context.Should().BeNull();
@@ -110,7 +113,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         // Should still be included (at least one chunk per group guarantee).
         var docs = new[] { MakeDoc("file:///a.cs", "ctx", [new string('X', 5000)]) };
 
-        var (groups, _) = EmbeddingRefresher.BuildContextualGroups(docs, 1000);
+        var (groups, _) = EmbeddingRefresher.BuildContextualGroups(docs, 1000, CharCounter);
 
         groups.Should().HaveCount(1);
         groups[0].Chunks.Should().HaveCount(1);
@@ -284,7 +287,7 @@ public sealed class EmbeddingRefresherContextualGroupTests
         var doc = MakeDoc("file:///big.cs", context, chunks);
         var docs = new[] { doc };
 
-        var (groups, groupMeta) = EmbeddingRefresher.BuildContextualGroups(docs, 1600);
+        var (groups, groupMeta) = EmbeddingRefresher.BuildContextualGroups(docs, 1600, CharCounter);
         // 8 chunks at 500 chars, context 100, max 1600 → 3 chunks per group → 3 groups (3+3+2)
 
         groups.Should().HaveCount(3);
