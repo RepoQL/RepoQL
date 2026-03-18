@@ -17,6 +17,7 @@ namespace RepoQL.Contracts;
 /// <param name="EmbeddedAt">When embeddings were last successfully computed.</param>
 /// <param name="LineCount">Total number of lines in the file. Zero if unavailable.</param>
 /// <param name="Symbols">Child symbol URIs mapped to their entry (kind and span).</param>
+/// <param name="ProcessingDurationMs">How long processing took in milliseconds. Null if not yet recorded.</param>
 /// <param name="Headline">X-ray headline (Level 0) — essential identity in a single line.</param>
 /// <param name="Structure">X-ray structure (Level 2) — detailed outline for navigation.</param>
 public record FileEntry(
@@ -28,6 +29,7 @@ public record FileEntry(
     DateTime? EmbeddedAt,
     int LineCount,
     IReadOnlyDictionary<RepoUri, SymbolEntry> Symbols,
+    long? ProcessingDurationMs = null,
     string? Headline = null,
     string? Structure = null)
 {
