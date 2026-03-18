@@ -22,6 +22,11 @@
         <PackageReference Include="Microsoft.Build.Framework"
                           ExcludeAssets="runtime"
                           PrivateAssets="all" />
+        <PackageReference Include="OpenTelemetry" />
+        <PackageReference Include="OpenTelemetry.Exporter.Console" />
+        <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+        <Compile Include="$(RepositoryRoot)src\tests\Shared\TUnitOpenTelemetrySetup.cs"
+                 Link="Shared\TUnitOpenTelemetrySetup.cs" />
     </ItemGroup>
 
     <!-- Repository Areas -->
