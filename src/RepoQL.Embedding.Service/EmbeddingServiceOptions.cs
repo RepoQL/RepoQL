@@ -9,8 +9,8 @@ internal sealed class EmbeddingServiceOptions
     /// <summary>Voyage AI API key. Required.</summary>
     public string VoyageApiKey { get; set; } = "";
 
-    /// <summary>Voyage AI model name.</summary>
-    public string Model { get; set; } = "voyage-context-3";
+    /// <summary>Voyage AI model name. Voyage 4 models use the standard endpoint; context-3 uses contextual.</summary>
+    public string Model { get; set; } = "voyage-4-lite";
 
     /// <summary>Output dimension for embeddings.</summary>
     public int Dimension { get; set; } = 1024;

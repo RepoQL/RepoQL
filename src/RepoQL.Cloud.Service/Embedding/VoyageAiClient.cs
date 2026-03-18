@@ -6,8 +6,11 @@ using Microsoft.Extensions.Options;
 namespace RepoQL.Cloud.Service.Embedding;
 
 /// <summary>
-/// HTTP client for Voyage AI's contextual embeddings API.
-/// Always calls /v1/contextualizedembeddings — standard embeddings are never used.
+/// HTTP client for Voyage AI's embedding APIs.
+/// Routes to /v1/embeddings (standard) or /v1/contextualizedembeddings based on model:
+/// - Voyage 4 models → standard endpoint (faster, cheaper)
+/// - voyage-context-3 → contextual endpoint (legacy support)
+/// The gRPC API surface remains contextual-compatible for all models.
 /// </summary>
 /// <remarks>
 /// Handles Voyage API limits internally:
@@ -20,6 +23,7 @@ internal sealed class VoyageAiClient : IDisposable
 {
     private static readonly ActivitySource ActivitySource = new("RepoQL.Embedding.Voyage");
 
+    private static readonly Uri StandardEndpoint = new("embeddings", UriKind.Relative);
     private static readonly Uri ContextualizedEndpoint = new("contextualizedembeddings", UriKind.Relative);
     private static readonly Uri RerankEndpoint = new("rerank", UriKind.Relative);
     private const int MaxGroupsPerRequest = 1000;
@@ -54,6 +58,13 @@ internal sealed class VoyageAiClient : IDisposable
     public string Model => _options.Model;
     public int Dimension => _options.Dimension;
     public string RerankModel => _options.RerankModel;
+
+    /// <summary>
+    /// Whether the configured model uses the contextual endpoint.
+    /// Voyage 4 models use standard /v1/embeddings; context-3 uses /v1/contextualizedembeddings.
+    /// </summary>
+    private bool UseContextualEndpoint =>
+        _options.Model.Contains("context", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Embed grouped chunks with contextual awareness.
@@ -132,7 +143,7 @@ internal sealed class VoyageAiClient : IDisposable
     }
 
     /// <summary>
-    /// Embed a single query string. Uses the contextual endpoint with a single-element group.
+    /// Embed a single query string. Routes to standard or contextual endpoint based on model.
     /// </summary>
     public async Task<(float[] Vector, int Tokens)> EmbedQueryAsync(string text, CancellationToken ct)
     {
@@ -285,6 +296,94 @@ internal sealed class VoyageAiClient : IDisposable
         string inputType,
         CancellationToken ct)
     {
+        return UseContextualEndpoint
+            ? await CallContextualAsync(groups, inputType, ct)
+            : await CallStandardAsync(groups, inputType, ct);
+    }
+
+    /// <summary>Standard /v1/embeddings endpoint for Voyage 4 models. Flattens groups into a single input list.</summary>
+    private async Task<(List<float[]> Vectors, int Tokens)> CallStandardAsync(
+        List<List<string>> groups,
+        string inputType,
+        CancellationToken ct)
+    {
+        var sw = Stopwatch.StartNew();
+        using var activity = ActivitySource.StartActivity("voyage.embed", ActivityKind.Client);
+        activity?.SetTag("embed.model", _options.Model);
+        activity?.SetTag("embed.groups", groups.Count);
+        activity?.SetTag("embed.input_type", inputType);
+
+        // Standard endpoint takes a flat list of strings.
+        // Flatten all group elements — context and chunks are treated equally.
+        var allTexts = groups.SelectMany(g => g).ToList();
+
+        var request = new JsonObject
+        {
+            ["input"] = new JsonArray(allTexts.Select(t => JsonValue.Create(t)).ToArray<JsonNode>()),
+            ["model"] = _options.Model,
+            ["input_type"] = inputType,
+            ["output_dimension"] = _options.Dimension,
+            ["output_dtype"] = _options.OutputDtype
+        };
+
+        using var content = new StringContent(
+            request.ToJsonString(),
+            System.Text.Encoding.UTF8,
+            "application/json");
+
+        var response = await _httpClient.PostAsync(StandardEndpoint, content, ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError("Voyage API error {StatusCode}: {Body}", response.StatusCode, errorBody);
+            throw new HttpRequestException(
+                $"Voyage API error {(int)response.StatusCode}: {errorBody}",
+                null,
+                response.StatusCode);
+        }
+
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(responseBody);
+        var root = doc.RootElement;
+
+        // Standard embeddings response: { "data": [{ "embedding": [...], "index": 0 }, ...], "usage": { "total_tokens": N } }
+        var totalTokens = 0;
+        if (root.TryGetProperty("usage", out var usage) &&
+            usage.TryGetProperty("total_tokens", out var tokensProp))
+            totalTokens = tokensProp.GetInt32();
+
+        activity?.SetTag("embed.tokens", totalTokens);
+
+        var vectors = new List<float[]>();
+        if (root.TryGetProperty("data", out var data))
+        {
+            foreach (var item in data.EnumerateArray())
+            {
+                if (!item.TryGetProperty("embedding", out var embedding))
+                    continue;
+
+                var vec = new float[embedding.GetArrayLength()];
+                var i = 0;
+                foreach (var val in embedding.EnumerateArray())
+                    vec[i++] = val.GetSingle();
+                vectors.Add(vec);
+            }
+        }
+
+        EmbeddingMetrics.RecordVoyageDuration(sw.Elapsed.TotalMilliseconds);
+
+        _logger.LogInformation("Voyage standard returned {VectorCount} vectors (dim={Dim}), {Tokens} tokens in {Duration}ms",
+            vectors.Count, vectors.Count > 0 ? vectors[0].Length : 0, totalTokens, (int)sw.Elapsed.TotalMilliseconds);
+        return (vectors, totalTokens);
+    }
+
+    /// <summary>Contextual /v1/contextualizedembeddings endpoint for context-3 models.</summary>
+    private async Task<(List<float[]> Vectors, int Tokens)> CallContextualAsync(
+        List<List<string>> groups,
+        string inputType,
+        CancellationToken ct)
+    {
         var sw = Stopwatch.StartNew();
         using var activity = ActivitySource.StartActivity("voyage.contextualized_embed", ActivityKind.Client);
         activity?.SetTag("embed.model", _options.Model);
@@ -323,24 +422,19 @@ internal sealed class VoyageAiClient : IDisposable
         using var doc = JsonDocument.Parse(responseBody);
         var root = doc.RootElement;
 
-        // Voyage contextualizedembeddings response format:
-        // { "data": [{ "data": [{ "embedding": [...], "index": 0 }, ...], "index": 0 }, ...],
-        //   "usage": { "total_tokens": N } }
+        // Contextual response: { "data": [{ "data": [{ "embedding": [...] }, ...] }, ...], "usage": { "total_tokens": N } }
         var totalTokens = 0;
         if (root.TryGetProperty("usage", out var usage) &&
             usage.TryGetProperty("total_tokens", out var tokensProp))
             totalTokens = tokensProp.GetInt32();
-        // Fallback for older format
         else if (root.TryGetProperty("total_tokens", out var topLevelTokens))
             totalTokens = topLevelTokens.GetInt32();
 
         activity?.SetTag("embed.tokens", totalTokens);
 
         var vectors = new List<float[]>();
-
         if (root.TryGetProperty("data", out var outerData))
         {
-            // Each outer element is a group: { "data": [{ "embedding": [...] }, ...], "index": N }
             foreach (var groupResult in outerData.EnumerateArray())
             {
                 if (!groupResult.TryGetProperty("data", out var innerData))
@@ -362,7 +456,7 @@ internal sealed class VoyageAiClient : IDisposable
 
         EmbeddingMetrics.RecordVoyageDuration(sw.Elapsed.TotalMilliseconds);
 
-        _logger.LogInformation("Voyage returned {VectorCount} vectors (dim={Dim}), {Tokens} tokens in {Duration}ms",
+        _logger.LogInformation("Voyage contextual returned {VectorCount} vectors (dim={Dim}), {Tokens} tokens in {Duration}ms",
             vectors.Count, vectors.Count > 0 ? vectors[0].Length : 0, totalTokens, (int)sw.Elapsed.TotalMilliseconds);
         return (vectors, totalTokens);
     }

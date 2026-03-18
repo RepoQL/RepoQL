@@ -97,7 +97,7 @@ message RerankRequest {
   // Optional instruction for instruction-following rerankers (rerank-2.5).
   // Empty = no instruction. Example: "rank by relevance to themes: auth middleware"
   string instruction = 3;
-  // Model override. Empty = server default (rerank-2.5-lite).
+  // Model override. Empty = server default (rerank-2.5).
   string model = 4;
   // Return only top_k results. 0 = return all.
   int32 top_k = 5;
