@@ -11,9 +11,9 @@ using RepoQL.Protocol;
 namespace RepoQL.ConsoleApp.CommandImplementations;
 
 /// <summary>
-/// Purpose: Expose system health diagnostics plus indexing health commands.
-/// Complexity: Thin wrapper over SelfTestRunner for full/fast checks plus client-side SQL
-/// aggregation and text rendering for ::diagnostics.index.
+/// Purpose: Expose system health diagnostics plus indexing and cloud health commands.
+/// Complexity: Thin wrapper over SelfTestRunner for full/fast checks plus SQL-backed
+/// aggregation and text rendering for specialized diagnostics commands.
 /// </summary>
 [CommandClass]
 internal sealed class DiagnosticsCommand
@@ -23,6 +23,7 @@ internal sealed class DiagnosticsCommand
     private const long SlowDurationThresholdMs = 30_000;
 
     private const string SummarySql = "SELECT _registry_summary_internal('all')";
+    private const string CloudDiagnosticsSql = "SELECT cloud_diagnostics() as diag";
     private const string StuckQueueSql = """
         SELECT uri, stage, status, age_seconds, size_bytes, mime_type
         FROM processing_queue()
@@ -36,12 +37,18 @@ internal sealed class DiagnosticsCommand
     private readonly SelfTestRunner _runner;
     private readonly IIndexDiagnosticsOperations _operations;
 
-    public DiagnosticsCommand(SelfTestRunner runner, RepoQlClientProvider clientProvider)
-        : this(runner, new DefaultIndexDiagnosticsOperations(clientProvider))
+    public DiagnosticsCommand(
+        SelfTestRunner runner,
+        RepoQlClientProvider clientProvider)
+        : this(
+            runner,
+            new DefaultIndexDiagnosticsOperations(clientProvider))
     {
     }
 
-    internal DiagnosticsCommand(SelfTestRunner runner, IIndexDiagnosticsOperations operations)
+    internal DiagnosticsCommand(
+        SelfTestRunner runner,
+        IIndexDiagnosticsOperations operations)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _operations = operations ?? throw new ArgumentNullException(nameof(operations));
@@ -92,6 +99,54 @@ internal sealed class DiagnosticsCommand
         var durationSection = await BuildDurationSectionAsync(client, cancel).ConfigureAwait(false);
         if (durationSection.Count > 0)
             AppendSection(lines, "Duration by extension", durationSection);
+
+        return CommandResult.Success(string.Join(Environment.NewLine, lines));
+    }
+
+    [Command("diagnostics.cloud", Description = "Verify cloud authentication, inference, and embedding services")]
+    public async Task<CommandResult> ExecuteCloud(CancellationToken cancel)
+    {
+        var lines = new List<string> { "Cloud diagnostics" };
+
+        IRepoQlClient client;
+        try
+        {
+            client = await _operations.GetClientAsync(cancel).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AppendSection(lines, "Host", FormatKeyValueLines([new("Error", $"Failed to connect to host: {ex.Message}")]));
+            return CommandResult.Success(string.Join(Environment.NewLine, lines));
+        }
+
+        string? text;
+        try
+        {
+            var response = await client.ExecuteRawQueryAsync(CloudDiagnosticsSql, cancellationToken: cancel).ConfigureAwait(false);
+            text = GetScalarString(response);
+        }
+        catch (Exception ex)
+        {
+            AppendSection(lines, "Host", FormatKeyValueLines([new("Error", $"cloud_diagnostics() failed: {ex.Message}")]));
+            return CommandResult.Success(string.Join(Environment.NewLine, lines));
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            AppendSection(lines, "Host", FormatKeyValueLines([new("Error", "cloud_diagnostics() returned no data")]));
+            return CommandResult.Success(string.Join(Environment.NewLine, lines));
+        }
+
+        var values = ParseKeyValueText(text);
+        if (values.Count == 0)
+        {
+            AppendSection(lines, "Host", FormatKeyValueLines([new("Error", text.Trim())]));
+            return CommandResult.Success(string.Join(Environment.NewLine, lines));
+        }
+
+        AppendSection(lines, "Authentication", FormatKeyValueLines(BuildAuthenticationSection(values)));
+        AppendSection(lines, "Inference", FormatKeyValueLines(BuildInferenceSection(values)));
+        AppendSection(lines, "Embeddings", FormatKeyValueLines(BuildEmbeddingsSection(values)));
 
         return CommandResult.Success(string.Join(Environment.NewLine, lines));
     }
@@ -153,6 +208,123 @@ internal sealed class DiagnosticsCommand
             .ThenBy(distribution => distribution!.Extension, StringComparer.OrdinalIgnoreCase)
             .Select(distribution => distribution!)
             .ToArray();
+    }
+
+    internal static Dictionary<string, string> ParseKeyValueText(string text)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        if (string.IsNullOrWhiteSpace(text))
+            return result;
+
+        foreach (var line in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var colonIndex = line.IndexOf(':');
+            if (colonIndex <= 0)
+                continue;
+
+            var key = line[..colonIndex].Trim();
+            var value = line[(colonIndex + 1)..].Trim();
+            result[key] = value;
+        }
+
+        return result;
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> BuildAuthenticationSection(IReadOnlyDictionary<string, string> values)
+    {
+        var authStatus = values.GetValueOrDefault("auth") ?? "unknown";
+        if (!string.Equals(authStatus, "authenticated", StringComparison.OrdinalIgnoreCase))
+        {
+            var lines = new List<KeyValuePair<string, string>>
+            {
+                new("Status", authStatus)
+            };
+
+            var authError = values.GetValueOrDefault("auth_error");
+            if (ShouldShowAuthAction(authError))
+                lines.Add(new("Action", "command(command=\"auth.login\")"));
+            else if (!string.IsNullOrWhiteSpace(authError))
+                lines.Add(new("Error", authError));
+
+            return lines;
+        }
+
+        var authenticated = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrWhiteSpace(values.GetValueOrDefault("identity")))
+            authenticated.Add(new("Identity", values["identity"]));
+
+        authenticated.Add(new("Token", values.GetValueOrDefault("token") ?? "valid"));
+        return authenticated;
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> BuildInferenceSection(IReadOnlyDictionary<string, string> values)
+    {
+        var lines = new List<KeyValuePair<string, string>>
+        {
+            new("Status", values.GetValueOrDefault("inference") ?? "unknown")
+        };
+
+        if (!string.IsNullOrWhiteSpace(values.GetValueOrDefault("inference_url")))
+            lines.Add(new("Endpoint", values["inference_url"]));
+
+        return lines;
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> BuildEmbeddingsSection(IReadOnlyDictionary<string, string> values)
+    {
+        var embeddingStatus = values.GetValueOrDefault("embedding") ?? "unknown";
+        if (!string.Equals(embeddingStatus, "enabled", StringComparison.OrdinalIgnoreCase))
+            return [new("Status", embeddingStatus)];
+
+        var lines = new List<KeyValuePair<string, string>>();
+        if (!string.IsNullOrWhiteSpace(values.GetValueOrDefault("embedding_provider")))
+            lines.Add(new("Provider", values["embedding_provider"]));
+
+        if (!string.IsNullOrWhiteSpace(values.GetValueOrDefault("embedding_model")))
+        {
+            var model = values["embedding_model"];
+            var dimension = values.TryGetValue("embedding_dimension", out var dimensionText)
+                            && int.TryParse(dimensionText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedDimension)
+                ? parsedDimension
+                : 0;
+            lines.Add(new("Model", dimension > 0 ? $"{model} ({dimension:N0} dim)" : model));
+        }
+
+        if (!string.IsNullOrWhiteSpace(values.GetValueOrDefault("embedding_url")))
+            lines.Add(new("Endpoint", values["embedding_url"]));
+
+        if (!string.IsNullOrWhiteSpace(values.GetValueOrDefault("embedding_reachable")))
+            lines.Add(new("Reachable", values["embedding_reachable"]));
+
+        var progress = BuildEmbeddingProgress(values);
+        if (!string.IsNullOrWhiteSpace(progress))
+            lines.Add(new("Progress", progress));
+
+        if (!string.IsNullOrWhiteSpace(values.GetValueOrDefault("embedding_error")))
+            lines.Add(new("Error", values["embedding_error"]));
+
+        return lines.Count == 0 ? [new("Status", embeddingStatus)] : lines;
+    }
+
+    private static bool ShouldShowAuthAction(string? authError)
+        => !string.IsNullOrWhiteSpace(authError)
+           && (authError.Contains("auth.login", StringComparison.OrdinalIgnoreCase)
+               || authError.Contains("not logged in", StringComparison.OrdinalIgnoreCase)
+               || authError.Contains("not authenticated", StringComparison.OrdinalIgnoreCase)
+               || authError.Contains("session expired", StringComparison.OrdinalIgnoreCase));
+
+    private static string? BuildEmbeddingProgress(IReadOnlyDictionary<string, string> values)
+    {
+        if (!TryGetInt(values, "embedded_files", out var embeddedFiles) ||
+            !TryGetInt(values, "total_files", out var totalFiles))
+            return null;
+
+        var progress = $"{embeddedFiles:N0}/{totalFiles:N0} embedded";
+        if (TryGetInt(values, "not_applicable", out var notApplicable))
+            progress += $" ({notApplicable:N0} not applicable)";
+
+        return progress;
     }
 
     private static async Task<List<string>> BuildSummarySectionAsync(IRepoQlClient client, CancellationToken cancel)
@@ -334,6 +506,16 @@ internal sealed class DiagnosticsCommand
         {
             return [$"  Error: {ex.Message}"];
         }
+    }
+
+    private static IEnumerable<string> FormatKeyValueLines(IEnumerable<KeyValuePair<string, string>> values)
+    {
+        var materialized = values.ToList();
+        if (materialized.Count == 0)
+            return [];
+
+        var width = materialized.Max(pair => pair.Key.Length);
+        return materialized.Select(pair => $"  {pair.Key.PadRight(width)}: {pair.Value}");
     }
 
     private static void AppendSection(List<string> lines, string title, IEnumerable<string> sectionLines)
@@ -521,6 +703,16 @@ internal sealed class DiagnosticsCommand
                ((orderedDurations[upperIndex] - orderedDurations[lowerIndex]) * fraction);
     }
 
+    private static bool TryGetInt(IReadOnlyDictionary<string, string> values, string key, out int value)
+    {
+        if (values.TryGetValue(key, out var raw) &&
+            int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            return true;
+
+        value = 0;
+        return false;
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true
@@ -548,7 +740,9 @@ internal sealed class DiagnosticsCommand
         [property: JsonPropertyName("indexing")] int Indexing,
         [property: JsonPropertyName("indexed")] int Indexed,
         [property: JsonPropertyName("failed")] int Failed,
-        [property: JsonPropertyName("stale")] int Stale);
+        [property: JsonPropertyName("stale")] int Stale,
+        [property: JsonPropertyName("embedded")] int Embedded,
+        [property: JsonPropertyName("not_applicable")] int NotApplicable);
 
     private sealed record PendingEntry(
         [property: JsonPropertyName("uri")] string Uri,
