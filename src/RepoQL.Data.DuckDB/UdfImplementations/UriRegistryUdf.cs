@@ -46,7 +46,8 @@ public class UriRegistryUdf
                 entry.EmbeddingStatus.ToString(),
                 entry.EmbeddedChunkCount,
                 entry.EmbeddedAt?.ToString("O"),
-                entry.Symbols.Count
+                entry.Symbols.Count,
+                entry.ProcessingDurationMs
             );
         }
     }
@@ -134,7 +135,7 @@ public class UriRegistryUdf
                 entry.Status == UriStatus.Skipped ||
                 entry.EmbeddingStatus == EmbeddingStatus.Failed)
             {
-                yield return new ErrorRow(uri.AbsoluteUri, entry.Status.ToString(), entry.Error);
+                yield return new ErrorRow(uri.AbsoluteUri, entry.Status.ToString(), entry.Error, entry.ProcessingDurationMs);
             }
         }
     }
@@ -209,7 +210,9 @@ public class UriRegistryUdf
         string EmbeddingStatus,
         int EmbeddedChunks,
         string? EmbeddedAt,
-        int SymbolCount
+        int SymbolCount,
+        [property: System.Text.Json.Serialization.JsonPropertyName("processing_duration_ms")]
+        long? ProcessingDurationMs
     );
 
     public record ScopeReadinessRow(
@@ -228,7 +231,13 @@ public class UriRegistryUdf
 
     public record EmbeddingPendingRow(string Uri, string EmbeddingStatus);
 
-    public record ErrorRow(string Uri, string Status, string? Error);
+    public record ErrorRow(
+        string Uri,
+        string Status,
+        string? Error,
+        [property: System.Text.Json.Serialization.JsonPropertyName("processing_duration_ms")]
+        long? ProcessingDurationMs
+    );
 
     public record RegistrySummaryRow(
         int TotalFiles,

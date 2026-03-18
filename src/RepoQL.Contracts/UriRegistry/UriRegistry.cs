@@ -262,6 +262,17 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     }
 
     /// <summary>
+    /// Records how long processing took for a file.
+    /// </summary>
+    public void SetProcessingDuration(RepoUri uri, long durationMs)
+    {
+        if (!TryGetValue(uri, out var existing))
+            return;
+
+        TryUpdate(uri, existing with { ProcessingDurationMs = durationMs }, existing);
+    }
+
+    /// <summary>
     /// Removes a file and returns its entry if it existed.
     /// </summary>
     public FileEntry? RemoveFile(RepoUri uri)
