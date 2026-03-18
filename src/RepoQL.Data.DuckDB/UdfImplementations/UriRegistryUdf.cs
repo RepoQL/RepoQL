@@ -32,7 +32,7 @@ public class UriRegistryUdf
     public IEnumerable<IndexerStatusRow> IndexerStatus(
         [UdfDefault("NULL")] string? pattern)
     {
-        var files = string.IsNullOrWhiteSpace(pattern)
+        var files = string.IsNullOrWhiteSpace(pattern) || string.Equals(pattern, "all", StringComparison.OrdinalIgnoreCase)
             ? _registry.FileEntries
             : _registry.MatchFiles(pattern).Select(uri => new KeyValuePair<RepoUri, FileEntry>(uri, _registry[uri]));
 
@@ -81,7 +81,7 @@ public class UriRegistryUdf
     public IEnumerable<PendingRow> IndexerPending(
         [UdfDefault("NULL")] string? pattern)
     {
-        var files = string.IsNullOrWhiteSpace(pattern)
+        var files = string.IsNullOrWhiteSpace(pattern) || string.Equals(pattern, "all", StringComparison.OrdinalIgnoreCase)
             ? _registry.FileEntries
             : _registry.MatchFiles(pattern).Select(uri => new KeyValuePair<RepoUri, FileEntry>(uri, _registry[uri]));
 
@@ -103,7 +103,7 @@ public class UriRegistryUdf
     public IEnumerable<EmbeddingPendingRow> EmbeddingPending(
         [UdfDefault("NULL")] string? pattern)
     {
-        var files = string.IsNullOrWhiteSpace(pattern)
+        var files = string.IsNullOrWhiteSpace(pattern) || string.Equals(pattern, "all", StringComparison.OrdinalIgnoreCase)
             ? _registry.FileEntries
             : _registry.MatchFiles(pattern).Select(uri => new KeyValuePair<RepoUri, FileEntry>(uri, _registry[uri]));
 
@@ -125,7 +125,7 @@ public class UriRegistryUdf
     public IEnumerable<ErrorRow> IndexerErrors(
         [UdfDefault("NULL")] string? pattern)
     {
-        var files = string.IsNullOrWhiteSpace(pattern)
+        var files = string.IsNullOrWhiteSpace(pattern) || string.Equals(pattern, "all", StringComparison.OrdinalIgnoreCase)
             ? _registry.FileEntries
             : _registry.MatchFiles(pattern).Select(uri => new KeyValuePair<RepoUri, FileEntry>(uri, _registry[uri]));
 
@@ -211,8 +211,7 @@ public class UriRegistryUdf
         int EmbeddedChunks,
         string? EmbeddedAt,
         int SymbolCount,
-        [property: System.Text.Json.Serialization.JsonPropertyName("processing_duration_ms")]
-        long? ProcessingDurationMs
+        double? ProcessingDurationMs
     );
 
     public record ScopeReadinessRow(
@@ -231,13 +230,7 @@ public class UriRegistryUdf
 
     public record EmbeddingPendingRow(string Uri, string EmbeddingStatus);
 
-    public record ErrorRow(
-        string Uri,
-        string Status,
-        string? Error,
-        [property: System.Text.Json.Serialization.JsonPropertyName("processing_duration_ms")]
-        long? ProcessingDurationMs
-    );
+    public record ErrorRow(string Uri, string Status, string? Error, double? ProcessingDurationMs);
 
     public record RegistrySummaryRow(
         int TotalFiles,

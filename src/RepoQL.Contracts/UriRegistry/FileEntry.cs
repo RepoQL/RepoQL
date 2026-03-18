@@ -29,9 +29,9 @@ public record FileEntry(
     DateTime? EmbeddedAt,
     int LineCount,
     IReadOnlyDictionary<RepoUri, SymbolEntry> Symbols,
-    long? ProcessingDurationMs = null,
     string? Headline = null,
-    string? Structure = null)
+    string? Structure = null,
+    double? ProcessingDurationMs = null)
 {
     /// <summary>
     /// Creates a new FileEntry in Discovered state with no symbols.

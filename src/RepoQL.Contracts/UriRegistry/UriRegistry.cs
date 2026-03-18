@@ -224,6 +224,19 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     }
 
     /// <summary>
+    /// Records total hot-path processing duration for an existing file entry.
+    /// Does nothing when the URI is no longer tracked.
+    /// </summary>
+    public void SetProcessingDuration(RepoUri uri, double durationMs)
+    {
+        while (TryGetValue(uri, out var existing))
+        {
+            if (TryUpdate(uri, existing with { ProcessingDurationMs = durationMs }, existing))
+                return;
+        }
+    }
+
+    /// <summary>
     /// Marks a file as not applicable for embedding (e.g., binary files).
     /// </summary>
     public void SetEmbeddingNotApplicable(RepoUri uri)
@@ -259,17 +272,6 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
         {
             MarkSummaryDirty();
         }
-    }
-
-    /// <summary>
-    /// Records how long processing took for a file.
-    /// </summary>
-    public void SetProcessingDuration(RepoUri uri, long durationMs)
-    {
-        if (!TryGetValue(uri, out var existing))
-            return;
-
-        TryUpdate(uri, existing with { ProcessingDurationMs = durationMs }, existing);
     }
 
     /// <summary>

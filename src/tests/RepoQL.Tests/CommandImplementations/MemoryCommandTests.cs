@@ -94,3 +94,62 @@ internal sealed class MemoryCommandTests
         return response;
     }
 }
+
+internal sealed class DiagnosticsCommandTests
+{
+    [Test]
+    [Arguments(0L, "0ms")]
+    [Arguments(999L, "999ms")]
+    [Arguments(1_250L, "1.3s")]
+    [Arguments(135_000L, "2m 15s")]
+    [Arguments(3_661_000L, "1h 1m 1s")]
+    public void FormatDuration_FormatsMillisecondsAcrossRanges(long milliseconds, string expected)
+    {
+        DiagnosticsCommand.FormatDuration(milliseconds).Should().Be(expected);
+    }
+
+    [Test]
+    public void CalculateDurationDistribution_GroupsByExtensionAndComputesPercentiles()
+    {
+        var distributions = DiagnosticsCommand.CalculateDurationDistribution(
+        [
+            new DiagnosticsCommand.IndexerStatusEntry("file:///repo/src/alpha.cs", "Indexed", 1000),
+            new DiagnosticsCommand.IndexerStatusEntry("file:///repo/src/beta.cs", "Indexed", 2000),
+            new DiagnosticsCommand.IndexerStatusEntry("file:///repo/src/gamma.cs", "Indexed", 5000),
+            new DiagnosticsCommand.IndexerStatusEntry("file:///repo/docs/readme.md", "Indexed", 4000)
+        ]);
+
+        distributions.Should().HaveCount(2);
+
+        var csharp = distributions.Single(d => d.Extension == ".cs");
+        csharp.MinMs.Should().Be(1000);
+        csharp.P5Ms.Should().Be(1100);
+        csharp.P50Ms.Should().Be(2000);
+        csharp.AvgMs.Should().Be(2667);
+        csharp.P95Ms.Should().Be(4700);
+        csharp.MaxMs.Should().Be(5000);
+        csharp.TotalMs.Should().Be(8000);
+        csharp.Count.Should().Be(3);
+
+        var markdown = distributions.Single(d => d.Extension == ".md");
+        markdown.MinMs.Should().Be(4000);
+        markdown.P50Ms.Should().Be(4000);
+        markdown.TotalMs.Should().Be(4000);
+        markdown.Count.Should().Be(1);
+    }
+
+    [Test]
+    public void CalculateDurationDistribution_OmitsExtensionsWithOnlyZeroDurations()
+    {
+        var distributions = DiagnosticsCommand.CalculateDurationDistribution(
+        [
+            new DiagnosticsCommand.IndexerStatusEntry("file:///repo/src/alpha.cs", "Indexed", 0),
+            new DiagnosticsCommand.IndexerStatusEntry("file:///repo/src/beta.cs", "Indexed", 0),
+            new DiagnosticsCommand.IndexerStatusEntry("file:///repo/src/gamma.md", "Indexed", 250)
+        ]);
+
+        distributions.Should().HaveCount(1);
+        distributions[0].Extension.Should().Be(".md");
+        distributions[0].MaxMs.Should().Be(250);
+    }
+}
