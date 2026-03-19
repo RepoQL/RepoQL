@@ -168,24 +168,7 @@ internal sealed class CloudCredentialProviderTests
     }
 
     [Test]
-    public void AddCloudCredentialProvider_RegistersDynamicProviderWithoutStoredCredentials()
-    {
-        using var tempDir = new TempDir();
-        var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: tempDir.Path);
-
-        var services = new ServiceCollection();
-        services.AddSingleton(resolved);
-        services.AddLogging();
-        services.AddCloudCredentialProvider();
-
-        using var provider = services.BuildServiceProvider();
-        var credentialProvider = provider.GetRequiredService<ICloudCredentialProvider?>();
-
-        credentialProvider.Should().BeOfType<CloudCredentialProvider>();
-    }
-
-    [Test]
-    public void AddCloudCredentialProvider_UsesStaticProviderWhenApiKeyIsConfigured()
+    public void AddCloudCredentialProvider_AlwaysRegistersDynamicProvider()
     {
         using var tempDir = new TempDir();
         var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: tempDir.Path);
@@ -199,7 +182,22 @@ internal sealed class CloudCredentialProviderTests
         using var provider = services.BuildServiceProvider();
         var credentialProvider = provider.GetRequiredService<ICloudCredentialProvider?>();
 
-        credentialProvider.Should().BeOfType<StaticCloudCredentialProvider>();
+        credentialProvider.Should().BeOfType<CloudCredentialProvider>();
+    }
+
+    [Test]
+    public async Task GetTokenAsync_FallsBackToApiKeyWhenNoOAuthCredentials()
+    {
+        using var tempDir = new TempDir();
+        var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: tempDir.Path);
+        resolved.Settings.Cloud.ApiKey = "rql_test-key";
+
+        var sessionStore = new CloudAuthSessionStore(resolved, refreshTokenStore: new FakeRefreshTokenStore());
+        using var provider = new CloudCredentialProvider(resolved, sessionStore, logger: null);
+
+        var token = await provider.GetTokenAsync();
+
+        token.Should().Be("rql_test-key");
     }
 
     private static CloudCredentialProvider CreateProvider(
