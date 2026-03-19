@@ -150,7 +150,7 @@ jobs:
             --use-http2
             --port=8080
             --min-instances=0
-            --max-instances=2
+            --max-instances=50
             --memory=1Gi
             --cpu=1
             --timeout=300
@@ -245,7 +245,7 @@ jobs:
             --use-http2
             --port=8080
             --min-instances=0
-            --max-instances=2
+            --max-instances=50
             --memory=1Gi
             --cpu=1
             --timeout=300
