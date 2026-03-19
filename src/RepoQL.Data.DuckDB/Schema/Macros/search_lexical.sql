@@ -30,7 +30,6 @@ filtered AS (
     SELECT
         sf.node_id,
         sf.doc_id,
-        doc.artifact_id AS doc_artifact_id,
         -- search_key: lowercase document path
         LOWER(REPLACE(repository_uri_container(
             COALESCE(n.uri, doc.uri, 'repoql://unknown')
@@ -102,9 +101,6 @@ score_source AS (
             WHEN position(p.keywords_lc IN LOWER(COALESCE(ri.basename, ''))) > 0 THEN 2.0
             -- Search key contains query
             WHEN position(p.keywords_lc IN ri.search_key) > 0 THEN 1.0
-            -- Body contains query (full text_content, no truncation)
-            -- Score 2.5: higher than fuzzy matches, between basename-contains (2.0) and exact-basename (3.0)
-            WHEN position(p.keywords_lc IN LOWER(COALESCE(art.text_content, ''))) > 0 THEN 2.5
             ELSE NULL
         END AS bm25_heur,
         -- Fallback fuzzy match on full text
@@ -113,8 +109,6 @@ score_source AS (
         TRY_CAST(match_score(p.keywords_lc, ri.search_key) AS DOUBLE) AS fuzz
     FROM filtered ri
     CROSS JOIN params p
-    -- Join to artifact for body position check via the document artifact resolved in filtered
-    LEFT JOIN artifact art ON art.id = ri.doc_artifact_id
     WHERE p.keywords_empty = FALSE
 ),
 
