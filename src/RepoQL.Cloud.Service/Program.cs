@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using Google.Apis.Auth.OAuth2;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Exporter;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
@@ -24,7 +25,26 @@ builder.Logging.AddOpenTelemetry(logging =>
     otlpExporterConfiguration?.Apply(logging);
 });
 
+// Enrich resource attributes for Cloud Run → cloud_run_revision mapping.
+// K_SERVICE and K_REVISION are auto-injected by Cloud Run at runtime.
+var resourceBuilder = OpenTelemetry.Resources.ResourceBuilder.CreateDefault();
+var kService = Environment.GetEnvironmentVariable("K_SERVICE");
+var kRevision = Environment.GetEnvironmentVariable("K_REVISION");
+if (!string.IsNullOrEmpty(kService))
+{
+    resourceBuilder.AddService(kService, serviceVersion: kRevision ?? "unknown",
+        serviceInstanceId: $"{kRevision ?? "unknown"}-{Environment.ProcessId}");
+    resourceBuilder.AddAttributes(new KeyValuePair<string, object>[]
+    {
+        new("cloud.provider", "gcp"),
+        new("cloud.platform", "gcp_cloud_run"),
+        new("faas.name", kService),
+        new("faas.version", kRevision ?? "unknown"),
+    });
+}
+
 builder.Services.AddOpenTelemetry()
+    .ConfigureResource(r => r.AddDetector(new WrappedResourceDetector(resourceBuilder.Build())))
     .WithMetrics(m => m
         .AddMeter("RepoQL.Embedding.*")
         .AddMeter("RepoQL.Inference.*")
@@ -168,11 +188,13 @@ internal static class CloudServiceOtlpExportConfiguration
     {
         if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(OtlpEndpointEnvironmentVariable)))
         {
+            Console.WriteLine("[OTLP] Using explicit OTLP endpoint from environment");
             return OtlpExporterConfiguration.UseDefaults;
         }
 
         if (!IsRunningOnGoogleCloud())
         {
+            Console.WriteLine("[OTLP] Not on GCP and no explicit endpoint — telemetry export disabled");
             return null;
         }
 
@@ -185,6 +207,8 @@ internal static class CloudServiceOtlpExportConfiguration
             }
 
             credential = credential.CreateWithEnvironmentQuotaProject();
+            Console.WriteLine("[OTLP] Configured GCP telemetry export to {0} (credential type: {1})",
+                GoogleCloudTelemetryEndpoint, credential.UnderlyingCredential.GetType().Name);
             return new OtlpExporterConfiguration(options =>
             {
                 options.Endpoint = GoogleCloudTelemetryEndpoint;
@@ -192,9 +216,9 @@ internal static class CloudServiceOtlpExportConfiguration
                 options.HttpClientFactory = () => CreateGoogleCloudTelemetryClient(credential);
             });
         }
-        catch
+        catch (Exception ex)
         {
-            // No ADC available on startup. Skip exporting instead of failing the service.
+            Console.WriteLine("[OTLP] ADC initialization failed — telemetry export disabled: {0}", ex.Message);
             return null;
         }
     }
@@ -311,6 +335,13 @@ internal sealed class GoogleCloudTelemetryAuthHandler(GoogleCredential credentia
 
         return await base.SendAsync(request, cancellationToken);
     }
+}
+
+/// <summary>Wraps a pre-built Resource so it can be passed to ConfigureResource's AddDetector.</summary>
+internal sealed class WrappedResourceDetector(OpenTelemetry.Resources.Resource resource)
+    : OpenTelemetry.Resources.IResourceDetector
+{
+    public OpenTelemetry.Resources.Resource Detect() => resource;
 }
 
 internal static class OpenTelemetryExporterConfigurationExtensions
