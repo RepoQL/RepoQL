@@ -18,7 +18,7 @@ namespace RepoQL.Indexing.Indexing.PostProcessing;
 /// </summary>
 public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
 {
-    private const int StructureEmbeddingBatchSize = 100;
+    private const int StructureEmbeddingBatchSize = 500;
     internal const int RegistrySyncBatchSize = 256;
 
     private readonly IEmbeddingRefreshRunner _refreshRunner;
