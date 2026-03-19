@@ -159,7 +159,13 @@ public sealed class AuthValidationService
             ValidateLifetime = true,
             ValidateWithLKG = true,
             ValidAudience = _options.ClientId,
-            ValidIssuer = _options.Issuer
+            // WorkOS issuer includes client path: https://auth.repoql.ai/user_management/{client_id}
+            // Use prefix matching so the configured base URL matches the full issuer.
+            IssuerValidator = !string.IsNullOrWhiteSpace(_options.Issuer)
+                ? (issuer, _, _) => issuer.StartsWith(_options.Issuer, StringComparison.OrdinalIgnoreCase)
+                    ? issuer
+                    : throw new SecurityTokenInvalidIssuerException($"Issuer '{issuer}' does not match '{_options.Issuer}'")
+                : null
         };
 
         var result = await _tokenHandler.ValidateTokenAsync(token, validationParameters).ConfigureAwait(false);
