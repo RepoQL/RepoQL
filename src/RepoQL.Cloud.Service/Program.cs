@@ -43,9 +43,38 @@ builder.Services.AddRepoQlServerAuth(builder.Configuration.GetSection("Auth"));
 
 // --- Embedding domain ---
 
-builder.Services.AddSingleton<VoyageAiClient>();
-builder.Services.AddHttpClient();
 builder.Services.Configure<EmbeddingServiceOptions>(builder.Configuration.GetSection("Embedding"));
+builder.Services.AddHttpClient();
+
+// Keyed VoyageAiClient instances: realtime (lite, fast) and batch (large, quality).
+// Both share config but use different models. Embeddings are compatible (same v4 space).
+builder.Services.AddKeyedSingleton<VoyageAiClient>("realtime");
+builder.Services.AddKeyedSingleton<VoyageAiClient>("batch", (sp, _) =>
+{
+    var baseOptions = sp.GetRequiredService<IOptions<EmbeddingServiceOptions>>().Value;
+    if (string.IsNullOrWhiteSpace(baseOptions.BatchModel) ||
+        string.Equals(baseOptions.BatchModel, baseOptions.Model, StringComparison.OrdinalIgnoreCase))
+    {
+        // No separate batch model — reuse realtime client
+        return sp.GetRequiredKeyedService<VoyageAiClient>("realtime");
+    }
+
+    var batchOptions = new EmbeddingServiceOptions
+    {
+        VoyageApiKey = baseOptions.VoyageApiKey,
+        Model = baseOptions.BatchModel,
+        Dimension = baseOptions.Dimension,
+        OutputDtype = baseOptions.OutputDtype,
+        VoyageBaseUrl = baseOptions.VoyageBaseUrl,
+        TimeoutSeconds = baseOptions.TimeoutSeconds,
+        Concurrency = baseOptions.Concurrency,
+        RerankModel = baseOptions.RerankModel,
+    };
+    return new VoyageAiClient(Options.Create(batchOptions),
+        sp.GetRequiredService<ILogger<VoyageAiClient>>());
+});
+// Default (unkeyed) resolves to realtime for backward compat
+builder.Services.AddSingleton(sp => sp.GetRequiredKeyedService<VoyageAiClient>("realtime"));
 builder.Services.Configure<CacheLayerSettings>(builder.Configuration.GetSection("CacheLayer"));
 builder.Services.AddSingleton<IObjectStorageClient>(sp =>
 {

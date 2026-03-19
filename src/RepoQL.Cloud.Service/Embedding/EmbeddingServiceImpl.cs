@@ -1,4 +1,5 @@
 using Grpc.Core;
+using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Cloud.Service.Analytics;
 using RepoQL.Cloud.Service.Embedding.Cache;
 
@@ -9,22 +10,32 @@ namespace RepoQL.Cloud.Service.Embedding;
 /// </summary>
 internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBase
 {
-    private readonly VoyageAiClient _voyage;
+    private readonly VoyageAiClient _realtimeVoyage;
+    private readonly VoyageAiClient _batchVoyage;
     private readonly ILogger<EmbeddingServiceImpl> _logger;
     private readonly EmbeddingCacheLayer? _cache;
     private readonly ProductAnalyticsStore? _analytics;
 
     public EmbeddingServiceImpl(
-        VoyageAiClient voyage,
+        [FromKeyedServices("realtime")] VoyageAiClient realtimeVoyage,
+        [FromKeyedServices("batch")] VoyageAiClient batchVoyage,
         ILogger<EmbeddingServiceImpl> logger,
         EmbeddingCacheLayer? cache = null,
         ProductAnalyticsStore? analytics = null)
     {
-        _voyage = voyage;
+        _realtimeVoyage = realtimeVoyage;
+        _batchVoyage = batchVoyage;
         _logger = logger;
         _cache = cache;
         _analytics = analytics;
     }
+
+    /// <summary>Select the Voyage client based on the request's use case.</summary>
+    private VoyageAiClient ResolveClient(EmbedChunksRequest request) => request.UseCase switch
+    {
+        EmbeddingUseCase.Batch => _batchVoyage,
+        _ => _realtimeVoyage
+    };
 
     public override async Task<EmbedChunksResponse> EmbedChunks(
         EmbedChunksRequest request,
@@ -112,7 +123,7 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
 
         try
         {
-            var (vector, tokens) = await _voyage.EmbedQueryAsync(request.Text, context.CancellationToken);
+            var (vector, tokens) = await _realtimeVoyage.EmbedQueryAsync(request.Text, context.CancellationToken);
 
             return new EmbedQueryResponse
             {
@@ -145,8 +156,8 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
             // Normalize Voyage 4 family to a single model name so cache/refresh
             // treats voyage-4-lite, voyage-4, and voyage-4-large as interchangeable
             // (they share an embedding space with 0.89-0.96 cosine similarity).
-            Model = NormalizeModelFamily(_voyage.Model),
-            Dimension = _voyage.Dimension
+            Model = NormalizeModelFamily(_realtimeVoyage.Model),
+            Dimension = _realtimeVoyage.Dimension
         });
     }
 
@@ -174,7 +185,7 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
 
         _logger.LogDebug("Rerank: {Documents} documents, model={Model}, instruction={HasInstruction}",
             request.Documents.Count,
-            string.IsNullOrEmpty(request.Model) ? _voyage.RerankModel : request.Model,
+            string.IsNullOrEmpty(request.Model) ? _realtimeVoyage.RerankModel : request.Model,
             !string.IsNullOrEmpty(request.Instruction));
 
         try
@@ -187,7 +198,7 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
                 documents.Add(doc.Text);
             }
 
-            var result = await _voyage.RerankAsync(
+            var result = await _realtimeVoyage.RerankAsync(
                 request.Query,
                 documents,
                 request.Instruction,
@@ -262,9 +273,11 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
         EmbedChunksRequest request,
         CancellationToken ct)
     {
-        var result = await _voyage.EmbedChunksAsync(groups, ct);
+        var client = ResolveClient(request);
+        var result = await client.EmbedChunksAsync(groups, ct);
 
-        _logger.LogInformation("EmbedChunks: Voyage returned {VectorCount} vectors, {Tokens} tokens",
+        _logger.LogInformation("EmbedChunks: {Model} returned {VectorCount} vectors, {Tokens} tokens",
+            client.Model,
             result.Vectors.Count, result.TotalTokens);
 
         var response = new EmbedChunksResponse { TotalTokens = result.TotalTokens };
@@ -337,7 +350,7 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
         var voyageInputs = missGroups
             .Select(group => new ChunkGroupInput(group.ReducedGroupIndex, group.Context, group.Chunks))
             .ToList();
-        var voyageResult = await _voyage.EmbedChunksAsync(voyageInputs, ct);
+        var voyageResult = await ResolveClient(request).EmbedChunksAsync(voyageInputs, ct);
 
         var computedByIndex = new Dictionary<int, ComputedChunkResult>();
         var cacheEntries = new List<CacheEntry>();

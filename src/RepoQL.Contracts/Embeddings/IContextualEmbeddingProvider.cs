@@ -20,6 +20,13 @@ public interface IContextualEmbeddingProvider
     Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     /// <summary>
+    /// Hint to the provider about how these embeddings will be used.
+    /// The server may select different models based on use case (e.g., batch vs realtime).
+    /// Values: "realtime" (default), "batch", "structure".
+    /// </summary>
+    void SetUseCaseHint(string useCase) { }
+
+    /// <summary>
     /// Embed grouped chunks with document-level context.
     /// Each group represents one document's chunks in document order.
     /// The provider sends them to the embedding model as a unit so chunks

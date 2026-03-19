@@ -849,7 +849,8 @@ public sealed class EmbeddingRefresher
             pendingDocs.Count, groups.Count, totalItems,
             groups.Sum(g => g.Chunks.Count));
 
-        var result = await _contextualProvider!.EmbedChunksAsync(groups, ct).ConfigureAwait(false);
+        _contextualProvider!.SetUseCaseHint("batch");
+        var result = await _contextualProvider.EmbedChunksAsync(groups, ct).ConfigureAwait(false);
 
         var nonNullVectors = result.Vectors.Count(v => v.Vector is { Length: > 0 });
         _logger.LogInformation(

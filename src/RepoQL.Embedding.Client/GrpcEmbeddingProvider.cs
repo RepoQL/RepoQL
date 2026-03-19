@@ -66,6 +66,21 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
     public bool Enabled => true;
     public string? Source { get; set; }
 
+    /// <summary>
+    /// Use case hint sent to the cloud service for model selection.
+    /// </summary>
+    public EmbeddingUseCase UseCase { get; set; }
+
+    public void SetUseCaseHint(string useCase)
+    {
+        UseCase = useCase switch
+        {
+            "batch" => EmbeddingUseCase.Batch,
+            "structure" => EmbeddingUseCase.Structure,
+            _ => EmbeddingUseCase.Realtime
+        };
+    }
+
     public Task InitializeAsync(CancellationToken cancellationToken = default)
         => EnsureModelInfoAsync(cancellationToken);
 
@@ -77,6 +92,7 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
 
         var request = new EmbedChunksRequest();
         request.Source = Source ?? "";
+        request.UseCase = UseCase;
         foreach (var group in groups)
         {
             var protoGroup = new ChunkGroup

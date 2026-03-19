@@ -38,6 +38,20 @@ message EmbedChunksRequest {
   // Normalized: "{host}/{path}" (e.g., "github.com/org/repo").
   // Empty = skip cloud cache (e.g., file:// with no git remote).
   string source = 2;
+
+  // How these embeddings will be used. The server may choose different models
+  // or routing based on the use case.
+  EmbeddingUseCase use_case = 3;
+}
+
+// Describes the embedding use case so the server can optimize model selection.
+enum EmbeddingUseCase {
+  // Default: real-time embedding for search queries and incremental updates.
+  EMBEDDING_USE_CASE_REALTIME = 0;
+  // Batch/idle embedding for full-text content during background refresh.
+  EMBEDDING_USE_CASE_BATCH = 1;
+  // Structure embedding (headline + structure summaries).
+  EMBEDDING_USE_CASE_STRUCTURE = 2;
 }
 
 message ChunkGroup {

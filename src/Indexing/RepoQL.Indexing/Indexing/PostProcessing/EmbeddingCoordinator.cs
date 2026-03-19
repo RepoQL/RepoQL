@@ -518,6 +518,7 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
                 {
                     var groups = payloads.Select((p, i) =>
                         new DocumentChunkGroup(batch[i].Uri, Context: null, new[] { p })).ToList();
+                    _contextualProvider.SetUseCaseHint("structure");
                     var result = await _contextualProvider.EmbedChunksAsync(groups, cancellationToken).ConfigureAwait(false);
                     vectors = new float[]?[batchCount];
                     foreach (var cv in result.Vectors)
