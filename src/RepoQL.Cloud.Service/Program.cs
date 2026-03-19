@@ -1,5 +1,10 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Diagnostics.CodeAnalysis;
+using Google.Apis.Auth.OAuth2;
 using Microsoft.Extensions.Options;
-using OpenTelemetry;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using RepoQL.Cloud.Auth;
@@ -10,21 +15,27 @@ using RepoQL.Cloud.Service.Inference;
 using RepoQL.Embedding.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
+var otlpExporterConfiguration = CloudServiceOtlpExportConfiguration.TryCreate();
 
 // --- Observability ---
 
-builder.Logging.AddOpenTelemetry();
+builder.Logging.AddOpenTelemetry(logging =>
+{
+    otlpExporterConfiguration?.Apply(logging);
+});
+
 builder.Services.AddOpenTelemetry()
     .WithMetrics(m => m
         .AddMeter("RepoQL.Embedding.*")
         .AddMeter("RepoQL.Inference.*")
         .AddAspNetCoreInstrumentation()
-        .AddRuntimeInstrumentation())
+        .AddRuntimeInstrumentation()
+        .ApplyExporterConfiguration(otlpExporterConfiguration))
     .WithTracing(t => t
         .AddSource("RepoQL.Embedding.*")
         .AddSource("RepoQL.Inference.*")
-        .AddAspNetCoreInstrumentation())
-    .UseOtlpExporter();
+        .AddAspNetCoreInstrumentation()
+        .ApplyExporterConfiguration(otlpExporterConfiguration));
 
 // --- gRPC ---
 
@@ -144,3 +155,179 @@ app.MapGrpcService<EmbeddingServiceImpl>();
 app.MapGrpcService<InferenceServiceImpl>();
 
 app.Run();
+
+internal static class CloudServiceOtlpExportConfiguration
+{
+    private const string OtlpEndpointEnvironmentVariable = "OTEL_EXPORTER_OTLP_ENDPOINT";
+    private const string GoogleCloudRunServiceEnvironmentVariable = "K_SERVICE";
+    private const string GoogleComputeMetadataEnvironmentVariable = "GCE_METADATA";
+    private const string CloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform";
+    private static readonly Uri GoogleCloudTelemetryEndpoint = new("https://telemetry.googleapis.com");
+
+    public static OtlpExporterConfiguration? TryCreate()
+    {
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(OtlpEndpointEnvironmentVariable)))
+        {
+            return OtlpExporterConfiguration.UseDefaults;
+        }
+
+        if (!IsRunningOnGoogleCloud())
+        {
+            return null;
+        }
+
+        try
+        {
+            var credential = GoogleCredential.GetApplicationDefault();
+            if (credential.IsCreateScopedRequired)
+            {
+                credential = credential.CreateScoped(CloudPlatformScope);
+            }
+
+            credential = credential.CreateWithEnvironmentQuotaProject();
+            return new OtlpExporterConfiguration(options =>
+            {
+                options.Endpoint = GoogleCloudTelemetryEndpoint;
+                options.Protocol = OtlpExportProtocol.Grpc;
+                options.HttpClientFactory = () => CreateGoogleCloudTelemetryClient(credential);
+            });
+        }
+        catch
+        {
+            // No ADC available on startup. Skip exporting instead of failing the service.
+            return null;
+        }
+    }
+
+    private static bool IsRunningOnGoogleCloud()
+        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(GoogleCloudRunServiceEnvironmentVariable)) ||
+           !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(GoogleComputeMetadataEnvironmentVariable));
+
+    [SuppressMessage("Reliability", "CA2000:Dispose objects before losing scope",
+        Justification = "HttpClient owns and disposes the handler pipeline.")]
+    private static HttpClient CreateGoogleCloudTelemetryClient(GoogleCredential credential)
+    {
+        var transport = new SocketsHttpHandler
+        {
+            EnableMultipleHttp2Connections = true,
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+        };
+
+        var authHandler = new GoogleCloudTelemetryAuthHandler(credential)
+        {
+            InnerHandler = transport,
+        };
+
+        return new HttpClient(authHandler, disposeHandler: true)
+        {
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+    }
+}
+
+internal sealed class OtlpExporterConfiguration
+{
+    public static readonly OtlpExporterConfiguration UseDefaults = new();
+
+    private readonly Action<OtlpExporterOptions>? configure;
+
+    public OtlpExporterConfiguration()
+    {
+    }
+
+    public OtlpExporterConfiguration(Action<OtlpExporterOptions> configure)
+    {
+        this.configure = configure;
+    }
+
+    public void Apply(OpenTelemetryLoggerOptions logging)
+    {
+        if (configure is null)
+        {
+            logging.AddOtlpExporter();
+            return;
+        }
+
+        logging.AddOtlpExporter(configure);
+    }
+
+    public void Apply(MeterProviderBuilder metrics)
+    {
+        if (configure is null)
+        {
+            metrics.AddOtlpExporter();
+            return;
+        }
+
+        metrics.AddOtlpExporter(configure);
+    }
+
+    public void Apply(TracerProviderBuilder tracing)
+    {
+        if (configure is null)
+        {
+            tracing.AddOtlpExporter();
+            return;
+        }
+
+        tracing.AddOtlpExporter(configure);
+    }
+}
+
+internal sealed class GoogleCloudTelemetryAuthHandler(GoogleCredential credential) : DelegatingHandler
+{
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        request.Version = HttpVersion.Version20;
+        request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
+
+        if (credential.UnderlyingCredential is ITokenAccessWithHeaders tokenAccessWithHeaders)
+        {
+            var tokenWithHeaders =
+                await tokenAccessWithHeaders.GetAccessTokenWithHeadersForRequestAsync(
+                    request.RequestUri?.ToString(),
+                    cancellationToken);
+
+            request.Headers.Authorization =
+                new AuthenticationHeaderValue("Bearer", tokenWithHeaders.AccessToken);
+            tokenWithHeaders.AddHeaders(request);
+        }
+        else if (credential.UnderlyingCredential is ITokenAccess tokenAccess)
+        {
+            var token = await tokenAccess.GetAccessTokenForRequestAsync(
+                request.RequestUri?.ToString(),
+                cancellationToken);
+
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            if (!string.IsNullOrWhiteSpace(credential.QuotaProject))
+            {
+                request.Headers.TryAddWithoutValidation("x-goog-user-project", credential.QuotaProject);
+            }
+        }
+
+        return await base.SendAsync(request, cancellationToken);
+    }
+}
+
+internal static class OpenTelemetryExporterConfigurationExtensions
+{
+    public static MeterProviderBuilder ApplyExporterConfiguration(
+        this MeterProviderBuilder builder,
+        OtlpExporterConfiguration? exporterConfiguration)
+    {
+        exporterConfiguration?.Apply(builder);
+        return builder;
+    }
+
+    public static TracerProviderBuilder ApplyExporterConfiguration(
+        this TracerProviderBuilder builder,
+        OtlpExporterConfiguration? exporterConfiguration)
+    {
+        exporterConfiguration?.Apply(builder);
+        return builder;
+    }
+}
