@@ -41,6 +41,7 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
     private const string E5PassagePrefix = "passage: ";
     private const string BoostCacheKey = "OnnxBoostSession";
     private const int BoostExpirySeconds = 15;
+    private const int DefaultBoostIntraOpThreads = 4;
 
     private InferenceSession? _session;
     private readonly ILogger<OnnxEmbeddingProvider> _logger;
@@ -576,11 +577,18 @@ public sealed class OnnxEmbeddingProvider : IEmbeddingProvider, IDisposable
         var intraOpThreads = _intraOp ?? (_ortSettings.IntraThreads is >= 0 ? _ortSettings.IntraThreads : null);
         var interOpThreads = _interOp ?? (_ortSettings.InterThreads is >= 0 ? _ortSettings.InterThreads : null);
 
+        // Keep the base session on ONNX auto-threading by default, but cap the arena-backed
+        // boost session to a modest worker count. Passage batches can otherwise multiply native
+        // thread pools under concurrent query/indexing load and look like thread starvation.
+        var resolvedIntraOpThreads = boost
+            ? (intraOpThreads is > 0 ? intraOpThreads.Value : DefaultBoostIntraOpThreads)
+            : (intraOpThreads ?? 0);
+
         // IntraOp: 0 = ONNX auto-detect based on hardware. InterOp: 1 is sensible for sequential mode.
-        so.IntraOpNumThreads = intraOpThreads ?? 0;
+        so.IntraOpNumThreads = resolvedIntraOpThreads;
         so.InterOpNumThreads = interOpThreads ?? 1;
-        _logger.LogInformation("ONNX thread config: IntraOp={IntraOp}, InterOp={InterOp}",
-            so.IntraOpNumThreads, so.InterOpNumThreads);
+        _logger.LogInformation("ONNX thread config: Session={SessionKind}, IntraOp={IntraOp}, InterOp={InterOp}",
+            boost ? "boost" : "base", so.IntraOpNumThreads, so.InterOpNumThreads);
 
         // Int8 quantized model optimizations
         so.AddSessionConfigEntry("session.intra_op.allow_spinning", "0");
