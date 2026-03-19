@@ -6,6 +6,7 @@ using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts.Cloud;
 using RepoQL.Core.Cloud;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Configuration;
 
 namespace RepoQL.Core.Tests.Cloud;
@@ -30,8 +31,8 @@ internal sealed class CloudCredentialProviderTests
         var token = CreateJwt(DateTimeOffset.UtcNow.AddMinutes(10));
         await WriteAuthFileAsync(tempDir.Path, token, DateTimeOffset.UtcNow.AddMinutes(10));
 
-        var handler = new RecordingHttpHandler(_ => throw new InvalidOperationException("refresh should not run"));
-        var provider = CreateProvider(
+        using var handler = new RecordingHttpHandler(_ => throw new InvalidOperationException("refresh should not run"));
+        using var provider = CreateProvider(
             tempDir.Path,
             httpClient: new HttpClient(handler),
             refreshTokenStore: new FakeRefreshTokenStore("refresh-token"));
@@ -51,7 +52,7 @@ internal sealed class CloudCredentialProviderTests
         await WriteAuthFileAsync(tempDir.Path, expiredToken, DateTimeOffset.UtcNow.AddMinutes(-5));
 
         string? capturedBody = null;
-        var handler = new RecordingHttpHandler(async request =>
+        using var handler = new RecordingHttpHandler(async request =>
         {
             capturedBody = await request.Content!.ReadAsStringAsync();
             return new HttpResponseMessage(HttpStatusCode.OK)
@@ -72,7 +73,7 @@ internal sealed class CloudCredentialProviderTests
         });
 
         var refreshStore = new FakeRefreshTokenStore("rt_old");
-        var provider = CreateProvider(
+        using var provider = CreateProvider(
             tempDir.Path,
             httpClient: new HttpClient(handler),
             refreshTokenStore: refreshStore);
@@ -82,7 +83,7 @@ internal sealed class CloudCredentialProviderTests
         token.Should().Be(refreshedToken);
         refreshStore.StoredToken.Should().Be("rt_new");
         capturedBody.Should().Contain("grant_type=refresh_token");
-        capturedBody.Should().Contain("client_id=client_01KKDYHD5DF3E3SHDPPN3BMB57");
+        capturedBody.Should().Contain($"client_id={RepoQlConfig.CloudSettings.DefaultClientId}");
         capturedBody.Should().NotContain("client_secret");
         capturedBody.Should().Contain("refresh_token=rt_old");
 
@@ -168,10 +169,27 @@ internal sealed class CloudCredentialProviderTests
     }
 
     [Test]
-    public void AddCloudCredentialProvider_AlwaysRegistersDynamicProvider()
+    public void AddCloudCredentialProvider_RegistersDynamicProviderWithoutStoredCredentials()
     {
         using var tempDir = new TempDir();
-        var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: tempDir.Path);
+        var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: tempDir.Path, envReader: _ => null);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(resolved);
+        services.AddLogging();
+        services.AddCloudCredentialProvider();
+
+        using var provider = services.BuildServiceProvider();
+        var credentialProvider = provider.GetRequiredService<ICloudCredentialProvider?>();
+
+        credentialProvider.Should().BeOfType<CloudCredentialProvider>();
+    }
+
+    [Test]
+    public void AddCloudCredentialProvider_UsesStaticProviderWhenApiKeyIsConfigured()
+    {
+        using var tempDir = new TempDir();
+        var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: tempDir.Path, envReader: _ => null);
         resolved.Settings.Cloud.ApiKey = "rql_api-key";
 
         var services = new ServiceCollection();
@@ -206,7 +224,7 @@ internal sealed class CloudCredentialProviderTests
         IRefreshTokenStore? refreshTokenStore = null,
         TimeSpan? lockTimeout = null)
     {
-        var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: userConfigDir);
+        var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: userConfigDir, envReader: _ => null);
         var sessionStore = new CloudAuthSessionStore(
             resolved,
             refreshTokenStore: refreshTokenStore);

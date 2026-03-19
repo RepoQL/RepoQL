@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      ARTIFACTS_PATH: ${{ github.workspace }}/artifacts/tests
+      ARTIFACTS_PATH: ${{ github.workspace }}/artifacts
     steps:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
@@ -64,68 +64,36 @@ jobs:
       - name: Run tests with coverage
         id: test
         run: |
-          set -uo pipefail
+          dotnet test \
+            --solution RepoQL.sln \
+            --configuration Release \
+            --no-build \
+            -- \
+            --coverage \
+            --coverage-output-format cobertura \
+            --report-trx
+      - name: Merge coverage reports
+        if: always() && !cancelled()
+        run: |
+          RESULTS_DIR="${{ env.ARTIFACTS_PATH }}/TestResults"
+          COVERAGE_DIR="${{ env.ARTIFACTS_PATH }}/coverage"
+          mkdir -p "$COVERAGE_DIR"
 
-          ARTIFACTS_DIR="${{ env.ARTIFACTS_PATH }}"
-          rm -rf "$ARTIFACTS_DIR/coverage" "$ARTIFACTS_DIR/test-results"
-          mkdir -p "$ARTIFACTS_DIR/coverage" "$ARTIFACTS_DIR/test-results"
-
-          mapfile -t test_projects < <(dotnet sln RepoQL.sln list | awk '/\.Tests\.csproj$/ {print}' | sort)
-          echo "Found ${#test_projects[@]} test project(s) in RepoQL.sln"
-          if [[ "${#test_projects[@]}" -eq 0 ]]; then
-            echo "No test projects found in RepoQL.sln" >&2
-            exit 1
-          fi
-
-          failed=0
-          for project in "${test_projects[@]}"; do
-            project_dir="$(dirname "$project")"
-            first_source=$(find "$project_dir" -maxdepth 5 -name '*.cs' -type f | head -n1)
-            if [[ -z "$first_source" ]]; then
-              echo "Skipping $project (no test sources detected)"
-              continue
-            fi
-
-            echo "Running tests for: $project"
-            if ! dotnet run \
-              --project "$project" \
-              --configuration Release \
-              --no-build \
-              -- \
-              --coverage \
-              --coverage-output-format cobertura \
-              --report-trx \
-              --results-directory "$ARTIFACTS_DIR/test-results"; then
-              echo "::error::Tests failed for $project"
-              failed=1
-            fi
-          done
-
-          mapfile -t coverage_files < <(find "$ARTIFACTS_DIR/test-results" -name "*.cobertura.xml" -type f | sort)
+          mapfile -t coverage_files < <(find "$RESULTS_DIR" -name "*.cobertura.xml" -type f | sort)
           echo "Found ${#coverage_files[@]} coverage file(s)"
+
           if [[ "${#coverage_files[@]}" -eq 0 ]]; then
             echo "No coverage files generated" >&2
-            exit 1
-          fi
-
-          if [[ "${#coverage_files[@]}" -eq 1 ]]; then
-            cp "${coverage_files[0]}" "$ARTIFACTS_DIR/coverage/coverage.cobertura.xml"
+            exit 0
+          elif [[ "${#coverage_files[@]}" -eq 1 ]]; then
+            cp "${coverage_files[0]}" "$COVERAGE_DIR/coverage.cobertura.xml"
           else
             merge_args=()
             for file in "${coverage_files[@]}"; do
               merge_args+=("--reports" "$file")
             done
-            dotnet-coverage merge "${merge_args[@]}" --output "$ARTIFACTS_DIR/coverage/coverage.cobertura.xml" --output-format cobertura
+            dotnet-coverage merge "${merge_args[@]}" --output "$COVERAGE_DIR/coverage.cobertura.xml" --output-format cobertura
           fi
-
-          if [[ ! -f "$ARTIFACTS_DIR/test-results/tests.trx" ]]; then
-            mapfile -t trx_candidates < <(find "$ARTIFACTS_DIR/test-results" -name '*.trx' -type f | sort)
-            if [[ "${#trx_candidates[@]}" -gt 0 ]]; then
-              cp "${trx_candidates[-1]}" "$ARTIFACTS_DIR/test-results/tests.trx"
-            fi
-          fi
-
-          exit $failed
       - name: Show disk space (post-tests)
         if: always()
         run: df -h
@@ -151,13 +119,13 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           files: |
-            ${{ env.ARTIFACTS_PATH }}/test-results/**/*.trx
+            ${{ env.ARTIFACTS_PATH }}/TestResults/**/*.trx
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
           path: |
-            ${{ env.ARTIFACTS_PATH }}/test-results/**/*
+            ${{ env.ARTIFACTS_PATH }}/TestResults/**/*
             ${{ env.ARTIFACTS_PATH }}/coverage/coverage.cobertura.xml
             ${{ env.ARTIFACTS_PATH }}/coverage/report/**

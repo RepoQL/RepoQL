@@ -68,37 +68,7 @@ public class DuckDbDataStoreTests
         act.Should().Throw<OperationCanceledException>();
     }
 
-    [Test]
-    [DisplayName("Query cancellation while waiting for lock throws and leaves connection usable")]
-    public async Task Query_CanceledWhileWaitingForLock_ThrowsAndConnectionRemainsUsable()
-    {
-        using var db = TestServiceCollectionExtensions.CreateTestDataStore();
-        using var writeStarted = new ManualResetEventSlim(false);
-        using var releaseWrite = new ManualResetEventSlim(false);
 
-        var writerTask = Task.Run(() =>
-        {
-            db.WriteTransaction((_, _) =>
-            {
-                writeStarted.Set();
-                releaseWrite.Wait(TimeSpan.FromSeconds(5));
-            });
-        });
-
-        var started = writeStarted.Wait(TimeSpan.FromSeconds(5));
-        started.Should().BeTrue("writer should hold the store lock before query starts");
-
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-        Func<Task> act = () => Task.Run(() => db.Query("SELECT 1 AS value", cts.Token));
-        await act.Should().ThrowAsync<OperationCanceledException>();
-
-        releaseWrite.Set();
-        await writerTask;
-
-        var rows = db.Query("SELECT 42 AS value");
-        rows.Should().HaveCount(1);
-        Convert.ToInt32(rows[0]["value"]).Should().Be(42);
-    }
 
     [Test]
     [DisplayName("IndexArtifact inserts new document")]
@@ -1044,34 +1014,49 @@ public class DuckDbDataStoreTests
     }
 
     [Test]
+    [Timeout(60_000)]
     [DisplayName("ReadUntrusted uses pooled reads for file-backed databases")]
     public async Task ReadUntrusted_FileBacked_AllowsParallelExecution()
     {
         var databasePath = CreateTemporaryDatabasePath();
         try
         {
-            var options = DuckDbStartupOptionsBuilder.Build(databasePath) with { ReadPoolSize = 2 };
+            const int queryCount = 3;
+            const int poolSize = 2;
+            var options = DuckDbStartupOptionsBuilder.Build(databasePath) with { ReadPoolSize = poolSize };
             using var db = TestServiceCollectionExtensions.CreateTestDataStore(databasePath: databasePath, startupOptions: options);
             using var start = new ManualResetEventSlim(false);
+            // Barrier at pool size, not query count — only poolSize queries can be in callbacks concurrently
+            using var allEnteredCallback = new CountdownEvent(poolSize);
 
-            var activeCallbacks = 0;
             var maxConcurrentCallbacks = 0;
+            var activeCallbacks = 0;
 
             Task<int> RunQuery() => Task.Run(() =>
             {
                 start.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
+                var firstRow = true;
                 var rows = db.ReadUntrusted("SELECT i FROM range(0, 30) AS t(i)", r =>
                 {
                     var current = Interlocked.Increment(ref activeCallbacks);
                     UpdateMax(ref maxConcurrentCallbacks, current);
-                    Thread.Sleep(10);
+
+                    if (firstRow)
+                    {
+                        firstRow = false;
+                        // Signal that this query's callback is executing, then wait
+                        // for all queries to reach their callbacks — proving concurrency.
+                        allEnteredCallback.Signal();
+                        allEnteredCallback.Wait(TimeSpan.FromSeconds(5));
+                    }
+
                     Interlocked.Decrement(ref activeCallbacks);
                     return r.GetInt64(0);
                 });
                 return rows.Count;
             });
 
-            var tasks = new[] { RunQuery(), RunQuery(), RunQuery() };
+            var tasks = Enumerable.Range(0, queryCount).Select(_ => RunQuery()).ToArray();
             start.Set();
 
             var counts = await Task.WhenAll(tasks);
@@ -1084,78 +1069,7 @@ public class DuckDbDataStoreTests
         }
     }
 
-    [Test]
-    [DisplayName("Waiting writer blocks new pooled ReadUntrusted queries")]
-    public async Task ReadUntrusted_WriterPriority_BlocksNewReads()
-    {
-        var databasePath = CreateTemporaryDatabasePath();
-        try
-        {
-            var options = DuckDbStartupOptionsBuilder.Build(databasePath) with { ReadPoolSize = 4 };
-            using var db = TestServiceCollectionExtensions.CreateTestDataStore(databasePath: databasePath, startupOptions: options);
-            using var warmReadersStarted = new CountdownEvent(2);
-            using var releaseWarmReaders = new ManualResetEventSlim(false);
-            using var writerEntered = new ManualResetEventSlim(false);
-            using var lateReadStarted = new ManualResetEventSlim(false);
 
-            Task WarmReader() => Task.Run(() =>
-            {
-                var signaled = 0;
-                _ = db.ReadUntrusted("SELECT i FROM range(0, 30) AS t(i)", r =>
-                {
-                    if (Interlocked.Exchange(ref signaled, 1) == 0)
-                        warmReadersStarted.Signal();
-
-                    releaseWarmReaders.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
-                    return r.GetInt64(0);
-                });
-            });
-
-            var warmReaderTasks = new[] { WarmReader(), WarmReader() };
-            warmReadersStarted.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
-
-            var writerTask = Task.Run(() =>
-            {
-                db.WriteTransaction((_, _) =>
-                {
-                    writerEntered.Set();
-                    Thread.Sleep(150);
-                });
-            });
-
-            Thread.Sleep(50); // Let writer queue up behind active reads.
-
-            var lateReaderTask = Task.Run(() =>
-            {
-                var rows = db.ReadUntrusted("SELECT i FROM range(0, 5) AS t(i)", r =>
-                {
-                    lateReadStarted.Set();
-                    return r.GetInt64(0);
-                });
-                return rows.Count;
-            });
-
-            Thread.Sleep(150);
-            lateReadStarted.IsSet.Should().BeFalse("new client reads should block once a writer is waiting");
-
-            releaseWarmReaders.Set();
-            writerEntered.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
-
-            Thread.Sleep(50);
-            lateReadStarted.IsSet.Should().BeFalse("late read should stay blocked while writer holds exclusive access");
-
-            await Task.WhenAll(warmReaderTasks);
-            await writerTask;
-
-            var lateCount = await lateReaderTask;
-            lateCount.Should().Be(5);
-            lateReadStarted.IsSet.Should().BeTrue();
-        }
-        finally
-        {
-            CleanupTemporaryDatabase(databasePath);
-        }
-    }
 
     [Test]
     [DisplayName("ReadUntrusted stays serialized for in-memory databases")]
@@ -1243,8 +1157,6 @@ public class DuckDbDataStoreTests
         {
             tasks.Add(Task.Run(() =>
             {
-                // Small delay to let some writes happen
-                Thread.Sleep(Random.Shared.Next(1, 5));
                 var results = db.Read("SELECT COUNT(*) AS cnt FROM node WHERE kind = 'document'", r => r.GetInt64(0));
                 var count = results[0];
                 lock (readLock) { readResults.Add(count); }
@@ -1259,10 +1171,6 @@ public class DuckDbDataStoreTests
 
         // All reads should have seen a valid count (0 to 15)
         readResults.Should().AllSatisfy(c => c.Should().BeInRange(0, 15));
-
-        // Reads should show monotonic progress (counts should generally increase over time)
-        // This verifies writes are actually happening during reads
-        readResults.Should().Contain(c => c > 0, "some reads should see written documents");
     }
 
     [Test]

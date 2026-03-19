@@ -16,6 +16,8 @@
         <WarningLevel>1</WarningLevel>
         <NoWarn>$(NoWarn);CA1707;CA1515</NoWarn>
         <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+        <TestResultsDirectory>$(RepositoryRoot)artifacts/TestResults</TestResultsDirectory>
+        <TestingPlatformCommandLineArguments>$(TestingPlatformCommandLineArguments) --results-directory "$(RepositoryRoot)artifacts/TestResults" --report-html-filename "$(RepositoryRoot)artifacts/TestResults/$(MSBuildProjectName)-report.html"</TestingPlatformCommandLineArguments>
     </PropertyGroup>
 
     <ItemGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').EndsWith('.Tests'))">

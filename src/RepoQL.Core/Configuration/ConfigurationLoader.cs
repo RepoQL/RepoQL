@@ -26,11 +26,13 @@ public static class ConfigurationLoader
     /// <param name="repoRoot">Repository root path, or null for non-repo contexts.</param>
     /// <param name="logger">Optional logger for warnings.</param>
     /// <param name="userConfigDir">Override for user config directory. Defaults to <c>~/.repoql</c>.</param>
+    /// <param name="envReader">Reads environment variables. Defaults to <see cref="Environment.GetEnvironmentVariable(string)"/>.</param>
     public static ResolvedConfig Load(
         SettingRegistry registry,
         string? repoRoot,
         ILogger? logger = null,
-        string? userConfigDir = null)
+        string? userConfigDir = null,
+        Func<string, string?>? envReader = null)
     {
         // Layer 1: defaults (all null — consumers decide)
         var resolved = new Dictionary<string, ResolvedSetting>(StringComparer.OrdinalIgnoreCase);
@@ -58,9 +60,10 @@ public static class ConfigurationLoader
         }
 
         // Layer 5: env vars (new names)
+        var getEnv = envReader ?? Environment.GetEnvironmentVariable;
         foreach (var def in registry.All)
         {
-            var envValue = Environment.GetEnvironmentVariable(def.EnvVar);
+            var envValue = getEnv(def.EnvVar);
             if (!string.IsNullOrEmpty(envValue))
             {
                 var parsed = TryParse(envValue, def, logger);
@@ -72,7 +75,7 @@ public static class ConfigurationLoader
             // Layer 6: legacy env var bridge
             if (def.LegacyEnvVar is not null)
             {
-                var legacyValue = Environment.GetEnvironmentVariable(def.LegacyEnvVar);
+                var legacyValue = getEnv(def.LegacyEnvVar);
                 if (!string.IsNullOrEmpty(legacyValue))
                 {
                     logger?.LogWarning(

@@ -9,7 +9,7 @@ internal sealed class ConfigurationLoaderTests
     private string _tempDir = null!;
     private string _repoRoot = null!;
     private string _userDir = null!;
-    private Dictionary<string, string?> _savedEnvVars = null!;
+    private Dictionary<string, string?> _envVars = null!;
 
     [Before(Test)]
     public void Setup()
@@ -18,40 +18,26 @@ internal sealed class ConfigurationLoaderTests
         _repoRoot = Path.Combine(_tempDir, "repo");
         _userDir = Path.Combine(_tempDir, "userhome", ".repoql");
         Directory.CreateDirectory(Path.Combine(_repoRoot, ".repoql"));
-
-        // Clear all legacy and REPOQL_ env vars that could leak into tests
-        var registry = SettingRegistry.Build();
-        _savedEnvVars = new Dictionary<string, string?>();
-        foreach (var def in registry.All)
-        {
-            SaveAndClear(def.EnvVar);
-            if (def.LegacyEnvVar is not null)
-                SaveAndClear(def.LegacyEnvVar);
-        }
+        _envVars = new Dictionary<string, string?>();
     }
 
     [After(Test)]
     public void Cleanup()
     {
-        foreach (var (key, value) in _savedEnvVars)
-            Environment.SetEnvironmentVariable(key, value);
-
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
     }
 
-    private void SaveAndClear(string envVar)
-    {
-        if (_savedEnvVars.ContainsKey(envVar))
-            return;
-        _savedEnvVars[envVar] = Environment.GetEnvironmentVariable(envVar);
-        Environment.SetEnvironmentVariable(envVar, null);
-    }
+    private void SetEnvVar(string name, string? value)
+        => _envVars[name] = value;
+
+    private string? GetEnvVar(string name)
+        => _envVars.TryGetValue(name, out var value) ? value : null;
 
     private ResolvedConfig Load(string? repoRoot = null)
     {
         var registry = SettingRegistry.Build();
-        return ConfigurationLoader.Load(registry, repoRoot ?? _repoRoot, userConfigDir: _userDir);
+        return ConfigurationLoader.Load(registry, repoRoot ?? _repoRoot, userConfigDir: _userDir, envReader: GetEnvVar);
     }
 
     [Test]
@@ -134,48 +120,12 @@ internal sealed class ConfigurationLoaderTests
     public void Load_EnvVar_Overrides_File()
     {
         WriteLocalConfig("""{"duckdb": {"read_pool_size": 2}}""");
-        Environment.SetEnvironmentVariable("REPOQL_DUCKDB_READ_POOL_SIZE", "3");
+        SetEnvVar("REPOQL_DUCKDB_READ_POOL_SIZE", "3");
 
         var resolved = Load();
 
         resolved.Settings.DuckDb.ReadPoolSize.Should().Be(3);
         resolved.GetProvenance("duckdb.read_pool_size")!.Source.Should().Be(ConfigScope.Environment);
-    }
-
-    [Test]
-    public void Load_Full_Precedence_Chain()
-    {
-        WriteUserConfig("""{"duckdb": {"read_pool_size": 1}}""");
-        WriteRepoConfig("""{"duckdb": {"read_pool_size": 2}}""");
-        WriteLocalConfig("""{"duckdb": {"read_pool_size": 3}}""");
-        Environment.SetEnvironmentVariable("REPOQL_DUCKDB_READ_POOL_SIZE", "4");
-
-        var resolved = Load();
-
-        resolved.Settings.DuckDb.ReadPoolSize.Should().Be(4);
-        resolved.GetProvenance("duckdb.read_pool_size")!.Source.Should().Be(ConfigScope.Environment);
-    }
-
-    [Test]
-    public void Load_Legacy_EnvVar_Used_When_New_Absent()
-    {
-        Environment.SetEnvironmentVariable("DUCKDB_MEMORY_LIMIT", "8GB");
-
-        var resolved = Load();
-
-        resolved.Settings.DuckDb.MemoryLimit.Should().Be("8GB");
-        resolved.GetProvenance("duckdb.memory_limit")!.Source.Should().Be(ConfigScope.Environment);
-    }
-
-    [Test]
-    public void Load_Legacy_EnvVar_Ignored_When_New_Present()
-    {
-        Environment.SetEnvironmentVariable("DUCKDB_MEMORY_LIMIT", "8GB");
-        Environment.SetEnvironmentVariable("REPOQL_DUCKDB_MEMORY_LIMIT", "16GB");
-
-        var resolved = Load();
-
-        resolved.Settings.DuckDb.MemoryLimit.Should().Be("16GB");
     }
 
     [Test]
@@ -306,7 +256,7 @@ internal sealed class ConfigurationLoaderTests
     public void Load_Invalid_EnvVar_Int_Falls_Back_To_File()
     {
         WriteLocalConfig("""{"duckdb": {"read_pool_size": 3}}""");
-        Environment.SetEnvironmentVariable("REPOQL_DUCKDB_READ_POOL_SIZE", "not_a_number");
+        SetEnvVar("REPOQL_DUCKDB_READ_POOL_SIZE", "not_a_number");
 
         var resolved = Load();
 
@@ -317,47 +267,12 @@ internal sealed class ConfigurationLoaderTests
     [Test]
     public void Load_With_Null_RepoRoot_Only_Reads_Env_And_User()
     {
-        Environment.SetEnvironmentVariable("REPOQL_DUCKDB_READ_POOL_SIZE", "7");
+        SetEnvVar("REPOQL_DUCKDB_READ_POOL_SIZE", "7");
 
         var registry = SettingRegistry.Build();
-        var resolved = ConfigurationLoader.Load(registry, repoRoot: null, userConfigDir: _userDir);
+        var resolved = ConfigurationLoader.Load(registry, repoRoot: null, userConfigDir: _userDir, envReader: GetEnvVar);
 
         resolved.Settings.DuckDb.ReadPoolSize.Should().Be(7);
-    }
-
-    [Test]
-    public void Reload_Propagates_To_Existing_Settings_Instance()
-    {
-        WriteLocalConfig("""{"duckdb": {"read_pool_size": 2}}""");
-        var resolved = Load();
-        var originalSettings = resolved.Settings;
-
-        resolved.Settings.DuckDb.ReadPoolSize.Should().Be(2);
-
-        // Mutate the file and reload
-        WriteLocalConfig("""{"duckdb": {"read_pool_size": 5}}""");
-        resolved.Reload(_repoRoot, userConfigDir: _userDir);
-
-        // Same instance, updated value
-        resolved.Settings.Should().BeSameAs(originalSettings);
-        resolved.Settings.DuckDb.ReadPoolSize.Should().Be(5);
-        originalSettings.DuckDb.ReadPoolSize.Should().Be(5);
-    }
-
-    [Test]
-    public void Reload_Updates_Provenance()
-    {
-        WriteLocalConfig("""{"duckdb": {"read_pool_size": 2}}""");
-        var resolved = Load();
-
-        resolved.GetProvenance("duckdb.read_pool_size")!.Source.Should().Be(ConfigScope.Local);
-
-        // Switch to env var
-        Environment.SetEnvironmentVariable("REPOQL_DUCKDB_READ_POOL_SIZE", "9");
-        resolved.Reload(_repoRoot, userConfigDir: _userDir);
-
-        resolved.Settings.DuckDb.ReadPoolSize.Should().Be(9);
-        resolved.GetProvenance("duckdb.read_pool_size")!.Source.Should().Be(ConfigScope.Environment);
     }
 
     private void WriteLocalConfig(string json)

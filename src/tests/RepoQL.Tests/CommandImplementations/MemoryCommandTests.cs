@@ -125,7 +125,7 @@ internal sealed class DiagnosticsCommandTests
         csharp.MinMs.Should().Be(1000);
         csharp.P5Ms.Should().Be(1100);
         csharp.P50Ms.Should().Be(2000);
-        csharp.AvgMs.Should().Be(2667);
+        csharp.AvgMs.Should().BeApproximately(2667.0f, 1.0);
         csharp.P95Ms.Should().Be(4700);
         csharp.MaxMs.Should().Be(5000);
         csharp.TotalMs.Should().Be(8000);

@@ -16,6 +16,7 @@ artifacts/
 **/.scratch
 **/bin/
 **/obj/
+**/TestResults/
 .repoql/*
 .claude/worktrees/
 .next
