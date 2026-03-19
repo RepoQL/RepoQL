@@ -153,7 +153,9 @@ public sealed class AuthValidationService
             RequireExpirationTime = true,
             RequireSignedTokens = true,
             TryAllIssuerSigningKeys = true,
-            ValidateAudience = !string.IsNullOrWhiteSpace(_options.ClientId),
+            // WorkOS access tokens don't include an audience claim — disable audience validation.
+            // The issuer already encodes the client ID (e.g. .../user_management/{client_id}).
+            ValidateAudience = false,
             ValidateIssuer = !string.IsNullOrWhiteSpace(_options.Issuer),
             ValidateIssuerSigningKey = true,
             ValidateLifetime = true,
