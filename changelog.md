@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.2
+
+- Switch embedding model from voyage-context-3 to voyage-4-lite (60x faster, 9x cheaper, same 1024 dimensions)
+- Add accurate Voyage token counting using embedded BPE tokenizer (Qwen2, 151K vocab) for contextual group splitting
+- Add `safe_cosine` SQL macro to handle mixed-dimension embeddings without crashing
+- Normalize Voyage 4 model family names so cache treats voyage-4-lite/voyage-4/voyage-4-large as interchangeable
+- Fix contextual embedding error handling: connection failures disable cloud for the run, payload failures skip only the current batch
+- Fix parse command URI canonicalization on Windows (absolute paths now correctly relativized)
+- Fix pipeline error propagation in DocumentPreviewService (errors no longer silently swallowed)
+- Fix JWT issuer validation for custom AuthKit domain (prefix matching instead of exact)
+- Disable JWT audience validation (WorkOS access tokens don't include an aud claim)
+- Remove stale `intent=` parameter from explore suggestions in MCP system prompt and error messages
+- Reorganize help:// docs from nested repoql/ prefix to flat layout (commands/, formats/, schema/, etc.)
+- Add PHP, TypeScript format docs and per-function/per-view documentation
+- Consolidate Claude Code skills: remove old code-intelligence/sql-expert/writing-documents, add effective-markdown
+- Remove repo_index SQL view (replaced by UDF-based diagnostics)
+- Add queue observability tests
+- Delete unused repoql-embedding and repoql-inference Cloud Run services (consolidated into repoql-cloud)
+- Fix stale proto comment for rerank model default (rerank-2.5, not lite)
+- Bump version to 1.5.2
+
 ## 1.4.10
 
 - Simplify search SQL: centralize scope filtering into `_scope_filter` macro, eliminate `repo_index` from hot path
