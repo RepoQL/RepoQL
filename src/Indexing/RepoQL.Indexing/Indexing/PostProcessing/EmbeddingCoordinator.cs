@@ -24,6 +24,7 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
     private readonly IEmbeddingRefreshRunner _refreshRunner;
     private readonly DuckDbDataStore? _db;
     private readonly IEmbeddingProvider? _embeddingProvider;
+    private readonly IContextualEmbeddingProvider? _contextualProvider;
     private readonly EmbeddingMode _embeddingMode;
     private readonly ILogger<EmbeddingCoordinator> _logger;
     private readonly UriRegistry? _uriRegistry;
@@ -57,7 +58,8 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
             embeddingMode,
             logger,
             uriRegistry,
-            embeddingSettings)
+            embeddingSettings,
+            contextualProvider: contextualProvider)
     {
     }
 
@@ -68,11 +70,13 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
         EmbeddingMode embeddingMode = EmbeddingMode.Full,
         ILogger<EmbeddingCoordinator>? logger = null,
         UriRegistry? uriRegistry = null,
-        RepoQlConfig.EmbeddingSettings? embeddingSettings = null)
+        RepoQlConfig.EmbeddingSettings? embeddingSettings = null,
+        IContextualEmbeddingProvider? contextualProvider = null)
     {
         _refreshRunner = refreshRunner ?? throw new ArgumentNullException(nameof(refreshRunner));
         _db = db;
         _embeddingProvider = embeddingProvider;
+        _contextualProvider = contextualProvider is { Enabled: true } ? contextualProvider : null;
         _embeddingMode = embeddingMode;
         _logger = logger ?? NullLogger<EmbeddingCoordinator>.Instance;
         _uriRegistry = uriRegistry;
@@ -343,7 +347,7 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
         using var structureActivity = IndexingEngine.ActivitySource.StartActivity("repoql.embedding.structure", ActivityKind.Internal);
         structureActivity?.SetTag("items", totalWorkItems);
         structureActivity?.SetTag("batches", totalBatches);
-        structureActivity?.SetTag("model", _embeddingProvider.Model);
+        structureActivity?.SetTag("model", _contextualProvider?.Model ?? _embeddingProvider.Model);
 
         var batch = new List<StructureWorkItem>(StructureEmbeddingBatchSize);
         foreach (var item in items)
@@ -496,13 +500,54 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
 
         var batchTimer = Stopwatch.StartNew();
         float[]?[] vectors;
+        string activeModel;
+        int activeDimension;
+        var usedContextual = false;
+
         using (var batchActivity = IndexingEngine.ActivitySource.StartActivity("repoql.embedding.structure.batch", ActivityKind.Internal))
         {
             batchActivity?.SetTag("batch", batchNumber);
             batchActivity?.SetTag("total_batches", totalBatches);
             batchActivity?.SetTag("size", batchCount);
 
-            vectors = await _embeddingProvider!.EmbedPassageBatchAsync(payloads, progress, cancellationToken).ConfigureAwait(false);
+            // Prefer contextual provider (Voyage) for structure embeddings so they share
+            // the same vector space as full-content and query embeddings.
+            if (_contextualProvider is not null)
+            {
+                try
+                {
+                    var groups = payloads.Select((p, i) =>
+                        new DocumentChunkGroup(batch[i].Uri, Context: null, new[] { p })).ToList();
+                    var result = await _contextualProvider.EmbedChunksAsync(groups, cancellationToken).ConfigureAwait(false);
+                    vectors = new float[]?[batchCount];
+                    foreach (var cv in result.Vectors)
+                    {
+                        if (cv.GroupIndex >= 0 && cv.GroupIndex < batchCount)
+                            vectors[cv.GroupIndex] = cv.Vector;
+                    }
+                    usedContextual = true;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Contextual structure embedding failed, falling back to local");
+                    vectors = await _embeddingProvider!.EmbedPassageBatchAsync(payloads, progress, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                vectors = await _embeddingProvider!.EmbedPassageBatchAsync(payloads, progress, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (usedContextual)
+            {
+                activeModel = _contextualProvider!.Model;
+                activeDimension = _contextualProvider.Dimension;
+            }
+            else
+            {
+                activeModel = _embeddingProvider!.Model;
+                activeDimension = _embeddingProvider.Dimension;
+            }
         }
         batchTimer.Stop();
 
@@ -513,9 +558,10 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
             : "";
         if (totalBatches > 1)
         {
-            _logger.LogInformation("Structure embeddings: {Batch}/{Total} ({Percent}%) - {BatchSize} items in {Time}{Eta}",
+            _logger.LogInformation("Structure embeddings: {Batch}/{Total} ({Percent}%) - {BatchSize} items in {Time}{Eta} ({Provider})",
                 batchNumber, totalBatches, percentComplete, batchCount,
-                batchTimer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond), etaStr);
+                batchTimer.Elapsed.Humanize(precision: 2, minUnit: Humanizer.Localisation.TimeUnit.Millisecond), etaStr,
+                usedContextual ? "contextual" : "local");
         }
 
         var documentEmbeddings = new List<DocumentEmbedding>(batchCount);
@@ -534,8 +580,8 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
                 work.Uri,
                 DocumentEmbedding.ScopeDocument,
                 vec,
-                _embeddingProvider!.Model,
-                _embeddingProvider!.Dimension));
+                activeModel,
+                activeDimension));
         }
 
         if (documentEmbeddings.Count > 0)
