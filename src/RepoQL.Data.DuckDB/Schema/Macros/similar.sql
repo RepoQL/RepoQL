@@ -126,7 +126,8 @@ seed_chunks AS (
                     LEAST(de.end_byte, sr.end_byte) - GREATEST(de.start_byte, sr.start_byte)
                 )
             )::FLOAT[]
-        END AS embedding
+        END AS embedding,
+        de.dim
     FROM seed_parts sp
     CROSS JOIN seed_range sr
     JOIN node n ON n.uri = sp.base AND n.kind = 'document'
@@ -150,7 +151,7 @@ chunk_pairs AS (
     SELECT
         de.uri,
         de.node_id,
-        list_cosine_similarity(sc.embedding, de.embedding) AS similarity
+        safe_cosine(sc.embedding, de.embedding) AS similarity
     FROM document_embedding de
     CROSS JOIN seed_chunks sc
     CROSS JOIN seed_parts sp
@@ -158,6 +159,7 @@ chunk_pairs AS (
     LEFT JOIN scope_filter sf ON sf.uri = de.uri
     WHERE de.uri <> sp.base
       AND de.embedding_type = 'full'
+      AND de.dim = sc.dim
       AND (p.scope_glob IS NULL OR sf.uri IS NOT NULL)
 ),
 

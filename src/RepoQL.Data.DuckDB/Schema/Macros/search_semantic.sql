@@ -38,7 +38,7 @@ structure_sem AS (
     SELECT
         de.doc_id,
         de.node_id,
-        list_cosine_similarity(qv.vec::FLOAT[], de.embedding) AS struct_sem,
+        safe_cosine(qv.vec::FLOAT[], de.embedding) AS struct_sem,
         'linear' AS source
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
@@ -56,7 +56,7 @@ full_text_chunks AS (
         de.chunk_index,
         de.start_byte,
         de.end_byte,
-        list_cosine_similarity(qv.vec::FLOAT[], de.embedding) AS chunk_sem
+        safe_cosine(qv.vec::FLOAT[], de.embedding) AS chunk_sem
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
     JOIN _sem_scope sf ON sf.node_id = de.node_id

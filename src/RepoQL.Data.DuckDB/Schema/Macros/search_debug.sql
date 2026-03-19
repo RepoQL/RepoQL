@@ -36,7 +36,7 @@ CREATE OR REPLACE MACRO _search_linear_direct(q, k := 10) AS TABLE (
         de.doc_id,
         de.node_id,
         de.embedding_type,
-        list_cosine_similarity(qv.vec, de.embedding) AS score
+        safe_cosine(qv.vec, de.embedding) AS score
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
     WHERE de.scope = 'document'

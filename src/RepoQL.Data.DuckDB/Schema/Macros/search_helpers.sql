@@ -1,6 +1,16 @@
 -- Search helper macros: small, composable utilities for scoring.
 -- These are used by _search_lexical, _search_semantic, and _search_combine.
 
+-- Dimension-safe cosine similarity. Returns NULL instead of throwing when
+-- vector dimensions don't match. Required because DuckDB's vectorized engine
+-- may evaluate list_cosine_similarity on rows before WHERE/JOIN filters apply,
+-- causing crashes when the index contains mixed-dimension embeddings.
+CREATE OR REPLACE MACRO safe_cosine(a, b) AS (
+    IF(a IS NOT NULL AND b IS NOT NULL AND array_length(a) = array_length(b),
+       list_cosine_similarity(a, b),
+       NULL)
+);
+
 -- Normalize a value to [0,1] range relative to the max in the window.
 -- Returns 0 if max is NULL or 0, otherwise x/max.
 CREATE OR REPLACE MACRO zero_one(x) AS (

@@ -142,9 +142,23 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
     {
         return Task.FromResult(new GetModelInfoResponse
         {
-            Model = _voyage.Model,
+            // Normalize Voyage 4 family to a single model name so cache/refresh
+            // treats voyage-4-lite, voyage-4, and voyage-4-large as interchangeable
+            // (they share an embedding space with 0.89-0.96 cosine similarity).
+            Model = NormalizeModelFamily(_voyage.Model),
             Dimension = _voyage.Dimension
         });
+    }
+
+    /// <summary>
+    /// Maps all Voyage 4 variants to "voyage-4" so embeddings are treated as the same model
+    /// for cache hits, refresh plans, and dimension matching.
+    /// </summary>
+    private static string NormalizeModelFamily(string model)
+    {
+        if (model.StartsWith("voyage-4", StringComparison.OrdinalIgnoreCase))
+            return "voyage-4";
+        return model;
     }
 
     public override async Task<RerankResponse> Rerank(
