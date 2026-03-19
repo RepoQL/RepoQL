@@ -72,6 +72,43 @@ public sealed class GrpcEmbeddingProviderTests
         provider.Dimension.Should().Be(2048);
     }
 
+    [Test]
+    public async Task InitializeAsync_RetriesOnceOnUnauthenticatedWithRefreshedToken()
+    {
+        var grpcClient = A.Fake<EmbeddingService.EmbeddingServiceClient>();
+        var credentialProvider = new RefreshingCloudCredentialProvider("expired-token", "fresh-token");
+        var headers = new List<string?>();
+        var calls = 0;
+
+        A.CallTo(() => grpcClient.GetModelInfoAsync(
+                A<GetModelInfoRequest>.Ignored,
+                A<Metadata?>.Ignored,
+                A<DateTime?>.Ignored,
+                A<CancellationToken>.Ignored))
+            .ReturnsLazily(call =>
+            {
+                calls++;
+                headers.Add(call.GetArgument<Metadata?>(1)?.SingleOrDefault(h => h.Key == "authorization").Value);
+                return calls == 1
+                    ? CreateFaultedUnaryCall<GetModelInfoResponse>(
+                        new RpcException(new Status(StatusCode.Unauthenticated, "expired")))
+                    : CreateUnaryCall(new GetModelInfoResponse
+                    {
+                        Model = "voyage-code-3",
+                        Dimension = 2048
+                    });
+            });
+
+        using var provider = new GrpcEmbeddingProvider(grpcClient, credentialProvider);
+
+        await provider.InitializeAsync();
+
+        provider.Model.Should().Be("voyage-code-3");
+        provider.Dimension.Should().Be(2048);
+        headers.Should().Equal(["Bearer expired-token", "Bearer fresh-token"]);
+        credentialProvider.RefreshCallCount.Should().Be(1);
+    }
+
     private static AsyncUnaryCall<T> CreateUnaryCall<T>(T response)
         where T : class
         => new(
@@ -81,9 +118,35 @@ public sealed class GrpcEmbeddingProviderTests
             () => new Metadata(),
             () => { });
 
+    private static AsyncUnaryCall<T> CreateFaultedUnaryCall<T>(RpcException exception)
+        where T : class
+        => new(
+            Task.FromException<T>(exception),
+            Task.FromResult(new Metadata()),
+            () => exception.Status,
+            () => new Metadata(),
+            () => { });
+
     private sealed class StubCloudCredentialProvider(string token) : ICloudCredentialProvider
     {
         public Task<string> GetTokenAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(token);
+
+        public Task<string> RefreshTokenAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(token);
+    }
+
+    private sealed class RefreshingCloudCredentialProvider(string initialToken, string refreshedToken) : ICloudCredentialProvider
+    {
+        public int RefreshCallCount { get; private set; }
+
+        public Task<string> GetTokenAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(initialToken);
+
+        public Task<string> RefreshTokenAsync(CancellationToken cancellationToken = default)
+        {
+            RefreshCallCount++;
+            return Task.FromResult(refreshedToken);
+        }
     }
 }

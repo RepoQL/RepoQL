@@ -280,6 +280,38 @@ public sealed class InferenceClientTests
     }
 
     [Test]
+    public async Task CompleteAsync_RetriesOnceOnUnauthenticatedWithRefreshedToken()
+    {
+        var grpcClient = A.Fake<ProtoInference.InferenceService.InferenceServiceClient>();
+        var credentialProvider = new RefreshingCloudCredentialProvider("expired-token", "fresh-token");
+        var headers = new List<string?>();
+        var calls = 0;
+
+        A.CallTo(() => grpcClient.CompleteAsync(
+                A<ProtoInference.CompleteRequest>.Ignored,
+                A<Metadata?>.Ignored,
+                A<DateTime?>.Ignored,
+                A<CancellationToken>.Ignored))
+            .ReturnsLazily(call =>
+            {
+                calls++;
+                headers.Add(call.GetArgument<Metadata?>(1)?.SingleOrDefault(h => h.Key == "authorization").Value);
+                return calls == 1
+                    ? CreateFaultedUnaryCall<ProtoInference.Completion>(
+                        new RpcException(new Status(StatusCode.Unauthenticated, "expired")))
+                    : CreateUnaryCall(new ProtoInference.Completion { Content = "refreshed" });
+            });
+
+        using var client = new InferenceClient(grpcClient, "https://inference.example", credentialProvider);
+
+        var result = await client.CompleteAsync(new InferenceRequest { Prompt = "Explain" });
+
+        result.Content.Should().Be("refreshed");
+        headers.Should().Equal(["Bearer expired-token", "Bearer fresh-token"]);
+        credentialProvider.RefreshCallCount.Should().Be(1);
+    }
+
+    [Test]
     public async Task CompleteWithToolsAsync_ToolCallbackThrowingMarshalledAsError()
     {
         var grpcClient = A.Fake<ProtoInference.InferenceService.InferenceServiceClient>();
@@ -615,5 +647,22 @@ public sealed class InferenceClientTests
     {
         public Task<string> GetTokenAsync(CancellationToken cancellationToken = default)
             => Task.FromResult(token);
+
+        public Task<string> RefreshTokenAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(token);
+    }
+
+    private sealed class RefreshingCloudCredentialProvider(string initialToken, string refreshedToken) : ICloudCredentialProvider
+    {
+        public int RefreshCallCount { get; private set; }
+
+        public Task<string> GetTokenAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult(initialToken);
+
+        public Task<string> RefreshTokenAsync(CancellationToken cancellationToken = default)
+        {
+            RefreshCallCount++;
+            return Task.FromResult(refreshedToken);
+        }
     }
 }

@@ -112,10 +112,14 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
         EmbedChunksResponse response;
         try
         {
-            response = await _client.EmbedChunksAsync(
-                request,
-                headers: await GetAuthHeadersAsync(cancellationToken).ConfigureAwait(false),
-                cancellationToken: cancellationToken);
+            response = await CallWithAuthRetryAsync(
+                headers => _client.EmbedChunksAsync(
+                        request,
+                        headers: headers,
+                        cancellationToken: cancellationToken)
+                    .ResponseAsync,
+                "EmbedChunks",
+                cancellationToken).ConfigureAwait(false);
         }
         catch (RpcException rpcEx)
         {
@@ -168,10 +172,14 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
     {
         await EnsureModelInfoAsync(cancellationToken).ConfigureAwait(false);
 
-        var response = await _client.EmbedQueryAsync(
-            new EmbedQueryRequest { Text = text },
-            headers: await GetAuthHeadersAsync(cancellationToken).ConfigureAwait(false),
-            cancellationToken: cancellationToken);
+        var response = await CallWithAuthRetryAsync(
+            headers => _client.EmbedQueryAsync(
+                    new EmbedQueryRequest { Text = text },
+                    headers: headers,
+                    cancellationToken: cancellationToken)
+                .ResponseAsync,
+            "EmbedQuery",
+            cancellationToken).ConfigureAwait(false);
 
         return response.Vector.Count > 0 ? response.Vector.ToArray() : null;
     }
@@ -199,10 +207,14 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
         RerankResponse response;
         try
         {
-            response = await _client.RerankAsync(
-                request,
-                headers: await GetAuthHeadersAsync(cancellationToken).ConfigureAwait(false),
-                cancellationToken: cancellationToken);
+            response = await CallWithAuthRetryAsync(
+                headers => _client.RerankAsync(
+                        request,
+                        headers: headers,
+                        cancellationToken: cancellationToken)
+                    .ResponseAsync,
+                "Rerank",
+                cancellationToken).ConfigureAwait(false);
         }
         catch (RpcException rpcEx)
         {
@@ -228,10 +240,14 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
         if (_infoFetched)
             return;
 
-        var info = await _client.GetModelInfoAsync(
-            new GetModelInfoRequest(),
-            headers: await GetAuthHeadersAsync(ct).ConfigureAwait(false),
-            cancellationToken: ct);
+        var info = await CallWithAuthRetryAsync(
+            headers => _client.GetModelInfoAsync(
+                    new GetModelInfoRequest(),
+                    headers: headers,
+                    cancellationToken: ct)
+                .ResponseAsync,
+            "GetModelInfo",
+            ct).ConfigureAwait(false);
 
         _model = info.Model;
         _dimension = info.Dimension;
@@ -248,6 +264,33 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
         {
             { "authorization", $"Bearer {await _credentialProvider.GetTokenAsync(cancellationToken).ConfigureAwait(false)}" }
         };
+    }
+
+    private async Task<Metadata> GetRefreshedAuthHeadersAsync(CancellationToken cancellationToken)
+    {
+        return new Metadata
+        {
+            { "authorization", $"Bearer {await _credentialProvider.RefreshTokenAsync(cancellationToken).ConfigureAwait(false)}" }
+        };
+    }
+
+    private async Task<T> CallWithAuthRetryAsync<T>(
+        Func<Metadata, Task<T>> operation,
+        string operationName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await operation(await GetAuthHeadersAsync(cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        }
+        catch (RpcException rpcEx) when (rpcEx.StatusCode == StatusCode.Unauthenticated)
+        {
+            _logger?.LogInformation(
+                "{Operation} was rejected as unauthenticated; forcing token refresh and retrying once.",
+                operationName);
+
+            return await operation(await GetRefreshedAuthHeadersAsync(cancellationToken).ConfigureAwait(false)).ConfigureAwait(false);
+        }
     }
 
     private static (int GroupIndex, int ChunkIndex) FlatIndexToGroupChunk(

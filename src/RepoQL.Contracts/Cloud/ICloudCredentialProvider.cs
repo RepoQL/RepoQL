@@ -7,4 +7,5 @@ namespace RepoQL.Contracts.Cloud;
 public interface ICloudCredentialProvider
 {
     Task<string> GetTokenAsync(CancellationToken cancellationToken = default);
+    Task<string> RefreshTokenAsync(CancellationToken cancellationToken = default);
 }

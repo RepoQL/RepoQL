@@ -72,10 +72,14 @@ public sealed class InferenceClient : IInferenceProvider, IDisposable
 
         try
         {
-            var response = await _client.CompleteAsync(
-                MapRequest(request),
-                headers: await GetAuthHeadersAsync(ct).ConfigureAwait(false),
-                cancellationToken: ct).ConfigureAwait(false);
+            var response = await InvokeWithAuthRetryAsync(
+                (headers, cancellationToken) => _client.CompleteAsync(
+                        MapRequest(request),
+                        headers: headers,
+                        cancellationToken: cancellationToken)
+                    .ResponseAsync,
+                "Inference completion",
+                ct).ConfigureAwait(false);
 
             return MapResult(response);
         }
@@ -101,67 +105,7 @@ public sealed class InferenceClient : IInferenceProvider, IDisposable
 
         try
         {
-            using var call = _client.CompleteWithTools(
-                headers: await GetAuthHeadersAsync(ct).ConfigureAwait(false),
-                cancellationToken: ct);
-
-            await call.RequestStream.WriteAsync(new ProtoInference.ClientMessage
-            {
-                Request = MapRequest(request, toolOptions)
-            }).ConfigureAwait(false);
-
-            while (await call.ResponseStream.MoveNext(ct).ConfigureAwait(false))
-            {
-                var serverMessage = call.ResponseStream.Current;
-                switch (serverMessage.MessageCase)
-                {
-                    case ProtoInference.ServerMessage.MessageOneofCase.Completion:
-                        await SafeCompleteRequestStreamAsync(call).ConfigureAwait(false);
-                        return MapResult(serverMessage.Completion);
-
-                    case ProtoInference.ServerMessage.MessageOneofCase.ToolRequest:
-                    {
-                        var round = new List<ProtoInference.ToolRequest> { serverMessage.ToolRequest };
-
-                        while (round[^1].MoreInRound)
-                        {
-                            if (!await call.ResponseStream.MoveNext(ct).ConfigureAwait(false))
-                                throw new InferenceException("Inference stream ended before completing the tool round.");
-
-                            var next = call.ResponseStream.Current;
-                            if (next.MessageCase == ProtoInference.ServerMessage.MessageOneofCase.Completion)
-                            {
-                                await SafeCompleteRequestStreamAsync(call).ConfigureAwait(false);
-                                return MapResult(next.Completion);
-                            }
-
-                            if (next.MessageCase != ProtoInference.ServerMessage.MessageOneofCase.ToolRequest)
-                                throw new InferenceException($"Unexpected inference stream message: {next.MessageCase}.");
-
-                            round.Add(next.ToolRequest);
-                        }
-
-                        var responses = await Task.WhenAll(round.Select(toolRequest =>
-                                ExecuteToolAsync(toolRequest, executeTool, ct)))
-                            .ConfigureAwait(false);
-
-                        foreach (var response in responses)
-                        {
-                            await call.RequestStream.WriteAsync(new ProtoInference.ClientMessage
-                            {
-                                ToolResponse = response
-                            }).ConfigureAwait(false);
-                        }
-
-                        break;
-                    }
-
-                    default:
-                        throw new InferenceException($"Unexpected inference stream message: {serverMessage.MessageCase}.");
-                }
-            }
-
-            throw new InferenceException("Inference stream completed without a final completion.");
+            return await CompleteWithToolsWithAuthRetryAsync(request, toolOptions, executeTool, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -261,10 +205,140 @@ public sealed class InferenceClient : IInferenceProvider, IDisposable
             ToolTokens = completion.Usage?.ToolTokens ?? 0
         };
 
+    private async Task<InferenceResult> CompleteWithToolsWithAuthRetryAsync(
+        InferenceRequest request,
+        ToolOptions toolOptions,
+        Func<ToolCall, CancellationToken, Task<ToolCallResult>> executeTool,
+        CancellationToken ct)
+    {
+        var toolExecutionStarted = false;
+
+        try
+        {
+            return await CompleteWithToolsCoreAsync(
+                    MapRequest(request, toolOptions),
+                    await GetAuthHeadersAsync(ct).ConfigureAwait(false),
+                    () => toolExecutionStarted = true,
+                    executeTool,
+                    ct)
+                .ConfigureAwait(false);
+        }
+        catch (RpcException rpcEx) when (rpcEx.StatusCode == StatusCode.Unauthenticated && !toolExecutionStarted)
+        {
+            _logger?.LogInformation(
+                "Inference tool completion was rejected as unauthenticated; forcing token refresh and retrying once.");
+
+            return await CompleteWithToolsCoreAsync(
+                    MapRequest(request, toolOptions),
+                    await GetRefreshedAuthHeadersAsync(ct).ConfigureAwait(false),
+                    () => toolExecutionStarted = true,
+                    executeTool,
+                    ct)
+                .ConfigureAwait(false);
+        }
+    }
+
+    private async Task<InferenceResult> CompleteWithToolsCoreAsync(
+        ProtoInference.CompleteRequest request,
+        Metadata headers,
+        Action onToolExecutionStarted,
+        Func<ToolCall, CancellationToken, Task<ToolCallResult>> executeTool,
+        CancellationToken ct)
+    {
+        using var call = _client.CompleteWithTools(headers: headers, cancellationToken: ct);
+
+        await call.RequestStream.WriteAsync(new ProtoInference.ClientMessage
+        {
+            Request = request
+        }).ConfigureAwait(false);
+
+        while (await call.ResponseStream.MoveNext(ct).ConfigureAwait(false))
+        {
+            var serverMessage = call.ResponseStream.Current;
+            switch (serverMessage.MessageCase)
+            {
+                case ProtoInference.ServerMessage.MessageOneofCase.Completion:
+                    await SafeCompleteRequestStreamAsync(call).ConfigureAwait(false);
+                    return MapResult(serverMessage.Completion);
+
+                case ProtoInference.ServerMessage.MessageOneofCase.ToolRequest:
+                {
+                    onToolExecutionStarted();
+
+                    var round = new List<ProtoInference.ToolRequest> { serverMessage.ToolRequest };
+
+                    while (round[^1].MoreInRound)
+                    {
+                        if (!await call.ResponseStream.MoveNext(ct).ConfigureAwait(false))
+                            throw new InferenceException("Inference stream ended before completing the tool round.");
+
+                        var next = call.ResponseStream.Current;
+                        if (next.MessageCase == ProtoInference.ServerMessage.MessageOneofCase.Completion)
+                        {
+                            await SafeCompleteRequestStreamAsync(call).ConfigureAwait(false);
+                            return MapResult(next.Completion);
+                        }
+
+                        if (next.MessageCase != ProtoInference.ServerMessage.MessageOneofCase.ToolRequest)
+                            throw new InferenceException($"Unexpected inference stream message: {next.MessageCase}.");
+
+                        round.Add(next.ToolRequest);
+                    }
+
+                    var responses = await Task.WhenAll(round.Select(toolRequest =>
+                            ExecuteToolAsync(toolRequest, executeTool, ct)))
+                        .ConfigureAwait(false);
+
+                    foreach (var response in responses)
+                    {
+                        await call.RequestStream.WriteAsync(new ProtoInference.ClientMessage
+                        {
+                            ToolResponse = response
+                        }).ConfigureAwait(false);
+                    }
+
+                    break;
+                }
+
+                default:
+                    throw new InferenceException($"Unexpected inference stream message: {serverMessage.MessageCase}.");
+            }
+        }
+
+        throw new InferenceException("Inference stream completed without a final completion.");
+    }
+
+    private async Task<T> InvokeWithAuthRetryAsync<T>(
+        Func<Metadata, CancellationToken, Task<T>> operation,
+        string operationName,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await operation(await GetAuthHeadersAsync(cancellationToken).ConfigureAwait(false), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (RpcException rpcEx) when (rpcEx.StatusCode == StatusCode.Unauthenticated)
+        {
+            _logger?.LogInformation(
+                "{Operation} was rejected as unauthenticated; forcing token refresh and retrying once.",
+                operationName);
+
+            return await operation(await GetRefreshedAuthHeadersAsync(cancellationToken).ConfigureAwait(false), cancellationToken)
+                .ConfigureAwait(false);
+        }
+    }
+
     private async Task<Metadata> GetAuthHeadersAsync(CancellationToken cancellationToken)
         => new()
         {
             { "authorization", $"Bearer {await _credentialProvider.GetTokenAsync(cancellationToken).ConfigureAwait(false)}" }
+        };
+
+    private async Task<Metadata> GetRefreshedAuthHeadersAsync(CancellationToken cancellationToken)
+        => new()
+        {
+            { "authorization", $"Bearer {await _credentialProvider.RefreshTokenAsync(cancellationToken).ConfigureAwait(false)}" }
         };
 
     private Exception MapRpcException(string operation, RpcException rpcEx)

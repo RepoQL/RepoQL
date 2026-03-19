@@ -135,6 +135,20 @@ public sealed partial class CloudCredentialProvider : ICloudCredentialProvider, 
         }
     }
 
+    public async Task<string> RefreshTokenAsync(CancellationToken cancellationToken = default)
+    {
+        await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _cachedToken = null;
+            return await RefreshOrFallbackAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
+    }
+
     private async Task<string> RefreshOrFallbackAsync(CancellationToken cancellationToken)
     {
         if (await HasCredentialMaterialAsync(cancellationToken).ConfigureAwait(false))
