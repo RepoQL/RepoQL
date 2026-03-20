@@ -362,9 +362,56 @@ public sealed class TextMatchUdf(
         }
     }
 
+    /// <summary>
+    /// Fast file-level grep: returns distinct URIs of files containing the pattern.
+    /// Uses ReadToEnd + single IndexOf per file instead of line-by-line parsing.
+    /// Designed for search's grep_hits CTE which only needs "which files match."
+    /// </summary>
+    [StructuredUdf("_grep_file_matches_internal",
+        MacroName = "grep_file_matches",
+        Description = "Fast file-level case-insensitive text search — returns matching file URIs only")]
+    public IEnumerable<FileMatchRow> GrepFileMatches(
+        string pattern,
+        [UdfDefault("NULL")] string? scope,
+        [UdfDefault("500")] int max_results)
+    {
+        if (string.IsNullOrEmpty(pattern))
+            yield break;
+
+        var limit = max_results <= 0 ? int.MaxValue : max_results;
+        var emitted = 0;
+
+        foreach (var repoUri in uriRegistry.MatchPattern(scope))
+        {
+            if (!TryOpenTextReader(repoUri, out var reader))
+                continue;
+
+            using (reader)
+            {
+                var content = reader.ReadToEnd();
+                if (content.Contains(pattern, StringComparison.OrdinalIgnoreCase))
+                {
+                    emitted++;
+                    if (emitted > limit)
+                    {
+                        yield return new FileMatchRow(
+                            repoUri.Container.AbsoluteUri,
+                            $"Truncated at {limit} results. Narrow scope or increase max_results.");
+                        yield break;
+                    }
+                    yield return new FileMatchRow(repoUri.Container.AbsoluteUri, null);
+                }
+            }
+        }
+    }
+
     public record TextMatchRow(
         string Uri,
         int LineNumber,
         string LineContent,
+        string? TruncatedWarning);
+
+    public record FileMatchRow(
+        string Uri,
         string? TruncatedWarning);
 }

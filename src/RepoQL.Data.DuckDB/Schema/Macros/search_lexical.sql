@@ -111,15 +111,22 @@ doc_ranked AS (
 ),
 
 -- =====================================================================
--- PHASE 2: OBJECT EXPANSION WITH SYMBOL SCORING
+-- PHASE 2+3: EXPAND OBJECTS AND UNION (single reference to doc_ranked)
 -- =====================================================================
 
--- Get child objects of top-ranked documents only
-obj_scored AS (
+-- Documents + their child objects in one pass. doc_ranked referenced once
+-- to prevent Phase 1 re-evaluation in the TABLE macro CTE chain.
+all_candidates AS (
+    -- Document rows
+    SELECT node_id, doc_id, doc_bm25 AS bm25, doc_fuzz AS fuzz
+    FROM doc_ranked
+
+    UNION ALL
+
+    -- Child objects with symbol scoring
     SELECT
         child.id AS node_id,
         dr.doc_id,
-        -- Symbol match: object-level signal
         CASE
             WHEN LOWER(COALESCE(
                 repository_uri_symbol(child.uri),
@@ -131,32 +138,17 @@ obj_scored AS (
                 json_extract_string(child.properties, '$.symbol'),
                 json_extract_string(child.properties, '$.name'),
                 ''))) > 0 THEN 3.2
-            -- Object headline/structure match
             WHEN position(p.keywords_lc IN LOWER(
                 COALESCE(child.headline, '') || ' ' || COALESCE(child.structure, ''))) > 0
                 THEN GREATEST(1.5, dr.doc_bm25)
-            -- Inherit document score
             ELSE dr.doc_bm25
         END AS bm25,
-        -- Inherit document fuzz (search_key is identical for all children)
         dr.doc_fuzz AS fuzz
     FROM doc_ranked dr
     JOIN span s ON s.document_id = dr.doc_id
     JOIN node child ON child.span_id = s.id AND child.kind <> 'document'
     CROSS JOIN params p
     WHERE p.keywords_empty = FALSE
-),
-
--- =====================================================================
--- PHASE 3: UNION, RANK, NORMALIZE (identical output contract)
--- =====================================================================
-
-all_candidates AS (
-    SELECT node_id, doc_id, doc_bm25 AS bm25, doc_fuzz AS fuzz
-    FROM doc_ranked
-    UNION ALL
-    SELECT node_id, doc_id, bm25, fuzz
-    FROM obj_scored
 ),
 
 limited AS (
