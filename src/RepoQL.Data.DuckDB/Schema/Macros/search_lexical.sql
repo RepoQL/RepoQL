@@ -72,8 +72,15 @@ filtered AS (
     )
 ),
 
+-- Body content matches via grep (reads live files, no artifact materialization)
+grep_hits AS (
+    SELECT DISTINCT n.id AS doc_id
+    FROM params p, grep_matches(p.keywords_lc, '**', 500) g
+    JOIN node n ON n.uri = g.uri AND n.kind = 'document'
+    WHERE p.keywords_empty = FALSE
+),
+
 -- Score each document/object against the query
--- Join to artifact for full-text body position check (streaming, no materialization)
 score_source AS (
     SELECT
         ri.node_id,
@@ -101,6 +108,8 @@ score_source AS (
             WHEN position(p.keywords_lc IN LOWER(COALESCE(ri.basename, ''))) > 0 THEN 2.0
             -- Search key contains query
             WHEN position(p.keywords_lc IN ri.search_key) > 0 THEN 1.0
+            -- Body contains query (via grep on live files)
+            WHEN ri.doc_id IN (SELECT doc_id FROM grep_hits) THEN 2.5
             ELSE NULL
         END AS bm25_heur,
         -- Fallback fuzzy match on full text
