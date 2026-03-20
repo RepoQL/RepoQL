@@ -1,5 +1,7 @@
--- Lexical search module: BM25 heuristics + fuzzy subsequence scoring.
--- This is the "lexical" half of hybrid search, focusing on keyword/pattern matching.
+-- Lexical search module: two-phase document-first scoring.
+-- Phase 1: Score documents only (11K rows vs 286K) using document-level signals.
+-- Phase 2: Expand top documents to child objects with symbol scoring.
+-- Output contract unchanged: (node_id, doc_id, bm25_score, fuzzy_score, bm25_norm, fuzz_norm, lex_rank, rrf_lex)
 
 CREATE OR REPLACE MACRO _search_lexical(
     q,
@@ -17,62 +19,36 @@ params AS (
         CAST(COALESCE(max_cand, 5000) AS BIGINT) AS limit_cand
 ),
 
--- Scope-filtered nodes via centralized scope filter
-_lex_scope AS (
+-- =====================================================================
+-- PHASE 1: DOCUMENT-LEVEL SCORING (~11K rows instead of ~286K)
+-- =====================================================================
+
+-- Get document nodes only
+_lex_doc_scope AS (
     SELECT * FROM _scope_filter(
         uri_glob := uri_glob,
-        uri_like := uri_like
+        uri_like := uri_like,
+        scope := 'document'
     )
 ),
 
--- Enrich scope results with columns needed for lexical scoring
-filtered AS (
+-- Enrich documents with scoring columns
+doc_filtered AS (
     SELECT
         sf.node_id,
         sf.doc_id,
-        -- search_key: lowercase document path
         LOWER(REPLACE(repository_uri_container(
-            COALESCE(n.uri, doc.uri, 'repoql://unknown')
+            COALESCE(n.uri, 'repoql://unknown')
         ), '\\', '/')) AS search_key,
-        -- basename: document filename
-        repository_uri_file_name(COALESCE(doc.uri, n.uri)) AS basename,
-        -- headline: node-specific computation
-        CASE WHEN n.kind = 'document'
-            THEN COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, ''))
-            ELSE COALESCE(
-                NULLIF(n.headline, ''),
-                json_extract_string(n.properties, '$.name'),
-                repository_uri_file_name(doc.uri)
-            )
-        END AS headline,
-        -- structure: node-specific
-        CASE WHEN n.kind = 'document'
-            THEN COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, ''))
-            ELSE NULLIF(n.structure, '')
-        END AS structure,
-        -- symbol: from URI or properties
-        COALESCE(
-            repository_uri_symbol(n.uri),
-            json_extract_string(n.properties, '$.symbol'),
-            json_extract_string(n.properties, '$.name')
-        ) AS symbol,
-        -- symbol_key: lowercase symbol
-        LOWER(COALESCE(
-            repository_uri_symbol(n.uri),
-            json_extract_string(n.properties, '$.symbol'),
-            json_extract_string(n.properties, '$.name'),
-            ''
-        )) AS symbol_key
-    FROM _lex_scope sf
+        repository_uri_file_name(n.uri) AS basename,
+        COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')) AS headline,
+        COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')) AS structure
+    FROM _lex_doc_scope sf
     JOIN node n ON n.id = sf.node_id
-    LEFT JOIN node doc ON doc.id = sf.doc_id
-    LEFT JOIN artifact a ON a.id = COALESCE(
-        CASE WHEN n.kind = 'document' THEN n.artifact_id END,
-        doc.artifact_id
-    )
+    LEFT JOIN artifact a ON a.id = n.artifact_id
 ),
 
--- Body content matches via grep (reads live files, no artifact materialization)
+-- Body content matches via grep (reads live files, already document-scoped)
 grep_hits AS (
     SELECT DISTINCT n.id AS doc_id
     FROM params p, grep_matches(p.keywords_lc, '**', 500) g
@@ -80,80 +56,119 @@ grep_hits AS (
     WHERE p.keywords_empty = FALSE
 ),
 
--- Phase 1: cheap heuristic scoring (position checks + grep)
-heur_scored AS (
+-- Document heuristic scoring
+doc_heur_scored AS (
     SELECT
-        ri.node_id,
-        ri.doc_id,
-        ri.search_key,
-        -- Concatenate searchable text for fuzzy matching (metadata only, no body)
+        d.node_id,
+        d.doc_id,
+        d.search_key,
+        d.basename,
+        d.headline,
+        d.structure,
         concat_ws(' ',
-            COALESCE(ri.search_key, ''),
-            COALESCE(ri.basename, ''),
-            COALESCE(ri.headline, ''),
-            COALESCE(ri.structure, ''),
-            COALESCE(ri.symbol, '')
+            COALESCE(d.search_key, ''),
+            COALESCE(d.basename, ''),
+            COALESCE(d.headline, ''),
+            COALESCE(d.structure, '')
         ) AS text_target,
-        -- BM25-style heuristic scoring
         CASE
-            -- Exact symbol match
-            WHEN COALESCE(ri.symbol_key, '') = p.keywords_lc THEN 4.0
-            -- Symbol contains query
-            WHEN p.keywords_lc <> '' AND position(p.keywords_lc IN COALESCE(ri.symbol_key, '')) > 0 THEN 3.2
-            -- Exact basename match
-            WHEN LOWER(COALESCE(ri.basename, '')) = p.keywords_lc
-              OR LOWER(regexp_replace(COALESCE(ri.basename, ''), '\.[^.]*$', '')) = p.keywords_lc THEN 3.0
-            -- Body contains query (via grep on live files — ranked high, between basename and search key)
-            WHEN ri.doc_id IN (SELECT doc_id FROM grep_hits) THEN 2.5
-            -- Basename contains query
-            WHEN position(p.keywords_lc IN LOWER(COALESCE(ri.basename, ''))) > 0 THEN 2.0
-            -- Headline or structure contains query
-            WHEN position(p.keywords_lc IN LOWER(COALESCE(ri.headline, '') || ' ' || COALESCE(ri.structure, ''))) > 0 THEN 1.5
-            -- Search key contains query
-            WHEN position(p.keywords_lc IN ri.search_key) > 0 THEN 1.0
+            WHEN LOWER(COALESCE(d.basename, '')) = p.keywords_lc
+              OR LOWER(regexp_replace(COALESCE(d.basename, ''), '\.[^.]*$', '')) = p.keywords_lc THEN 3.0
+            WHEN d.doc_id IN (SELECT doc_id FROM grep_hits) THEN 2.5
+            WHEN position(p.keywords_lc IN LOWER(COALESCE(d.basename, ''))) > 0 THEN 2.0
+            WHEN position(p.keywords_lc IN LOWER(COALESCE(d.headline, '') || ' ' || COALESCE(d.structure, ''))) > 0 THEN 1.5
+            WHEN position(p.keywords_lc IN d.search_key) > 0 THEN 1.0
             ELSE NULL
-        END AS bm25_heur
-    FROM filtered ri
+        END AS bm25_heur,
+        TRY_CAST(match_score(p.keywords_lc, d.search_key) AS DOUBLE) AS fuzz
+    FROM doc_filtered d
     CROSS JOIN params p
     WHERE p.keywords_empty = FALSE
 ),
 
--- Phase 2: fuzzy match_score only where heuristic didn't match (avoids 286K UDF calls)
-score_source AS (
+-- Fuzzy fallback only for documents without a heuristic match
+doc_scored AS (
     SELECT
-        h.node_id,
-        h.doc_id,
-        FALSE AS keywords_empty,
-        h.text_target,
-        h.bm25_heur,
-        -- Fuzzy fallback only for rows without a heuristic score
+        h.*,
         IF(h.bm25_heur IS NULL,
             TRY_CAST(match_score((SELECT keywords_lc FROM params), h.text_target) AS DOUBLE),
-            NULL) AS bm25_fallback,
-        -- Fuzzy on search_key (cheap, always useful for ranking)
-        TRY_CAST(match_score((SELECT keywords_lc FROM params), h.search_key) AS DOUBLE) AS fuzz
-    FROM heur_scored h
+            NULL) AS bm25_fallback
+    FROM doc_heur_scored h
 ),
 
--- Rank by best available BM25 signal and apply limit via QUALIFY
+-- Top documents by score
+doc_ranked AS (
+    SELECT
+        node_id,
+        doc_id,
+        COALESCE(bm25_heur, bm25_fallback, 0.05) AS doc_bm25,
+        fuzz AS doc_fuzz,
+        ROW_NUMBER() OVER (
+            ORDER BY COALESCE(bm25_heur, bm25_fallback, 0) DESC, fuzz DESC, node_id
+        ) AS doc_rank
+    FROM doc_scored
+    QUALIFY doc_rank <= (SELECT limit_cand FROM params)
+),
+
+-- =====================================================================
+-- PHASE 2: OBJECT EXPANSION WITH SYMBOL SCORING
+-- =====================================================================
+
+-- Get child objects of top-ranked documents only
+obj_scored AS (
+    SELECT
+        child.id AS node_id,
+        dr.doc_id,
+        -- Symbol match: object-level signal
+        CASE
+            WHEN LOWER(COALESCE(
+                repository_uri_symbol(child.uri),
+                json_extract_string(child.properties, '$.symbol'),
+                json_extract_string(child.properties, '$.name'),
+                '')) = p.keywords_lc THEN 4.0
+            WHEN p.keywords_lc <> '' AND position(p.keywords_lc IN LOWER(COALESCE(
+                repository_uri_symbol(child.uri),
+                json_extract_string(child.properties, '$.symbol'),
+                json_extract_string(child.properties, '$.name'),
+                ''))) > 0 THEN 3.2
+            -- Object headline/structure match
+            WHEN position(p.keywords_lc IN LOWER(
+                COALESCE(child.headline, '') || ' ' || COALESCE(child.structure, ''))) > 0
+                THEN GREATEST(1.5, dr.doc_bm25)
+            -- Inherit document score
+            ELSE dr.doc_bm25
+        END AS bm25,
+        -- Inherit document fuzz (search_key is identical for all children)
+        dr.doc_fuzz AS fuzz
+    FROM doc_ranked dr
+    JOIN span s ON s.document_id = dr.doc_id
+    JOIN node child ON child.span_id = s.id AND child.kind <> 'document'
+    CROSS JOIN params p
+    WHERE p.keywords_empty = FALSE
+),
+
+-- =====================================================================
+-- PHASE 3: UNION, RANK, NORMALIZE (identical output contract)
+-- =====================================================================
+
+all_candidates AS (
+    SELECT node_id, doc_id, doc_bm25 AS bm25, doc_fuzz AS fuzz
+    FROM doc_ranked
+    UNION ALL
+    SELECT node_id, doc_id, bm25, fuzz
+    FROM obj_scored
+),
+
 limited AS (
     SELECT
         node_id,
         doc_id,
-        -- Use best available score
-        COALESCE(
-            bm25_heur,
-            bm25_fallback,
-            CASE WHEN keywords_empty THEN 0 ELSE 0.05 END
-        ) AS bm25,
+        bm25,
         fuzz,
         ROW_NUMBER() OVER (
-            ORDER BY
-                COALESCE(bm25_heur, bm25_fallback, 0) DESC,
-                fuzz DESC,
-                node_id
+            ORDER BY bm25 DESC, fuzz DESC, node_id
         ) AS lex_rank
-    FROM score_source
+    FROM all_candidates
     QUALIFY lex_rank <= (SELECT limit_cand FROM params)
 ),
 

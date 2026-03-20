@@ -273,7 +273,7 @@ public class SearchMacroTests : IDisposable
     {
         var results = _store.Read(
             @"SELECT uri, ROUND(score, 3) AS score
-              FROM search('parser', scope := 'file:///src/%')
+              FROM search('parser', scope := 'file:///src/**')
               ORDER BY score DESC",
             r => (uri: r.GetString(0), score: r.GetDouble(1)));
 

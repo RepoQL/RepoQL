@@ -54,15 +54,15 @@ cfg AS (
     FROM params
 ),
 
--- Outline-only corpus (cheap to scan); body is joined only for final candidates
--- Scope-filtered document IDs via glob_files (efficient registry lookup)
+-- Scope-filtered documents via _scope_filter (handles glob + fallback for tests)
 _search_scope AS (
-    SELECT n.id AS doc_id
-    FROM cfg c
-    CROSS JOIN glob_files(pattern_spec := c.scope_glob) gf
-    JOIN node n ON n.uri = gf.uri AND n.kind = 'document'
+    SELECT * FROM _scope_filter(
+        uri_glob := (SELECT scope_glob FROM cfg),
+        scope := 'document'
+    )
 ),
 
+-- Outline-only corpus (cheap to scan); body is joined only for final candidates
 docs_outline AS (
     SELECT
         n.id AS doc_id,
