@@ -3,7 +3,7 @@
 --
 -- Parameters:
 --   keywords          - literal keywords for searching (required)
---   scope             - SQL LIKE pattern for doc URIs; NULL/'' => all docs (case-insensitive)
+--   scope             - glob pattern for doc URIs (e.g. 'src/**/*.cs'); NULL/'' => all docs
 --   boost_pattern     - regex used for boosting + rescue (optional, derived from keywords if not provided)
 --   negative_pattern  - regex used for de-ranking (optional)
 --   k                 - max candidates
@@ -15,7 +15,7 @@
 -- Example usage:
 --   SELECT * FROM search('database connection') LIMIT 10;
 --   SELECT * FROM search('parser', boost_pattern := 'markdown|yaml', negative_pattern := '(?i)test');
---   SELECT * FROM search('config', scope := 'file:///src/%');
+--   SELECT * FROM search('config', scope := 'src/**/*.cs');
 
 CREATE OR REPLACE MACRO search(
     keywords,
@@ -32,7 +32,7 @@ WITH
 params AS (
     SELECT
         trim(coalesce(keywords, '')) AS kw,
-        NULLIF(TRIM(COALESCE(scope, '')), '') AS scope_like,
+        NULLIF(TRIM(COALESCE(scope, '')), '') AS scope_glob,
         NULLIF(trim(coalesce(boost_pattern, '')), '') AS boost_in,
         CAST(negative_pattern AS VARCHAR) AS neg_re
 ),
@@ -43,7 +43,7 @@ params AS (
 cfg AS (
     SELECT
         kw,
-        scope_like,
+        scope_glob,
         neg_re,
         CAST(COALESCE(
             boost_in,
@@ -55,6 +55,14 @@ cfg AS (
 ),
 
 -- Outline-only corpus (cheap to scan); body is joined only for final candidates
+-- Scope-filtered document IDs via glob_files (efficient registry lookup)
+_search_scope AS (
+    SELECT n.id AS doc_id
+    FROM cfg c
+    CROSS JOIN glob_files(pattern_spec := c.scope_glob) gf
+    JOIN node n ON n.uri = gf.uri AND n.kind = 'document'
+),
+
 docs_outline AS (
     SELECT
         n.id AS doc_id,
@@ -65,9 +73,8 @@ docs_outline AS (
         coalesce(a.headline,'') || ' ' || coalesce(a.structure,'') AS outline_text
     FROM node n
     JOIN artifact a ON n.artifact_id = a.id
-    CROSS JOIN cfg c
+    JOIN _search_scope ss ON ss.doc_id = n.id
     WHERE n.kind = 'document'
-      AND (c.scope_like IS NULL OR n.uri ILIKE c.scope_like)
 ),
 
 -- Search results aggregated to doc level (fixes "bm25 under-count in tier1" issue)
@@ -79,7 +86,7 @@ search_rows AS (
     FROM _search_candidates(
         (SELECT kw FROM cfg),
         k := k,
-        uri_like := (SELECT scope_like FROM cfg)
+        uri_glob := (SELECT scope_glob FROM cfg)
     ) sc
     WHERE sc.doc_id IS NOT NULL
 ),
