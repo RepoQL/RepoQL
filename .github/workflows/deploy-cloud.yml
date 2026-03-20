@@ -145,6 +145,7 @@ jobs:
           flags: >-
             --use-http2
             --port=8080
+            --no-cpu-throttling
             --min-instances=0
             --max-instances=50
             --memory=1Gi
@@ -229,6 +230,7 @@ jobs:
           flags: >-
             --use-http2
             --port=8080
+            --no-cpu-throttling
             --min-instances=0
             --max-instances=50
             --memory=1Gi
