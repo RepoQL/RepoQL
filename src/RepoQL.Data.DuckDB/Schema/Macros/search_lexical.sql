@@ -80,12 +80,12 @@ grep_hits AS (
     WHERE p.keywords_empty = FALSE
 ),
 
--- Score each document/object against the query
-score_source AS (
+-- Phase 1: cheap heuristic scoring (position checks + grep)
+heur_scored AS (
     SELECT
         ri.node_id,
         ri.doc_id,
-        p.keywords_empty,
+        ri.search_key,
         -- Concatenate searchable text for fuzzy matching (metadata only, no body)
         concat_ws(' ',
             COALESCE(ri.search_key, ''),
@@ -96,7 +96,6 @@ score_source AS (
         ) AS text_target,
         -- BM25-style heuristic scoring
         CASE
-            WHEN p.keywords_empty THEN 0.0
             -- Exact symbol match
             WHEN COALESCE(ri.symbol_key, '') = p.keywords_lc THEN 4.0
             -- Symbol contains query
@@ -104,21 +103,36 @@ score_source AS (
             -- Exact basename match
             WHEN LOWER(COALESCE(ri.basename, '')) = p.keywords_lc
               OR LOWER(regexp_replace(COALESCE(ri.basename, ''), '\.[^.]*$', '')) = p.keywords_lc THEN 3.0
+            -- Body contains query (via grep on live files — ranked high, between basename and search key)
+            WHEN ri.doc_id IN (SELECT doc_id FROM grep_hits) THEN 2.5
             -- Basename contains query
             WHEN position(p.keywords_lc IN LOWER(COALESCE(ri.basename, ''))) > 0 THEN 2.0
+            -- Headline or structure contains query
+            WHEN position(p.keywords_lc IN LOWER(COALESCE(ri.headline, '') || ' ' || COALESCE(ri.structure, ''))) > 0 THEN 1.5
             -- Search key contains query
             WHEN position(p.keywords_lc IN ri.search_key) > 0 THEN 1.0
-            -- Body contains query (via grep on live files)
-            WHEN ri.doc_id IN (SELECT doc_id FROM grep_hits) THEN 2.5
             ELSE NULL
-        END AS bm25_heur,
-        -- Fallback fuzzy match on full text
-        TRY_CAST(match_score(p.keywords_lc, text_target) AS DOUBLE) AS bm25_fallback,
-        -- Fuzzy subsequence score on search_key
-        TRY_CAST(match_score(p.keywords_lc, ri.search_key) AS DOUBLE) AS fuzz
+        END AS bm25_heur
     FROM filtered ri
     CROSS JOIN params p
     WHERE p.keywords_empty = FALSE
+),
+
+-- Phase 2: fuzzy match_score only where heuristic didn't match (avoids 286K UDF calls)
+score_source AS (
+    SELECT
+        h.node_id,
+        h.doc_id,
+        FALSE AS keywords_empty,
+        h.text_target,
+        h.bm25_heur,
+        -- Fuzzy fallback only for rows without a heuristic score
+        IF(h.bm25_heur IS NULL,
+            TRY_CAST(match_score((SELECT keywords_lc FROM params), h.text_target) AS DOUBLE),
+            NULL) AS bm25_fallback,
+        -- Fuzzy on search_key (cheap, always useful for ranking)
+        TRY_CAST(match_score((SELECT keywords_lc FROM params), h.search_key) AS DOUBLE) AS fuzz
+    FROM heur_scored h
 ),
 
 -- Rank by best available BM25 signal and apply limit via QUALIFY
