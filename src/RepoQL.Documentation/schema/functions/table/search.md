@@ -22,6 +22,6 @@ FROM search('error handling', k := 10);
 //BOUNDARY: Returns documents (files), not individual symbols. Use `snippet()` to get code context.
 
 **Depth**
-- `scope` uses SQL `LIKE` syntax with `%`, not glob syntax
+- `scope` uses glob patterns (e.g. `src/**/*.cs`, `github://dotnet/aspire/**`)
 - `sem_score` can be NULL while embeddings are still loading; lexical ranking still works
 - `headline` and `structure` are pre-computed x-ray summaries, so you often do not need to read the file next

@@ -61,9 +61,7 @@ Powerful for gathering context from known locations without multiple round-trips
 | `src/**test` | `src/**/test*` | `**` must be complete segment |
 | `File.cs#MyClass` | `File.cs#symbol=MyClass` | Need `#symbol=` key |
 | `*.cs` for recursive | `**/*.cs` | `*` is single-level only |
-| `search(scope='**/*.cs')` | `search(scope='%.cs')` | `search()` uses SQL LIKE (`%`), not glob |
-
-**Note:** `search()` scope uses SQL LIKE syntax. For glob patterns with search, use `explore` or filter results with `glob_files`.
+| `search(scope='%.cs')` | `search(scope='**/*.cs')` | `search()` uses glob patterns, not SQL LIKE |
 
 ## Defaults
 
