@@ -1,5 +1,15 @@
 -- Semantic search module: exact embedding-based similarity using linear scans.
 -- Combines structure embeddings (fast, always available) with full-text embeddings (detailed).
+--
+-- Performance notes (DuckDB TABLE macro pitfalls):
+-- 1. Cast in CTE, not at use site. `qv.vec::FLOAT[]` at each use site causes DuckDB
+--    to re-evaluate the CTE. `embed_query(...)::FLOAT[] AS vec` in the CTE definition
+--    evaluates once. Difference: 4s → 1s.
+-- 2. Resolve macro parameters into CTEs before use in QUALIFY/WHERE. Raw macro
+--    parameter in QUALIFY triggers full pipeline re-evaluation. A CTE subquery
+--    resolves to a constant the optimizer can fold. Difference: 18s → 1s.
+-- 3. Single-pass GROUP BY replaces the FULL OUTER JOIN for combining embedding types.
+-- 4. query_dim carried through pipeline to avoid re-referencing query_vec in calibration.
 
 CREATE OR REPLACE MACRO _search_semantic(
     q,
@@ -8,112 +18,84 @@ CREATE OR REPLACE MACRO _search_semantic(
     uri_like := NULL
 ) AS TABLE (
 WITH
+-- Resolve macro parameters into CTE values. Critical for QUALIFY performance.
 params AS (
-    SELECT
-        COALESCE(TRIM(q), '') AS raw_query,
-        CASE WHEN COALESCE(TRIM(q), '') = '' THEN TRUE ELSE FALSE END AS keywords_empty,
-        CAST(COALESCE(max_cand, 5000) AS BIGINT) AS limit_cand
+    SELECT CAST(COALESCE(max_cand, 5000) AS BIGINT) AS limit_cand
 ),
 
-_sem_scope AS (
-    SELECT * FROM _scope_filter(
-        uri_glob := uri_glob,
-        uri_like := uri_like
-    )
-),
-
+-- Cast to FLOAT[] in the CTE, not at use sites. DuckDB re-evaluates
+-- the CTE when a cast expression appears at the use site (~4s → ~1s).
 query_vec AS (
-    SELECT embed_query(p.raw_query) AS vec
-    FROM params p
-    WHERE p.keywords_empty = FALSE
+    SELECT embed_query(COALESCE(TRIM(q), ''))::FLOAT[] AS vec
+    WHERE COALESCE(TRIM(q), '') <> ''
 ),
 
-query_info AS (
-    SELECT array_length(vec::FLOAT[]) AS query_dim
-    FROM query_vec
-    WHERE vec IS NOT NULL
-),
-
-structure_sem AS (
+-- Single pass: score ALL document embeddings (structure + full) in one scan.
+all_scored AS (
     SELECT
         de.doc_id,
         de.node_id,
-        safe_cosine(qv.vec::FLOAT[], de.embedding) AS struct_sem,
-        'linear' AS source
-    FROM query_vec qv
-    JOIN document_embedding de ON de.embedding IS NOT NULL
-    JOIN _sem_scope sf ON sf.node_id = de.node_id
-    WHERE qv.vec IS NOT NULL
-      AND de.scope = 'document'
-      AND de.embedding_type = 'structure'
-      AND de.dim = array_length(qv.vec::FLOAT[])
-),
-
-full_text_chunks AS (
-    SELECT
-        de.doc_id,
-        de.node_id,
+        de.embedding_type,
         de.chunk_index,
         de.start_byte,
         de.end_byte,
-        safe_cosine(qv.vec::FLOAT[], de.embedding) AS chunk_sem
+        safe_cosine(qv.vec, de.embedding) AS score,
+        array_length(qv.vec) AS query_dim
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
-    JOIN _sem_scope sf ON sf.node_id = de.node_id
+    JOIN _scope_filter(uri_glob := uri_glob, uri_like := uri_like) sf
+        ON sf.node_id = de.node_id
     WHERE qv.vec IS NOT NULL
       AND de.scope = 'document'
-      AND de.embedding_type = 'full'
-      AND de.dim = array_length(qv.vec::FLOAT[])
+      AND de.dim = array_length(qv.vec)
 ),
 
-full_text_ranked AS (
+-- Aggregate both embedding types per node — no FULL OUTER JOIN.
+per_node AS (
     SELECT
         node_id,
         doc_id,
-        chunk_index,
-        start_byte,
-        end_byte,
-        chunk_sem,
-        ROW_NUMBER() OVER (
-            PARTITION BY node_id
-            ORDER BY chunk_sem DESC, chunk_index
-        ) AS chunk_rank
-    FROM full_text_chunks
-),
-
-full_text_scored AS (
-    SELECT
-        node_id,
-        doc_id,
-        chunk_sem AS full_sem,
-        chunk_index AS best_chunk_index,
-        start_byte AS best_chunk_start,
-        end_byte AS best_chunk_end
-    FROM full_text_ranked
-    WHERE chunk_rank = 1
+        MAX(CASE WHEN embedding_type = 'structure' THEN score END) AS struct_sem,
+        MAX(CASE WHEN embedding_type = 'full' THEN score END) AS full_sem,
+        ARG_MAX(
+            CASE WHEN embedding_type = 'full' THEN chunk_index END,
+            CASE WHEN embedding_type = 'full' THEN score ELSE -1 END
+        ) AS best_chunk_index,
+        ARG_MAX(
+            CASE WHEN embedding_type = 'full' THEN start_byte END,
+            CASE WHEN embedding_type = 'full' THEN score ELSE -1 END
+        ) AS best_chunk_start,
+        ARG_MAX(
+            CASE WHEN embedding_type = 'full' THEN end_byte END,
+            CASE WHEN embedding_type = 'full' THEN score ELSE -1 END
+        ) AS best_chunk_end,
+        MAX(query_dim) AS query_dim
+    FROM all_scored
+    GROUP BY node_id, doc_id
 ),
 
 combined AS (
     SELECT
-        COALESCE(ss.node_id, fs.node_id) AS node_id,
-        COALESCE(ss.doc_id, fs.doc_id) AS doc_id,
-        ss.struct_sem,
-        fs.full_sem,
-        GREATEST(COALESCE(ss.struct_sem, 0), COALESCE(fs.full_sem, 0))
+        node_id,
+        doc_id,
+        struct_sem,
+        full_sem,
+        GREATEST(COALESCE(struct_sem, 0), COALESCE(full_sem, 0))
             + CASE
-                WHEN ss.struct_sem IS NOT NULL AND fs.full_sem IS NOT NULL
-                THEN 0.05 * (ss.struct_sem + fs.full_sem)
+                WHEN struct_sem IS NOT NULL AND full_sem IS NOT NULL
+                THEN 0.05 * (struct_sem + full_sem)
                 ELSE 0
             END AS sem_score,
-        COALESCE(ss.source, 'full_only') AS search_source,
-        fs.best_chunk_index,
-        fs.best_chunk_start,
-        fs.best_chunk_end
-    FROM structure_sem ss
-    FULL OUTER JOIN full_text_scored fs ON ss.node_id = fs.node_id
+        CASE WHEN struct_sem IS NOT NULL THEN 'linear' ELSE 'full_only' END AS search_source,
+        best_chunk_index,
+        best_chunk_start,
+        best_chunk_end,
+        query_dim
+    FROM per_node
 ),
 
-limited AS (
+-- QUALIFY uses CTE subquery, NOT raw macro parameter. See performance notes.
+ranked AS (
     SELECT
         c.*,
         ROW_NUMBER() OVER (ORDER BY c.sem_score DESC, c.node_id) AS sem_rank
@@ -121,47 +103,30 @@ limited AS (
     QUALIFY sem_rank <= (SELECT limit_cand FROM params)
 ),
 
-sem_stats AS (
-    SELECT
-        COUNT(*) AS candidate_count,
-        MAX(sem_score) AS top_sem,
-        quantile_cont(sem_score, 0.90) AS p90_sem
-    FROM limited
-),
-
-calibrated AS (
-    SELECT
-        l.*,
-        sem_calibrate(l.sem_score, (SELECT query_dim FROM query_info)) AS sem_base_norm,
-        sem_query_confidence(
-            (SELECT top_sem FROM sem_stats),
-            (SELECT p90_sem FROM sem_stats),
-            (SELECT candidate_count FROM sem_stats),
-            (SELECT query_dim FROM query_info)
-        ) AS sem_query_conf
-    FROM limited l
-),
-
+-- Calibration + normalization using window functions (no separate sem_stats CTE).
+-- query_dim carried from all_scored to avoid re-referencing query_vec.
 normalized AS (
     SELECT
-        c.*,
-        c.sem_base_norm * c.sem_query_conf AS sem_norm,
-        rrf_score(c.sem_rank) AS rrf_sem
-    FROM calibrated c
+        node_id,
+        doc_id,
+        sem_score,
+        sem_calibrate(sem_score, query_dim)
+            * sem_query_confidence(
+                MAX(sem_score) OVER (),
+                quantile_cont(sem_score, 0.90) OVER (),
+                COUNT(*) OVER (),
+                query_dim
+            ) AS sem_norm,
+        sem_rank,
+        rrf_score(sem_rank) AS rrf_sem,
+        search_source,
+        struct_sem AS structure_score,
+        full_sem AS fulltext_score,
+        best_chunk_index,
+        best_chunk_start,
+        best_chunk_end
+    FROM ranked
 )
 
-SELECT
-    node_id,
-    doc_id,
-    sem_score,
-    sem_norm,
-    sem_rank,
-    rrf_sem,
-    search_source,
-    struct_sem AS structure_score,
-    full_sem AS fulltext_score,
-    best_chunk_index,
-    best_chunk_start,
-    best_chunk_end
-FROM normalized
+SELECT * FROM normalized
 );

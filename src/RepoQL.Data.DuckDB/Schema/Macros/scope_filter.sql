@@ -8,6 +8,11 @@
 -- This is the single source of truth for scope filtering.
 -- All search macros call this instead of duplicating the filter logic.
 --
+-- Performance: When all filter args are NULL (the common case from search()),
+-- bypasses glob_files + URI string join entirely and scans node table directly.
+-- The glob_files path is gated behind a subquery that produces 0 rows when
+-- no filters are specified, so DuckDB won't invoke the table function.
+--
 -- Parameters:
 --   uri_glob     - URI glob pattern resolved via glob_files (NULL = all)
 --   uri_like     - SQL LIKE pattern, case-insensitive via ILIKE (NULL = all)
@@ -34,13 +39,27 @@ params AS (
         NULLIF(TRIM(CAST(scope AS VARCHAR)), '') AS scope_filter
 ),
 
--- glob_files drives narrowing: pattern → matching docs, NULL → all docs.
--- Falls back to matches_glob on node table when glob_files returns nothing
--- (e.g. in test environments without URI registry).
--- LIKE and exclude filters applied at document level before expansion.
+-- Fast path: when no URI/LIKE/exclude filters, get all documents directly.
+-- Avoids glob_files UDF call + URI string join (saves ~3s in macro contexts).
+unfiltered_docs AS (
+    SELECT n.id AS doc_id
+    FROM node n
+    CROSS JOIN (
+        SELECT 1 FROM params
+        WHERE uri_filter IS NULL AND like_filter IS NULL AND exclude_filter IS NULL
+    ) gate
+    WHERE n.kind = 'document'
+),
+
+-- Filtered path: glob_files drives narrowing when any filter is specified.
+-- The subquery on params produces 0 rows when no filters exist,
+-- so DuckDB will not invoke glob_files in the unfiltered case.
 glob_docs AS (
     SELECT n.id AS doc_id
-    FROM params p
+    FROM (
+        SELECT * FROM params
+        WHERE uri_filter IS NOT NULL OR like_filter IS NOT NULL OR exclude_filter IS NOT NULL
+    ) p
     CROSS JOIN glob_files(pattern_spec := p.uri_filter) gf
     JOIN node n ON n.uri = gf.uri AND n.kind = 'document'
     WHERE (p.like_filter IS NULL OR gf.uri ILIKE p.like_filter)
@@ -63,6 +82,8 @@ fallback_docs AS (
 ),
 
 docs AS (
+    SELECT doc_id FROM unfiltered_docs
+    UNION ALL
     SELECT doc_id FROM glob_docs
     UNION ALL
     SELECT doc_id FROM fallback_docs

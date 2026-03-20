@@ -24,8 +24,9 @@ scope_uris AS (
          json_each(p.uri_json_raw) j
     WHERE json_extract_string(j.value, '$') IS NOT NULL
 ),
+-- Cast to FLOAT[] in CTE definition to prevent DuckDB re-evaluation at use sites.
 query_vec AS (
-    SELECT embed_query(p.raw_query) AS vec
+    SELECT embed_query(p.raw_query)::FLOAT[] AS vec
     FROM params p
     WHERE p.raw_query <> ''
 ),
@@ -33,13 +34,13 @@ full_scores AS (
     SELECT
         de.uri, de.node_id, de.doc_id, de.chunk_index, de.start_byte, de.end_byte,
         'full' AS embedding_type,
-        safe_cosine(qv.vec::FLOAT[], de.embedding) AS sem_score
+        safe_cosine(qv.vec, de.embedding) AS sem_score
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
     JOIN scope_uris su ON su.uri = de.uri
     WHERE de.scope = 'document'
       AND de.embedding_type = 'full'
-      AND de.dim = array_length(qv.vec::FLOAT[])
+      AND de.dim = array_length(qv.vec)
 ),
 full_docs AS (
     SELECT DISTINCT uri
@@ -49,14 +50,14 @@ structure_scores AS (
     SELECT
         de.uri, de.node_id, de.doc_id, de.chunk_index, de.start_byte, de.end_byte,
         'structure' AS embedding_type,
-        safe_cosine(qv.vec::FLOAT[], de.embedding) AS sem_score
+        safe_cosine(qv.vec, de.embedding) AS sem_score
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
     JOIN scope_uris su ON su.uri = de.uri
     LEFT JOIN full_docs fd ON fd.uri = de.uri
     WHERE de.scope = 'document'
       AND de.embedding_type = 'structure'
-      AND de.dim = array_length(qv.vec::FLOAT[])
+      AND de.dim = array_length(qv.vec)
       AND fd.uri IS NULL
 ),
 candidate_scores AS (
