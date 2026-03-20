@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore;
@@ -10,18 +12,24 @@ namespace RepoQL.ConsoleApp.Host;
 /// <summary>
 /// Purpose: Provides semantic similarity search as a read modifier, finding files
 /// similar to a seed document by comparing stored passage embeddings.
-/// Complexity: Queries document_embedding directly for chunk-level cosine similarity
-/// (passage-to-passage), takes best chunk match per candidate, filters to scope, and
-/// fits results to token budget.
+/// Complexity: Queries document_embedding for chunk-level cosine similarity using
+/// stored embeddings only (never re-embeds). Filters candidates by matching dimension,
+/// pushes scope into SQL via VALUES list CTE, uses adaptive threshold for cloud embedding
+/// compatibility, and fits results to token budget.
 /// </summary>
-internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegistry) : IModifierHandler
+internal sealed class SimilarHandler(
+    DuckDbDataStore? db,
+    UriRegistry? uriRegistry,
+    ILogger<SimilarHandler>? logger = null) : IModifierHandler
 {
     private readonly DuckDbDataStore? _db = db;
     private readonly UriRegistry? _uriRegistry = uriRegistry;
+    private readonly ILogger<SimilarHandler> _logger = logger ?? NullLogger<SimilarHandler>.Instance;
 
     private const int MaxResults = 20;
     private const int DefaultContextLines = 2;
-    private const double MinSimilarityThreshold = 0.10;
+    private const double AdaptiveThresholdFloor = 0.01;
+    private const double AdaptiveThresholdFraction = 0.50;
 
     public string ModifierName => "similar";
 
@@ -82,10 +90,39 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
                 tokenBudget: tokenBudget));
         }
 
-        var results = ExecuteSimilaritySearch(seedUri, documentUris, ct);
+        // Normalize URIs for SQL queries — document_embedding stores lowercase via NormalizeContainerKey
+        var seedKey = RepoUri.NormalizeContainerKey(seedBase);
+        var documentKeys = documentUris.Select(RepoUri.NormalizeContainerKey).Distinct().ToList();
+
+        // Step 1: Resolve seed dimension
+        var seedDimResult = ResolveSeedDimension(seedKey, ct);
+        if (seedDimResult.Error is not null)
+        {
+            return Task.FromResult(BuildSimpleResult(
+                seedDimResult.Error,
+                filesConsulted: documentUris,
+                tokenBudget: tokenBudget));
+        }
+
+        var seedDim = seedDimResult.Dimension;
+
+        // Step 2: Execute similarity search with dimension filtering and scope in SQL
+        var searchResult = ExecuteSimilaritySearch(seedUri, seedKey, seedDim, documentKeys, ct);
+        if (searchResult.Error is not null)
+        {
+            return Task.FromResult(BuildSimpleResult(
+                searchResult.Error,
+                filesConsulted: documentUris,
+                tokenBudget: tokenBudget));
+        }
+
+        var results = searchResult.Results;
+
+        // Step 3: Apply adaptive threshold
+        var threshold = ComputeAdaptiveThreshold(results);
 
         var filtered = results
-            .Where(r => r.Similarity >= MinSimilarityThreshold)
+            .Where(r => r.Similarity >= threshold)
             .OrderByDescending(r => r.Similarity)
             .Take(MaxResults)
             .ToList();
@@ -96,21 +133,24 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
                 ? results.Max(r => r.Similarity)
                 : 0.0;
             return Task.FromResult(BuildSimpleResult(
-                $"No similar files found for '{seedUri}' in {documentUris.Count} file(s). Best similarity: {bestScore:F2}",
+                $"No similar files found for '{seedUri}' in {documentUris.Count} file(s). Best similarity: {bestScore:F4} (threshold: {threshold:F4})",
                 filesConsulted: documentUris,
                 tokenBudget: tokenBudget,
                 warning: "All results below similarity threshold"));
         }
 
-        var (content, shownCount) = BuildOutput(filtered, results.Count - filtered.Count, tokenBudget, ct);
+        var belowThreshold = results.Count - filtered.Count;
+        var (content, shownCount) = BuildOutput(filtered, belowThreshold, tokenBudget, ct);
         var tokenCount = TokenEstimator.EstimateTokens(content);
 
         var extra = new Dictionary<string, object>(StringComparer.Ordinal)
         {
             ["seed_uri"] = seedUri,
+            ["seed_dim"] = seedDim,
             ["results_found"] = results.Count,
             ["results_shown"] = shownCount,
-            ["below_threshold"] = results.Count - filtered.Count
+            ["below_threshold"] = belowThreshold,
+            ["adaptive_threshold"] = threshold
         };
 
         return Task.FromResult(new ModifierResult(
@@ -120,6 +160,289 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
             Shown: shownCount,
             ExceedsBudget: tokenCount > tokenBudget,
             Metadata: new ResultMetadata(documentUris, null, extra)));
+    }
+
+    /// <summary>
+    /// Resolves the embedding dimension for the seed URI from document_embedding.
+    /// Returns the dimension or an actionable error message.
+    /// </summary>
+    internal SeedDimResult ResolveSeedDimension(string seedBaseUri, CancellationToken ct)
+    {
+        if (_db is null)
+            return new SeedDimResult(0, "Database not available. Cannot perform similarity search.");
+
+        try
+        {
+            var escapedUri = EscapeSqlLiteral(seedBaseUri);
+            var sql = $"""
+                SELECT DISTINCT dim
+                FROM document_embedding
+                WHERE uri = '{escapedUri}'
+                  AND embedding_type = 'full'
+                """;
+
+            var rows = _db.Query(sql, ct);
+            if (rows.Count == 0)
+            {
+                return new SeedDimResult(0,
+                    $"No stored embeddings found for seed '{seedBaseUri}'. The file may not have been embedded yet, " +
+                    "or embeddings may have been cleared. Check embedding status with ::status.");
+            }
+
+            // Use the first dimension found (typically there's only one per URI)
+            var dim = rows[0].TryGetValue("dim", out var dimVal) && dimVal is not null
+                ? Convert.ToInt32(dimVal, CultureInfo.InvariantCulture)
+                : 0;
+
+            if (dim <= 0)
+            {
+                return new SeedDimResult(0,
+                    $"Seed '{seedBaseUri}' has embeddings with invalid dimension ({dim}).");
+            }
+
+            return new SeedDimResult(dim, null);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Failed to resolve seed dimension for {SeedUri}", seedBaseUri);
+            return new SeedDimResult(0,
+                $"Failed to resolve seed embedding dimension: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Executes the similarity search using stored embeddings only. Never calls embed_passage().
+    /// Pushes candidate URI scope into SQL via VALUES list CTE and filters by matching dimension.
+    /// </summary>
+    internal SimilaritySearchResult ExecuteSimilaritySearch(
+        string seedUri,
+        string seedBase,
+        int seedDim,
+        IReadOnlyList<string> documentUris,
+        CancellationToken ct)
+    {
+        if (_db is null)
+            return new SimilaritySearchResult([], "Database not available. Cannot perform similarity search.");
+
+        try
+        {
+            var escapedSeedBase = EscapeSqlLiteral(seedBase);
+
+            // Build seed range CTE for fragment handling
+            var seedRangeCte = BuildSeedRangeCte(seedUri, escapedSeedBase);
+
+            // Build VALUES list for candidate URI scope
+            var scopeValues = BuildScopeValuesList(documentUris, seedBase);
+
+            var sql = $"""
+                {seedRangeCte}
+                seed_chunks AS (
+                    SELECT de.embedding
+                    FROM document_embedding de
+                    CROSS JOIN seed_range sr
+                    WHERE de.uri = '{escapedSeedBase}'
+                      AND de.embedding_type = 'full'
+                      AND de.dim = {seedDim}
+                      AND (
+                          sr.start_byte IS NULL
+                          OR NOT (de.end_byte < sr.start_byte OR de.start_byte > sr.end_byte)
+                      )
+                ),
+                scope_uris(uri) AS (
+                    {scopeValues}
+                ),
+                chunk_pairs AS (
+                    SELECT
+                        de.uri,
+                        de.node_id,
+                        de.start_byte,
+                        de.end_byte,
+                        list_cosine_similarity(sc.embedding, de.embedding) AS similarity
+                    FROM document_embedding de
+                    CROSS JOIN seed_chunks sc
+                    JOIN scope_uris su ON de.uri = su.uri
+                    WHERE de.embedding_type = 'full'
+                      AND de.dim = {seedDim}
+                ),
+                best_per_doc AS (
+                    SELECT *, ROW_NUMBER() OVER (PARTITION BY uri ORDER BY similarity DESC NULLS LAST) AS rn
+                    FROM chunk_pairs
+                    QUALIFY rn = 1
+                    ORDER BY similarity DESC NULLS LAST
+                    LIMIT {MaxResults * 2}
+                )
+                SELECT
+                    bp.uri,
+                    bp.similarity,
+                    COALESCE(NULLIF(ri.headline, ''), NULLIF(ria.headline, '')) AS headline,
+                    (SELECT string_agg(s.text, E'\n' ORDER BY s.line_number)
+                     FROM snippet(bp.uri || CASE WHEN bp.start_byte IS NOT NULL
+                         THEN '#char=' || bp.start_byte || ',' || bp.end_byte
+                         ELSE '' END, {DefaultContextLines}) s
+                    ) AS snippet,
+                    (SELECT MIN(s.line_number)
+                     FROM snippet(bp.uri || CASE WHEN bp.start_byte IS NOT NULL
+                         THEN '#char=' || bp.start_byte || ',' || bp.end_byte
+                         ELSE '' END, {DefaultContextLines}) s
+                    ) AS line_start,
+                    (SELECT MAX(s.line_number)
+                     FROM snippet(bp.uri || CASE WHEN bp.start_byte IS NOT NULL
+                         THEN '#char=' || bp.start_byte || ',' || bp.end_byte
+                         ELSE '' END, {DefaultContextLines}) s
+                    ) AS line_end
+                FROM best_per_doc bp
+                LEFT JOIN node ri ON ri.id = bp.node_id
+                LEFT JOIN artifact ria ON ria.id = ri.artifact_id
+                ORDER BY bp.similarity DESC NULLS LAST
+                """;
+
+            var rows = _db.Query(sql, ct);
+
+            // Check for dimension mismatch: seed has embeddings but no candidates matched
+            if (rows.Count == 0)
+            {
+                var dimCheckResult = CheckDimensionMismatch(escapedSeedBase, seedDim, documentUris, ct);
+                if (dimCheckResult is not null)
+                    return new SimilaritySearchResult([], dimCheckResult);
+            }
+
+            var results = new List<SimilarResult>();
+            foreach (var row in rows)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var uri = row.TryGetValue("uri", out var uriVal) ? uriVal?.ToString() : null;
+                if (string.IsNullOrWhiteSpace(uri))
+                    continue;
+
+                var similarity = row.TryGetValue("similarity", out var simVal) && simVal is not null
+                    ? Convert.ToDouble(simVal, CultureInfo.InvariantCulture)
+                    : 0.0;
+
+                var headline = row.TryGetValue("headline", out var headlineVal) ? headlineVal?.ToString() : null;
+                var snippet = row.TryGetValue("snippet", out var snippetVal) ? snippetVal?.ToString() : null;
+                var lineStart = row.TryGetValue("line_start", out var lsVal) && lsVal is not null
+                    ? Convert.ToInt32(lsVal, CultureInfo.InvariantCulture)
+                    : (int?)null;
+                var lineEnd = row.TryGetValue("line_end", out var leVal) && leVal is not null
+                    ? Convert.ToInt32(leVal, CultureInfo.InvariantCulture)
+                    : (int?)null;
+
+                results.Add(new SimilarResult(
+                    Uri: uri!, Headline: headline, Snippet: snippet,
+                    LineStart: lineStart, LineEnd: lineEnd, Similarity: similarity));
+            }
+
+            return new SimilaritySearchResult(results, null);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Similarity search failed for seed {SeedUri} against {CandidateCount} candidates",
+                seedUri, documentUris.Count);
+            return new SimilaritySearchResult([],
+                $"Similarity query failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Checks whether the zero-result outcome is due to a dimension mismatch between
+    /// seed embeddings and candidate embeddings, returning a specific error if so.
+    /// </summary>
+    private string? CheckDimensionMismatch(
+        string escapedSeedBase,
+        int seedDim,
+        IReadOnlyList<string> documentUris,
+        CancellationToken ct)
+    {
+        if (_db is null)
+            return null;
+
+        try
+        {
+            var scopeValues = BuildScopeValuesList(documentUris, null);
+            var dimSql = $"""
+                WITH scope_uris(uri) AS (
+                    {scopeValues}
+                )
+                SELECT DISTINCT de.dim
+                FROM document_embedding de
+                JOIN scope_uris su ON de.uri = su.uri
+                WHERE de.embedding_type = 'full'
+                LIMIT 10
+                """;
+
+            var dimRows = _db.Query(dimSql, ct);
+            if (dimRows.Count == 0)
+            {
+                return $"No stored embeddings found for any of the {documentUris.Count} candidate file(s). " +
+                       "Candidates may not have been embedded yet.";
+            }
+
+            var candidateDims = dimRows
+                .Select(r => r.TryGetValue("dim", out var d) && d is not null
+                    ? Convert.ToInt32(d, CultureInfo.InvariantCulture)
+                    : 0)
+                .Where(d => d > 0)
+                .Distinct()
+                .ToList();
+
+            if (candidateDims.Count > 0 && !candidateDims.Contains(seedDim))
+            {
+                var dimList = string.Join(", ", candidateDims);
+                return $"Dimension mismatch: seed has {seedDim}-dim embeddings, but candidates have {dimList}-dim embeddings. " +
+                       "This usually means the seed and candidates were embedded with different models. " +
+                       "Re-embed with the same model to compare.";
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex, "Failed to check dimension mismatch");
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Builds a VALUES list for candidate URI scope filtering in SQL.
+    /// Excludes the seed URI from candidates.
+    /// </summary>
+    internal static string BuildScopeValuesList(IReadOnlyList<string> documentUris, string? excludeUri)
+    {
+        var sb = new StringBuilder("VALUES ");
+        var first = true;
+        foreach (var uri in documentUris)
+        {
+            if (excludeUri is not null && string.Equals(uri, excludeUri, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            if (!first)
+                sb.Append(", ");
+            sb.Append("('");
+            sb.Append(EscapeSqlLiteral(uri));
+            sb.Append("')");
+            first = false;
+        }
+
+        // Handle edge case where all URIs were excluded
+        if (first)
+            sb.Append("(NULL)");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Computes adaptive threshold: max(floor, topScore * fraction).
+    /// Cloud embeddings produce lower absolute similarity values, so a hard 0.10 threshold
+    /// would filter out valid matches. This approach adapts to the score distribution.
+    /// </summary>
+    internal static double ComputeAdaptiveThreshold(IReadOnlyList<SimilarResult> rankedResults)
+    {
+        if (rankedResults.Count == 0)
+            return AdaptiveThresholdFloor;
+
+        var topScore = rankedResults.Max(r => r.Similarity);
+        var relativeThreshold = topScore * AdaptiveThresholdFraction;
+        return Math.Max(AdaptiveThresholdFloor, relativeThreshold);
     }
 
     private static ModifierResult BuildSimpleResult(
@@ -203,7 +526,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         if (fragment is null || fragment.Value.Symbol is null)
             return null;
 
-        var seedBase = StripFragment(seedUri);
+        var seedBase = RepoUri.NormalizeContainerKey(StripFragment(seedUri));
         var symbol = fragment.Value.Symbol;
         var symbolLower = symbol.ToLowerInvariant();
         var lastDot = symbolLower.LastIndexOf('.');
@@ -274,136 +597,13 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         return $"Symbol '{symbol}' not found in file '{seedBase}'. Available symbols with similar names: {suggestionText}";
     }
 
-    private IReadOnlyList<SimilarResult> ExecuteSimilaritySearch(
-        string seedUri,
-        IReadOnlyList<string> documentUris,
-        CancellationToken ct)
-    {
-        if (_db is null)
-            return [];
-
-        try
-        {
-            var seedBase = StripFragment(seedUri);
-            var escapedSeedBase = EscapeSqlLiteral(seedBase);
-            var documentUriSet = new HashSet<string>(documentUris, StringComparer.OrdinalIgnoreCase);
-
-            // Resolve fragment to byte range for chunk filtering
-            var seedRangeCte = BuildSeedRangeCte(seedUri, escapedSeedBase);
-
-            var sql = $"""
-                {seedRangeCte}
-                seed_chunks AS (
-                    SELECT CASE
-                        WHEN sr.start_byte IS NULL OR de.start_byte IS NULL
-                            THEN de.embedding
-                        WHEN de.start_byte >= sr.start_byte AND de.end_byte <= sr.end_byte
-                            THEN de.embedding
-                        ELSE embed_passage(substr(a.text_content,
-                            GREATEST(de.start_byte, sr.start_byte) + 1,
-                            LEAST(de.end_byte, sr.end_byte) - GREATEST(de.start_byte, sr.start_byte)))::FLOAT[]
-                    END AS embedding
-                    FROM document_embedding de
-                    CROSS JOIN seed_range sr
-                    JOIN node n ON n.uri = '{escapedSeedBase}' AND n.kind = 'document'
-                    JOIN artifact a ON a.id = n.artifact_id
-                    WHERE de.uri = '{escapedSeedBase}'
-                      AND de.embedding_type = 'full'
-                      AND (
-                          sr.start_byte IS NULL
-                          OR NOT (de.end_byte < sr.start_byte OR de.start_byte > sr.end_byte)
-                      )
-                ),
-                chunk_pairs AS (
-                    SELECT
-                        de.uri,
-                        de.node_id,
-                        de.start_byte,
-                        de.end_byte,
-                        list_cosine_similarity(sc.embedding, de.embedding) AS similarity
-                    FROM document_embedding de
-                    CROSS JOIN seed_chunks sc
-                    WHERE de.uri <> '{escapedSeedBase}'
-                      AND de.embedding_type = 'full'
-                ),
-                best_per_doc AS (
-                    SELECT *, ROW_NUMBER() OVER (PARTITION BY uri ORDER BY similarity DESC NULLS LAST) AS rn
-                    FROM chunk_pairs
-                    QUALIFY rn = 1
-                    ORDER BY similarity DESC NULLS LAST
-                    LIMIT {MaxResults * 2}
-                )
-                SELECT
-                    bp.uri,
-                    bp.similarity,
-                    COALESCE(NULLIF(ri.headline, ''), NULLIF(ria.headline, '')) AS headline,
-                    (SELECT string_agg(s.text, E'\n' ORDER BY s.line_number)
-                     FROM snippet(bp.uri || CASE WHEN bp.start_byte IS NOT NULL
-                         THEN '#char=' || bp.start_byte || ',' || bp.end_byte
-                         ELSE '' END, {DefaultContextLines}) s
-                    ) AS snippet,
-                    (SELECT MIN(s.line_number)
-                     FROM snippet(bp.uri || CASE WHEN bp.start_byte IS NOT NULL
-                         THEN '#char=' || bp.start_byte || ',' || bp.end_byte
-                         ELSE '' END, {DefaultContextLines}) s
-                    ) AS line_start,
-                    (SELECT MAX(s.line_number)
-                     FROM snippet(bp.uri || CASE WHEN bp.start_byte IS NOT NULL
-                         THEN '#char=' || bp.start_byte || ',' || bp.end_byte
-                         ELSE '' END, {DefaultContextLines}) s
-                    ) AS line_end
-                FROM best_per_doc bp
-                LEFT JOIN node ri ON ri.id = bp.node_id
-                LEFT JOIN artifact ria ON ria.id = ri.artifact_id
-                ORDER BY bp.similarity DESC NULLS LAST
-                """;
-
-            var rows = _db.Query(sql, ct);
-            var results = new List<SimilarResult>();
-            foreach (var row in rows)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                var uri = row.TryGetValue("uri", out var uriVal) ? uriVal?.ToString() : null;
-                if (string.IsNullOrWhiteSpace(uri))
-                    continue;
-
-                if (!documentUriSet.Contains(uri!))
-                    continue;
-
-                var similarity = row.TryGetValue("similarity", out var simVal) && simVal is not null
-                    ? Convert.ToDouble(simVal, CultureInfo.InvariantCulture)
-                    : 0.0;
-
-                var headline = row.TryGetValue("headline", out var headlineVal) ? headlineVal?.ToString() : null;
-                var snippet = row.TryGetValue("snippet", out var snippetVal) ? snippetVal?.ToString() : null;
-                var lineStart = row.TryGetValue("line_start", out var lsVal) && lsVal is not null
-                    ? Convert.ToInt32(lsVal, CultureInfo.InvariantCulture)
-                    : (int?)null;
-                var lineEnd = row.TryGetValue("line_end", out var leVal) && leVal is not null
-                    ? Convert.ToInt32(leVal, CultureInfo.InvariantCulture)
-                    : (int?)null;
-
-                results.Add(new SimilarResult(
-                    Uri: uri!, Headline: headline, Snippet: snippet,
-                    LineStart: lineStart, LineEnd: lineEnd, Similarity: similarity));
-            }
-
-            return results;
-        }
-        catch (Exception) when (!ct.IsCancellationRequested)
-        {
-            return [];
-        }
-    }
-
     /// <summary>
     /// Builds a CTE that resolves the seed URI's fragment to a byte range.
-    /// - No fragment → first-to-last object byte range (excludes using directives)
-    /// - #symbol=Name → look up span by symbol suffix
-    /// - #line=X,Y → convert lines to bytes via artifact text
+    /// - No fragment: use range from first object to last object (excludes using directives)
+    /// - #symbol=Name: look up span by symbol suffix
+    /// - #line=X,Y: convert lines to bytes via artifact text
     /// </summary>
-    private static string BuildSeedRangeCte(string seedUri, string escapedSeedBase)
+    internal static string BuildSeedRangeCte(string seedUri, string escapedSeedBase)
     {
         var fragment = ParseFragment(seedUri);
 
@@ -411,7 +611,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         {
             // File-level seed: use range from first object to last object,
             // excluding using directives and boilerplate before the first declaration.
-            // MIN/MAX over empty set returns NULLs, which the EXISTS check treats as "all chunks".
+            // MIN/MAX over empty set returns NULLs, which the overlap check treats as "all chunks".
             return $"""
                 WITH seed_range AS (
                     SELECT MIN(s.start_byte) AS start_byte, MAX(s.end_byte) AS end_byte
@@ -426,9 +626,6 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
 
         if (fragment.Value.Symbol is not null)
         {
-            // Agents use dotted names like "FindHandler.ExecuteSearch" but
-            // $.name stores just "ExecuteSearch". Match the last segment
-            // against $.name, full string against the node URI's symbol.
             var symbolLower = fragment.Value.Symbol.ToLowerInvariant();
             var lastDot = symbolLower.LastIndexOf('.');
             var shortName = lastDot >= 0 ? symbolLower[(lastDot + 1)..] : symbolLower;
@@ -468,9 +665,9 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
             """;
     }
 
-    private readonly record struct SeedFragment(string? Symbol, int StartLine, int EndLine);
+    internal readonly record struct SeedFragment(string? Symbol, int StartLine, int EndLine);
 
-    private static SeedFragment? ParseFragment(string uri)
+    internal static SeedFragment? ParseFragment(string uri)
     {
         var hashIndex = uri.IndexOf('#', StringComparison.Ordinal);
         if (hashIndex < 0)
@@ -512,7 +709,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         return null;
     }
 
-    private static string StripFragment(string uri)
+    internal static string StripFragment(string uri)
     {
         if (RepoUri.TryParse(uri, out var repoUri))
             return repoUri.Container.AbsoluteUri;
@@ -521,7 +718,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         return hashIndex > 0 ? uri[..hashIndex] : uri;
     }
 
-    private static (string Content, int ShownCount) BuildOutput(
+    internal static (string Content, int ShownCount) BuildOutput(
         IReadOnlyList<SimilarResult> results,
         int belowThreshold,
         int tokenBudget,
@@ -582,7 +779,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         return builder.ToString();
     }
 
-    private static string FormatResult(SimilarResult result)
+    internal static string FormatResult(SimilarResult result)
     {
         var builder = new StringBuilder();
 
@@ -629,7 +826,7 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         return builder.ToString();
     }
 
-    private static string BuildFooter(int shown, int omitted)
+    internal static string BuildFooter(int shown, int omitted)
     {
         var label = shown == 1 ? "similar file" : "similar files";
         if (omitted > 0)
@@ -637,10 +834,10 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         return $"[{shown} {label} shown]";
     }
 
-    private static string EscapeSqlLiteral(string value)
+    internal static string EscapeSqlLiteral(string value)
         => value.Replace("'", "''", StringComparison.Ordinal);
 
-    private sealed record SimilarResult(
+    internal sealed record SimilarResult(
         string Uri,
         string? Headline,
         string? Snippet,
@@ -648,4 +845,9 @@ internal sealed class SimilarHandler(DuckDbDataStore? db, UriRegistry? uriRegist
         int? LineEnd,
         double Similarity);
 
+    internal readonly record struct SeedDimResult(int Dimension, string? Error);
+
+    internal sealed record SimilaritySearchResult(
+        IReadOnlyList<SimilarResult> Results,
+        string? Error);
 }
