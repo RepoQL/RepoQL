@@ -22,8 +22,8 @@ namespace RepoQL.Mcp.Client;
 public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
 {
     private readonly IReadOnlyDictionary<string, McpServerConfig> _configs;
-    private readonly ConcurrentDictionary<string, IMcpClient> _clients = new();
-    private readonly ConcurrentDictionary<string, Task<IMcpClient>> _connectingClients = new();
+    private readonly ConcurrentDictionary<string, McpClient> _clients = new();
+    private readonly ConcurrentDictionary<string, Task<McpClient>> _connectingClients = new();
     private readonly ILogger _logger;
     private readonly string _selfServerName;
     private readonly McpCredentialProvider _credentialProvider;
@@ -195,7 +195,7 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
     /// <summary>
     /// Gets or creates a connected client for the specified server.
     /// </summary>
-    public async Task<IMcpClient> GetClientAsync(string serverName, CancellationToken cancellationToken = default)
+    public async Task<McpClient> GetClientAsync(string serverName, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -213,7 +213,7 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         return await connectTask.ConfigureAwait(false);
     }
 
-    private async Task<IMcpClient> ConnectAsync(string serverName, CancellationToken cancellationToken)
+    private async Task<McpClient> ConnectAsync(string serverName, CancellationToken cancellationToken)
     {
         if (!_configs.TryGetValue(serverName, out var config))
             throw new KeyNotFoundException($"MCP server '{serverName}' not found in configuration.");
@@ -327,7 +327,7 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         // Prefer structured payload when available: it's already machine-readable JSON.
         if (result.StructuredContent is not null)
         {
-            var structuredJson = result.StructuredContent.ToJsonString();
+            var structuredJson = result.StructuredContent.Value.GetRawText();
             if (!string.IsNullOrWhiteSpace(structuredJson) &&
                 !structuredJson.Equals("null", StringComparison.OrdinalIgnoreCase))
             {
@@ -352,7 +352,7 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
             : JsonSerializer.Serialize(contents);
     }
 
-    private async Task<IMcpClient> CreateClientAsync(McpServerConfig config, CancellationToken cancellationToken)
+    private async Task<McpClient> CreateClientAsync(McpServerConfig config, CancellationToken cancellationToken)
     {
         var options = new McpClientOptions
         {

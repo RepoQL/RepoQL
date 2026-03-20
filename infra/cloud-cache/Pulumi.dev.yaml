@@ -8,5 +8,5 @@ config:
   cloud-cache:compactionEndpointUrl: https://replace-after-writer-deploy.run.app
   # Cloudflare — Cloud Run origins for proxied DNS records.
   # CLOUDFLARE_API_TOKEN env var provides auth (scoped to Zone:DNS:Edit, Zone:Zone Settings:Edit, Zone:Zone:Read).
-  cloud-cache:embeddingServiceOrigin: repoql-embedding-s3lststjqa-uc.a.run.app
-  cloud-cache:inferenceServiceOrigin: repoql-inference-s3lststjqa-uc.a.run.app
+  cloud-cache:embeddingServiceOrigin: repoql-cloud-4dl6e6infa-uc.a.run.app
+  cloud-cache:inferenceServiceOrigin: repoql-cloud-4dl6e6infa-uc.a.run.app

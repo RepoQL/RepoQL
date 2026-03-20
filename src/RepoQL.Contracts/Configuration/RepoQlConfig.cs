@@ -90,8 +90,8 @@ public sealed class RepoQlConfig
 #if DEBUG
         [Setting("gRPC endpoint URL for the remote embedding service",
             RequiresRestart = true,
-            DefaultValue = "https://api.repoql.ai")]
-        public string? Url { get; set; } = "https://api.repoql.ai";
+            DefaultValue = "https://repoql-cloud-4dl6e6infa-uc.a.run.app")]
+        public string? Url { get; set; } = "https://repoql-cloud-4dl6e6infa-uc.a.run.app";
 #else
         public string? Url { get; } = "https://api.repoql.ai";
 #endif
@@ -210,8 +210,8 @@ public sealed class RepoQlConfig
 #if DEBUG
         [Setting("Inference service gRPC URL",
             RequiresRestart = true,
-            DefaultValue = "https://api.repoql.ai")]
-        public string? ServiceUrl { get; set; } = "https://api.repoql.ai";
+            DefaultValue = "https://repoql-cloud-4dl6e6infa-uc.a.run.app")]
+        public string? ServiceUrl { get; set; } = "https://repoql-cloud-4dl6e6infa-uc.a.run.app";
 #else
         public string? ServiceUrl { get; } = "https://api.repoql.ai";
 #endif

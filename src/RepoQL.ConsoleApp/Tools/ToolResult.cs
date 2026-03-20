@@ -13,7 +13,7 @@ internal static class ToolResult
 {
     public static CallToolResult Success(string text) => new()
     {
-        Content = [new TextContentBlock { Type = "text", Text = text }]
+        Content = [new TextContentBlock { Text = text }]
     };
 
     private const string FeedbackHint =
@@ -21,7 +21,7 @@ internal static class ToolResult
 
     public static CallToolResult Error(string text) => new()
     {
-        Content = [new TextContentBlock { Type = "text", Text = text + FeedbackHint }],
+        Content = [new TextContentBlock { Text = text + FeedbackHint }],
         IsError = true
     };
 }

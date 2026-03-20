@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text;
+using Microsoft.Extensions.Logging;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Data.DuckDB.UdfFramework;
 
@@ -13,16 +14,24 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 /// to match the dimension of contextual document embeddings.
 /// </summary>
 [UdfClass]
-public class EmbedUdf(IEmbeddingProvider? embeddingProvider, IContextualEmbeddingProvider? contextualProvider = null)
+public class EmbedUdf(
+    IEmbeddingProvider? embeddingProvider,
+    IContextualEmbeddingProvider? contextualProvider = null,
+    ILogger<EmbedUdf>? logger = null)
 {
     private readonly IEmbeddingProvider? _embeddingProvider = embeddingProvider;
     private readonly IContextualEmbeddingProvider? _contextualProvider = contextualProvider is { Enabled: true } ? contextualProvider : null;
+    private readonly ILogger<EmbedUdf>? _logger = logger;
     /// <summary>
     /// Cache for embeddings to avoid redundant API calls.
     /// Key is (text, model), value is (embedding result, timestamp).
     /// Cache entries expire after 60 seconds.
     /// </summary>
     private static readonly ConcurrentDictionary<string, (string? Result, DateTime Timestamp)> EmbeddingCache = new();
+    private static string? _lastEmbedError;
+
+    [ScalarUdf("embed_last_error", Description = "Returns the last embed_query error (if any)", IsPure = false)]
+    public string? EmbedLastError([UdfDefault("''")] string? _dummy) => _lastEmbedError ?? "no error";
     private static readonly TimeSpan CacheExpiry = TimeSpan.FromSeconds(60);
     private const int MaxCacheSize = 100;
     /// <summary>
@@ -123,7 +132,7 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider, IContextualEmbeddin
         return EmbedWithCache(cacheKey, () => embedFunc(_embeddingProvider));
     }
 
-    private static string? EmbedWithCache(string cacheKey, Func<Task<float[]?>> embedFunc)
+    private string? EmbedWithCache(string cacheKey, Func<Task<float[]?>> embedFunc)
     {
         if (EmbeddingCache.TryGetValue(cacheKey, out var cached))
         {
@@ -137,8 +146,10 @@ public class EmbedUdf(IEmbeddingProvider? embeddingProvider, IContextualEmbeddin
         {
             vector = embedFunc().GetAwaiter().GetResult();
         }
-        catch
+        catch (Exception ex)
         {
+            _lastEmbedError = $"{ex.GetType().Name}: {ex.Message}";
+            _logger?.LogWarning(ex, "embed_query failed, falling back to flat provider");
             return null;
         }
 
