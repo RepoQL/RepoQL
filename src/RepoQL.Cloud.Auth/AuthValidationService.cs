@@ -136,7 +136,10 @@ public sealed class AuthValidationService
 
         var validationResult = await ValidateJwtCoreAsync(token, cancellationToken).ConfigureAwait(false);
         if (!validationResult.IsValid)
+        {
+            _logger.LogWarning(validationResult.Exception, "JWT validation failed: {Error}", validationResult.Exception?.Message);
             throw ToRpcException(validationResult.Exception);
+        }
 
         var claimsIdentity = validationResult.ClaimsIdentity;
         var subject = claimsIdentity?.FindFirst("sub")?.Value;
