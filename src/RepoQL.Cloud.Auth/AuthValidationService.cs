@@ -34,6 +34,13 @@ public sealed class AuthValidationService
         _options = options.Value;
         _validKeyHashes = new HashSet<string>(_options.ApiKeyHashes, StringComparer.OrdinalIgnoreCase);
 
+        _logger.LogInformation(
+            "Auth config: JwksUri={JwksUri}, Issuer={Issuer}, ClientId={ClientId}, ApiKeyHashes={KeyCount}",
+            string.IsNullOrWhiteSpace(_options.JwksUri) ? "(empty)" : _options.JwksUri,
+            string.IsNullOrWhiteSpace(_options.Issuer) ? "(empty)" : _options.Issuer,
+            string.IsNullOrWhiteSpace(_options.ClientId) ? "(empty)" : _options.ClientId,
+            _options.ApiKeyHashes.Length);
+
         if (!string.IsNullOrWhiteSpace(_options.JwksUri))
         {
             var httpClient = httpClientFactory.CreateClient(nameof(AuthValidationService));
