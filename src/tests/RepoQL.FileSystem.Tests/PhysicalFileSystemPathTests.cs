@@ -129,6 +129,27 @@ public class PhysicalFileSystemPathTests
         actualUri.AbsoluteUri.Should().Be(actualUri.AbsoluteUri.ToLowerInvariant());
     }
 
+    [Test]
+    public void ToRepoUri_EncodesHashCharactersInFileNames()
+    {
+        using var temp = new TempRoot();
+        var root = temp.DirectoryPath;
+        var docsPath = Path.Combine(root, "docs");
+        Directory.CreateDirectory(docsPath);
+        var filePath = Path.Combine(docsPath, "snapshot#1.json");
+        File.WriteAllText(filePath, "{}");
+
+        var store = new PhysicalFileSystem(root);
+
+        var uri = store.ToRepoUri(filePath);
+        var resolved = FileUriPathResolver.Resolve(root, uri);
+
+        uri.AbsoluteUri.Should().Be("file:///docs/snapshot%231.json");
+        uri.Container.AbsoluteUri.Should().Be("file:///docs/snapshot%231.json");
+        resolved.RelativePath.Should().Be("docs/snapshot#1.json");
+        AssertPathEquals(resolved.AbsolutePath, filePath);
+    }
+
     private static void AssertPathEquals(string actual, string expected)
     {
         var comparer = OperatingSystem.IsWindows()

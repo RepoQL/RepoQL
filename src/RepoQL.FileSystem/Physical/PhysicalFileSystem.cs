@@ -63,9 +63,10 @@ public sealed class PhysicalFileSystem(
             : string.IsNullOrEmpty(rel)
                 ? _uriPrefix
                 : $"{_uriPrefix}/{rel}";
+        var escapedPath = EscapeUriPath(combined);
         var uri = string.IsNullOrEmpty(_authority)
-            ? $"{Scheme}:///{combined}"
-            : $"{Scheme}://{_authority}/{combined}";
+            ? $"{Scheme}:///{escapedPath}"
+            : $"{Scheme}://{_authority}/{escapedPath}";
         return RepoUri.Parse(uri);
     }
 
@@ -163,5 +164,16 @@ public sealed class PhysicalFileSystem(
         if (OperatingSystem.IsWindows())
             return normalized.ToLowerInvariant();
         return normalized;
+    }
+
+    private static string EscapeUriPath(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return string.Empty;
+
+        return string.Join(
+            "/",
+            path.Split('/', StringSplitOptions.None)
+                .Select(Uri.EscapeDataString));
     }
 }
