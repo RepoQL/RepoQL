@@ -44,8 +44,16 @@ SELECT
     TRY_CAST(value->>'dense_score' AS DOUBLE) AS dense_score,
     TRY_CAST(value->>'rrf' AS DOUBLE) AS rrf,
     TRY_CAST(value->>'doc_semn' AS DOUBLE) AS doc_semn,
-    TRY_CAST(value->>'score' AS DOUBLE) AS score,
-    TRY_CAST(value->>'confidence' AS DOUBLE) AS confidence,
+    -- Rescale score: subtract noise floor (0.33) so irrelevant results → 0.
+    -- Floor is the Combine() output for zero lexical + weak semantic (~0.55 * 0.6).
+    GREATEST(
+        (TRY_CAST(value->>'score' AS DOUBLE) - 0.33) / (1.0 - 0.33),
+        0
+    ) AS score,
+    GREATEST(
+        (TRY_CAST(value->>'confidence' AS DOUBLE) - 0.33) / (1.0 - 0.33),
+        0
+    ) AS confidence,
     value->>'explain_json' AS explain_json
 FROM raw
 );

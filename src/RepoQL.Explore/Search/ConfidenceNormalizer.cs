@@ -1,33 +1,14 @@
 namespace RepoQL.Explore.Search;
 
 /// <summary>
-/// Normalizes raw scores to 0-100 confidence values using a hybrid approach:
-/// 75% sigmoid curve + 25% floor-based scaling.
+/// Converts pipeline scores to 0-100 confidence values.
+/// Scores are already floor-normalized in the search_pipeline macro
+/// (floor=0.33 subtracted, rescaled to [0,1]), so this is a direct mapping.
 /// </summary>
 public static class ConfidenceNormalizer
 {
     /// <summary>
-    /// Sigmoid steepness factor. Higher = sharper transition around midpoint.
-    /// </summary>
-    private const double SigmoidK = 12.0;
-
-    /// <summary>
-    /// Sigmoid midpoint. Scores above this get boosted, below get penalized.
-    /// </summary>
-    private const double SigmoidMidpoint = 0.50;
-
-    /// <summary>
-    /// Floor for hybrid component. Scores below this contribute 0 to hybrid.
-    /// </summary>
-    private const double HybridFloor = 0.20;
-
-    /// <summary>
-    /// Weight for sigmoid component (remainder goes to hybrid).
-    /// </summary>
-    private const double SigmoidWeight = 0.75;
-
-    /// <summary>
-    /// Normalize raw scores to 1-100 confidence range against fixed thresholds.
+    /// Normalize raw scores to 1-100 confidence range.
     /// Recursively normalizes child objects.
     /// </summary>
     public static IReadOnlyList<SearchResult> Normalize(IReadOnlyList<SearchResult> results)
@@ -85,22 +66,11 @@ public static class ConfidenceNormalizer
     }
 
     /// <summary>
-    /// Convert a raw score to 0-100 confidence using hybrid approach:
-    /// sigmoid + floor-based scaling.
+    /// Score is already normalized to [0,1] by the pipeline macro.
+    /// Just scale to percentage.
     /// </summary>
     public static int ScoreToConfidence(double rawScore)
     {
-        // Sigmoid component: smooth S-curve centered at midpoint
-        var sigmoid = 100.0 / (1.0 + Math.Exp(-SigmoidK * (rawScore - SigmoidMidpoint)));
-
-        // Hybrid component: linear scaling from floor to 1.0
-        var hybrid = rawScore < HybridFloor
-            ? 0.0
-            : (rawScore - HybridFloor) / (1.0 - HybridFloor) * 100.0;
-
-        // Weighted combination
-        var confidence = sigmoid * SigmoidWeight + hybrid * (1.0 - SigmoidWeight);
-
-        return (int)Math.Clamp(Math.Round(confidence), 1, 100);
+        return (int)Math.Clamp(Math.Round(rawScore * 100.0), 1, 100);
     }
 }

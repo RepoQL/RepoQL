@@ -38,92 +38,125 @@ doc_filtered AS (
         LOWER(REPLACE(repository_uri_container(
             COALESCE(n.uri, 'repoql://unknown')
         ), '\\', '/')) AS search_key,
-        repository_uri_file_name(n.uri) AS basename,
-        COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')) AS headline,
-        COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')) AS structure
+        LOWER(COALESCE(repository_uri_file_name(n.uri), '')) AS basename_lc,
+        LOWER(COALESCE(
+            COALESCE(NULLIF(n.headline, ''), NULLIF(a.headline, '')),
+            ''
+        )) AS headline_lc,
+        LOWER(COALESCE(
+            COALESCE(NULLIF(n.structure, ''), NULLIF(a.structure, '')),
+            ''
+        )) AS structure_lc
     FROM _lex_doc_scope sf
     JOIN node n ON n.id = sf.node_id
     LEFT JOIN artifact a ON a.id = n.artifact_id
 ),
 
--- Body content matches via grep (reads live files, already document-scoped)
+-- Tokenize query into lowercase terms. Drop empty strings and 1-char noise tokens.
+-- Defined before grep_lines so per-term grep can reference it.
+query_terms AS (
+    SELECT TRIM(qt.term_raw) AS term
+    FROM params p
+    CROSS JOIN UNNEST(string_split(p.keywords_lc, ' ')) AS qt(term_raw)
+    WHERE p.keywords_empty = FALSE
+      AND LENGTH(TRIM(qt.term_raw)) > 1
+),
+
+term_count AS (
+    SELECT COUNT(*) AS n
+    FROM query_terms
+),
+
+-- Single-pass multi-term grep: reads each file once, checks all terms per line.
 grep_lines AS (
-    SELECT DISTINCT n.id AS doc_id, g.line_number
-    FROM params p, grep_matches(p.keywords_lc, '**', 500) g
+    SELECT DISTINCT n.id AS doc_id, g.line_number, g.term
+    FROM params p, grep_terms(p.keywords_lc, '**', 1000) g
     JOIN node n ON n.uri = g.uri AND n.kind = 'document'
     WHERE p.keywords_empty = FALSE
 ),
 
--- Document heuristic scoring
-doc_heur_scored AS (
+-- Per-document, per-term coverage on in-memory fields.
+doc_term_hits AS (
     SELECT
         d.node_id,
         d.doc_id,
-        d.search_key,
-        d.basename,
-        d.headline,
-        d.structure,
-        concat_ws(' ',
-            COALESCE(d.search_key, ''),
-            COALESCE(d.basename, ''),
-            COALESCE(d.headline, ''),
-            COALESCE(d.structure, '')
-        ) AS text_target,
-        CASE
-            WHEN LOWER(COALESCE(d.basename, '')) = p.keywords_lc
-              OR LOWER(regexp_replace(COALESCE(d.basename, ''), '\.[^.]*$', '')) = p.keywords_lc THEN 3.0
-            WHEN d.doc_id IN (SELECT DISTINCT doc_id FROM grep_lines) THEN 2.5
-            WHEN position(p.keywords_lc IN LOWER(COALESCE(d.basename, ''))) > 0 THEN 2.0
-            WHEN position(p.keywords_lc IN LOWER(COALESCE(d.headline, '') || ' ' || COALESCE(d.structure, ''))) > 0 THEN 1.5
-            WHEN position(p.keywords_lc IN d.search_key) > 0 THEN 1.0
-            ELSE NULL
-        END AS bm25_heur,
-        TRY_CAST(match_score(p.keywords_lc, d.search_key) AS DOUBLE) AS fuzz
+        t.term,
+        CASE WHEN position(t.term IN d.basename_lc) > 0 THEN 1 ELSE 0 END AS bn_hit,
+        CASE WHEN d.basename_lc = t.term
+              OR regexp_replace(d.basename_lc, '\.[^.]*$', '') = t.term THEN 1 ELSE 0 END AS bn_exact,
+        CASE WHEN position(t.term IN d.headline_lc) > 0 THEN 1 ELSE 0 END AS hl_hit,
+        CASE WHEN position(t.term IN d.structure_lc) > 0 THEN 1 ELSE 0 END AS st_hit,
+        CASE WHEN position(t.term IN d.search_key) > 0 THEN 1 ELSE 0 END AS pk_hit,
+        TRY_CAST(match_score(t.term, d.basename_lc) AS DOUBLE) AS bn_fuzz
     FROM doc_filtered d
-    CROSS JOIN params p
-    WHERE p.keywords_empty = FALSE
+    CROSS JOIN query_terms t
 ),
 
--- Fuzzy fallback only for documents without a heuristic match
+doc_coverage AS (
+    SELECT
+        h.node_id,
+        h.doc_id,
+        SUM(h.bn_hit)::DOUBLE / NULLIF(tc.n, 0) AS basename_coverage,
+        MAX(h.bn_exact) AS has_basename_exact,
+        SUM(h.hl_hit)::DOUBLE / NULLIF(tc.n, 0) AS headline_coverage,
+        SUM(h.st_hit)::DOUBLE / NULLIF(tc.n, 0) AS structure_coverage,
+        SUM(h.pk_hit)::DOUBLE / NULLIF(tc.n, 0) AS path_coverage,
+        SUM(CASE WHEN h.bn_hit + h.hl_hit + h.st_hit + h.pk_hit > 0 THEN 1 ELSE 0 END)::DOUBLE
+            / NULLIF(tc.n, 0) AS any_field_coverage,
+        MAX(h.bn_fuzz) AS fuzz
+    FROM doc_term_hits h
+    CROSS JOIN term_count tc
+    GROUP BY h.node_id, h.doc_id, tc.n
+),
+
+grep_doc_counts AS (
+    SELECT
+        doc_id,
+        COUNT(*) AS hit_count,
+        COUNT(DISTINCT term) AS terms_found
+    FROM grep_lines
+    GROUP BY doc_id
+),
+
+-- Cumulative scoring: independent lexical signals add evidence instead of collapsing into score buckets.
+-- Sources from doc_coverage (not doc_filtered) to avoid MultiRefCTE double-evaluation trap.
+-- When query_terms is empty (all terms filtered by LENGTH>1), doc_coverage is empty → no results.
 doc_scored AS (
     SELECT
-        h.*,
-        IF(h.bm25_heur IS NULL,
-            TRY_CAST(match_score((SELECT keywords_lc FROM params), h.text_target) AS DOUBLE),
-            NULL) AS bm25_fallback
-    FROM doc_heur_scored h
+        c.node_id,
+        c.doc_id,
+        (
+            CASE
+                WHEN c.has_basename_exact = 1 THEN 3.0
+                WHEN c.basename_coverage > 0 THEN 1.5 * c.basename_coverage
+                ELSE 0
+            END
+            + CASE
+                WHEN COALESCE(g.hit_count, 0) > 0
+                    THEN 2.0 * (g.terms_found::DOUBLE / NULLIF((SELECT n FROM term_count), 0))
+                       + 0.3 * LN(1 + g.hit_count)
+                ELSE 0
+            END
+            + 1.5 * c.headline_coverage
+            + 1.0 * c.structure_coverage
+            + 0.5 * c.path_coverage
+        ) AS bm25_score,
+        c.fuzz AS fuzz
+    FROM doc_coverage c
+    LEFT JOIN grep_doc_counts g ON g.doc_id = c.doc_id
 ),
 
--- Top documents by score
-doc_ranked AS (
+-- Rank, cap, normalize. Single ROW_NUMBER pass (previously duplicated).
+ranked AS (
     SELECT
         node_id,
         doc_id,
-        COALESCE(bm25_heur, bm25_fallback, 0.05) AS doc_bm25,
-        fuzz AS doc_fuzz,
-        ROW_NUMBER() OVER (
-            ORDER BY COALESCE(bm25_heur, bm25_fallback, 0) DESC, fuzz DESC, node_id
-        ) AS doc_rank
-    FROM doc_scored
-    QUALIFY doc_rank <= (SELECT limit_cand FROM params)
-),
-
--- Document candidates only. Object scoring moves to the second pass.
-all_candidates AS (
-    SELECT node_id, doc_id, doc_bm25 AS bm25, doc_fuzz AS fuzz
-    FROM doc_ranked
-),
-
-limited AS (
-    SELECT
-        node_id,
-        doc_id,
-        bm25,
+        bm25_score,
         fuzz,
         ROW_NUMBER() OVER (
-            ORDER BY bm25 DESC, fuzz DESC, node_id
+            ORDER BY bm25_score DESC, COALESCE(fuzz, 0) DESC, node_id
         ) AS lex_rank
-    FROM all_candidates
+    FROM doc_scored
     QUALIFY lex_rank <= (SELECT limit_cand FROM params)
 ),
 
@@ -131,19 +164,19 @@ normalized AS (
     SELECT
         node_id,
         doc_id,
-        bm25,
+        bm25_score,
         fuzz,
         lex_rank,
-        zero_one(bm25) AS bm25_norm,
+        zero_one(bm25_score) AS bm25_norm,
         zero_one(fuzz) AS fuzz_norm,
         rrf_score(lex_rank) AS rrf_lex
-    FROM limited
+    FROM ranked
 )
 
 SELECT
     node_id,
     doc_id,
-    bm25 AS bm25_score,
+    bm25_score,
     fuzz AS fuzzy_score,
     bm25_norm,
     fuzz_norm,

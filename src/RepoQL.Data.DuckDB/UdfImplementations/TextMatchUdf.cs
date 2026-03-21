@@ -411,7 +411,71 @@ public sealed class TextMatchUdf(
         string LineContent,
         string? TruncatedWarning);
 
+    /// <summary>
+    /// Single-pass multi-term grep. Takes space-separated terms, reads each file once,
+    /// and emits (uri, line_number, term) for every matching line+term combination.
+    /// </summary>
+    [StructuredUdf("_grep_terms_internal",
+        MacroName = "grep_terms",
+        Description = "Single-pass multi-term grep: space-separated terms, one file scan, returns (uri, line_number, term)")]
+    public IEnumerable<TermMatchRow> GrepTerms(
+        string terms,
+        [UdfDefault("NULL")] string? scope,
+        [UdfDefault("1000")] int max_results)
+    {
+        if (string.IsNullOrWhiteSpace(terms))
+            yield break;
+
+        var termList = terms.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (termList.Length == 0)
+            yield break;
+
+        var limit = max_results <= 0 ? int.MaxValue : max_results;
+        var emitted = 0;
+
+        foreach (var repoUri in uriRegistry.MatchPattern(scope))
+        {
+            if (!TryOpenTextReader(repoUri, out var reader))
+                continue;
+
+            using (reader)
+            {
+                var uri = repoUri.Container.AbsoluteUri;
+                string? line;
+                var lineNumber = 0;
+
+                while ((line = reader.ReadLine()) is not null)
+                {
+                    lineNumber++;
+
+                    foreach (var term in termList)
+                    {
+                        if (!line.Contains(term, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        emitted++;
+                        if (emitted > limit)
+                        {
+                            yield return new TermMatchRow(
+                                uri, lineNumber, term,
+                                $"Truncated at {limit} results. Narrow scope or increase max_results.");
+                            yield break;
+                        }
+
+                        yield return new TermMatchRow(uri, lineNumber, term, null);
+                    }
+                }
+            }
+        }
+    }
+
     public record FileMatchRow(
         string Uri,
+        string? TruncatedWarning);
+
+    public record TermMatchRow(
+        string Uri,
+        int LineNumber,
+        string Term,
         string? TruncatedWarning);
 }

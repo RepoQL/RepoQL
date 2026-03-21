@@ -20,12 +20,10 @@ CREATE OR REPLACE MACRO zero_one(x) AS (
     END
 );
 
--- Combine normalized scores: max-signal + weighted blend.
--- The strongest single signal dominates; multi-signal agreement adds a bonus.
--- No classifier needed — a perfect lexical match naturally outscores semantic noise.
-CREATE OR REPLACE MACRO combine(bm25n, fuzzn, semn, wb := 0.15, wf := 0.15, ws := 0.70) AS (
-    GREATEST(COALESCE(bm25n, 0), COALESCE(fuzzn, 0), COALESCE(semn, 0))
-    + 0.2 * (COALESCE(wb * bm25n, 0) + COALESCE(wf * fuzzn, 0) + COALESCE(ws * semn, 0))
+-- Combine normalized scores via weighted blend. All inputs [0,1], output [0,1].
+-- Weights default to 0.30/0.15/0.55 matching the C# Combine() in SearchPipelineUdf.
+CREATE OR REPLACE MACRO combine(bm25n, fuzzn, semn, wb := 0.30, wf := 0.15, ws := 0.55) AS (
+    COALESCE(wb * bm25n, 0) + COALESCE(wf * fuzzn, 0) + COALESCE(ws * semn, 0)
 );
 
 -- Classify a query to determine the best search route.
@@ -48,13 +46,10 @@ CREATE OR REPLACE MACRO rrf_score(rank, k := 60) AS (
 );
 
 -- Confidence bucket based on combined score.
+-- Confidence = score clamped to [0,1]. Display layer (ConfidenceNormalizer)
+-- handles the sigmoid mapping to percentages.
 CREATE OR REPLACE MACRO score_confidence(score) AS (
-    CASE
-        WHEN score >= 2.0 THEN 0.95
-        WHEN score >= 1.2 THEN 0.80
-        WHEN score >= 0.8 THEN 0.65
-        ELSE 0.40
-    END
+    LEAST(GREATEST(COALESCE(score, 0), 0), 1.0)
 );
 
 -- Per-model noise floor: cosine scores below this are random similarity.

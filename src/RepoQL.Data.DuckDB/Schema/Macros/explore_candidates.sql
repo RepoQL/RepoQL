@@ -31,9 +31,9 @@ CREATE OR REPLACE MACRO _explore_candidates(
     k := 100,
     mode := 'auto',
     max_cand := 5000,
-    bm25_weight := 0.15,
+    bm25_weight := 0.30,
     fuzzy_weight := 0.15,
-    semantic_weight := 0.70,
+    semantic_weight := 0.55,
     uri_like := NULL
 ) AS TABLE (
 WITH
@@ -338,12 +338,10 @@ promoted AS (
 ranked AS (
     SELECT
         p.*,
-        -- Min-max confidence: 10 (lowest) to 100 (highest) within result set.
-        -- score_confidence() is calibrated for search() scores (0-2+), not combine() scores (0-0.3).
-        -- Use result-relative normalization instead.
-        CAST(LEAST(100, GREATEST(10,
-            10 + 90.0 * (p.promoted_score - MIN(p.promoted_score) OVER ())
-            / NULLIF(MAX(p.promoted_score) OVER () - MIN(p.promoted_score) OVER (), 0)
+        -- Floor-normalized confidence: subtract noise floor (0.33), rescale to [0,100].
+        -- Matches search_pipeline macro. No min-max — absolute, not relative.
+        CAST(LEAST(100, GREATEST(1,
+            ROUND(100.0 * GREATEST(p.promoted_score - 0.33, 0) / (1.0 - 0.33))
         )) AS INTEGER) AS confidence,
         ROW_NUMBER() OVER (ORDER BY p.promoted_score DESC, LENGTH(p.uri)) AS rank_pos
     FROM promoted p

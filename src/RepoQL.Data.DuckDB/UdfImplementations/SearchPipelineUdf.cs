@@ -239,16 +239,18 @@ public sealed class SearchPipelineUdf(
 
         foreach (var lex in lexDocs)
         {
+            // Lexical rows with no BM25 and no fuzzy evidence should not contribute to fusion.
+            var hasLexSignal = lex.Bm25Score > 0 || lex.FuzzyScore > 0;
             merged[lex.DocId] = new MergedDocScore(
                 lex.NodeId,
                 lex.DocId,
                 lex.Bm25Score,
                 lex.FuzzyScore,
-                lex.Bm25Norm,
-                lex.FuzzNorm,
+                hasLexSignal ? lex.Bm25Norm : 0.0,
+                hasLexSignal ? lex.FuzzNorm : 0.0,
                 0.0,
                 0.0,
-                lex.RrfLex,
+                hasLexSignal ? lex.RrfLex : 0.0,
                 0.0,
                 string.Empty,
                 null,
@@ -316,6 +318,7 @@ public sealed class SearchPipelineUdf(
 
         var ranked = merged.Values
             .OrderByDescending(static d => Combine(d.Bm25Norm, d.FuzzNorm, d.SemNorm))
+            .ThenByDescending(static d => (d.Bm25Norm > 0 || d.FuzzNorm > 0) && d.SemNorm > 0 ? 1 : 0)
             .ThenByDescending(static d => d.RrfLex + d.RrfSem)
             .ThenBy(static d => d.DocId)
             .ToList();
@@ -634,14 +637,13 @@ public sealed class SearchPipelineUdf(
         var denseScore = obj.ChunkSem.HasValue
             ? Math.Clamp(obj.ChunkSem.Value, 0.0, 1.0)
             : doc.SemNorm * 0.5; // weak inheritance: object didn't overlap any chunk
-        // Doc-rank boost: objects in higher-ranked documents score higher.
-        // An object in the #1 doc gets +0.15, objects in the last doc get ~0.
-        var docRankBoost = totalDocs > 1
-            ? 0.15 * (1.0 - ((double)(docRank - 1) / (totalDocs - 1)))
-            : 0.15;
-        var score = Combine(bm25Score, fuzzyScore, denseScore)
-            + (0.25 * Math.Min(obj.ObjectScore / 4.5, 1.0))
-            + docRankBoost;
+        // Doc-rank signal: objects in higher-ranked documents get a positional boost.
+        // Folded into the blend (not additive) so scores stay in [0,1].
+        var docRankSignal = totalDocs > 1
+            ? 1.0 - ((double)(docRank - 1) / (totalDocs - 1))
+            : 1.0;
+        // Object scoring: evidence (0.30) + symbol (0.10) + chunk semantic (0.40) + doc rank (0.20)
+        var score = (0.30 * bm25Score) + (0.10 * fuzzyScore) + (0.40 * denseScore) + (0.20 * docRankSignal);
 
         return new SearchResultRow(
             DocId: node.DocIdText,
@@ -797,25 +799,20 @@ public sealed class SearchPipelineUdf(
     }
 
     /// <summary>
-    /// Combine search signals into a final score. Uses a weighted blend (60%) plus
-    /// a best-signal boost (40%). The previous MAX + 0.2*blend formula gave MAX 83%
-    /// weight, causing score saturation when semantic was 1.0 for all results.
+    /// Combine search signals into a final score via weighted blend.
+    /// All inputs normalized to [0,1], output stays in [0,1].
+    /// Previous formula (0.6*blend + 0.4*best) inflated single-signal results —
+    /// a doc with only moderate semantic (0.43) scored 0.35 from the best-signal
+    /// term alone, compressing the entire output range into 0.7-1.0.
     /// </summary>
-    private static double Combine(double bm25Norm, double fuzzNorm, double semNorm, double wb = 0.15, double wf = 0.15, double ws = 0.70)
+    private static double Combine(double bm25Norm, double fuzzNorm, double semNorm,
+        double wb = 0.30, double wf = 0.15, double ws = 0.55)
     {
-        var blend = (wb * bm25Norm) + (wf * fuzzNorm) + (ws * semNorm);
-        var best = Math.Max(bm25Norm, Math.Max(fuzzNorm, semNorm));
-        return (0.6 * blend) + (0.4 * best);
+        return (wb * bm25Norm) + (wf * fuzzNorm) + (ws * semNorm);
     }
 
     private static double ScoreConfidence(double score)
-        => score switch
-        {
-            >= 2.0 => 0.95,
-            >= 1.2 => 0.80,
-            >= 0.8 => 0.65,
-            _ => 0.40
-        };
+        => Math.Clamp(score, 0.0, 1.0);
 
     private static string SearchClassifyQuery(string query)
     {
