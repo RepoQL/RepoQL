@@ -589,8 +589,13 @@ public sealed class SearchPipelineUdf(
         var snippet = BuildSnippet(node, doc.BestChunkStart, doc.BestChunkEnd);
         var bm25Score = Math.Min(obj.ObjectScore / 4.5, 1.0);
         var fuzzyScore = Math.Min(obj.SymbolScore / 4.0, 1.0);
-        var denseScore = Math.Max(doc.SemNorm, Math.Clamp(obj.ChunkSem ?? 0.0, 0.0, 1.0));
-        var score = Combine(bm25Score, fuzzyScore, Math.Max(doc.SemNorm, denseScore))
+        // Use chunk-level semantic score for objects, NOT document-level SemNorm.
+        // doc.SemNorm is the same for all objects in a document (often saturated at 1.0),
+        // which destroys differentiation. chunk_sem varies per object based on byte-range overlap.
+        var denseScore = obj.ChunkSem.HasValue
+            ? Math.Clamp(obj.ChunkSem.Value, 0.0, 1.0)
+            : doc.SemNorm * 0.5; // weak inheritance: object didn't overlap any chunk
+        var score = Combine(bm25Score, fuzzyScore, denseScore)
             + (0.25 * Math.Min(obj.ObjectScore / 4.5, 1.0));
 
         return new SearchResultRow(
@@ -746,9 +751,17 @@ public sealed class SearchPipelineUdf(
         return 0;
     }
 
+    /// <summary>
+    /// Combine search signals into a final score. Uses a weighted blend (60%) plus
+    /// a best-signal boost (40%). The previous MAX + 0.2*blend formula gave MAX 83%
+    /// weight, causing score saturation when semantic was 1.0 for all results.
+    /// </summary>
     private static double Combine(double bm25Norm, double fuzzNorm, double semNorm, double wb = 0.15, double wf = 0.15, double ws = 0.70)
-        => Math.Max(bm25Norm, Math.Max(fuzzNorm, semNorm))
-           + (0.2 * ((wb * bm25Norm) + (wf * fuzzNorm) + (ws * semNorm)));
+    {
+        var blend = (wb * bm25Norm) + (wf * fuzzNorm) + (ws * semNorm);
+        var best = Math.Max(bm25Norm, Math.Max(fuzzNorm, semNorm));
+        return (0.6 * blend) + (0.4 * best);
+    }
 
     private static double ScoreConfidence(double score)
         => score switch
