@@ -1525,6 +1525,47 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [DisplayName("Pruning still runs when every file in the epoch fails")]
+    public async Task Given_ReindexEpochContainsOnlyFailedFiles_When_IdleProcessingRuns_Then_PruneStillExecutes(CancellationToken token)
+    {
+        var failedUri = CreateUri("file:///repo/failed-only-reindex.md");
+        IReadOnlyCollection<RepoUri>? observedUris = null;
+        var pruneObserved = NewTaskCompletionSource<bool>();
+        var pruner = A.Fake<IArtifactPruner>();
+        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<RepoUri>>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                observedUris = call.GetArgument<IReadOnlyCollection<RepoUri>>(0);
+                pruneObserved.TrySetResult(true);
+                return Task.FromResult(PruningResult.None);
+            });
+
+        var parser = A.Fake<ParsingPipeline>();
+        A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .Returns(Task.FromResult(PipelineResult.Error));
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithParser(parser);
+            builder.WithArtifactPruner(pruner);
+        });
+
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(CreateRawArtifact(failedUri.AbsoluteUri), IndexItemOptions.Default, token);
+
+        await pruneObserved.Task.WaitAsync(token);
+
+        observedUris.Should().NotBeNull();
+        observedUris!
+            .Select(uri => uri.AbsoluteUri)
+            .Should()
+            .ContainSingle()
+            .Which.Should()
+            .Be(failedUri.AbsoluteUri);
+    }
+
+    [Test]
+    [Timeout(15_000)]
     [DisplayName("Idle processing requeues epoch when prune fails transiently")]
     public async Task Given_PruneFailsOnce_When_IdleProcessingRuns_Then_EpochIsRetriedAndAnalysisRuns(CancellationToken token)
     {

@@ -1461,7 +1461,8 @@ public partial class IndexingEngine : IAsyncDisposable
                 }
 
                 var hasWork = consolidatedStructureItems.Count > 0
-                    || consolidatedAnalysisItems.Count > 0;
+                    || consolidatedAnalysisItems.Count > 0
+                    || observedUris.Count > 0;
                 if (hasWork)
                 {
                     Interlocked.Increment(ref _activeIdleProcessingCount);
@@ -1472,11 +1473,10 @@ public partial class IndexingEngine : IAsyncDisposable
             if (!startedProcessing)
             {
                 // FM-008 visibility: Log when idle processing is skipped due to empty items.
-                // This can happen if all items in the epoch failed or were filtered during hot path.
-                // Pruning will NOT run in this case - stale documents may remain if this is a reindex.
+                // This should only happen when nothing from the epoch needs prune, embeddings, or analysis.
                 Logger.LogDebug(
                     "Idle processing skipped for epochs {MinEpoch}-{MaxEpoch}: no items pending. " +
-                    "If this occurs during reindex, stale documents may not be pruned.",
+                    "No pruning, embedding, or analysis work was observed.",
                     epochs.Min(), epochs.Max());
                 return;
             }
