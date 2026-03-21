@@ -42,12 +42,12 @@ internal sealed class BlameHandler(DuckDbDataStore db, RepositoryConfiguration r
         if (fileInfos.Count == 0)
         {
             return Task.FromResult(BuildSimpleResult(
-                "Blame is only available for file:/// URIs.",
+                "No valid URIs found in matched documents.",
                 filesConsulted: documents.Select(d => d.Uri).ToArray(),
                 tokenBudget: tokenBudget));
         }
 
-        if (!IsGitRepository(_repoConfig.Path))
+        if (AllUrisAreFileScheme(fileInfos) && !IsGitRepository(_repoConfig.Path))
         {
             return Task.FromResult(BuildSimpleResult(
                 "Not in a git repository.",
@@ -158,10 +158,6 @@ internal sealed class BlameHandler(DuckDbDataStore db, RepositoryConfiguration r
             if (!RepoUri.TryParse(doc.Uri, out var repoUri))
                 continue;
 
-            // Only handle file:// URIs
-            if (!string.Equals(repoUri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
-                continue;
-
             var containerUri = repoUri.Container.AbsoluteUri;
 
             // Extract line range from parsed Location
@@ -179,6 +175,9 @@ internal sealed class BlameHandler(DuckDbDataStore db, RepositoryConfiguration r
 
         return results;
     }
+
+    private static bool AllUrisAreFileScheme(IReadOnlyList<FileBlameInfo> fileInfos)
+        => fileInfos.Count > 0 && fileInfos.All(f => f.Uri.StartsWith("file:///", StringComparison.OrdinalIgnoreCase));
 
     private static bool IsGitRepository(string repoRoot)
         => Directory.Exists(Path.Combine(repoRoot, ".git"));

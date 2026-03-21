@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.ConsoleApp.Host;
-using RepoQL.Read;
+using RepoQL.Contracts;
 using static RepoQL.ConsoleApp.Host.SimilarHandler;
 
 namespace RepoQL.Tests;

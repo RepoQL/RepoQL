@@ -81,7 +81,7 @@ internal sealed class BlameHandlerTests
             tokenBudget: 1000,
             ct: CancellationToken.None);
 
-        result.Content.Should().Be("Blame is only available for file:/// URIs.");
+        result.Content.Should().Contain("No blame available");
     }
 
     [Test]

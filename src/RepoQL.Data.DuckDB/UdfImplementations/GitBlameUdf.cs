@@ -1,6 +1,8 @@
 using LibGit2Sharp;
 using RepoQL.Contracts;
 using RepoQL.Data.DuckDB.UdfFramework;
+using RepoQL.FileSystem.Abstractions;
+using RepoQL.FileSystem.Physical;
 
 namespace RepoQL.Data.DuckDB.UdfImplementations;
 
@@ -12,11 +14,14 @@ namespace RepoQL.Data.DuckDB.UdfImplementations;
 ///
 /// Complexity: Uses LibGit2Sharp to compute blame on-demand. Can be slow
 /// for large files but avoids the storage cost of pre-computing blame for all files.
+/// Resolves any URI scheme (file://, github://, etc.) to a physical git repository
+/// via the file system registry.
 /// </summary>
 [UdfClass]
-public class GitBlameUdf(RepositoryConfiguration repoConfig)
+public class GitBlameUdf(RepositoryConfiguration repoConfig, IFileSystemRegistry? fileSystemRegistry = null)
 {
     private readonly string _repoRoot = repoConfig.Path;
+    private readonly IFileSystemRegistry? _registry = fileSystemRegistry;
 
     /// <summary>
     /// Returns git blame information for a file.
@@ -30,15 +35,17 @@ public class GitBlameUdf(RepositoryConfiguration repoConfig)
         [UdfDefault("NULL")] int? startLine,
         [UdfDefault("NULL")] int? endLine)
     {
-        if (!Repository.IsValid(_repoRoot))
-            throw new InvalidOperationException($"git_blame: Not a valid git repository: {_repoRoot}");
+        // Resolve URI to a git repo root and relative path
+        var target = ResolveGitRepository(uri);
+        if (target is null)
+            yield break; // URI scheme not backed by a physical git repository
 
-        // Convert URI to relative path for LibGit2Sharp
-        var relativePath = UriToRelativePath(uri);
-        if (relativePath is null)
-            throw new InvalidOperationException($"git_blame: Invalid URI format: '{uri}'. Expected file:///path or relative path.");
+        var (repoRoot, relativePath) = target.Value;
 
-        using var repo = new Repository(_repoRoot);
+        if (!Repository.IsValid(repoRoot))
+            yield break; // Not a valid git repository at this path
+
+        using var repo = new Repository(repoRoot);
 
         BlameHunkCollection blame;
         try
@@ -84,36 +91,56 @@ public class GitBlameUdf(RepositoryConfiguration repoConfig)
     }
 
     /// <summary>
-    /// Converts a repository URI to a relative path for LibGit2Sharp.
-    /// Accepts: file:///src/Foo.cs, src/Foo.cs, /src/Foo.cs
-    /// Returns: src/Foo.cs (forward slashes)
+    /// Resolves a URI to the git repository root and file's relative path within it.
+    /// For file:// URIs, uses the primary repo root. For other schemes (github://, etc.),
+    /// resolves through the file system registry to find the backing PhysicalFileSystem.
     /// </summary>
-    private static string? UriToRelativePath(string input)
+    private (string RepoRoot, string RelativePath)? ResolveGitRepository(string input)
     {
         if (string.IsNullOrWhiteSpace(input))
             return null;
 
-        string relativePath;
-
-        // Try to parse as URI first
         if (RepoUri.TryParse(input, out var repoUri))
         {
-            // Only handle file:// URIs
-            if (!string.Equals(repoUri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
-                return null;
+            if (string.Equals(repoUri.Scheme, "file", StringComparison.OrdinalIgnoreCase))
+            {
+                var relativePath = ExtractRelativePath(repoUri);
+                return relativePath is null ? null : (_repoRoot, relativePath);
+            }
 
-            // Get path portion (URL-decoded)
-            relativePath = Uri.UnescapeDataString(repoUri.AbsolutePath);
+            // Non-file scheme — resolve through file system registry
+            if (_registry is not null)
+            {
+                try
+                {
+                    var vfs = _registry.Resolve(repoUri);
+                    if (vfs is PhysicalFileSystem pfs)
+                    {
+                        var resolved = FileUriPathResolver.Resolve(pfs.RootPath, repoUri, repoUri.Scheme);
+                        var relativePath = Path.GetRelativePath(pfs.RootPath, resolved.AbsolutePath)
+                            .Replace('\\', '/');
+                        return string.IsNullOrEmpty(relativePath) ? null : (pfs.RootPath, relativePath);
+                    }
+                }
+                catch (NotSupportedException)
+                {
+                    // No VFS registered for this scheme — fall through
+                }
+            }
+
+            return null;
         }
-        else
-        {
-            // Treat as raw path
-            relativePath = input;
-        }
 
-        // Remove leading slash and normalize to forward slashes
-        relativePath = relativePath.TrimStart('/').Replace('\\', '/');
+        // Raw path fallback
+        var rawPath = input.TrimStart('/').Replace('\\', '/');
+        return string.IsNullOrEmpty(rawPath) ? null : (_repoRoot, rawPath);
+    }
 
+    private static string? ExtractRelativePath(RepoUri repoUri)
+    {
+        var relativePath = Uri.UnescapeDataString(repoUri.AbsolutePath)
+            .TrimStart('/')
+            .Replace('\\', '/');
         return string.IsNullOrEmpty(relativePath) ? null : relativePath;
     }
 

@@ -221,18 +221,18 @@ Not all modifiers work across repository boundaries. Imported repos (github://) 
 
 **Example**
 ```
--- Works everywhere: content, structure, headline, tree, history, find, grep, regex, similar
+-- Works everywhere: content, structure, headline, tree, history, find, grep, regex, similar, blame
 read("github://owner/repo/src/** => structure", 3000)
 read("github://owner/repo/src/** => similar: file:///src/Logging.cs", 2000)
+read("github://owner/repo/src/main.go => blame", 2000)
 
 -- Works only on file:// URIs
-read("file:///src/Auth.cs => blame", 2000)
 read("file:///src/** => changes", 2000)
 ```
-//BOUNDARY: blame/changes require local git. Everything else works on all URI schemes.
+//BOUNDARY: changes requires local working copy. Everything else works on all URI schemes.
 
 **Depth**
-- `blame`: Only `file:///` — requires local git repository
+- `blame`: Works on all schemes with a git repository (file://, github://)
 - `changes`: Only `file:///` — working copy is local only
 - `similar`: Works across repos when content is genuinely related; returns 0.00 when it isn't
 - `history`: Works on both — imported repos index git history
