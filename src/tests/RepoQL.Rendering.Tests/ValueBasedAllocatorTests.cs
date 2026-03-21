@@ -7,36 +7,49 @@ namespace RepoQL.Rendering.Tests;
 public class ValueBasedAllocatorTests
 {
     [Test]
-    [DisplayName("breadth=5 uses identity exponent (1.0)")]
-    public void Given_BreadthFive_When_GettingModifier_Then_ReturnsIdentity()
+    [DisplayName("breadth=1 produces steep sigmoid (high k)")]
+    public void Given_BreadthOne_When_GettingSigmoidK_Then_ReturnsSteepValue()
     {
-        ValueBasedAllocator.GetBreadthModifier(5).Should().Be(1.0);
+        ValueBasedAllocator.GetSigmoidK(1).Should().BeGreaterThan(10.0);
+    }
+
+    [Test]
+    [DisplayName("breadth=10 produces gentle sigmoid (low k)")]
+    public void Given_BreadthTen_When_GettingSigmoidK_Then_ReturnsGentleValue()
+    {
+        ValueBasedAllocator.GetSigmoidK(10).Should().BeLessThan(5.0);
     }
 
     [Test]
     [DisplayName("breadth=1 concentrates budget on high-confidence results more than breadth=5")]
     public void Given_LowBreadth_When_Allocating_Then_TopResultGetsMoreBudget()
     {
-        var confidences = new[] { 95.0, 70.0, 45.0, 20.0 };
+        const int tokenBudget = 2000;
+        var results = CreateResults(4);
 
-        var lowShares = ComputeProportionalShares(confidences, breadth: 1);
-        var defaultShares = ComputeProportionalShares(confidences, breadth: 5);
+        var lowBreadth = ValueBasedAllocator.Allocate(results, tokenBudget, 1);
+        var defaultBreadth = ValueBasedAllocator.Allocate(results, tokenBudget, 5);
 
-        lowShares[0].Should().BeGreaterThan(defaultShares[0]);
-        lowShares[^1].Should().BeLessThan(defaultShares[^1]);
+        var lowTop = TotalTokensPerDecision(lowBreadth[0]);
+        var defaultTop = TotalTokensPerDecision(defaultBreadth[0]);
+
+        lowTop.Should().BeGreaterThan(defaultTop);
     }
 
     [Test]
     [DisplayName("breadth=10 flattens budget distribution compared to breadth=5")]
     public void Given_HighBreadth_When_Allocating_Then_DistributionFlattens()
     {
-        var confidences = new[] { 95.0, 70.0, 45.0, 20.0 };
+        const int tokenBudget = 2000;
+        var results = CreateResults(4);
 
-        var highShares = ComputeProportionalShares(confidences, breadth: 10);
-        var defaultShares = ComputeProportionalShares(confidences, breadth: 5);
+        var highBreadth = ValueBasedAllocator.Allocate(results, tokenBudget, 10);
+        var defaultBreadth = ValueBasedAllocator.Allocate(results, tokenBudget, 5);
 
-        highShares[0].Should().BeLessThan(defaultShares[0]);
-        highShares[^1].Should().BeGreaterThan(defaultShares[^1]);
+        var highTop = TotalTokensPerDecision(highBreadth[0]);
+        var defaultTop = TotalTokensPerDecision(defaultBreadth[0]);
+
+        highTop.Should().BeLessThan(defaultTop);
     }
 
     [Test]
@@ -55,6 +68,19 @@ public class ValueBasedAllocatorTests
         var twentyResultAverageTokens = twentyResultDecisions.Average(TotalTokensPerDecision);
 
         twoResultAverageTokens.Should().BeGreaterThan(twentyResultAverageTokens);
+    }
+
+    [Test]
+    [DisplayName("sigmoid k decreases monotonically as breadth increases")]
+    public void Given_IncreasingBreadth_When_GettingSigmoidK_Then_KDecreases()
+    {
+        var previous = double.MaxValue;
+        for (var breadth = 1; breadth <= 10; breadth++)
+        {
+            var k = ValueBasedAllocator.GetSigmoidK(breadth);
+            k.Should().BeLessThan(previous);
+            previous = k;
+        }
     }
 
     private static List<ExploreResult> CreateResults(int count)
@@ -77,14 +103,6 @@ public class ValueBasedAllocatorTests
                         uri: $"file:///test/result{i}.cs#symbol=Method{j}"))
                     .ToList()))
             .ToList();
-    }
-
-    private static double[] ComputeProportionalShares(double[] confidences, int breadth)
-    {
-        var exponent = ValueBasedAllocator.GetBreadthModifier(breadth);
-        var evs = confidences.Select(c => Math.Pow(c, exponent)).ToArray();
-        var total = evs.Sum();
-        return evs.Select(v => v / total).ToArray();
     }
 
     private static int TotalTokensPerDecision(RenderingDecision decision)

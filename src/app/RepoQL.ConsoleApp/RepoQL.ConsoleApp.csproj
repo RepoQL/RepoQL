@@ -51,8 +51,8 @@
       <PackageReference Include="JetBrains.Annotations" />
       <PackageReference Include="Microsoft.ML.OnnxRuntime" GeneratePathProperty="true" />
       <PackageReference Include="Microsoft.Extensions.Hosting" />
-        <PackageReference Include="Spectre.Console" />
-        <PackageReference Include="ModelContextProtocol" />
+        <!-- Spectre.Console comes transitively from RepoQL.Client -->
+        <!-- ModelContextProtocol comes transitively from RepoQL.McpServer -->
       <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
       <PackageReference Include="Microsoft.Diagnostics.Runtime" />
       <PackageReference Include="Google.Protobuf" />
@@ -143,18 +143,11 @@
     </ItemGroup>
 
     <ItemGroup>
-    <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" />
-    <ProjectReference Include="..\..\core\RepoQL.Protocol\RepoQL.Protocol.csproj" />
+    <ProjectReference Include="..\RepoQL.Client\RepoQL.Client.csproj" />
+    <ProjectReference Include="..\RepoQL.McpServer\RepoQL.McpServer.csproj" />
     <ProjectReference Include="..\..\core\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
-    <ProjectReference Include="..\..\core\RepoQL.Core\RepoQL.Core.csproj" />
     <ProjectReference Include="..\..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
-    <ProjectReference Include="..\RepoQL.Documentation\RepoQL.Documentation.csproj" />
-    <ProjectReference Include="..\..\core\RepoQL.Templating\RepoQL.Templating.csproj" />
-    <ProjectReference Include="..\..\engine\RepoQL.Explore\RepoQL.Explore.csproj" />
     <ProjectReference Include="..\..\engine\RepoQL.Read\RepoQL.Read.csproj" />
-    <ProjectReference Include="..\..\engine\RepoQL.Commands\RepoQL.Commands.csproj" />
-    <ProjectReference Include="..\..\cloud\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" />
-    <ProjectReference Include="..\..\engine\RepoQL.Sandbox\RepoQL.Sandbox.csproj" />
   </ItemGroup>
 
     
@@ -226,7 +219,6 @@
     </ItemGroup>
 
     <ItemGroup>
-        <EmbeddedResource Include="Templates/**/*.liquid" />
         <TrimmerRootDescriptor Include="ILLink.Descriptors.xml" />
     </ItemGroup>
 

@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>RepoQL.ConsoleApp</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RepoQL.McpServer" />
+    <InternalsVisibleTo Include="repoql" />
+    <InternalsVisibleTo Include="RepoQL.Cli.Tests" />
+    <InternalsVisibleTo Include="RepoQL.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Transitive from RepoQL.Formats.DotNet; explicit here to satisfy Microsoft.Build.Locator MSBL001 -->
+    <PackageReference Include="Microsoft.Build.Framework" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Spectre.Console" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Diagnostics.Runtime" />
+    <PackageReference Include="Serilog" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\..\core\RepoQL.Protocol\RepoQL.Protocol.csproj" />
+    <ProjectReference Include="..\..\core\RepoQL.Core\RepoQL.Core.csproj" />
+    <ProjectReference Include="..\..\core\RepoQL.Templating\RepoQL.Templating.csproj" />
+    <ProjectReference Include="..\..\engine\RepoQL.Commands\RepoQL.Commands.csproj" />
+    <ProjectReference Include="..\..\engine\RepoQL.Explore\RepoQL.Explore.csproj" />
+    <ProjectReference Include="..\..\engine\RepoQL.Sandbox\RepoQL.Sandbox.csproj" />
+    <ProjectReference Include="..\..\cloud\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" />
+    <ProjectReference Include="..\..\cloud\RepoQL.Inference.Client\RepoQL.Inference.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Templates/**/*.liquid" />
+  </ItemGroup>
+
+</Project>

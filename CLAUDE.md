@@ -236,10 +236,12 @@ Projects are organized into tiers under `src/` that reflect the dependency direc
 | `RepoQL.Sarif` | SARIF import and annotation integration |
 | `RepoQL.Analyzers` | Roslyn analyzers that enforce RepoQL architectural rules |
 
-**`app/`** — Composition roots
+**`app/`** — Composition roots and client infrastructure
 | Project | Purpose |
 |---------|---------|
-| `RepoQL.ConsoleApp` | CLI + gRPC host, tool handlers, commands, dashboard |
+| `RepoQL.Client` | Shared client infrastructure — gRPC client management, formatters, command implementations, diagnostics, auth |
+| `RepoQL.McpServer` | MCP server — tool handlers, resource handlers, MCP startup logic |
+| `RepoQL.ConsoleApp` | gRPC host + CLI — the single `repoql.exe` binary, references Client + McpServer |
 | `RepoQL.Documentation` | Embedded `help://` docs — where help content lives physically |
 | `RepoQL.Orchestrator` | Aspire host for development telemetry |
 

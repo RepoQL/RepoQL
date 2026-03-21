@@ -5,8 +5,10 @@ using Grpc.Core;
 using Grpc.Health.V1;
 using Grpc.Net.Client;
 using Microsoft.Extensions.FileProviders;
+using System.Reflection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.ConsoleApp.Host;
-using RepoQL.ConsoleApp.Logging;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 using Serilog;
@@ -163,7 +165,7 @@ internal sealed class DiagnosticsCollector
             dbExists = File.Exists(dbPath);
             if (dbExists == true)
             {
-                var lockHolder = DatabaseLockInspector.TryGetLockHolder(dbPath, Log.Logger);
+                var lockHolder = DatabaseLockInspector.TryGetLockHolder(dbPath, Serilog.Log.Logger);
                 if (lockHolder is not null)
                 {
                     dbLocked = true;
@@ -250,7 +252,7 @@ internal sealed class DiagnosticsCollector
             CurrentDirectory = cwd,
             Platform = string.IsNullOrWhiteSpace(platform) ? null : platform,
             Runtime = string.IsNullOrWhiteSpace(runtime) ? null : runtime,
-            RepoqlVersion = HostLogging.GetHostVersion(),
+            RepoqlVersion = Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "unknown",
             RepoqlEnvironmentVariables = repoqlEnv,
             SocketPath = socketPath,
             SocketExists = socketExists,
@@ -491,7 +493,7 @@ internal sealed class DiagnosticsCollector
     {
         try
         {
-            var stderrPath = CrossSessionHostState.GetHostStderrPath(repoRoot);
+            var stderrPath = HostPaths.GetHostStderrPath(repoRoot);
             if (!File.Exists(stderrPath))
             {
                 probeFailures.Add($"host_stderr_file: FileNotFoundException - File '{stderrPath}' was not found.");
@@ -521,7 +523,7 @@ internal sealed class DiagnosticsCollector
     {
         try
         {
-            var versionPath = CrossSessionHostState.GetHostVersionPath(repoRoot);
+            var versionPath = HostPaths.GetHostVersionPath(repoRoot);
             if (!File.Exists(versionPath))
                 return null;
 

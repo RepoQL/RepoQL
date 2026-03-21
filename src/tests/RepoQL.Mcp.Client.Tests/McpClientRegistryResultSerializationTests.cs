@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+using System.Text.Json;
 using AwesomeAssertions;
 using ModelContextProtocol.Protocol;
 
@@ -11,12 +11,12 @@ public class McpClientRegistryResultSerializationTests
     {
         var result = new CallToolResult
         {
-            StructuredContent = JsonNode.Parse("""
+            StructuredContent = JsonDocument.Parse("""
                 {"data":{"actor":{"accounts":[{"id":1418123,"name":"Church Community Builder"}]}}}
-                """),
+                """).RootElement,
             Content = new List<ContentBlock>
             {
-                new TextContentBlock { Type = "text", Text = "ignored text payload" }
+                new TextContentBlock { Text = "ignored text payload" }
             }
         };
 
@@ -34,7 +34,7 @@ public class McpClientRegistryResultSerializationTests
         {
             Content = new List<ContentBlock>
             {
-                new TextContentBlock { Type = "text", Text = """{"status":"ok"}""" }
+                new TextContentBlock { Text = """{"status":"ok"}""" }
             }
         };
 
@@ -52,9 +52,8 @@ public class McpClientRegistryResultSerializationTests
             {
                 new ImageContentBlock
                 {
-                    Type = "image",
                     MimeType = "image/png",
-                    Data = "AA=="
+                    Data = Convert.FromBase64String("AA==")
                 }
             }
         };
