@@ -291,19 +291,19 @@ public sealed class SearchPipelineUdf(
             }
         }
 
-        // Normalize raw semantic scores using the result set's own range.
-        // sem_norm from SQL calibration saturates (66 docs at 1.0), destroying differentiation.
-        // Raw sem_score has real variation (e.g., 0.45-0.62). Rescale to 0-1 using min/max.
-        var semScores = merged.Values.Where(d => d.SemScore > 0).Select(d => d.SemScore).ToList();
-        var semMin = semScores.Count > 0 ? semScores.Min() : 0.0;
-        var semMax = semScores.Count > 0 ? semScores.Max() : 1.0;
-        var semRange = semMax - semMin;
-        if (semRange < 0.01) semRange = 1.0; // avoid division by zero when all scores are identical
+        // Normalize raw semantic scores using absolute anchors based on embedding model characteristics.
+        // Voyage 1024d cosine similarity ranges:
+        //   0.60+ = strong match, 0.40-0.60 = moderate, 0.20-0.40 = weak, <0.20 = noise
+        // Using fixed floor/ceiling preserves absolute relevance signal — irrelevant queries
+        // ("quantum physics") stay low instead of being inflated to 1.0 by relative scaling.
+        const double semFloor = 0.20;   // below this is noise
+        const double semCeiling = 0.65; // above this is a strong match
+        const double semRange = semCeiling - semFloor;
 
         foreach (var key in merged.Keys.ToList())
         {
             var d = merged[key];
-            var rescaled = d.SemScore > 0 ? (d.SemScore - semMin) / semRange : 0.0;
+            var rescaled = d.SemScore > 0 ? (d.SemScore - semFloor) / semRange : 0.0;
             merged[key] = d with { SemNorm = Math.Clamp(rescaled, 0.0, 1.0) };
         }
 
