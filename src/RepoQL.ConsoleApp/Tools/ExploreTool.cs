@@ -32,7 +32,7 @@ internal sealed class ExploreTool(
 
         <BREADTH>
         Breadth controls how tokens are distributed across results.
-        - Low (1-3): Depth. Few results with full structure and children. Use when you know what you're looking for.
+        - Low (1-3): Depth. Few results with full structure and children. Use when you need content
         - Medium (4-6): Balanced. Good detail on top hits, awareness of the rest. Default.
         - High (7-10): Coverage. Many results with headlines. Use for surveying what exists.
         Default is 5. Combine with tokenBudget to control the tradeoff.
@@ -40,7 +40,7 @@ internal sealed class ExploreTool(
 
         <PARAMETERS>
         **tokenBudget** (required): How many tokens you're willing to spend. This is a bet—you don't know exactly what you'll get.
-        - Start low (500-1000) and increase if you need more
+        - Start low (500-1000) and increase if you need more. Don't spend more than 25000
         - Different scopes, breadth levels, and content will consume budget differently
         - The tool maximizes value within your budget, but outcomes vary
         Consider the stakes: if an incomplete answer has serious consequences, bet more. When the cost of being wrong is low, bet small and iterate.
@@ -57,7 +57,7 @@ internal sealed class ExploreTool(
         - file:///src/**;!**/tests/** — source without tests
         - help://** — documentation only
         - github://owner/repo/** — imported repository (use query("SELECT * FROM Filesystems") to find URI schemes)
-        - Combine with ; exclude with !
+        - Combine with ; exclude with ! e.g. file://**;!**/tests/**
 
         **boost**: Regex to elevate matches (demotes others relatively).
         - (?i)interface|abstract — find contracts
@@ -74,37 +74,38 @@ internal sealed class ExploreTool(
         Combine parameters for precision:
         1. uriGlob filters WHERE (path matching)
         2. keywords finds WHAT (semantic search)
-        3. boost ranks UP (elevate matches)
-        4. penalize ranks DOWN (demote matches)
+        3. question determines result RELEVANCE (natural language search)
+        4. boost ranks UP (elevate matches)
+        5. penalize ranks DOWN (demote matches)
 
         Example: Find auth implementations, not tests:
-        → breadth=5, uriGlob="file:///src/**", keywords="authenticate authorize", penalize="(?i)test|mock"
+        → breadth=5, uriGlob="file:///src/**", keywords="authenticate authorize", question="How is authentication implemented?", penalize="(?i)test|mock"
 
         Example: Find service contracts:
-        → breadth=5, uriGlob="file:///src/**", keywords="service", boost="(?i)interface|abstract"
+        → breadth=5, uriGlob="file:///src/**", keywords="service", question="What service contracts exist?", boost="(?i)interface|abstract"
         </LAYERED_APPROACH>
 
         <QUICK_PATTERNS>
         Ranked survey:
-        → breadth=8, uriGlob="file:///src/**", keywords="Controller", tokenBudget=3000
+        → breadth=10, uriGlob="file:///src/**", keywords="Controller", question="What controllers exist and what do they handle?", tokenBudget=3000
 
         Find where something is (wide search — no scope):
-        → breadth=5, keywords="cache", tokenBudget=1500
+        → breadth=5, keywords="cache", question="Where is caching implemented?", boost="(?i)invalidation|redis|evict", tokenBudget=1500
 
         Examine specific code:
-        → breadth=2, uriGlob="file:///src/**", keywords="cache invalidation", tokenBudget=2500
+        → breadth=1, uriGlob="file:///src/**", keywords="cache invalidation", question="How does cache invalidation work?", tokenBudget=2500
 
         Find production code only:
-        → breadth=5, uriGlob="file:///src/**;!**/tests/**", keywords="database connection", penalize="(?i)test|mock", tokenBudget=1500
+        → breadth=5, uriGlob="file:///src/**;!**/tests/**", keywords="database connection", question="How are database connections managed?", penalize="(?i)test|mock", tokenBudget=1500
 
         Find contracts/interfaces:
-        → breadth=5, uriGlob="file:///src/**/*.cs", keywords="service", boost="(?i)interface|abstract", tokenBudget=1500
+        → breadth=5, uriGlob="file:///src/**/*.cs", keywords="service", question="What service interfaces are defined?", boost="(?i)interface|abstract", tokenBudget=1500
 
         Search documentation:
-        → breadth=8, uriGlob="help://**", keywords="configuration", tokenBudget=1000
+        → breadth=8, uriGlob="help://**", keywords="configuration", question="How is configuration handled?", tokenBudget=1000
 
         Explore an imported repository:
-        → breadth=5, uriGlob="github://owner/repo/**", keywords="middleware routing", tokenBudget=2000
+        → breadth=5, uriGlob="github://owner/repo/**", keywords="middleware routing", question="How does the middleware pipeline work?", tokenBudget=2000
         </QUICK_PATTERNS>
 
         <TIPS>

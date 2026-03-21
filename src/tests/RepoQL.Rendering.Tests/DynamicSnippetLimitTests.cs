@@ -86,7 +86,7 @@ public class DynamicSnippetLimitTests
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
                 Scope: null,
-                Question: "find symbol",
+                Keywords: "find symbol",
                 Patterns: [],
                 Breadth: 5,
                 TokenBudget: 2000),
@@ -125,7 +125,7 @@ public class DynamicSnippetLimitTests
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
                 Scope: null,
-                Question: "find symbol",
+                Keywords: "find symbol",
                 Patterns: [],
                 Breadth: 5,
                 TokenBudget: 2000),

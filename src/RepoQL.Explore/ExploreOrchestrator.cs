@@ -51,12 +51,12 @@ public sealed class ExploreOrchestrator
         // Build search parameters
         var searchParams = new SearchParameters(
             Scope: query.Scope,
-            Question: query.Keywords,
+            Keywords: query.Keywords,
             Patterns: boostPatterns,
             Breadth: query.Breadth,
             TokenBudget: query.TokenBudget,
             PenalizePatterns: penalizePatterns.Count > 0 ? penalizePatterns : null,
-            RerankQuery: string.IsNullOrWhiteSpace(query.Question) ? null : query.Question
+            Question: string.IsNullOrWhiteSpace(query.Question) ? null : query.Question
         );
 
         // Create JIT cache for this search session

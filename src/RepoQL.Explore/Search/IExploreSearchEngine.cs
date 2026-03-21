@@ -53,7 +53,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         var targetPerFile = (int)(300.0 / Math.Max(parameters.Breadth, 1));
         var k = Math.Clamp(parameters.TokenBudget / targetPerFile, 5, 200);
         var candidateResult = await _candidateService.SearchAsync(
-            parameters.Question,
+            parameters.Keywords,
             parameters.Scope,
             k,
             cancellationToken).ConfigureAwait(false);
@@ -65,7 +65,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         {
             var config = GetJitSearchConfig(parameters.Breadth, parameters.TokenBudget);
             var enrichment = await jitService!.EnrichAsync(
-                parameters.Question!,
+                parameters.Keywords!,
                 candidates,
                 jitCache,
                 config,
@@ -99,10 +99,10 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         // Phase 5: Document-level reranking via Voyage AI
         // Runs last so it sees JIT-corrected scores and pattern boosts.
         // Applies relevance-based modifier: above neutral → boost, below → heavier penalty.
-        // Uses RerankQuery (natural language question) when available; falls back to keywords.
+        // Uses Question (natural language) when available; falls back to keywords.
         if (ShouldRerank(parameters, results))
         {
-            var rerankQuery = parameters.RerankQuery ?? parameters.Question!;
+            var rerankQuery = parameters.Question ?? parameters.Keywords!;
             await ApplyRerankAsync(rerankQuery, results, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -129,7 +129,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
             return false;
         if (!_rerankProvider.Enabled)
             return false;
-        if (string.IsNullOrWhiteSpace(parameters.Question))
+        if (string.IsNullOrWhiteSpace(parameters.Question) && string.IsNullOrWhiteSpace(parameters.Keywords))
             return false;
         if (results.Count < 5)
             return false;
@@ -268,7 +268,7 @@ public sealed class ExploreSearchEngine : IExploreSearchEngine
         if (jitService is null)
             return false;
 
-        if (string.IsNullOrWhiteSpace(parameters.Question))
+        if (string.IsNullOrWhiteSpace(parameters.Keywords))
             return false;
 
         return parameters.Breadth <= 7;

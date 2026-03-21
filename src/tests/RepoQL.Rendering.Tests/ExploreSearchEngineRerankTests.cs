@@ -20,7 +20,7 @@ public class ExploreSearchEngineRerankTests
             reranker);
 
         var result = await searchEngine.SearchAsync(
-            new SearchParameters(Scope: null, Question: "test query", Patterns: [], Breadth: 5, TokenBudget: 2000),
+            new SearchParameters(Scope: null, Keywords: "test query", Patterns: [], Breadth: 5, TokenBudget: 2000),
             jitService: null, jitCache: null, cancellationToken: CancellationToken.None);
 
         // doc0 was originally first but got demoted (moved down 4 positions)
@@ -44,7 +44,7 @@ public class ExploreSearchEngineRerankTests
             reranker);
 
         var result = await searchEngine.SearchAsync(
-            new SearchParameters(Scope: null, Question: "test query", Patterns: [], Breadth: 5, TokenBudget: 2000),
+            new SearchParameters(Scope: null, Keywords: "test query", Patterns: [], Breadth: 5, TokenBudget: 2000),
             jitService: null, jitCache: null, cancellationToken: CancellationToken.None);
 
         // doc0 should no longer be first
@@ -62,7 +62,7 @@ public class ExploreSearchEngineRerankTests
             reranker);
 
         var result = await searchEngine.SearchAsync(
-            new SearchParameters(Scope: null, Question: null, Patterns: [], Breadth: 5, TokenBudget: 2000),
+            new SearchParameters(Scope: null, Keywords: null, Patterns: [], Breadth: 5, TokenBudget: 2000),
             jitService: null, jitCache: null, cancellationToken: CancellationToken.None);
 
         reranker.CallCount.Should().Be(0);
@@ -81,7 +81,7 @@ public class ExploreSearchEngineRerankTests
             reranker);
 
         var result = await searchEngine.SearchAsync(
-            new SearchParameters(Scope: null, Question: "test", Patterns: [], Breadth: 5, TokenBudget: 2000),
+            new SearchParameters(Scope: null, Keywords: "test", Patterns: [], Breadth: 5, TokenBudget: 2000),
             jitService: null, jitCache: null, cancellationToken: CancellationToken.None);
 
         reranker.CallCount.Should().Be(0);
@@ -98,7 +98,7 @@ public class ExploreSearchEngineRerankTests
             reranker);
 
         var result = await searchEngine.SearchAsync(
-            new SearchParameters(Scope: null, Question: "test", Patterns: [], Breadth: 8, TokenBudget: 2000),
+            new SearchParameters(Scope: null, Keywords: "test", Patterns: [], Breadth: 8, TokenBudget: 2000),
             jitService: null, jitCache: null, cancellationToken: CancellationToken.None);
 
         reranker.CallCount.Should().Be(0);
@@ -115,7 +115,7 @@ public class ExploreSearchEngineRerankTests
             reranker);
 
         var result = await searchEngine.SearchAsync(
-            new SearchParameters(Scope: null, Question: "test", Patterns: [], Breadth: 5, TokenBudget: 2000),
+            new SearchParameters(Scope: null, Keywords: "test", Patterns: [], Breadth: 5, TokenBudget: 2000),
             jitService: null, jitCache: null, cancellationToken: CancellationToken.None);
 
         // Original order preserved despite failure
@@ -136,7 +136,7 @@ public class ExploreSearchEngineRerankTests
             reranker);
 
         var result = await searchEngine.SearchAsync(
-            new SearchParameters(Scope: null, Question: "test", Patterns: [], Breadth: 5, TokenBudget: 2000),
+            new SearchParameters(Scope: null, Keywords: "test", Patterns: [], Breadth: 5, TokenBudget: 2000),
             jitService: null, jitCache: null, cancellationToken: CancellationToken.None);
 
         // All scores should be >= 0

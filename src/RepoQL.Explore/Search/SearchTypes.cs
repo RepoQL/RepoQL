@@ -5,12 +5,12 @@ namespace RepoQL.Explore.Search;
 /// </summary>
 public record SearchParameters(
     string? Scope,
-    string? Question,
+    string? Keywords,
     IReadOnlyList<string> Patterns,
     int Breadth = 5,
     int TokenBudget = 2000,
     IReadOnlyList<string>? PenalizePatterns = null,
-    string? RerankQuery = null
+    string? Question = null
 );
 
 /// <summary>

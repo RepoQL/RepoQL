@@ -88,7 +88,7 @@ public class ExploreSearchEngineProvenanceTests
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
                 Scope: null,
-                Question: "validate token",
+                Keywords: "validate token",
                 Patterns: [],
                 Breadth: 5,
                 TokenBudget: 2000),
@@ -173,7 +173,7 @@ public class ExploreSearchEngineProvenanceTests
         var result = await searchEngine.SearchAsync(
             new SearchParameters(
                 Scope: null,
-                Question: "validate token",
+                Keywords: "validate token",
                 Patterns: [],
                 Breadth: 5,
                 TokenBudget: 2000),
