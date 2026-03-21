@@ -256,7 +256,9 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         });
 
         // --- Cloud Trace ---
-        // Both services send OTLP to the Cloud Run built-in collector on localhost:4317.
+        // Embedding and cache-writer use plain .UseOtlpExporter() with no GCP detection,
+        // so they only export when OTEL_EXPORTER_OTLP_ENDPOINT is set (Aspire in dev).
+        // On Cloud Run they currently export nothing — trace agent grants are forward-looking.
 
         _ = new Gcp.Projects.IAMMember("embeddingServiceTraceAgent", new Gcp.Projects.IAMMemberArgs
         {
@@ -380,6 +382,15 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Member = AsServiceAccountMember(cloudServiceAccount.Email),
         });
 
+        // Cloud service exports OTLP metrics to telemetry.googleapis.com (commit 48c6a0e).
+        // Previously granted manually in production; now codified here.
+        _ = new Gcp.Projects.IAMMember("cloudServiceMetricWriter", new Gcp.Projects.IAMMemberArgs
+        {
+            Project = gcpProjectId,
+            Role = "roles/monitoring.metricWriter",
+            Member = AsServiceAccountMember(cloudServiceAccount.Email),
+        });
+
         // --- Cloudflare DNS & CDN proxy ---
         // Proxied CNAME records to Cloud Run services. Cloudflare terminates TLS at the edge,
         // provides free DDoS protection and analytics. SSL "Full" mode works because Cloud Run
@@ -399,13 +410,43 @@ internal sealed class CloudCacheInfrastructureStack : Stack
 
         var zoneId = zone.Apply(z => z.Id);
 
-        // Zone settings — SSL Full (GFE presents valid Google-managed cert for api.repoql.ai).
-        // gRPC is enabled via Cloudflare dashboard (Network → gRPC toggle).
+        // Zone settings — all Cloudflare zone-level config codified here.
         _ = new Cloudflare.ZoneSetting("sslSetting", new Cloudflare.ZoneSettingArgs
         {
             ZoneId = zoneId,
             SettingId = "ssl",
-            Value = "full",
+            Value = "strict",
+        });
+
+        _ = new Cloudflare.ZoneSetting("minTlsVersion", new Cloudflare.ZoneSettingArgs
+        {
+            ZoneId = zoneId,
+            SettingId = "min_tls_version",
+            Value = "1.2",
+        });
+
+        _ = new Cloudflare.ZoneSetting("grpcSetting", new Cloudflare.ZoneSettingArgs
+        {
+            ZoneId = zoneId,
+            SettingId = "grpc",
+            Value = "on",
+        });
+
+        // Cloud Run domain mapping — routes api.repoql.ai to the repoql-cloud service.
+        // Google manages the TLS cert via Let's Encrypt. The CNAME to ghs.googlehosted.com
+        // tells Google Frontend which service to route to.
+        _ = new Gcp.CloudRun.DomainMapping("apiDomainMapping", new Gcp.CloudRun.DomainMappingArgs
+        {
+            Name = $"api.{domain}",
+            Location = region,
+            Metadata = new Gcp.CloudRun.Inputs.DomainMappingMetadataArgs
+            {
+                Namespace = gcpProjectId,
+            },
+            Spec = new Gcp.CloudRun.Inputs.DomainMappingSpecArgs
+            {
+                RouteName = "repoql-cloud",
+            },
         });
 
         // Proxied CNAME to Google Frontend via Cloud Run domain mapping.

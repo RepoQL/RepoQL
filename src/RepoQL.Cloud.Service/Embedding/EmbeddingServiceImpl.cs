@@ -123,7 +123,7 @@ internal sealed class EmbeddingServiceImpl : EmbeddingService.EmbeddingServiceBa
 
         try
         {
-            var (vector, tokens) = await _realtimeVoyage.EmbedQueryAsync(request.Text, context.CancellationToken);
+            var (vector, tokens) = await _batchVoyage.EmbedQueryAsync(request.Text, context.CancellationToken);
 
             return new EmbedQueryResponse
             {

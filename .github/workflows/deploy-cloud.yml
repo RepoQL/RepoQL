@@ -146,6 +146,7 @@ jobs:
             --use-http2
             --port=8080
             --no-cpu-throttling
+            --cpu-boost
             --min-instances=0
             --max-instances=50
             --memory=1Gi
@@ -231,6 +232,7 @@ jobs:
             --use-http2
             --port=8080
             --no-cpu-throttling
+            --cpu-boost
             --min-instances=0
             --max-instances=50
             --memory=1Gi
