@@ -443,9 +443,6 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             {
                 RouteName = "repoql-cloud",
             },
-        }, new CustomResourceOptions
-        {
-            ImportId = $"locations/{region}/namespaces/{gcpProjectId}/domainmappings/api.{domain}",
         });
 
         // Proxied CNAME to Google Frontend via Cloud Run domain mapping.
