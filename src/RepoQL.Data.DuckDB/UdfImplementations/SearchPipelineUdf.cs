@@ -617,7 +617,8 @@ public sealed class SearchPipelineUdf(
             DocSemn: doc.SemNorm,
             Score: score,
             Confidence: ScoreConfidence(score),
-            ExplainJson: explainJson);
+            ExplainJson: explainJson,
+            SemProvenance: doc.SemScore > 0 ? "direct" : "none");
     }
 
     private SearchResultRow BuildObjectRow(
@@ -668,7 +669,10 @@ public sealed class SearchPipelineUdf(
             DocSemn: doc.SemNorm,
             Score: score,
             Confidence: ScoreConfidence(score),
-            ExplainJson: explainJson);
+            ExplainJson: explainJson,
+            SemProvenance: obj.ChunkSem.HasValue ? "chunk_overlap"
+                : doc.SemScore > 0 ? "inherited"
+                : "none");
     }
 
     private static SearchResultRow BuildFallbackRow(EnrichedNode node, string explainJson)
@@ -984,5 +988,6 @@ public sealed class SearchPipelineUdf(
         double DocSemn,
         double Score,
         double Confidence,
-        string ExplainJson);
+        string ExplainJson,
+        string SemProvenance = "none");
 }

@@ -54,7 +54,8 @@ SELECT
         (TRY_CAST(value->>'confidence' AS DOUBLE) - 0.33) / (1.0 - 0.33),
         0
     ) AS confidence,
-    value->>'explain_json' AS explain_json
+    value->>'explain_json' AS explain_json,
+    value->>'sem_provenance' AS sem_provenance
 FROM raw
 );
 
