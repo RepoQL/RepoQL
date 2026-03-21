@@ -100,6 +100,12 @@ public sealed class SearchPipelineUdf(
                 results.Add(BuildDocumentRow(node, doc, explainJson));
             }
 
+            // Build doc rank lookup for doc-rank boost in object scoring
+            var docRankLookup = new Dictionary<Guid, int>();
+            for (var i = 0; i < docRanked.Count; i++)
+                docRankLookup[docRanked[i].DocId] = i + 1; // 1-based rank
+            var totalDocCount = docRanked.Count;
+
             foreach (var obj in scoredObjects)
             {
                 if (!enrichedByNodeId.TryGetValue(obj.NodeId, out var node))
@@ -108,7 +114,8 @@ public sealed class SearchPipelineUdf(
                 if (!docScores.TryGetValue(obj.DocId, out var doc))
                     continue;
 
-                results.Add(BuildObjectRow(node, doc, obj, explainJson));
+                docRankLookup.TryGetValue(obj.DocId, out var docRank);
+                results.Add(BuildObjectRow(node, doc, obj, explainJson, docRank, totalDocCount));
             }
 
             var addedNodeIds = results.Select(static r => r.NodeId).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -324,8 +331,18 @@ public sealed class SearchPipelineUdf(
         int perDocCap)
     {
         var children = ReadObjectCandidates(reader, topDocIds);
+        _logger.LogDebug("search_pipeline: {ChildCount} children from {DocCount} top docs. Query: '{Query}'",
+            children.Count, topDocIds.Count, queryLower);
         if (children.Count == 0)
             return [];
+
+        // Log per-doc child counts for debugging
+        var childrenByDoc = children.GroupBy(c => c.DocId).ToDictionary(g => g.Key, g => g.Count());
+        foreach (var docId in topDocIds.Take(5))
+        {
+            childrenByDoc.TryGetValue(docId, out var count);
+            _logger.LogDebug("search_pipeline: doc {DocId} has {Count} children", docId, count);
+        }
 
         var grepHits = ReadGrepHits(reader, topDocIds, queryLower);
         var grepByDoc = grepHits.ToLookup(static g => g.DocId);
@@ -333,9 +350,13 @@ public sealed class SearchPipelineUdf(
             .Where(static s => s.BestChunkStart is not null && s.BestChunkEnd is not null)
             .ToLookup(static s => s.DocId);
 
-        return children
+        var scored = children
             .Select(obj => ScoreObject(obj, queryLower, grepByDoc[obj.DocId], semByDoc[obj.DocId]))
-            .Where(static s => s.ObjectScore > 0)
+            .ToList();
+        var withSignal = scored.Where(static s => s.ObjectScore > 0).ToList();
+        _logger.LogDebug("search_pipeline: {Scored} scored, {WithSignal} with signal > 0", scored.Count, withSignal.Count);
+
+        return withSignal
             .GroupBy(static s => s.DocId)
             .SelectMany(g => g.OrderByDescending(static s => s.ObjectScore)
                 .ThenByDescending(static s => s.GrepHits)
@@ -600,7 +621,9 @@ public sealed class SearchPipelineUdf(
         EnrichedNode node,
         MergedDocScore doc,
         ScoredObject obj,
-        string explainJson)
+        string explainJson,
+        int docRank,
+        int totalDocs)
     {
         var snippet = BuildSnippet(node, doc.BestChunkStart, doc.BestChunkEnd);
         var bm25Score = Math.Min(obj.ObjectScore / 4.5, 1.0);
@@ -611,8 +634,14 @@ public sealed class SearchPipelineUdf(
         var denseScore = obj.ChunkSem.HasValue
             ? Math.Clamp(obj.ChunkSem.Value, 0.0, 1.0)
             : doc.SemNorm * 0.5; // weak inheritance: object didn't overlap any chunk
+        // Doc-rank boost: objects in higher-ranked documents score higher.
+        // An object in the #1 doc gets +0.15, objects in the last doc get ~0.
+        var docRankBoost = totalDocs > 1
+            ? 0.15 * (1.0 - ((double)(docRank - 1) / (totalDocs - 1)))
+            : 0.15;
         var score = Combine(bm25Score, fuzzyScore, denseScore)
-            + (0.25 * Math.Min(obj.ObjectScore / 4.5, 1.0));
+            + (0.25 * Math.Min(obj.ObjectScore / 4.5, 1.0))
+            + docRankBoost;
 
         return new SearchResultRow(
             DocId: node.DocIdText,
