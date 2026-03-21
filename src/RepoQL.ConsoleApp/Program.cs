@@ -178,7 +178,8 @@ static void WriteRootHelp()
         "Commands:\n" +
         "  serve      Start the RepoQL host and keep it running.\n" +
         "  mcp        Run RepoQL as an MCP server.\n" +
-        "  query      Execute DuckDB SQL or a ::command.\n" +
+        "  query      Execute DuckDB SQL.\n" +
+        "  execute    Run JavaScript in the RepoQL sandbox.\n" +
         "  command    Run an imperative RepoQL command.\n" +
         "  explore    Search and explore the repository.\n" +
         "  explain    Ask a question about the repository.\n" +
@@ -188,6 +189,16 @@ static void WriteRootHelp()
         "  login      Log in to RepoQL cloud services.\n" +
         "  logout     Clear the locally stored RepoQL session.\n" +
         "  whoami     Show the current RepoQL authentication identity.\n" +
+        "\n" +
+        "Examples:\n" +
+        "  repoql read src/** --tree folders\n" +
+        "  repoql read src/RepoQL.Commands/CommandRegistry.cs --symbol CommandRegistry.ExecuteAsync\n" +
+        "  repoql explore authentication\n" +
+        "  repoql explore --mode inventory --uri src/**\n" +
+        "  Get-Content query.sql | repoql query\n" +
+        "  repoql command diagnostics.fast\n" +
+        "  Get-Content script.js | repoql execute \"List controllers\"\n" +
+        "  repoql import ../other-repo --analyze\n" +
         "\n" +
         "Flags:\n" +
         "  -h, --help     Show this help message.\n" +
@@ -282,10 +293,14 @@ internal class ExceptionLoggingFilter(ConsoleAppFramework.ConsoleAppFilter next,
         }
         catch (Exception e)
         {
+            var errorText = e is ArgumentException or FileNotFoundException
+                ? e.GetBaseException().Message
+                : e.GetBaseException().ToString();
+
             if (IsMcpMode(context))
-                await Console.Error.WriteLineAsync(e.GetBaseException().ToString());
+                await Console.Error.WriteLineAsync(errorText);
             else
-                console.WriteLine(e.GetBaseException().ToString(), Color.Red);
+                console.WriteLine(errorText, Color.Red);
         }
     }
 
