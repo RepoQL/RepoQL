@@ -372,7 +372,7 @@ public partial class IndexingEngine : IAsyncDisposable
         {
             try
             {
-                await EnqueueIndexItemAsync(new IndexItem(completedItem.RawArtifact, options), shutdownToken).ConfigureAwait(false);
+                await EnqueueIndexItemAsync(CreateRetryIndexItem(completedItem, options), shutdownToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (shutdownToken.IsCancellationRequested)
             {
@@ -383,6 +383,12 @@ public partial class IndexingEngine : IAsyncDisposable
             }
         });
     }
+
+    private static RawArtifact RecreateRawArtifact(RawArtifact rawArtifact)
+        => new(rawArtifact.FileSystem.GetFile(rawArtifact.Uri), rawArtifact.FileSystem);
+
+    private static IndexItem CreateRetryIndexItem(IndexItem item, IndexItemOptions options)
+        => new(RecreateRawArtifact(item.RawArtifact), options);
 
     private WorkQueue<IndexItem> IndexerQueue { get; }
 
@@ -1869,7 +1875,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
     private IndexItem CreateDeferredRetryItem(IndexItem item)
     {
-        var retryItem = new IndexItem(item.RawArtifact, item.Options);
+        var retryItem = CreateRetryIndexItem(item, item.Options);
         retryItem.SetEpoch(item.Epoch);
         retryItem.MarkDeferredRetry();
         retryItem.IncrementTimeoutAttempts();

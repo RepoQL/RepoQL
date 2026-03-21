@@ -19,6 +19,7 @@ using RepoQL.FileSystem.Abstractions;
 using RepoQL.Testing;
 using RepoQL.Testing.Indexing;
 using System.Collections.Concurrent;
+using System.Text;
 using ModelSpan = RepoQL.Contracts.Models.Span;
 
 namespace RepoQL.Indexing.Tests.Indexing;
@@ -176,6 +177,73 @@ public class IndexingEngineTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var waited = await context.Engine.WaitForAsync(IndexingState.AllIdle, cts.Token);
         waited.Should().BeTrue("engine should return to AllIdle once the queued item finishes");
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("Requeue after dedupe refreshes the file snapshot before retrying")]
+    public async Task Given_FileChangesWhileQueuedForRequeue_When_Reprocessed_Then_RetryUsesFreshArtifact(CancellationToken token)
+    {
+        var uri = CreateUri("file:///repo/requeue-refresh.md");
+        var file = new MutableVirtualFile(uri, "first version");
+        var committer = A.Fake<IIndexingCommitter>();
+        var commitDigests = new ConcurrentQueue<string>();
+        var secondCommit = NewTaskCompletionSource<bool>();
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                var item = call.GetArgument<IndexItem>(0);
+                commitDigests.Enqueue(item.DigestHex!);
+                if (commitDigests.Count == 2)
+                    secondCommit.TrySetResult(true);
+
+                return Task.FromResult(CommitOutcome.Committed);
+            });
+
+        var classifyCalls = 0;
+        var classifierEntered = NewTaskCompletionSource<bool>();
+        var releaseFirstAttempt = NewTaskCompletionSource<bool>();
+        var classifier = A.Fake<ClassificationPipeline>();
+        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async call =>
+            {
+                var attempt = Interlocked.Increment(ref classifyCalls);
+                if (attempt == 1)
+                {
+                    classifierEntered.TrySetResult(true);
+                    await releaseFirstAttempt.Task.WaitAsync(call.GetArgument<CancellationToken>(1)).ConfigureAwait(false);
+                }
+
+                return PipelineResult.Success;
+            });
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithClassifier(classifier);
+            builder.WithCommitter(committer);
+        });
+
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(file.CreateRawArtifact(), IndexItemOptions.Default, token);
+
+        await classifierEntered.Task.WaitAsync(token);
+        var firstDigest = await file.CreateRawArtifact().Digest.WithCancellation(token);
+        file.SetContent("second version");
+        var secondDigest = await file.CreateRawArtifact().Digest.WithCancellation(token);
+
+        secondDigest.Should().NotBe(firstDigest);
+
+        var duplicate = await engine.EnqueueIndexItemAsync(
+            new IndexItem(file.CreateRawArtifact(), IndexItemOptions.Default),
+            token);
+
+        duplicate.Should().BeFalse("the duplicate enqueue should be collapsed into a requeue");
+
+        releaseFirstAttempt.TrySetResult(true);
+        await secondCommit.Task.WaitAsync(token);
+
+        commitDigests.Should().HaveCount(2);
+        commitDigests.ToArray().Should().Equal(firstDigest, secondDigest);
     }
 
     [Test]
@@ -565,6 +633,67 @@ public class IndexingEngineTests
         using var cleanupWait = CancellationTokenSource.CreateLinkedTokenSource(token);
         cleanupWait.CancelAfter(TimeSpan.FromSeconds(10));
         await deferredCompleted.Task.WaitAsync(cleanupWait.Token);
+    }
+
+    [Test]
+    [Timeout(15_000)]
+    [DisplayName("Deferred retry rebuilds the file snapshot after a timeout")]
+    public async Task Given_HotPathTimeout_When_DeferredRetryRuns_Then_RetryUsesFreshArtifact(CancellationToken token)
+    {
+        var uri = CreateUri("file:///repo/deferred-refresh.md");
+        var file = new MutableVirtualFile(uri, "before-timeout");
+        var committedDigest = NewTaskCompletionSource<string>();
+        var committer = A.Fake<IIndexingCommitter>();
+        A.CallTo(() => committer.CommitAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                committedDigest.TrySetResult(call.GetArgument<IndexItem>(0).DigestHex!);
+                return Task.FromResult(CommitOutcome.Committed);
+            });
+
+        var firstAttemptEntered = NewTaskCompletionSource<bool>();
+        var classifier = A.Fake<ClassificationPipeline>();
+        A.CallTo(() => classifier.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(async call =>
+            {
+                var item = call.GetArgument<IndexItem>(0);
+                var ct = call.GetArgument<CancellationToken>(1);
+                if (!item.IsDeferredRetry)
+                {
+                    firstAttemptEntered.TrySetResult(true);
+                    await Task.Delay(TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
+                }
+
+                return PipelineResult.Success;
+            });
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithClassifier(classifier);
+            builder.WithCommitter(committer);
+            builder.WithOptions(new IndexingEngineOptions
+            {
+                IndexingQueueSize = 32,
+                IndexingWorkers = 1,
+                AnalysisQueueSize = 32,
+                AnalysisWorkers = 1,
+                HotPathItemTimeout = TimeSpan.FromMilliseconds(100),
+                AnalysisItemTimeout = TimeSpan.FromSeconds(2)
+            });
+        });
+
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(file.CreateRawArtifact(), IndexItemOptions.Default, token);
+
+        await firstAttemptEntered.Task.WaitAsync(token);
+        file.SetContent("after-timeout");
+        var refreshedDigest = await file.CreateRawArtifact().Digest.WithCancellation(token);
+
+        await committedDigest.Task.WaitAsync(token).ConfigureAwait(false);
+
+        committedDigest.Task.Result.Should().Be(refreshedDigest);
+        engine.HotPathTimeoutCount.Should().Be(1);
+        engine.DeferredToIdleCount.Should().Be(1);
     }
 
     [Test]
@@ -1535,6 +1664,59 @@ public class IndexingEngineTests
 
     private static RawArtifact CreateRawArtifact(string uri)
         => IndexingTestItemFactory.CreateRawArtifact(uri);
+
+    private sealed class MutableVirtualFile
+    {
+        private readonly object _lock = new();
+        private readonly RepoUri _uri;
+        private string _content;
+        private DateTimeOffset _lastModified;
+        private readonly IVirtualFileSystem _fileSystem;
+
+        public MutableVirtualFile(RepoUri uri, string content)
+        {
+            _uri = uri;
+            _content = content;
+            _lastModified = DateTimeOffset.UtcNow;
+            _fileSystem = A.Fake<IVirtualFileSystem>();
+            A.CallTo(() => _fileSystem.GetUri(A<IFileInfo>._)).Returns(_uri);
+            A.CallTo(() => _fileSystem.GetFile(_uri)).ReturnsLazily(() => CreateFileInfoSnapshot());
+        }
+
+        public void SetContent(string content)
+        {
+            lock (_lock)
+            {
+                _content = content;
+                _lastModified = _lastModified.AddSeconds(1);
+            }
+        }
+
+        public RawArtifact CreateRawArtifact()
+            => new(CreateFileInfoSnapshot(), _fileSystem);
+
+        private IFileInfo CreateFileInfoSnapshot()
+        {
+            string content;
+            DateTimeOffset lastModified;
+            lock (_lock)
+            {
+                content = _content;
+                lastModified = _lastModified;
+            }
+
+            var bytes = Encoding.UTF8.GetBytes(content);
+            var fileInfo = A.Fake<IFileInfo>();
+            A.CallTo(() => fileInfo.Name).Returns(Path.GetFileName(_uri.AbsoluteUri));
+            A.CallTo(() => fileInfo.Exists).Returns(true);
+            A.CallTo(() => fileInfo.Length).Returns(bytes.Length);
+            A.CallTo(() => fileInfo.LastModified).Returns(lastModified);
+            A.CallTo(() => fileInfo.IsDirectory).Returns(false);
+            A.CallTo(() => fileInfo.PhysicalPath).Returns(_uri.AbsoluteUri);
+            A.CallTo(() => fileInfo.CreateReadStream()).ReturnsLazily(() => new MemoryStream(bytes, writable: false));
+            return fileInfo;
+        }
+    }
 
     private static IndexingEngine CreateEngineForIdleTests(
         TaskCompletionSource<bool>? parsingGate = null,
