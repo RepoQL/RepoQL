@@ -124,6 +124,47 @@ per_node AS (
 - Carry computed values (like `query_dim`) through the pipeline as columns instead of referencing the source CTE again
 - SeeAlso: `references/macro-rules.md`, `references/diagnosis.md`
 
+### Capsule: NestedMacroCascade
+
+**Invariant**
+A TABLE macro calling another TABLE macro compounds all re-evaluation traps. The inner macro's CTEs are invisible to the outer macro's optimizer, and each reference to the inner macro's result re-evaluates the entire inner pipeline.
+
+**Example**
+```sql
+-- 9.3s: _score_objects nested inside _search_candidates
+scored_objs AS (
+    SELECT * FROM _score_objects(...)  -- inner macro re-evaluates for each outer CTE reference
+),
+union_nodes AS (... FROM scored_objs ...),  -- triggers inner pipeline
+scored AS (... LEFT JOIN scored_objs ...),  -- triggers it AGAIN
+
+-- Fix: inline the inner macro's logic as CTEs in the outer macro,
+-- or move orchestration to C# via IReentrantReader (see escape hatch below)
+```
+//BOUNDARY: Nesting TABLE macros is almost never correct for performance-sensitive paths.
+
+**Depth**
+- The inner macro expands textually, creating a subquery with its own CTE chain
+- The outer macro's optimizer cannot see into the inner expansion
+- Each reference to the inner result is an independent subquery evaluation
+- Measured: nesting `_score_objects` inside `_search_candidates` added 5.3s overhead
+- SeeAlso: `references/escape-hatch.md`
+
+### Capsule: UnionAllNoShortCircuit
+
+**Invariant**
+DuckDB evaluates both branches of a `UNION ALL` regardless of runtime conditions. You cannot conditionally skip a branch.
+
+**Example**
+```sql
+-- Both branches evaluate even when fast_path is TRUE:
+unfiltered AS (SELECT ... WHERE (SELECT fast_path FROM params) = TRUE),
+filtered AS (SELECT ... FROM glob_files(...) WHERE (SELECT fast_path FROM params) = FALSE),
+result AS (SELECT * FROM unfiltered UNION ALL SELECT * FROM filtered)
+-- glob_files() still executes even when fast_path = TRUE
+```
+//BOUNDARY: This applies to all UNION ALL in DuckDB, not just TABLE macros.
+
 ---
 
 ## Quick Reference
@@ -133,6 +174,38 @@ per_node AS (
 | CastAtUseSite | 3-5x slower than expected | Cast in CTE definition | 4.4s → 0.8s |
 | RawParamInQualify | 10-20x slower than expected | Resolve params in CTE | 18s → 1s |
 | MultiRefCTE | Linear scaling with reference count | Single-pass + GROUP BY | 2-3x |
+| NestedMacroCascade | Inner macro overhead compounds | Inline or move to C# | 9.3s → 5.1s |
+| UnionAllNoShortCircuit | Conditional branches still execute | Separate queries or C# | varies |
+
+---
+
+## The Escape Hatch: IReentrantReader
+
+When a pipeline has multiple steps that each need materialized intermediate results, TABLE macros fundamentally cannot help — CTEs don't materialize, nesting cascades, and UNION ALL doesn't short-circuit.
+
+The solution: a `StructuredUdf` that orchestrates via `IReentrantReader`. Each SQL call materializes naturally as a `List<T>` in C#. The UDF returns results as JSON which DuckDB expands via `json_each()`.
+
+```csharp
+[UdfClass]
+public class MyPipelineUdf(IReentrantReader reader)
+{
+    [StructuredUdf("_my_pipeline_internal", MacroName = "my_pipeline")]
+    public IEnumerable<ResultRow> Execute(string query)
+    {
+        // Each call materializes fully — no CTE re-evaluation
+        var phase1 = reader.Read("SELECT ... FROM _step1(...)", mapper);
+        var phase2 = reader.Read("SELECT ... FROM _step2(...)", mapper);
+        // Score/merge in C# — pure memory, no SQL overhead
+        return Merge(phase1, phase2);
+    }
+}
+```
+
+**When to use:** More than 3 CTE references to the same expensive sub-pipeline, or nested TABLE macro calls. See `SearchPipelineUdf.cs` for the canonical example.
+
+**When NOT to use:** Single-step queries, simple macros with no CTE multi-reference. The SQL surface is simpler and faster for straightforward queries.
+
+SeeAlso: `references/escape-hatch.md`
 
 ---
 
@@ -140,14 +213,17 @@ per_node AS (
 
 - Writing or modifying any file in `Schema/Macros/*.sql`
 - Adding UDF calls to SQL macros
+- Designing multi-step search/scoring pipelines
 - Debugging unexpectedly slow queries
 - Reviewing macro PRs
+- Deciding whether to implement in SQL or C#
 
 ## References
 
 - `references/macro-rules.md` — Hard rules for writing macros
 - `references/diagnosis.md` — Diagnostic workflow for performance issues
 - `references/patterns.md` — Efficient patterns for common operations
+- `references/escape-hatch.md` — When and how to move from SQL to C#
 
 ---
 
