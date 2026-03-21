@@ -1,6 +1,6 @@
 using AwesomeAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
-using RepoQL.Indexing.Indexing.Pipelines;
+using RepoQL.Contracts;
 using RepoQL.Indexing.Indexing.PostProcessing;
 using RepoQL.Testing.Indexing;
 
@@ -19,15 +19,12 @@ internal class StorageBackedArtifactPrunerTests
             store.DataStore,
             () => true,
             NullLogger<StorageBackedArtifactPruner>.Instance);
-        var pending = new[]
+        var observedUris = new[]
         {
-            new IndexingTestItemBuilder()
-                .WithUri("file:///repo/doc-a.md")
-                .WithContent("text")
-                .Build()
+            IndexingTestItemFactory.CreateUri("file:///repo/doc-a.md")
         };
 
-        var result = await pruner.PruneAsync(pending, CancellationToken.None);
+        var result = await pruner.PruneAsync(observedUris, CancellationToken.None);
         result.DeletedArtifacts.Should().BeEmpty();
     }
 
@@ -43,15 +40,12 @@ internal class StorageBackedArtifactPrunerTests
             store.DataStore,
             () => true,
             NullLogger<StorageBackedArtifactPruner>.Instance);
-        var pending = new[]
+        var observedUris = new[]
         {
-            new IndexingTestItemBuilder()
-                .WithUri("file:///repo/doc-live.md")
-                .WithContent("text")
-                .Build()
+            IndexingTestItemFactory.CreateUri("file:///repo/doc-live.md")
         };
 
-        var result = await pruner.PruneAsync(pending, CancellationToken.None);
+        var result = await pruner.PruneAsync(observedUris, CancellationToken.None);
         result.DeletedArtifacts.Should().ContainSingle().Which.AbsoluteUri.Should().Be("file:///repo/doc-stale.md");
     }
 
@@ -67,8 +61,8 @@ internal class StorageBackedArtifactPrunerTests
             () => false,
             NullLogger<StorageBackedArtifactPruner>.Instance);
 
-        var pending = Array.Empty<IndexItem>();
-        var result = await pruner.PruneAsync(pending, CancellationToken.None);
+        var observedUris = Array.Empty<RepoUri>();
+        var result = await pruner.PruneAsync(observedUris, CancellationToken.None);
         result.DeletedArtifacts.Should().BeEmpty();
     }
 }

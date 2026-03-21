@@ -157,6 +157,7 @@ public partial class IndexingEngine : IAsyncDisposable
     private readonly object _structureEmbeddingLock = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingAnalysis = new();
     private readonly Dictionary<long, Queue<IndexItem>> _pendingStructureEmbeddings = new();  // Separate from analysis - includes read-only items
+    private readonly Dictionary<long, HashSet<RepoUri>> _observedUrisByEpoch = new();
     private readonly Queue<IndexItem> _pendingDeferredHotPathRetries = new();
     private readonly ConcurrentDictionary<string, byte> _deferredRetryOwnership = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<long, int> _pendingEagerStructureEmbeddings = new();
@@ -314,6 +315,7 @@ public partial class IndexingEngine : IAsyncDisposable
             }
 
             _epochTracker.Increment(epoch);
+            TrackObservedUri(epoch, indexItem.Uri);
             incremented = true;
             return true;
         }
@@ -1427,10 +1429,13 @@ public partial class IndexingEngine : IAsyncDisposable
         var epochTimer = Stopwatch.StartNew();
         Exception? failure = null;
         var startedProcessing = false;
+        var completedProcessing = false;
         var consolidatedStructureItems = new List<IndexItem>();
         var consolidatedAnalysisItems = new List<IndexItem>();
+        var observedUris = new HashSet<RepoUri>();
         IndexItem[] structureEmbedItems = [];
         IndexItem[] pendingItems = [];
+        IReadOnlyCollection<RepoUri> observedEpochUris = Array.Empty<RepoUri>();
         var analysisItemsEnqueued = 0;
 
         try
@@ -1447,6 +1452,11 @@ public partial class IndexingEngine : IAsyncDisposable
                     if (_pendingAnalysis.Remove(epoch, out var analysisQueue))
                     {
                         consolidatedAnalysisItems.AddRange(analysisQueue);
+                    }
+
+                    if (_observedUrisByEpoch.TryGetValue(epoch, out var epochObservedUris))
+                    {
+                        observedUris.UnionWith(epochObservedUris);
                     }
                 }
 
@@ -1473,6 +1483,7 @@ public partial class IndexingEngine : IAsyncDisposable
 
             structureEmbedItems = consolidatedStructureItems.ToArray();
             pendingItems = consolidatedAnalysisItems.ToArray();
+            observedEpochUris = [.. observedUris];
             var maxEpoch = epochs.Max();
 
             // Create span for the entire idle phase processing
@@ -1488,7 +1499,7 @@ public partial class IndexingEngine : IAsyncDisposable
             using (ActivitySource.StartActivity("prune_phase", ActivityKind.Internal))
             {
                 var pruneTimer = Stopwatch.StartNew();
-                pruningResult = await ArtifactPruner.PruneAsync(structureEmbedItems, Shutdown.Token).ConfigureAwait(false);
+                pruningResult = await ArtifactPruner.PruneAsync(observedEpochUris, Shutdown.Token).ConfigureAwait(false);
                 pruneTimer.Stop();
                 var prunedCount = pruningResult.DeletedArtifacts.Count;
                 Interlocked.Exchange(ref _lastPrunedCount, prunedCount);
@@ -1583,6 +1594,8 @@ public partial class IndexingEngine : IAsyncDisposable
 
             }
 
+            completedProcessing = true;
+
         }
         catch (OperationCanceledException) when (Shutdown.IsCancellationRequested)
         {
@@ -1614,6 +1627,17 @@ public partial class IndexingEngine : IAsyncDisposable
             if (startedProcessing)
             {
                 Interlocked.Decrement(ref _activeIdleProcessingCount);
+            }
+
+            if (completedProcessing)
+            {
+                lock (_analysisLock)
+                {
+                    foreach (var epoch in epochs)
+                    {
+                        _observedUrisByEpoch.Remove(epoch);
+                    }
+                }
             }
 
             epochTimer.Stop();
@@ -1693,6 +1717,23 @@ public partial class IndexingEngine : IAsyncDisposable
         }
 
         return (requeuedStructureCount, requeuedAnalysisCount, requeuedEpochs.Count);
+    }
+
+    private void TrackObservedUri(long epoch, RepoUri uri)
+    {
+        if (epoch < 0)
+            return;
+
+        lock (_analysisLock)
+        {
+            if (!_observedUrisByEpoch.TryGetValue(epoch, out var observedUris))
+            {
+                observedUris = new HashSet<RepoUri>();
+                _observedUrisByEpoch[epoch] = observedUris;
+            }
+
+            observedUris.Add(uri);
+        }
     }
 
     private Task DeleteStaleDocumentsAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken)

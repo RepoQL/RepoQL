@@ -2,8 +2,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
-using RepoQL.Indexing.Indexing.Pipelines;
-
 namespace RepoQL.Indexing.Indexing.PostProcessing;
 
 /// <summary>
@@ -34,9 +32,9 @@ public sealed class StorageBackedArtifactPruner : IArtifactPruner
         _isReindexingAccessor = isReindexingAccessor ?? throw new ArgumentNullException(nameof(isReindexingAccessor));
     }
 
-    public Task<PruningResult> PruneAsync(IReadOnlyCollection<IndexItem> pendingItems, CancellationToken cancellationToken)
+    public Task<PruningResult> PruneAsync(IReadOnlyCollection<RepoUri> observedUris, CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(pendingItems);
+        ArgumentNullException.ThrowIfNull(observedUris);
 
         if (!_isReindexingAccessor())
         {
@@ -46,9 +44,9 @@ public sealed class StorageBackedArtifactPruner : IArtifactPruner
 
         // Build the set of URIs that were observed during the latest indexing sweep.
         var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in pendingItems)
+        foreach (var uri in observedUris)
         {
-            live.Add(item.Uri.AbsoluteUri);
+            live.Add(uri.AbsoluteUri);
         }
 
         var stale = _store.Read(

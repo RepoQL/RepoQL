@@ -1455,7 +1455,7 @@ public class IndexingEngineTests
     {
         var pruneGate = NewTaskCompletionSource<bool>();
         var pruner = A.Fake<IArtifactPruner>();
-        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<IndexItem>>._, A<CancellationToken>._))
+        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<RepoUri>>._, A<CancellationToken>._))
             .ReturnsLazily(call =>
             {
                 pruneGate.TrySetResult(true);
@@ -1477,14 +1477,73 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [DisplayName("Pruning live set includes failed files from the same epoch")]
+    public async Task Given_ReindexEpochContainsFailedFile_When_PruningRuns_Then_FailedUriIsStillObserved(CancellationToken token)
+    {
+        var failedUri = CreateUri("file:///repo/failed-during-reindex.md");
+        var liveUri = CreateUri("file:///repo/live-during-reindex.md");
+        IReadOnlyCollection<RepoUri>? observedUris = null;
+        var pruneObserved = NewTaskCompletionSource<bool>();
+        var pruner = A.Fake<IArtifactPruner>();
+        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<RepoUri>>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                observedUris = call.GetArgument<IReadOnlyCollection<RepoUri>>(0);
+                pruneObserved.TrySetResult(true);
+                return Task.FromResult(PruningResult.None);
+            });
+
+        var parser = A.Fake<ParsingPipeline>();
+        A.CallTo(() => parser.ProcessItemAsync(A<IndexItem>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
+            {
+                var item = call.GetArgument<IndexItem>(0);
+                var result = string.Equals(item.Uri.AbsoluteUri, failedUri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)
+                    ? PipelineResult.Error
+                    : PipelineResult.Success;
+                return Task.FromResult(result);
+            });
+
+        var context = IndexingEngineTestFactory.Create(builder =>
+        {
+            builder.WithParser(parser);
+            builder.WithArtifactPruner(pruner);
+        });
+
+        await using var engine = context.Engine;
+        await engine.EnqueueItemAsync(CreateRawArtifact(failedUri.AbsoluteUri), IndexItemOptions.Default, token);
+        await engine.EnqueueItemAsync(CreateRawArtifact(liveUri.AbsoluteUri), IndexItemOptions.Default, token);
+
+        await pruneObserved.Task.WaitAsync(token);
+
+        observedUris.Should().NotBeNull();
+        observedUris!
+            .Select(uri => uri.AbsoluteUri)
+            .Should()
+            .Contain([failedUri.AbsoluteUri, liveUri.AbsoluteUri]);
+    }
+
+    [Test]
+    [Timeout(15_000)]
     [DisplayName("Idle processing requeues epoch when prune fails transiently")]
     public async Task Given_PruneFailsOnce_When_IdleProcessingRuns_Then_EpochIsRetriedAndAnalysisRuns(CancellationToken token)
     {
         var pruneAttempts = 0;
+        List<string[]> pruneObservedUris = [];
+        var expectedObservedUris = new[] { "file:///repo/prune-retry.md" };
         var pruner = A.Fake<IArtifactPruner>();
-        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<IndexItem>>._, A<CancellationToken>._))
-            .ReturnsLazily(_ =>
+        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<RepoUri>>._, A<CancellationToken>._))
+            .ReturnsLazily(call =>
             {
+                var observedUris = call.GetArgument<IReadOnlyCollection<RepoUri>>(0)!
+                    .Select(uri => uri.AbsoluteUri)
+                    .OrderBy(uri => uri, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                lock (pruneObservedUris)
+                {
+                    pruneObservedUris.Add(observedUris);
+                }
+
                 var attempt = Interlocked.Increment(ref pruneAttempts);
                 if (attempt == 1)
                 {
@@ -1506,6 +1565,8 @@ public class IndexingEngineTests
         await WaitForAnalysisToCompleteAsync(engine, analysisSignal, token);
 
         pruneAttempts.Should().BeGreaterThanOrEqualTo(2, "idle processing should retry the epoch after a transient prune failure");
+        pruneObservedUris.Should().Contain(attempt => attempt.SequenceEqual(expectedObservedUris));
+        pruneObservedUris.Last().Should().BeEquivalentTo(expectedObservedUris);
 
         // Poll briefly — idle processing may still be draining under CI load
         for (var i = 0; i < 20 && engine.GetPendingIdleProcessingCount() > 0; i++)
@@ -1522,7 +1583,7 @@ public class IndexingEngineTests
         var deletedUri = CreateUri("file:///repo/deleted.md");
         var pruneResult = new PruningResult(new[] { deletedUri });
         var pruner = A.Fake<IArtifactPruner>();
-        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<IndexItem>>._, A<CancellationToken>._))
+        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<RepoUri>>._, A<CancellationToken>._))
             .Returns(Task.FromResult(pruneResult));
 
         var deleteApplied = NewTaskCompletionSource<bool>();
@@ -1637,7 +1698,7 @@ public class IndexingEngineTests
         db.GetDocumentByUri(deleteUri).Should().NotBeNull("stale document should exist before pruning");
 
         var pruner = A.Fake<IArtifactPruner>();
-        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<IndexItem>>._, A<CancellationToken>._))
+        A.CallTo(() => pruner.PruneAsync(A<IReadOnlyCollection<RepoUri>>._, A<CancellationToken>._))
             .Returns(Task.FromResult(new PruningResult(new[] { deleteUri })));
 
         var embeddingCoordinator = NullEmbeddingCoordinator.Instance;

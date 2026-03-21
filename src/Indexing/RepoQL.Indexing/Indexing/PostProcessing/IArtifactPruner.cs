@@ -1,6 +1,4 @@
 ﻿using RepoQL.Contracts;
-using RepoQL.Indexing.Indexing.Pipelines;
-
 namespace RepoQL.Indexing.Indexing.PostProcessing;
 
 public readonly record struct PruningResult(IReadOnlyList<RepoUri> DeletedArtifacts)
@@ -10,7 +8,7 @@ public readonly record struct PruningResult(IReadOnlyList<RepoUri> DeletedArtifa
 
 public interface IArtifactPruner
 {
-    Task<PruningResult> PruneAsync(IReadOnlyCollection<IndexItem> pendingItems, CancellationToken cancellationToken);
+    Task<PruningResult> PruneAsync(IReadOnlyCollection<RepoUri> observedUris, CancellationToken cancellationToken);
 }
 
 public sealed class NullArtifactPruner : IArtifactPruner
@@ -21,7 +19,7 @@ public sealed class NullArtifactPruner : IArtifactPruner
     {
     }
 
-    public Task<PruningResult> PruneAsync(IReadOnlyCollection<IndexItem> pendingItems, CancellationToken cancellationToken)
+    public Task<PruningResult> PruneAsync(IReadOnlyCollection<RepoUri> observedUris, CancellationToken cancellationToken)
     {
         return Task.FromResult(PruningResult.None);
     }
