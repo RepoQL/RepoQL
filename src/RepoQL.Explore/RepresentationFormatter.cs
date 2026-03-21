@@ -9,13 +9,12 @@ namespace RepoQL.Explore;
 public static class RepresentationFormatter
 {
     /// <summary>
-    /// Format a result at Minimal level (uri + headline).
-    /// Used for wide Explore results without search criteria.
+    /// Format a result at Minimal level (uri only).
+    /// The cheapest representation — just enough to know what exists.
     /// </summary>
     public static string FormatMinimal(ExploreResult result)
     {
-        var headline = GetHeadline(result, result.Uri) ?? ExtractFileName(result.Uri);
-        return $"{result.Uri}  {headline}";
+        return result.Uri ?? "";
     }
 
     /// <summary>

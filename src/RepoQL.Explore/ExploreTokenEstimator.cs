@@ -12,12 +12,11 @@ namespace RepoQL.Explore;
 public static class ExploreTokenEstimator
 {
     /// <summary>
-    /// Estimate tokens for Minimal representation (uri + headline).
+    /// Estimate tokens for Minimal representation (uri only).
     /// </summary>
     public static int EstimateMinimal(ExploreResult result)
     {
-        // Headline + minimal overhead + approximate URI cost
-        return CoreTokenEstimator.EstimateTokens(result.Headline) + 1 + 15;
+        return CoreTokenEstimator.EstimateTokens(result.Uri) + 1;
     }
 
     /// <summary>

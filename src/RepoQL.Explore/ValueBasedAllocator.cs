@@ -5,11 +5,11 @@ namespace RepoQL.Explore;
 /// Level 1: Files compete for budget based on file-level EV (considers best child).
 /// Level 2: Within each file's budget, file and children compete for representation.
 ///
-/// Breadth (1-10) controls allocation curve steepness via an exponent
-/// applied to confidence scores before proportional allocation:
-/// - Low breadth (1-3): exponent > 1 → steeper curve, concentrates tokens on top results
-/// - Medium breadth (5): exponent = 1 → identity, linear proportional allocation
-/// - High breadth (7-10): exponent &lt; 1 → flatter curve, spreads tokens more evenly
+/// Breadth (1-10) controls allocation curve via a sigmoid applied to
+/// confidence scores before proportional allocation:
+/// - Low breadth (1-3): steep sigmoid → budget concentrated on top results, noise starved
+/// - Medium breadth (5): moderate sigmoid → balanced allocation
+/// - High breadth (7-10): gentle sigmoid → budget spread more evenly across results
 /// </summary>
 public static class ValueBasedAllocator
 {
@@ -31,11 +31,11 @@ public static class ValueBasedAllocator
         var clampedBreadth = Math.Clamp(breadth, 1, 10);
 
         // Level 1: Calculate file-level EV and allocate budget to files
-        var modifier = GetBreadthModifier(clampedBreadth);
+        var k = GetSigmoidK(clampedBreadth);
         var files = results.Select(r => new FileAllocation
         {
             Result = r,
-            ExpectedValue = CalculateFileEV(r, modifier),
+            ExpectedValue = CalculateFileEV(r, k),
             Budget = 0,
             MinCost = ExploreTokenEstimator.EstimateMinimal(r)
         }).ToList();
@@ -69,20 +69,36 @@ public static class ValueBasedAllocator
         }
 
         // Level 2: Allocate within each file
-        return files.Select(f => AllocateWithinFile(f.Result, f.Budget, clampedBreadth, modifier)).ToList();
+        return files.Select(f => AllocateWithinFile(f.Result, f.Budget, clampedBreadth, k)).ToList();
     }
 
     /// <summary>
-    /// Breadth curve exponent used in proportional allocation.
-    /// 1-3 steeper (focus), 4-6 balanced, 7-10 flatter (coverage).
-    /// breadth=5 is identity (exponent=1.0) so default behavior is preserved.
+    /// Sigmoid midpoint for budget allocation. Scores below this get
+    /// diminished budget; above get amplified. Set to 0.35 (35% confidence)
+    /// so results below ~35% confidence are starved at low breadth.
     /// </summary>
-    internal static double GetBreadthModifier(int breadth)
+    private const double SigmoidMidpoint = 0.35;
+
+    /// <summary>
+    /// Sigmoid steepness derived from breadth.
+    /// Low breadth (depth) → steep sigmoid → concentrate budget on top results.
+    /// High breadth (coverage) → gentle sigmoid → spread budget evenly.
+    /// </summary>
+    internal static double GetSigmoidK(int breadth)
     {
         var clamped = Math.Clamp(breadth, 1, 10);
-        if (clamped <= 5)
-            return 1.0 + ((5 - clamped) * 0.05); // 1 → 1.20, 5 → 1.00
-        return 1.0 - ((clamped - 5) * 0.04);     // 5 → 1.00, 10 → 0.80
+        // breadth 1 → k=14 (steep), 5 → k=7 (moderate), 10 → k=2 (gentle)
+        return 14.0 - (clamped - 1) * (12.0 / 9.0);
+    }
+
+    /// <summary>
+    /// Apply sigmoid to a 0-100 confidence score for budget allocation.
+    /// Output is a relative expected value (not a percentage).
+    /// </summary>
+    private static double SigmoidEV(double confidence, double k)
+    {
+        var x = Math.Max(confidence, 0) / 100.0;
+        return 1.0 / (1.0 + Math.Exp(-k * (x - SigmoidMidpoint)));
     }
 
     /// <summary>
@@ -100,16 +116,16 @@ public static class ValueBasedAllocator
         };
 
     /// <summary>
-    /// Calculate file-level expected value.
+    /// Calculate file-level expected value via sigmoid.
     /// Uses max of file confidence and best child confidence.
     /// </summary>
-    private static double CalculateFileEV(ExploreResult file, double modifier)
+    private static double CalculateFileEV(ExploreResult file, double k)
     {
         var bestChildConf = file.ChildObjects?.Count > 0
             ? file.ChildObjects.Max(c => c.Confidence)
             : 0;
-        var baseEV = Math.Max(file.Confidence, bestChildConf);
-        return Math.Pow(Math.Max(baseEV, 0), modifier);
+        var baseConf = Math.Max(file.Confidence, bestChildConf);
+        return SigmoidEV(baseConf, k);
     }
 
     /// <summary>
@@ -119,7 +135,7 @@ public static class ValueBasedAllocator
         ExploreResult file,
         int fileBudget,
         int breadth,
-        double modifier)
+        double k)
     {
         // Build candidate list: file (without children) + all children
         var items = new List<AllocationItem>
@@ -127,7 +143,7 @@ public static class ValueBasedAllocator
             new()
             {
                 Result = file with { ChildObjects = null },
-                ExpectedValue = Math.Pow(Math.Max(file.Confidence, 0), modifier),
+                ExpectedValue = SigmoidEV(file.Confidence, k),
                 Level = Representation.Minimal,
                 Tokens = ExploreTokenEstimator.EstimateMinimal(file)
             }
@@ -144,7 +160,7 @@ public static class ValueBasedAllocator
                 .Select(c => new AllocationItem
                 {
                     Result = c,
-                    ExpectedValue = Math.Pow(Math.Max(c.Confidence, 0), modifier),
+                    ExpectedValue = SigmoidEV(c.Confidence, k),
                     Level = Representation.Minimal,
                     Tokens = ExploreTokenEstimator.EstimateMinimal(c)
                 })
