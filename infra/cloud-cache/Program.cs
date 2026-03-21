@@ -428,22 +428,9 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         // Note: gRPC is a network-level toggle managed via the Cloudflare dashboard
         // (Network → gRPC), not a zone setting. It cannot be set via the ZoneSetting API.
 
-        // Cloud Run domain mapping — routes api.repoql.ai to the repoql-cloud service.
-        // Google manages the TLS cert via Let's Encrypt. The CNAME to ghs.googlehosted.com
-        // tells Google Frontend which service to route to.
-        _ = new Gcp.CloudRun.DomainMapping("apiDomainMapping", new Gcp.CloudRun.DomainMappingArgs
-        {
-            Name = $"api.{domain}",
-            Location = region,
-            Metadata = new Gcp.CloudRun.Inputs.DomainMappingMetadataArgs
-            {
-                Namespace = gcpProjectId,
-            },
-            Spec = new Gcp.CloudRun.Inputs.DomainMappingSpecArgs
-            {
-                RouteName = "repoql-cloud",
-            },
-        });
+        // Cloud Run domain mapping (api.repoql.ai → repoql-cloud) is managed manually.
+        // It requires domain ownership verification which the CI service account lacks.
+        // Created via: gcloud beta run domain-mappings create --service repoql-cloud --domain api.repoql.ai --region us-central1
 
         // Proxied CNAME to Google Frontend via Cloud Run domain mapping.
         // Cloudflare terminates client TLS, provides WAF/DDoS/gRPC proxying.
