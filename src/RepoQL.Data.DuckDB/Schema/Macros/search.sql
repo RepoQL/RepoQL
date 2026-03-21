@@ -79,14 +79,128 @@ sem AS (
 ),
 
 -- ============================================================================
--- COMBINE SCORES
+-- COMBINE SCORES + INLINE OBJECT SCORING
 -- ============================================================================
 
--- Union all candidate nodes from both scorers
+-- Top documents from both scorers (for object expansion)
+top_docs AS (
+    SELECT DISTINCT doc_id
+    FROM (
+        SELECT doc_id FROM lex WHERE lex_rank <= 200
+        UNION
+        SELECT doc_id FROM sem WHERE sem_rank <= 200
+    ) ranked_docs
+),
+
+-- Grep line hits scoped to top documents (for object span mapping)
+grep_for_objects AS (
+    SELECT DISTINCT n.id AS doc_id, TRY_CAST(g.line_number AS INTEGER) AS line_number
+    FROM base_params bp,
+         grep_matches(bp.raw_query, '**', 500) g
+    JOIN node n ON n.uri = g.uri AND n.kind = 'document'
+    JOIN top_docs td ON td.doc_id = n.id
+    WHERE bp.raw_query <> ''
+),
+
+-- Expand top documents to child objects via span
+obj_children AS (
+    SELECT
+        child.id AS node_id,
+        s.document_id AS doc_id,
+        s.start_line,
+        s.end_line,
+        s.start_byte,
+        s.end_byte,
+        LOWER(COALESCE(
+            repository_uri_symbol(child.uri),
+            json_extract_string(child.properties, '$.name'),
+            ''
+        )) AS symbol_key,
+        LOWER(COALESCE(child.headline, '') || ' ' || COALESCE(child.structure, '')) AS headline_text
+    FROM top_docs td
+    JOIN span s ON s.document_id = td.doc_id
+    JOIN node child ON child.span_id = s.id
+    WHERE child.kind <> 'document'
+),
+
+-- Score objects: grep overlap + symbol match + headline match in one pass
+scored_objs AS (
+    SELECT
+        c.node_id,
+        c.doc_id,
+        -- Symbol scoring
+        CASE
+            WHEN bp.keywords_lc <> '' AND c.symbol_key = bp.keywords_lc THEN 4.0
+            WHEN bp.keywords_lc <> '' AND position(bp.keywords_lc IN c.symbol_key) > 0 THEN 3.2
+            ELSE 0.0
+        END AS symbol_score,
+        -- Grep overlap
+        COUNT(DISTINCT g.line_number) AS grep_hits,
+        CASE
+            WHEN COUNT(DISTINCT g.line_number) >= 2 THEN 2.5 + 0.1 * COUNT(DISTINCT g.line_number)
+            WHEN COUNT(DISTINCT g.line_number) = 1 THEN 2.0
+            ELSE 0.0
+        END AS grep_score,
+        -- Headline/structure match
+        CASE
+            WHEN bp.keywords_lc <> '' AND position(bp.keywords_lc IN c.headline_text) > 0 THEN 1.5
+            ELSE 0.0
+        END AS headline_score,
+        CASE
+            WHEN bp.keywords_lc <> '' AND position(bp.keywords_lc IN c.headline_text) > 0 THEN TRUE
+            ELSE FALSE
+        END AS headline_hit,
+        -- Semantic chunk overlap deferred to avoid re-evaluation of sem CTE.
+        -- TODO: add when embed_query result can be shared across CTEs.
+        CAST(NULL AS DOUBLE) AS chunk_sem
+    FROM obj_children c
+    CROSS JOIN (SELECT LOWER(COALESCE(TRIM(raw_query), '')) AS keywords_lc FROM base_params) bp
+    LEFT JOIN grep_for_objects g
+        ON g.doc_id = c.doc_id
+       AND c.start_line IS NOT NULL AND c.end_line IS NOT NULL
+       AND g.line_number BETWEEN c.start_line AND c.end_line
+    GROUP BY c.node_id, c.doc_id, c.symbol_key, c.headline_text, c.start_line, bp.keywords_lc
+    -- Combined score: best signal + semantic boost
+    HAVING GREATEST(
+        CASE WHEN bp.keywords_lc <> '' AND c.symbol_key = bp.keywords_lc THEN 4.0
+             WHEN bp.keywords_lc <> '' AND position(bp.keywords_lc IN c.symbol_key) > 0 THEN 3.2
+             ELSE 0.0 END,
+        CASE WHEN COUNT(DISTINCT g.line_number) >= 2 THEN 2.5 WHEN COUNT(DISTINCT g.line_number) = 1 THEN 2.0 ELSE 0.0 END,
+        CASE WHEN bp.keywords_lc <> '' AND position(bp.keywords_lc IN c.headline_text) > 0 THEN 1.5 ELSE 0.0 END
+    ) > 0
+    -- Per-doc cap
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY c.doc_id
+        ORDER BY GREATEST(
+            CASE WHEN bp.keywords_lc <> '' AND c.symbol_key = bp.keywords_lc THEN 4.0
+                 WHEN bp.keywords_lc <> '' AND position(bp.keywords_lc IN c.symbol_key) > 0 THEN 3.2
+                 ELSE 0.0 END,
+            CASE WHEN COUNT(DISTINCT g.line_number) >= 2 THEN 2.5 WHEN COUNT(DISTINCT g.line_number) = 1 THEN 2.0 ELSE 0.0 END,
+            CASE WHEN bp.keywords_lc <> '' AND position(bp.keywords_lc IN c.headline_text) > 0 THEN 1.5 ELSE 0.0 END
+        ) DESC, c.start_line NULLS LAST, c.node_id
+    ) <= 20
+),
+
+-- Add object_score column for downstream scoring
+scored_objs_final AS (
+    SELECT
+        node_id,
+        doc_id,
+        GREATEST(symbol_score, grep_score, headline_score) + 0.3 * COALESCE(chunk_sem, 0) AS object_score,
+        symbol_score,
+        grep_hits,
+        chunk_sem,
+        headline_hit
+    FROM scored_objs
+),
+
+-- Union all candidate nodes from both scorers plus scored objects
 union_nodes AS (
     SELECT node_id FROM lex
     UNION
     SELECT node_id FROM sem
+    UNION
+    SELECT node_id FROM scored_objs_final
 ),
 
 -- Scope filter for fallback (recency-based when both scorers return nothing)
@@ -216,26 +330,70 @@ scored AS (
         e.line_start,
         e.line_end,
         e.digest,
-        COALESCE(l.bm25_norm, 0) AS bm25_score,
-        COALESCE(l.fuzz_norm, 0) AS fuzzy_score,
-        COALESCE(s.sem_norm, 0) AS dense_score,
+        CASE
+            WHEN e.node_scope = 'object' AND o.node_id IS NOT NULL
+            THEN LEAST(COALESCE(o.object_score, 0) / 4.5, 1.0)
+            ELSE COALESCE(l.bm25_norm, 0)
+        END AS bm25_score,
+        CASE
+            WHEN e.node_scope = 'object' AND o.node_id IS NOT NULL
+            THEN LEAST(COALESCE(o.symbol_score, 0) / 4.0, 1.0)
+            ELSE COALESCE(l.fuzz_norm, 0)
+        END AS fuzzy_score,
+        CASE
+            WHEN e.node_scope = 'object' AND o.node_id IS NOT NULL
+            THEN GREATEST(
+                COALESCE(s.sem_norm, 0),
+                LEAST(GREATEST(COALESCE(o.chunk_sem, 0), 0), 1.0)
+            )
+            ELSE COALESCE(s.sem_norm, 0)
+        END AS dense_score,
+        COALESCE(o.object_score, 0) AS object_score,
         COALESCE(l.rrf_lex, 0) + COALESCE(s.rrf_sem, 0) AS rrf
     FROM enriched e
     LEFT JOIN lex l ON l.node_id = e.node_id
     LEFT JOIN sem s ON s.doc_id = e.doc_id
+    LEFT JOIN scored_objs_final o ON o.node_id = e.node_id
 ),
 
 -- Propagate semantic score from document to its objects
 doc_sem AS (
-    SELECT doc_id, MAX(dense_score) AS doc_semn
-    FROM scored
+    SELECT doc_id, MAX(sem_norm) AS doc_semn
+    FROM sem
     GROUP BY doc_id
 ),
 
 -- Final scoring with confidence
 final_with_conf AS (
     SELECT
-        fws.*,
+        fws.doc_id,
+        fws.node_id,
+        fws.uri,
+        fws.path,
+        fws.node_scope,
+        fws.kind,
+        fws.symbol,
+        fws.lang,
+        fws.mime,
+        fws.headline,
+        fws.structure,
+        fws.snippet,
+        fws.line_start,
+        fws.line_end,
+        fws.digest,
+        fws.bm25_score,
+        fws.fuzzy_score,
+        fws.dense_score,
+        fws.rrf,
+        fws.doc_semn,
+        fws.score,
+        fws.route_mode,
+        fws.uri_glob_filter,
+        fws.keywords_empty,
+        fws.keywords_lc,
+        fws.requested_mode,
+        fws.boosts_json,
+        fws.explain_json,
         score_confidence(fws.score) AS confidence
     FROM (
         SELECT
@@ -244,11 +402,15 @@ final_with_conf AS (
             combine(
                 s.bm25_score,
                 s.fuzzy_score,
-                COALESCE(ds.doc_semn, s.dense_score),
+                GREATEST(COALESCE(ds.doc_semn, s.dense_score), s.dense_score),
                 wb := cfg.bm25_w,
                 wf := cfg.fuzzy_w,
                 ws := cfg.effective_sem_weight
-            ) AS score,
+            ) + CASE
+                WHEN s.node_scope = 'object'
+                THEN 0.25 * LEAST(s.object_score / 4.5, 1.0)
+                ELSE 0
+            END AS score,
             cls.route_mode,
             cls.uri_glob_filter,
             cls.keywords_empty,
@@ -263,6 +425,7 @@ final_with_conf AS (
                 'route', cls.route_mode,
                 'lex_candidates', (SELECT cnt FROM lex_stats),
                 'dense_candidates', (SELECT cnt FROM sem_stats),
+                'object_candidates', (SELECT COUNT(*) FROM scored_objs_final),
                 'requested_mode', cls.requested_mode
             ) AS explain_json
         FROM scored s
