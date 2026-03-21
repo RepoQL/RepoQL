@@ -1,7 +1,7 @@
 using System.Data;
 using System.Globalization;
 using System.Text;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Data.DuckDB.UdfFramework;
@@ -50,10 +50,9 @@ public sealed class SearchPipelineUdf(
         {
             var lexDocs = TryReadLexical(activeReader, queryClean, scopeParam);
             var semDocs = TryReadSemantic(activeReader, queryClean, scopeParam);
-            var docScores = MergeDocScores(lexDocs, semDocs);
+            var (docScores, docRanked) = MergeDocScores(lexDocs, semDocs);
 
-            var topDocIds = docScores
-                .Values
+            var topDocIds = docRanked
                 .Take(topDocLimit)
                 .Select(static d => d.DocId)
                 .ToHashSet();
@@ -62,11 +61,11 @@ public sealed class SearchPipelineUdf(
                 ? []
                 : ScoreObjects(activeReader, topDocIds, queryLower, semDocs, perDocCap);
 
-            IReadOnlyList<Guid> fallbackNodes = docScores.Count == 0 && scoredObjects.Count == 0
+            IReadOnlyList<Guid> fallbackNodes = docRanked.Count == 0 && scoredObjects.Count == 0
                 ? ReadFallbackNodes(activeReader, scopeParam, kParam)
                 : [];
 
-            var docRows = docScores.Values.Take(kParam).ToList();
+            var docRows = docRanked.Take(kParam).ToList();
             var allNodeIds = docRows.Select(static d => d.NodeId)
                 .Concat(scoredObjects.Select(static o => o.NodeId))
                 .Concat(fallbackNodes)
@@ -81,14 +80,15 @@ public sealed class SearchPipelineUdf(
                 return [];
 
             var enrichedByNodeId = enrichedNodes.ToDictionary(static n => n.NodeId);
-            var explainJson = JsonSerializer.Serialize(new
+            // Use JsonObject instead of anonymous type — anonymous types produce {} in IL-trimmed Release builds.
+            var explainJson = new JsonObject
             {
-                route = routeMode,
-                lex_candidates = lexDocs.Count,
-                dense_candidates = semDocs.Count,
-                object_candidates = scoredObjects.Count,
-                requested_mode = "auto"
-            });
+                ["route"] = routeMode,
+                ["lex_candidates"] = lexDocs.Count,
+                ["dense_candidates"] = semDocs.Count,
+                ["object_candidates"] = scoredObjects.Count,
+                ["requested_mode"] = "auto"
+            }.ToJsonString();
 
             var results = new List<SearchResultRow>(docRows.Count + scoredObjects.Count + fallbackNodes.Count);
 
@@ -111,12 +111,13 @@ public sealed class SearchPipelineUdf(
                 results.Add(BuildObjectRow(node, doc, obj, explainJson));
             }
 
+            var addedNodeIds = results.Select(static r => r.NodeId).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var fallbackNodeId in fallbackNodes)
             {
                 if (!enrichedByNodeId.TryGetValue(fallbackNodeId, out var node))
                     continue;
 
-                if (results.Any(r => StringComparer.OrdinalIgnoreCase.Equals(r.NodeId, node.NodeIdText)))
+                if (!addedNodeIds.Add(node.NodeIdText))
                     continue;
 
                 results.Add(BuildFallbackRow(node, explainJson));
@@ -218,7 +219,12 @@ public sealed class SearchPipelineUdf(
         }
     }
 
-    private Dictionary<Guid, MergedDocScore> MergeDocScores(
+    /// <summary>
+    /// Merge lexical and semantic doc scores. Returns a dictionary for lookup
+    /// and a separate ordered list for ranked iteration (Dictionary iteration order
+    /// is not guaranteed in .NET).
+    /// </summary>
+    private (Dictionary<Guid, MergedDocScore> ByDocId, List<MergedDocScore> Ranked) MergeDocScores(
         IReadOnlyList<LexDocScore> lexDocs,
         IReadOnlyList<SemDocScore> semDocs)
     {
@@ -285,12 +291,13 @@ public sealed class SearchPipelineUdf(
             }
         }
 
-        return merged
-            .Values
+        var ranked = merged.Values
             .OrderByDescending(static d => Combine(d.Bm25Norm, d.FuzzNorm, d.SemNorm))
             .ThenByDescending(static d => d.RrfLex + d.RrfSem)
             .ThenBy(static d => d.DocId)
-            .ToDictionary(static d => d.DocId);
+            .ToList();
+
+        return (merged, ranked);
     }
 
     private IReadOnlyList<ScoredObject> ScoreObjects(
