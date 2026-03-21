@@ -425,12 +425,8 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Value = "1.2",
         });
 
-        _ = new Cloudflare.ZoneSetting("grpcSetting", new Cloudflare.ZoneSettingArgs
-        {
-            ZoneId = zoneId,
-            SettingId = "grpc",
-            Value = "on",
-        });
+        // Note: gRPC is a network-level toggle managed via the Cloudflare dashboard
+        // (Network → gRPC), not a zone setting. It cannot be set via the ZoneSetting API.
 
         // Cloud Run domain mapping — routes api.repoql.ai to the repoql-cloud service.
         // Google manages the TLS cert via Let's Encrypt. The CNAME to ghs.googlehosted.com
@@ -447,6 +443,9 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             {
                 RouteName = "repoql-cloud",
             },
+        }, new CustomResourceOptions
+        {
+            ImportId = $"locations/{region}/namespaces/{gcpProjectId}/domainmappings/api.{domain}",
         });
 
         // Proxied CNAME to Google Frontend via Cloud Run domain mapping.
