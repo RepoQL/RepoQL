@@ -222,6 +222,11 @@ public sealed class FindCandidatesMacroTests : IDisposable
         child.Path.Should().Be(doc.DocumentUri);
         child.LineStart.Should().Be(4);
         child.LineEnd.Should().Be(4);
+
+        rows.Should().ContainSingle(r => r.Uri == doc.DocumentUri);
+        var document = rows.Single(r => r.Uri == doc.DocumentUri);
+        document.Kind.Should().Be("document");
+        document.Path.Should().Be(doc.DocumentUri);
     }
 
     [Test]

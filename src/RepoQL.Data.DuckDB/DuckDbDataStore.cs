@@ -40,6 +40,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     private readonly DuckDbStartupOptions _startupOptions;
     private readonly int _readPoolSize;
     private static readonly AsyncLocal<IServiceScope?> _currentScope = new();
+    private static readonly AsyncLocal<IReentrantReader?> _currentReentrantReader = new();
     private volatile int _exclusiveOwnerThreadId; // 0 = no owner; only the owner thread can match
     private int _exclusiveSectionDepth;            // only accessed by owner thread, no synchronization needed
     private int _activePooledReads;
@@ -92,6 +93,9 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
     /// </summary>
     public static T? GetService<T>() where T : class
         => _currentScope.Value?.ServiceProvider.GetService<T>();
+
+    internal static IReentrantReader? GetAmbientReentrantReader()
+        => _currentReentrantReader.Value;
 
     /// <summary>
     /// Purpose: Force schema initialization for startup validation.
@@ -508,7 +512,9 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             // Set up DI scope for UDFs that need service resolution
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
+            var previousReentrantReader = _currentReentrantReader.Value;
             _currentScope.Value = scope;
+            _currentReentrantReader.Value = this;
             try
             {
                 return ExecuteReadOnConnection(conn, "duckdb.query", sql, map, cancellationToken);
@@ -516,6 +522,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             finally
             {
                 _currentScope.Value = previousScope;
+                _currentReentrantReader.Value = previousReentrantReader;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
@@ -651,7 +658,9 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             // Set up DI scope for UDFs that need service resolution
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
+            var previousReentrantReader = _currentReentrantReader.Value;
             _currentScope.Value = scope;
+            _currentReentrantReader.Value = this;
             try
             {
                 // Start a read-only transaction - DuckDB will reject any write attempts
@@ -672,6 +681,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             finally
             {
                 _currentScope.Value = previousScope;
+                _currentReentrantReader.Value = previousReentrantReader;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
@@ -701,7 +711,9 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             // Set up DI scope for UDFs that need service resolution
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
+            var previousReentrantReader = _currentReentrantReader.Value;
             _currentScope.Value = scope;
+            _currentReentrantReader.Value = this;
             try
             {
                 pooledConnection.Execute("BEGIN TRANSACTION READ ONLY;");
@@ -721,6 +733,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             finally
             {
                 _currentScope.Value = previousScope;
+                _currentReentrantReader.Value = previousReentrantReader;
             }
         }
         finally
@@ -753,7 +766,9 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             // Set up DI scope for UDFs that need service resolution
             using var scope = _serviceProvider?.CreateScope();
             var previousScope = _currentScope.Value;
+            var previousReentrantReader = _currentReentrantReader.Value;
             _currentScope.Value = scope;
+            _currentReentrantReader.Value = this;
             try
             {
                 return ExecuteScalarOnConnection<T>(conn, sql, cancellationToken);
@@ -761,6 +776,7 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
             finally
             {
                 _currentScope.Value = previousScope;
+                _currentReentrantReader.Value = previousReentrantReader;
             }
         }
         catch (DuckDBException ex) when (IsFatalDatabaseError(ex))
@@ -1503,8 +1519,8 @@ public sealed class DuckDbDataStore : IReentrantReader, IDisposable
                 "Macros/find_candidates.sql",
                 "Macros/search_semantic.sql",
                 "Macros/search_debug.sql",
-                "Macros/search.sql",
                 "Macros/score_objects.sql",
+                "Macros/search.sql",
                 "Macros/explore_candidates.sql",
                 "Macros/hybrid_search.sql",
                 "Macros/search_symbol.sql",
