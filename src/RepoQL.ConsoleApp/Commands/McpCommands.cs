@@ -51,14 +51,9 @@ internal class McpCommands
 
                                            **Everything has summaries.** Headline (one line, the most important aspects), structure (signatures, document outlines), content (full text, or a text representation). You choose the level. Don't pay for content when structure answers the question.
 
-                                           **Budget controls detail.** 500 tokens = shape. 2000 = structure. 5000 = depth. Set it based on what you need, not what exists.
-
-                                           **Breadth controls depth vs coverage.**
-                                           - High breadth (8-10): You don't know what's there yet. Survey with or without keywords. Returns an index, not content.
-                                           - Medium breadth (4-6, default): You know the concept, not the location. Balanced — detail on matches, awareness of the rest.
-                                           - Low breadth (1-3): You know the target. Depth with context — concentrates tokens on relevant content and its surroundings.
-
-                                           **Why this matters:** Traditional search finds *most* results and you answer confidently — but gaps erode trust. Users run subagents to verify, wasting tokens and time. Explore searches wide first, so you see what exists before answering. No blind spots, no verification tax. You can say "I found everything related to X" — not "I found some things."
+                                           **Budget controls detail.** Set it based on how important the answer is to you. More budget, more detail/results depending on breadth
+                                           
+                                           Traditional search finds *most* results and you answer confidently — but gaps erode trust. Users run subagents to verify, wasting tokens and time. Explore searches wide first, so you see what exists before answering. No blind spots, no verification tax. You can say "I found everything related to X" — not "I found some things."
 
                                            You also never get stale data — RepoQL reindexes changes live and holds requests until everything in scope is ready. Complete and current, every time.
 
@@ -76,28 +71,26 @@ internal class McpCommands
                                            **explain** — Ask a question, get a synthesized answer with citations. An LLM reads wide (50k tokens), returns focused prose. Use when you want understanding, not raw text.
                                            **read** — Fetch known URIs. Append `=> modifier` for views (tree, history, blame, lint, question).
                                            **query** — SQL for aggregation, graph traversal, git history, cross-file analysis. Also: call MCP servers, parse JSON/CSV/Excel/Parquet.
-                                           **command** — Imperative operations: diagnostics, reindex, config. Use `command(command="?")` to list all.
+                                           **execute** — Run javascript in a wasm sandbox with access to query, the file system and many common libraries. Can also register your own wasm/JS modules
+                                           **command** — Imperative operations: diagnostics, auth, config etc. Use `command(command="?")` to list all.
                                            </TOOLS>
 
                                            <START>
-                                           **Best 3k tokens you'll ever spend.** You don't know what you don't know — RepoQL has capabilities you won't guess. Read the map first:
-                                             read("help://** => tree: headlines", 3000)
-
-                                           Then orient in the codebase:
-                                             read("file://** => tree: folders", 5000)
+                                           **Best 5k tokens you'll ever spend.** You don't know what you don't know — RepoQL has capabilities you won't guess. Read the map first:
+                                             read("help://** => tree: headlines", 5000)
 
                                            Now you can find things without guessing:
-                                             explore(uriGlob="help://**", keywords="authentication", tokenBudget=1500)
+                                             explore(uriGlob="file://**", question="How do users authenticate with the app?", keywords="authentication cookie", tokenBudget=1500)
                                            </START>
 
                                            <HELP>
                                            RepoQL documentation is indexed at `help://` — query it like code.
 
                                            Ask a question:
-                                             explain(question="How do I add a new file format?", uriGlob="help://**", tokenBudget=2500)
+                                             explain(question="How do I query MCP servers and save it to a csv file?", keywords="csv mcp", uriGlob="help://**", tokenBudget=2500)
 
                                            Find relevant docs:
-                                             explore(uriGlob="help://**", keywords="views", tokenBudget=1500)
+                                             explore(uriGlob="help://formats/**", keywords="c# python markdown", tokenBudget=1500)
                                            </HELP>
                                            """;
                 })
