@@ -23,8 +23,8 @@
   </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\..\RepoQL.Templating\RepoQL.Templating.csproj" />
-      <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+      <ProjectReference Include="..\..\core\RepoQL.Templating\RepoQL.Templating.csproj" />
+      <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" />
       <ProjectReference Include="..\..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
     </ItemGroup>
 

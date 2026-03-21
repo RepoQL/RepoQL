@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>SARIF normalization primitives for RepoQL imports</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\..\core\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+  </ItemGroup>
+
+</Project>

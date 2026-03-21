@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
@@ -15,7 +15,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\..\RepoQL.Mcp.Client\RepoQL.Mcp.Client.csproj" />
+      <ProjectReference Include="..\..\engine\RepoQL.Mcp.Client\RepoQL.Mcp.Client.csproj" />
     </ItemGroup>
 
 </Project>

@@ -1,0 +1,36 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="DuckDB.NET.Data.Full" />
+        <PackageReference Include="Humanizer.Core" />
+        <PackageReference Include="Ignore" />
+        <PackageReference Include="LibGit2Sharp" />
+        <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+        <PackageReference Include="System.Text.Json" />
+        <PackageReference Include="YamlDotNet" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <EmbeddedResource Include="Schema/**/*.sql" />
+        <EmbeddedResource Include="Resources/full-embedding.ignore" />
+        <EmbeddedResource Include="Resources/voyage-tokenizer.json" />
+        <!-- IL Linker config to preserve UDF classes during trimming -->
+        <EmbeddedResource Include="ILLink.Descriptors.xml" LogicalName="ILLink.Descriptors.xml" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+      <ProjectReference Include="..\..\engine\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
+      <ProjectReference Include="..\..\engine\RepoQL.Explore\RepoQL.Explore.csproj" />
+      <ProjectReference Include="..\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <InternalsVisibleTo Include="RepoQL.Data.DuckDB.Tests" />
+    </ItemGroup>
+
+</Project>

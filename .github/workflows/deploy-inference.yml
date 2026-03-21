@@ -86,7 +86,7 @@ jobs:
 
           echo "Publishing container image: ${full_image}"
 
-          dotnet publish src/RepoQL.Inference.Service/RepoQL.Inference.Service.csproj \
+          dotnet publish src/cloud/RepoQL.Inference.Service/RepoQL.Inference.Service.csproj \
             -c Release \
             /t:PublishContainer \
             -p:ContainerRegistry="${registry}" \

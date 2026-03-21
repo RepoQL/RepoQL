@@ -125,7 +125,7 @@ jobs:
 
           echo "Publishing container image: ${full_image}"
 
-          dotnet publish src/RepoQL.Cloud.Service/RepoQL.Cloud.Service.csproj \
+          dotnet publish src/cloud/RepoQL.Cloud.Service/RepoQL.Cloud.Service.csproj \
             -c Release \
             /t:PublishContainer \
             -p:ContainerRegistry="${registry}" \
@@ -211,7 +211,7 @@ jobs:
 
           echo "Publishing container image: ${full_image}"
 
-          dotnet publish src/RepoQL.Cloud.Service/RepoQL.Cloud.Service.csproj \
+          dotnet publish src/cloud/RepoQL.Cloud.Service/RepoQL.Cloud.Service.csproj \
             -c Release \
             /t:PublishContainer \
             -p:ContainerRegistry="${registry}" \

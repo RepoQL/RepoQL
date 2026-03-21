@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
@@ -15,7 +15,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\RepoQL.Sandbox\RepoQL.Sandbox.csproj" />
+        <ProjectReference Include="..\..\engine\RepoQL.Sandbox\RepoQL.Sandbox.csproj" />
     </ItemGroup>
 
 </Project>

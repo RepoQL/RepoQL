@@ -34,7 +34,7 @@ jobs:
         run: |
           set -eo pipefail
 
-          csproj="src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj"
+          csproj="src/app/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj"
           current_version=$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' "$csproj" | head -n1)
 
           if git rev-parse HEAD^ >/dev/null 2>&1; then

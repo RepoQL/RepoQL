@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
       <OutputType>exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -21,7 +21,7 @@
     <ProjectReference Include="..\RepoQL.Indexing\RepoQL.Indexing.csproj" />
     <ProjectReference Include="..\..\Formats\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />
     <ProjectReference Include="..\..\Formats\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
-    <ProjectReference Include="..\..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+    <ProjectReference Include="..\..\core\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
     <ProjectReference Include="..\..\tests\RepoQL.Testing\RepoQL.Testing.csproj" />
   </ItemGroup>
 </Project>

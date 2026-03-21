@@ -17,8 +17,8 @@
 
     <ItemGroup>
       <ProjectReference Include="..\..\Formats\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />
-      <ProjectReference Include="..\..\RepoQL.Templating\RepoQL.Templating.csproj" />
-      <ProjectReference Include="..\..\RepoQL.Core\RepoQL.Core.csproj" />
+      <ProjectReference Include="..\..\core\RepoQL.Templating\RepoQL.Templating.csproj" />
+      <ProjectReference Include="..\..\core\RepoQL.Core\RepoQL.Core.csproj" />
     </ItemGroup>
 
 </Project>

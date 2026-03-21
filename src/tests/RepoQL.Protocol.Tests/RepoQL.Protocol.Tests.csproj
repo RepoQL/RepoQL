@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -16,6 +16,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\RepoQL.Protocol\RepoQL.Protocol.csproj" />
+    <ProjectReference Include="..\..\core\RepoQL.Protocol\RepoQL.Protocol.csproj" />
   </ItemGroup>
 </Project>

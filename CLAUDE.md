@@ -145,16 +145,16 @@ Beyond the schema, these subsystems are what you'll encounter building RepoQL.
 
 | Component | What to know |
 |-----------|-------------|
-| **UriRegistry** | In-memory source of truth for what exists and its state (`Discovered → Indexing → Indexed`, parallel embedding track). Operations poll it. Scope readiness checks query it. `src/RepoQL.Contracts/UriRegistry/` |
+| **UriRegistry** | In-memory source of truth for what exists and its state (`Discovered → Indexing → Indexed`, parallel embedding track). Operations poll it. Scope readiness checks query it. `src/core/RepoQL.Contracts/UriRegistry/` |
 | **Operations** | Track batches of indexing work to completion. Awaitable, queryable via SQL. How "are my files ready?" gets answered. `docs/designs/current/operations.md` today, with internal design doctrine moving under `design/` (see `design/documentation-structure.md`) |
 | **Format system** | Pluggable parsers per file type. Classifier → parser → analyzer → x-ray templates. `IFormatLoader` via DI discovery. `src/Indexing/RepoQL.Indexing/PROCESSOR_GUIDE.md` |
-| **File system abstraction** | VFS per URI scheme (`file://`, `help://`, `github://`). `IMultiFileSystem` routes. Not all imports need VFS — SARIF annotates existing nodes. `src/RepoQL.FileSystem/` |
-| **Explore/read engine** | Search with hybrid scoring (BM25 + fuzzy + semantic) → budget allocation per result → intent shapes curve. `src/RepoQL.Explore/` |
-| **UDF system** | `[UdfClass]`/`[ScalarUdf]`/`[StructuredUdf]` attributes → auto-discovered → SQL macros generated. `src/RepoQL.Data.DuckDB/UdfImplementations/` |
-| **MCP client registry** | Discovers external MCP servers, generates SQL macros. Query Postgres, New Relic, anything from SQL. `src/RepoQL.Mcp.Client/` |
-| **Embeddings** | Local ONNX model, no cloud. Vector search via DuckDB VSS. Generated during idle processing. `src/RepoQL.Embeddings/` |
-| **Snapshots** | Pre-computed indexed data shipped with binary. Makes `help://` instantly queryable on first startup. `src/RepoQL.Data.DuckDB/Snapshots/` |
-| **Command system** | `[CommandClass]` + `[Command("name")]` → auto-discovered. `::` prefix, never overlaps SQL. `src/RepoQL.Commands/` |
+| **File system abstraction** | VFS per URI scheme (`file://`, `help://`, `github://`). `IMultiFileSystem` routes. Not all imports need VFS — SARIF annotates existing nodes. `src/core/RepoQL.FileSystem/` |
+| **Explore/read engine** | Search with hybrid scoring (BM25 + fuzzy + semantic) → budget allocation per result → intent shapes curve. `src/engine/RepoQL.Explore/` |
+| **UDF system** | `[UdfClass]`/`[ScalarUdf]`/`[StructuredUdf]` attributes → auto-discovered → SQL macros generated. `src/core/RepoQL.Data.DuckDB/UdfImplementations/` |
+| **MCP client registry** | Discovers external MCP servers, generates SQL macros. Query Postgres, New Relic, anything from SQL. `src/engine/RepoQL.Mcp.Client/` |
+| **Embeddings** | Local ONNX model, no cloud. Vector search via DuckDB VSS. Generated during idle processing. `src/engine/RepoQL.Embeddings/` |
+| **Snapshots** | Pre-computed indexed data shipped with binary. Makes `help://` instantly queryable on first startup. `src/core/RepoQL.Data.DuckDB/Snapshots/` |
+| **Command system** | `[CommandClass]` + `[Command("name")]` → auto-discovered. `::` prefix, never overlaps SQL. `src/engine/RepoQL.Commands/` |
 | **Dashboard** | React app for "what is it doing?" Real-time status via the host dashboard event stream (`/api/events`). `dashboard/` |
 | **Observability** | OpenTelemetry throughout. Aspire in dev (`RepoQL.Orchestrator`). Logs to `.repoql/` file. Long-term: RepoQL as OTEL collector. |
 | **Agent integrations** | Claude Code plugin, clawdbot/openclaw — skills that teach agents desire paths. `integrations/` |
@@ -194,7 +194,7 @@ dotnet run -- --output Detailed            # Verbose output
 | Spans: 1-based lines, 0-based chars | `#line=42` = line 42. `#char=100,150` = bytes [100,150) |
 | Current vs Future docs | Today the durable docs mostly live under `docs/*/current/` and `docs/*/future/`. The target structure is `design/flows` and `design/designs` (see `design/documentation-structure.md`). Current = built and working. Future = designed but not yet built. Don't update future to match limitations. Don't update current with aspirations. The gap = work to do |
 | Class docs required | Purpose (why it exists) + Complexity (what's contained). The "and" test: rarely need "and" in a class's purpose |
-| Version lives in ConsoleApp | `src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj` → `<Version>` element. Nowhere else. |
+| Version lives in ConsoleApp | `src/app/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj` → `<Version>` element. Nowhere else. |
 | Version bumps are patch only | Bump the revision number (e.g. 1.4.0 → 1.4.1). Minor/major bumps only when explicitly requested. |
 
 ### How Do I...
@@ -207,37 +207,61 @@ dotnet run -- --output Detailed            # Verbose output
 | Add SQL function | `[UdfClass]` + `[ScalarUdf]` in `UdfImplementations/`, auto-discovered |
 | Add command | `[CommandClass]` + `[Command("name")]` in `CommandImplementations/`, auto-discovered |
 | Add lint rule | Emit `annotation` with `kind='lint'`, `severity`, `rule_id`, `message` |
-| Propose architecture | Read `docs/RepoqlDesign.md` first, then `design/documentation-structure.md` for the target internal doctrine layout. Extend via SQL surface |
+| Propose architecture | Read `docs/architecture/RepoqlDesign.md` first, then `design/documentation-structure.md` for the target internal doctrine layout. Extend via SQL surface |
 | Find docs | `explore(uriGlob="help://**", keywords="topic")` or `read("help://** => tree: headlines", 3000)` |
 
 ### Project Map
 
+Projects are organized into tiers under `src/` that reflect the dependency direction:
+
+**`core/`** — Foundation, everything depends on these
+| Project | Purpose |
+|---------|---------|
+| `RepoQL.Contracts` | Shared types (RepoUri, SemanticMediaType, UriRegistry, Operations, models) |
+| `RepoQL.Core` | Shared indexing infrastructure — format registry, pipeline snapshots, work queue, EditorConfig, metrics |
+| `RepoQL.Data.DuckDB` | Graph store, UDFs, schema, snapshots (single writer enforced here) |
+| `RepoQL.FileSystem` | VFS abstraction (file://, help://, github://, memory) |
+| `RepoQL.Protocol` | gRPC proto, client, transport, diagnostics |
+| `RepoQL.Templating` | Liquid templates for x-ray generation |
+
+**`engine/`** — Capabilities built on core
+| Project | Purpose |
+|---------|---------|
+| `RepoQL.Commands` | Command framework (`::command` syntax — attributes, parser, registry) |
+| `RepoQL.Embeddings` | Local ONNX embedding model, tokenizer |
+| `RepoQL.Explore` | Search orchestration, rendering, budget allocation |
+| `RepoQL.Read` | Read tool orchestration, modifier dispatch, content handlers |
+| `RepoQL.Mcp.Client` | External MCP server discovery and SQL macro generation |
+| `RepoQL.Sandbox` | Sandboxed JS/WASM execution surface |
+| `RepoQL.Sarif` | SARIF import and annotation integration |
+| `RepoQL.Analyzers` | Roslyn analyzers that enforce RepoQL architectural rules |
+
+**`app/`** — Composition roots
 | Project | Purpose |
 |---------|---------|
 | `RepoQL.ConsoleApp` | CLI + gRPC host, tool handlers, commands, dashboard |
-| `RepoQL.Commands` | Command framework (`::command` syntax — attributes, parser, registry) |
-| `RepoQL.Data.DuckDB` | Graph store, UDFs, schema, snapshots (single writer enforced here) |
-| `Indexing/RepoQL.Indexing` | Pipeline, epoch tracking, processors |
-| `Formats/*` | File parsers — one project per format family |
-| `RepoQL.Explore` | Search orchestration, rendering, budget allocation |
-| `RepoQL.Read` | Read tool orchestration, modifier dispatch, content handlers |
-| `RepoQL.Contracts` | Shared types (RepoUri, SemanticMediaType, UriRegistry, Operations, models) |
-| `RepoQL.Core` | Shared indexing infrastructure — format registry, pipeline snapshots, work queue, EditorConfig, metrics |
-| `RepoQL.Protocol` | gRPC proto, client, transport, diagnostics |
-| `RepoQL.FileSystem` | VFS abstraction (file://, help://, github://, memory) |
-| `RepoQL.Embeddings` | Local ONNX embedding model, tokenizer |
-| `RepoQL.Embedding.Proto` | gRPC contracts for the embedding service stack |
-| `RepoQL.Embedding.Service` | Out-of-process embedding generation service |
-| `RepoQL.Embedding.Client` | Client for talking to the embedding service |
-| `RepoQL.Embedding.Writer` | Persistence pipeline for embedding writes |
-| `RepoQL.Embedding.Storage` | Local storage and caching for embedding artifacts |
-| `RepoQL.Mcp.Client` | External MCP server discovery and SQL macro generation |
-| `RepoQL.LLM.Client` | LLM provider abstraction for LLM-powered features |
-| `RepoQL.Templating` | Liquid templates for x-ray generation |
-| `RepoQL.Analyzers` | Roslyn analyzers that enforce RepoQL architectural rules |
-| `RepoQL.Sarif` | SARIF import and annotation integration |
 | `RepoQL.Documentation` | Embedded `help://` docs — where help content lives physically |
 | `RepoQL.Orchestrator` | Aspire host for development telemetry |
+
+**`cloud/`** — Remote services (deployed separately)
+| Project | Purpose |
+|---------|---------|
+| `RepoQL.Cloud.Auth` | Auth primitives for cloud services |
+| `RepoQL.Cloud.Service` | Unified cloud host (embedding + inference) |
+| `RepoQL.Embedding.Proto` | gRPC contracts for the embedding service stack |
+| `RepoQL.Embedding.Client` | Client for talking to the embedding service |
+| `RepoQL.Embedding.Service` | Out-of-process embedding generation service |
+| `RepoQL.Embedding.Storage` | Local storage and caching for embedding artifacts |
+| `RepoQL.Embedding.Writer` | Persistence pipeline for embedding writes |
+| `RepoQL.Inference.Proto` | gRPC contracts for the inference service |
+| `RepoQL.Inference.Client` | Client for talking to the inference service |
+| `RepoQL.Inference.Service` | Out-of-process LLM inference service |
+
+**Other groups** (already organized)
+| Project | Purpose |
+|---------|---------|
+| `Indexing/RepoQL.Indexing` | Pipeline, epoch tracking, processors |
+| `Formats/*` | File parsers — one project per format family |
 | `integrations/` | Claude Code plugin, clawdbot/openclaw — skills and desire paths |
 ---
 
@@ -248,12 +272,15 @@ RepoQL has two documentation surfaces. Public consumption docs live at `help://`
 | Topic | File path |
 |-------|-----------|
 | Documentation doctrine | `design/documentation-structure.md` |
-| Vision & north stars | `docs/north-star/` (current corpus) |
-| Design | `docs/RepoqlDesign.md` (current corpus) |
-| Schema | `docs/Schema.md` |
+| Vision & north stars | `docs/north-star/` |
+| Design | `docs/architecture/RepoqlDesign.md` |
+| Schema | `docs/reference/Schema.md` |
+| Reference specs | `docs/reference/` (URI, media types, vocabulary, x-ray, schema) |
 | Testing | `docs/knowledge/testing-guidelines.md` |
-| Indexing pipeline | `docs/flows/current/indexing/` (current corpus) |
-| Failure modes | `docs/flows/current/*/failure-modes/` (current corpus) |
+| Indexing pipeline | `docs/flows/current/indexing/` |
+| Failure modes | `docs/flows/current/*/failure-modes/` |
+| Active plans | `docs/plans/active/` |
+| Archived plans | `docs/plans/archive/` |
 | Full awareness guide | `docs/knowledge/building-repoql.md` |
 
 ---

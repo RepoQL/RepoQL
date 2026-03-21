@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -16,8 +16,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\RepoQL.Sarif\RepoQL.Sarif.csproj" />
-    <ProjectReference Include="..\..\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+    <ProjectReference Include="..\..\engine\RepoQL.Sarif\RepoQL.Sarif.csproj" />
+    <ProjectReference Include="..\..\core\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
     <ProjectReference Include="..\RepoQL.Testing\RepoQL.Testing.csproj" />
   </ItemGroup>
 

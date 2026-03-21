@@ -90,7 +90,7 @@ jobs:
 
           echo "Publishing container image: ${full_image}"
 
-          dotnet publish src/RepoQL.Embedding.Service/RepoQL.Embedding.Service.csproj \
+          dotnet publish src/cloud/RepoQL.Embedding.Service/RepoQL.Embedding.Service.csproj \
             -c Release \
             /t:PublishContainer \
             -p:ContainerRegistry="${registry}" \

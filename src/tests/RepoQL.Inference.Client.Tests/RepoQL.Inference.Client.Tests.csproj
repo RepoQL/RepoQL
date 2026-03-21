@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -17,9 +17,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
-    <ProjectReference Include="..\..\RepoQL.Inference.Client\RepoQL.Inference.Client.csproj" />
-    <ProjectReference Include="..\..\RepoQL.Inference.Proto\RepoQL.Inference.Proto.csproj" />
+    <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\..\cloud\RepoQL.Inference.Client\RepoQL.Inference.Client.csproj" />
+    <ProjectReference Include="..\..\cloud\RepoQL.Inference.Proto\RepoQL.Inference.Proto.csproj" />
   </ItemGroup>
 
 </Project>

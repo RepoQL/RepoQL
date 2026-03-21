@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
@@ -15,7 +15,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\..\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+      <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" />
     </ItemGroup>
 
 </Project>

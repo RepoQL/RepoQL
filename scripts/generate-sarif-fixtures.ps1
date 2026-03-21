@@ -86,7 +86,7 @@ $roslynOutput = Join-Path $OutputDir 'roslyn.sarif'
 # Actually, ErrorLog with a solution build puts SARIF per-project next to the binary.
 # Use a different approach: build with BinaryLogger and convert? Too complex.
 # Simplest: build the main app project which pulls in most analyzers.
-$mainProject = Join-Path $repoRoot 'src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj'
+$mainProject = Join-Path $repoRoot 'src/app/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj'
 if (Test-Path $mainProject) {
     # ErrorLog path must be absolute for dotnet build
     # The comma between path and version must be escaped — MSBuild treats commas as property separators.

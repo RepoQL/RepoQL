@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\RepoQL.Inference.Proto\RepoQL.Inference.Proto.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="RepoQL.Inference.Client.Tests" />
+  </ItemGroup>
+
+</Project>

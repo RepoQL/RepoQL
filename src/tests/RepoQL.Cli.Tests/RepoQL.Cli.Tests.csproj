@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -15,8 +15,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\RepoQL.ConsoleApp\RepoQL.ConsoleApp.csproj" />
-    <ProjectReference Include="..\..\RepoQL.Commands\RepoQL.Commands.csproj" />
+    <ProjectReference Include="..\..\app\RepoQL.ConsoleApp\RepoQL.ConsoleApp.csproj" />
+    <ProjectReference Include="..\..\engine\RepoQL.Commands\RepoQL.Commands.csproj" />
   </ItemGroup>
 
 </Project>
