@@ -190,8 +190,8 @@ read("file:///src/** => lint: errors", 1000)   -- show errors only
 - `headline`: one-line summary per file
 - `structure`: signatures without bodies
 - `content`: full file content (explicit default)
-- `history`: commits affecting file; `: keyword` filters by message/author
-- `blame`: git blame showing who changed each line
+- `history`: commits affecting file; `: keyword` filters by message/author (works on all schemes including github://)
+- `blame`: git blame showing who changed each line (**file:// only** — requires local git repository)
 - `lint`: diagnostics; `: errors` or `: warnings` filters severity
 - `find`: semantic search within matched files; `: keywords` to search
   - `read => find` has a file-scope cap (default 96 files); broader scopes are rejected with guidance

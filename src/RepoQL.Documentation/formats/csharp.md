@@ -57,7 +57,7 @@ ORDER BY params DESC
 
 -- Search → structure → snippet
 WITH hits AS (
-  SELECT uri FROM file_search('repository service', question := 'Where is data access implemented?', k := 5)
+  SELECT uri FROM search('repository service data access', k := 5)
 )
 SELECT h.uri, t.qualified_name, t.kind, sn.line_number, sn.text
 FROM hits h

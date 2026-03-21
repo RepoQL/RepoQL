@@ -23,12 +23,15 @@ Glob-style patterns for selecting files and symbols. Works in `read`, `explore`,
 
 ## Symbol Patterns
 
-| Pattern | Matches |
-|---------|---------|
-| `MyClass` | Exact name only |
-| `*Handler` | Anything ending in Handler |
-| `MyClass.*` | Direct children (one level) |
-| `MyClass.**` | All descendants (any depth) |
+Patterns match against **fully qualified symbol names** (e.g. `MyApp.Services.AuthService.ValidateToken`), not short names.
+
+| Pattern | Matches | Example match |
+|---------|---------|---------------|
+| `*Handler` | Anything ending in Handler | `MyApp.Host.FindHandler` |
+| `*Service*` | Anything containing Service | `MyApp.Services.AuthService` |
+| `MyClass.*` | Direct children (one level) | `MyClass.Execute` |
+| `MyClass.**` | All descendants (any depth) | `MyClass.Inner.Method` |
+| `*Validate*` | Any symbol with Validate in the name | `MyApp.Auth.ValidateToken` |
 
 ## Examples
 

@@ -42,6 +42,7 @@ SELECT * FROM Types WHERE file_name = 'UserService.cs';
 - Properties extracted from node's JSON `properties` field
 - `signature` falls back to `headline` if not set
 - SeeAlso: `Functions` view for methods, `Files` view for documents
+- For richer language-specific views with edges (USES_SYMBOL, IMPLEMENTS, INHERITS_FROM), see `help:///formats/` — e.g. `csharp_types`, `go_types`, `ruby_associations`
 
 ---
 

@@ -42,6 +42,7 @@ SELECT * FROM Functions WHERE file_name = 'UserService.cs';
 - `qualified_name` computed as `declaring_type.name` if not explicitly set
 - `signature` falls back to `headline` if not set
 - SeeAlso: `Types` view for classes, `Files` view for documents
+- For richer language-specific views with edges and relationships, see `help:///formats/` — e.g. `csharp_members`, `go_functions`, `ruby_methods`
 
 ---
 
