@@ -291,6 +291,22 @@ public sealed class SearchPipelineUdf(
             }
         }
 
+        // Normalize raw semantic scores using the result set's own range.
+        // sem_norm from SQL calibration saturates (66 docs at 1.0), destroying differentiation.
+        // Raw sem_score has real variation (e.g., 0.45-0.62). Rescale to 0-1 using min/max.
+        var semScores = merged.Values.Where(d => d.SemScore > 0).Select(d => d.SemScore).ToList();
+        var semMin = semScores.Count > 0 ? semScores.Min() : 0.0;
+        var semMax = semScores.Count > 0 ? semScores.Max() : 1.0;
+        var semRange = semMax - semMin;
+        if (semRange < 0.01) semRange = 1.0; // avoid division by zero when all scores are identical
+
+        foreach (var key in merged.Keys.ToList())
+        {
+            var d = merged[key];
+            var rescaled = d.SemScore > 0 ? (d.SemScore - semMin) / semRange : 0.0;
+            merged[key] = d with { SemNorm = Math.Clamp(rescaled, 0.0, 1.0) };
+        }
+
         var ranked = merged.Values
             .OrderByDescending(static d => Combine(d.Bm25Norm, d.FuzzNorm, d.SemNorm))
             .ThenByDescending(static d => d.RrfLex + d.RrfSem)
