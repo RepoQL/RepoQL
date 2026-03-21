@@ -1,6 +1,4 @@
--- Lexical search module: two-phase document-first scoring.
--- Phase 1: Score documents only (11K rows vs 286K) using document-level signals.
--- Phase 2: Expand top documents to child objects with symbol scoring.
+-- Lexical search module: document-first scoring.
 -- Output contract unchanged: (node_id, doc_id, bm25_score, fuzzy_score, bm25_norm, fuzz_norm, lex_rank, rrf_lex)
 
 CREATE OR REPLACE MACRO _search_lexical(
@@ -49,8 +47,8 @@ doc_filtered AS (
 ),
 
 -- Body content matches via grep (reads live files, already document-scoped)
-grep_hits AS (
-    SELECT DISTINCT n.id AS doc_id
+grep_lines AS (
+    SELECT DISTINCT n.id AS doc_id, g.line_number
     FROM params p, grep_matches(p.keywords_lc, '**', 500) g
     JOIN node n ON n.uri = g.uri AND n.kind = 'document'
     WHERE p.keywords_empty = FALSE
@@ -74,7 +72,7 @@ doc_heur_scored AS (
         CASE
             WHEN LOWER(COALESCE(d.basename, '')) = p.keywords_lc
               OR LOWER(regexp_replace(COALESCE(d.basename, ''), '\.[^.]*$', '')) = p.keywords_lc THEN 3.0
-            WHEN d.doc_id IN (SELECT doc_id FROM grep_hits) THEN 2.5
+            WHEN d.doc_id IN (SELECT DISTINCT doc_id FROM grep_lines) THEN 2.5
             WHEN position(p.keywords_lc IN LOWER(COALESCE(d.basename, ''))) > 0 THEN 2.0
             WHEN position(p.keywords_lc IN LOWER(COALESCE(d.headline, '') || ' ' || COALESCE(d.structure, ''))) > 0 THEN 1.5
             WHEN position(p.keywords_lc IN d.search_key) > 0 THEN 1.0
@@ -110,45 +108,10 @@ doc_ranked AS (
     QUALIFY doc_rank <= (SELECT limit_cand FROM params)
 ),
 
--- =====================================================================
--- PHASE 2+3: EXPAND OBJECTS AND UNION (single reference to doc_ranked)
--- =====================================================================
-
--- Documents + their child objects in one pass. doc_ranked referenced once
--- to prevent Phase 1 re-evaluation in the TABLE macro CTE chain.
+-- Document candidates only. Object scoring moves to the second pass.
 all_candidates AS (
-    -- Document rows
     SELECT node_id, doc_id, doc_bm25 AS bm25, doc_fuzz AS fuzz
     FROM doc_ranked
-
-    UNION ALL
-
-    -- Child objects with symbol scoring
-    SELECT
-        child.id AS node_id,
-        dr.doc_id,
-        CASE
-            WHEN LOWER(COALESCE(
-                repository_uri_symbol(child.uri),
-                json_extract_string(child.properties, '$.symbol'),
-                json_extract_string(child.properties, '$.name'),
-                '')) = p.keywords_lc THEN 4.0
-            WHEN p.keywords_lc <> '' AND position(p.keywords_lc IN LOWER(COALESCE(
-                repository_uri_symbol(child.uri),
-                json_extract_string(child.properties, '$.symbol'),
-                json_extract_string(child.properties, '$.name'),
-                ''))) > 0 THEN 3.2
-            WHEN position(p.keywords_lc IN LOWER(
-                COALESCE(child.headline, '') || ' ' || COALESCE(child.structure, ''))) > 0
-                THEN GREATEST(1.5, dr.doc_bm25)
-            ELSE dr.doc_bm25
-        END AS bm25,
-        dr.doc_fuzz AS fuzz
-    FROM doc_ranked dr
-    JOIN span s ON s.document_id = dr.doc_id
-    JOIN node child ON child.span_id = s.id AND child.kind <> 'document'
-    CROSS JOIN params p
-    WHERE p.keywords_empty = FALSE
 ),
 
 limited AS (
