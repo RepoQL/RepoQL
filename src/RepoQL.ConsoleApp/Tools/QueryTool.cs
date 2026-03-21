@@ -249,7 +249,8 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
             // User-input errors (SQL syntax, invalid column, etc.) return Success so the
             // Claude harness doesn't cancel sibling parallel tool calls. The error text
             // is still clearly an error — the agent sees it and can correct the query.
-            return ToolResult.Success(cleanMessage + orientationFooter);
+            var enrichedMessage = ErrorClassifier.EnrichSqlError(cleanMessage);
+            return ToolResult.Success(enrichedMessage + orientationFooter);
         }
     }
 
