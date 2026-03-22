@@ -67,7 +67,7 @@ internal sealed class DiagnosticsCollectorTests : IDisposable
         var repoRoot = CreateTempDirectory();
         Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
         var repoqlDirectory = Directory.CreateDirectory(Path.Combine(repoRoot, ".repoql"));
-        var stderrPath = Path.Combine(repoqlDirectory.FullName, CrossSessionHostState.HostStderrFileName);
+        var stderrPath = Path.Combine(repoqlDirectory.FullName, RepoQL.Client.Diagnostics.HostPaths.HostStderrFileName);
         File.WriteAllLines(stderrPath, Enumerable.Range(1, 60).Select(i => $"stderr-{i}"));
 
         var report = await CollectFromDirectoryAsync(
@@ -105,7 +105,7 @@ internal sealed class DiagnosticsCollectorTests : IDisposable
         var repoRoot = CreateTempDirectory();
         Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
         var repoqlDirectory = Directory.CreateDirectory(Path.Combine(repoRoot, ".repoql"));
-        var versionPath = Path.Combine(repoqlDirectory.FullName, CrossSessionHostState.HostVersionFileName);
+        var versionPath = Path.Combine(repoqlDirectory.FullName, RepoQL.Client.Diagnostics.HostPaths.HostVersionFileName);
         File.WriteAllText(versionPath, "9.9.9");
 
         var report = await CollectFromDirectoryAsync(

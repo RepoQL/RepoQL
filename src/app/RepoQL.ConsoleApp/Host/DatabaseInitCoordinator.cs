@@ -112,7 +112,7 @@ internal static class DatabaseInitCoordinator
 
                 if (errorType == DatabaseOpenErrorType.Locked)
                 {
-                    report.LockHolder = DatabaseLockInspector.TryGetLockHolder(report.Path, logger);
+                    report.LockHolder = DatabaseLockInspector.TryGetLockHolder(report.Path, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
                     if (report.LockHolder is { } lockHolder &&
                         RepoQlProcessInspector.TryGetRepoQlProcess(lockHolder.ProcessId, out var process))
                     {

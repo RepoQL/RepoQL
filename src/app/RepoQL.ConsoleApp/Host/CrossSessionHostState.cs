@@ -9,15 +9,15 @@ namespace RepoQL.ConsoleApp.Host;
 /// </summary>
 internal static class CrossSessionHostState
 {
-    internal const string HostStderrFileName = "host.stderr.log";
-    internal const string HostVersionFileName = "host.version";
+    // Path constants defined in RepoQL.Client.Diagnostics.HostPaths — use those for the canonical source.
+    // Duplicated here because CrossSessionHostState has additional host-only behavior beyond path resolution.
     internal const int HostStderrRingBufferLineCount = 200;
 
     public static string GetHostStderrPath(string repoRoot)
-        => Path.Combine(RepoLocator.EnsureRepoqlDirectory(repoRoot), HostStderrFileName);
+        => RepoQL.Client.Diagnostics.HostPaths.GetHostStderrPath(repoRoot);
 
     public static string GetHostVersionPath(string repoRoot)
-        => Path.Combine(RepoLocator.EnsureRepoqlDirectory(repoRoot), HostVersionFileName);
+        => RepoQL.Client.Diagnostics.HostPaths.GetHostVersionPath(repoRoot);
 
     public static bool TryInstallStderrMirror(
         string repoRoot,

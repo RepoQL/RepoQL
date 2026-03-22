@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
+using Microsoft.Extensions.Logging;
 using RepoQL.Client.Diagnostics;
 
 namespace RepoQL.Client.Host;
@@ -11,7 +12,7 @@ namespace RepoQL.Client.Host;
 /// </summary>
 internal static class DatabaseLockInspector
 {
-    public static ProcessInfo? TryGetLockHolder(string databasePath, Serilog.ILogger logger)
+    public static ProcessInfo? TryGetLockHolder(string databasePath, ILogger logger)
     {
         try
         {
@@ -26,13 +27,13 @@ internal static class DatabaseLockInspector
         }
         catch (Exception ex)
         {
-            logger.Debug(ex, "Failed to inspect database lock holder.");
+            logger.LogDebug(ex, "Failed to inspect database lock holder.");
         }
 
         return null;
     }
 
-    private static ProcessInfo? TryGetLockHolderLinux(string databasePath, Serilog.ILogger logger)
+    private static ProcessInfo? TryGetLockHolderLinux(string databasePath, ILogger logger)
     {
         var normalizedPath = Path.GetFullPath(databasePath);
         foreach (var dir in Directory.EnumerateDirectories("/proc"))
@@ -62,14 +63,14 @@ internal static class DatabaseLockInspector
             }
             catch (Exception ex)
             {
-                logger.Debug(ex, "Failed to inspect /proc/{Pid}/fd for lock holder.", pid);
+                logger.LogDebug(ex, "Failed to inspect /proc/{Pid}/fd for lock holder.", pid);
             }
         }
 
         return null;
     }
 
-    private static ProcessInfo? TryGetLockHolderMac(string databasePath, Serilog.ILogger logger)
+    private static ProcessInfo? TryGetLockHolderMac(string databasePath, ILogger logger)
     {
         try
         {
@@ -113,18 +114,18 @@ internal static class DatabaseLockInspector
         }
         catch (Exception ex)
         {
-            logger.Debug(ex, "Failed to run lsof for lock holder detection.");
+            logger.LogDebug(ex, "Failed to run lsof for lock holder detection.");
             return null;
         }
     }
 
-    private static ProcessInfo? TryGetLockHolderWindows(string databasePath, Serilog.ILogger logger)
+    private static ProcessInfo? TryGetLockHolderWindows(string databasePath, ILogger logger)
     {
         var sessionKey = Guid.NewGuid().ToString("N");
         var result = RmStartSession(out var sessionHandle, 0, sessionKey);
         if (result != 0)
         {
-            logger.Debug("Restart Manager session start failed with code {Code}.", result);
+            logger.LogDebug("Restart Manager session start failed with code {Code}.", result);
             return null;
         }
 
@@ -134,7 +135,7 @@ internal static class DatabaseLockInspector
             result = RmRegisterResources(sessionHandle, (uint)resources.Length, resources, 0, null, 0, null);
             if (result != 0)
             {
-                logger.Debug("Restart Manager resource registration failed with code {Code}.", result);
+                logger.LogDebug("Restart Manager resource registration failed with code {Code}.", result);
                 return null;
             }
 

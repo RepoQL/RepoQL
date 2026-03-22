@@ -11,7 +11,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Client.Host;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
-using Serilog;
 
 namespace RepoQL.Client.Diagnostics;
 
@@ -165,7 +164,7 @@ internal sealed class DiagnosticsCollector
             dbExists = File.Exists(dbPath);
             if (dbExists == true)
             {
-                var lockHolder = DatabaseLockInspector.TryGetLockHolder(dbPath, Serilog.Log.Logger);
+                var lockHolder = DatabaseLockInspector.TryGetLockHolder(dbPath, NullLogger.Instance);
                 if (lockHolder is not null)
                 {
                     dbLocked = true;

@@ -19,7 +19,6 @@
     <PackageReference Include="Spectre.Console" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Diagnostics.Runtime" />
-    <PackageReference Include="Serilog" />
   </ItemGroup>
 
   <ItemGroup>
