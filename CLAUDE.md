@@ -272,10 +272,20 @@ Projects are organized under `src/` by dependency layer. Each folder has a one-s
 | `RepoQL.Documentation` | Embedded `help://` docs — where help content lives physically |
 | `RepoQL.Orchestrator` | Aspire host for development telemetry |
 
+**`tests/`** — Shared test infrastructure.
+| Project | Purpose |
+|---------|---------|
+| `RepoQL.Testing` | Shared test helpers, base classes, builders |
+| `Shared/` | Shared test fixtures across test projects |
+
+**`tools/`** — Development and build tooling.
+| `RepoQL.SnapshotGenerator` | Builds pre-computed snapshots shipped with the binary (help:// data) |
+
 **`cloud/`** — Remote services (deployed separately).
 | Project | Purpose |
 |---------|---------|
 | `RepoQL.Cloud.Auth` | Auth primitives for cloud services |
+| `RepoQL.Cloud.Infra` | Pulumi infrastructure-as-code for cloud deployment |
 | `RepoQL.Cloud.Service` | Unified cloud host (embedding + inference) |
 | `RepoQL.Embedding.*` | Proto, Client, Service, Storage, Writer for embedding pipeline |
 | `RepoQL.Inference.*` | Proto, Client, Service for LLM inference |
