@@ -193,6 +193,7 @@ internal class HostCommands(IAnsiConsole console)
                 sp.GetRequiredService<ExploreOrchestrator>(),
                 sp.GetService<IInferenceProvider>(),
                 sp.GetServices<IModifierHandler>()));
+            builder.Services.AddSingleton<RepoQL.Explain.ExplainEngine>();
 
             // gRPC already configured above
             builder.Services.AddSingleton<HostMetrics>();

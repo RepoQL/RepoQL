@@ -55,6 +55,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly IModuleRegistry? _moduleRegistry;
     private readonly UriRegistry? _uriRegistry;
     private readonly QueueCommandService? _queueCommandService;
+    private readonly Explain.ExplainEngine _explainEngine;
     private readonly RepoQlConfig.HostSettings _hostSettings;
     private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
     private readonly RepoQlConfig.InferenceSettings _inferenceSettings;
@@ -62,76 +63,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly DashboardQueryActivityTracker? _dashboardQueryActivity;
     private readonly ILogger<RepoQlServiceImpl> _logger;
     private readonly SemaphoreSlim _queryConcurrency;
-
-    /// <summary>System prompt for the explain synthesis LLM call. Shapes output into Answer/Evidence/Nuance.</summary>
-    private const string ExplainSystemPrompt = """
-        # Repository Analysis Agent
-
-        You're augmenting another AI agent's codebase exploration. They're making real decisions—writing code, explaining systems, choosing architectures. They see only your response, not the underlying data. Your synthesis becomes their understanding, your confidence becomes their confidence.
-
-        ## Capsule: TruthStakes
-        **Invariant**: Claims become code; wrong information propagates into systems.
-        **Example**: Caller asks "does this validate input?" You see partial validation. Say "validates length but not format—SQL injection possible" not just "yes, it validates."
-        //BOUNDARY: When uncertain, say so explicitly rather than hedging with weak language.
-
-        ## Capsule: EvidenceRichness
-        **Invariant**: Generous inline snippets now save costly follow-ups later.
-        **Example**: Don't say "auth is in AuthService.cs:42". Show the URI from the context and include the snippet:
-        <uri from context>#line=42,48
-        ---
-        public bool ValidateToken(string token) {
-            return _jwt.Verify(token, _secret);
-        }
-        ---
-        //BOUNDARY: The caller cannot fetch more data. This response is their only view.
-        //BOUNDARY: Use the exact URIs from the supplied context — they may be file://, help://, github://, or other schemes. Never fabricate URIs.
-
-        ## Capsule: GapDetection
-        **Invariant**: Surface what's missing or anomalous—the caller can't see these patterns.
-        **Example**: "Auth checks user permissions, but I don't see where admin permissions are defined. Expected an AdminRole enum or similar."
-        //BOUNDARY: Patterns of absence matter as much as patterns of presence.
-
-        ## Capsule: VerifiableSynthesis
-        **Invariant**: Connect dots AND show your work—the caller needs both insight and evidence trail.
-        //BOUNDARY: Synthesis without evidence is unverifiable; evidence without synthesis wastes their time.
-
-        ## Capsule: UnknownUnknowns
-        **Invariant**: The caller asked one question but may need adjacent answers.
-        **Example**: Question about AuthService? Note "AuthService depends on TokenCache which isn't in your query—may affect token lifetime behavior."
-
-        ## Capsule: AgentEmpathy
-        **Invariant**: The caller is an AI agent like you—answer as you'd want to be answered.
-        //BOUNDARY: They're probably mid-task, not starting fresh. Context they already have shouldn't be repeated; context they're missing should be supplied.
-
-        ---
-
-        ## Response Format
-
-        <Answer>
-        Synthesis answering the question. If data doesn't fully answer, say what's missing and why.
-        </Answer>
-
-        <Evidence>
-        Generous snippets grounding your claims. Annotate conclusions alongside snippets.
-        Always provide snippets verbatim, or explicitly note when paraphrasing.
-        Use the exact URIs from the supplied context (file://, help://, github://, etc.) — never invent URIs.
-        </Evidence>
-
-        <Nuance>
-        (Optional—only if it genuinely adds value)
-        - Context they may not know they need
-        - Gaps or anomalies worth flagging
-        - Related files worth exploring
-        </Nuance>
-
-        If data doesn't answer, say so in Answer.
-
-        ## Remember
-        - Every claim should have evidence
-        - Gaps and anomalies should be surfaced
-        - Be careful about stating something doesn't exist vs wasn't in search results
-        - Misleading or unsubstantiated claims are much more damaging than no claims
-        """;
 
     private static readonly JsonSerializerOptions PreviewJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -163,6 +94,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         ExploreOrchestrator exploreOrchestrator,
         ReadOrchestrator readOrchestrator,
         IReadContentProvider readContentProvider,
+        Explain.ExplainEngine explainEngine,
         RepoQlConfig config,
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
@@ -196,6 +128,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
         _readOrchestrator = readOrchestrator ?? throw new ArgumentNullException(nameof(readOrchestrator));
         _readContentProvider = readContentProvider ?? throw new ArgumentNullException(nameof(readContentProvider));
+        _explainEngine = explainEngine ?? throw new ArgumentNullException(nameof(explainEngine));
         _uriRegistry = uriRegistry;
         _queueCommandService = queueCommandService;
         _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
@@ -1883,107 +1816,58 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
                 return activity?.Fail(failure, notReady, EstimateResponseTokens(notReady)) ?? failure;
             }
 
-            var status = GetTrustSignal(0, context.CancellationToken);
-            if (_inferenceProvider?.Available != true)
+            var trustSignal = GetTrustSignal(0, context.CancellationToken);
+
+            var engineRequest = new Explain.ExplainRequest
+            {
+                Question = request.Question,
+                Keywords = string.IsNullOrWhiteSpace(request.Keywords) ? null : request.Keywords,
+                Scope = scope,
+                TokenBudget = request.TokenBudget,
+                Tools = [InferenceReadToolDefinitionFactory.Create()],
+                ToolTokenBudget = _inferenceSettings.ToolTokenBudget,
+                MaxRounds = _inferenceSettings.MaxRounds
+            };
+
+            var result = await _explainEngine.ExecuteAsync(engineRequest, trustSignal, context.CancellationToken)
+                .ConfigureAwait(false);
+
+            if (!result.Success)
             {
                 var failure = new ExplainResponse
                 {
                     Success = false,
-                    Error = "Inference service not configured (set inference.service_url and cloud.api_key)"
+                    Error = result.Error ?? ""
                 };
                 return activity?.Fail(failure, failure.Error, EstimateResponseTokens(failure.Error)) ?? failure;
             }
 
-            string searchKeywords;
-            if (!string.IsNullOrWhiteSpace(request.Keywords))
-            {
-                searchKeywords = request.Keywords.Trim();
-            }
-            else
-            {
-                var extracted = await _inferenceProvider.CompleteAsync(
-                    new InferenceRequest
-                    {
-                        Prompt = BuildKeywordExtractionPrompt(request.Question),
-                        Effort = InferenceEffort.Low
-                    },
-                    context.CancellationToken).ConfigureAwait(false);
-                searchKeywords = string.IsNullOrWhiteSpace(extracted.Content)
-                    ? request.Question
-                    : extracted.Content.Trim();
-            }
-
-            var query = new ExploreQuery(
-                TokenBudget: 50_000,
-                Breadth: 2,
-                Scope: scope,
-                Keywords: searchKeywords,
-                Boost: null,
-                Penalize: null,
-                Limit: null);
-
-            var result = await _exploreOrchestrator.ExecuteAsync(query, status, context.CancellationToken, sw).ConfigureAwait(false);
-
-            var treeUri = string.IsNullOrWhiteSpace(scope) ? "file://** => tree: folders" : $"{scope} => tree: folders";
-            var treeResult = await _readOrchestrator.ExecuteAsync(treeUri, 8_000, status, context.CancellationToken).ConfigureAwait(false);
-            var treeContext = treeResult.Success && !string.IsNullOrWhiteSpace(treeResult.RenderedOutput)
-                ? $"## Codebase structure\n\n{treeResult.RenderedOutput}\n\n## Search results\n\n{result.RenderedOutput}"
-                : result.RenderedOutput;
-
-            var toolCallLog = new List<(string Uri, int Tokens, bool IsError)>();
-            var synthesized = await _inferenceProvider.CompleteWithToolsAsync(
-                new InferenceRequest
-                {
-                    System = ExplainSystemPrompt,
-                    Context = treeContext,
-                    Prompt = request.Question,
-                    Effort = InferenceEffort.High,
-                    MaxTokens = Math.Max(500, request.TokenBudget)
-                },
-                new ToolOptions
-                {
-                    Tools = [InferenceReadToolDefinitionFactory.Create()],
-                    ToolTokenBudget = _inferenceSettings.ToolTokenBudget,
-                    MaxRounds = _inferenceSettings.MaxRounds
-                },
-                async (toolCall, ct) =>
-                {
-                    var uri = TryExtractToolCallUri(toolCall);
-                    var toolResult = await ExecuteExplainReadToolAsync(toolCall, status, ct).ConfigureAwait(false);
-                    toolCallLog.Add((uri ?? toolCall.Tool, toolResult.TokensUsed, toolResult.IsError));
-                    return toolResult;
-                },
-                context.CancellationToken).ConfigureAwait(false);
-
-            if (!string.IsNullOrWhiteSpace(synthesized.Reasoning))
-                _logger.LogDebug("Explain reasoning trace: {Reasoning}", synthesized.Reasoning);
-
-            var contextTokens = TokenEstimator.EstimateTokens(result.RenderedOutput);
             var synthesis = new ExplainSynthesis
             {
-                InputTokens = synthesized.InputTokens,
-                OutputTokens = synthesized.OutputTokens,
-                MatchCount = result.Results.Count,
-                ContextTokens = contextTokens
+                InputTokens = result.InputTokens,
+                OutputTokens = result.OutputTokens,
+                MatchCount = result.MatchCount,
+                ContextTokens = result.ContextTokens
             };
-            foreach (var (uri, tokens, isError) in toolCallLog)
-                synthesis.ToolCalls.Add(new ExplainToolCall { Uri = uri, TokensUsed = tokens, IsError = isError });
+            foreach (var tc in result.ToolCalls)
+                synthesis.ToolCalls.Add(new Contracts.ExplainToolCall
+                    { Uri = tc.Uri, TokensUsed = tc.TokensUsed, IsError = tc.IsError });
 
             var response = new ExplainResponse
             {
                 Success = true,
-                RenderedOutput = $"## {request.Question}\n\n{synthesized.Content}",
+                RenderedOutput = result.RenderedOutput ?? "",
                 Synthesis = synthesis,
                 Status = new ExploreIndexerStatus
                 {
-                    IndexPending = status.IndexPending,
-                    SemanticReady = status.SemanticReady,
-                    Ready = status.IndexPending == 0 && status.SemanticReady,
-                    ElapsedMs = sw.ElapsedMilliseconds,
-                    IndexTotal = status.IndexTotal,
-                    IndexFailed = status.IndexFailed,
-                    IndexStale = status.IndexStale,
-                    SemanticPercent = status.SemanticPercent
+                    IndexPending = trustSignal.IndexPending,
+                    SemanticReady = trustSignal.SemanticReady,
+                    Ready = trustSignal.IndexPending == 0 && trustSignal.SemanticReady,
+                    ElapsedMs = result.ElapsedMs,
+                    IndexTotal = trustSignal.IndexTotal,
+                    IndexFailed = trustSignal.IndexFailed,
+                    IndexStale = trustSignal.IndexStale,
+                    SemanticPercent = trustSignal.SemanticPercent
                 }
             };
 
@@ -2345,126 +2229,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         return item;
     }
 
-    private static string BuildKeywordExtractionPrompt(string question)
-        => $"""
-            Extract search keywords from this question. Return ONLY space-separated keywords, no explanation.
-            Include technical terms, class names, function names that might appear in code.
-
-            Question: {question}
-
-            Keywords:
-            """;
-
-    private async Task<ToolCallResult> ExecuteExplainReadToolAsync(
-        ToolCall toolCall,
-        TrustSignal status,
-        CancellationToken cancellationToken)
-    {
-        if (!string.Equals(toolCall.Tool, "read", StringComparison.Ordinal))
-        {
-            var content = $"Unsupported tool: {toolCall.Tool}";
-            return new ToolCallResult
-            {
-                Content = content,
-                IsError = true,
-                TokensUsed = TokenEstimator.EstimateTokens(content)
-            };
-        }
-
-        ExplainReadToolArguments? args;
-        try
-        {
-            args = JsonSerializer.Deserialize<ExplainReadToolArguments>(toolCall.ArgumentsJson, PreviewJsonOptions);
-        }
-        catch (Exception ex) when (ex is JsonException or NotSupportedException)
-        {
-            var content = $"Malformed read tool arguments: {ex.Message}";
-            return new ToolCallResult
-            {
-                Content = content,
-                IsError = true,
-                TokensUsed = TokenEstimator.EstimateTokens(content)
-            };
-        }
-
-        if (string.IsNullOrWhiteSpace(args?.UriGlob))
-        {
-            var content = "read uriGlob is required";
-            return new ToolCallResult
-            {
-                Content = content,
-                IsError = true,
-                TokensUsed = TokenEstimator.EstimateTokens(content)
-            };
-        }
-
-        if (args.TokenBudget <= 0)
-        {
-            var content = "read tokenBudget must be a positive integer";
-            return new ToolCallResult
-            {
-                Content = content,
-                IsError = true,
-                TokensUsed = TokenEstimator.EstimateTokens(content)
-            };
-        }
-
-        if (args.UriGlob.Contains("=> question:", StringComparison.OrdinalIgnoreCase))
-        {
-            var content = "read => question: is not allowed during inference tool execution";
-            return new ToolCallResult
-            {
-                Content = content,
-                IsError = true,
-                TokensUsed = TokenEstimator.EstimateTokens(content)
-            };
-        }
-
-        try
-        {
-            var result = await _readOrchestrator.ExecuteAsync(
-                args.UriGlob,
-                args.TokenBudget,
-                status,
-                cancellationToken).ConfigureAwait(false);
-
-            var content = result.Success
-                ? result.RenderedOutput ?? string.Empty
-                : result.Error ?? "Read execution failed.";
-
-            return new ToolCallResult
-            {
-                Content = content,
-                IsError = !result.Success,
-                TokensUsed = TokenEstimator.EstimateTokens(content)
-            };
-        }
-        catch (Exception ex)
-        {
-            var content = ex.Message;
-            return new ToolCallResult
-            {
-                Content = content,
-                IsError = true,
-                TokensUsed = TokenEstimator.EstimateTokens(content)
-            };
-        }
-    }
-
-    private static string? TryExtractToolCallUri(ToolCall toolCall)
-    {
-        try
-        {
-            var args = JsonSerializer.Deserialize<ExplainReadToolArguments>(toolCall.ArgumentsJson, PreviewJsonOptions);
-            return args?.UriGlob;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private sealed record ExplainReadToolArguments(string? UriGlob, int TokenBudget);
 }
 
 

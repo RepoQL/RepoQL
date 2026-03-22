@@ -148,6 +148,7 @@
     <ProjectReference Include="..\..\data\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
     <ProjectReference Include="..\..\pipeline\RepoQL.Indexing\RepoQL.Indexing.csproj" />
     <ProjectReference Include="..\..\query\RepoQL.Read\RepoQL.Read.csproj" />
+    <ProjectReference Include="..\..\query\RepoQL.Explain\RepoQL.Explain.csproj" />
   </ItemGroup>
 
     
