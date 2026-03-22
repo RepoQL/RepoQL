@@ -1,4 +1,4 @@
-namespace RepoQL.ConsoleApp.Tools;
+﻿namespace RepoQL.McpServer.Tools;
 
 /// <summary>
 /// Tracks whether the agent has oriented themselves by reading the help documentation.

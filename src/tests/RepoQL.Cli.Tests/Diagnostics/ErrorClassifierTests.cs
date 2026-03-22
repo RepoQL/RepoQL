@@ -1,6 +1,6 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Grpc.Core;
-using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.Client.Diagnostics;
 using RepoQL.Protocol;
 
 namespace RepoQL.Cli.Tests.Diagnostics;

@@ -1,6 +1,6 @@
-using RepoQL.Contracts;
+﻿using RepoQL.Contracts;
 
-namespace RepoQL.ConsoleApp.Diagnostics;
+namespace RepoQL.Client.Diagnostics;
 
 /// <summary>
 /// Path helpers for host state files used by client-side diagnostics.

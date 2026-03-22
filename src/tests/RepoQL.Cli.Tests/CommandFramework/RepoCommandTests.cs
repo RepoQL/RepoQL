@@ -1,8 +1,8 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.CommandImplementations;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Client.CommandImplementations;
+using RepoQL.Client.Helpers;
 using RepoQL.Contracts;
 
 namespace RepoQL.Cli.Tests.CommandFramework;

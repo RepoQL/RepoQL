@@ -1,9 +1,10 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.Client.Diagnostics;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts;
 using RepoQL.Data.DuckDB;
+using RepoQL.Client.Host;
 
 namespace RepoQL.ConsoleApp.Host;
 

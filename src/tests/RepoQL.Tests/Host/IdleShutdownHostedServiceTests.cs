@@ -1,6 +1,7 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using RepoQL.Client.Host;
 using RepoQL.ConsoleApp.Host;
 
 namespace RepoQL.Tests.Host;

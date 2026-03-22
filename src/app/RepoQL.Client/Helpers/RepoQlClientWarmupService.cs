@@ -1,8 +1,8 @@
-using Microsoft.Extensions.Hosting;
+﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
-namespace RepoQL.ConsoleApp.Helpers;
+namespace RepoQL.Client.Helpers;
 
 /// <summary>
 /// Triggers the RepoQL client warm-up as part of the host lifecycle without blocking startup.

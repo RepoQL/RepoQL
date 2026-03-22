@@ -1,8 +1,8 @@
-using System.Text;
+﻿using System.Text;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Auth;
+using RepoQL.Client.Auth;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Authenticate the local RepoQL client for cloud-backed features.

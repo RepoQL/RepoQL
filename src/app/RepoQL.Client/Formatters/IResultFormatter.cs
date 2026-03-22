@@ -1,7 +1,7 @@
-﻿using RepoQL.ConsoleApp.Commands;
+﻿using RepoQL.Client.Commands;
 using RepoQL.Contracts;
 
-namespace RepoQL.ConsoleApp.Formatters;
+namespace RepoQL.Client.Formatters;
 
 public interface IResultFormatter
 {

@@ -1,6 +1,6 @@
-﻿using RepoQL.ConsoleApp.Commands;
+﻿using RepoQL.Client.Commands;
 
-namespace RepoQL.ConsoleApp.Formatters;
+namespace RepoQL.Client.Formatters;
 
 internal class ResultFormatterFactory(IEnumerable<IResultFormatter> formatters)
 {

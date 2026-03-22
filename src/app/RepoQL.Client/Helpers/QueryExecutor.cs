@@ -1,8 +1,8 @@
-using RepoQL.ConsoleApp.Commands;
-using RepoQL.ConsoleApp.Formatters;
+﻿using RepoQL.Client.Commands;
+using RepoQL.Client.Formatters;
 using RepoQL.Contracts;
 
-namespace RepoQL.ConsoleApp.Helpers;
+namespace RepoQL.Client.Helpers;
 
 internal sealed class QueryExecutor
 {

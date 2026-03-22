@@ -1,6 +1,6 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using FakeItEasy;
-using RepoQL.ConsoleApp.CommandImplementations;
+using RepoQL.Client.CommandImplementations;
 
 namespace RepoQL.Tests.CommandImplementations;
 

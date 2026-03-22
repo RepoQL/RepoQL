@@ -1,10 +1,12 @@
-using ConsoleAppFramework;
+﻿using ConsoleAppFramework;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.Client.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 using Spectre.Console;
+using RepoQL.Client.Helpers;
+using RepoQL.Client.Commands;
 
 namespace RepoQL.ConsoleApp.Commands;
 

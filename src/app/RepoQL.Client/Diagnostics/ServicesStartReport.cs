@@ -1,8 +1,8 @@
-using System.Text;
+﻿using System.Text;
 using System.Linq;
 using RepoQL.Contracts;
 
-namespace RepoQL.ConsoleApp.Diagnostics;
+namespace RepoQL.Client.Diagnostics;
 
 /// <summary>
 /// Purpose: Capture degradable service startup outcomes for diagnostics.

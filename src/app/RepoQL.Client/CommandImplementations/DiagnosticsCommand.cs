@@ -1,14 +1,14 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Google.Protobuf.WellKnownTypes;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Diagnostics;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Client.Diagnostics;
+using RepoQL.Client.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Expose system health diagnostics plus indexing and cloud health commands.

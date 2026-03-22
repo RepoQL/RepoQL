@@ -1,12 +1,12 @@
-using System.Globalization;
+﻿using System.Globalization;
 using Microsoft.Diagnostics.Runtime;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Helpers;
-using RepoQL.ConsoleApp.Host;
+using RepoQL.Client.Helpers;
+using RepoQL.Client.Host;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Expose top managed heap types in the host as an expensive diagnostics command.

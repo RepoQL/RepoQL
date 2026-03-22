@@ -1,4 +1,4 @@
-﻿namespace RepoQL.ConsoleApp.Helpers;
+﻿namespace RepoQL.Client.Helpers;
 
 internal readonly record struct QueryExecutionResult(
     string[] Lines,

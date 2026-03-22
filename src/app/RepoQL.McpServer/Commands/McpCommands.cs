@@ -1,13 +1,13 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Helpers;
-using RepoQL.ConsoleApp.Resources;
-using RepoQL.ConsoleApp.Tools;
-using RepoQL.ConsoleApp.Logging;
+using RepoQL.McpServer.Helpers;
+using RepoQL.McpServer.Resources;
+using RepoQL.McpServer.Tools;
+using RepoQL.McpServer.Logging;
 
-namespace RepoQL.ConsoleApp.Commands;
+namespace RepoQL.McpServer.Commands;
 
 internal class McpCommands
 {

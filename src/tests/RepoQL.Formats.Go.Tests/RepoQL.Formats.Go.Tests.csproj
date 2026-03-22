@@ -18,7 +18,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.Go\RepoQL.Formats.Go.csproj" />
-    <ProjectReference Include="..\RepoQL.Testing\RepoQL.Testing.csproj" />
   </ItemGroup>
 
   <ItemGroup>

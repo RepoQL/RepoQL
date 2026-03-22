@@ -1,9 +1,9 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
-using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.Client.Diagnostics;
 
-namespace RepoQL.ConsoleApp.Host;
+namespace RepoQL.Client.Host;
 
 /// <summary>
 /// Purpose: Identify processes holding a lock on the DuckDB file.

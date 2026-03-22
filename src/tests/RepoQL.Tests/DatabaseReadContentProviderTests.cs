@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Host;

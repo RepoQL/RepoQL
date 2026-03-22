@@ -1,8 +1,8 @@
-using System.Text;
+﻿using System.Text;
 using RepoQL.Commands;
 using RepoQL.Sandbox;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Manage registered sandbox JavaScript modules stored under .repoql/modules/.

@@ -1,7 +1,7 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace RepoQL.ConsoleApp.Host;
+namespace RepoQL.Client.Host;
 
 /// <summary>
 /// Purpose: Terminate processes in a platform-aware, best-effort manner.

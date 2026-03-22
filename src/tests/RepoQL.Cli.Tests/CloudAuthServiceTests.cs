@@ -1,6 +1,6 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Microsoft.Extensions.Logging;
-using RepoQL.ConsoleApp.Auth;
+using RepoQL.Client.Auth;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Cloud;
 using RepoQL.Core.Configuration;

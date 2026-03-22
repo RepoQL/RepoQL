@@ -1,7 +1,7 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using FakeItEasy;
 using Google.Protobuf.WellKnownTypes;
-using RepoQL.ConsoleApp.CommandImplementations;
+using RepoQL.Client.CommandImplementations;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 

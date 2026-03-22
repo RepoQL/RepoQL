@@ -1,9 +1,9 @@
-using System.Net.Sockets;
+﻿using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using Grpc.Core;
 using RepoQL.Protocol;
 
-namespace RepoQL.ConsoleApp.Diagnostics;
+namespace RepoQL.Client.Diagnostics;
 
 /// <summary>
 /// Classifies exceptions to determine if they're infrastructure errors (connection, host, etc.)

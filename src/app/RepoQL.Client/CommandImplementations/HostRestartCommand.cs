@@ -1,16 +1,16 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using Grpc.Core;
 using Grpc.Net.Client;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Diagnostics;
-using RepoQL.ConsoleApp.Helpers;
-using RepoQL.ConsoleApp.Host;
+using RepoQL.Client.Diagnostics;
+using RepoQL.Client.Helpers;
+using RepoQL.Client.Host;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Restart the gRPC host without changing the active repository.

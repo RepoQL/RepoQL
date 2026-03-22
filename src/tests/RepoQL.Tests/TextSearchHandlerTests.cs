@@ -1,5 +1,6 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using RepoQL.Client.Host;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Embeddings;

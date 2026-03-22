@@ -1,11 +1,11 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Auth;
-using RepoQL.ConsoleApp.Diagnostics;
-using RepoQL.ConsoleApp.Feedback;
-using RepoQL.ConsoleApp.Formatters;
-using RepoQL.ConsoleApp.Tools;
+using RepoQL.Client.Auth;
+using RepoQL.Client.Diagnostics;
+using RepoQL.Client.Feedback;
+using RepoQL.Client.Formatters;
+using RepoQL.Client.Tools;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Configuration;
@@ -16,7 +16,7 @@ using RepoQL.Sandbox;
 using RepoQL.Templating;
 using Spectre.Console;
 
-namespace RepoQL.ConsoleApp.Helpers;
+namespace RepoQL.Client.Helpers;
 
 /// <summary>
 /// Shared service registration methods used by both MCP and CLI modes.
@@ -123,7 +123,7 @@ public static class ClientServiceCollectionExtensions
     {
         services.AddLiquidTemplatingFromEmbedded(
             assembly: typeof(ClientServiceCollectionExtensions).Assembly,
-            resourceRoot: "RepoQL.ConsoleApp.Templates");
+            resourceRoot: "RepoQL.Client.Templates");
         return services;
     }
 }

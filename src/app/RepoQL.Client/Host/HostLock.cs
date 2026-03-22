@@ -1,8 +1,8 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text;
 using RepoQL.Contracts;
 
-namespace RepoQL.ConsoleApp.Host;
+namespace RepoQL.Client.Host;
 
 /// <summary>
 /// Purpose: Provide an exclusive, cross-process lock to ensure a single host owns a repository at startup.

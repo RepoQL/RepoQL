@@ -1,5 +1,6 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using AwesomeAssertions;
+using RepoQL.Client.Host;
 using RepoQL.ConsoleApp.Host;
 
 namespace RepoQL.Tests.Host;

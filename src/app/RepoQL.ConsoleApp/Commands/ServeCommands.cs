@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
@@ -17,9 +17,10 @@ using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using RepoQL.Contracts;
-using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.Client.Diagnostics;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Dashboard;
+using RepoQL.Client.Host;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.ConsoleApp.Logging;
 using RepoQL.ConsoleApp.Search;
@@ -38,6 +39,7 @@ using RepoQL.Explore.Search;
 using Serilog;
 using Spectre.Console;
 using Microsoft.Extensions.Configuration;
+using RepoQL.Client.Helpers;
 
 namespace RepoQL.ConsoleApp.Commands;
 

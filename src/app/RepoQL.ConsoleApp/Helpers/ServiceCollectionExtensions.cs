@@ -1,5 +1,6 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts;
+using RepoQL.Client.Helpers;
 
 namespace RepoQL.ConsoleApp.Helpers;
 

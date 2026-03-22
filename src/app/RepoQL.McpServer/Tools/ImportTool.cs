@@ -1,12 +1,14 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using RepoQL.ConsoleApp.Commands;
-using RepoQL.ConsoleApp.Diagnostics;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.McpServer.Commands;
+using RepoQL.Client.Diagnostics;
+using RepoQL.McpServer.Helpers;
 using RepoQL.Contracts;
+using RepoQL.Client.Helpers;
+using RepoQL.Client.Commands;
 
-namespace RepoQL.ConsoleApp.Tools;
+namespace RepoQL.McpServer.Tools;
 
 [McpServerToolType]
 internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRunner selfTestRunner, QueryExecutor queryExecutor)

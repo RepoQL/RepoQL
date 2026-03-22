@@ -1,9 +1,9 @@
-using RepoQL.Commands;
-using RepoQL.ConsoleApp.Diagnostics;
-using RepoQL.ConsoleApp.Feedback;
-using RepoQL.ConsoleApp.Tools;
+﻿using RepoQL.Commands;
+using RepoQL.Client.Diagnostics;
+using RepoQL.Client.Feedback;
+using RepoQL.Client.Tools;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Let agents provide feedback on their experience with RepoQL.

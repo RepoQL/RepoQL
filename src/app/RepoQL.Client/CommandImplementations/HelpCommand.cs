@@ -1,7 +1,7 @@
-using System.Text;
+﻿using System.Text;
 using RepoQL.Commands;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: List all registered commands.

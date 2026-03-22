@@ -1,5 +1,5 @@
-using ConsoleAppFramework;
-using RepoQL.ConsoleApp.Auth;
+﻿using ConsoleAppFramework;
+using RepoQL.Client.Auth;
 using Spectre.Console;
 
 namespace RepoQL.ConsoleApp.Commands;

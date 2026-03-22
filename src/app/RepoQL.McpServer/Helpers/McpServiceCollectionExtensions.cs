@@ -1,9 +1,10 @@
-using Microsoft.Extensions.DependencyInjection;
-using RepoQL.ConsoleApp.Resources;
-using RepoQL.ConsoleApp.Tools;
+﻿using Microsoft.Extensions.DependencyInjection;
+using RepoQL.McpServer.Resources;
+using RepoQL.McpServer.Tools;
 using RepoQL.Contracts;
+using RepoQL.Client.Helpers;
 
-namespace RepoQL.ConsoleApp.Helpers;
+namespace RepoQL.McpServer.Helpers;
 
 /// <summary>
 /// MCP-specific service registrations.

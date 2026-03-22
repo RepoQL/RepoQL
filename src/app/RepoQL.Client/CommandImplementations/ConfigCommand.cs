@@ -1,14 +1,14 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Client.Helpers;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Configuration;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Inspect and mutate RepoQL settings across local, repo, and user scopes.

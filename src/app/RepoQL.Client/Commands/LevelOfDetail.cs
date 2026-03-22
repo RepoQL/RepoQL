@@ -1,4 +1,4 @@
-namespace RepoQL.ConsoleApp.Commands;
+﻿namespace RepoQL.Client.Commands;
 
 public enum LevelOfDetail
 {

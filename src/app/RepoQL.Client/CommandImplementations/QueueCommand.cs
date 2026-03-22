@@ -1,8 +1,8 @@
-using RepoQL.Commands;
-using RepoQL.ConsoleApp.Helpers;
+﻿using RepoQL.Commands;
+using RepoQL.Client.Helpers;
 using RepoQL.Contracts;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Provide surgical queue control for one URI (cancel, skip, retry).

@@ -1,6 +1,6 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
-namespace RepoQL.ConsoleApp.Diagnostics;
+namespace RepoQL.Client.Diagnostics;
 
 /// <summary>
 /// Purpose: Preserve the live dashboard endpoint in diagnostics storage for other processes.

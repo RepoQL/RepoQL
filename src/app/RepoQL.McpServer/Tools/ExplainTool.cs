@@ -1,12 +1,13 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using RepoQL.ConsoleApp.Diagnostics;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Client.Diagnostics;
+using RepoQL.McpServer.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
+using RepoQL.Client.Helpers;
 
-namespace RepoQL.ConsoleApp.Tools;
+namespace RepoQL.McpServer.Tools;
 
 /// <summary>
 /// MCP tool for LLM-synthesized understanding of codebase concepts.

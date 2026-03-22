@@ -1,12 +1,12 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using Google.Protobuf.WellKnownTypes;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Client.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Expose host memory and graph stats as a ::diagnostics.memory command.

@@ -1,9 +1,9 @@
-using System.Text;
+﻿using System.Text;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Client.Helpers;
 using RepoQL.Contracts;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: On-demand parsing of any file through the hot-path pipeline without persisting results.

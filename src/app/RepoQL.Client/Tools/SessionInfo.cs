@@ -1,4 +1,4 @@
-namespace RepoQL.ConsoleApp.Tools;
+﻿namespace RepoQL.Client.Tools;
 
 /// <summary>
 /// Purpose: Identify the current MCP session with a stable ID.

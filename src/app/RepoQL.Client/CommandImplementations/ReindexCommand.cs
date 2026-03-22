@@ -1,9 +1,9 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
 using RepoQL.Commands;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Client.Helpers;
 
-namespace RepoQL.ConsoleApp.CommandImplementations;
+namespace RepoQL.Client.CommandImplementations;
 
 /// <summary>
 /// Purpose: Trigger a reindex, optionally scoped to a URI glob pattern.

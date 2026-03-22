@@ -18,6 +18,13 @@
         <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
         <TestResultsDirectory>$(RepositoryRoot)artifacts/TestResults</TestResultsDirectory>
         <TestingPlatformCommandLineArguments>$(TestingPlatformCommandLineArguments) --results-directory "$(RepositoryRoot)artifacts/TestResults" --report-html-filename "$(RepositoryRoot)artifacts/TestResults/$(MSBuildProjectName)-report.html"</TestingPlatformCommandLineArguments>
+        <!-- Only copy native runtimes for the current platform. Without this, NuGet copies
+             DuckDB/ONNX/Wasmtime natives for ALL platforms (~1.3 GB per project). Test projects
+             only run on the build machine, so portable output is pure waste.
+             Uses RuntimeInformation API since NETCoreSdkRuntimeIdentifier isn't available yet
+             at Directory.Build.props import time (SDK props haven't loaded). -->
+        <TestRuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$([System.Runtime.InteropServices.RuntimeInformation]::RuntimeIdentifier)</TestRuntimeIdentifier>
+        <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' AND '$(TestRuntimeIdentifier)' != ''">$(TestRuntimeIdentifier)</RuntimeIdentifier>
     </PropertyGroup>
 
     <ItemGroup Condition="$([System.String]::Copy('$(MSBuildProjectName)').EndsWith('.Tests'))">

@@ -1,9 +1,9 @@
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Protocol;
 
-namespace RepoQL.ConsoleApp.Helpers;
+namespace RepoQL.Client.Helpers;
 
 /// <summary>
 /// Provides a shared RepoQL gRPC client instance and supports asynchronous warm-up.

@@ -1,6 +1,7 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using RepoQL.ConsoleApp.Dashboard;
-using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.Client.Diagnostics;
+using RepoQL.Client.Host;
 using RepoQL.ConsoleApp.Host;
 
 namespace RepoQL.Tests.Dashboard;

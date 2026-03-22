@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using FakeItEasy;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;

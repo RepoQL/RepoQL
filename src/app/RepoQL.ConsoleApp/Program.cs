@@ -1,4 +1,4 @@
-using Grpc.Core;
+﻿using Grpc.Core;
 using JetBrains.Annotations;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,6 +9,7 @@ using RepoQL.ConsoleApp.Commands;
 using RepoQL.ConsoleApp.Helpers;
 using RepoQL.ConsoleApp.Logging;
 using ConsoleAppFramework;
+using RepoQL.McpServer.Commands;
 
 AnsiConsole.Profile.Width = 1000;
 

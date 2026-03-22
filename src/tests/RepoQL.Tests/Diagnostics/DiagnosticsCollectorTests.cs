@@ -1,5 +1,6 @@
-using AwesomeAssertions;
-using RepoQL.ConsoleApp.Diagnostics;
+﻿using AwesomeAssertions;
+using RepoQL.Client.Diagnostics;
+using RepoQL.Client.Host;
 using RepoQL.ConsoleApp.Host;
 using RepoQL.Contracts;
 using RepoQL.Protocol;

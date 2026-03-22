@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -10,7 +10,7 @@ using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Configuration;
 using RepoQL.Embedding;
 
-namespace RepoQL.ConsoleApp.Feedback;
+namespace RepoQL.Client.Feedback;
 
 /// <summary>
 /// Purpose: Send agent feedback to the RepoQL cloud service for product improvement.

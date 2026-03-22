@@ -1,4 +1,4 @@
-namespace RepoQL.ConsoleApp.Diagnostics;
+﻿namespace RepoQL.Client.Diagnostics;
 
 /// <summary>
 /// Purpose: Capture process identity details for diagnostics reports.

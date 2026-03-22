@@ -1,12 +1,12 @@
-using System.Buffers;
+﻿using System.Buffers;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Google.Protobuf.WellKnownTypes;
-using RepoQL.ConsoleApp.Commands;
+using RepoQL.Client.Commands;
 using RepoQL.Contracts;
 
-namespace RepoQL.ConsoleApp.Formatters;
+namespace RepoQL.Client.Formatters;
 
 /// <summary>
 /// Formats query results as TOON (Token-Oriented Object Notation).

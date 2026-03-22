@@ -1,4 +1,4 @@
-﻿namespace RepoQL.ConsoleApp.Commands;
+﻿namespace RepoQL.Client.Commands;
 
 /// <summary>
 ///   The format that the results will be returned in - unstructured is adaptive and tries to present the data the best way possible, but is not predictable

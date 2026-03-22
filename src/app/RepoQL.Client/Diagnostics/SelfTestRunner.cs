@@ -1,4 +1,4 @@
-namespace RepoQL.ConsoleApp.Diagnostics;
+﻿namespace RepoQL.Client.Diagnostics;
 
 /// <summary>
 /// Purpose: Provide a single entry point to render full diagnostics output on demand.

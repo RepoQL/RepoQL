@@ -1,7 +1,7 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Google.Protobuf.WellKnownTypes;
-using RepoQL.ConsoleApp.Commands;
-using RepoQL.ConsoleApp.Formatters;
+using RepoQL.Client.Commands;
+using RepoQL.Client.Formatters;
 using RepoQL.Contracts;
 
 namespace RepoQL.Cli.Tests;

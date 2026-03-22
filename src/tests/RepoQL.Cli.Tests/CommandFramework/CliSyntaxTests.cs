@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using RepoQL.ConsoleApp.Commands;
 
 namespace RepoQL.Cli.Tests.CommandFramework;

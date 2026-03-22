@@ -1,9 +1,9 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using RepoQL.Commands;
 
-namespace RepoQL.ConsoleApp.Tools;
+namespace RepoQL.McpServer.Tools;
 
 /// <summary>
 /// Purpose: MCP tool for imperative commands — diagnostics, reindex, config, etc.

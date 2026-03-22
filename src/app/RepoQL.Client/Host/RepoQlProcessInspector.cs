@@ -1,6 +1,6 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 
-namespace RepoQL.ConsoleApp.Host;
+namespace RepoQL.Client.Host;
 
 /// <summary>
 /// Purpose: Identify RepoQL processes safely before termination.

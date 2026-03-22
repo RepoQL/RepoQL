@@ -1,6 +1,6 @@
-using ModelContextProtocol.Protocol;
+﻿using ModelContextProtocol.Protocol;
 
-namespace RepoQL.ConsoleApp.Tools;
+namespace RepoQL.McpServer.Tools;
 
 /// <summary>
 /// Factory for MCP tool responses with correct <c>IsError</c> signaling.

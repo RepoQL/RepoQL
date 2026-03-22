@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
@@ -12,7 +12,7 @@ using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Cloud;
 using RepoQL.Core.Configuration;
 
-namespace RepoQL.ConsoleApp.Auth;
+namespace RepoQL.Client.Auth;
 
 /// <summary>
 /// Purpose: Run RepoQL's interactive cloud login/logout/whoami workflows for both CLI and command surfaces.

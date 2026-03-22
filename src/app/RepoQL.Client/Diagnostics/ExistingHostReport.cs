@@ -1,6 +1,6 @@
-using System.Text;
+﻿using System.Text;
 
-namespace RepoQL.ConsoleApp.Diagnostics;
+namespace RepoQL.Client.Diagnostics;
 
 /// <summary>
 /// Purpose: Capture host shutdown and takeover observations for diagnostics.

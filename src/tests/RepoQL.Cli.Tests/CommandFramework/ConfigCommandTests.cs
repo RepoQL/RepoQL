@@ -1,8 +1,8 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
 using AwesomeAssertions;
-using RepoQL.ConsoleApp.CommandImplementations;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.Client.CommandImplementations;
+using RepoQL.Client.Helpers;
 using RepoQL.Core.Configuration;
 
 namespace RepoQL.Cli.Tests.CommandFramework;

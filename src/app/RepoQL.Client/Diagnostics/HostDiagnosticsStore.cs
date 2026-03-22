@@ -1,7 +1,7 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using RepoQL.Contracts;
 
-namespace RepoQL.ConsoleApp.Diagnostics;
+namespace RepoQL.Client.Diagnostics;
 
 /// <summary>
 /// Purpose: Persist and retrieve host-side diagnostic reports for later inspection.

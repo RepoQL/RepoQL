@@ -1,4 +1,5 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
+using RepoQL.Client.Host;
 using RepoQL.ConsoleApp.Host;
 
 namespace RepoQL.Tests.Host;

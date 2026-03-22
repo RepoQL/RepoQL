@@ -1,10 +1,10 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Server;
-using RepoQL.ConsoleApp.Tools;
 using RepoQL.Contracts.Inference;
+using RepoQL.McpServer.Tools;
 
 namespace RepoQL.ConsoleApp.Host;
 

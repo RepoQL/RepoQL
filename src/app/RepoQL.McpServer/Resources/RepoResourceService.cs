@@ -1,12 +1,13 @@
-using System.Globalization;
+﻿using System.Globalization;
 using Google.Protobuf.WellKnownTypes;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
-using RepoQL.ConsoleApp.Helpers;
+using RepoQL.McpServer.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
+using RepoQL.Client.Helpers;
 
-namespace RepoQL.ConsoleApp.Resources;
+namespace RepoQL.McpServer.Resources;
 
 /// <summary>
 /// Provides MCP resource handlers so clients can fetch repository content by RepoURI.

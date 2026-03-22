@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using Grpc.Core;
@@ -8,12 +8,12 @@ using Microsoft.Extensions.FileProviders;
 using System.Reflection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using RepoQL.ConsoleApp.Host;
+using RepoQL.Client.Host;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 using Serilog;
 
-namespace RepoQL.ConsoleApp.Diagnostics;
+namespace RepoQL.Client.Diagnostics;
 
 /// <summary>
 /// Purpose: Describe the depth of diagnostic collection for the current request.

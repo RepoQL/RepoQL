@@ -1,6 +1,6 @@
-using Grpc.Health.V1;
+﻿using Grpc.Health.V1;
 using Grpc.HealthCheck;
-using RepoQL.ConsoleApp.Diagnostics;
+using RepoQL.Client.Diagnostics;
 using RepoQL.Contracts;
 
 namespace RepoQL.ConsoleApp.Host;
