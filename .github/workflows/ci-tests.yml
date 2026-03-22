@@ -22,23 +22,79 @@ permissions:
   pull-requests: write
 
 jobs:
-  tests:
+  test:
+    name: test (${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Shard 1: Core, data, infra, integrations, cloud — the heavy DuckDB/pipeline tests
+          - shard: core
+            projects: >-
+              src/app/RepoQL.Tests/RepoQL.Tests.csproj
+              src/app/RepoQL.Core.Tests/RepoQL.Core.Tests.csproj
+              src/app/RepoQL.Cli.Tests/RepoQL.Cli.Tests.csproj
+              src/data/RepoQL.Data.Tests/RepoQL.Data.Tests.csproj
+              src/data/RepoQL.Data.DuckDB.Tests/RepoQL.Data.DuckDB.Tests.csproj
+              src/infra/RepoQL.FileSystem.Tests/RepoQL.FileSystem.Tests.csproj
+              src/infra/RepoQL.Protocol.Tests/RepoQL.Protocol.Tests.csproj
+              src/integrations/RepoQL.Mcp.Client.Tests/RepoQL.Mcp.Client.Tests.csproj
+              src/integrations/RepoQL.Sarif.Tests/RepoQL.Sarif.Tests.csproj
+              src/pipeline/RepoQL.Indexing.Tests/RepoQL.Indexing.Tests.csproj
+
+          # Shard 2: Format loaders — many projects, individually fast
+          - shard: formats
+            projects: >-
+              src/pipeline/Formats/RepoQL.Formats.Cpp.Tests/RepoQL.Formats.Cpp.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.CSS.Tests/RepoQL.Formats.CSS.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Csv.Tests/RepoQL.Formats.Csv.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Docx.Tests/RepoQL.Formats.Docx.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.DotNet.Tests/RepoQL.Formats.DotNet.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Go.Tests/RepoQL.Formats.Go.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Json.Tests/RepoQL.Formats.Json.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Mermaid.Tests/RepoQL.Formats.Mermaid.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Pdf.Tests/RepoQL.Formats.Pdf.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.PHP.Tests/RepoQL.Formats.PHP.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Python.Tests/RepoQL.Formats.Python.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Ruby.Tests/RepoQL.Formats.Ruby.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Rust.Tests/RepoQL.Formats.Rust.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Terraform.Tests/RepoQL.Formats.Terraform.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.TypeScript.Tests/RepoQL.Formats.TypeScript.Tests.csproj
+              src/pipeline/Formats/RepoQL.Formats.Xlsx.Tests/RepoQL.Formats.Xlsx.Tests.csproj
+
+          # Shard 3: Query engine, sandbox, cloud services, tools
+          - shard: engine
+            projects: >-
+              src/query/RepoQL.Rendering.Tests/RepoQL.Rendering.Tests.csproj
+              src/query/RepoQL.Sandbox.Tests/RepoQL.Sandbox.Tests.csproj
+              src/cloud/RepoQL.Embedding.Client.Tests/RepoQL.Embedding.Client.Tests.csproj
+              src/cloud/RepoQL.Embedding.Service.Tests/RepoQL.Embedding.Service.Tests.csproj
+              src/cloud/RepoQL.Embedding.Writer.Tests/RepoQL.Embedding.Writer.Tests.csproj
+              src/cloud/RepoQL.Inference.Client.Tests/RepoQL.Inference.Client.Tests.csproj
+              src/cloud/RepoQL.Inference.Service.Tests/RepoQL.Inference.Service.Tests.csproj
+              src/tools/RepoQL.SnapshotGenerator.Tests/RepoQL.SnapshotGenerator.Tests.csproj
+
     env:
       ARTIFACTS_PATH: ${{ github.workspace }}/artifacts
+
     steps:
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
           sudo docker image prune --all --force || true
           df -h
+
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.1xx'
+
       - name: Set USERPROFILE for Antlr4BuildTasks (Linux)
         run: echo "USERPROFILE=$HOME" >> $GITHUB_ENV
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -46,79 +102,103 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore RepoQL.sln --nologo
+
+      - name: Build solution (Release)
+        run: dotnet build RepoQL.sln --configuration Release --no-restore --nologo
+
+      - name: Run tests
+        run: |
+          for project in ${{ matrix.projects }}; do
+            echo "::group::Testing $project"
+            dotnet test "$project" \
+              --configuration Release \
+              --no-build \
+              -- \
+              --coverage \
+              --coverage-output-format cobertura \
+              --report-trx
+            echo "::endgroup::"
+          done
+
+      - name: Show disk space (post-tests)
+        if: always()
+        run: df -h
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.shard }}
+          path: |
+            ${{ env.ARTIFACTS_PATH }}/TestResults/**/*
+
+  results:
+    name: Test Results
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-*
+          path: ./TestResults
+          merge-multiple: true
+
       - name: Install coverage tooling
         run: |
           dotnet tool install --global dotnet-coverage
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
-      - name: Restore
-        run: dotnet restore RepoQL.sln --nologo
-      - name: Build solution (Release)
-        run: dotnet build RepoQL.sln --configuration Release --no-restore --nologo
-      - name: Run tests with coverage
-        id: test
-        run: |
-          dotnet test \
-            --solution RepoQL.sln \
-            --configuration Release \
-            --no-build \
-            -- \
-            --coverage \
-            --coverage-output-format cobertura \
-            --report-trx
-      - name: Merge coverage reports
-        if: always() && !cancelled()
-        run: |
-          RESULTS_DIR="${{ env.ARTIFACTS_PATH }}/TestResults"
-          COVERAGE_DIR="${{ env.ARTIFACTS_PATH }}/coverage"
-          mkdir -p "$COVERAGE_DIR"
 
-          mapfile -t coverage_files < <(find "$RESULTS_DIR" -name "*.cobertura.xml" -type f | sort)
+      - name: Merge coverage reports
+        run: |
+          mkdir -p coverage
+          mapfile -t coverage_files < <(find ./TestResults -name "*.cobertura.xml" -type f | sort)
           echo "Found ${#coverage_files[@]} coverage file(s)"
 
           if [[ "${#coverage_files[@]}" -eq 0 ]]; then
             echo "No coverage files generated" >&2
             exit 0
           elif [[ "${#coverage_files[@]}" -eq 1 ]]; then
-            cp "${coverage_files[0]}" "$COVERAGE_DIR/coverage.cobertura.xml"
+            cp "${coverage_files[0]}" coverage/coverage.cobertura.xml
           else
             merge_args=()
             for file in "${coverage_files[@]}"; do
               merge_args+=("--reports" "$file")
             done
-            dotnet-coverage merge "${merge_args[@]}" --output "$COVERAGE_DIR/coverage.cobertura.xml" --output-format cobertura
+            dotnet-coverage merge "${merge_args[@]}" --output coverage/coverage.cobertura.xml --output-format cobertura
           fi
-      - name: Show disk space (post-tests)
-        if: always()
-        run: df -h
+
       - name: Generate coverage report
-        if: always() && !cancelled()
         uses: danielpalme/ReportGenerator-GitHub-Action@5
         with:
-          reports: '${{ env.ARTIFACTS_PATH }}/coverage/coverage.cobertura.xml'
-          targetdir: '${{ env.ARTIFACTS_PATH }}/coverage/report'
+          reports: 'coverage/coverage.cobertura.xml'
+          targetdir: 'coverage/report'
           reporttypes: 'Html;MarkdownSummaryGithub'
-          tag: '${{ github.run_number }}_${{ github.run_id }}'
+
       - name: Publish coverage summary
-        if: always() && !cancelled()
         run: |
-          summary='${{ env.ARTIFACTS_PATH }}/coverage/report/SummaryGithub.md'
+          summary='coverage/report/SummaryGithub.md'
           if [[ -f "$summary" ]]; then
             cat "$summary" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Coverage summary not generated (missing $summary)." >> "$GITHUB_STEP_SUMMARY"
+            echo "Coverage summary not generated." >> "$GITHUB_STEP_SUMMARY"
           fi
+
       - name: Publish test results (GitHub UI)
-        if: always()
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           files: |
-            ${{ env.ARTIFACTS_PATH }}/TestResults/**/*.trx
-      - name: Upload test reports
-        if: always()
+            ./TestResults/**/*.trx
+
+      - name: Upload combined reports
         uses: actions/upload-artifact@v4
         with:
           name: test-reports
           path: |
-            ${{ env.ARTIFACTS_PATH }}/TestResults/**/*
-            ${{ env.ARTIFACTS_PATH }}/coverage/coverage.cobertura.xml
-            ${{ env.ARTIFACTS_PATH }}/coverage/report/**
+            ./TestResults/**/*
+            coverage/**
