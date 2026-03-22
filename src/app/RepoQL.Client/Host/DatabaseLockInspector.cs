@@ -10,7 +10,7 @@ namespace RepoQL.Client.Host;
 /// Purpose: Identify processes holding a lock on the DuckDB file.
 /// Complexity: Uses OS-specific process enumeration strategies with safe fallbacks.
 /// </summary>
-internal static class DatabaseLockInspector
+public static class DatabaseLockInspector
 {
     public static ProcessInfo? TryGetLockHolder(string databasePath, ILogger logger)
     {

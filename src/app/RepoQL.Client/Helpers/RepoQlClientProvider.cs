@@ -8,7 +8,7 @@ namespace RepoQL.Client.Helpers;
 /// <summary>
 /// Provides a shared RepoQL gRPC client instance and supports asynchronous warm-up.
 /// </summary>
-internal sealed class RepoQlClientProvider : IAsyncDisposable
+public sealed class RepoQlClientProvider : IAsyncDisposable
 {
     private readonly ILogger<RepoQlClientProvider> _logger;
     private readonly RepoQlConfig.HostSettings _hostSettings;

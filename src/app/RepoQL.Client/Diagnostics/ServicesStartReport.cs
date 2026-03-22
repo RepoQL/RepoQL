@@ -8,7 +8,7 @@ namespace RepoQL.Client.Diagnostics;
 /// Purpose: Capture degradable service startup outcomes for diagnostics.
 /// Complexity: Aggregates service issues into a compact report.
 /// </summary>
-internal sealed class ServicesStartReport
+public sealed class ServicesStartReport
 {
     public List<ServiceStartIssue> Issues { get; } = [];
 
@@ -45,4 +45,4 @@ internal sealed class ServicesStartReport
 /// Purpose: Describe a degraded service and its primary issue.
 /// Complexity: Simple data carrier for diagnostics.
 /// </summary>
-internal sealed record ServiceStartIssue(ServiceDegradationKind Kind, string Message);
+public sealed record ServiceStartIssue(ServiceDegradationKind Kind, string Message);

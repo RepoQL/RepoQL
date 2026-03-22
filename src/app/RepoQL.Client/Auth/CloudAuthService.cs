@@ -18,7 +18,7 @@ namespace RepoQL.Client.Auth;
 /// Purpose: Run RepoQL's interactive cloud login/logout/whoami workflows for both CLI and command surfaces.
 /// Complexity: Handles PKCE/device OAuth exchanges, loopback callback listening, local credential persistence, and user-facing auth summaries.
 /// </summary>
-internal sealed class CloudAuthService : IDisposable
+public sealed class CloudAuthService : IDisposable
 {
     private static readonly TimeSpan BrowserCallbackTimeout = TimeSpan.FromSeconds(120);
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -594,11 +594,11 @@ internal sealed class CloudAuthService : IDisposable
         }
     }
 
-    internal sealed record LoginResult(string DisplayName);
+    public sealed record LoginResult(string DisplayName);
 
-    internal sealed record AuthProgressUpdate(AuthProgressKind Kind, string Message);
+    public sealed record AuthProgressUpdate(AuthProgressKind Kind, string Message);
 
-    internal enum AuthProgressKind
+    public enum AuthProgressKind
     {
         Info,
         Warning,

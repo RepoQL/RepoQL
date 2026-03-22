@@ -8,7 +8,7 @@
 ///
 /// Complexity: Simple boolean state. Singleton per MCP session. Thread-safe via volatile.
 /// </summary>
-internal sealed class SessionOrientation
+public sealed class SessionOrientation
 {
     private volatile bool _hasReadHelp;
 

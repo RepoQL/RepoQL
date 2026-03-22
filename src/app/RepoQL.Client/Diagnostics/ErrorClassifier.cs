@@ -9,7 +9,7 @@ namespace RepoQL.Client.Diagnostics;
 /// Classifies exceptions to determine if they're infrastructure errors (connection, host, etc.)
 /// vs user-input errors (SQL syntax, invalid parameters, etc.).
 /// </summary>
-internal static class ErrorClassifier
+public static class ErrorClassifier
 {
     /// <summary>
     /// Returns true if the exception indicates an infrastructure problem that warrants

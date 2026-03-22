@@ -5,7 +5,7 @@ namespace RepoQL.Client.Diagnostics;
 /// <summary>
 /// Path helpers for host state files used by client-side diagnostics.
 /// </summary>
-internal static class HostPaths
+public static class HostPaths
 {
     internal const string HostStderrFileName = "host.stderr.log";
     internal const string HostVersionFileName = "host.version";

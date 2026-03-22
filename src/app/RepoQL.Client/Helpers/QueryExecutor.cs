@@ -4,7 +4,7 @@ using RepoQL.Contracts;
 
 namespace RepoQL.Client.Helpers;
 
-internal sealed class QueryExecutor
+public sealed class QueryExecutor
 {
     private readonly ResultFormatterFactory _formatterFactory;
     private readonly RepoQlClientProvider _clientProvider;

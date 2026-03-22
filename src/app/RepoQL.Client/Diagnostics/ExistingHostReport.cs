@@ -6,7 +6,7 @@ namespace RepoQL.Client.Diagnostics;
 /// Purpose: Capture host shutdown and takeover observations for diagnostics.
 /// Complexity: Stores partial probe/kill/cleanup results without requiring all fields.
 /// </summary>
-internal sealed class ExistingHostReport
+public sealed class ExistingHostReport
 {
     public required string SocketPath { get; init; }
     public bool SocketExists { get; set; }

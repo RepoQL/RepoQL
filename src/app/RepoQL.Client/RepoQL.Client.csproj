@@ -7,8 +7,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="RepoQL.McpServer" />
-    <InternalsVisibleTo Include="repoql" />
     <InternalsVisibleTo Include="RepoQL.Cli.Tests" />
     <InternalsVisibleTo Include="RepoQL.Tests" />
   </ItemGroup>

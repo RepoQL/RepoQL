@@ -18,7 +18,7 @@ namespace RepoQL.Client.Diagnostics;
 /// Purpose: Describe the depth of diagnostic collection for the current request.
 /// Complexity: Enum-only configuration to avoid branching errors.
 /// </summary>
-internal enum DiagnosticCollectionMode
+public enum DiagnosticCollectionMode
 {
     Fast,
     Full
@@ -28,7 +28,7 @@ internal enum DiagnosticCollectionMode
 /// Purpose: Gather diagnostics facts from sockets, health checks, and host artifacts.
 /// Complexity: Coordinates best-effort probes without throwing or mutating host state.
 /// </summary>
-internal sealed class DiagnosticsCollector
+public sealed class DiagnosticsCollector
 {
     private readonly Func<HostDiagnostics> _hostDiagnosticsProvider;
 

@@ -4,7 +4,7 @@
 /// Purpose: Provide a single entry point to render full diagnostics output on demand.
 /// Complexity: Delegates to the diagnostics collector while preserving a simple async surface.
 /// </summary>
-internal sealed class SelfTestRunner(DiagnosticsCollector collector)
+public sealed class SelfTestRunner(DiagnosticsCollector collector)
 {
     private readonly DiagnosticsCollector _collector = collector ?? throw new ArgumentNullException(nameof(collector));
 

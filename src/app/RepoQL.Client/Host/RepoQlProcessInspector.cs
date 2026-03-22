@@ -6,7 +6,7 @@ namespace RepoQL.Client.Host;
 /// Purpose: Identify RepoQL processes safely before termination.
 /// Complexity: Checks process name and executable path while handling restricted access.
 /// </summary>
-internal static class RepoQlProcessInspector
+public static class RepoQlProcessInspector
 {
     public static bool TryGetRepoQlProcess(int pid, out Process process)
     {

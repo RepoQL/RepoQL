@@ -37,7 +37,7 @@ namespace RepoQL.Client.Host;
 /// See <see href="docs/flows/current/host-client-architecture.md">Host-Client Architecture</see> for the startup flow.
 /// </para>
 /// </remarks>
-internal sealed class HostLock : IDisposable
+public sealed class HostLock : IDisposable
 {
     private const string PidPrefix = "PID:";
     private static readonly ConcurrentDictionary<string, byte> ProcessLocks = new(GetProcessLockComparer());
@@ -251,7 +251,7 @@ internal sealed class HostLock : IDisposable
 /// Purpose: Enumerate why a host lock acquisition failed.
 /// Complexity: Keeps startup decisions explicit without leaking IO error details.
 /// </summary>
-internal enum HostLockFailure
+public enum HostLockFailure
 {
     /// <summary>Lock was acquired successfully.</summary>
     None,

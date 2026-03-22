@@ -7,7 +7,7 @@ namespace RepoQL.Client.Diagnostics;
 /// Purpose: Persist and retrieve host-side diagnostic reports for later inspection.
 /// Complexity: Centralizes JSON storage in the .repoql diagnostics directory without throwing.
 /// </summary>
-internal static class HostDiagnosticsStore
+public static class HostDiagnosticsStore
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {

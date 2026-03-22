@@ -6,7 +6,7 @@ namespace RepoQL.Client.Diagnostics;
 /// Purpose: Capture socket binding context and failures for diagnostics.
 /// Complexity: Tracks platform-specific path details with optional error information.
 /// </summary>
-internal sealed class SocketBindReport
+public sealed class SocketBindReport
 {
     public required string SocketPath { get; init; }
     public int PathLength { get; set; }

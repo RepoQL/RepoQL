@@ -19,7 +19,7 @@ namespace RepoQL.McpServer.Tools;
 /// and returns the pre-rendered response.
 /// </summary>
 [McpServerToolType]
-internal sealed class ReadTool(
+public sealed class ReadTool(
     RepoQlClientProvider clientProvider,
     SelfTestRunner selfTestRunner,
     SessionOrientation sessionOrientation)

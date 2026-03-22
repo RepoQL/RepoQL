@@ -6,7 +6,7 @@ namespace RepoQL.Client.Diagnostics;
 /// Purpose: Capture database initialization context and recovery attempts for diagnostics.
 /// Complexity: Stores open, validation, and recovery outcomes without requiring all fields.
 /// </summary>
-internal sealed class DatabaseInitReport
+public sealed class DatabaseInitReport
 {
     public required string Path { get; init; }
     public bool Existed { get; set; }
@@ -65,4 +65,4 @@ internal sealed class DatabaseInitReport
 /// Purpose: Record invalid DuckDB environment variable values in diagnostics.
 /// Complexity: Simple data carrier for configuration validation.
 /// </summary>
-internal sealed record DatabaseEnvVarIssue(string Name, string? Value, string Error);
+public sealed record DatabaseEnvVarIssue(string Name, string? Value, string Error);

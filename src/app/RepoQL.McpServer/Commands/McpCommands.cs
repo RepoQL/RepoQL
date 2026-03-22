@@ -9,7 +9,7 @@ using RepoQL.McpServer.Logging;
 
 namespace RepoQL.McpServer.Commands;
 
-internal class McpCommands
+public class McpCommands
 {
     /// <summary>
     ///    Runs RepoQL as an MCP server

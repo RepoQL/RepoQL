@@ -7,7 +7,7 @@ namespace RepoQL.Client.Host;
 /// Purpose: Terminate processes in a platform-aware, best-effort manner.
 /// Complexity: Wraps OS-specific termination paths while enforcing timeouts.
 /// </summary>
-internal static class ProcessTermination
+public static class ProcessTermination
 {
     public static async Task<bool> TryTerminateAsync(Process process, CancellationToken cancellationToken)
     {

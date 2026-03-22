@@ -1,6 +1,6 @@
 ﻿namespace RepoQL.Client.Helpers;
 
-internal readonly record struct QueryExecutionResult(
+public readonly record struct QueryExecutionResult(
     string[] Lines,
     long TotalRowCount,
     long ExecutionTimeMs,
