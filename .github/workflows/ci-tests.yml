@@ -69,7 +69,7 @@ jobs:
     name: Test (${{ matrix.shard }})
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -157,11 +157,13 @@ jobs:
             fi
             bindir=$(dirname "$bin")
             echo "::group::${name}"
-            if ! dotnet exec "$bin" \
+            if ! timeout 300 dotnet exec "$bin" \
+              --timeout 240000 \
               --coverage \
               --coverage-output-format cobertura \
               --report-trx \
               --results-directory "$(pwd)/TestResults"; then
+              echo "::warning::${name} failed or timed out"
               failed=1
             fi
             echo "::endgroup::"
