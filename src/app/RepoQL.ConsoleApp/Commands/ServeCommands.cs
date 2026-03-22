@@ -195,6 +195,8 @@ internal class HostCommands(IAnsiConsole console)
                 sp.GetService<IInferenceProvider>(),
                 sp.GetServices<IModifierHandler>()));
             builder.Services.AddSingleton<RepoQL.Explain.ExplainEngine>();
+            builder.Services.AddSingleton<RepoQL.Query.IQueryDataSource, DuckDbQueryDataSource>();
+            builder.Services.AddSingleton<RepoQL.Query.QueryEngine>();
 
             // gRPC already configured above
             builder.Services.AddSingleton<HostMetrics>();

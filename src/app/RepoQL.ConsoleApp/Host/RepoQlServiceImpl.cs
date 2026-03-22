@@ -26,6 +26,7 @@ using RepoQL.Sarif;
 using RepoQL.Explore;
 using RepoQL.Read;
 using RepoQL.Sandbox;
+using RepoQL.Query;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoStageStatus = RepoQL.Contracts.StageStatus;
@@ -55,6 +56,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly IModuleRegistry? _moduleRegistry;
     private readonly UriRegistry? _uriRegistry;
     private readonly QueueCommandService? _queueCommandService;
+    private readonly QueryEngine _queryEngine;
     private readonly Explain.ExplainEngine _explainEngine;
     private readonly RepoQlConfig.HostSettings _hostSettings;
     private readonly RepoQlConfig.EmbeddingSettings _embeddingSettings;
@@ -95,6 +97,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         ReadOrchestrator readOrchestrator,
         IReadContentProvider readContentProvider,
         Explain.ExplainEngine explainEngine,
+        QueryEngine queryEngine,
         RepoQlConfig config,
         EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
@@ -129,6 +132,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _readOrchestrator = readOrchestrator ?? throw new ArgumentNullException(nameof(readOrchestrator));
         _readContentProvider = readContentProvider ?? throw new ArgumentNullException(nameof(readContentProvider));
         _explainEngine = explainEngine ?? throw new ArgumentNullException(nameof(explainEngine));
+        _queryEngine = queryEngine ?? throw new ArgumentNullException(nameof(queryEngine));
         _uriRegistry = uriRegistry;
         _queueCommandService = queueCommandService;
         _hostSettings = (config ?? throw new ArgumentNullException(nameof(config))).Host;
@@ -159,46 +163,37 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         // No barrier - queries execute immediately with whatever data is available.
         // ExploreTool handles "call again to wait" pattern for semantic readiness.
         var resp = new RawQueryResponse();
-        var sw = Stopwatch.StartNew();
         var activity = _dashboardQueryActivity?.Begin("query", SummarizeSqlForDashboard(request.Sql), request.TokenBudget);
 
         try
         {
-            // Substitute parameters into SQL (DuckDbDataStore.Query does not support params)
-            var sql = SubstituteParameters(request.Sql, request.Parameters);
-            var rows = _db.Query(sql, context.CancellationToken);
-
-            var limited = request.Limit > 0;
-            var take = limited ? rows.Take(request.Limit) : rows;
-
-            IReadOnlyDictionary<string, object?>? first = null;
-            foreach (var r in take)
+            var engineRequest = new QueryRequest
             {
-                if (first is null)
-                {
-                    first = r;
-                    foreach (var col in first.Keys)
-                    {
-                        var sample = first[col];
-                        resp.Columns.Add(new ColumnSchema { Name = col, DbType = InferDbType(sample) });
-                    }
-                }
+                Sql = request.Sql,
+                Parameters = request.Parameters.Select(ToQueryParameter).ToList(),
+                TokenBudget = request.TokenBudget,
+                Limit = request.Limit
+            };
+
+            var result = await _queryEngine.ExecuteAsync(engineRequest, context.CancellationToken).ConfigureAwait(false);
+
+            // Map QueryResult back to proto RawQueryResponse
+            foreach (var col in result.Columns)
+                resp.Columns.Add(new ColumnSchema { Name = col.Name, DbType = col.TypeName });
+
+            foreach (var row in result.Rows)
+            {
                 var rd = new RowData();
-                foreach (var col in first.Keys)
-                {
-                    r.TryGetValue(col, out var value);
+                foreach (var value in row)
                     rd.Values.Add(ToProtoValue(value));
-                }
                 resp.Rows.Add(rd);
             }
-            resp.RowCount = resp.Rows.Count;
-            // Detect truncation from the already-fetched results: the full result set was
-            // materialized by _db.Query, so if we took fewer rows than exist, it's truncated.
-            resp.Truncated = limited && rows.Count > request.Limit;
 
-            // Check token budget and potentially summarize
-            await TryBudgetSummarize(resp, request.TokenBudget, ExtractSqlComment(request.Sql), context.CancellationToken)
-                .ConfigureAwait(false);
+            resp.RowCount = result.RowCount;
+            resp.Truncated = result.Truncated;
+            resp.Summarized = result.Summarized;
+            resp.OriginalRowCount = result.OriginalRowCount;
+            resp.ExecutionTimeMs = result.ElapsedMs;
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
@@ -210,9 +205,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             activity?.Cancel(SummarizeDashboardText(ex.Message));
             throw new RpcException(new Status(StatusCode.Internal, ex.Message));
         }
-
-        sw.Stop();
-        resp.ExecutionTimeMs = sw.ElapsedMilliseconds;
 
         var trustSignal = GetTrustSignal(resp.ExecutionTimeMs, context.CancellationToken);
         resp.IndexPending = trustSignal.IndexPending;
@@ -226,25 +218,8 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         return activity?.Complete(resp, BuildQueryActivitySummary(resp), EstimateQueryActivityTokens(resp)) ?? resp;
     }
     /// <summary>
-    /// Extract user intent from SQL comment (-- or /* */).
-    /// </summary>
-    private static string? ExtractSqlComment(string sql)
-    {
-        // Single-line comment: -- comment
-        var singleLine = Regex.Match(sql, @"--\s*(.+?)(?:\r?\n|$)");
-        if (singleLine.Success)
-            return singleLine.Groups[1].Value.Trim();
-
-        // Block comment: /* comment */
-        var block = Regex.Match(sql, @"/\*\s*([\s\S]*?)\s*\*/");
-        if (block.Success)
-            return block.Groups[1].Value.Trim();
-
-        return null;
-    }
-
-    /// <summary>
     /// Format response as text for token estimation.
+    /// Used by EstimateQueryActivityTokens and TryBudgetSummarize.
     /// </summary>
     private static string FormatResponseForTokenEstimation(RawQueryResponse resp)
     {
@@ -270,7 +245,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
     /// <summary>
     /// Check token budget and LLM-summarize the response if it exceeds the budget and intent is available.
-    /// Shared by ExecuteRawQueryCore and Execute.
+    /// Used by the Execute RPC (sandbox). The query RPC delegates to QueryEngine instead.
     /// </summary>
     private async Task TryBudgetSummarize(RawQueryResponse resp, int tokenBudget, string? intent, CancellationToken ct)
     {
@@ -1142,90 +1117,16 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         return protoStruct;
     }
 
-    private static string InferDbType(object? sample)
-    {
-        if (sample is null || sample is DBNull) return "UNKNOWN";
-        return sample switch
-        {
-            bool => "BOOLEAN",
-            byte or sbyte or short or ushort or int => "INTEGER",
-            uint or long => "BIGINT",
-            ulong => "UBIGINT",
-            float or double or decimal => "DOUBLE",
-            DateTime => "TIMESTAMP",
-            Guid => "UUID",
-            byte[] => "BLOB",
-            _ => "VARCHAR"
-        };
-    }
-
     /// <summary>
-    /// Substitutes ? placeholders in SQL with properly escaped values from parameters.
-    /// DuckDbDataStore.Query doesn't support parameterized queries, so we inline values.
+    /// Map a protobuf Value parameter to a transport-agnostic QueryParameter.
     /// </summary>
-    private static string SubstituteParameters(string sql, IList<Value> parameters)
+    private static QueryParameter ToQueryParameter(Value v) => v.KindCase switch
     {
-        if (parameters.Count == 0)
-            return sql;
-
-        var result = new StringBuilder(sql.Length + parameters.Count * 20);
-        var paramIndex = 0;
-
-        for (var i = 0; i < sql.Length; i++)
-        {
-            var c = sql[i];
-
-            // Skip string literals (single quotes)
-            if (c == '\'')
-            {
-                var start = i;
-                i++;
-                while (i < sql.Length)
-                {
-                    if (sql[i] == '\'' && i + 1 < sql.Length && sql[i + 1] == '\'')
-                    {
-                        i += 2; // Skip escaped quote
-                        continue;
-                    }
-                    if (sql[i] == '\'')
-                        break;
-                    i++;
-                }
-                result.Append(sql.AsSpan(start, i - start + 1));
-                continue;
-            }
-
-            // Replace ? with parameter value
-            if (c == '?')
-            {
-                if (paramIndex < parameters.Count)
-                {
-                    result.Append(ToSqlLiteral(parameters[paramIndex]));
-                    paramIndex++;
-                }
-                else
-                {
-                    result.Append('?'); // Not enough params, keep placeholder
-                }
-                continue;
-            }
-
-            result.Append(c);
-        }
-
-        return result.ToString();
-    }
-
-    /// <summary>
-    /// Converts a protobuf Value to a SQL literal string.
-    /// </summary>
-    private static string ToSqlLiteral(Value value) => value.KindCase switch
-    {
-        Value.KindOneofCase.NullValue => "NULL",
-        Value.KindOneofCase.BoolValue => value.BoolValue ? "TRUE" : "FALSE",
-        Value.KindOneofCase.NumberValue => value.NumberValue.ToString(CultureInfo.InvariantCulture),
-        Value.KindOneofCase.StringValue => $"'{value.StringValue.Replace("'", "''")}'",
-        _ => "NULL"
+        Value.KindOneofCase.NullValue => new QueryParameter { Kind = QueryParameterKind.Null },
+        Value.KindOneofCase.BoolValue => new QueryParameter { Kind = QueryParameterKind.Bool, BoolValue = v.BoolValue },
+        Value.KindOneofCase.NumberValue => new QueryParameter { Kind = QueryParameterKind.Number, NumberValue = v.NumberValue },
+        Value.KindOneofCase.StringValue => new QueryParameter { Kind = QueryParameterKind.String, StringValue = v.StringValue },
+        _ => new QueryParameter { Kind = QueryParameterKind.Null }
     };
 
     public override async Task ReindexAll(ReindexRequest request, IServerStreamWriter<ReindexProgress> responseStream, ServerCallContext context)
