@@ -14,8 +14,8 @@ internal sealed class CommandTool(CommandRegistry commandRegistry)
 {
     private const string CommandInstructions = """
         <CONCEPT>
-        Command is how you act — imperative operations for administration and diagnostics.
-        Use command when you need to DO something (reindex, configure, diagnose). Use `?` to discover what's available — the system is self-documenting.
+        Imperative commands for administration and diagnostics.
+        Use command when you need to DO something (reindex, configure, diagnose).
         Commands use DOT notation for subcommands and BRACKET notation for arguments:
           command.subcommand[arg1, arg2]
         </CONCEPT>
