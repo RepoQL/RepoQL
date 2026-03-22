@@ -82,32 +82,28 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
                 packageEmbeddings,
                 candidateTypeIds);
 
-            // Return edges as output — the pipeline commit stage persists them.
-            // Filter out prior IMPLEMENTS edges for these candidates, then add new ones.
-            var existingEdges = item.Records.Edges
-                .Where(e => !(string.Equals(e.Type, GoEdgeTypes.Implements, StringComparison.Ordinal) &&
-                              candidateTypeIds.Contains(e.SrcId)))
-                .ToList();
-
-            foreach (var implementation in result.Implementations)
+            // Return edges as output — the pipeline commit stage merges them.
+            // EdgesList on IndexItem follows the same pattern as AnnotationsList.
+            if (item is IndexItem indexItem)
             {
-                existingEdges.Add(new Edge
+                foreach (var implementation in result.Implementations)
                 {
-                    SrcId = implementation.TypeNodeId,
-                    DstId = implementation.InterfaceNodeId,
-                    Type = GoEdgeTypes.Implements,
-                    ScopeDocumentId = documentNode.Id,
-                    EdgeKey = BuildSemanticKey(implementation),
-                    Props = new JsonObject
+                    indexItem.AnalyzerEdges.Add(new Edge
                     {
-                        [GoPropertyKeys.Target] = implementation.InterfaceQualifiedName,
-                        [GoPropertyKeys.ReceiverKind] = implementation.ReceiverKind,
-                        [GoPropertyKeys.IsStdlib] = implementation.IsStdlib
-                    }
-                });
+                        SrcId = implementation.TypeNodeId,
+                        DstId = implementation.InterfaceNodeId,
+                        Type = GoEdgeTypes.Implements,
+                        ScopeDocumentId = documentNode.Id,
+                        EdgeKey = BuildSemanticKey(implementation),
+                        Props = new JsonObject
+                        {
+                            [GoPropertyKeys.Target] = implementation.InterfaceQualifiedName,
+                            [GoPropertyKeys.ReceiverKind] = implementation.ReceiverKind,
+                            [GoPropertyKeys.IsStdlib] = implementation.IsStdlib
+                        }
+                    });
+                }
             }
-
-            item.Records.Edges = existingEdges.ToArray();
 
             foreach (var diagnostic in result.Diagnostics)
             {

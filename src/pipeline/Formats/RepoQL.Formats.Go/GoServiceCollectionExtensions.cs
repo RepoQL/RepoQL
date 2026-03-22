@@ -29,7 +29,8 @@ public static class GoServiceCollectionExtensions
 
         services.AddIndexingProcessor<GoClassifier>();
         services.AddIndexingProcessor<GoParser>();
-        services.AddIndexingProcessor<GoInterfaceSatisfactionAnalyzer>(default(IAsyncPipeline<IAnnotatedArtifact, Annotation[]>));
+        // TODO: Re-enable once IGraphQueryService is implemented
+        // services.AddIndexingProcessor<GoInterfaceSatisfactionAnalyzer>(default(IAsyncPipeline<IAnnotatedArtifact, Annotation[]>));
 
         return services;
     }

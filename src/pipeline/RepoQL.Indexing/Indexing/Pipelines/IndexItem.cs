@@ -262,6 +262,9 @@ public sealed class IndexItem(RawArtifact rawArtifact, IndexItemOptions options)
         return true;
     }
     
+    /// <summary>Edges produced by analyzers, merged with parsed edges at commit time.</summary>
+    public List<Edge> AnalyzerEdges { get; } = [];
+
     /// <summary>Annotations produced by analyzers (internal list)</summary>
     internal List<Annotation> AnnotationsList { get; } = [];
 

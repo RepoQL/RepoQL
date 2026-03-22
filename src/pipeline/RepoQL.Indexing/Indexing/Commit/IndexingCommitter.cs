@@ -481,12 +481,23 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
                 ? existingAnnotations
                 : [.. existingAnnotations, .. analyzerAnnotations];
 
+        var existingEdges = item.Records.Edges ?? Array.Empty<Edge>();
+        var analyzerEdges = item.AnalyzerEdges.Count > 0
+            ? item.AnalyzerEdges.ToArray()
+            : Array.Empty<Edge>();
+
+        var combinedEdges = existingEdges.Length == 0
+            ? analyzerEdges
+            : analyzerEdges.Length == 0
+                ? existingEdges
+                : [.. existingEdges, .. analyzerEdges];
+
         return new Records
         {
             Artifacts = item.Records.Artifacts,
             Nodes = item.Records.Nodes,
             Spans = item.Records.Spans,
-            Edges = item.Records.Edges,
+            Edges = combinedEdges,
             Annotations = combinedAnnotations,
             AnnotationSources = item.Records.AnnotationSources
         };
