@@ -22,16 +22,59 @@ permissions:
   pull-requests: write
 
 jobs:
-  test:
-    name: test (${{ matrix.shard }})
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.1xx'
+
+      - name: Set USERPROFILE for Antlr4BuildTasks (Linux)
+        run: echo "USERPROFILE=$HOME" >> $GITHUB_ENV
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore RepoQL.sln --nologo
+
+      - name: Build solution (Release)
+        run: dotnet build RepoQL.sln --configuration Release --no-restore --nologo
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            artifacts/bin/
+            artifacts/obj/
+          retention-days: 1
+
+  test:
+    name: Test (${{ matrix.shard }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Shard 1: Core, data, infra, integrations, cloud — the heavy DuckDB/pipeline tests
+          # Shard 1: Core, data, infra, integrations, pipeline — the heavy DuckDB tests
           - shard: core
             projects: >-
               src/app/RepoQL.Tests/RepoQL.Tests.csproj
@@ -81,52 +124,35 @@ jobs:
       ARTIFACTS_PATH: ${{ github.workspace }}/artifacts
 
     steps:
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
-          sudo docker image prune --all --force || true
-          df -h
-
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.1xx'
 
-      - name: Set USERPROFILE for Antlr4BuildTasks (Linux)
-        run: echo "USERPROFILE=$HOME" >> $GITHUB_ENV
-
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
         with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      - name: Restore
-        run: dotnet restore RepoQL.sln --nologo
-
-      - name: Build solution (Release)
-        run: dotnet build RepoQL.sln --configuration Release --no-restore --nologo
+          name: build-output
+          path: artifacts/
 
       - name: Run tests
         run: |
+          failed=0
           for project in ${{ matrix.projects }}; do
             echo "::group::Testing $project"
-            dotnet test \
+            if ! dotnet test \
               --project "$project" \
               --configuration Release \
               --no-build \
               -- \
               --coverage \
               --coverage-output-format cobertura \
-              --report-trx
+              --report-trx; then
+              failed=1
+            fi
             echo "::endgroup::"
           done
-
-      - name: Show disk space (post-tests)
-        if: always()
-        run: df -h
+          exit $failed
 
       - name: Upload test results
         if: always()
