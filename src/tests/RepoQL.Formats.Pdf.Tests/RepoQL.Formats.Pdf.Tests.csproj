@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Formats\RepoQL.Formats.Pdf\RepoQL.Formats.Pdf.csproj" />
+    <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.Pdf\RepoQL.Formats.Pdf.csproj" />
   </ItemGroup>
 
 </Project>

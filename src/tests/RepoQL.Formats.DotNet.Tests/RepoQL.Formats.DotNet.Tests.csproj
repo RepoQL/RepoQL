@@ -16,9 +16,9 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\..\Formats\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />
-      <ProjectReference Include="..\..\core\RepoQL.Templating\RepoQL.Templating.csproj" />
-      <ProjectReference Include="..\..\core\RepoQL.Core\RepoQL.Core.csproj" />
+      <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />
+      <ProjectReference Include="..\..\infra\RepoQL.Templating\RepoQL.Templating.csproj" />
+      <ProjectReference Include="..\..\app\RepoQL.Core\RepoQL.Core.csproj" />
     </ItemGroup>
 
 </Project>

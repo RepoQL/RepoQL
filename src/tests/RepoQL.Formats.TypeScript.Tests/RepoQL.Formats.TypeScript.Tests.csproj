@@ -16,8 +16,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Formats\RepoQL.Formats.TypeScript\RepoQL.Formats.TypeScript.csproj" />
-    <ProjectReference Include="..\..\core\RepoQL.Core\RepoQL.Core.csproj" />
+    <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.TypeScript\RepoQL.Formats.TypeScript.csproj" />
+    <ProjectReference Include="..\..\app\RepoQL.Core\RepoQL.Core.csproj" />
   </ItemGroup>
 
 </Project>

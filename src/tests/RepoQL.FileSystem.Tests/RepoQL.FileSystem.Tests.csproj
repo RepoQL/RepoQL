@@ -17,9 +17,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\RepoQL.Testing\RepoQL.Testing.csproj" />
-    <ProjectReference Include="..\..\core\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
-    <ProjectReference Include="..\..\core\RepoQL.Core\RepoQL.Core.csproj" />
-    <ProjectReference Include="..\..\Formats\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
+    <ProjectReference Include="..\..\infra\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
+    <ProjectReference Include="..\..\app\RepoQL.Core\RepoQL.Core.csproj" />
+    <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -16,6 +16,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\core\RepoQL.Protocol\RepoQL.Protocol.csproj" />
+    <ProjectReference Include="..\..\infra\RepoQL.Protocol\RepoQL.Protocol.csproj" />
   </ItemGroup>
 </Project>

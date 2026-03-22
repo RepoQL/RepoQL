@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Formats\RepoQL.Formats.Go\RepoQL.Formats.Go.csproj" />
+    <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.Go\RepoQL.Formats.Go.csproj" />
     <ProjectReference Include="..\RepoQL.Testing\RepoQL.Testing.csproj" />
   </ItemGroup>
 

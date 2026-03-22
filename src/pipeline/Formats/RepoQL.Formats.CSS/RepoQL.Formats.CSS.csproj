@@ -1,0 +1,40 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantCulture>true</InvariantCulture>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Antlr4.Runtime.Standard" />
+    <PackageReference Include="Antlr4BuildTasks" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Antlr4 Include="Grammar\css3Lexer.g4">
+      <Listener>false</Listener>
+      <Visitor>true</Visitor>
+    </Antlr4>
+    <Antlr4 Include="Grammar\css3Parser.g4">
+      <Listener>false</Listener>
+      <Visitor>true</Visitor>
+    </Antlr4>
+    <Antlr4 Include="Grammar\ScssLexer.g4">
+      <Listener>false</Listener>
+      <Visitor>true</Visitor>
+    </Antlr4>
+    <Antlr4 Include="Grammar\ScssParser.g4">
+      <Listener>false</Listener>
+      <Visitor>true</Visitor>
+    </Antlr4>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\..\RepoQL.Indexing\RepoQL.Indexing.csproj" />
+  </ItemGroup>
+
+</Project>

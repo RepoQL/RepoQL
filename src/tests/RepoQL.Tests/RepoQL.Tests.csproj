@@ -21,15 +21,15 @@
 
   <ItemGroup>
         <ProjectReference Include="..\RepoQL.Testing\RepoQL.Testing.csproj" />
-        <ProjectReference Include="..\..\core\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
-        <ProjectReference Include="..\..\Formats\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
-        <ProjectReference Include="..\..\Formats\RepoQL.Formats.Mermaid\RepoQL.Formats.Mermaid.csproj" />
-        <ProjectReference Include="..\..\Formats\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />
-        <ProjectReference Include="..\..\core\RepoQL.Core\RepoQL.Core.csproj" />
-        <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+        <ProjectReference Include="..\..\data\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+        <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.Markdown\RepoQL.Formats.Markdown.csproj" />
+        <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.Mermaid\RepoQL.Formats.Mermaid.csproj" />
+        <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.DotNet\RepoQL.Formats.DotNet.csproj" />
+        <ProjectReference Include="..\..\app\RepoQL.Core\RepoQL.Core.csproj" />
+        <ProjectReference Include="..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
         <ProjectReference Include="..\..\app\RepoQL.Documentation\RepoQL.Documentation.csproj" />
         <ProjectReference Include="..\..\app\RepoQL.ConsoleApp\RepoQL.ConsoleApp.csproj" />
-        <ProjectReference Include="..\..\engine\RepoQL.Read\RepoQL.Read.csproj" />
+        <ProjectReference Include="..\..\query\RepoQL.Read\RepoQL.Read.csproj" />
 </ItemGroup>
 
   <ItemGroup>

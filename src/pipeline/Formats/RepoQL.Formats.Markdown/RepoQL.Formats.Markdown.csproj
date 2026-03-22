@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <InvariantCulture>true</InvariantCulture>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="RepoQL.Tests" />
+    </ItemGroup>
+
+  <ItemGroup>
+      <PackageReference Include="Markdig" />
+      <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+      <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Templates/**/*.liquid" />
+    <EmbeddedResource Include="Schema/**/*.sql" />
+  </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\..\..\infra\RepoQL.Templating\RepoQL.Templating.csproj" />
+      <ProjectReference Include="..\..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+      <ProjectReference Include="..\..\RepoQL.Indexing\RepoQL.Indexing.csproj" />
+    </ItemGroup>
+
+</Project>

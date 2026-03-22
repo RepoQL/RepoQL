@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Formats\RepoQL.Formats.Rust\RepoQL.Formats.Rust.csproj" />
+    <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.Rust\RepoQL.Formats.Rust.csproj" />
   </ItemGroup>
 
   <ItemGroup>

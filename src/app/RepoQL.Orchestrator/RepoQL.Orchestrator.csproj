@@ -9,9 +9,9 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\RepoQL.ConsoleApp\RepoQL.ConsoleApp.csproj" />
-    <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\cloud\RepoQL.Embedding.Proto\RepoQL.Embedding.Proto.csproj" IsAspireProjectResource="false" />
-    <ProjectReference Include="..\..\core\RepoQL.Protocol\RepoQL.Protocol.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\infra\RepoQL.Protocol\RepoQL.Protocol.csproj" IsAspireProjectResource="false" />
     <ProjectReference Include="..\..\cloud\RepoQL.Embedding.Service\RepoQL.Embedding.Service.csproj" />
     <ProjectReference Include="..\..\cloud\RepoQL.Embedding.Writer\RepoQL.Embedding.Writer.csproj" />
   </ItemGroup>

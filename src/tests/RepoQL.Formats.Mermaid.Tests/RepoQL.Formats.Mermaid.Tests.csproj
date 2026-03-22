@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -17,7 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Formats\RepoQL.Formats.Mermaid\RepoQL.Formats.Mermaid.csproj" />
+    <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.Mermaid\RepoQL.Formats.Mermaid.csproj" />
   </ItemGroup>
 
 </Project>

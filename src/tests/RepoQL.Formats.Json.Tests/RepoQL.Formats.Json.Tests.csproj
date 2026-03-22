@@ -19,6 +19,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Formats\RepoQL.Formats.Json\RepoQL.Formats.Json.csproj" />
+    <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.Json\RepoQL.Formats.Json.csproj" />
   </ItemGroup>
 </Project>

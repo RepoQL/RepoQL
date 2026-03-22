@@ -17,7 +17,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\core\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
+        <ProjectReference Include="..\..\infra\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
     </ItemGroup>
 
 </Project>

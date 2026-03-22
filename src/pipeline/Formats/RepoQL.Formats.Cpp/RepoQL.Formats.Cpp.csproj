@@ -1,0 +1,27 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantCulture>true</InvariantCulture>
+    <TreeSitterCppCommitSha>089e05896dbb23945af5721323ccfd60ac179d36</TreeSitterCppCommitSha>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TreeSitter.DotNet" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\infra\RepoQL.Templating\RepoQL.Templating.csproj" />
+    <ProjectReference Include="..\..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\..\RepoQL.Indexing\RepoQL.Indexing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Templates\**\*.liquid" />
+    <EmbeddedResource Include="Schema\**\*.sql" />
+  </ItemGroup>
+
+</Project>

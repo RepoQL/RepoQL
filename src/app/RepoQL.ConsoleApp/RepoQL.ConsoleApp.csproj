@@ -145,9 +145,9 @@
     <ItemGroup>
     <ProjectReference Include="..\RepoQL.Client\RepoQL.Client.csproj" />
     <ProjectReference Include="..\RepoQL.McpServer\RepoQL.McpServer.csproj" />
-    <ProjectReference Include="..\..\core\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
-    <ProjectReference Include="..\..\Indexing\RepoQL.Indexing\RepoQL.Indexing.csproj" />
-    <ProjectReference Include="..\..\engine\RepoQL.Read\RepoQL.Read.csproj" />
+    <ProjectReference Include="..\..\data\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+    <ProjectReference Include="..\..\pipeline\RepoQL.Indexing\RepoQL.Indexing.csproj" />
+    <ProjectReference Include="..\..\query\RepoQL.Read\RepoQL.Read.csproj" />
   </ItemGroup>
 
     

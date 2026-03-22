@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Formats\RepoQL.Formats.PHP\RepoQL.Formats.PHP.csproj" />
+    <ProjectReference Include="..\..\pipeline\Formats\RepoQL.Formats.PHP\RepoQL.Formats.PHP.csproj" />
   </ItemGroup>
 
 </Project>

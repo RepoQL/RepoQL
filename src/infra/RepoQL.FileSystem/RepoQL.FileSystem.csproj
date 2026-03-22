@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Ignore" />
+      <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
+      <PackageReference Include="Microsoft.Extensions.FileProviders.Physical" />
+      <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+      <PackageReference Include="Mime-Detective" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <InternalsVisibleTo Include="RepoQL.FileSystem.Tests" />
+    </ItemGroup>
+
+</Project>

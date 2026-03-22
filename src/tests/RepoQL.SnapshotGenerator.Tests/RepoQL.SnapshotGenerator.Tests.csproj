@@ -17,7 +17,7 @@
 
     <ItemGroup>
         <ProjectReference Include="..\..\tools\RepoQL.SnapshotGenerator\RepoQL.SnapshotGenerator.csproj" />
-        <ProjectReference Include="..\..\core\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+        <ProjectReference Include="..\..\data\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
     </ItemGroup>
 
 </Project>

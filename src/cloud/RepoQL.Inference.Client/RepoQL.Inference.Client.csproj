@@ -5,7 +5,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\core\RepoQL.Contracts\RepoQL.Contracts.csproj" />
+    <ProjectReference Include="..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
     <ProjectReference Include="..\RepoQL.Inference.Proto\RepoQL.Inference.Proto.csproj" />
   </ItemGroup>
 

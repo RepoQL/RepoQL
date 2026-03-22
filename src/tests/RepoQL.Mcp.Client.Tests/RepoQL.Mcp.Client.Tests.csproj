@@ -15,7 +15,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\..\engine\RepoQL.Mcp.Client\RepoQL.Mcp.Client.csproj" />
+      <ProjectReference Include="..\..\integrations\RepoQL.Mcp.Client\RepoQL.Mcp.Client.csproj" />
     </ItemGroup>
 
 </Project>

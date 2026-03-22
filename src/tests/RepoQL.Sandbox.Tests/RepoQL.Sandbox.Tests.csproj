@@ -15,7 +15,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\engine\RepoQL.Sandbox\RepoQL.Sandbox.csproj" />
+        <ProjectReference Include="..\..\query\RepoQL.Sandbox\RepoQL.Sandbox.csproj" />
     </ItemGroup>
 
 </Project>

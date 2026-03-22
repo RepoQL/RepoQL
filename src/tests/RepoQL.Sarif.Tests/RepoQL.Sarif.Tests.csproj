@@ -16,8 +16,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\engine\RepoQL.Sarif\RepoQL.Sarif.csproj" />
-    <ProjectReference Include="..\..\core\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
+    <ProjectReference Include="..\..\integrations\RepoQL.Sarif\RepoQL.Sarif.csproj" />
+    <ProjectReference Include="..\..\data\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
     <ProjectReference Include="..\RepoQL.Testing\RepoQL.Testing.csproj" />
   </ItemGroup>
 

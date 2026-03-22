@@ -44,7 +44,7 @@
 
     <!-- RepoQL analyzers — applied to all projects except the analyzer itself and AOT publishes -->
     <ItemGroup Condition="'$(MSBuildProjectName)' != 'RepoQL.Analyzers' and '$(PublishAot)' != 'true' and '$(PublishAot)' != 'True'">
-        <ProjectReference Include="$(RepositoryRoot)src/engine/RepoQL.Analyzers/RepoQL.Analyzers.csproj"
+        <ProjectReference Include="$(RepositoryRoot)src/infra/RepoQL.Analyzers/RepoQL.Analyzers.csproj"
                           OutputItemType="Analyzer"
                           ReferenceOutputAssembly="false"
                           PrivateAssets="All" />
