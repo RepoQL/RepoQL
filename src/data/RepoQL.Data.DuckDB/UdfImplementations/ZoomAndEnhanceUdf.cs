@@ -13,9 +13,9 @@ using RepoQL.Data.DuckDB.UdfFramework;
 namespace RepoQL.Data.DuckDB.UdfImplementations;
 
 /// <summary>
-/// Purpose: Refine semantic chunk ranges via BFS binary chop and local embeddings.
-/// Complexity: Parses JSON input, loads artifact text once, runs batched embeddings,
-/// and emits refined line ranges with scores.
+/// Purpose: Refine semantic chunk ranges via binary chop and local embeddings.
+/// Complexity: Parses JSON input, loads artifact text once, precomputes a bounded
+/// split tree, runs batched embeddings, and emits refined line ranges with scores.
 /// </summary>
 [UdfClass]
 public sealed class ZoomAndEnhanceUdf(
@@ -30,13 +30,13 @@ public sealed class ZoomAndEnhanceUdf(
     private const int DefaultMaxDepth = 2;
     private const int DefaultMinLines = 8;
     private const double DefaultThreshold = 0.2;
-    private const int MaxBatchSize = 128;
+    private const int MaxBatchSize = 512;
     private static readonly TimeSpan QueryEmbeddingTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan BatchEmbeddingTimeout = TimeSpan.FromMinutes(5);
 
     private static readonly ConcurrentDictionary<string, CacheEntry> EmbeddingCache = new();
     private static readonly TimeSpan CacheExpiry = TimeSpan.FromSeconds(60);
-    private const int MaxCacheSize = 200;
+    private const int MaxCacheSize = 600;
     private static long _cacheAccessCounter;
 
     [StructuredUdf("_zoom_and_enhance_internal", MacroName = "zoom_and_enhance",
@@ -86,7 +86,7 @@ public sealed class ZoomAndEnhanceUdf(
         if (queryEmbedding is null)
             return BuildBaseRows(inputs, documents);
 
-        var queue = new Queue<WorkItem>();
+        var roots = new List<WorkItem>(inputs.Count);
         foreach (var input in inputs)
         {
             if (!documents.TryGetValue(input.DocumentUri, out var doc))
@@ -95,15 +95,22 @@ public sealed class ZoomAndEnhanceUdf(
             if (!TryResolveLineRange(input, doc, out var startLine, out var endLine))
                 continue;
 
-            queue.Enqueue(new WorkItem(doc, startLine, endLine, input.Score, Depth: 0));
+            roots.Add(new WorkItem(
+                doc,
+                startLine,
+                endLine,
+                SemanticScore: input.Score,
+                FinalScore: input.Score,
+                Depth: 0));
         }
 
-        if (queue.Count == 0)
+        if (roots.Count == 0)
             return [];
 
+        var queryTerms = ParseQueryTerms(query);
         var results = new List<RefinedChunkRow>();
-        RunBfs(queue, queryEmbedding, min_lines, max_depth, threshold, results);
-        return results;
+        RunPrecomputedTree(roots, queryEmbedding, queryTerms, min_lines, max_depth, threshold, results);
+        return SnapResultsToObjects(results);
     }
 
     public sealed record RefinedChunkRow(
@@ -134,7 +141,8 @@ public sealed class ZoomAndEnhanceUdf(
         DocumentText Doc,
         int StartLine,
         int EndLine,
-        double ParentScore,
+        double SemanticScore,
+        double FinalScore,
         int Depth);
 
     private sealed record SplitRequest(
@@ -143,8 +151,26 @@ public sealed class ZoomAndEnhanceUdf(
         int LeftEnd,
         int RightStart,
         int RightEnd,
+        string LeftRawText,
+        string RightRawText,
         string LeftText,
         string RightText);
+
+    private sealed class PrecomputedNode
+    {
+        public required WorkItem Item { get; set; }
+        public string? RawText { get; init; }
+        public string? FullText { get; init; }
+        public PrecomputedNode? Left { get; set; }
+        public PrecomputedNode? Right { get; set; }
+    }
+
+    private sealed record SnapCandidate(
+        string Uri,
+        int StartLine,
+        int EndLine,
+        string? Headline,
+        string Kind);
 
     private sealed class CacheEntry
     {
@@ -204,6 +230,42 @@ public sealed class ZoomAndEnhanceUdf(
         }
     }
 
+    internal static string[] ParseQueryTerms(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return [];
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var terms = new List<string>();
+
+        foreach (var part in query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var lowered = part.Trim().ToLowerInvariant();
+            if (lowered.Length <= 1 || !seen.Add(lowered))
+                continue;
+
+            terms.Add(lowered);
+        }
+
+        return terms.ToArray();
+    }
+
+    internal static double TermCoverage(string text, string[] terms)
+    {
+        if (string.IsNullOrEmpty(text) || terms.Length == 0)
+            return 0.0;
+
+        var lowered = text.ToLowerInvariant();
+        var matched = 0;
+        foreach (var term in terms)
+        {
+            if (lowered.Contains(term, StringComparison.Ordinal))
+                matched++;
+        }
+
+        return matched == 0 ? 0.0 : matched / (double)terms.Length;
+    }
+
     private Dictionary<string, DocumentText> LoadDocuments(IReadOnlyList<InputChunk> inputs)
     {
         var uris = inputs.Select(i => i.DocumentUri)
@@ -250,6 +312,7 @@ public sealed class ZoomAndEnhanceUdf(
     private void RunBfs(
         Queue<WorkItem> queue,
         float[] queryEmbedding,
+        string[] queryTerms,
         int minLines,
         int maxDepth,
         double threshold,
@@ -271,20 +334,20 @@ public sealed class ZoomAndEnhanceUdf(
                         item.Doc.Uri,
                         item.StartLine,
                         item.EndLine,
-                        item.ParentScore,
+                        item.FinalScore,
                         item.Depth));
                     continue;
                 }
 
                 var mid = item.StartLine + (lineCount / 2);
-                if (!TryBuildHalfText(item.Doc, item.StartLine, mid, out var leftText) ||
-                    !TryBuildHalfText(item.Doc, mid + 1, item.EndLine, out var rightText))
+                if (!TryBuildHalf(item.Doc, item.StartLine, mid, out var leftRawText, out var leftText) ||
+                    !TryBuildHalf(item.Doc, mid + 1, item.EndLine, out var rightRawText, out var rightText))
                 {
                     results.Add(new RefinedChunkRow(
                         item.Doc.Uri,
                         item.StartLine,
                         item.EndLine,
-                        item.ParentScore,
+                        item.FinalScore,
                         item.Depth));
                     continue;
                 }
@@ -295,6 +358,8 @@ public sealed class ZoomAndEnhanceUdf(
                     LeftEnd: mid,
                     RightStart: mid + 1,
                     RightEnd: item.EndLine,
+                    LeftRawText: leftRawText,
+                    RightRawText: rightRawText,
                     LeftText: leftText,
                     RightText: rightText));
             }
@@ -317,29 +382,33 @@ public sealed class ZoomAndEnhanceUdf(
                 var leftEmbedding = embeddings[i * 2];
                 var rightEmbedding = embeddings[i * 2 + 1];
 
-                var leftScore = leftEmbedding is null ? 0.0 : CosineSimilarity(queryEmbedding, leftEmbedding);
-                var rightScore = rightEmbedding is null ? 0.0 : CosineSimilarity(queryEmbedding, rightEmbedding);
+                var leftSemanticScore = leftEmbedding is null ? 0.0 : CosineSimilarity(queryEmbedding, leftEmbedding);
+                var rightSemanticScore = rightEmbedding is null ? 0.0 : CosineSimilarity(queryEmbedding, rightEmbedding);
+                var leftFinalScore = leftSemanticScore + (0.10 * TermCoverage(split.LeftRawText, queryTerms));
+                var rightFinalScore = rightSemanticScore + (0.10 * TermCoverage(split.RightRawText, queryTerms));
 
                 var any = false;
-                if (leftScore >= threshold)
+                if (leftSemanticScore >= threshold)
                 {
                     queue.Enqueue(split.Parent with
                     {
                         StartLine = split.LeftStart,
                         EndLine = split.LeftEnd,
-                        ParentScore = leftScore,
+                        SemanticScore = leftSemanticScore,
+                        FinalScore = leftFinalScore,
                         Depth = split.Parent.Depth + 1
                     });
                     any = true;
                 }
 
-                if (rightScore >= threshold)
+                if (rightSemanticScore >= threshold)
                 {
                     queue.Enqueue(split.Parent with
                     {
                         StartLine = split.RightStart,
                         EndLine = split.RightEnd,
-                        ParentScore = rightScore,
+                        SemanticScore = rightSemanticScore,
+                        FinalScore = rightFinalScore,
                         Depth = split.Parent.Depth + 1
                     });
                     any = true;
@@ -351,10 +420,162 @@ public sealed class ZoomAndEnhanceUdf(
                         split.Parent.Doc.Uri,
                         split.Parent.StartLine,
                         split.Parent.EndLine,
-                        split.Parent.ParentScore,
+                        split.Parent.FinalScore,
                         split.Parent.Depth));
                 }
             }
+        }
+    }
+
+    private void RunPrecomputedTree(
+        IReadOnlyList<WorkItem> roots,
+        float[] queryEmbedding,
+        string[] queryTerms,
+        int minLines,
+        int maxDepth,
+        double threshold,
+        List<RefinedChunkRow> results)
+    {
+        var embeddableNodes = new List<PrecomputedNode>();
+        var rootNodes = new List<PrecomputedNode>(roots.Count);
+
+        foreach (var root in roots)
+            rootNodes.Add(BuildPrecomputedTree(root, minLines, maxDepth, embeddableNodes));
+
+        if (embeddableNodes.Count > 0)
+        {
+            var embeddings = GetOrComputeBatch(embeddableNodes
+                .Select(static node => node.FullText!)
+                .ToList());
+
+            for (var i = 0; i < embeddableNodes.Count; i++)
+            {
+                var node = embeddableNodes[i];
+                var embedding = embeddings[i];
+                var semanticScore = embedding is null ? 0.0 : CosineSimilarity(queryEmbedding, embedding);
+                var finalScore = semanticScore + (0.10 * TermCoverage(node.RawText ?? string.Empty, queryTerms));
+
+                node.Item = node.Item with
+                {
+                    SemanticScore = semanticScore,
+                    FinalScore = finalScore
+                };
+            }
+        }
+
+        foreach (var root in rootNodes)
+            TraversePrecomputedTree(root, threshold, results, isRoot: true);
+    }
+
+    private PrecomputedNode BuildPrecomputedTree(
+        WorkItem item,
+        int minLines,
+        int maxDepth,
+        List<PrecomputedNode> embeddableNodes,
+        string? rawText = null,
+        string? fullText = null)
+    {
+        var node = new PrecomputedNode
+        {
+            Item = item,
+            RawText = rawText,
+            FullText = fullText
+        };
+
+        if (fullText is not null)
+            embeddableNodes.Add(node);
+
+        var lineCount = item.EndLine - item.StartLine + 1;
+        if (lineCount < minLines || item.Depth >= maxDepth)
+            return node;
+
+        var mid = item.StartLine + (lineCount / 2);
+        if (!TryBuildHalf(item.Doc, item.StartLine, mid, out var leftRawText, out var leftText) ||
+            !TryBuildHalf(item.Doc, mid + 1, item.EndLine, out var rightRawText, out var rightText))
+            return node;
+
+        node.Left = BuildPrecomputedTree(
+            item with
+            {
+                StartLine = item.StartLine,
+                EndLine = mid,
+                SemanticScore = 0.0,
+                FinalScore = 0.0,
+                Depth = item.Depth + 1
+            },
+            minLines,
+            maxDepth,
+            embeddableNodes,
+            leftRawText,
+            leftText);
+
+        node.Right = BuildPrecomputedTree(
+            item with
+            {
+                StartLine = mid + 1,
+                EndLine = item.EndLine,
+                SemanticScore = 0.0,
+                FinalScore = 0.0,
+                Depth = item.Depth + 1
+            },
+            minLines,
+            maxDepth,
+            embeddableNodes,
+            rightRawText,
+            rightText);
+
+        return node;
+    }
+
+    private static void TraversePrecomputedTree(
+        PrecomputedNode node,
+        double threshold,
+        List<RefinedChunkRow> results,
+        bool isRoot)
+    {
+        if (node.Left is null || node.Right is null)
+        {
+            results.Add(new RefinedChunkRow(
+                node.Item.Doc.Uri,
+                node.Item.StartLine,
+                node.Item.EndLine,
+                node.Item.FinalScore,
+                node.Item.Depth));
+            return;
+        }
+
+        if (!isRoot && node.Item.SemanticScore < threshold)
+        {
+            results.Add(new RefinedChunkRow(
+                node.Item.Doc.Uri,
+                node.Item.StartLine,
+                node.Item.EndLine,
+                node.Item.FinalScore,
+                node.Item.Depth));
+            return;
+        }
+
+        var any = false;
+        if (node.Left.Item.SemanticScore >= threshold)
+        {
+            TraversePrecomputedTree(node.Left, threshold, results, isRoot: false);
+            any = true;
+        }
+
+        if (node.Right.Item.SemanticScore >= threshold)
+        {
+            TraversePrecomputedTree(node.Right, threshold, results, isRoot: false);
+            any = true;
+        }
+
+        if (!any)
+        {
+            results.Add(new RefinedChunkRow(
+                node.Item.Doc.Uri,
+                node.Item.StartLine,
+                node.Item.EndLine,
+                node.Item.FinalScore,
+                node.Item.Depth));
         }
     }
 
@@ -554,8 +775,9 @@ public sealed class ZoomAndEnhanceUdf(
         return true;
     }
 
-    private static bool TryBuildHalfText(DocumentText doc, int startLine, int endLine, out string text)
+    private static bool TryBuildHalf(DocumentText doc, int startLine, int endLine, out string rawText, out string text)
     {
+        rawText = string.Empty;
         text = string.Empty;
         if (!TrySliceLines(doc, startLine, endLine, out var slice))
             return false;
@@ -563,6 +785,7 @@ public sealed class ZoomAndEnhanceUdf(
         if (string.IsNullOrWhiteSpace(slice))
             return false;
 
+        rawText = slice;
         if (string.IsNullOrWhiteSpace(doc.Preamble))
         {
             text = slice;
@@ -572,6 +795,9 @@ public sealed class ZoomAndEnhanceUdf(
         text = $"{doc.Preamble}\n\n{slice}";
         return true;
     }
+
+    private static bool TryBuildHalfText(DocumentText doc, int startLine, int endLine, out string text)
+        => TryBuildHalf(doc, startLine, endLine, out _, out text);
 
     private static bool TrySliceLines(DocumentText doc, int startLine, int endLine, out string slice)
     {
@@ -725,5 +951,107 @@ public sealed class ZoomAndEnhanceUdf(
             return null;
 
         return new RefinedChunkRow(doc.Uri, startLine, endLine, input.Score, Depth: 0);
+    }
+
+    private IReadOnlyList<RefinedChunkRow> SnapResultsToObjects(IReadOnlyList<RefinedChunkRow> results)
+    {
+        if (results.Count == 0)
+            return results;
+
+        var snapped = TrySnapResultsToObjects(results);
+        var deduped = new Dictionary<string, RefinedChunkRow>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in snapped)
+        {
+            var key = $"{row.Uri}|{row.StartLine}|{row.EndLine}";
+            if (!deduped.TryGetValue(key, out var existing) || row.Score > existing.Score)
+                deduped[key] = row;
+        }
+
+        return deduped.Values.ToList();
+    }
+
+    private IReadOnlyList<RefinedChunkRow> TrySnapResultsToObjects(IReadOnlyList<RefinedChunkRow> results)
+    {
+        var uris = results
+            .Select(static row => row.Uri)
+            .Where(static uri => !string.IsNullOrWhiteSpace(uri))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (uris.Count == 0)
+            return results;
+
+        try
+        {
+            var uriList = string.Join(",", uris.Select(u => $"'{EscapeSql(u)}'"));
+            var sql = $"""
+                SELECT doc.uri, sp.start_line, sp.end_line, child.headline, child.kind
+                FROM node doc
+                JOIN span sp ON sp.document_id = doc.id
+                JOIN node child ON child.span_id = sp.id
+                WHERE doc.uri IN ({uriList})
+                  AND doc.kind = 'document'
+                  AND child.kind != 'document'
+                  AND sp.start_line IS NOT NULL
+                  AND sp.end_line IS NOT NULL
+                """;
+
+            var candidates = _reader.Read(sql, r => new SnapCandidate(
+                Uri: r.IsDBNull(0) ? "" : r.GetString(0),
+                StartLine: r.IsDBNull(1) ? 0 : r.GetInt32(1),
+                EndLine: r.IsDBNull(2) ? 0 : r.GetInt32(2),
+                Headline: r.IsDBNull(3) ? null : r.GetString(3),
+                Kind: r.IsDBNull(4) ? "" : r.GetString(4)));
+
+            var byUri = candidates
+                .Where(c => !string.IsNullOrWhiteSpace(c.Uri) && c.StartLine > 0 && c.EndLine >= c.StartLine)
+                .GroupBy(c => c.Uri, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+            var snapped = new List<RefinedChunkRow>(results.Count);
+            foreach (var row in results)
+            {
+                if (!byUri.TryGetValue(row.Uri, out var objects))
+                {
+                    snapped.Add(row);
+                    continue;
+                }
+
+                var snippetSize = row.EndLine - row.StartLine + 1;
+                var maxObjectSize = Math.Max(snippetSize * 2, 40);
+
+                var best = objects
+                    .Where(o => o.StartLine <= row.StartLine && o.EndLine >= row.EndLine)
+                    .Select(o => new
+                    {
+                        Candidate = o,
+                        Size = o.EndLine - o.StartLine + 1
+                    })
+                    .Where(x => x.Size <= maxObjectSize)
+                    .OrderBy(x => x.Size)
+                    .ThenBy(x => x.Candidate.StartLine)
+                    .FirstOrDefault();
+
+                if (best is null)
+                {
+                    snapped.Add(row);
+                    continue;
+                }
+
+                snapped.Add(row with
+                {
+                    StartLine = best.Candidate.StartLine,
+                    EndLine = best.Candidate.EndLine
+                });
+            }
+
+            return snapped;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "zoom_and_enhance: object snap query failed");
+            return results;
+        }
     }
 }

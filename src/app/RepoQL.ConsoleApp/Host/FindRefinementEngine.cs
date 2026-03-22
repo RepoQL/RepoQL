@@ -142,12 +142,9 @@ internal sealed class FindRefinementEngine(DuckDbDataStore db)
                 break;
             }
 
-            var newCandidates = new List<FindCandidateChunk>(roundCandidates.Count);
-            foreach (var candidate in roundCandidates)
-            {
-                if (refinedChunkKeys.Add(BuildChunkKey(candidate)))
-                    newCandidates.Add(candidate);
-            }
+            var newCandidates = roundCandidates
+                .Where(candidate => !refinedChunkKeys.Contains(BuildChunkKey(candidate)))
+                .ToList();
 
             if (newCandidates.Count == 0)
             {
@@ -163,6 +160,9 @@ internal sealed class FindRefinementEngine(DuckDbDataStore db)
                 .OrderByDescending(c => c.Score)
                 .Take(settings.MaxZoomInputsPerRound)
                 .ToList();
+
+            foreach (var candidate in roundInputs)
+                refinedChunkKeys.Add(BuildChunkKey(candidate));
 
             IReadOnlyList<FindSemanticMatch> refined;
             try
@@ -256,7 +256,8 @@ internal sealed class FindRefinementEngine(DuckDbDataStore db)
                 '{escapedKeywords}',
                 uri_json := '{escapedUriJson}',
                 max_chunks := {candidateLimit},
-                per_doc_limit := {settings.PerDocumentChunkLimit}
+                per_doc_limit := {settings.PerDocumentChunkLimit},
+                min_sem := 0.05
             )
             ORDER BY sem_score DESC
             LIMIT {candidateLimit}
@@ -590,7 +591,7 @@ internal sealed record FindRuntimeSettings(
     private const int DefaultTargetQualifiedMatches = 24;
     private const double DefaultConfidenceMargin = 0.05;
     private const int DefaultPerDocumentChunkLimit = 3;
-    private const int DefaultMaxZoomInputsPerRound = 192;
+    private const int DefaultMaxZoomInputsPerRound = 64;
     private const int DefaultZoomMinLines = 8;
     private const int DefaultZoomMaxDepth = 3;
     private const double DefaultZoomThreshold = 0.20;
