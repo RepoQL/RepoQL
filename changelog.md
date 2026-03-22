@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.5.3
+
+### Search & Scoring
+- Rewrite lexical scoring: tokenized cumulative signals replace CASE-ladder priority selection, spreading 15+ distinct scores where 5 buckets existed before
+- Add `grep_terms` single-pass multi-term grep UDF (one file scan per document, not N)
+- Fix score compression: `Combine()` changed from `0.6*blend + 0.4*best` to pure weighted blend `0.30*bm25 + 0.15*fuzz + 0.55*sem`
+- Add floor normalization: subtract noise floor (0.33) so irrelevant results score 0, not 0.71
+- Consolidate explore scoring: `_explore_candidates` rewritten from 360-line parallel pipeline to 90-line wrapper over `search_pipeline` (single scoring authority)
+- Move search pipeline to C# StructuredUdf via IReentrantReader for materialized intermediates
+- Add evidence-based object scoring with doc-rank boost and symbol matching
+- Add `calibrated_cosine` SQL macro and C# method: model-independent [0,1] similarity scores regardless of ONNX (384) vs Voyage (1024)
+- Use absolute anchors for semantic score normalization instead of relative calibration
+
+### Find (read => find)
+- Optimize `zoom_and_enhance`: pre-computed binary tree embeds all sub-chunks in single batch (35s timeout → 3s)
+- Add term boost to BFS scoring: +0.10 × term coverage differentiates halves with similar cosine (boost, not gate)
+- Add object snap: BFS results expand to tightest enclosing symbol (method/function) from graph, with size guard
+- Cap zoom inputs at 64 (was 192), raise batch/cache limits
+- Fix drop-before-take bug: overflow candidates no longer permanently discarded across widening rounds
+- Pass `min_sem := 0.05` to `_find_candidates` to cut tail noise before zoom
+
+### Explore
+- Replace linear allocation modifier with sigmoid controlled by breadth (k=14 steep to k=2 gentle)
+- Change Minimal representation from headline-only to URI-only
+- Simplify ConfidenceNormalizer to linear passthrough (score × 100)
+
+### Architecture
+- Reorganize src/ into tier directories (contracts/, infra/, data/, query/, pipeline/, integrations/, app/)
+- Extract MCP server and shared client infrastructure from ConsoleApp
+- Wire QueryEngine, ExplainEngine, ImportEngine into RepoQlServiceImpl
+- Scatter test projects to live next to what they test
+- Move search interfaces from Explore to Contracts, remove data→query dependency
+- Remove InternalsVisibleTo hacks, RootNamespace workarounds, Serilog from Client
+- Add IGraphReader to cut Go format's transitive DuckDB dependency
+- Speed up C++ format project builds
+
+### MCP & Tools
+- Rewrite MCP server description based on empirical agent testing
+- Add writing-tool-descriptions skill
+- Rewrite CLAUDE.md with voice and understanding
+
+### CI
+- Split tests into parallel shards with TUnit HTML report auto-upload
+- Various CI fixes for NuGet restore, test filtering, artifact sizing
+
+### Fixes
+- Fix DuckDB TABLE macro pitfalls causing 5-18x semantic search regression
+- Fix SimilarHandler: 0.00 similarity with cloud embeddings
+- Fix JWT issuer validation, disable audience validation for WorkOS
+- Fix reindex pruning live-set tracking and stale RawArtifact reuse
+- Enrich SQL errors with schema discovery hints
+
 ## 1.5.2
 
 - Switch embedding model from voyage-context-3 to voyage-4-lite (60x faster, 9x cheaper, same 1024 dimensions)
