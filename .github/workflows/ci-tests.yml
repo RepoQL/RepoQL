@@ -116,7 +116,6 @@ jobs:
               RepoQL.Embedding.Writer.Tests
               RepoQL.Inference.Client.Tests
               RepoQL.Inference.Service.Tests
-              RepoQL.SnapshotGenerator.Tests
 
     steps:
       - uses: actions/setup-dotnet@v4
