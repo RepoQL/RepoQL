@@ -14,11 +14,13 @@ public static class OutputComposer
     /// <param name="decisionResult">The decision result containing decisions and omitted info.</param>
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="trustSignal">Optional trust signal for footer.</param>
+    /// <param name="budgetResolution">Optional resolved budget used for footer token display.</param>
     /// <returns>The composed output string.</returns>
     public static string Compose(
         DecisionResult decisionResult,
         bool showConfidence,
-        TrustSignal? trustSignal = null)
+        TrustSignal? trustSignal = null,
+        BudgetResolution? budgetResolution = null)
     {
         if (decisionResult.Decisions.Count == 0)
             return string.Empty;
@@ -98,7 +100,7 @@ public static class OutputComposer
                 sb.Append('\n');
 
             var totalTokens = TokenEstimator.EstimateTokens(sb.ToString());
-            sb.Append(RepresentationFormatter.FormatStatusFooter(trustSignal, totalTokens));
+            sb.Append(RepresentationFormatter.FormatStatusFooter(trustSignal, totalTokens, budgetResolution: budgetResolution));
         }
 
         return sb.ToString();

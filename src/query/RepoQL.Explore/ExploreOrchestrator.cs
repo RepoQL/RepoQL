@@ -95,9 +95,10 @@ public sealed class ExploreOrchestrator
         exploreResults = DeduplicateResults(exploreResults);
 
         var hasSearchCriteria = !string.IsNullOrWhiteSpace(query.Keywords) || boostPatterns.Count > 0;
+        var budgetResolution = BudgetResolver.Resolve(exploreResults, query.TokenBudget, hasSearchCriteria);
 
         // Hierarchical token allocation (files compete first, then children within each file)
-        var decisions = ValueBasedAllocator.Allocate(exploreResults, query.TokenBudget, query.Breadth);
+        var decisions = ValueBasedAllocator.Allocate(exploreResults, budgetResolution.EffectiveBudget, query.Breadth);
 
         // Apply limit if specified
         var limitedDecisions = query.Limit.HasValue && query.Limit.Value > 0
@@ -109,7 +110,7 @@ public sealed class ExploreOrchestrator
         var decisionResult = new DecisionResult(limitedDecisions, omittedCount, null);
 
         // Compose output
-        var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status);
+        var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status, budgetResolution);
         var truncated = omittedCount > 0;
 
         return new ExploreExecutionResult(renderedOutput, exploreResults, truncated);

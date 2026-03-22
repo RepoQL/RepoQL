@@ -6,7 +6,7 @@ Explore is the discovery tool. An agent doesn't know what exists — explore sea
 
 Explore is a pure function of two inputs:
 
-1. **Budget** — how many tokens to spend (default 2000)
+1. **Budget** — the maximum tokens explore may spend (default 2000)
 2. **Breadth** — how to distribute them (1–10, default 5)
 
 Everything else derives from these two numbers.
@@ -29,17 +29,62 @@ The `search_pipeline` macro applies floor normalization — subtracts the noise 
 
 ---
 
+## Auto-Budget
+
+Budget is a cap, not a promise. Explore resolves an **effective budget** from the result set before allocation. When the results are weak, sparse, or naturally shallow, it spends less and preserves context.
+
+The resolver is count-driven:
+
+1. **Zero results** — pass the cap through unchanged
+2. **Inventory scan** — no search criteria means `clamp(resultCount × 15, 800, statedCap)`
+3. **Qualified set** — only results at `confidence ≥ 35` count toward demand
+4. **No qualified results** — use the 800-token floor
+5. **Natural demand** — average per-result cost from representation shape:
+   - Structure present: ~150 tokens
+   - Headline only: ~50 tokens
+   - Neither: ~15 tokens
+   - Children add `min(childCount, 5) × 40`
+6. **Concentration** — participation ratio on relative confidence scores:
+
+```
+relativeScore = confidence / topConfidence
+effectiveCount = (sum(relativeScores)^2) / sum(relativeScores^2)
+concentratedDemand = effectiveCount × avgCostPerResult
+```
+
+7. **Quality multiplier** — `0.8 + (topConfidence / 100.0) × 0.4`
+8. **Clamp** — `effectiveBudget = clamp(rawBudget, 800, statedCap)`
+
+Design principle: count and shape determine demand. There is **no dominance penalty**. If the top results are legitimately strong, explore is allowed to render them deeply.
+
+### Footer Format
+
+When auto-budget reduces the cap, the footer shows rendered tokens against the user cap:
+
+```
+[0.9k/3.0k tok | 1.1s | index: ready | semantic: ready]
+```
+
+When the effective budget equals the stated cap, token display stays unchanged:
+
+```
+[1.8k tok | 1.1s | index: ready | semantic: ready]
+```
+
+---
+
 ## Budget Allocation
 
-Two-level hierarchical allocation. Breadth controls the curve shape via a sigmoid.
+Two-level hierarchical allocation. Breadth controls the curve shape via a sigmoid, and allocation uses the resolved effective budget rather than blindly spending the full cap.
 
 The pipeline, in order:
 
 1. **Search** — `_explore_candidates` scores documents and objects via `search_pipeline`
 2. **Normalize** — map floor-normalized [0, 1] scores to 1–100 confidence
-3. **Level 1** — files compete for budget proportional to sigmoid EV
-4. **Level 2** — within each file, file and children compete for representation
-5. **Render** — pick richest representation that fits each item's budget
+3. **Resolve budget** — infer natural demand from result count, quality, and concentration
+4. **Level 1** — files compete for budget proportional to sigmoid EV
+5. **Level 2** — within each file, file and children compete for representation
+6. **Render** — pick richest representation that fits each item's budget
 
 ### The Sigmoid
 
@@ -257,15 +302,16 @@ flowchart LR
     E["explore(budget, breadth)"] --> O["ExploreOrchestrator"]
     O --> S["SearchEngine<br/><i>_explore_candidates</i>"]
     O --> N["ConfidenceNormalizer"]
-    O --> V["ValueBasedAllocator<br/><i>sigmoid(confidence, k)</i>"]
+    O --> B["BudgetResolver<br/><i>count, quality, concentration</i>"]
+    B --> V["ValueBasedAllocator<br/><i>sigmoid(confidence, k)</i>"]
     V --> R["RepresentationFormatter"]
     R --> OC["OutputComposer"]
 
-    %% MEANING: Orchestrator fans out to three concerns — search, scoring, allocation
+    %% MEANING: Orchestrator fans out to search, scoring, and budget resolution
     %% then converges through formatting into final output
 ```
 
-*The orchestrator coordinates three independent concerns: search (what exists), normalization (how confident), and allocation (how much budget). These converge through formatting into rendered output.*
+*The orchestrator coordinates search (what exists), normalization (how confident), and budget resolution (how much budget the results deserve) before allocation and formatting.*
 
 ### Key Files
 

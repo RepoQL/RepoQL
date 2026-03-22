@@ -241,7 +241,12 @@ public static class RepresentationFormatter
     /// <param name="status">Current trust signal.</param>
     /// <param name="tokenCount">Optional token count for the output.</param>
     /// <param name="representationHint">Optional representation hint (inner content) to append.</param>
-    public static string FormatStatusFooter(TrustSignal status, int? tokenCount = null, string? representationHint = null)
+    /// <param name="budgetResolution">Optional resolved budget used to show original cap when reduced.</param>
+    public static string FormatStatusFooter(
+        TrustSignal status,
+        int? tokenCount = null,
+        string? representationHint = null,
+        BudgetResolution? budgetResolution = null)
     {
         if (status.IndexTotal == status.IndexPending && status.IndexPending > 0)
             return $"[NOT READY - {status.IndexPending} pending, discovery in progress]";
@@ -293,7 +298,16 @@ public static class RepresentationFormatter
         }
 
         if (tokenCount.HasValue)
-            parts.Add(FormatTokenCount(tokenCount.Value));
+        {
+            if (budgetResolution is not null && budgetResolution.EffectiveBudget < budgetResolution.StatedCap)
+            {
+                parts.Add($"{FormatTokenCountValue(tokenCount.Value)}/{FormatTokenCountValue(budgetResolution.StatedCap)} tok");
+            }
+            else
+            {
+                parts.Add(FormatTokenCount(tokenCount.Value));
+            }
+        }
 
         parts.Add(FormatDuration(status.ExecutionTimeMs));
         parts.Add($"index: {indexStatus}");
@@ -359,13 +373,18 @@ public static class RepresentationFormatter
     /// <summary>
     /// Format token count as a human-readable quantity (e.g., "1.5k tok").
     /// </summary>
-    private static string FormatTokenCount(int tokens)
+    internal static string FormatTokenCount(int tokens)
+    {
+        return $"{FormatTokenCountValue(tokens)} tok";
+    }
+
+    private static string FormatTokenCountValue(int tokens)
     {
         return tokens switch
         {
-            < 1000 => $"{tokens} tok",
-            < 10000 => $"{tokens / 1000.0:F1}k tok",
-            _ => $"{tokens / 1000.0:F0}k tok"
+            < 1000 => $"{tokens}",
+            < 10000 => $"{tokens / 1000.0:F1}k",
+            _ => $"{tokens / 1000.0:F0}k"
         };
     }
 
