@@ -560,7 +560,7 @@ public sealed class IndexingMetrics : IDisposable
     /// <summary>
     /// Records a file processed through the hot path with all relevant metrics.
     /// </summary>
-    public void RecordFileProcessed(string mimeType, string status, long fileSize, double durationMs)
+    public void RecordFileProcessed(string mimeType, string status, long fileSize)
     {
         var tags = new TagList
         {

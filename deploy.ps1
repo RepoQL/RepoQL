@@ -15,7 +15,7 @@ $configLower = $config.ToLower()
 # Dashboard assets are built via MSBuild during RepoQL.ConsoleApp publish.
 
 Write-Host "Publishing RepoQL.ConsoleApp ($config)..." -ForegroundColor Cyan
-dotnet publish "$repoRoot/src/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj" -c $config -r win-x64 --nologo -v q
+dotnet publish "$repoRoot/src/app/RepoQL.ConsoleApp/RepoQL.ConsoleApp.csproj" -c $config -r win-x64 --nologo -v q
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Build failed!" -ForegroundColor Red
     exit 1

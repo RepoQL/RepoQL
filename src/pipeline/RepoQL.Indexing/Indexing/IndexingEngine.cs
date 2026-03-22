@@ -907,7 +907,7 @@ public partial class IndexingEngine : IAsyncDisposable
                 { "mime_type", mime },
                 { "read_only", item.IsReadOnly.ToString().ToLowerInvariant() }
             });
-            Metrics?.RecordFileProcessed(mime, status, fileSize, overallTimer.Elapsed.TotalMilliseconds);
+            Metrics?.RecordFileProcessed(mime, status, fileSize);
             AddEpochTag(item.Epoch, "index.result", status);
             if (!item.SkipEpochCompletion && item.TryMarkEpochComplete())
             {
