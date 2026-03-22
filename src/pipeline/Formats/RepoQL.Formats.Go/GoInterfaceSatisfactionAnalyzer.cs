@@ -4,8 +4,8 @@ using System.Globalization;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
+using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.Pipelines.Analysis;
 
@@ -14,17 +14,17 @@ namespace RepoQL.Formats.Go;
 /// <summary>
 /// Purpose: Compute Go IMPLEMENTS relationships from package-wide graph state.
 ///
-/// Complexity: Reads package data via IGraphQueryService, computes interface satisfaction
+/// Complexity: Reads package data from DuckDB, computes interface satisfaction
 /// for structs in the current document, and returns IMPLEMENTS edges + diagnostics as output.
 /// The pipeline commit stage handles persistence — this analyzer never writes directly.
 /// </summary>
 public sealed class GoInterfaceSatisfactionAnalyzer(
-    IGraphQueryService graphQuery,
+    DuckDbDataStore dataStore,
     ILogger<GoInterfaceSatisfactionAnalyzer>? logger = null)
     : IAsyncPipeline<IAnnotatedArtifact, Annotation[]>
 {
     private static readonly TimeSpan SlowAnalysisThreshold = TimeSpan.FromSeconds(5);
-    private readonly IGraphQueryService _graphQuery = graphQuery ?? throw new ArgumentNullException(nameof(graphQuery));
+    private readonly DuckDbDataStore _dataStore = dataStore ?? throw new ArgumentNullException(nameof(dataStore));
     private readonly ILogger<GoInterfaceSatisfactionAnalyzer> _logger = logger ?? NullLogger<GoInterfaceSatisfactionAnalyzer>.Instance;
 
     public async Task<(Annotation[]? Result, PipelineResult PipelineStatus)> ProcessAsync(
@@ -197,7 +197,7 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
               AND COALESCE(t.properties->>'kind', '') IN ('struct', 'interface')
             """;
 
-        return _graphQuery.Read(
+        return _dataStore.Read(
             sql,
             record => new GoTypeSnapshot(
                 Id: record.GetGuid(0),
@@ -229,7 +229,7 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
               AND COALESCE(doc.properties->>'package_name', '') = '{packageLiteral}'
             """;
 
-        return _graphQuery.Read(
+        return _dataStore.Read(
             sql,
             record => new GoMethodSnapshot(
                 Name: ReadString(record, 0),
@@ -261,7 +261,7 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
               AND COALESCE(doc.properties->>'package_name', '') = '{packageLiteral}'
             """;
 
-        return _graphQuery.Read(
+        return _dataStore.Read(
             sql,
             record => new GoEmbeddingSnapshot(
                 SourceTypeId: record.GetGuid(0),
