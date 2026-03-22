@@ -1,3 +1,6 @@
+using RepoQL.Contracts.Inference;
+using RepoQL.Explore;
+
 namespace RepoQL.Explain;
 
 /// <summary>
@@ -10,33 +13,47 @@ public interface IExplainEngine
     /// <summary>
     /// Answer a question by searching the codebase and synthesizing a response.
     /// </summary>
-    /// <param name="question">The natural-language question to answer.</param>
-    /// <param name="keywords">Optional keywords to guide search. If null, extracted from the question via LLM.</param>
-    /// <param name="uriGlob">Optional URI scope to restrict the search.</param>
-    /// <param name="tokenBudget">Token budget for the response.</param>
-    /// <param name="cancel">Cancellation token.</param>
     Task<ExplainResult> ExecuteAsync(
-        string question,
-        string? keywords = null,
-        string? uriGlob = null,
-        int tokenBudget = 2500,
+        ExplainRequest request,
+        TrustSignal status,
         CancellationToken cancel = default);
 }
 
-/// <summary>
-/// Transport-agnostic explain result.
-/// </summary>
+public sealed class ExplainRequest
+{
+    public required string Question { get; init; }
+    public string? Keywords { get; init; }
+    public string? Scope { get; init; }
+    public int TokenBudget { get; init; } = 2500;
+
+    /// <summary>Tool definitions the LLM can invoke during synthesis (e.g., read tool).</summary>
+    public IReadOnlyList<InferenceToolDefinition>? Tools { get; init; }
+
+    /// <summary>Max tokens per tool call result.</summary>
+    public int ToolTokenBudget { get; init; } = 8000;
+
+    /// <summary>Max LLM tool-use rounds.</summary>
+    public int MaxRounds { get; init; } = 3;
+}
+
 public sealed class ExplainResult
 {
-    public required string Answer { get; init; }
-    public IReadOnlyList<ExplainCitation>? Citations { get; init; }
-    public string? Nuance { get; init; }
-    public int SourceTokensConsumed { get; init; }
+    public static ExplainResult Failure(string error) => new() { Success = false, Error = error };
+
+    public bool Success { get; init; }
+    public string? Error { get; init; }
+    public string? RenderedOutput { get; init; }
+    public int MatchCount { get; init; }
+    public int ContextTokens { get; init; }
+    public int InputTokens { get; init; }
+    public int OutputTokens { get; init; }
+    public IReadOnlyList<ExplainToolCall> ToolCalls { get; init; } = [];
     public long ElapsedMs { get; init; }
 }
 
-public sealed class ExplainCitation
+public sealed class ExplainToolCall
 {
     public required string Uri { get; init; }
-    public string? Snippet { get; init; }
+    public int TokensUsed { get; init; }
+    public bool IsError { get; init; }
 }
