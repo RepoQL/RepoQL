@@ -40,7 +40,7 @@ public class McpCommands
                 {
                     s.InitializationTimeout = TimeSpan.FromSeconds(45);
                     s.ServerInstructions = """
-                                           RepoQL gives you a pre-built structural index of the entire codebase — every file, symbol, and relationship already parsed, connected, and summarized.
+                                           RepoQL gives you a pre-built structural index of the entire codebase — every file, symbol, and relationship already parsed, connected, and summarized. Use it. Survey 1000 files in 1500 tokens. The same task with grep and read: 30 calls, 50k tokens, and you still miss connections between files.
 
                                            Think of it as extra senses. You can feel the shape of a thousand files without opening one — the index has three summary levels: headline (one line), structure (signatures), and content. You can see relationships that grep will never find — what calls what, what depends on what. You can hear relevance — explore ranks by meaning, not literal text, showing everything that exists before you commit to reading anything. And you can reach precisely — a single method body, a line range, a glob across every file in the codebase.
 
@@ -104,22 +104,11 @@ public class McpCommands
                                            **command** — Diagnostics, auth, config. `command(command="?")` lists all.
                                            </TOOLS>
 
-                                           <BOUNDARIES>
-                                           - Never read a file to discover its structure — the index has it pre-computed
-                                           - Never search without seeing the landscape first — explore teaches you the vocabulary
-                                           - Never use explain without scoping it to specific directories
-                                           </BOUNDARIES>
-
-                                           <START>
-                                           Explore what exists, then read what matters:
-                                             explore(keywords="authentication middleware", tokenBudget=1500)
-
-                                           See the shape of the codebase:
-                                             read("file:///** => tree: folders", 3000)
-
-                                           Documentation lives at `help://` — queryable with the same tools:
-                                             explore(uriGlob="help://**", keywords="modifiers views", tokenBudget=1500)
-                                           </START>
+                                           - [ ] Explore to understand what exists and find things
+                                           - [ ] Read with structure, symbols, and scoped modifiers — not whole files
+                                           - [ ] Query when you need to count, list, or traverse relationships
+                                           - [ ] Explain scoped to specific directories for synthesized understanding
+                                           - [ ] Execute to compose capabilities that don't exist as standalone tools
                                            """;
                 })
                 .WithStdioServerTransport()
