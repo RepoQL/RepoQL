@@ -1,3 +1,4 @@
+using System.Reflection;
 using AwesomeAssertions;
 
 namespace RepoQL.Formats.Rust.Tests;
@@ -34,9 +35,8 @@ public sealed class RustSharedViewTests
     [Test]
     public void SharedViewSql_IncludesRustKindsAndTypePattern()
     {
-        var repoRoot = FindRepoRoot();
-        var typesSql = File.ReadAllText(Path.Combine(repoRoot, "src", "RepoQL.Data.DuckDB", "Schema", "Views", "types.sql"));
-        var functionsSql = File.ReadAllText(Path.Combine(repoRoot, "src", "RepoQL.Data.DuckDB", "Schema", "Views", "functions.sql"));
+        var typesSql = ReadEmbeddedViewSql("types.sql");
+        var functionsSql = ReadEmbeddedViewSql("functions.sql");
 
         typesSql.Should().Contain("WHERE n.kind LIKE '%.type'");
 
@@ -45,19 +45,15 @@ public sealed class RustSharedViewTests
         functionsSql.Should().Contain("json_extract_string(n.properties, '$.kind') IN ('method', 'constructor', 'function')");
     }
 
-    private static string FindRepoRoot()
+    private static string ReadEmbeddedViewSql(string fileName)
     {
-        var current = new DirectoryInfo(AppContext.BaseDirectory);
-        while (current is not null)
-        {
-            if (File.Exists(Path.Combine(current.FullName, "RepoQL.sln")))
-            {
-                return current.FullName;
-            }
+        var assembly = typeof(RepoQL.Data.DuckDB.DuckDbDataStore).Assembly;
+        var resourceName = assembly.GetManifestResourceNames()
+            .FirstOrDefault(n => n.EndsWith($"Views.{fileName}", StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException($"Embedded resource ending in 'Views.{fileName}' not found in {assembly.GetName().Name}");
 
-            current = current.Parent;
-        }
-
-        throw new InvalidOperationException("Could not find repository root from test base directory.");
+        using var stream = assembly.GetManifestResourceStream(resourceName)!;
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
     }
 }

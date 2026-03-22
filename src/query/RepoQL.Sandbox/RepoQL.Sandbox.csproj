@@ -13,10 +13,10 @@
         <ProjectReference Include="..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
     </ItemGroup>
     <ItemGroup>
-        <EmbeddedResource Include="..\..\sandbox\wasm\dist\quickjs-evaluator.wasm" LogicalName="quickjs-evaluator.wasm" Condition="Exists('..\..\sandbox\wasm\dist\quickjs-evaluator.wasm')" />
-        <EmbeddedResource Include="..\..\sandbox\wasm\dist\graphviz.wasm" LogicalName="graphviz.wasm" Condition="Exists('..\..\sandbox\wasm\dist\graphviz.wasm')" />
-        <EmbeddedResource Include="..\..\sandbox\wasm\dist\pandoc.wasm" LogicalName="pandoc.wasm" Condition="Exists('..\..\sandbox\wasm\dist\pandoc.wasm')" />
-        <EmbeddedResource Include="..\..\sandbox\wasm\dist\modules\*.mjs" LogicalName="module.%(Filename).mjs" Condition="Exists('..\..\sandbox\wasm\dist\modules')" />
+        <EmbeddedResource Include="..\..\..\sandbox\wasm\dist\quickjs-evaluator.wasm" LogicalName="quickjs-evaluator.wasm" Condition="Exists('..\..\..\sandbox\wasm\dist\quickjs-evaluator.wasm')" />
+        <EmbeddedResource Include="..\..\..\sandbox\wasm\dist\graphviz.wasm" LogicalName="graphviz.wasm" Condition="Exists('..\..\..\sandbox\wasm\dist\graphviz.wasm')" />
+        <EmbeddedResource Include="..\..\..\sandbox\wasm\dist\pandoc.wasm" LogicalName="pandoc.wasm" Condition="Exists('..\..\..\sandbox\wasm\dist\pandoc.wasm')" />
+        <EmbeddedResource Include="..\..\..\sandbox\wasm\dist\modules\*.mjs" LogicalName="module.%(Filename).mjs" Condition="Exists('..\..\..\sandbox\wasm\dist\modules')" />
     </ItemGroup>
 </Project>
 

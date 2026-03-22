@@ -21,4 +21,8 @@
     <ProjectReference Include="..\RepoQL.Formats.Pdf\RepoQL.Formats.Pdf.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Resources\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -516,17 +516,11 @@ public sealed class PdfLoaderTests
 
     private static string FindTestImagePath()
     {
-        var current = new DirectoryInfo(Directory.GetCurrentDirectory());
-        while (current is not null)
-        {
-            var candidate = Path.Combine(current.FullName, "src", "tests", "RepoQL.Formats.Pdf.Tests", "Resources", "test-image.png");
-            if (File.Exists(candidate))
-                return candidate;
+        var candidate = Path.Combine(AppContext.BaseDirectory, "Resources", "test-image.png");
+        if (File.Exists(candidate))
+            return candidate;
 
-            current = current.Parent;
-        }
-
-        throw new FileNotFoundException("Could not locate src/tests/RepoQL.Formats.Pdf.Tests/Resources/test-image.png from test working directory.");
+        throw new FileNotFoundException($"Could not locate test-image.png at {candidate}. Ensure Resources are copied to output directory.");
     }
 
     private static PdfDocumentState CreateSyntheticState(

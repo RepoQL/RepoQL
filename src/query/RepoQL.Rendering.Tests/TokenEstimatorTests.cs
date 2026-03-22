@@ -48,28 +48,24 @@ public class TokenEstimatorTests
     }
 
     [Test]
-    [DisplayName("Minimal representation estimates headline plus overhead and uri allowance")]
-    public void Given_Result_When_EstimateMinimal_Then_IncludesHeadlineOverheadAndUriAllowance()
+    [DisplayName("Minimal representation estimates uri plus overhead")]
+    public void Given_Result_When_EstimateMinimal_Then_EstimatesUriTokens()
     {
-        var smallHeadline = ResultBuilder.Create(80, headlineLength: 20);
-        var largeHeadline = ResultBuilder.Create(80, headlineLength: 100);
+        var result = ResultBuilder.Create(80, headlineLength: 20);
 
-        var smallTokens = ExploreTokenEstimator.EstimateMinimal(smallHeadline);
-        var largeTokens = ExploreTokenEstimator.EstimateMinimal(largeHeadline);
+        var tokens = ExploreTokenEstimator.EstimateMinimal(result);
 
-        // Both should produce positive token counts
-        smallTokens.Should().BeGreaterThan(0);
-        largeTokens.Should().BeGreaterThan(smallTokens, "larger headline produces more tokens");
+        tokens.Should().BeGreaterThan(0);
     }
 
     [Test]
-    [DisplayName("Minimal representation adds fixed uri token allowance")]
-    public void Given_Result_When_EstimateMinimal_Then_AddsFifteenTokenUriAllowance()
+    [DisplayName("Minimal representation is uri tokens plus one")]
+    public void Given_Result_When_EstimateMinimal_Then_IsUriTokensPlusOne()
     {
         var result = ResultBuilder.Document(80, headlineLength: 40);
 
         var tokens = ExploreTokenEstimator.EstimateMinimal(result);
-        var expected = TokenEstimator.EstimateTokens(result.Headline) + 1 + 15;
+        var expected = TokenEstimator.EstimateTokens(result.Uri) + 1;
 
         tokens.Should().Be(expected);
     }

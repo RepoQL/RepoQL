@@ -6,11 +6,11 @@ namespace RepoQL.Rendering.Tests;
 
 public class RepresentationFormatterTests
 {
-    // Minimal format tests (uri + headline)
+    // Minimal format tests (uri only — cheapest representation)
 
     [Test]
-    [DisplayName("Minimal shows uri and headline")]
-    public void Given_Minimal_Then_ShowsUriAndHeadline()
+    [DisplayName("Minimal shows uri only")]
+    public void Given_Minimal_Then_ShowsUriOnly()
     {
         var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
@@ -23,13 +23,14 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatMinimal(result);
 
-        output.Should().Be("file:///src/Auth.cs  Auth service - handles authentication");
+        output.Should().Be("file:///src/Auth.cs");
         output.Should().NotContain("85%");
+        output.Should().NotContain("Auth service");
     }
 
     [Test]
-    [DisplayName("Minimal truncates headline at newline")]
-    public void Given_MinimalWithMultilineHeadline_Then_TruncatesAtNewline()
+    [DisplayName("Minimal ignores headline")]
+    public void Given_MinimalWithHeadline_Then_IgnoresHeadline()
     {
         var result = new ExploreResult(
             Uri: "file:///src/Auth.cs",
@@ -42,12 +43,12 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatMinimal(result);
 
-        output.Should().Be("file:///src/Auth.cs  First line");
+        output.Should().Be("file:///src/Auth.cs");
     }
 
     [Test]
-    [DisplayName("Minimal without headline uses filename")]
-    public void Given_MinimalNoHeadline_Then_UsesFilename()
+    [DisplayName("Minimal without headline shows uri")]
+    public void Given_MinimalNoHeadline_Then_ShowsUri()
     {
         var result = new ExploreResult(
             Uri: "file:///src/Auth/JwtService.cs",
@@ -60,12 +61,12 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatMinimal(result);
 
-        output.Should().Be("file:///src/Auth/JwtService.cs  JwtService.cs");
+        output.Should().Be("file:///src/Auth/JwtService.cs");
     }
 
     [Test]
-    [DisplayName("Minimal extracts filename ignoring fragment")]
-    public void Given_MinimalWithFragment_Then_ExtractsFilenameWithoutFragment()
+    [DisplayName("Minimal preserves fragment")]
+    public void Given_MinimalWithFragment_Then_PreservesFragment()
     {
         var result = new ExploreResult(
             Uri: "file:///src/Auth.cs#line=42,58",
@@ -78,7 +79,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatMinimal(result);
 
-        output.Should().Be("file:///src/Auth.cs#line=42,58  Auth.cs");
+        output.Should().Be("file:///src/Auth.cs#line=42,58");
     }
 
     [Test]
@@ -97,7 +98,7 @@ public class RepresentationFormatterTests
 
         var output = RepresentationFormatter.FormatMinimal(result);
 
-        output.Should().Be("file:///src/Auth.cs  Auth service");
+        output.Should().Be("file:///src/Auth.cs");
         output.Should().NotContain("(semantic)");
     }
 
@@ -738,7 +739,7 @@ public class RepresentationFormatterTests
         var minimal = RepresentationFormatter.Format(minimalDecision, showConfidence: true);
         var standard = RepresentationFormatter.Format(standardDecision, showConfidence: true);
 
-        minimal.Should().Be("file:///test.cs  Test");  // Minimal is uri + headline
+        minimal.Should().Be("file:///test.cs");  // Minimal is uri only
         standard.Should().Contain("- Item");  // Standard shows structure
         standard.Should().Contain("file:///test.cs");  // Has URI
     }
