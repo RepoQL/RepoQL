@@ -40,23 +40,23 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{CEA09484
 		src\tests\Directory.Build.props = src\tests\Directory.Build.props
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Cli.Tests", "src\tests\RepoQL.Cli.Tests\RepoQL.Cli.Tests.csproj", "{7567B68B-F399-400C-895A-F755DADBA9D0}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Cli.Tests", "src\app\RepoQL.Cli.Tests\RepoQL.Cli.Tests.csproj", "{7567B68B-F399-400C-895A-F755DADBA9D0}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Data.DuckDB.Tests", "src\tests\RepoQL.Data.DuckDB.Tests\RepoQL.Data.DuckDB.Tests.csproj", "{6E211884-DA51-47F1-8236-D36F757001A7}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Data.DuckDB.Tests", "src\data\RepoQL.Data.DuckDB.Tests\RepoQL.Data.DuckDB.Tests.csproj", "{6E211884-DA51-47F1-8236-D36F757001A7}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Data.Tests", "src\tests\RepoQL.Data.Tests\RepoQL.Data.Tests.csproj", "{C02BFD70-B3AB-4868-9360-66AB5B83FF31}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Data.Tests", "src\data\RepoQL.Data.Tests\RepoQL.Data.Tests.csproj", "{C02BFD70-B3AB-4868-9360-66AB5B83FF31}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Core.Tests", "src\tests\RepoQL.Core.Tests\RepoQL.Core.Tests.csproj", "{F4E7CB79-7DA4-45A3-ABAE-D0B13FC52831}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Core.Tests", "src\app\RepoQL.Core.Tests\RepoQL.Core.Tests.csproj", "{F4E7CB79-7DA4-45A3-ABAE-D0B13FC52831}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.FileSystem.Tests", "src\tests\RepoQL.FileSystem.Tests\RepoQL.FileSystem.Tests.csproj", "{E217C5FA-84FF-42A2-BAB6-D2226BA61D49}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.FileSystem.Tests", "src\infra\RepoQL.FileSystem.Tests\RepoQL.FileSystem.Tests.csproj", "{E217C5FA-84FF-42A2-BAB6-D2226BA61D49}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Tests", "src\tests\RepoQL.Tests\RepoQL.Tests.csproj", "{32630BD1-DC67-403D-AE30-6280EF27D9FC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Tests", "src\app\RepoQL.Tests\RepoQL.Tests.csproj", "{32630BD1-DC67-403D-AE30-6280EF27D9FC}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Orchestrator", "src\app\RepoQL.Orchestrator\RepoQL.Orchestrator.csproj", "{82F789A8-143C-4254-AA74-9AA82D7CF226}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Formats", "Formats", "{CF3BB764-123E-4A7B-8A47-05F15D677FE5}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.DotNet.Tests", "src\tests\RepoQL.Formats.DotNet.Tests\RepoQL.Formats.DotNet.Tests.csproj", "{28DD473A-7AFC-4361-AA92-2314B0AC4B4E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.DotNet.Tests", "src\pipeline/Formats\RepoQL.Formats.DotNet.Tests\RepoQL.Formats.DotNet.Tests.csproj", "{28DD473A-7AFC-4361-AA92-2314B0AC4B4E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Testing", "src\tests\RepoQL.Testing\RepoQL.Testing.csproj", "{3FEC1660-C58B-465D-9282-15B1B4B9EEAB}"
 EndProject
@@ -70,53 +70,53 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Embeddings", "src\da
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.TypeScript", "src\pipeline\Formats\RepoQL.Formats.TypeScript\RepoQL.Formats.TypeScript.csproj", "{33E9831D-CE3B-4CA9-A404-32B1A12B6AE3}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.TypeScript.Tests", "src\tests\RepoQL.Formats.TypeScript.Tests\RepoQL.Formats.TypeScript.Tests.csproj", "{7CAA8024-41F9-4588-8C96-9FA44B3E16B9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.TypeScript.Tests", "src\pipeline/Formats\RepoQL.Formats.TypeScript.Tests\RepoQL.Formats.TypeScript.Tests.csproj", "{7CAA8024-41F9-4588-8C96-9FA44B3E16B9}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Sql", "src\pipeline\Formats\RepoQL.Formats.Sql\RepoQL.Formats.Sql.csproj", "{5D36F096-C1F2-4DE1-BBEA-A69F9258F638}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Explore", "src\query\RepoQL.Explore\RepoQL.Explore.csproj", "{71DBB5E1-097C-4B41-A19F-305D084822B6}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Rendering.Tests", "src\tests\RepoQL.Rendering.Tests\RepoQL.Rendering.Tests.csproj", "{054E306B-CCF9-4E7C-A339-7F9938675239}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Rendering.Tests", "src\query\RepoQL.Rendering.Tests\RepoQL.Rendering.Tests.csproj", "{054E306B-CCF9-4E7C-A339-7F9938675239}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.PHP", "src\pipeline\Formats\RepoQL.Formats.PHP\RepoQL.Formats.PHP.csproj", "{0B939659-BBC7-4CF1-8703-F38BF275DB4C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.PHP.Tests", "src\tests\RepoQL.Formats.PHP.Tests\RepoQL.Formats.PHP.Tests.csproj", "{75FD4639-AC47-4C25-8D07-95A9092CAAA4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.PHP.Tests", "src\pipeline/Formats\RepoQL.Formats.PHP.Tests\RepoQL.Formats.PHP.Tests.csproj", "{75FD4639-AC47-4C25-8D07-95A9092CAAA4}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Terraform", "src\pipeline\Formats\RepoQL.Formats.Terraform\RepoQL.Formats.Terraform.csproj", "{FC5C18B3-33C9-4C43-9A31-E13539650DDC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Terraform.Tests", "src\tests\RepoQL.Formats.Terraform.Tests\RepoQL.Formats.Terraform.Tests.csproj", "{98FC2B2E-9BCA-4F31-8E11-84D14CCCB340}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Terraform.Tests", "src\pipeline/Formats\RepoQL.Formats.Terraform.Tests\RepoQL.Formats.Terraform.Tests.csproj", "{98FC2B2E-9BCA-4F31-8E11-84D14CCCB340}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.CSS", "src\pipeline\Formats\RepoQL.Formats.CSS\RepoQL.Formats.CSS.csproj", "{47D942F3-12E1-4C3B-B156-4749D4DADF82}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.CSS.Tests", "src\tests\RepoQL.Formats.CSS.Tests\RepoQL.Formats.CSS.Tests.csproj", "{DE54C23E-C476-46B9-B411-D419D5510C64}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.CSS.Tests", "src\pipeline/Formats\RepoQL.Formats.CSS.Tests\RepoQL.Formats.CSS.Tests.csproj", "{DE54C23E-C476-46B9-B411-D419D5510C64}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Mcp.Client", "src\integrations\RepoQL.Mcp.Client\RepoQL.Mcp.Client.csproj", "{72115FCD-8F06-44B6-AFCA-D99C2CA3E0B3}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Mcp.Client.Tests", "src\tests\RepoQL.Mcp.Client.Tests\RepoQL.Mcp.Client.Tests.csproj", "{4B93654B-CCFF-40DD-8C4E-1C18BAB80885}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Mcp.Client.Tests", "src\integrations\RepoQL.Mcp.Client.Tests\RepoQL.Mcp.Client.Tests.csproj", "{4B93654B-CCFF-40DD-8C4E-1C18BAB80885}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Protocol.Tests", "src\tests\RepoQL.Protocol.Tests\RepoQL.Protocol.Tests.csproj", "{45D60C48-11C4-42A8-BD25-62BF93A95799}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Protocol.Tests", "src\infra\RepoQL.Protocol.Tests\RepoQL.Protocol.Tests.csproj", "{45D60C48-11C4-42A8-BD25-62BF93A95799}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Xlsx", "src\pipeline\Formats\RepoQL.Formats.Xlsx\RepoQL.Formats.Xlsx.csproj", "{756F832C-43DD-45EB-90A4-6F2D0670A0E2}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Xlsx.Tests", "src\tests\RepoQL.Formats.Xlsx.Tests\RepoQL.Formats.Xlsx.Tests.csproj", "{4BC3AF12-F861-48B7-AA9D-3000D40DF633}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Xlsx.Tests", "src\pipeline/Formats\RepoQL.Formats.Xlsx.Tests\RepoQL.Formats.Xlsx.Tests.csproj", "{4BC3AF12-F861-48B7-AA9D-3000D40DF633}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Docx.Tests", "src\tests\RepoQL.Formats.Docx.Tests\RepoQL.Formats.Docx.Tests.csproj", "{B828887E-CC91-41D2-AEE9-DB51A83AED24}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Docx.Tests", "src\pipeline/Formats\RepoQL.Formats.Docx.Tests\RepoQL.Formats.Docx.Tests.csproj", "{B828887E-CC91-41D2-AEE9-DB51A83AED24}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Docx", "src\pipeline\Formats\RepoQL.Formats.Docx\RepoQL.Formats.Docx.csproj", "{97DF6A92-90B2-4B70-BEAE-3F3E3BB29D2A}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Pdf", "src\pipeline\Formats\RepoQL.Formats.Pdf\RepoQL.Formats.Pdf.csproj", "{07644C62-1C8B-439B-97F7-AAC764EC6AA2}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Pdf.Tests", "src\tests\RepoQL.Formats.Pdf.Tests\RepoQL.Formats.Pdf.Tests.csproj", "{F565DEA1-9D33-4951-973E-B3A173F9AA94}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Pdf.Tests", "src\pipeline/Formats\RepoQL.Formats.Pdf.Tests\RepoQL.Formats.Pdf.Tests.csproj", "{F565DEA1-9D33-4951-973E-B3A173F9AA94}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Ruby", "src\pipeline\Formats\RepoQL.Formats.Ruby\RepoQL.Formats.Ruby.csproj", "{936F1CBC-1882-41BC-9492-2805AE706124}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Ruby.Tests", "src\tests\RepoQL.Formats.Ruby.Tests\RepoQL.Formats.Ruby.Tests.csproj", "{DC69A4C0-9069-4DD5-AB04-B112DA9DE331}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Ruby.Tests", "src\pipeline/Formats\RepoQL.Formats.Ruby.Tests\RepoQL.Formats.Ruby.Tests.csproj", "{DC69A4C0-9069-4DD5-AB04-B112DA9DE331}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Commands", "src\query\RepoQL.Commands\RepoQL.Commands.csproj", "{0114EDB7-8F82-4FE8-B387-850E05AA8911}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Json", "src\pipeline\Formats\RepoQL.Formats.Json\RepoQL.Formats.Json.csproj", "{039AA6E9-8B4E-480B-9E36-B0AAC55C419D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Json.Tests", "src\tests\RepoQL.Formats.Json.Tests\RepoQL.Formats.Json.Tests.csproj", "{8975B01E-0B62-4FCA-BE52-83D8582E2152}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Json.Tests", "src\pipeline/Formats\RepoQL.Formats.Json.Tests\RepoQL.Formats.Json.Tests.csproj", "{8975B01E-0B62-4FCA-BE52-83D8582E2152}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{07C2787E-EAC7-C090-1BA3-A61EC2A24D84}"
 EndProject
@@ -124,29 +124,29 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.SnapshotGenerator", 
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.SnapshotGenerator.Tests", "src\tests\RepoQL.SnapshotGenerator.Tests\RepoQL.SnapshotGenerator.Tests.csproj", "{B2F33E42-0F05-4AC9-9120-B8D258298DED}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.SnapshotGenerator.Tests", "src\tools\RepoQL.SnapshotGenerator.Tests\RepoQL.SnapshotGenerator.Tests.csproj", "{B2F33E42-0F05-4AC9-9120-B8D258298DED}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Analyzers", "src\infra\RepoQL.Analyzers\RepoQL.Analyzers.csproj", "{1FA8DEAB-AE33-42DA-B420-37AE2FD57017}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Go.Tests", "src\tests\RepoQL.Formats.Go.Tests\RepoQL.Formats.Go.Tests.csproj", "{6305251A-5B03-4384-B683-7AABCD6F374E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Go.Tests", "src\pipeline/Formats\RepoQL.Formats.Go.Tests\RepoQL.Formats.Go.Tests.csproj", "{6305251A-5B03-4384-B683-7AABCD6F374E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Go", "src\pipeline\Formats\RepoQL.Formats.Go\RepoQL.Formats.Go.csproj", "{FDC03946-4CB9-498C-84BD-1AFB348A929A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Python.Tests", "src\tests\RepoQL.Formats.Python.Tests\RepoQL.Formats.Python.Tests.csproj", "{BE0F4B4F-58B8-4577-A791-0F4B3EE6A723}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Python.Tests", "src\pipeline/Formats\RepoQL.Formats.Python.Tests\RepoQL.Formats.Python.Tests.csproj", "{BE0F4B4F-58B8-4577-A791-0F4B3EE6A723}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Python", "src\pipeline\Formats\RepoQL.Formats.Python\RepoQL.Formats.Python.csproj", "{E3854E8B-A32E-4BB8-81F9-53B0648D47C6}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Rust", "src\pipeline\Formats\RepoQL.Formats.Rust\RepoQL.Formats.Rust.csproj", "{727A6E9B-4CAE-4858-85F8-EEE28616F544}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Rust.Tests", "src\tests\RepoQL.Formats.Rust.Tests\RepoQL.Formats.Rust.Tests.csproj", "{1D063740-8639-4838-80F9-04955934E813}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Rust.Tests", "src\pipeline/Formats\RepoQL.Formats.Rust.Tests\RepoQL.Formats.Rust.Tests.csproj", "{1D063740-8639-4838-80F9-04955934E813}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Cpp", "src\pipeline\Formats\RepoQL.Formats.Cpp\RepoQL.Formats.Cpp.csproj", "{F343B068-20E8-4E28-ADB9-ECAB3A16656A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Cpp.Tests", "src\tests\RepoQL.Formats.Cpp.Tests\RepoQL.Formats.Cpp.Tests.csproj", "{BE0F75EA-FC0F-4BF4-9493-AD475F608A75}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Cpp.Tests", "src\pipeline/Formats\RepoQL.Formats.Cpp.Tests\RepoQL.Formats.Cpp.Tests.csproj", "{BE0F75EA-FC0F-4BF4-9493-AD475F608A75}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Sarif", "src\integrations\RepoQL.Sarif\RepoQL.Sarif.csproj", "{251D7CA4-36B0-400E-8135-DEE72C5E6194}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Sarif.Tests", "src\tests\RepoQL.Sarif.Tests\RepoQL.Sarif.Tests.csproj", "{B68B7DA6-B717-471A-A8D3-97D1A2185CB2}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Sarif.Tests", "src\integrations\RepoQL.Sarif.Tests\RepoQL.Sarif.Tests.csproj", "{B68B7DA6-B717-471A-A8D3-97D1A2185CB2}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Read", "src\query\RepoQL.Read\RepoQL.Read.csproj", "{9A12512E-0CB7-48FB-9ED9-68FFB3E071B5}"
 EndProject
@@ -156,25 +156,25 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Embedding.Service", 
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Embedding.Client", "src\cloud\RepoQL.Embedding.Client\RepoQL.Embedding.Client.csproj", "{726A19C1-EA52-4473-BA7D-92BFF299D439}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Embedding.Service.Tests", "src\tests\RepoQL.Embedding.Service.Tests\RepoQL.Embedding.Service.Tests.csproj", "{1D3771AE-C890-497E-AA9B-0DAAE14D18AB}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Embedding.Service.Tests", "src\cloud\RepoQL.Embedding.Service.Tests\RepoQL.Embedding.Service.Tests.csproj", "{1D3771AE-C890-497E-AA9B-0DAAE14D18AB}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Embedding.Writer.Tests", "src\tests\RepoQL.Embedding.Writer.Tests\RepoQL.Embedding.Writer.Tests.csproj", "{0B220682-F2E7-4D23-A1CA-A677E666FC54}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Embedding.Writer.Tests", "src\cloud\RepoQL.Embedding.Writer.Tests\RepoQL.Embedding.Writer.Tests.csproj", "{0B220682-F2E7-4D23-A1CA-A677E666FC54}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Embedding.Writer", "src\cloud\RepoQL.Embedding.Writer\RepoQL.Embedding.Writer.csproj", "{E733049F-565B-4E54-93C0-7FB35409B11C}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Embedding.Storage", "src\cloud\RepoQL.Embedding.Storage\RepoQL.Embedding.Storage.csproj", "{421EB6B0-E874-4C56-A023-5E16618AE2E4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Mermaid.Tests", "src\tests\RepoQL.Formats.Mermaid.Tests\RepoQL.Formats.Mermaid.Tests.csproj", "{2FBF0FBA-BE0D-4FF3-9118-2329C3934BE1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Formats.Mermaid.Tests", "src\pipeline/Formats\RepoQL.Formats.Mermaid.Tests\RepoQL.Formats.Mermaid.Tests.csproj", "{2FBF0FBA-BE0D-4FF3-9118-2329C3934BE1}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Inference.Proto", "src\cloud\RepoQL.Inference.Proto\RepoQL.Inference.Proto.csproj", "{2857A1E7-6B26-4180-85C9-333012AA3E57}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Inference.Service", "src\cloud\RepoQL.Inference.Service\RepoQL.Inference.Service.csproj", "{1224BA73-AA5E-43E2-B0B6-903860A39E94}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Inference.Service.Tests", "src\tests\RepoQL.Inference.Service.Tests\RepoQL.Inference.Service.Tests.csproj", "{8ACD3A2B-2069-4E52-ABCF-1912AA901AF6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Inference.Service.Tests", "src\cloud\RepoQL.Inference.Service.Tests\RepoQL.Inference.Service.Tests.csproj", "{8ACD3A2B-2069-4E52-ABCF-1912AA901AF6}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Inference.Client", "src\cloud\RepoQL.Inference.Client\RepoQL.Inference.Client.csproj", "{F40E37E6-F9F4-40E7-BFFB-EAD04E041FFE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Inference.Client.Tests", "src\tests\RepoQL.Inference.Client.Tests\RepoQL.Inference.Client.Tests.csproj", "{E7D025C6-CC11-4D28-B1B7-D201AB6271E3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Inference.Client.Tests", "src\cloud\RepoQL.Inference.Client.Tests\RepoQL.Inference.Client.Tests.csproj", "{E7D025C6-CC11-4D28-B1B7-D201AB6271E3}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Cloud.Service", "src\cloud\RepoQL.Cloud.Service\RepoQL.Cloud.Service.csproj", "{AD0DE72D-8005-4B7D-9F50-DACADE2DED85}"
 EndProject
@@ -182,7 +182,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Cloud.Auth", "src\cl
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Sandbox", "src\query\RepoQL.Sandbox\RepoQL.Sandbox.csproj", "{BBB2D914-1FCD-4C6E-A4FE-7F8579527F32}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Sandbox.Tests", "src\tests\RepoQL.Sandbox.Tests\RepoQL.Sandbox.Tests.csproj", "{7328C2AA-D94D-4848-9C59-8D347B9720AD}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RepoQL.Sandbox.Tests", "src\query\RepoQL.Sandbox.Tests\RepoQL.Sandbox.Tests.csproj", "{7328C2AA-D94D-4848-9C59-8D347B9720AD}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "core", "core", "{A1B2C3D4-0001-4000-8000-000000000001}"
 EndProject

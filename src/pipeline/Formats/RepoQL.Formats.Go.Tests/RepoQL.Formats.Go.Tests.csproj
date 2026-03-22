@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AwesomeAssertions.Analyzers">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="FakeItEasy" />
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\RepoQL.Formats.Go\RepoQL.Formats.Go.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Fixtures\**\*.go" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\**\*.mod" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\**\*.work" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures\go.mod" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures\go.work" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
