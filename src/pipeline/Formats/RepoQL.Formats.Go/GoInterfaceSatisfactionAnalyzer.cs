@@ -2,29 +2,29 @@ using System.Data;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json.Nodes;
-using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Models;
-using RepoQL.Data.DuckDB;
 using RepoQL.Indexing.Indexing.Pipelines;
 using RepoQL.Indexing.Indexing.Pipelines.Analysis;
 
 namespace RepoQL.Formats.Go;
 
 /// <summary>
-/// Purpose: Compute and persist Go IMPLEMENTS relationships from package-wide graph state.
+/// Purpose: Compute Go IMPLEMENTS relationships from package-wide graph state.
 ///
-/// Complexity: Reads package data from DuckDB, computes interface satisfaction for structs in
-/// the current document, replaces prior IMPLEMENTS edges idempotently, and returns diagnostics.
+/// Complexity: Reads package data via IGraphQueryService, computes interface satisfaction
+/// for structs in the current document, and returns IMPLEMENTS edges + diagnostics as output.
+/// The pipeline commit stage handles persistence — this analyzer never writes directly.
 /// </summary>
 public sealed class GoInterfaceSatisfactionAnalyzer(
-    DuckDbDataStore dataStore,
+    IGraphQueryService graphQuery,
     ILogger<GoInterfaceSatisfactionAnalyzer>? logger = null)
     : IAsyncPipeline<IAnnotatedArtifact, Annotation[]>
 {
     private static readonly TimeSpan SlowAnalysisThreshold = TimeSpan.FromSeconds(5);
-    private readonly DuckDbDataStore _dataStore = dataStore ?? throw new ArgumentNullException(nameof(dataStore));
+    private readonly IGraphQueryService _graphQuery = graphQuery ?? throw new ArgumentNullException(nameof(graphQuery));
     private readonly ILogger<GoInterfaceSatisfactionAnalyzer> _logger = logger ?? NullLogger<GoInterfaceSatisfactionAnalyzer>.Instance;
 
     public async Task<(Annotation[]? Result, PipelineResult PipelineStatus)> ProcessAsync(
@@ -82,7 +82,32 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
                 packageEmbeddings,
                 candidateTypeIds);
 
-            ReplaceImplementsEdges(documentNode.Id, candidateTypeIds, result.Implementations);
+            // Return edges as output — the pipeline commit stage persists them.
+            // Filter out prior IMPLEMENTS edges for these candidates, then add new ones.
+            var existingEdges = item.Records.Edges
+                .Where(e => !(string.Equals(e.Type, GoEdgeTypes.Implements, StringComparison.Ordinal) &&
+                              candidateTypeIds.Contains(e.SrcId)))
+                .ToList();
+
+            foreach (var implementation in result.Implementations)
+            {
+                existingEdges.Add(new Edge
+                {
+                    SrcId = implementation.TypeNodeId,
+                    DstId = implementation.InterfaceNodeId,
+                    Type = GoEdgeTypes.Implements,
+                    ScopeDocumentId = documentNode.Id,
+                    EdgeKey = BuildSemanticKey(implementation),
+                    Props = new JsonObject
+                    {
+                        [GoPropertyKeys.Target] = implementation.InterfaceQualifiedName,
+                        [GoPropertyKeys.ReceiverKind] = implementation.ReceiverKind,
+                        [GoPropertyKeys.IsStdlib] = implementation.IsStdlib
+                    }
+                });
+            }
+
+            item.Records.Edges = existingEdges.ToArray();
 
             foreach (var diagnostic in result.Diagnostics)
             {
@@ -176,7 +201,7 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
               AND COALESCE(t.properties->>'kind', '') IN ('struct', 'interface')
             """;
 
-        return _dataStore.Read(
+        return _graphQuery.Read(
             sql,
             record => new GoTypeSnapshot(
                 Id: record.GetGuid(0),
@@ -208,7 +233,7 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
               AND COALESCE(doc.properties->>'package_name', '') = '{packageLiteral}'
             """;
 
-        return _dataStore.Read(
+        return _graphQuery.Read(
             sql,
             record => new GoMethodSnapshot(
                 Name: ReadString(record, 0),
@@ -240,111 +265,12 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
               AND COALESCE(doc.properties->>'package_name', '') = '{packageLiteral}'
             """;
 
-        return _dataStore.Read(
+        return _graphQuery.Read(
             sql,
             record => new GoEmbeddingSnapshot(
                 SourceTypeId: record.GetGuid(0),
                 Target: ReadString(record, 1)),
             token);
-    }
-
-    private void ReplaceImplementsEdges(
-        Guid scopeDocumentId,
-        IReadOnlyCollection<Guid> candidateTypeIds,
-        IReadOnlyList<GoInterfaceImplementation> implementations)
-    {
-        _dataStore.WriteTransaction((connection, transaction) =>
-        {
-            DeleteExistingImplementsEdges(connection, transaction, candidateTypeIds);
-            if (implementations.Count == 0)
-            {
-                return;
-            }
-
-            using var insert = connection.CreateCommand();
-            insert.Transaction = transaction;
-            insert.CommandText = $"""
-                INSERT INTO edge (
-                    id,
-                    source_node_id,
-                    destination_node_id,
-                    destination_uri,
-                    type,
-                    is_composition,
-                    ordinal,
-                    scope_document_id,
-                    semantic_key,
-                    source_span_id,
-                    destination_span_id,
-                    composition_child_id,
-                    properties,
-                    created_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
-                );
-                """;
-
-            var createdAt = DateTime.UtcNow;
-            foreach (var implementation in implementations)
-            {
-                insert.Parameters.Clear();
-
-                var edgeProps = new JsonObject
-                {
-                    [GoPropertyKeys.Target] = implementation.InterfaceQualifiedName,
-                    [GoPropertyKeys.ReceiverKind] = implementation.ReceiverKind,
-                    [GoPropertyKeys.IsStdlib] = implementation.IsStdlib
-                };
-
-                insert.Parameters.Add(new DuckDBParameter { Value = Guid.NewGuid() });
-                insert.Parameters.Add(new DuckDBParameter { Value = implementation.TypeNodeId });
-                insert.Parameters.Add(new DuckDBParameter { Value = implementation.InterfaceNodeId ?? (object)DBNull.Value });
-                insert.Parameters.Add(new DuckDBParameter { Value = DBNull.Value }); // destination_uri
-                insert.Parameters.Add(new DuckDBParameter { Value = GoEdgeTypes.Implements });
-                insert.Parameters.Add(new DuckDBParameter { Value = false }); // is_composition
-                insert.Parameters.Add(new DuckDBParameter { Value = DBNull.Value }); // ordinal
-                insert.Parameters.Add(new DuckDBParameter { Value = scopeDocumentId });
-                insert.Parameters.Add(new DuckDBParameter { Value = BuildSemanticKey(implementation) });
-                insert.Parameters.Add(new DuckDBParameter { Value = DBNull.Value }); // source_span_id
-                insert.Parameters.Add(new DuckDBParameter { Value = DBNull.Value }); // destination_span_id
-                insert.Parameters.Add(new DuckDBParameter { Value = DBNull.Value }); // composition_child_id
-                insert.Parameters.Add(new DuckDBParameter { Value = edgeProps.ToJsonString() });
-                insert.Parameters.Add(new DuckDBParameter { Value = createdAt });
-                insert.ExecuteNonQuery();
-            }
-        });
-    }
-
-    private static void DeleteExistingImplementsEdges(
-        DuckDBConnection connection,
-        DuckDBTransaction transaction,
-        IReadOnlyCollection<Guid> candidateTypeIds)
-    {
-        if (candidateTypeIds.Count == 0)
-        {
-            return;
-        }
-
-        var ids = candidateTypeIds.ToArray();
-        var placeholders = new string[ids.Length];
-        for (var i = 0; i < ids.Length; i++)
-        {
-            placeholders[i] = $"${i + 2}";
-        }
-
-        using var delete = connection.CreateCommand();
-        delete.Transaction = transaction;
-        delete.CommandText = $"""
-            DELETE FROM edge
-            WHERE type = $1
-              AND source_node_id IN ({string.Join(", ", placeholders)});
-            """;
-        delete.Parameters.Add(new DuckDBParameter { Value = GoEdgeTypes.Implements });
-        foreach (var id in ids)
-        {
-            delete.Parameters.Add(new DuckDBParameter { Value = id });
-        }
-        delete.ExecuteNonQuery();
     }
 
     private static string BuildSemanticKey(GoInterfaceImplementation implementation)
@@ -356,37 +282,23 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
     private static Annotation[]? MergeAnnotations(Annotation[]? downstream, List<Annotation> additional)
     {
         if ((downstream is null || downstream.Length == 0) && additional.Count == 0)
-        {
             return downstream;
-        }
-
         if (downstream is null || downstream.Length == 0)
-        {
             return additional.ToArray();
-        }
-
         if (additional.Count == 0)
-        {
             return downstream;
-        }
 
         var merged = new Annotation[downstream.Length + additional.Count];
         downstream.CopyTo(merged, 0);
         for (var i = 0; i < additional.Count; i++)
-        {
             merged[downstream.Length + i] = additional[i];
-        }
-
         return merged;
     }
 
     private static bool IsStructTypeNode(Node node)
     {
         if (!string.Equals(node.Kind, GoNodeKinds.Type, StringComparison.Ordinal))
-        {
             return false;
-        }
-
         return string.Equals(node.Props[GoPropertyKeys.Kind]?.ToString(), "struct", StringComparison.Ordinal);
     }
 
@@ -395,20 +307,14 @@ public sealed class GoInterfaceSatisfactionAnalyzer(
     private static string ReadString(IDataRecord record, int ordinal)
     {
         if (record.IsDBNull(ordinal))
-        {
             return string.Empty;
-        }
-
         return Convert.ToString(record.GetValue(ordinal), CultureInfo.InvariantCulture) ?? string.Empty;
     }
 
     private static bool ReadBoolean(IDataRecord record, int ordinal)
     {
         if (record.IsDBNull(ordinal))
-        {
             return false;
-        }
-
         var value = record.GetValue(ordinal);
         return value switch
         {
