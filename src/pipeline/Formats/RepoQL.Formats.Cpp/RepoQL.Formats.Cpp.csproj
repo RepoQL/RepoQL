@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <InvariantCulture>true</InvariantCulture>
+    <!-- SDK analyzers push this large parser/materializer project into multi-minute compile times.
+         Keep RepoQL's custom analyzers from Directory.Build.props, but skip the generic NET analyzers here. -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
     <TreeSitterCppCommitSha>089e05896dbb23945af5721323ccfd60ac179d36</TreeSitterCppCommitSha>
   </PropertyGroup>
 
