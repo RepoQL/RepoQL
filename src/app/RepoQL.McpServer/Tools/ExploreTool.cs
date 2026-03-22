@@ -24,11 +24,9 @@ internal sealed class ExploreTool(
 
     private const string ToolInstructions = """
         <WHY>
-        Don't read blind. Traditional search finds most results—you answer confidently but with gaps.
-        Users run subagents to verify, wasting tokens. Explore searches wide first, so you see what exists before answering. 
-        No blind spots, no verification tax.
-        
-        RepoQL rewards creativity, use your intuition and experiment
+        Explore is how you hear — it reveals the relevance of everything in the codebase, ranked by meaning, not literal text. No blind spots, no verification tax. You see what exists before committing tokens to read anything.
+
+        More than search: your first explore teaches you the vocabulary — the real class names, patterns, and terms-of-art you need for every subsequent call. The index is wild magic — composable, responsive to intent, and forgiving. A bad explore costs 1500 tokens. A good one saves you from 30 blind grep calls.
         </WHY>
 
         <BREADTH>

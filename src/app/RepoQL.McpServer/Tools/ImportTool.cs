@@ -19,6 +19,8 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
     private const string ImportInstructions =
         """
+        Import brings external sources into your perception. Once imported, everything works the same — explore, read, query — across boundaries. Same tools, same wild magic, same composability.
+
         Import or remove an external data source (e.g., GitHub repository, local directory, or SARIF report) from the current repoql datastore.
 
         To import: Provide a URI such as `github://owner/repo@ref`, `local:///path/to/dir`, or `sarif:///path/to/file.sarif`.

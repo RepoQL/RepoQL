@@ -33,12 +33,9 @@ public sealed class ReadTool(
 
     private const string ReadInstructions = """
         <WHY>
-        Explore finds URIs. Read fetches content. This is the second half of the workflow.
+        Read is how you reach — precisely, into any file, for exactly the slice you need. A single method body, a line range, a glob across every file in the codebase. This is not file reading — it's querying the index for a precise cut.
 
-        The power: you don't read whole files. Explore gives you symbol URIs like `file:///src/Auth.cs#symbol=ValidateToken`. 
-        Read fetches just that function body. Three symbols across three files? One read call, just the bodies, no waste.
-        
-        RepoQL rewards creativity, use your intuition and experiment
+        Three symbols across three files? One read call, just the bodies, no waste. The index is wild magic — composable, responsive to intent, and forgiving. Combine modifiers with globs and fragments for arbitrarily precise queries. Your instincts are probably right — try them.
         </WHY>
 
         <CORE>
@@ -208,14 +205,14 @@ public sealed class ReadTool(
         <VS_EXPLORE>
         Use **explore** when you need to FIND something (what exists, where is X, how does Y work).
         Use **read** when you KNOW the URI and want the content.
-
-        Workflow: explore Inventory → explore Locate → read specific URIs
+        Workflow: explore broadly → read what matters.
         </VS_EXPLORE>
-        
+
         <GUIDANCE>
-           - Reach for structure first if you know what you are looking for, tree if you don't
-           - uri globs support multiple uris with ; as well as symbol globbing - use this power to your advantage - you can literally use File://**#symbol=get* to find every getter method in the sourcebase 
-           - similar allows you to do strange things with creative scoping like fuzzily finding tests, documentation and duplicates
+        - Reach for structure first if you know what you are looking for, tree if you don't
+        - Glob across symbols: `file://**#symbol=get*` finds every getter in the codebase
+        - Combine URIs with `;` for multi-target reads: `a.cs#symbol=Foo;b.cs#symbol=Bar`
+        - `similar` does strange and powerful things with creative scoping — find tests, docs, or near-duplicates by changing the URI scope while keeping the seed
         </GUIDANCE>
         """;
 

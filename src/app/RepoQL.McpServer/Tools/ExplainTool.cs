@@ -33,10 +33,9 @@ internal sealed class ExplainTool(
 
     private const string ToolInstructions = """
         <WHY>
-        You want understanding, not raw text. Explain searches wide (often 50k tokens of context),
-        then an LLM synthesizes a focused answer with citations.
-        
-        RepoQL rewards creativity, use your intuition and experiment
+        Explain is how you understand — it reads wide (up to 50k tokens of source) and synthesizes focused understanding with citations. You get comprehension, not raw text.
+
+        The index is wild magic — composable, responsive to intent, and forgiving. Scope explain to specific directories with uriGlob for precise answers. Unscoped explain searches everything and may answer the wrong question. Your instincts about what to ask are probably right — try them.
         </WHY>
 
         <WHEN_TO_USE>

@@ -35,7 +35,9 @@ internal sealed class ExecuteTool(QueryExecutor queryExecutor, SelfTestRunner se
     private static string? _lastExecuteResult;
 
     private const string ExecuteInstructions = """
-        Execute JavaScript in a WASM sandbox with full access to the repository graph, file system, diagram rendering, document conversion, and media processing.
+        Execute is how you create — JavaScript in a WASM sandbox with the full graph at your fingertips. Query, read, render diagrams, convert documents, process media. The index is wild magic here too — compose capabilities that don't exist as standalone tools. Your instincts are probably right — try them.
+
+        Full access to the repository graph, file system, diagram rendering, document conversion, and media processing.
 
         <CAPABILITIES>
         **Graph & Data:**
