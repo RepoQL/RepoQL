@@ -288,14 +288,18 @@
         <EmbeddedResource Remove="$(RepositoryRoot)dashboard/dist/**" />
         <DashboardDistFile Include="$(RepositoryRoot)dashboard/dist/**"
                            Condition="Exists('$(RepositoryRoot)dashboard/dist/index.html')" />
+        <!-- Use forward slashes: on Linux, MSBuild's manifest generator doesn't split
+             on backslash, producing flat filenames (wwwroot\index.html) instead of a
+             directory tree. ManifestEmbeddedFileProvider then can't find the wwwroot
+             directory and Resolve() returns null. Forward slashes work on both platforms. -->
         <Content Include="@(DashboardDistFile)"
-                 Link="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)"
-                 TargetPath="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)"
+                 Link="wwwroot/%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)"
+                 TargetPath="wwwroot/%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)"
                  CopyToOutputDirectory="PreserveNewest"
                  CopyToPublishDirectory="Always"
                  ExcludeFromSingleFile="false" />
         <EmbeddedResource Include="@(DashboardDistFile)"
-                          Link="wwwroot\%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)" />
+                          Link="wwwroot/%(DashboardDistFile.RecursiveDir)%(DashboardDistFile.Filename)%(DashboardDistFile.Extension)" />
       </ItemGroup>
     </Target>
 

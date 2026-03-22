@@ -803,6 +803,18 @@ public sealed class DemoAnalyzer : DiagnosticAnalyzer
         }
         sb.AppendLine("</Project>");
         File.WriteAllText(Path.Combine(dir, "Demo.csproj"), sb.ToString());
+
+        // Write a global.json to pin the SDK version, otherwise the temp directory
+        // (outside the repo) may resolve to a lower SDK that doesn't support the target framework.
+        File.WriteAllText(Path.Combine(dir, "global.json"), $$"""
+            {
+              "sdk": {
+                "version": "{{Environment.Version.Major}}.0.100",
+                "rollForward": "latestFeature"
+              }
+            }
+            """);
+
         foreach (var kvp in sourceFiles)
         {
             File.WriteAllText(Path.Combine(dir, kvp.Key), kvp.Value);

@@ -5,6 +5,7 @@ using System.Text;
 using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts.Cloud;
+using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Cloud;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Configuration;
