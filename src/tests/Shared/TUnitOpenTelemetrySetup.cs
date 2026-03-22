@@ -2,6 +2,8 @@ using OpenTelemetry;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
+[assembly: Timeout(30_000)]
+
 namespace RepoQL.Testing;
 
 /// <summary>
