@@ -22,63 +22,10 @@ permissions:
   pull-requests: write
 
 jobs:
-  test:
-    name: Test (${{ matrix.shard }})
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Shard 1: Core, data, infra, integrations, pipeline — the heavy DuckDB tests
-          - shard: core
-            projects: >-
-              src/app/RepoQL.Tests/RepoQL.Tests.csproj
-              src/app/RepoQL.Core.Tests/RepoQL.Core.Tests.csproj
-              src/app/RepoQL.Cli.Tests/RepoQL.Cli.Tests.csproj
-              src/data/RepoQL.Data.Tests/RepoQL.Data.Tests.csproj
-              src/data/RepoQL.Data.DuckDB.Tests/RepoQL.Data.DuckDB.Tests.csproj
-              src/infra/RepoQL.FileSystem.Tests/RepoQL.FileSystem.Tests.csproj
-              src/infra/RepoQL.Protocol.Tests/RepoQL.Protocol.Tests.csproj
-              src/integrations/RepoQL.Mcp.Client.Tests/RepoQL.Mcp.Client.Tests.csproj
-              src/integrations/RepoQL.Sarif.Tests/RepoQL.Sarif.Tests.csproj
-              src/pipeline/RepoQL.Indexing.Tests/RepoQL.Indexing.Tests.csproj
-
-          # Shard 2: Format loaders — many projects, individually fast
-          - shard: formats
-            projects: >-
-              src/pipeline/Formats/RepoQL.Formats.Cpp.Tests/RepoQL.Formats.Cpp.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.CSS.Tests/RepoQL.Formats.CSS.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Csv.Tests/RepoQL.Formats.Csv.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Docx.Tests/RepoQL.Formats.Docx.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.DotNet.Tests/RepoQL.Formats.DotNet.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Go.Tests/RepoQL.Formats.Go.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Json.Tests/RepoQL.Formats.Json.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Mermaid.Tests/RepoQL.Formats.Mermaid.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Pdf.Tests/RepoQL.Formats.Pdf.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.PHP.Tests/RepoQL.Formats.PHP.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Python.Tests/RepoQL.Formats.Python.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Ruby.Tests/RepoQL.Formats.Ruby.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Rust.Tests/RepoQL.Formats.Rust.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Terraform.Tests/RepoQL.Formats.Terraform.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.TypeScript.Tests/RepoQL.Formats.TypeScript.Tests.csproj
-              src/pipeline/Formats/RepoQL.Formats.Xlsx.Tests/RepoQL.Formats.Xlsx.Tests.csproj
-
-          # Shard 3: Query engine, sandbox, cloud services, tools
-          - shard: engine
-            projects: >-
-              src/query/RepoQL.Rendering.Tests/RepoQL.Rendering.Tests.csproj
-              src/query/RepoQL.Sandbox.Tests/RepoQL.Sandbox.Tests.csproj
-              src/cloud/RepoQL.Embedding.Client.Tests/RepoQL.Embedding.Client.Tests.csproj
-              src/cloud/RepoQL.Embedding.Service.Tests/RepoQL.Embedding.Service.Tests.csproj
-              src/cloud/RepoQL.Embedding.Writer.Tests/RepoQL.Embedding.Writer.Tests.csproj
-              src/cloud/RepoQL.Inference.Client.Tests/RepoQL.Inference.Client.Tests.csproj
-              src/cloud/RepoQL.Inference.Service.Tests/RepoQL.Inference.Service.Tests.csproj
-              src/tools/RepoQL.SnapshotGenerator.Tests/RepoQL.SnapshotGenerator.Tests.csproj
-
-    env:
-      ARTIFACTS_PATH: ${{ github.workspace }}/artifacts
+    timeout-minutes: 20
 
     steps:
       - name: Free disk space
@@ -108,6 +55,77 @@ jobs:
       - name: Build solution (Release)
         run: dotnet build RepoQL.sln --configuration Release --no-restore --nologo
 
+      - name: Upload test binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-bins
+          path: artifacts/bin/*Tests*/
+          retention-days: 1
+
+  test:
+    name: Test (${{ matrix.shard }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: core
+            tests: >-
+              RepoQL.Tests
+              RepoQL.Core.Tests
+              RepoQL.Cli.Tests
+              RepoQL.Data.Tests
+              RepoQL.Data.DuckDB.Tests
+              RepoQL.FileSystem.Tests
+              RepoQL.Protocol.Tests
+              RepoQL.Mcp.Client.Tests
+              RepoQL.Sarif.Tests
+              RepoQL.Indexing.Tests
+
+          - shard: formats
+            tests: >-
+              RepoQL.Formats.Cpp.Tests
+              RepoQL.Formats.CSS.Tests
+              RepoQL.Formats.Csv.Tests
+              RepoQL.Formats.Docx.Tests
+              RepoQL.Formats.DotNet.Tests
+              RepoQL.Formats.Go.Tests
+              RepoQL.Formats.Json.Tests
+              RepoQL.Formats.Mermaid.Tests
+              RepoQL.Formats.Pdf.Tests
+              RepoQL.Formats.PHP.Tests
+              RepoQL.Formats.Python.Tests
+              RepoQL.Formats.Ruby.Tests
+              RepoQL.Formats.Rust.Tests
+              RepoQL.Formats.Terraform.Tests
+              RepoQL.Formats.TypeScript.Tests
+              RepoQL.Formats.Xlsx.Tests
+
+          - shard: engine
+            tests: >-
+              RepoQL.Rendering.Tests
+              RepoQL.Sandbox.Tests
+              RepoQL.Embedding.Client.Tests
+              RepoQL.Embedding.Service.Tests
+              RepoQL.Embedding.Writer.Tests
+              RepoQL.Inference.Client.Tests
+              RepoQL.Inference.Service.Tests
+              RepoQL.SnapshotGenerator.Tests
+
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.1xx'
+
+      - name: Download test binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: test-bins
+          path: test-bins/
+
       - name: Expose GitHub Actions runtime for TUnit HTML reports
         uses: actions/github-script@v7
         with:
@@ -118,25 +136,32 @@ jobs:
       - name: Run tests
         run: |
           failed=0
-          for project in ${{ matrix.projects }}; do
-            echo "::group::Testing $project"
-            if ! dotnet test \
-              --project "$project" \
-              --configuration Release \
-              --no-build \
-              -- \
+          for name in ${{ matrix.tests }}; do
+            dir=$(find test-bins -type d -name "${name}" | head -1)
+            if [[ -z "$dir" ]]; then
+              echo "::error::Test directory not found for ${name}"
+              failed=1
+              continue
+            fi
+            # Find the release output directory (release_linux-x64 or similar)
+            bin=$(find "$dir" -name "${name}.dll" -path "*/release*" | head -1)
+            if [[ -z "$bin" ]]; then
+              echo "::error::Test DLL not found for ${name}"
+              failed=1
+              continue
+            fi
+            bindir=$(dirname "$bin")
+            echo "::group::${name}"
+            if ! dotnet exec "$bin" \
               --coverage \
               --coverage-output-format cobertura \
-              --report-trx; then
+              --report-trx \
+              --results-directory "$(pwd)/TestResults"; then
               failed=1
             fi
             echo "::endgroup::"
           done
           exit $failed
-
-      - name: Show disk space (post-tests)
-        if: always()
-        run: df -h
 
       - name: Upload test results
         if: always()
@@ -144,7 +169,7 @@ jobs:
         with:
           name: test-results-${{ matrix.shard }}
           path: |
-            ${{ env.ARTIFACTS_PATH }}/TestResults/**/*
+            TestResults/**/*
 
   results:
     name: Test Results
