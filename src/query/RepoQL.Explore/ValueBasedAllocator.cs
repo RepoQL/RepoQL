@@ -238,7 +238,7 @@ public static class ValueBasedAllocator
 
     /// <summary>
     /// Pick the richest representation that fits within the token allocation.
-    /// Minimal (no URI) is only used at high breadth (≥8); lower breadth uses Compact as floor.
+    /// Minimal (URI-only) is only used at high breadth (≥8); lower breadth uses Compact as floor.
     /// </summary>
     private static Representation PickBestFit(ExploreResult result, int allocation, int breadth)
     {
@@ -249,7 +249,7 @@ public static class ValueBasedAllocator
         if (ExploreTokenEstimator.EstimateCompact(result) <= allocation)
             return Representation.Compact;
 
-        // Minimal (headline-only) only for high breadth — URI is high-value at lower breadth
+        // Minimal (URI-only) only for high breadth — at lower breadth, headlines earn their cost
         return breadth >= 8 ? Representation.Minimal : Representation.Compact;
     }
 
