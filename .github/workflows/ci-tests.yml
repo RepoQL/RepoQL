@@ -113,7 +113,8 @@ jobs:
         run: |
           for project in ${{ matrix.projects }}; do
             echo "::group::Testing $project"
-            dotnet test "$project" \
+            dotnet test \
+              --project "$project" \
               --configuration Release \
               --no-build \
               -- \
