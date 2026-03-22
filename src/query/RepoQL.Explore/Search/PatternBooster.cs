@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using RepoQL.Contracts.Search;
 
 namespace RepoQL.Explore.Search;
 

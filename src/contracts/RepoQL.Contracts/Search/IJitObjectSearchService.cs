@@ -1,4 +1,4 @@
-namespace RepoQL.Explore.Search;
+namespace RepoQL.Contracts.Search;
 
 /// <summary>
 /// JIT enrichment service. Computes ONNX embeddings for uncertain object candidates

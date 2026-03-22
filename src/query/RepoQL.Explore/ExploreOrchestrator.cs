@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Search;
 using RepoQL.Explore.Search;
 
 namespace RepoQL.Explore;

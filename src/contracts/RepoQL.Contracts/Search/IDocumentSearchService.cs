@@ -1,4 +1,4 @@
-namespace RepoQL.Explore.Search;
+namespace RepoQL.Contracts.Search;
 
 /// <summary>
 /// Result from document search including chunk scores for proximity boosting.

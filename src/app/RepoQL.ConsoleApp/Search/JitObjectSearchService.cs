@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Search;
 using RepoQL.Data.DuckDB;
 using RepoQL.Explore.Search;
 

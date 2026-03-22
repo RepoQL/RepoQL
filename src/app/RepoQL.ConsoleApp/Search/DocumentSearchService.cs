@@ -1,5 +1,5 @@
+using RepoQL.Contracts.Search;
 using RepoQL.Data.DuckDB;
-using RepoQL.Explore.Search;
 
 namespace RepoQL.ConsoleApp.Search;
 

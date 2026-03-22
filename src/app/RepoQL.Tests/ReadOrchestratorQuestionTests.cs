@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using RepoQL.Contracts;
 using RepoQL.Contracts.Inference;
+using RepoQL.Contracts.Search;
 using RepoQL.Explore;
 using RepoQL.Read;
 using RepoQL.Explore.Search;

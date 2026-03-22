@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using RepoQL.Contracts.Search;
 using RepoQL.Explore;
 using RepoQL.Explore.Search;
 

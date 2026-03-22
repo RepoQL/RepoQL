@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace RepoQL.Explore.Search;
+namespace RepoQL.Contracts.Search;
 
 /// <summary>
 /// Session-level cache for JIT embeddings computed during object search.

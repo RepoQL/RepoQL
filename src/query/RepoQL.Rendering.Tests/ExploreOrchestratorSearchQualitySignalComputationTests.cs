@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using FakeItEasy;
+using RepoQL.Contracts.Search;
 using RepoQL.Explore;
 using RepoQL.Explore.Search;
 

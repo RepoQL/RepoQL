@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Search;
 
 namespace RepoQL.Explore.Search;
 

@@ -25,7 +25,6 @@
     <ItemGroup>
       <ProjectReference Include="..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
       <ProjectReference Include="..\RepoQL.Embeddings\RepoQL.Embeddings.csproj" />
-      <ProjectReference Include="..\..\query\RepoQL.Explore\RepoQL.Explore.csproj" />
       <ProjectReference Include="..\..\infra\RepoQL.FileSystem\RepoQL.FileSystem.csproj" />
     </ItemGroup>
 

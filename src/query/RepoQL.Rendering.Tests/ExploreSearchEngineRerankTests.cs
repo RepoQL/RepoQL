@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using RepoQL.Contracts.Embeddings;
+using RepoQL.Contracts.Search;
 using RepoQL.Explore.Search;
 
 namespace RepoQL.Rendering.Tests;

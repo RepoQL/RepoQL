@@ -1,4 +1,4 @@
-namespace RepoQL.Explore.Search;
+namespace RepoQL.Contracts.Search;
 
 public interface IExploreCandidateService
 {

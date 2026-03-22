@@ -32,6 +32,7 @@ using RepoQL.Contracts.Inference;
 using RepoQL.Data.DuckDB;
 using RepoQL.Protocol;
 using RepoQL.Protocol.Transport;
+using RepoQL.Contracts.Search;
 using RepoQL.Explore;
 using RepoQL.Sandbox;
 using RepoQL.Read;

@@ -1,3 +1,5 @@
+using RepoQL.Contracts.Search;
+
 namespace RepoQL.Explore.Search;
 
 /// <summary>
