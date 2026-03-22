@@ -81,6 +81,13 @@ CREATE OR REPLACE MACRO sem_calibrate(sem, query_dim) AS (
     0), 1.0)
 );
 
+-- Cosine similarity calibrated to [0,1] in one step.
+-- Use instead of safe_cosine when you want model-independent scores.
+-- Dimension of vec_a determines the calibration parameters.
+CREATE OR REPLACE MACRO calibrated_cosine(vec_a, vec_b) AS (
+    sem_calibrate(safe_cosine(vec_a, vec_b), array_length(vec_a))
+);
+
 -- Minimum score separation between the top semantic result and the p90 tail
 -- before we trust semantic strongly for this query.
 CREATE OR REPLACE MACRO _sem_contrast_gap(query_dim) AS (

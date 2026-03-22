@@ -34,7 +34,7 @@ full_scores AS (
     SELECT
         de.uri, de.node_id, de.doc_id, de.chunk_index, de.start_byte, de.end_byte,
         'full' AS embedding_type,
-        safe_cosine(qv.vec, de.embedding) AS sem_score
+        calibrated_cosine(qv.vec, de.embedding) AS sem_score
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
     JOIN scope_uris su ON su.uri = de.uri
@@ -50,7 +50,7 @@ structure_scores AS (
     SELECT
         de.uri, de.node_id, de.doc_id, de.chunk_index, de.start_byte, de.end_byte,
         'structure' AS embedding_type,
-        safe_cosine(qv.vec, de.embedding) AS sem_score
+        calibrated_cosine(qv.vec, de.embedding) AS sem_score
     FROM query_vec qv
     JOIN document_embedding de ON de.embedding IS NOT NULL
     JOIN scope_uris su ON su.uri = de.uri

@@ -86,7 +86,7 @@ scored_objects AS (
         MAX(
             CASE
                 WHEN p.query_vec_f32 IS NOT NULL AND p.query_dim_value IS NOT NULL
-                THEN safe_cosine(p.query_vec_f32, de.embedding)
+                THEN calibrated_cosine(p.query_vec_f32, de.embedding)
                 ELSE NULL
             END
         ) AS chunk_sem

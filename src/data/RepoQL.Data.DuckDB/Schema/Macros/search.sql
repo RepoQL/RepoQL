@@ -161,7 +161,7 @@ scoring_candidates AS (
 scored AS (
     SELECT
         f.*,
-        safe_cosine(seed.embedding, f.embedding) AS sim_score,
+        calibrated_cosine(seed.embedding, f.embedding) AS sim_score,
         TRY_CAST(match_score(LOWER(COALESCE(seed.symbol_key, seed.search_key, '')), f.search_key) AS DOUBLE) AS bm25_score,
         0.0 AS xref_score
     FROM scoring_candidates f

@@ -151,7 +151,7 @@ chunk_pairs AS (
     SELECT
         de.uri,
         de.node_id,
-        safe_cosine(sc.embedding, de.embedding) AS similarity
+        calibrated_cosine(sc.embedding, de.embedding) AS similarity
     FROM document_embedding de
     CROSS JOIN seed_chunks sc
     CROSS JOIN seed_parts sp

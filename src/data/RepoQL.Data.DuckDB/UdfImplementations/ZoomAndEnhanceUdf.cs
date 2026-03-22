@@ -382,8 +382,8 @@ public sealed class ZoomAndEnhanceUdf(
                 var leftEmbedding = embeddings[i * 2];
                 var rightEmbedding = embeddings[i * 2 + 1];
 
-                var leftSemanticScore = leftEmbedding is null ? 0.0 : CosineSimilarity(queryEmbedding, leftEmbedding);
-                var rightSemanticScore = rightEmbedding is null ? 0.0 : CosineSimilarity(queryEmbedding, rightEmbedding);
+                var leftSemanticScore = leftEmbedding is null ? 0.0 : CalibratedCosine(queryEmbedding, leftEmbedding);
+                var rightSemanticScore = rightEmbedding is null ? 0.0 : CalibratedCosine(queryEmbedding, rightEmbedding);
                 var leftFinalScore = leftSemanticScore + (0.10 * TermCoverage(split.LeftRawText, queryTerms));
                 var rightFinalScore = rightSemanticScore + (0.10 * TermCoverage(split.RightRawText, queryTerms));
 
@@ -452,7 +452,7 @@ public sealed class ZoomAndEnhanceUdf(
             {
                 var node = embeddableNodes[i];
                 var embedding = embeddings[i];
-                var semanticScore = embedding is null ? 0.0 : CosineSimilarity(queryEmbedding, embedding);
+                var semanticScore = embedding is null ? 0.0 : CalibratedCosine(queryEmbedding, embedding);
                 var finalScore = semanticScore + (0.10 * TermCoverage(node.RawText ?? string.Empty, queryTerms));
 
                 node.Item = node.Item with
@@ -877,6 +877,28 @@ public sealed class ZoomAndEnhanceUdf(
         }
         var denom = Math.Sqrt(normA) * Math.Sqrt(normB);
         return denom > 0 ? dot / denom : 0.0;
+    }
+
+    /// <summary>
+    /// Cosine similarity calibrated to [0,1] based on embedding model dimension.
+    /// Same floor/range as SQL calibrated_cosine — model-independent scores.
+    /// </summary>
+    internal static double CalibratedCosine(float[] a, float[] b)
+    {
+        var raw = CosineSimilarity(a, b);
+        return CalibrateScore(raw, a.Length);
+    }
+
+    internal static double CalibrateScore(double raw, int dim)
+    {
+        var (floor, range) = dim switch
+        {
+            384 => (0.30, 0.60),
+            768 => (0.20, 0.60),
+            1024 => (0.03, 0.42),
+            _ => (0.10, 0.50),
+        };
+        return Math.Clamp((raw - floor) / range, 0.0, 1.0);
     }
 
     private static string EscapeSql(string value) => value.Replace("'", "''");
