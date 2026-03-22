@@ -1,17 +1,16 @@
 using System.Text.Json;
-using Google.Protobuf.WellKnownTypes;
 using RepoQL.Contracts;
 
 namespace RepoQL.Sandbox;
 
 /// <summary>
-/// Purpose: Map JSON output from the WASM JS evaluator to RawQueryResponse proto messages.
+/// Purpose: Map JSON output from the WASM JS evaluator to transport-agnostic TabularResult records.
 /// Complexity: Handles all JSON value types (scalar, object, array) with special vertical
 /// key-value formatting for single objects. Produces the same column/row structure as SQL queries.
 /// </summary>
 public static class JsonResultMapper
 {
-    public static RawQueryResponse MapToResponse(string? json)
+    public static TabularResult MapToResponse(string? json)
     {
         if (string.IsNullOrWhiteSpace(json))
             return EmptyResponse();
@@ -27,7 +26,7 @@ public static class JsonResultMapper
         };
     }
 
-    private static RawQueryResponse MapArray(JsonElement array)
+    private static TabularResult MapArray(JsonElement array)
     {
         var items = array.EnumerateArray().ToArray();
         if (items.Length == 0)
@@ -45,7 +44,7 @@ public static class JsonResultMapper
         return MapMixedArray(items);
     }
 
-    private static RawQueryResponse MapObject(JsonElement obj)
+    private static TabularResult MapObject(JsonElement obj)
     {
         var response = CreateResponse(
             ("property", "VARCHAR"),
@@ -54,15 +53,15 @@ public static class JsonResultMapper
         foreach (var property in obj.EnumerateObject())
         {
             response.Rows.Add(CreateRow(
-                Value.ForString(property.Name),
-                ToCellValue(property.Value)));
+                TabularValue.ForString(property.Name),
+                ToTabularValue(property.Value)));
         }
 
         response.RowCount = response.Rows.Count;
         return response;
     }
 
-    private static RawQueryResponse MapArrayOfObjects(JsonElement[] items)
+    private static TabularResult MapArrayOfObjects(JsonElement[] items)
     {
         var columns = items[0]
             .EnumerateObject()
@@ -78,15 +77,15 @@ public static class JsonResultMapper
 
             response.Rows.Add(CreateRow(columns.Select(column =>
                 valuesByName.TryGetValue(column.Name, out var value)
-                    ? ToCellValue(value)
-                    : Value.ForNull())));
+                    ? ToTabularValue(value)
+                    : TabularValue.Null)));
         }
 
         response.RowCount = response.Rows.Count;
         return response;
     }
 
-    private static RawQueryResponse MapArrayOfScalars(JsonElement[] items)
+    private static TabularResult MapArrayOfScalars(JsonElement[] items)
     {
         var response = CreateResponse(("value", InferDbType(items[0])));
 
@@ -97,18 +96,18 @@ public static class JsonResultMapper
         return response;
     }
 
-    private static RawQueryResponse MapMixedArray(JsonElement[] items)
+    private static TabularResult MapMixedArray(JsonElement[] items)
     {
         var response = CreateResponse(("value", "JSON"));
 
         foreach (var item in items)
-            response.Rows.Add(CreateRow(Value.ForString(item.GetRawText())));
+            response.Rows.Add(CreateRow(TabularValue.ForString(item.GetRawText())));
 
         response.RowCount = response.Rows.Count;
         return response;
     }
 
-    private static RawQueryResponse MapScalar(string columnName, JsonElement scalar)
+    private static TabularResult MapScalar(string columnName, JsonElement scalar)
     {
         var response = CreateResponse((columnName, InferDbType(scalar)));
         response.Rows.Add(CreateRow(ToScalarValue(scalar)));
@@ -116,26 +115,26 @@ public static class JsonResultMapper
         return response;
     }
 
-    private static RawQueryResponse EmptyResponse() => new()
+    private static TabularResult EmptyResponse() => new()
     {
         RowCount = 0
     };
 
-    private static RawQueryResponse CreateResponse(params (string Name, string DbType)[] columns)
+    private static TabularResult CreateResponse(params (string Name, string DbType)[] columns)
     {
-        var response = new RawQueryResponse();
+        var response = new TabularResult();
         foreach (var (name, dbType) in columns)
-            response.Columns.Add(new ColumnSchema { Name = name, DbType = dbType });
+            response.Columns.Add(new TabularColumn(name, dbType));
 
         return response;
     }
 
-    private static RowData CreateRow(params Value[] values) => CreateRow((IEnumerable<Value>)values);
+    private static TabularRow CreateRow(params TabularValue[] values) => CreateRow((IEnumerable<TabularValue>)values);
 
-    private static RowData CreateRow(IEnumerable<Value> values)
+    private static TabularRow CreateRow(IEnumerable<TabularValue> values)
     {
-        var row = new RowData();
-        row.Values.Add(values);
+        var row = new TabularRow();
+        row.Values.AddRange(values);
         return row;
     }
 
@@ -146,21 +145,21 @@ public static class JsonResultMapper
             or JsonValueKind.False
             or JsonValueKind.Null;
 
-    private static Value ToCellValue(JsonElement element) =>
+    private static TabularValue ToTabularValue(JsonElement element) =>
         IsScalar(element)
             ? ToScalarValue(element)
-            : Value.ForString(element.GetRawText());
+            : TabularValue.ForString(element.GetRawText());
 
-    private static Value ToScalarValue(JsonElement element) => element.ValueKind switch
+    private static TabularValue ToScalarValue(JsonElement element) => element.ValueKind switch
     {
-        JsonValueKind.Null => Value.ForNull(),
-        JsonValueKind.True => Value.ForBool(true),
-        JsonValueKind.False => Value.ForBool(false),
+        JsonValueKind.Null => TabularValue.Null,
+        JsonValueKind.True => TabularValue.ForBool(true),
+        JsonValueKind.False => TabularValue.ForBool(false),
         JsonValueKind.Number => element.TryGetInt64(out var integer)
-            ? Value.ForNumber(integer)
-            : Value.ForNumber(element.GetDouble()),
-        JsonValueKind.String => Value.ForString(element.GetString() ?? string.Empty),
-        _ => Value.ForString(element.GetRawText())
+            ? TabularValue.ForNumber(integer)
+            : TabularValue.ForNumber(element.GetDouble()),
+        JsonValueKind.String => TabularValue.ForString(element.GetString() ?? string.Empty),
+        _ => TabularValue.ForString(element.GetRawText())
     };
 
     private static string InferDbType(JsonElement element) => element.ValueKind switch

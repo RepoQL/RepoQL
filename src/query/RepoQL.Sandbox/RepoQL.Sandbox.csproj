@@ -5,11 +5,12 @@
         <Nullable>enable</Nullable>
     </PropertyGroup>
     <ItemGroup>
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
         <PackageReference Include="Svg.Skia" />
         <PackageReference Include="Wasmtime" />
     </ItemGroup>
     <ItemGroup>
-        <ProjectReference Include="..\..\infra\RepoQL.Protocol\RepoQL.Protocol.csproj" />
+        <ProjectReference Include="..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
     </ItemGroup>
     <ItemGroup>
         <EmbeddedResource Include="..\..\sandbox\wasm\dist\quickjs-evaluator.wasm" LogicalName="quickjs-evaluator.wasm" Condition="Exists('..\..\sandbox\wasm\dist\quickjs-evaluator.wasm')" />

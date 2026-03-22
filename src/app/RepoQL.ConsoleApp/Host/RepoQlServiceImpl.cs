@@ -428,7 +428,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             }
             else
             {
-                resp = JsonResultMapper.MapToResponse(result.JsonOutput);
+                resp = JsonResultMapper.MapToResponse(result.JsonOutput).ToProto();
                 resp.RawJsOutput = result.JsonOutput ?? string.Empty;
             }
 

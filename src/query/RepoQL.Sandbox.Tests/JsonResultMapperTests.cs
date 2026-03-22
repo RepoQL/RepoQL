@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using Google.Protobuf.WellKnownTypes;
 using RepoQL.Contracts;
 
 namespace RepoQL.Sandbox.Tests;
@@ -31,8 +30,8 @@ public sealed class JsonResultMapperTests
         response.Columns[0].Name.Should().Be("result");
         response.Rows.Should().HaveCount(1);
         response.RowCount.Should().Be(1);
-        response.Rows[0].Values[0].KindCase.Should().Be(Value.KindOneofCase.StringValue);
-        response.Rows[0].Values[0].StringValue.Should().Be("hello");
+        response.Rows[0].Values[0].Should().BeOfType<TabularValue.StringValue>()
+            .Which.Value.Should().Be("hello");
     }
 
     [Test]
@@ -43,8 +42,8 @@ public sealed class JsonResultMapperTests
         response.Columns.Should().HaveCount(1);
         response.Columns[0].Name.Should().Be("result");
         response.Rows.Should().HaveCount(1);
-        response.Rows[0].Values[0].KindCase.Should().Be(Value.KindOneofCase.NumberValue);
-        response.Rows[0].Values[0].NumberValue.Should().Be(42);
+        response.Rows[0].Values[0].Should().BeOfType<TabularValue.NumberValue>()
+            .Which.Value.Should().Be(42);
     }
 
     [Test]
@@ -55,8 +54,8 @@ public sealed class JsonResultMapperTests
         response.Columns.Should().HaveCount(1);
         response.Columns[0].Name.Should().Be("result");
         response.Rows.Should().HaveCount(1);
-        response.Rows[0].Values[0].KindCase.Should().Be(Value.KindOneofCase.BoolValue);
-        response.Rows[0].Values[0].BoolValue.Should().BeTrue();
+        response.Rows[0].Values[0].Should().BeOfType<TabularValue.BoolValue>()
+            .Which.Value.Should().BeTrue();
     }
 
     [Test]
@@ -68,10 +67,10 @@ public sealed class JsonResultMapperTests
         response.Rows.Should().HaveCount(2);
         response.RowCount.Should().Be(2);
 
-        response.Rows[0].Values[0].StringValue.Should().Be("a");
-        response.Rows[0].Values[1].NumberValue.Should().Be(1);
-        response.Rows[1].Values[0].StringValue.Should().Be("b");
-        response.Rows[1].Values[1].StringValue.Should().Be("x");
+        GetString(response, 0, 0).Should().Be("a");
+        GetNumber(response, 0, 1).Should().Be(1);
+        GetString(response, 1, 0).Should().Be("b");
+        GetString(response, 1, 1).Should().Be("x");
     }
 
     [Test]
@@ -83,8 +82,8 @@ public sealed class JsonResultMapperTests
         response.Rows.Should().HaveCount(2);
         response.RowCount.Should().Be(2);
 
-        response.Rows[0].Values.Select(value => value.NumberValue).Should().Equal(1, 2);
-        response.Rows[1].Values.Select(value => value.NumberValue).Should().Equal(3, 4);
+        response.Rows[0].Values.Select(GetNumberValue).Should().Equal(1, 2);
+        response.Rows[1].Values.Select(GetNumberValue).Should().Equal(3, 4);
     }
 
     [Test]
@@ -95,8 +94,8 @@ public sealed class JsonResultMapperTests
         response.Columns.Select(column => column.Name).Should().Equal("property", "value");
         response.Rows.Should().HaveCount(2);
         response.RowCount.Should().Be(2);
-        response.Rows[0].Values[0].StringValue.Should().Be("a");
-        response.Rows[1].Values[0].StringValue.Should().Be("b");
+        GetString(response, 0, 0).Should().Be("a");
+        GetString(response, 1, 0).Should().Be("b");
     }
 
     [Test]
@@ -108,7 +107,7 @@ public sealed class JsonResultMapperTests
         response.Columns[0].Name.Should().Be("value");
         response.Rows.Should().HaveCount(3);
         response.RowCount.Should().Be(3);
-        response.Rows.Select(row => row.Values[0].NumberValue).Should().Equal(1, 2, 3);
+        response.Rows.Select(row => GetNumberValue(row.Values[0])).Should().Equal(1, 2, 3);
     }
 
     [Test]
@@ -119,16 +118,25 @@ public sealed class JsonResultMapperTests
         response.Columns.Select(column => column.Name).Should().Equal("property", "value");
         response.Rows.Should().HaveCount(2);
 
-        response.Rows[0].Values[0].StringValue.Should().Be("a");
-        response.Rows[0].Values[1].StringValue.Should().Be("""{"nested":1}""");
-        response.Rows[1].Values[0].StringValue.Should().Be("b");
-        response.Rows[1].Values[1].StringValue.Should().Be("[1,2]");
+        GetString(response, 0, 0).Should().Be("a");
+        GetString(response, 0, 1).Should().Be("""{"nested":1}""");
+        GetString(response, 1, 0).Should().Be("b");
+        GetString(response, 1, 1).Should().Be("[1,2]");
     }
 
-    private static void AssertEmptyResponse(RawQueryResponse response)
+    private static void AssertEmptyResponse(TabularResult response)
     {
         response.Columns.Should().BeEmpty();
         response.Rows.Should().BeEmpty();
         response.RowCount.Should().Be(0);
     }
+
+    private static string GetString(TabularResult response, int row, int col)
+        => ((TabularValue.StringValue)response.Rows[row].Values[col]).Value;
+
+    private static double GetNumber(TabularResult response, int row, int col)
+        => ((TabularValue.NumberValue)response.Rows[row].Values[col]).Value;
+
+    private static double GetNumberValue(TabularValue cell)
+        => ((TabularValue.NumberValue)cell).Value;
 }
