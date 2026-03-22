@@ -55,11 +55,14 @@ jobs:
       - name: Build solution (Release)
         run: dotnet build RepoQL.sln --configuration Release --no-restore --nologo
 
+      - name: Package test binaries
+        run: tar -cf test-bins.tar -C artifacts/bin $(ls artifacts/bin | grep Tests)
+
       - name: Upload test binaries
         uses: actions/upload-artifact@v4
         with:
           name: test-bins
-          path: artifacts/bin/*Tests*/
+          path: test-bins.tar
           retention-days: 1
 
   test:
@@ -124,7 +127,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: test-bins
-          path: test-bins/
+
+      - name: Extract test binaries
+        run: mkdir -p test-bins && tar -xf test-bins.tar -C test-bins && rm test-bins.tar
+
 
       - name: Expose GitHub Actions runtime for TUnit HTML reports
         uses: actions/github-script@v7
