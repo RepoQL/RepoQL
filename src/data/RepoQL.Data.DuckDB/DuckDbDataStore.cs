@@ -18,7 +18,7 @@ namespace RepoQL.Data.DuckDB;
 /// All database access should go through Read/WriteTransaction methods.
 /// Includes automatic detection and recovery from database corruption.
 /// </summary>
-public sealed class DuckDbDataStore : IReentrantReader, IDisposable
+public sealed class DuckDbDataStore : IReentrantReader, RepoQL.Contracts.Data.IGraphReader, IDisposable
 {
     private static readonly ActivitySource ActivitySource = new("RepoQL.DuckDB");
 

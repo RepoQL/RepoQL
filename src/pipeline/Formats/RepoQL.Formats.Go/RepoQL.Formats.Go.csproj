@@ -14,7 +14,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\..\contracts\RepoQL.Contracts\RepoQL.Contracts.csproj" />
-    <ProjectReference Include="..\..\..\data\RepoQL.Data.DuckDB\RepoQL.Data.DuckDB.csproj" />
     <ProjectReference Include="..\..\RepoQL.Indexing\RepoQL.Indexing.csproj" />
   </ItemGroup>
 
