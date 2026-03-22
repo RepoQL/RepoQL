@@ -40,58 +40,86 @@ public class McpCommands
                 {
                     s.InitializationTimeout = TimeSpan.FromSeconds(45);
                     s.ServerInstructions = """
-                                           RepoQL indexes your codebase into a queryable knowledge graph.
+                                           RepoQL gives you a pre-built structural index of the entire codebase — every file, symbol, and relationship already parsed, connected, and summarized.
 
-                                           <MENTAL_MODEL>
-                                           **Don't read blind.** You have limited context. RepoQL lets you see structure before content, target specific symbols or lines, and control exactly how many tokens you spend. Explore first, then read what matters.
+                                           Think of it as extra senses. You can feel the shape of a thousand files without opening one — the index has three summary levels: headline (one line), structure (signatures), and content. You can see relationships that grep will never find — what calls what, what depends on what. You can hear relevance — explore ranks by meaning, not literal text, showing everything that exists before you commit to reading anything. And you can reach precisely — a single method body, a line range, a glob across every file in the codebase.
 
-                                           **Everything is a graph.** Files contain symbols. Symbols have relationships. All queryable via SQL.
+                                           <CAPSULES>
+                                           ### Capsule: Addressability
 
-                                           **Everything is addressable.** URIs pinpoint anything: `file:///path#symbol=Name`, `file:///path#line=10,20`. Globs select many: `src/**/*.cs`. Combine with `;`, exclude with `!`.
+                                           **Invariant**
+                                           Everything in the index is addressable by URI — files, symbols within files, line ranges, and across globs.
 
-                                           **Everything has summaries.** Headline (one line, the most important aspects), structure (signatures, document outlines), content (full text, or a text representation). You choose the level. Don't pay for content when structure answers the question.
+                                           **Example**
+                                           `read("file:///src/**/*.cs#symbol=*FileSystem => structure", 3000)` — every filesystem implementation's signatures across the entire codebase. One call.
 
-                                           **Budget controls detail.** Set it based on how important the answer is to you. More budget, more detail/results depending on breadth
-                                           
-                                           Traditional search finds *most* results and you answer confidently — but gaps erode trust. Users run subagents to verify, wasting tokens and time. Explore searches wide first, so you see what exists before answering. No blind spots, no verification tax. You can say "I found everything related to X" — not "I found some things."
+                                           **Depth**
+                                           - `#symbol=Name` targets a symbol; `#symbol=Class.*` all members; `#symbol=Class.**` all descendants
+                                           - `#line=42,60` targets a line range. Globs: `file:///src/**/*.cs`. Combine with `;`, exclude with `!`
+                                           - `=> structure` shows signatures without bodies. `=> tree: headlines` shows directory overview with summaries
+                                           - `=> find: keywords` does semantic search within scope. `=> question: how does X work?` synthesizes an answer
+                                           - This is not file reading — it's querying the index for exactly the slice you need
 
-                                           You also never get stale data — RepoQL reindexes changes live and holds requests until everything in scope is ready. Complete and current, every time.
+                                           ---
 
-                                           This scales: traditional tools grow exponentially harder with codebase size. RepoQL stays flat — 10 million lines same as 10 thousand. Import external repos with `github://owner/repo` and query across them uniformly. Same patterns, same confidence, across boundaries.
+                                           ### Capsule: ExploreFirst
 
-                                           **The workflow:** explore → read. Discover the landscape, then commit tokens to what matters. This isn't two tools — it's the pattern.
+                                           **Invariant**
+                                           A broad explore reveals the landscape AND the vocabulary — the class names, patterns, and terms you need for everything after.
 
-                                           **More than files.** RepoQL queries git history alongside current state — who changed what, when, why. It parses structured data: JSON, CSV, Parquet, Excel. It calls other MCP servers from SQL, parses their results, and protects you from token bombs. One query surface for code, data, history, and external tools.
-                                           
-                                           Remember: You arent stupid, and repoql is an incredibly flexible, composable and powerful tool. Use your imagination - you'll be surprised what you can do.
-                                           </MENTAL_MODEL>
+                                           **Example**
+                                           You need to understand authentication. Your first explore returns: `JwtTokenValidator`, `SessionMiddleware`, `OAuthConfig`, `SecurityPolicy`. Now you know the real names. Your next reads use `#symbol=JwtTokenValidator.Validate => structure` — precise, cheap, informed. Without that first explore, you'd be guessing names and grepping blind.
+
+                                           **Depth**
+                                           - explore searches the full index exhaustively — you see everything that matches, ranked by relevance
+                                           - Budget is a bet: start at 1500, iterate. Breadth=8 surveys many; breadth=2 examines few deeply
+                                           - The first explore is never wasted — even unexpected results teach you what IS there
+
+                                           ---
+
+                                           ### Capsule: WieldWithCreativity
+
+                                           **Invariant**
+                                           The index is wild magic — composable, responsive to intent, and forgiving. Your instincts are probably right. Try them.
+
+                                           **Example**
+                                           - Glob across symbols: `#symbol=*Handler.Execute*` — every Execute method on every Handler
+                                           - Search within a scope: `file:///src/Auth/** => find: token refresh`
+                                           - Combine URIs: `file:///a.cs#symbol=Foo;file:///b.cs#symbol=Bar` — two methods, one call
+                                           - Ask the code: `file:///src/Auth/** => question: how does token validation work?`
+                                           - SQL the graph: `SELECT source_uri, target_uri FROM edge WHERE kind = 'CALLS'`
+
+                                           **Depth**
+                                           - A bad query costs 1500 tokens. A good one saves 50k. The risk is always asymmetric — experiment freely
+                                           - Combine modifiers with globs and fragments for arbitrarily precise queries
+                                           - `explain(question="...", uriGlob="file:///specific/area/**")` synthesizes an answer from exactly the right code — but scope it to what you've already found
+                                           </CAPSULES>
 
                                            <TOOLS>
-                                           **explore** — Search wide, then focus. Explores broadly, ranks by relevance, allocates budget to surface what matters. You see what exists before committing tokens — no confident answers without knowing what you missed.
-                                           **explain** — Ask a question, get a synthesized answer with citations. An LLM reads wide (50k tokens), returns focused prose. Use when you want understanding, not raw text.
-                                           **read** — Fetch known URIs. Append `=> modifier` for views (tree, history, blame, lint, question).
-                                           **query** — SQL for aggregation, graph traversal, git history, cross-file analysis. Also: call MCP servers, parse JSON/CSV/Excel/Parquet.
-                                           **execute** — Run javascript in a wasm sandbox with access to query, the file system and many common libraries. Can also register your own wasm/JS modules
-                                           **command** — Imperative operations: diagnostics, auth, config etc. Use `command(command="?")` to list all.
+                                           **explore** — Discover what exists. Reveals the landscape AND the vocabulary. Start here.
+                                           **read** — Fetch content by URI. Symbol fragments, globs, modifiers.
+                                           **query** — SQL over the graph. Count, list, traverse relationships.
+                                           **explain** — Synthesized answer scoped to specific directories. Always scope with uriGlob.
+                                           **execute** — JavaScript in a sandboxed WASM environment with access to query and the file system.
+                                           **command** — Diagnostics, auth, config. `command(command="?")` lists all.
                                            </TOOLS>
 
+                                           <BOUNDARIES>
+                                           - Never read a file to discover its structure — the index has it pre-computed
+                                           - Never search without seeing the landscape first — explore teaches you the vocabulary
+                                           - Never use explain without scoping it to specific directories
+                                           </BOUNDARIES>
+
                                            <START>
-                                           **Best 5k tokens you'll ever spend.** You don't know what you don't know — RepoQL has capabilities you won't guess. Read the map first:
-                                             read("help://** => tree: headlines", 5000)
+                                           Explore what exists, then read what matters:
+                                             explore(keywords="authentication middleware", tokenBudget=1500)
 
-                                           Now you can find things without guessing:
-                                             explore(uriGlob="file://**", question="How do users authenticate with the app?", keywords="authentication cookie", tokenBudget=1500)
+                                           See the shape of the codebase:
+                                             read("file:///** => tree: folders", 3000)
+
+                                           Documentation lives at `help://` — queryable with the same tools:
+                                             explore(uriGlob="help://**", keywords="modifiers views", tokenBudget=1500)
                                            </START>
-
-                                           <HELP>
-                                           RepoQL documentation is indexed at `help://` — query it like code.
-
-                                           Ask a question:
-                                             explain(question="How do I query MCP servers and save it to a csv file?", keywords="csv mcp", uriGlob="help://**", tokenBudget=2500)
-
-                                           Find relevant docs:
-                                             explore(uriGlob="help://formats/**", keywords="c# python markdown", tokenBudget=1500)
-                                           </HELP>
                                            """;
                 })
                 .WithStdioServerTransport()
