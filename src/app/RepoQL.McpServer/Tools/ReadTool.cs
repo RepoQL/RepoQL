@@ -33,7 +33,7 @@ public sealed class ReadTool(
 
     private const string ReadInstructions = """
         <WHY>
-        Read is how you reach — precisely, into any file, for exactly the slice you need. A single method body, a line range, a glob across every file in the codebase. This is not file reading — it's querying the index for a precise cut.
+        The index has already parsed everything. Read queries it for exactly the slice you need — a single method body, a line range, a pattern across every file in the codebase. This is not file reading — it's precision.
 
         Three symbols across three files? One read call, just the bodies, no waste. The index is wild magic — composable, responsive to intent, and forgiving. Combine modifiers with globs and fragments for arbitrarily precise queries. Your instincts are probably right — try them.
         </WHY>

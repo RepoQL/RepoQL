@@ -27,7 +27,7 @@ internal sealed class QueryTool(QueryExecutor queryExecutor, SelfTestRunner self
 
     private const string QueryInstructions = """
         <CONCEPT>
-        Query is how you compute — DuckDB SQL over the entire indexed graph. Count, list, traverse relationships, join with git history, parse data files, call external MCP servers. One query surface for code, data, history, and external tools.
+        The index has already parsed everything. Query gives you DuckDB SQL over the entire graph — count, list, traverse relationships, join with git history, parse data files, call external MCP servers. One query surface for code, data, history, and external tools.
 
         The index is wild magic — every operation returns a table, and tables compose with SQL. CTEs, LATERAL joins, recursive traversals — if you can express it in SQL, you can compute it. Your instincts are probably right — try them.
         </CONCEPT>
