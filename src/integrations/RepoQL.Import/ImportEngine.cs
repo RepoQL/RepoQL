@@ -85,6 +85,7 @@ public sealed class ImportEngine : IImportEngine
             IndexedCount = result.IndexedCount,
             FailedCount = result.FailedCount,
             OperationId = result.OperationId,
+            Operation = result.Operation,
             ElapsedMs = sw.ElapsedMilliseconds
         };
     }

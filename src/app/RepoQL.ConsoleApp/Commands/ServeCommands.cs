@@ -41,6 +41,7 @@ using Serilog;
 using Spectre.Console;
 using Microsoft.Extensions.Configuration;
 using RepoQL.Client.Helpers;
+using RepoQL.Import;
 
 namespace RepoQL.ConsoleApp.Commands;
 
@@ -197,6 +198,11 @@ internal class HostCommands(IAnsiConsole console)
             builder.Services.AddSingleton<RepoQL.Explain.ExplainEngine>();
             builder.Services.AddSingleton<RepoQL.Query.IQueryDataSource, DuckDbQueryDataSource>();
             builder.Services.AddSingleton<RepoQL.Query.QueryEngine>();
+
+            // Import engine — delegates to RepositoryImporterAdapter and SarifImporterAdapter
+            builder.Services.AddSingleton<IRepositoryImporter, RepositoryImporterAdapter>();
+            builder.Services.AddSingleton<ISarifImporter, SarifImporterAdapter>();
+            builder.Services.AddSingleton<IImportEngine, ImportEngine>();
 
             // gRPC already configured above
             builder.Services.AddSingleton<HostMetrics>();

@@ -19,17 +19,16 @@ using RepoQL.Contracts.Inference;
 using RepoQL.Contracts.Models;
 using RepoQL.Data.DuckDB;
 using RepoQL.FileSystem.Physical;
-using RepoQL.Indexing.FileSystems;
-using RepoQL.Indexing.FileSystems.Imports;
 using RepoQL.Indexing.Hosting;
-using RepoQL.Sarif;
 using RepoQL.Explore;
 using RepoQL.Read;
 using RepoQL.Sandbox;
 using RepoQL.Query;
+using RepoQL.Import;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoStageStatus = RepoQL.Contracts.StageStatus;
+using EngineImportRequest = RepoQL.Import.ImportRequest;
 
 namespace RepoQL.ConsoleApp.Host;
 
@@ -38,9 +37,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly DuckDbDataStore _db;
     private readonly RepositoryConfiguration repoConfig;
     private readonly IIndexingCoordinator coordinator;
-    private readonly IFileSystemImportService importService;
-    private readonly ISarifImportService _sarifImportService;
-    private readonly ICompositeFileSystemManager _mountManager;
+    private readonly IImportEngine _importEngine;
     private readonly DocumentPreviewService _previewService;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IEmbeddingProvider? _embeddingProvider;
@@ -88,9 +85,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         DuckDbDataStore db,
         RepositoryConfiguration repoConfig,
         IIndexingCoordinator coordinator,
-        IFileSystemImportService importService,
-        ISarifImportService sarifImportService,
-        ICompositeFileSystemManager mountManager,
+        IImportEngine importEngine,
         DocumentPreviewService previewService,
         IHostApplicationLifetime hostLifetime,
         ExploreOrchestrator exploreOrchestrator,
@@ -123,9 +118,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _moduleRegistry = moduleRegistry;
         _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
-        this.importService = importService ?? throw new ArgumentNullException(nameof(importService));
-        _sarifImportService = sarifImportService ?? throw new ArgumentNullException(nameof(sarifImportService));
-        _mountManager = mountManager ?? throw new ArgumentNullException(nameof(mountManager));
+        _importEngine = importEngine ?? throw new ArgumentNullException(nameof(importEngine));
         _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
         _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
@@ -1171,96 +1164,53 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         return new WaitForPipelineResponse { Status = ToProtoStatus(snapshot) };
     }
 
-    public override async Task<ImportResponse> ImportRepository(ImportRequest request, ServerCallContext context)
+    public override async Task<ImportResponse> ImportRepository(Contracts.ImportRequest request, ServerCallContext context)
     {
         var sw = Stopwatch.StartNew();
         var uri = request.Uri?.Trim() ?? "";
-        var isRemoval = uri.StartsWith('-');
-        var displayUri = isRemoval ? uri.Substring(1).Trim() : uri;
-
-        _logger.LogInformation("[Import] Starting {Operation} for {Uri}", isRemoval ? "removal" : "import", displayUri);
 
         try
         {
-            if (string.IsNullOrWhiteSpace(request.Uri))
+            var engineRequest = new EngineImportRequest
             {
-                _logger.LogWarning("[Import] Rejected: empty URI");
-                throw new RpcException(new Status(StatusCode.InvalidArgument, "uri is required."));
-            }
+                Uri = uri,
+                Analyze = request.Analyze
+            };
 
-            // Handle removal with '-' prefix
-            if (isRemoval)
-            {
-                _logger.LogInformation("[Import] Delegating to removal handler for {Uri}", displayUri);
-                return await RemoveImportAsync(displayUri, context).ConfigureAwait(false);
-            }
-
-            if (!RepoUri.TryParse(uri, out var repoUri))
-            {
-                _logger.LogWarning("[Import] Rejected: invalid URI format '{Uri}'", uri);
-                throw new RpcException(new Status(StatusCode.InvalidArgument, $"Invalid Repo URI '{uri}'."));
-            }
-
-            _logger.LogInformation("[Import] Parsed URI: scheme={Scheme}, authority={Authority}, path={Path}",
-                repoUri!.Scheme, repoUri.Authority, repoUri.AbsolutePath);
-
-            if (string.Equals(repoUri.Scheme, "sarif", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogDebug("[Import] Routing to SARIF import service");
-                return await ImportSarifAsync(repoUri, context, sw).ConfigureAwait(false);
-            }
-
-            // Clone/sync the repository and get the tracking operation
-            _logger.LogDebug("[Import] Starting repository clone/sync...");
-            var importStart = sw.ElapsedMilliseconds;
-            Contracts.IOperation? operation = null;
+            Import.ImportResult result;
             try
             {
-                var result = await importService.ImportAsync(repoUri, request.Analyze, context.CancellationToken).ConfigureAwait(false);
-                operation = result.Operation;
-                _logger.LogInformation("[Import] Clone/sync completed ({ElapsedMs}ms), operation={OpId}",
-                    sw.ElapsedMilliseconds - importStart, operation?.Id ?? "(none)");
+                result = await _importEngine.ExecuteAsync(engineRequest, context.CancellationToken).ConfigureAwait(false);
             }
             catch (InvalidOperationException ex)
             {
-                _logger.LogError(ex, "[Import] Clone/sync failed with InvalidOperationException after {ElapsedMs}ms", sw.ElapsedMilliseconds - importStart);
                 throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[Import] Clone/sync failed with exception after {ElapsedMs}ms", sw.ElapsedMilliseconds - importStart);
-                throw new RpcException(new Status(StatusCode.Internal, ex.Message));
-            }
 
-            // Flush WAL so follow-up queries see the imported data immediately
-            _db.TryCheckpoint();
+            if (!result.Success)
+            {
+                var code = result.Action == ImportAction.Failed ? StatusCode.InvalidArgument : StatusCode.Internal;
+                throw new RpcException(new Status(code, result.Error ?? "Import failed."));
+            }
 
             var snapshot = coordinator.GetPipelineStatus();
-            _logger.LogInformation("[Import] Completed successfully for {Uri} in {ElapsedMs}ms", uri, sw.ElapsedMilliseconds);
+            _logger.LogInformation("[Import] Completed {Action} for {Uri} in {ElapsedMs}ms",
+                result.Action, uri, sw.ElapsedMilliseconds);
 
-            var response = new ImportResponse { Status = ToProtoStatus(snapshot) };
-            var opProgress = operation?.Progress;
-            if (opProgress is not null)
+            var response = new ImportResponse
             {
-                response.TotalFiles = opProgress.TotalFiles;
-                response.IndexedCount = opProgress.IndexedCount;
-                response.EmbeddedCount = opProgress.EmbeddedCount;
-                response.FailedCount = opProgress.FailedCount;
-            }
+                Status = ToProtoStatus(snapshot),
+                TotalFiles = result.TotalFiles,
+                IndexedCount = result.IndexedCount,
+                FailedCount = result.FailedCount,
+                Message = result.Message
+            };
 
-            if (operation is not null)
-            {
-                response.OperationId = operation.Id;
-                var fileCount = opProgress?.TotalFiles ?? 0;
-                response.Message = $"Importing {fileCount} files from {displayUri} - operation {operation.Id}";
-            }
-            else
-            {
-                _logger.LogWarning("[Import] No operation created - UriRegistry may not be configured");
-                response.Message = $"Import started for {displayUri}. Operation tracking is unavailable.";
-            }
+            if (result.OperationId is not null)
+                response.OperationId = result.OperationId;
 
             // Preserve existing post-import embedding refresh behavior without blocking the import response.
+            var operation = result.Operation;
             if (operation is not null && _embeddingProvider is { Enabled: true } provider)
             {
                 var db = _db;
@@ -1291,218 +1241,19 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         }
         catch (RpcException)
         {
-            throw; // Already logged
+            throw;
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("[Import] Cancelled for {Uri} after {ElapsedMs}ms", displayUri, sw.ElapsedMilliseconds);
+            _logger.LogWarning("[Import] Cancelled for {Uri} after {ElapsedMs}ms", uri, sw.ElapsedMilliseconds);
             throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[Import] Unexpected error for {Uri} after {ElapsedMs}ms", displayUri, sw.ElapsedMilliseconds);
+            _logger.LogError(ex, "[Import] Unexpected error for {Uri} after {ElapsedMs}ms", uri, sw.ElapsedMilliseconds);
             throw new RpcException(new Status(StatusCode.Internal, $"Import failed: {ex.Message}"));
         }
     }
-
-    private async Task<ImportResponse> ImportSarifAsync(
-        RepoUri repoUri,
-        ServerCallContext context,
-        Stopwatch sw)
-    {
-        var sarifPath = ResolveSarifFilePath(repoUri);
-        _logger.LogInformation("[Import:SARIF] Importing findings from {Path}", sarifPath);
-
-        RepoQL.Sarif.Models.SarifImportResult importResult;
-        try
-        {
-            importResult = await _sarifImportService.ImportAsync(sarifPath, context.CancellationToken).ConfigureAwait(false);
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "[Import:SARIF] Import rejected for {Path}", sarifPath);
-            throw new RpcException(new Status(StatusCode.InvalidArgument, ex.Message));
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[Import:SARIF] Import failed for {Path}", sarifPath);
-            throw new RpcException(new Status(StatusCode.Internal, ex.Message));
-        }
-
-        _db.TryCheckpoint();
-        var snapshot = coordinator.GetPipelineStatus();
-        var message = FormatSarifImportMessage(importResult);
-        _logger.LogInformation("[Import:SARIF] Completed in {ElapsedMs}ms with {Total} findings", sw.ElapsedMilliseconds, importResult.TotalFindings);
-
-        return new ImportResponse
-        {
-            Status = ToProtoStatus(snapshot),
-            Message = message
-        };
-    }
-
-    private string ResolveSarifFilePath(RepoUri repoUri)
-    {
-        var decodedPath = Uri.UnescapeDataString(repoUri.AbsolutePath ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(decodedPath))
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "sarif:// URI must include a file path."));
-
-        var normalized = decodedPath.Replace('\\', '/');
-        if (normalized.StartsWith("/./", StringComparison.Ordinal))
-            normalized = normalized[3..];
-        else if (normalized.StartsWith("./", StringComparison.Ordinal))
-            normalized = normalized[2..];
-
-        // file:///C:/... style path embedded in sarif URI absolute path.
-        if (normalized.Length >= 3 && normalized[0] == '/' && char.IsLetter(normalized[1]) && normalized[2] == ':')
-            normalized = normalized[1..];
-
-        var candidate = normalized.Replace('/', Path.DirectorySeparatorChar);
-        if (Path.IsPathRooted(candidate))
-            return Path.GetFullPath(candidate);
-
-        return Path.GetFullPath(Path.Combine(repoConfig.Path, candidate));
-    }
-
-    private static string FormatSarifImportMessage(RepoQL.Sarif.Models.SarifImportResult result)
-    {
-        var sb = new StringBuilder();
-        if (result.Sources.Count == 1)
-            sb.AppendLine($"Imported {result.TotalFindings} findings from {result.Sources[0].Source}");
-        else
-            sb.AppendLine($"Imported {result.TotalFindings} findings from {result.Sources.Count} sources");
-
-        foreach (var source in result.Sources.OrderBy(s => s.Source, StringComparer.Ordinal))
-        {
-            sb.AppendLine($"{source.Source}: {source.Total} findings");
-            sb.AppendLine($"  {source.Resolved} resolved to indexed files, {source.Unresolved} unresolved");
-            sb.AppendLine($"  {source.New} new, {source.Updated} updated, {source.Unchanged} unchanged, {source.Expired} expired");
-        }
-
-        if (result.Warnings.Count > 0)
-        {
-            sb.AppendLine("Warnings:");
-            foreach (var warning in result.Warnings)
-                sb.AppendLine($"- {warning}");
-        }
-
-        return sb.ToString().TrimEnd();
-    }
-
-    private Task<ImportResponse> RemoveImportAsync(string uri, ServerCallContext context)
-    {
-        var sw = Stopwatch.StartNew();
-
-        if (string.IsNullOrWhiteSpace(uri))
-        {
-            _logger.LogWarning("[Import:Remove] Rejected: empty URI");
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "URI is required for removal."));
-        }
-
-        _logger.LogDebug("[Import:Remove] Searching for mount matching '{Uri}'", uri);
-
-        // Find matching mount by source URI or mount ID pattern
-        var mounts = _db.GetAllMounts();
-        _logger.LogDebug("[Import:Remove] Found {Count} total mounts to search", mounts.Count);
-
-        var matchingMount = mounts.FirstOrDefault(m =>
-            m.SourceUri.Equals(uri, StringComparison.OrdinalIgnoreCase) ||
-            m.Id.Contains(uri.Replace("://", ":"), StringComparison.OrdinalIgnoreCase));
-
-        if (matchingMount is null)
-        {
-            _logger.LogWarning("[Import:Remove] No mount found matching '{Uri}'. Available mounts: {Mounts}",
-                uri, string.Join(", ", mounts.Select(m => m.Id)));
-            throw new RpcException(new Status(StatusCode.NotFound, $"No import found matching: {uri}"));
-        }
-
-        _logger.LogInformation("[Import:Remove] Found mount {MountId} (source: {SourceUri}, local: {LocalPath})",
-            matchingMount.Id, matchingMount.SourceUri, matchingMount.LocalPath);
-
-        // Build URI pattern for matching documents
-        var docPattern = string.IsNullOrEmpty(matchingMount.Authority)
-            ? $"{matchingMount.Scheme}:///{matchingMount.PathPrefix}%"
-            : $"{matchingMount.Scheme}://{matchingMount.Authority}/{matchingMount.PathPrefix}%";
-
-        _logger.LogDebug("[Import:Remove] Querying documents with pattern '{Pattern}'", docPattern);
-
-        // Get all document URIs matching this mount, then delete each using DeleteArtifact
-        var docUris = _db.Read(
-            $"SELECT uri FROM node WHERE kind = 'document' AND uri LIKE '{docPattern.Replace("'", "''")}'",
-            r => r.GetString(0));
-
-        _logger.LogInformation("[Import:Remove] Found {Count} documents to delete", docUris.Count);
-
-        var deleteStart = sw.ElapsedMilliseconds;
-        var deleted = 0;
-        foreach (var docUri in docUris)
-        {
-            if (RepoUri.TryParse(docUri, out var repoUri))
-            {
-                _db.DeleteArtifact(repoUri);
-                deleted++;
-                if (deleted % 100 == 0)
-                {
-                    _logger.LogDebug("[Import:Remove] Deleted {Count}/{Total} documents ({ElapsedMs}ms)",
-                        deleted, docUris.Count, sw.ElapsedMilliseconds - deleteStart);
-                }
-            }
-        }
-        _logger.LogInformation("[Import:Remove] Deleted {Count} documents ({ElapsedMs}ms)",
-            deleted, sw.ElapsedMilliseconds - deleteStart);
-
-        // Remove indexed git history for this source so query/read history does not return stale results.
-        var historyPrefix = BuildMountHistoryPrefix(matchingMount);
-        _db.ExecuteRaw(
-            $"""
-            DELETE FROM git_file_change
-            WHERE starts_with(uri, '{historyPrefix}')
-               OR (old_uri IS NOT NULL AND starts_with(old_uri, '{historyPrefix}'));
-
-            DELETE FROM git_commit
-            WHERE hash NOT IN (SELECT DISTINCT commit_hash FROM git_file_change);
-            """);
-        _logger.LogInformation("[Import:Remove] Deleted git history rows matching prefix '{Prefix}'", historyPrefix);
-
-        // Delete the mount record
-        _logger.LogDebug("[Import:Remove] Deleting mount record...");
-        _db.DeleteMount(matchingMount.Id);
-
-        // Remove mount from memory
-        _logger.LogDebug("[Import:Remove] Removing mount from memory...");
-        _mountManager.RemoveMount(matchingMount.Id);
-
-        _logger.LogInformation("[Import:Remove] Completed removal of {MountId} ({Count} documents) in {ElapsedMs}ms",
-            matchingMount.Id, deleted, sw.ElapsedMilliseconds);
-
-        var snapshot = coordinator.GetPipelineStatus();
-        return Task.FromResult(new ImportResponse { Status = ToProtoStatus(snapshot) });
-    }
-
-    private static string BuildMountHistoryPrefix(FileSystemMountRecord mount)
-    {
-        var sourceUri = BuildMountSourceUri(mount).TrimEnd('/');
-        return EscapeSqlLiteral($"{sourceUri}/");
-    }
-
-    private static string BuildMountSourceUri(FileSystemMountRecord mount)
-    {
-        var scheme = (mount.Scheme ?? string.Empty).Trim().ToLowerInvariant();
-        var authority = mount.Authority?.Trim();
-        var pathPrefix = (mount.PathPrefix ?? string.Empty).Trim('/').Replace('\\', '/');
-
-        if (string.IsNullOrWhiteSpace(authority))
-            return string.IsNullOrWhiteSpace(pathPrefix)
-                ? $"{scheme}://"
-                : $"{scheme}:///{pathPrefix}";
-
-        return string.IsNullOrWhiteSpace(pathPrefix)
-            ? $"{scheme}://{authority}"
-            : $"{scheme}://{authority}/{pathPrefix}";
-    }
-
-    private static string EscapeSqlLiteral(string value)
-        => value.Replace("'", "''", StringComparison.Ordinal);
 
     private static ReindexProgress ToProtoProgress(ReindexProgressSnapshot snapshot)
     {

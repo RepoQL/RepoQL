@@ -150,6 +150,7 @@
     <ProjectReference Include="..\..\query\RepoQL.Read\RepoQL.Read.csproj" />
     <ProjectReference Include="..\..\query\RepoQL.Query\RepoQL.Query.csproj" />
     <ProjectReference Include="..\..\query\RepoQL.Explain\RepoQL.Explain.csproj" />
+    <ProjectReference Include="..\..\integrations\RepoQL.Import\RepoQL.Import.csproj" />
   </ItemGroup>
 
     

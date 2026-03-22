@@ -1,3 +1,5 @@
+using RepoQL.Contracts;
+
 namespace RepoQL.Import;
 
 /// <summary>
@@ -47,6 +49,12 @@ public sealed class ImportResult
     public int FailedCount { get; init; }
     public string? OperationId { get; init; }
     public long ElapsedMs { get; init; }
+
+    /// <summary>
+    /// The underlying operation for awaiting completion (host-level embedding refresh).
+    /// Only populated for repository imports; null for SARIF and removal.
+    /// </summary>
+    public IOperation? Operation { get; init; }
 }
 
 public sealed class RepositoryImportResult
@@ -55,6 +63,13 @@ public sealed class RepositoryImportResult
     public int TotalFiles { get; init; }
     public int IndexedCount { get; init; }
     public int FailedCount { get; init; }
+
+    /// <summary>
+    /// The underlying operation object for awaiting completion (e.g., for embedding refresh).
+    /// Transport-agnostic consumers use <see cref="OperationId"/>; host-level code may use this
+    /// to coordinate post-import work like embedding refresh.
+    /// </summary>
+    public IOperation? Operation { get; init; }
 }
 
 public sealed class RemoveImportResult
