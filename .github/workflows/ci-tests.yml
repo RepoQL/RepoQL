@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      runner:
+        description: 'Runner to use (ubuntu-latest or self-hosted)'
+        default: 'self-hosted'
+        type: choice
+        options:
+          - self-hosted
+          - ubuntu-latest
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,6 +22,8 @@ concurrency:
 env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  # Default to self-hosted for push/PR, overridable via workflow_dispatch
+  RUNNER: ${{ inputs.runner || 'self-hosted' }}
 
 permissions:
   contents: read
@@ -24,18 +34,34 @@ permissions:
 jobs:
   build:
     name: Build
-    runs-on: self-hosted
-    timeout-minutes: 15
-
-    env:
-      DOTNET_ROOT: /home/stueeey/.dotnet
-      PATH: /home/stueeey/.dotnet:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    runs-on: ${{ inputs.runner || 'self-hosted' }}
+    timeout-minutes: 20
 
     steps:
+      - name: Free disk space (hosted runners only)
+        if: ${{ (inputs.runner || 'self-hosted') == 'ubuntu-latest' }}
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        if: ${{ (inputs.runner || 'self-hosted') == 'ubuntu-latest' }}
+        with:
+          dotnet-version: '10.0.1xx'
 
       - name: Set USERPROFILE for Antlr4BuildTasks (Linux)
         run: echo "USERPROFILE=$HOME" >> $GITHUB_ENV
+
+      - name: Cache NuGet packages
+        if: ${{ (inputs.runner || 'self-hosted') == 'ubuntu-latest' }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
 
       - name: Restore
         run: dotnet restore RepoQL.sln --nologo
@@ -56,8 +82,8 @@ jobs:
   test:
     name: Test (${{ matrix.shard }})
     needs: build
-    runs-on: self-hosted
-    timeout-minutes: 15
+    runs-on: ${{ inputs.runner || 'self-hosted' }}
+    timeout-minutes: 20
 
     strategy:
       fail-fast: false
@@ -113,10 +139,14 @@ jobs:
               RepoQL.Inference.Service.Tests
 
     env:
-      DOTNET_ROOT: /home/stueeey/.dotnet
-      PATH: /home/stueeey/.dotnet:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      ARTIFACTS_PATH: ${{ github.workspace }}/artifacts
 
     steps:
+      - uses: actions/setup-dotnet@v4
+        if: ${{ (inputs.runner || 'self-hosted') == 'ubuntu-latest' }}
+        with:
+          dotnet-version: '10.0.1xx'
+
       - name: Download test binaries
         uses: actions/download-artifact@v4
         with:
@@ -124,7 +154,6 @@ jobs:
 
       - name: Extract test binaries
         run: mkdir -p test-bins && tar -xf test-bins.tar -C test-bins && rm test-bins.tar
-
 
       - name: Expose GitHub Actions runtime for TUnit HTML reports
         uses: actions/github-script@v7
@@ -175,7 +204,7 @@ jobs:
   results:
     name: Test Results
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner || 'self-hosted' }}
     if: always()
 
     steps:
@@ -188,7 +217,7 @@ jobs:
 
       - name: Install coverage tooling
         run: |
-          dotnet tool install --global dotnet-coverage
+          dotnet tool install --global dotnet-coverage 2>/dev/null || true
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
       - name: Merge coverage reports
