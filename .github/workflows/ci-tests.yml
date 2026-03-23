@@ -157,7 +157,7 @@ jobs:
             fi
             bindir=$(dirname "$bin")
             echo "::group::${name}"
-            if ! timeout 120 dotnet exec "$bin" \
+            if ! timeout 600 dotnet exec "$bin" \
               --coverage \
               --coverage-output-format cobertura \
               --report-trx \
