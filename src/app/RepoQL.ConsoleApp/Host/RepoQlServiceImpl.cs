@@ -25,6 +25,7 @@ using RepoQL.Read;
 using RepoQL.Sandbox;
 using RepoQL.Query;
 using RepoQL.Import;
+using RepoQL.Indexing.Indexing.PostProcessing;
 using ProtoPipelineStage = RepoQL.Contracts.PipelineStage;
 using ProtoPipelineStatus = RepoQL.Contracts.PipelineStatus;
 using ProtoStageStatus = RepoQL.Contracts.StageStatus;
@@ -38,6 +39,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly RepositoryConfiguration repoConfig;
     private readonly IIndexingCoordinator coordinator;
     private readonly IImportEngine _importEngine;
+    private readonly IEmbeddingCoordinator _embeddingCoordinator;
     private readonly DocumentPreviewService _previewService;
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IEmbeddingProvider? _embeddingProvider;
@@ -86,6 +88,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         RepositoryConfiguration repoConfig,
         IIndexingCoordinator coordinator,
         IImportEngine importEngine,
+        IEmbeddingCoordinator embeddingCoordinator,
         DocumentPreviewService previewService,
         IHostApplicationLifetime hostLifetime,
         ExploreOrchestrator exploreOrchestrator,
@@ -119,6 +122,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         _importEngine = importEngine ?? throw new ArgumentNullException(nameof(importEngine));
+        _embeddingCoordinator = embeddingCoordinator ?? throw new ArgumentNullException(nameof(embeddingCoordinator));
         _previewService = previewService ?? throw new ArgumentNullException(nameof(previewService));
         _hostLifetime = hostLifetime ?? throw new ArgumentNullException(nameof(hostLifetime));
         _exploreOrchestrator = exploreOrchestrator ?? throw new ArgumentNullException(nameof(exploreOrchestrator));
@@ -136,6 +140,31 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _logger = logger ?? NullLogger<RepoQlServiceImpl>.Instance;
         var maxConcurrent = Math.Clamp(_hostSettings.MaxConcurrentQueries ?? 15, 1, 64);
         _queryConcurrency = new SemaphoreSlim(maxConcurrent, maxConcurrent);
+    }
+
+    public override async Task<RecheckCloudLoginStateResponse> RecheckCloudLoginState(
+        RecheckCloudLoginStateRequest request,
+        ServerCallContext context)
+    {
+        try
+        {
+            var refreshTriggered = await _embeddingCoordinator
+                .RecheckActiveEmbeddingModelAsync(context.CancellationToken)
+                .ConfigureAwait(false);
+            return new RecheckCloudLoginStateResponse
+            {
+                RefreshTriggered = refreshTriggered
+            };
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            throw new RpcException(new Status(StatusCode.Cancelled, "Cloud login state recheck was canceled."));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Cloud login state recheck failed");
+            throw new RpcException(new Status(StatusCode.Internal, ex.Message));
+        }
     }
 
     public override async Task<RawQueryResponse> ExecuteRawQuery(RawQueryRequest request, ServerCallContext context)

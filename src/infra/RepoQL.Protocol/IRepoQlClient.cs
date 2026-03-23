@@ -88,6 +88,12 @@ public interface IRepoQlClient : IAsyncDisposable
         bool analyze = false,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Notify a running host that cloud authentication state may have changed and it should
+    /// re-check the active embedding model for the current process.
+    /// </summary>
+    Task<RecheckCloudLoginStateResponse> RecheckCloudLoginStateAsync(CancellationToken cancellationToken = default);
+
 
     /// <summary>
     /// Runs the hot-path pipeline for a single document without persisting results.

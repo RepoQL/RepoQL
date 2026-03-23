@@ -2,6 +2,7 @@ using System.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Embeddings;
 
 namespace RepoQL.Data.DuckDB;
 
@@ -18,15 +19,21 @@ public class UriRegistryHydrator
 {
     private readonly DuckDbDataStore _db;
     private readonly UriRegistry _registry;
+    private readonly IEmbeddingProvider? _embeddingProvider;
+    private readonly IContextualEmbeddingProvider? _contextualEmbeddingProvider;
     private readonly ILogger<UriRegistryHydrator> _logger;
 
     public UriRegistryHydrator(
         DuckDbDataStore db,
         UriRegistry registry,
+        IEmbeddingProvider? embeddingProvider = null,
+        IContextualEmbeddingProvider? contextualEmbeddingProvider = null,
         ILogger<UriRegistryHydrator>? logger = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
+        _embeddingProvider = embeddingProvider;
+        _contextualEmbeddingProvider = contextualEmbeddingProvider;
         _logger = logger ?? NullLogger<UriRegistryHydrator>.Instance;
     }
 
@@ -51,7 +58,9 @@ public class UriRegistryHydrator
                     n.kind,
                     n.container_uri_lowercase,
                     a.headline,
-                    a.structure
+                    a.structure,
+                    a.media_type,
+                    a.text_content IS NOT NULL AS has_text_content
                 FROM node n
                 LEFT JOIN artifact a ON n.artifact_id = a.id
                 WHERE n.kind = 'document' OR n.uri IS NOT NULL
@@ -62,16 +71,16 @@ public class UriRegistryHydrator
 
             // Group symbols by their container (file)
             var symbolsByFile = new Dictionary<string, Dictionary<RepoUri, SymbolEntry>>(StringComparer.OrdinalIgnoreCase);
-            var documents = new List<(RepoUri Uri, string? Headline, string? Structure)>();
+            var documents = new List<(RepoUri Uri, string? Headline, string? Structure, string? MediaType, bool HasTextContent)>();
 
-            foreach (var (uri, kind, containerUri, headline, structure) in results)
+            foreach (var (uri, kind, containerUri, headline, structure, mediaType, hasTextContent) in results)
             {
                 if (uri is null)
                     continue;
 
                 if (kind == "document")
                 {
-                    documents.Add((uri, headline, structure));
+                    documents.Add((uri, headline, structure, mediaType, hasTextContent));
                 }
                 else if (uri is not null)
                 {
@@ -95,17 +104,20 @@ public class UriRegistryHydrator
             }
 
             // Create file entries
-            foreach (var (docUri, headline, structure) in documents)
+            foreach (var (docUri, headline, structure, mediaType, hasTextContent) in documents)
             {
                 var containerKey = RepoUri.NormalizeContainerKey(docUri);
                 var symbols = symbolsByFile.GetValueOrDefault(containerKey)
                     ?? new Dictionary<RepoUri, SymbolEntry>();
+                var embeddingStatus = IsEmbeddingApplicable(mediaType, hasTextContent)
+                    ? EmbeddingStatus.Pending
+                    : EmbeddingStatus.NotApplicable;
 
                 var entry = new FileEntry(
                     Status: UriStatus.Indexed,
                     IndexedAt: DateTime.UtcNow,
                     Error: null,
-                    EmbeddingStatus: EmbeddingStatus.NotApplicable, // Hydrated files completed pipeline; HydrateEmbeddings upgrades to Embedded
+                    EmbeddingStatus: embeddingStatus,
                     EmbeddedChunkCount: 0,
                     EmbeddedAt: null,
                     LineCount: 0, // Line count not available during hydration; will be populated during indexing
@@ -138,12 +150,21 @@ public class UriRegistryHydrator
 
         try
         {
-            // Query embedding counts per container
-            const string query = """
+            var activeModel = ActiveEmbeddingModelResolver.Resolve(_embeddingProvider, _contextualEmbeddingProvider);
+            if (string.IsNullOrWhiteSpace(activeModel))
+            {
+                _logger.LogDebug("Skipping embedding hydration compatibility check because no active model is available");
+                return;
+            }
+
+            var escapedModel = activeModel.Replace("'", "''", StringComparison.Ordinal);
+            var query = $"""
                 SELECT
                     repository_uri_container(uri) as container_uri,
                     COUNT(*) as chunk_count
                 FROM document_embedding
+                WHERE scope = 'document'
+                  AND model = '{escapedModel}'
                 GROUP BY repository_uri_container(uri)
                 """;
 
@@ -175,13 +196,26 @@ public class UriRegistryHydrator
         }
     }
 
-    private static (RepoUri? Uri, string? Kind, string? ContainerUri, string? Headline, string? Structure) MapNodeRow(IDataRecord record)
+    private static (RepoUri? Uri, string? Kind, string? ContainerUri, string? Headline, string? Structure, string? MediaType, bool HasTextContent) MapNodeRow(IDataRecord record)
     {
         var uriStr = record["uri"]?.ToString();
         var kind = record["kind"]?.ToString();
         var containerUri = record["container_uri_lowercase"]?.ToString();
         var headline = record["headline"]?.ToString();
         var structure = record["structure"]?.ToString();
+        var mediaType = record["media_type"]?.ToString();
+        var hasTextContent = record["has_text_content"] switch
+        {
+            bool b => b,
+            byte b => b != 0,
+            sbyte b => b != 0,
+            short s => s != 0,
+            ushort s => s != 0,
+            int i => i != 0,
+            long l => l != 0,
+            string s => bool.TryParse(s, out var parsed) ? parsed : s == "1",
+            _ => false
+        };
 
         RepoUri? uri = null;
         if (!string.IsNullOrEmpty(uriStr))
@@ -189,7 +223,7 @@ public class UriRegistryHydrator
             RepoUri.TryParse(uriStr, out uri);
         }
 
-        return (uri, kind, containerUri, headline, structure);
+        return (uri, kind, containerUri, headline, structure, mediaType, hasTextContent);
     }
 
     private static (string? ContainerUri, int ChunkCount) MapEmbeddingRow(IDataRecord record)
@@ -206,6 +240,28 @@ public class UriRegistryHydrator
     {
         var hashIndex = uri.IndexOf('#', StringComparison.Ordinal);
         return hashIndex >= 0 ? uri[..hashIndex] : uri;
+    }
+
+    private static bool IsEmbeddingApplicable(string? mediaType, bool hasTextContent)
+    {
+        if (!hasTextContent || string.IsNullOrWhiteSpace(mediaType))
+            return false;
+
+        return mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/xml", StringComparison.OrdinalIgnoreCase)
+               || mediaType.Contains("application/yaml", StringComparison.OrdinalIgnoreCase)
+               || mediaType.Contains("application/x-yaml", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/javascript", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/typescript", StringComparison.OrdinalIgnoreCase)
+               || mediaType.Contains("application/sql", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/graphql", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/toml", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/x-sh", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/x-python", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/x-ruby", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/x-perl", StringComparison.OrdinalIgnoreCase)
+               || mediaType.StartsWith("application/x-php", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

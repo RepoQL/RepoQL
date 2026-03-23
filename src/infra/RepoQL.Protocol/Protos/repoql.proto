@@ -40,6 +40,10 @@ service RepoQL {
   // Import an external repository (e.g., github://owner/repo). Returns after waiting for pipeline stages.
   rpc ImportRepository(ImportRequest) returns (ImportResponse);
 
+  // Notify the host that cloud authentication state may have changed and it should re-check
+  // which embedding model is active for the current process.
+  rpc RecheckCloudLoginState(RecheckCloudLoginStateRequest) returns (RecheckCloudLoginStateResponse);
+
 
   // Instruct the host process to shut down gracefully.
   rpc ShutdownHost(ShutdownHostRequest) returns (ShutdownHostResponse);
@@ -348,6 +352,14 @@ message ImportResponse {
   optional string message = 6;
   // Tracking operation identifier for async imports.
   optional string operation_id = 7;
+}
+
+message RecheckCloudLoginStateRequest {
+}
+
+message RecheckCloudLoginStateResponse {
+  // True when the host refreshed one or more embeddings for the active model.
+  bool refresh_triggered = 1;
 }
 
 message PipelineStatus {

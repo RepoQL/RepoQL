@@ -977,6 +977,15 @@ public class RepoQlConnectionClient : IRepoQlClient, IDisposable
                 OperationId: response.HasOperationId ? response.OperationId : null);
         }, cancellationToken);
 
+    public Task<RecheckCloudLoginStateResponse> RecheckCloudLoginStateAsync(CancellationToken cancellationToken = default)
+        => InvokeWithReconnectAsync(async (client, ct) =>
+        {
+            return await client.RecheckCloudLoginStateAsync(
+                new RecheckCloudLoginStateRequest(),
+                deadline: ComputeDeadline(),
+                cancellationToken: ct).ResponseAsync.ConfigureAwait(false);
+        }, cancellationToken);
+
     public Task<PreviewDocumentResponse> PreviewDocumentAsync(
         string uri,
         byte[]? content = null,

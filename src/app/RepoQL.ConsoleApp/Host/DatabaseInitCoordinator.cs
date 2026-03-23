@@ -93,7 +93,12 @@ internal static class DatabaseInitCoordinator
                 if (registry is not null)
                 {
                     var hydratorLogger = services.GetService<ILogger<UriRegistryHydrator>>();
-                    var hydrator = new UriRegistryHydrator(store, registry, hydratorLogger);
+                    var hydrator = new UriRegistryHydrator(
+                        store,
+                        registry,
+                        services.GetService<RepoQL.Contracts.Embeddings.IEmbeddingProvider>(),
+                        services.GetService<RepoQL.Contracts.Embeddings.IContextualEmbeddingProvider>(),
+                        hydratorLogger);
                     hydrator.Hydrate();
                     hydrator.HydrateEmbeddings();
                 }

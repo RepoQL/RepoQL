@@ -175,6 +175,26 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
     }
 
     /// <summary>
+    /// Updates a file's embedding status to Pending.
+    /// Use when previously stored embeddings are missing or incompatible with the active model.
+    /// </summary>
+    public void SetEmbeddingPending(RepoUri uri)
+    {
+        if (TryGetValue(uri, out var existing))
+        {
+            if (TryUpdate(uri, existing with
+            {
+                EmbeddingStatus = EmbeddingStatus.Pending,
+                EmbeddedChunkCount = 0,
+                EmbeddedAt = null
+            }, existing))
+            {
+                MarkSummaryDirty();
+            }
+        }
+    }
+
+    /// <summary>
     /// Updates a file's embedding status to Embedding.
     /// </summary>
     public void SetEmbedding(RepoUri uri)

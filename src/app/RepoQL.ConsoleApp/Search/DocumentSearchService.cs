@@ -1,3 +1,4 @@
+using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Search;
 using RepoQL.Data.DuckDB;
 
@@ -9,10 +10,17 @@ namespace RepoQL.ConsoleApp.Search;
 internal sealed class DocumentSearchService : IDocumentSearchService
 {
     private readonly DuckDbDataStore _db;
+    private readonly IEmbeddingProvider? _embeddingProvider;
+    private readonly IContextualEmbeddingProvider? _contextualEmbeddingProvider;
 
-    public DocumentSearchService(DuckDbDataStore db)
+    public DocumentSearchService(
+        DuckDbDataStore db,
+        IEmbeddingProvider? embeddingProvider = null,
+        IContextualEmbeddingProvider? contextualEmbeddingProvider = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
+        _embeddingProvider = embeddingProvider;
+        _contextualEmbeddingProvider = contextualEmbeddingProvider;
     }
 
     public Task<DocumentSearchResult> SearchAsync(
@@ -244,6 +252,10 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             return new Dictionary<string, IReadOnlyList<ChunkScore>>();
 
         var docIdValues = string.Join(",\n                    ", validDocIds.Select(id => $"('{id:D}'::UUID)"));
+        var activeModel = ActiveEmbeddingModelResolver.Resolve(_embeddingProvider, _contextualEmbeddingProvider);
+        var modelFilter = string.IsNullOrWhiteSpace(activeModel)
+            ? string.Empty
+            : $" AND de.model = '{EscapeSql(activeModel)}'";
 
         var sql = $"""
             WITH filter_doc_ids(doc_id) AS (
@@ -264,6 +276,7 @@ internal sealed class DocumentSearchService : IDocumentSearchService
                 AND s.start_byte = de.start_byte
                 AND s.end_byte = de.end_byte
             WHERE de.scope = 'document'
+              {modelFilter}
             ORDER BY de.uri, de.chunk_index
             """;
 

@@ -8,6 +8,7 @@ public interface IEmbeddingCoordinator
     Task ApplyDeletesAsync(IReadOnlyList<RepoUri> deletedArtifacts, CancellationToken cancellationToken);
     Task ApplyAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken);
     Task GenerateStructureEmbeddingsAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken);
+    Task<bool> RecheckActiveEmbeddingModelAsync(CancellationToken cancellationToken);
 }
 
 public sealed class NullEmbeddingCoordinator : IEmbeddingCoordinator
@@ -26,4 +27,7 @@ public sealed class NullEmbeddingCoordinator : IEmbeddingCoordinator
 
     public Task GenerateStructureEmbeddingsAsync(IReadOnlyList<IndexItem> items, CancellationToken cancellationToken)
         => Task.CompletedTask;
+
+    public Task<bool> RecheckActiveEmbeddingModelAsync(CancellationToken cancellationToken)
+        => Task.FromResult(false);
 }

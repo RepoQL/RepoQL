@@ -71,7 +71,8 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
         ILogger<EmbeddingCoordinator>? logger = null,
         UriRegistry? uriRegistry = null,
         RepoQlConfig.EmbeddingSettings? embeddingSettings = null,
-        IContextualEmbeddingProvider? contextualProvider = null)
+        IContextualEmbeddingProvider? contextualProvider = null,
+        bool enableStartupCatchUp = true)
     {
         _refreshRunner = refreshRunner ?? throw new ArgumentNullException(nameof(refreshRunner));
         _db = db;
@@ -83,7 +84,7 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
         var refreshConcurrency = ResolveRefreshConcurrency(embeddingSettings);
         _refreshGate = new SemaphoreSlim(refreshConcurrency, refreshConcurrency);
 
-        if (_db is not null)
+        if (enableStartupCatchUp && _db is not null)
             _startupRefreshTask = Task.Run(() => TriggerStartupContentRefreshAsync(_shutdown.Token));
     }
 
@@ -126,6 +127,24 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
         }
     }
 
+    public async Task<bool> RecheckActiveEmbeddingModelAsync(CancellationToken cancellationToken)
+    {
+        if (_db is null)
+            return false;
+
+        await _refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var embeddingsChanged = await RefreshEmbeddingsAsync([], forceFullRefresh: false, cancellationToken).ConfigureAwait(false);
+            SyncRegistryEmbeddingStatus(documentIds: null);
+            return embeddingsChanged;
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
+    }
+
     private async Task<bool> RefreshEmbeddingsAsync(
         IReadOnlyList<Guid> targetDocumentIds,
         bool forceFullRefresh,
@@ -159,62 +178,22 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
 
         try
         {
-            var chunkCountsByContainer = new Dictionary<string, int>(StringComparer.Ordinal);
+            var activeModel = ActiveEmbeddingModelResolver.Resolve(_embeddingProvider, _contextualProvider);
+            var escapedModel = activeModel?.Replace("'", "''", StringComparison.Ordinal);
 
             if (documentIds is { Count: > 0 })
             {
                 foreach (var idBatch in BatchDocumentIds(documentIds))
                 {
                     var idList = ToUuidListSql(idBatch);
-                    var targetedQuery = $"""
-                        SELECT
-                            repository_uri_container(uri) as container_uri,
-                            COUNT(*) as chunk_count
-                        FROM document_embedding
-                        WHERE doc_id IN ({idList})
-                        GROUP BY repository_uri_container(uri)
-                        """;
-
-                    var batchResults = _db.Read(targetedQuery, record =>
-                    {
-                        var containerUri = record["container_uri"]?.ToString();
-                        var chunkCount = Convert.ToInt32(record["chunk_count"]);
-                        return (containerUri, chunkCount);
-                    });
-
-                    MergeChunkCounts(chunkCountsByContainer, batchResults);
+                    var targetedQuery = BuildRegistryEmbeddingStatusQuery($"AND n.id IN ({idList})", escapedModel);
+                    ApplyRegistryEmbeddingStatus(_db.Read(targetedQuery, MapRegistryEmbeddingStatusRow));
                 }
             }
             else
             {
-                const string fullQuery = """
-                    SELECT
-                        repository_uri_container(uri) as container_uri,
-                        COUNT(*) as chunk_count
-                    FROM document_embedding
-                    GROUP BY repository_uri_container(uri)
-                    """;
-
-                var results = _db.Read(fullQuery, record =>
-                {
-                    var containerUri = record["container_uri"]?.ToString();
-                    var chunkCount = Convert.ToInt32(record["chunk_count"]);
-                    return (containerUri, chunkCount);
-                });
-
-                MergeChunkCounts(chunkCountsByContainer, results);
-            }
-
-            foreach (var (containerUriStr, chunkCount) in chunkCountsByContainer)
-            {
-                if (string.IsNullOrEmpty(containerUriStr))
-                    continue;
-
-                if (!RepoUri.TryParse(containerUriStr, out var containerUri))
-                    continue;
-
-                if (_uriRegistry.TryGetValue(containerUri, out _))
-                    _uriRegistry.SetEmbedded(containerUri, chunkCount);
+                var fullQuery = BuildRegistryEmbeddingStatusQuery(null, escapedModel);
+                ApplyRegistryEmbeddingStatus(_db.Read(fullQuery, MapRegistryEmbeddingStatusRow));
             }
 
             _logger.LogDebug("UriRegistry embedding status synced from database");
@@ -225,18 +204,76 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
         }
     }
 
-    private static void MergeChunkCounts(
-        IDictionary<string, int> destination,
-        IReadOnlyList<(string? ContainerUri, int ChunkCount)> source)
+    private void ApplyRegistryEmbeddingStatus(
+        IReadOnlyList<(string? ContainerUri, bool IsApplicable, int CompatibleChunkCount)> rows)
     {
-        foreach (var (containerUri, chunkCount) in source)
+        foreach (var (containerUri, isApplicable, compatibleChunkCount) in rows)
         {
             if (string.IsNullOrWhiteSpace(containerUri))
                 continue;
 
-            destination.TryGetValue(containerUri, out var existingCount);
-            destination[containerUri] = existingCount + chunkCount;
+            if (!RepoUri.TryParse(containerUri, out var repoUri))
+                continue;
+
+            if (!_uriRegistry!.TryGetValue(repoUri, out _))
+                continue;
+
+            if (compatibleChunkCount > 0)
+                _uriRegistry.SetEmbedded(repoUri, compatibleChunkCount);
+            else if (isApplicable)
+                _uriRegistry.SetEmbeddingPending(repoUri);
+            else
+                _uriRegistry.SetEmbeddingNotApplicable(repoUri);
         }
+    }
+
+    private static (string? ContainerUri, bool IsApplicable, int CompatibleChunkCount) MapRegistryEmbeddingStatusRow(System.Data.IDataRecord record)
+    {
+        var containerUri = record["container_uri"]?.ToString();
+        var isApplicable = Convert.ToInt32(record["is_applicable"]) != 0;
+        var compatibleChunkCount = Convert.ToInt32(record["compatible_chunk_count"]);
+        return (containerUri, isApplicable, compatibleChunkCount);
+    }
+
+    private static string BuildRegistryEmbeddingStatusQuery(string? idFilter, string? escapedModel)
+    {
+        var modelFilter = string.IsNullOrWhiteSpace(escapedModel)
+            ? string.Empty
+            : $"AND de.model = '{escapedModel}'";
+
+        return $"""
+            SELECT
+                n.uri AS container_uri,
+                CASE
+                    WHEN a.text_content IS NOT NULL AND (
+                        a.media_type LIKE 'text/%'
+                        OR a.media_type LIKE 'application/json%'
+                        OR a.media_type LIKE 'application/xml%'
+                        OR a.media_type LIKE 'application/%yaml%'
+                        OR a.media_type LIKE 'application/javascript%'
+                        OR a.media_type LIKE 'application/typescript%'
+                        OR a.media_type LIKE 'application/%sql%'
+                        OR a.media_type LIKE 'application/graphql%'
+                        OR a.media_type LIKE 'application/toml%'
+                        OR a.media_type LIKE 'application/x-sh%'
+                        OR a.media_type LIKE 'application/x-python%'
+                        OR a.media_type LIKE 'application/x-ruby%'
+                        OR a.media_type LIKE 'application/x-perl%'
+                        OR a.media_type LIKE 'application/x-php%')
+                    THEN 1
+                    ELSE 0
+                END AS is_applicable,
+                COUNT(de.doc_id) AS compatible_chunk_count
+            FROM node n
+            JOIN artifact a ON a.id = n.artifact_id
+            LEFT JOIN document_embedding de
+                ON de.doc_id = n.id
+               AND de.scope = 'document'
+               {modelFilter}
+            WHERE n.kind = 'document'
+              {idFilter}
+            GROUP BY n.uri, is_applicable
+            """;
     }
 
     internal static IReadOnlyList<Guid[]> BatchDocumentIds(IReadOnlyList<Guid> documentIds)
@@ -656,8 +693,19 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
 
         try
         {
+            var activeModel = ActiveEmbeddingModelResolver.Resolve(_embeddingProvider, _contextualProvider);
+            var escapedModel = activeModel?.Replace("'", "''", StringComparison.Ordinal);
+            var modelFilter = string.IsNullOrWhiteSpace(escapedModel)
+                ? string.Empty
+                : $" AND model = '{escapedModel}'";
             var hasContentEmbeddings = (_db.ReadScalar<long?>(
-                "SELECT 1 FROM document_embedding WHERE embedding_type = 'full' LIMIT 1") ?? 0) > 0;
+                $"""
+                SELECT 1
+                FROM document_embedding
+                WHERE embedding_type = 'full'
+                  {modelFilter}
+                LIMIT 1
+                """) ?? 0) > 0;
 
             if (hasContentEmbeddings)
             {

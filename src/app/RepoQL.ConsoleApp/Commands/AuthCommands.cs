@@ -1,5 +1,6 @@
-﻿using ConsoleAppFramework;
+using ConsoleAppFramework;
 using RepoQL.Client.Auth;
+using RepoQL.Protocol;
 using Spectre.Console;
 
 namespace RepoQL.ConsoleApp.Commands;
@@ -32,6 +33,7 @@ internal sealed class AuthCommands(IAnsiConsole console, CloudAuthService authSe
         });
 
         var result = await authService.LoginAsync(deviceCode, progress, cancel).ConfigureAwait(false);
+        await NotifyRunningHostAsync(cancel).ConfigureAwait(false);
         console.WriteLine($"Logged in as {result.DisplayName}");
     }
 
@@ -42,6 +44,7 @@ internal sealed class AuthCommands(IAnsiConsole console, CloudAuthService authSe
     public async Task Logout(CancellationToken cancel = default)
     {
         var message = await authService.LogoutAsync(cancel).ConfigureAwait(false);
+        await NotifyRunningHostAsync(cancel).ConfigureAwait(false);
         console.WriteLine(message);
     }
 
@@ -53,5 +56,31 @@ internal sealed class AuthCommands(IAnsiConsole console, CloudAuthService authSe
     {
         var message = await authService.WhoAmIAsync(cancel).ConfigureAwait(false);
         console.WriteLine(message);
+    }
+
+    private async Task NotifyRunningHostAsync(CancellationToken cancellationToken)
+    {
+        IRepoQlClient? client = null;
+        try
+        {
+            client = await RepoQlClient.TryCreateIfRunningAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+            if (client is null)
+                return;
+
+            await client.RecheckCloudLoginStateAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            console.MarkupLine("[yellow]Updated authentication state, but could not notify the running host. Restart or reindex may still be required.[/]");
+        }
+        finally
+        {
+            if (client is not null)
+                await client.DisposeAsync().ConfigureAwait(false);
+        }
     }
 }

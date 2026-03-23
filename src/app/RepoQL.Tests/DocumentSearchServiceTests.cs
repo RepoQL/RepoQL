@@ -147,16 +147,89 @@ internal sealed class DocumentSearchServiceTests
         chunkScores.Should().BeEmpty();
     }
 
+    [Test]
+    public void GetChunkScores_WithIncompatibleEmbeddings_IgnoresWrongModel()
+    {
+        var embeddingProvider = new FixedModelEmbeddingProvider("current-model");
+        using var context = new DocumentSearchTestContext(embeddingProvider);
+        var service = new DocumentSearchService(context.Store, embeddingProvider);
+
+        var docId = Guid.NewGuid();
+        var nodeId = Guid.NewGuid();
+        const string uri = "file:///src/RepoQL.ConsoleApp/Search/DocumentSearchService.cs";
+
+        context.SeedDocumentEmbedding(
+            docId: docId,
+            nodeId: nodeId,
+            uri: uri,
+            scope: "document",
+            startByte: 10,
+            endByte: 20,
+            model: "old-model",
+            chunkIndex: 0);
+        context.SeedSpan(
+            documentId: docId,
+            startByte: 10,
+            endByte: 20,
+            startLine: 2,
+            endLine: 3);
+
+        context.SeedDocumentEmbedding(
+            docId: docId,
+            nodeId: nodeId,
+            uri: uri,
+            scope: "document",
+            startByte: 30,
+            endByte: 40,
+            model: "current-model",
+            chunkIndex: 1);
+        context.SeedSpan(
+            documentId: docId,
+            startByte: 30,
+            endByte: 40,
+            startLine: 6,
+            endLine: 8);
+
+        var chunkScores = service.GetChunkScores([docId.ToString("D")], CancellationToken.None);
+
+        chunkScores.Should().ContainKey(uri);
+        chunkScores[uri].Should().ContainSingle();
+        chunkScores[uri][0].StartLine.Should().Be(6);
+        chunkScores[uri][0].EndLine.Should().Be(8);
+    }
+
+    private sealed class FixedModelEmbeddingProvider(string model) : IEmbeddingProvider
+    {
+        public bool Enabled => true;
+        public string Model => model;
+        public int Dimension => 384;
+
+        public Task<float[]?> EmbedQueryAsync(string text, CancellationToken ct = default)
+            => Task.FromResult<float[]?>(null);
+
+        public Task<float[]?> EmbedPassageAsync(string text, CancellationToken ct = default)
+            => Task.FromResult<float[]?>(null);
+
+        public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken ct = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+    }
+
     private sealed class DocumentSearchTestContext : IDisposable
     {
         private readonly ServiceProvider _serviceProvider;
 
-        public DocumentSearchTestContext()
+        public DocumentSearchTestContext(IEmbeddingProvider? embeddingProvider = null)
         {
             var services = new ServiceCollection();
             services.AddSingleton(new RepositoryConfiguration { Path = "/repo" });
             services.AddSingleton<UriRegistry>();
-            services.AddSingleton<IEmbeddingProvider>(new DisabledEmbeddingProvider());
+            services.AddSingleton<IEmbeddingProvider>(embeddingProvider ?? new DisabledEmbeddingProvider());
             services.AddSingleton<IInferenceProvider>(new DisabledInferenceProvider());
             services.AddSingleton<IMcpToolCaller?>(_ => null);
 
@@ -205,13 +278,13 @@ internal sealed class DocumentSearchServiceTests
             Registry.SetIndexed(documentUri, lineCount: 1, new Dictionary<RepoUri, SymbolEntry>());
         }
 
-        public void SeedDocumentEmbedding(Guid docId, Guid nodeId, string uri, string scope, long startByte, long endByte)
+        public void SeedDocumentEmbedding(Guid docId, Guid nodeId, string uri, string scope, long startByte, long endByte, string model = "test-model", int chunkIndex = 0)
         {
             Store.ExecuteRaw($"""
                 INSERT INTO document_embedding
                     (doc_id, node_id, chunk_index, embedding_type, uri, scope, model, dim, embedding, start_byte, end_byte, updated_at)
                 VALUES
-                    ('{docId:D}'::UUID, '{nodeId:D}'::UUID, 0, 'structure', '{EscapeSql(uri)}', '{EscapeSql(scope)}', 'test-model', 3, [0.1,0.2,0.3]::FLOAT[], {startByte}, {endByte}, NOW())
+                    ('{docId:D}'::UUID, '{nodeId:D}'::UUID, {chunkIndex}, 'structure', '{EscapeSql(uri)}', '{EscapeSql(scope)}', '{EscapeSql(model)}', 3, [0.1,0.2,0.3]::FLOAT[], {startByte}, {endByte}, NOW())
                 """);
         }
 

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Net.Sockets;
 using Grpc.Core;
 using Grpc.Health.V1;
 using Grpc.Net.Client;
@@ -70,6 +71,57 @@ public sealed class RepoQlClient : RepoQlConnectionClient
         await client.EnsureConnectedAsync(forceReconnect: true, cancellationToken).ConfigureAwait(false);
         client.EnsureHealthWatchActive();
         return client;
+    }
+
+    /// <summary>
+    /// Create a client only when a RepoQL host is already running for the target repository.
+    /// Returns null instead of starting a host.
+    /// </summary>
+    public static async Task<IRepoQlClient?> TryCreateIfRunningAsync(
+        RepoQlClientOptions? options = null,
+        ILogger? logger = null,
+        CancellationToken cancellationToken = default)
+    {
+        options ??= new RepoQlClientOptions();
+        if (!RepoLocator.TryFindRepoRoot(options.RepositoryPath, out var repoPath, out _))
+            return null;
+
+        if (repoPath is null)
+            throw new InvalidOperationException("Repo root could not be resolved.");
+        using var accessor = new RepoDirectoryAccessor(repoPath);
+        var socketPath = string.IsNullOrWhiteSpace(options.SocketPath)
+            ? accessor.ResolveSocketPath()
+            : options.SocketPath!;
+
+        if (!await TryHealthCheckAsync(socketPath, cancellationToken).ConfigureAwait(false))
+            return null;
+
+        logger ??= NullLogger.Instance;
+        var handler = new SocketsHttpHandler
+        {
+            ConnectCallback = async (_, ct) =>
+            {
+                var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), ct).ConfigureAwait(false);
+                try { socket.SendBufferSize = 64 * 1024; } catch { }
+                try { socket.ReceiveBufferSize = 64 * 1024; } catch { }
+                return new NetworkStream(socket, ownsSocket: true);
+            },
+            PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            MaxConnectionsPerServer = 10,
+            KeepAlivePingDelay = TimeSpan.FromSeconds(60),
+            KeepAlivePingTimeout = TimeSpan.FromSeconds(30),
+            EnableMultipleHttp2Connections = true
+        };
+
+        var channel = GrpcChannel.ForAddress("http://unix", new GrpcChannelOptions
+        {
+            HttpHandler = handler,
+            Credentials = ChannelCredentials.Insecure
+        });
+
+        return new RepoQlClient(channel, options.DefaultTimeout, logger);
     }
 
     protected override async Task<T> InvokeWithReconnectAsync<T>(Func<Contracts.RepoQL.RepoQLClient, CancellationToken, Task<T>> operation, CancellationToken cancellationToken)

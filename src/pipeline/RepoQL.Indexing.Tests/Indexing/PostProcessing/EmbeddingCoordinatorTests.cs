@@ -135,6 +135,78 @@ internal class EmbeddingCoordinatorTests
     }
 
     [Test]
+    [DisplayName("Startup content embedding catch-up refreshes when only incompatible full embeddings exist")]
+    public async Task Given_IndexedDocumentsWithOnlyIncompatibleContentEmbeddings_When_CoordinatorStarts_Then_StartupCatchUpRefreshesContent()
+    {
+        var provider = new FixedModelEmbeddingProvider("current-model", 4);
+        using var database = new DuckDbDataStore(path: null, embeddingProvider: provider, logger: NullLogger<DuckDbDataStore>.Instance);
+        var document = SeedIndexedDocument(database, "file:///repo/startup-catchup-incompatible.md");
+
+        database.WriteEmbeddings([
+            new DocumentEmbedding(
+                document.Id,
+                document.Id,
+                0,
+                DocumentEmbedding.TypeFull,
+                document.Uri.AbsoluteUri,
+                DocumentEmbedding.ScopeDocument,
+                [1f, 2f, 3f, 4f],
+                "old-model",
+                4)
+        ]);
+
+        var refresher = new FakeRefresher();
+        using var coordinator = new EmbeddingCoordinator(
+            refresher,
+            db: database,
+            embeddingProvider: provider,
+            logger: NullLogger<EmbeddingCoordinator>.Instance);
+
+        await WaitForAsync(() => refresher.Invocations >= 1);
+        refresher.TargetedInvocations.Should().Be(0);
+    }
+
+    [Test]
+    [DisplayName("Explicit active-model recheck refreshes incompatible content embeddings without restart")]
+    public async Task Given_IndexedDocumentsWithOnlyIncompatibleContentEmbeddings_When_RecheckingActiveModel_Then_RefreshesContent()
+    {
+        var provider = new FixedModelEmbeddingProvider("current-model", 4);
+        using var database = new DuckDbDataStore(path: null, embeddingProvider: provider, logger: NullLogger<DuckDbDataStore>.Instance);
+        var document = SeedIndexedDocument(database, "file:///repo/recheck-incompatible.md");
+        var registry = new UriRegistry();
+        registry.TryRegisterDiscovered(document.Uri);
+        registry.SetIndexed(document.Uri, lineCount: 1, new Dictionary<RepoUri, SymbolEntry>());
+
+        database.WriteEmbeddings([
+            new DocumentEmbedding(
+                document.Id,
+                document.Id,
+                0,
+                DocumentEmbedding.TypeFull,
+                document.Uri.AbsoluteUri,
+                DocumentEmbedding.ScopeDocument,
+                [1f, 2f, 3f, 4f],
+                "old-model",
+                4)
+        ]);
+
+        var refresher = new FakeRefresher();
+        using var coordinator = new EmbeddingCoordinator(
+            refresher,
+            db: database,
+            embeddingProvider: provider,
+            logger: NullLogger<EmbeddingCoordinator>.Instance,
+            uriRegistry: registry,
+            enableStartupCatchUp: false);
+
+        var refreshTriggered = await coordinator.RecheckActiveEmbeddingModelAsync(CancellationToken.None);
+
+        refreshTriggered.Should().BeTrue();
+        refresher.Invocations.Should().Be(1);
+        registry[document.Uri].EmbeddingStatus.Should().Be(EmbeddingStatus.Pending);
+    }
+
+    [Test]
     [DisplayName("Targeted registry sync batches doc ids with bounded query size")]
     public void Given_LargeTargetedDocSet_When_Batching_Then_BatchesAreBoundedAndDeduplicated()
     {
@@ -207,7 +279,7 @@ internal class EmbeddingCoordinatorTests
         return item;
     }
 
-    private static void SeedIndexedDocument(DuckDbDataStore database, string uri)
+    private static Node SeedIndexedDocument(DuckDbDataStore database, string uri)
     {
         var artifact = new ArtifactModel
         {
@@ -239,6 +311,8 @@ internal class EmbeddingCoordinatorTests
             Spans = Array.Empty<Span>(),
             Edges = Array.Empty<Edge>()
         });
+
+        return documentNode;
     }
 
     private static async Task WaitForAsync(Func<bool> condition, int timeoutMs = 3000)
@@ -253,5 +327,27 @@ internal class EmbeddingCoordinatorTests
 
             await Task.Delay(20).ConfigureAwait(false);
         }
+    }
+
+    private sealed class FixedModelEmbeddingProvider(string model, int dimension) : IEmbeddingProvider
+    {
+        public bool Enabled => true;
+        public string Model => model;
+        public int Dimension => dimension;
+
+        public Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default)
+            => Task.FromResult<float[]?>(null);
+
+        public Task<float[]?> EmbedPassageAsync(string text, CancellationToken cancellationToken = default)
+            => Task.FromResult<float[]?>(null);
+
+        public Task<float[]?[]> EmbedQueryBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, CancellationToken cancellationToken = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+
+        public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
+            => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
     }
 }
