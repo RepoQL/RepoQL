@@ -75,10 +75,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Split heavy integration tests across two shards
+          # These two are the heaviest — each gets its own shard
           - shard: integration
             tests: >-
               RepoQL.Tests
+
+          - shard: data
+            tests: >-
               RepoQL.Data.DuckDB.Tests
 
           - shard: core
