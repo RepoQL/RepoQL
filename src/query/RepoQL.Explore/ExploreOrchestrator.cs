@@ -95,10 +95,27 @@ public sealed class ExploreOrchestrator
         exploreResults = DeduplicateResults(exploreResults);
 
         var hasSearchCriteria = !string.IsNullOrWhiteSpace(query.Keywords) || boostPatterns.Count > 0;
-        var budgetResolution = BudgetResolver.Resolve(exploreResults, query.TokenBudget, hasSearchCriteria);
+        var budgetResolution = BudgetResolver.Resolve(query, exploreResults, hasSearchCriteria);
+
+        var effectiveBreadth = query.Breadth;
+        int? resolvedBreadth = null;
+        IReadOnlyList<ExploreResult> allocResults = exploreResults;
+
+        if (query.AutoBreadth)
+        {
+            var breadthResolution = BreadthResolver.Resolve(
+                exploreResults,
+                budgetResolution.EffectiveBudget,
+                hasSearchCriteria,
+                query.Limit);
+
+            effectiveBreadth = breadthResolution.EffectiveBreadth;
+            resolvedBreadth = effectiveBreadth;
+            allocResults = exploreResults.Take(breadthResolution.EffectiveLimit).ToList();
+        }
 
         // Hierarchical token allocation (files compete first, then children within each file)
-        var decisions = ValueBasedAllocator.Allocate(exploreResults, budgetResolution.EffectiveBudget, query.Breadth);
+        var decisions = ValueBasedAllocator.Allocate(allocResults, budgetResolution.EffectiveBudget, effectiveBreadth);
 
         // Apply limit if specified
         var limitedDecisions = query.Limit.HasValue && query.Limit.Value > 0
@@ -110,7 +127,7 @@ public sealed class ExploreOrchestrator
         var decisionResult = new DecisionResult(limitedDecisions, omittedCount, null);
 
         // Compose output
-        var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status, budgetResolution);
+        var renderedOutput = OutputComposer.Compose(decisionResult, hasSearchCriteria, status, budgetResolution, resolvedBreadth);
         var truncated = omittedCount > 0;
 
         return new ExploreExecutionResult(renderedOutput, exploreResults, truncated);

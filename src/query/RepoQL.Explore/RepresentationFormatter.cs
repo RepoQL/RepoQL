@@ -246,7 +246,8 @@ public static class RepresentationFormatter
         TrustSignal status,
         int? tokenCount = null,
         string? representationHint = null,
-        BudgetResolution? budgetResolution = null)
+        BudgetResolution? budgetResolution = null,
+        int? resolvedBreadth = null)
     {
         if (status.IndexTotal == status.IndexPending && status.IndexPending > 0)
             return $"[NOT READY - {status.IndexPending} pending, discovery in progress]";
@@ -299,15 +300,18 @@ public static class RepresentationFormatter
 
         if (tokenCount.HasValue)
         {
-            if (budgetResolution is not null && budgetResolution.EffectiveBudget < budgetResolution.StatedCap)
+            if (budgetResolution?.StatedCap is not null && budgetResolution.EffectiveBudget < budgetResolution.StatedCap)
             {
-                parts.Add($"{FormatTokenCountValue(tokenCount.Value)}/{FormatTokenCountValue(budgetResolution.StatedCap)} tok");
+                parts.Add($"{FormatTokenCountValue(tokenCount.Value)}/{FormatTokenCountValue(budgetResolution.StatedCap.Value)} tok");
             }
             else
             {
                 parts.Add(FormatTokenCount(tokenCount.Value));
             }
         }
+
+        if (resolvedBreadth.HasValue)
+            parts.Add($"breadth: {resolvedBreadth.Value}");
 
         parts.Add(FormatDuration(status.ExecutionTimeMs));
         parts.Add($"index: {indexStatus}");

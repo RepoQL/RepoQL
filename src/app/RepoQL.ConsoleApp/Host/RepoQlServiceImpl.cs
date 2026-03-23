@@ -1358,8 +1358,10 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
 
             // Build query
             var query = new ExploreQuery(
-                TokenBudget: request.TokenBudget,
-                Breadth: Math.Clamp(request.Breadth > 0 ? request.Breadth : 5, 1, 10),
+                TokenBudget: request.TokenBudget > 0 ? request.TokenBudget : 2000,
+                BudgetTier: request.TokenBudget <= 0 ? "medium" : null,
+                Breadth: request.Breadth > 0 ? Math.Clamp(request.Breadth, 1, 10) : 5,
+                AutoBreadth: request.Breadth <= 0,
                 Scope: scope,
                 Keywords: string.IsNullOrWhiteSpace(request.Keywords) ? null : request.Keywords,
                 Boost: string.IsNullOrWhiteSpace(request.Boost) ? null : request.Boost,

@@ -34,15 +34,15 @@ internal sealed class ExploreTool(
         - Low (1-3): Depth. Few results with full structure and children. Use when you need content
         - Medium (4-6): Balanced. Good detail on top hits, awareness of the rest. Default.
         - High (7-10): Coverage. Many results with headlines. Use for surveying what exists.
-        Default is 5. Combine with tokenBudget to control the tradeoff.
+        Omit breadth or pass 0 to let the system choose based on result distribution.
         </BREADTH>
 
         <PARAMETERS>
-        **tokenBudget** (required): How many tokens you're willing to spend. This is a bet—you don't know exactly what you'll get.
-        - Start low (500-1000) and increase if you need more. Don't spend more than 25000
-        - Different scopes, breadth levels, and content will consume budget differently
-        - The tool maximizes value within your budget, but outcomes vary
-        Consider the stakes: if an incomplete answer has serious consequences, bet more. When the cost of being wrong is low, bet small and iterate.
+        **tokenBudget** (optional): Omit to let the system choose based on result quality. Provide an explicit number to spend exactly that many tokens.
+        - Omitted / 0: the system picks a budget (~800-3500) based on how many results are strong and how rich their content is. Good default for most explores.
+        - Explicit (e.g., 1500): spend exactly this. Use when you know the stakes — low for quick scans, high for deep investigation.
+        - Don't spend more than 25000
+        Consider the stakes: if an incomplete answer has serious consequences, bet more. When the cost of being wrong is low, omit and let the system decide.
 
         **keywords**: Search terms — code words and synonyms.
         - "login authentication" — synonyms widen the net
@@ -117,8 +117,8 @@ internal sealed class ExploreTool(
     [McpMeta("defer_loading", false)]
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<CallToolResult> ExploreAsync(
-        [Description("Tokens to invest in the response")] int tokenBudget,
-        [Description("How to distribute tokens: 1=depth, 10=breadth (default 5)")] int breadth = 5,
+        [Description("Token budget. Omit to let the system decide based on result quality (~1000-3500). Provide an explicit number to spend exactly that many tokens.")] int tokenBudget = 0,
+        [Description("How to distribute tokens: 1=depth, 10=breadth. Omit or 0 to let the system choose based on result distribution.")] int breadth = 0,
         [Description("URI glob pattern to filter results (e.g., file:///src/**, help://**). Combine with ; exclude with !")] string? uriGlob = null,
         [Description("Search terms — code words and synonyms (e.g., \"login authentication\", \"cache invalidation TTL\")")] string? keywords = null,
         [Description("Regex patterns to boost matches, comma-separated (e.g., \"Validate.*Token,(?i)auth\")")] string? boost = null,
@@ -127,10 +127,10 @@ internal sealed class ExploreTool(
         [Description("Natural language question for reranking (e.g., \"Which files implement format loaders?\"). Keywords drive retrieval; question drives reranking precision.")] string? question = null,
         CancellationToken cancellationToken = default)
     {
-        if (tokenBudget <= 0)
-            return ToolResult.Error("Error: tokenBudget must be a positive integer.");
-        if (breadth < 1 || breadth > 10)
-            return ToolResult.Error("Error: breadth must be between 1 and 10.");
+        if (tokenBudget < 0)
+            return ToolResult.Error("Error: tokenBudget must be zero (auto) or a positive integer.");
+        if (breadth < 0 || breadth > 10)
+            return ToolResult.Error("Error: breadth must be 0 (auto) or between 1 and 10.");
 
         var orientationFooter = _sessionOrientation.CheckOrientation(uriGlob);
         var requestSignature = $"{tokenBudget}|{breadth}|{uriGlob}|{keywords}|{boost}|{penalize}|{limit}|{question}";

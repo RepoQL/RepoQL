@@ -69,8 +69,37 @@ public static class ValueBasedAllocator
         }
 
         // Level 2: Allocate within each file
-        return files.Select(f => AllocateWithinFile(f.Result, f.Budget, clampedBreadth, k)).ToList();
+        var decisions = files.Select(f => AllocateWithinFile(f.Result, f.Budget, clampedBreadth, k)).ToList();
+
+        // Level 3: Global upgrade pass — per-file allocation often leaves budget in a dead zone
+        // (enough for Compact but not Standard). Collect unused tokens and upgrade top files.
+        var totalUsed = decisions.Sum(TotalDecisionTokens);
+        var globalRemaining = tokenBudget - totalUsed;
+
+        if (globalRemaining > 0)
+        {
+            for (var i = 0; i < decisions.Count && globalRemaining > 0; i++)
+            {
+                var d = decisions[i];
+                var nextLevel = GetNextLevel(d.Level);
+                if (nextLevel is null) continue;
+
+                var nextCost = ExploreTokenEstimator.Estimate(d.Result, nextLevel.Value);
+                var upgradeCost = nextCost - d.EstimatedTokens;
+
+                if (upgradeCost > 0 && upgradeCost <= globalRemaining)
+                {
+                    decisions[i] = d with { Level = nextLevel.Value, EstimatedTokens = nextCost };
+                    globalRemaining -= upgradeCost;
+                }
+            }
+        }
+
+        return decisions;
     }
+
+    private static int TotalDecisionTokens(RenderingDecision d)
+        => d.EstimatedTokens + (d.ChildDecisions?.Sum(c => c.EstimatedTokens) ?? 0);
 
     /// <summary>
     /// Sigmoid midpoint for budget allocation. Scores below this get
@@ -181,7 +210,7 @@ public static class ValueBasedAllocator
             foreach (var item in items)
             {
                 var allocation = (int)(fileBudget * item.ExpectedValue / totalEV);
-                item.Level = PickBestFit(item.Result, allocation, breadth);
+                item.Level = PickBestFit(item.Result, allocation);
                 item.Tokens = ExploreTokenEstimator.Estimate(item.Result, item.Level);
             }
         }
@@ -238,9 +267,11 @@ public static class ValueBasedAllocator
 
     /// <summary>
     /// Pick the richest representation that fits within the token allocation.
-    /// Minimal (URI-only) is only used at high breadth (≥8); lower breadth uses Compact as floor.
+    /// Falls through to Minimal (URI-only) when budget can't afford Compact — a visible
+    /// URI is better than an invisible result. The sigmoid concentrates budget on what
+    /// matters; the tail gets awareness, not depth.
     /// </summary>
-    private static Representation PickBestFit(ExploreResult result, int allocation, int breadth)
+    private static Representation PickBestFit(ExploreResult result, int allocation)
     {
         if (ExploreTokenEstimator.EstimateRich(result) <= allocation)
             return Representation.Rich;
@@ -249,8 +280,7 @@ public static class ValueBasedAllocator
         if (ExploreTokenEstimator.EstimateCompact(result) <= allocation)
             return Representation.Compact;
 
-        // Minimal (URI-only) only for high breadth — at lower breadth, headlines earn their cost
-        return breadth >= 8 ? Representation.Minimal : Representation.Compact;
+        return Representation.Minimal;
     }
 
     /// <summary>

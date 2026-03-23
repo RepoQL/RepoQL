@@ -15,12 +15,14 @@ public static class OutputComposer
     /// <param name="showConfidence">Whether to show confidence scores.</param>
     /// <param name="trustSignal">Optional trust signal for footer.</param>
     /// <param name="budgetResolution">Optional resolved budget used for footer token display.</param>
+    /// <param name="resolvedBreadth">When auto-breadth is active, the breadth the system chose. Null when explicit.</param>
     /// <returns>The composed output string.</returns>
     public static string Compose(
         DecisionResult decisionResult,
         bool showConfidence,
         TrustSignal? trustSignal = null,
-        BudgetResolution? budgetResolution = null)
+        BudgetResolution? budgetResolution = null,
+        int? resolvedBreadth = null)
     {
         if (decisionResult.Decisions.Count == 0)
             return string.Empty;
@@ -100,7 +102,7 @@ public static class OutputComposer
                 sb.Append('\n');
 
             var totalTokens = TokenEstimator.EstimateTokens(sb.ToString());
-            sb.Append(RepresentationFormatter.FormatStatusFooter(trustSignal, totalTokens, budgetResolution: budgetResolution));
+            sb.Append(RepresentationFormatter.FormatStatusFooter(trustSignal, totalTokens, budgetResolution: budgetResolution, resolvedBreadth: resolvedBreadth));
         }
 
         return sb.ToString();

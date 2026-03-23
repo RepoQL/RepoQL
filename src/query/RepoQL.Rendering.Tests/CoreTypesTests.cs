@@ -7,11 +7,12 @@ namespace RepoQL.Rendering.Tests;
 public class CoreTypesTests
 {
     [Test]
-    [DisplayName("ExploreQuery defaults breadth to 5")]
-    public void ExploreQuery_DefaultBreadth_IsFive()
+    [DisplayName("ExploreQuery defaults breadth to 5 and auto breadth off")]
+    public void ExploreQuery_Defaults_AreExpected()
     {
         var query = new ExploreQuery(TokenBudget: 1000);
         query.Breadth.Should().Be(5);
+        query.AutoBreadth.Should().BeFalse();
     }
 
     [Test]
