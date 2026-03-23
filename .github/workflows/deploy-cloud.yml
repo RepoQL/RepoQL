@@ -57,7 +57,7 @@ jobs:
         id: check
         shell: bash
         run: |
-          if git diff --name-only HEAD~1 HEAD | grep -qE '^(src/RepoQL\.(Cloud\.Service|Embedding\.(Proto|Storage)|Inference\.Proto)/|infra/|Directory\.(Build|Packages)\.props$)'; then
+          if git diff --name-only HEAD~1 HEAD | grep -qE '^(src/cloud/RepoQL\.(Cloud\.Service|Embedding\.(Proto|Storage)|Inference\.Proto)/|Directory\.(Build|Packages)\.props$)'; then
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
             echo "deploy=false" >> "$GITHUB_OUTPUT"
@@ -157,6 +157,19 @@ jobs:
             --set-env-vars=ASPNETCORE_URLS=http://+:8080,ASPNETCORE_ENVIRONMENT=Development,OTEL_SERVICE_NAME=repoql-cloud,OTEL_RESOURCE_ATTRIBUTES=service.version=${{ steps.tag.outputs.tag }},CacheLayer__Enabled=true,CacheLayer__StorageBackend=gcs,CacheLayer__EmbeddingsBucket=${{ vars.CACHE_EMBEDDINGS_BUCKET }},CacheLayer__StagingBucket=${{ vars.CACHE_STAGING_BUCKET }}
             --set-secrets=Embedding__VoyageApiKey=repoql-embedding-voyage-api-key:latest,Inference__GrokApiKey=repoql-inference-grok-api-key:latest,Auth__ApiKeyHashes__0=repoql-embedding-auth-key-hash-0:latest,Auth__ApiKeyHashes__1=repoql-embedding-auth-key-hash-1:latest,Firestore__ProjectId=repoql-cloud-firestore-project:latest,REPOQL_CACHE_GCS_HMAC_KEY_ID=${{ vars.CACHE_WRITER_HMAC_KEY_SECRET }}:latest,REPOQL_CACHE_GCS_HMAC_SECRET=${{ vars.CACHE_WRITER_HMAC_SECRET_SECRET }}:latest
 
+      - name: Smoke test
+        shell: bash
+        run: |
+          # Wait for new revision to stabilize, then verify the service responds
+          sleep 10
+          url="https://repoql-cloud-${{ vars.GCP_PROJECT_NUMBER }}.${{ env.REGION }}.run.app"
+          status=$(curl -sf -o /dev/null -w '%{http_code}' --max-time 15 "$url/health" 2>/dev/null || echo "000")
+          if [[ "$status" == "000" ]]; then
+            echo "::error::Smoke test failed — service unreachable at $url/health"
+            exit 1
+          fi
+          echo "Smoke test passed (HTTP $status)"
+
   deploy-prod:
     name: Deploy to prod
     if: github.event_name == 'workflow_dispatch' && inputs.environment == 'prod'
@@ -242,3 +255,15 @@ jobs:
             --service-account=cloud-service-prod@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com
             --set-env-vars=ASPNETCORE_URLS=http://+:8080,OTEL_SERVICE_NAME=repoql-cloud,OTEL_RESOURCE_ATTRIBUTES=service.version=${{ steps.tag.outputs.tag }},CacheLayer__Enabled=true,CacheLayer__StorageBackend=gcs,CacheLayer__EmbeddingsBucket=${{ vars.CACHE_EMBEDDINGS_BUCKET }},CacheLayer__StagingBucket=${{ vars.CACHE_STAGING_BUCKET }}
             --set-secrets=Embedding__VoyageApiKey=repoql-embedding-voyage-api-key:latest,Inference__GrokApiKey=repoql-inference-grok-api-key:latest,Auth__ApiKeyHashes__0=repoql-embedding-auth-key-hash-0:latest,Auth__ApiKeyHashes__1=repoql-embedding-auth-key-hash-1:latest,Firestore__ProjectId=repoql-cloud-firestore-project:latest,REPOQL_CACHE_GCS_HMAC_KEY_ID=${{ vars.CACHE_WRITER_HMAC_KEY_SECRET }}:latest,REPOQL_CACHE_GCS_HMAC_SECRET=${{ vars.CACHE_WRITER_HMAC_SECRET_SECRET }}:latest
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          sleep 10
+          url="https://repoql-cloud-${{ vars.GCP_PROJECT_NUMBER }}.${{ env.REGION }}.run.app"
+          status=$(curl -sf -o /dev/null -w '%{http_code}' --max-time 15 "$url/health" 2>/dev/null || echo "000")
+          if [[ "$status" == "000" ]]; then
+            echo "::error::Smoke test failed — service unreachable at $url/health"
+            exit 1
+          fi
+          echo "Smoke test passed (HTTP $status)"

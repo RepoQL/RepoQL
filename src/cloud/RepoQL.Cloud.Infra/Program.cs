@@ -6,10 +6,10 @@ using Gcp = Pulumi.Gcp;
 return await Deployment.RunAsync<CloudCacheInfrastructureStack>();
 
 /// <summary>
-/// Provisions the GCP foundation for the cloud embedding cache and Cloudflare edge proxy.
+/// Provisions the GCP foundation for the cloud embedding cache and Cloudflare DNS.
 /// Complexity: storage buckets, scheduling, service identities, HMAC credentials,
 /// Secret Manager storage, Eventarc IAM prerequisites, bucket-scoped IAM bindings,
-/// and Cloudflare proxied CNAME to GFE via Cloud Run domain mapping.
+/// and Cloudflare DNS records for Cloud Run domain mapping.
 /// </summary>
 internal sealed class CloudCacheInfrastructureStack : Stack
 {
@@ -391,12 +391,11 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Member = AsServiceAccountMember(cloudServiceAccount.Email),
         });
 
-        // --- Cloudflare DNS & CDN proxy ---
-        // Proxied CNAME records to Cloud Run services. Cloudflare terminates TLS at the edge,
-        // provides free DDoS protection and analytics. SSL "Full" mode works because Cloud Run
-        // presents a cert via domain mapping. NOT "Full (Strict)" — domain mapping uses Let's Encrypt
-        // with HTTP-01 validation which Cloudflare proxy blocks, causing cert renewal failures and 525s.
-        // gRPC toggle enables HTTP/2 gRPC proxying (unary RPCs).
+        // --- Cloudflare DNS ---
+        // Unproxied CNAME to Cloud Run via domain mapping. Cloud Run handles TLS directly
+        // with auto-renewed Let's Encrypt certs. Cloudflare proxy is intentionally OFF —
+        // it blocks Let's Encrypt HTTP-01 validation, causing cert renewal failures that
+        // eventually destroy the domain mapping (see 525 incident 2026-03-23).
         // Auth remains at the application layer (ApiKeyAuthInterceptor).
 
         var domain = config.Get("domain") ?? "repoql.ai";
@@ -413,13 +412,6 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         var zoneId = zone.Apply(z => z.Id);
 
         // Zone settings — all Cloudflare zone-level config codified here.
-        _ = new Cloudflare.ZoneSetting("sslSetting", new Cloudflare.ZoneSettingArgs
-        {
-            ZoneId = zoneId,
-            SettingId = "ssl",
-            Value = "full",
-        });
-
         _ = new Cloudflare.ZoneSetting("minTlsVersion", new Cloudflare.ZoneSettingArgs
         {
             ZoneId = zoneId,
@@ -427,24 +419,20 @@ internal sealed class CloudCacheInfrastructureStack : Stack
             Value = "1.2",
         });
 
-        // Note: gRPC is a network-level toggle managed via the Cloudflare dashboard
-        // (Network → gRPC), not a zone setting. It cannot be set via the ZoneSetting API.
-
         // Cloud Run domain mapping (api.repoql.ai → repoql-cloud) is managed manually.
         // It requires domain ownership verification which the CI service account lacks.
-        // Created via: gcloud beta run domain-mappings create --service repoql-cloud --domain api.repoql.ai --region us-central1
+        // Created via: gcloud beta run domain-mappings create --service repoql-cloud --domain api.repoql.ai --region us-central1 --project repoql-production
 
-        // Proxied CNAME to Google Frontend via Cloud Run domain mapping.
-        // Cloudflare terminates client TLS, provides WAF/DDoS/gRPC proxying.
-        // GFE routes to Cloud Run based on the domain mapping for api.repoql.ai.
+        // Unproxied CNAME to Google Frontend via Cloud Run domain mapping.
+        // Cloud Run handles TLS directly — no Cloudflare proxy in the path.
         var apiDns = new Cloudflare.DnsRecord("apiDns", new Cloudflare.DnsRecordArgs
         {
             ZoneId = zoneId,
             Name = "api",
             Type = "CNAME",
             Content = "ghs.googlehosted.com",
-            Ttl = 1, // 1 = automatic (Cloudflare manages TTL for proxied records)
-            Proxied = true,
+            Ttl = 300,
+            Proxied = false,
         });
 
         // --- Outputs ---
