@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  IL Linker configuration for preserving command implementation classes during trimming.
-  Command classes are discovered via reflection by CommandRegistry.
+  IL Linker configuration for preserving types discovered via reflection during trimming.
+  Command classes are discovered via assembly scanning by CommandRegistry.
 -->
 <linker>
-  <assembly fullname="repoql">
-    <type fullname="RepoQL.ConsoleApp.CommandImplementations.*" preserve="all" />
-    <type fullname="RepoQL.ConsoleApp.Tools.*" preserve="all" />
-    <type fullname="RepoQL.ConsoleApp.Host.RepoQlServiceImpl/ExplainReadToolArguments" preserve="all" />
+  <assembly fullname="RepoQL.Client">
+    <type fullname="RepoQL.Client.CommandImplementations.*" preserve="all" />
   </assembly>
 </linker>

@@ -2,10 +2,11 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RepoQL.Commands;
+using RepoQL.Contracts;
 using RepoQL.McpServer.Helpers;
+using RepoQL.McpServer.Logging;
 using RepoQL.McpServer.Resources;
 using RepoQL.McpServer.Tools;
-using RepoQL.McpServer.Logging;
 
 namespace RepoQL.McpServer.Commands;
 
@@ -19,12 +20,12 @@ public class McpCommands
     {
            // Log startup info to stderr for debugging
            var cwd = Directory.GetCurrentDirectory();
-           var repoRoot = RepoQL.Contracts.RepoLocator.FindRepoRoot(cwd);
+           var repoRoot = RepoLocator.FindRepoRoot(cwd);
            await Console.Error.WriteLineAsync($"[MCP] cwd={cwd}").ConfigureAwait(false);
            await Console.Error.WriteLineAsync($"[MCP] repoRoot={repoRoot}").ConfigureAwait(false);
 
-           var builder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder();
-           // Reduce graceful shutdown timeout from default 30s to 5s for faster exit
+           var builder = Host.CreateApplicationBuilder();
+           // Reduce graceful shutdown timeout from the default 30s to 5s for faster exit
            builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(5));
            builder.Logging.SetMinimumLevel(LogLevel.Warning);
             builder.Logging.AddConsole(consoleLogOptions =>
