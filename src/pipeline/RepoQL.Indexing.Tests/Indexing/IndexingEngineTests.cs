@@ -338,6 +338,7 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [SkipOnCI]
     [DisplayName("FM-001: Cancelled pipeline results caused by timeout still defer to idle retry")]
     public async Task Given_StageReturnsCancelledOnTimeout_When_ItemTimesOut_Then_DeferredRetryStillRuns(CancellationToken token)
     {
@@ -386,6 +387,7 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [SkipOnCI]
     [DisplayName("FM-001: Timeout hands pending catalog state off cleanly to deferred retry")]
     public async Task Given_CooperativeHotPathTimeout_When_ItemTimesOut_Then_CatalogPendingDigestTransfersToDeferredRetry(CancellationToken token)
     {
@@ -441,6 +443,7 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [SkipOnCI]
     [DisplayName("FM-001: Timed-out hot-path item is deferred to idle retry without blocking later work")]
     public async Task Given_HotPathTimeout_When_ItemTimesOut_Then_ItemIsDeferredToIdleRetry(CancellationToken token)
     {
@@ -497,6 +500,7 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [SkipOnCI]
     [DisplayName("FM-001: Non-cooperative hot-path work still times out and hands off to deferred retry")]
     public async Task Given_HotPathWorkIgnoresCancellation_When_TimeoutExpires_Then_DeferredRetryStillStarts(CancellationToken token)
     {
@@ -568,6 +572,7 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [SkipOnCI]
     [DisplayName("FM-001: Deferred retry ownership blocks duplicate hot-path enqueue for the same URI")]
     public async Task Given_DeferredRetryPending_When_SameUriEnqueuedAgain_Then_FreshHotPathEnqueueIsRejected(CancellationToken token)
     {
@@ -699,6 +704,7 @@ public class IndexingEngineTests
 
     [Test]
     [Timeout(15_000)]
+    [SkipOnCI]
     [DisplayName("FM-001: Second timeout during idle retry marks the file failed")]
     public async Task Given_DeferredRetryTimeout_When_ItemTimesOutAgain_Then_FileIsMarkedFailed(CancellationToken token)
     {

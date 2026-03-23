@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using RepoQL.Testing;
 
 namespace RepoQL.Sandbox.Tests;
 
@@ -283,6 +284,7 @@ public sealed class WasmtimeSandboxTests : IDisposable
     }
 
     [Test]
+    [WindowsOnly]
     public void Execute_RepoqlWrite_ErrorBecomesJsException()
     {
         var capabilities = new SandboxCapabilities

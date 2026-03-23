@@ -34,8 +34,8 @@
         <PackageReference Include="OpenTelemetry" />
         <PackageReference Include="OpenTelemetry.Exporter.Console" />
         <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
-        <Compile Include="$(RepositoryRoot)src\tests\Shared\TUnitOpenTelemetrySetup.cs"
-                 Link="Shared\TUnitOpenTelemetrySetup.cs" />
+        <Compile Include="$(RepositoryRoot)src\tests\Shared\*.cs"
+                 Link="Shared\%(Filename)%(Extension)" />
     </ItemGroup>
 
     <!-- Repository Areas -->
