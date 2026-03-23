@@ -10,13 +10,13 @@ namespace RepoQL.Core.Cloud;
 /// Purpose: Persist RepoQL's local OAuth session state across processes.
 /// Complexity: Coordinates access-token file storage, refresh-token secure storage, and file permission tightening.
 /// </summary>
-public sealed class CloudAuthSessionStore
+public sealed partial class CloudAuthSessionStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly AuthSessionJsonContext JsonContext = new(new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-    };
+    });
 
     private readonly ResolvedConfig _config;
     private readonly IRefreshTokenStore _refreshTokenStore;
@@ -56,7 +56,7 @@ public sealed class CloudAuthSessionStore
             AccessToken = session.AccessToken,
             ExpiresAt = session.ExpiresAt,
             IdToken = session.IdToken
-        }, JsonOptions);
+        }, JsonContext.AuthFileEntry);
 
         var tempPath = _authFilePath + ".tmp";
         await File.WriteAllTextAsync(tempPath, payload, cancellationToken).ConfigureAwait(false);
@@ -73,7 +73,7 @@ public sealed class CloudAuthSessionStore
         try
         {
             var json = await File.ReadAllTextAsync(_authFilePath, cancellationToken).ConfigureAwait(false);
-            var entry = JsonSerializer.Deserialize<AuthFileEntry>(json, JsonOptions);
+            var entry = JsonSerializer.Deserialize(json, JsonContext.AuthFileEntry);
             if (entry is null || string.IsNullOrWhiteSpace(entry.AccessToken))
                 return null;
 
@@ -134,6 +134,9 @@ public sealed class CloudAuthSessionStore
         public required DateTimeOffset ExpiresAt { get; init; }
         public string? IdToken { get; init; }
     }
+
+    [JsonSerializable(typeof(AuthFileEntry))]
+    private sealed partial class AuthSessionJsonContext : JsonSerializerContext;
 }
 
 /// <summary>

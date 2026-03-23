@@ -1,4 +1,6 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using RepoQL.Contracts;
 
 namespace RepoQL.Client.Diagnostics;
@@ -9,17 +11,17 @@ namespace RepoQL.Client.Diagnostics;
 /// </summary>
 public static class HostDiagnosticsStore
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new()
+    public static readonly DiagnosticsReportJsonContext JsonContext = new(new JsonSerializerOptions
     {
         WriteIndented = true
-    };
+    });
 
-    public static bool TryWriteReport<T>(string repoRoot, string fileName, T report)
+    public static bool TryWriteReport<T>(string repoRoot, string fileName, T report, JsonTypeInfo<T> jsonTypeInfo)
     {
         try
         {
             var path = GetReportPath(repoRoot, fileName);
-            var json = JsonSerializer.Serialize(report, SerializerOptions);
+            var json = JsonSerializer.Serialize(report, jsonTypeInfo);
             File.WriteAllText(path, json);
             return true;
         }
@@ -29,7 +31,7 @@ public static class HostDiagnosticsStore
         }
     }
 
-    public static bool TryReadReport<T>(string repoRoot, string fileName, out T? report)
+    public static bool TryReadReport<T>(string repoRoot, string fileName, JsonTypeInfo<T> jsonTypeInfo, out T? report)
     {
         report = default;
         try
@@ -39,7 +41,7 @@ public static class HostDiagnosticsStore
                 return false;
 
             var json = File.ReadAllText(path);
-            report = JsonSerializer.Deserialize<T>(json, SerializerOptions);
+            report = JsonSerializer.Deserialize(json, jsonTypeInfo);
             return report is not null;
         }
         catch
@@ -57,3 +59,10 @@ public static class HostDiagnosticsStore
         return Path.Combine(diagnosticsDir, fileName);
     }
 }
+
+[JsonSerializable(typeof(SocketBindReport))]
+[JsonSerializable(typeof(ExistingHostReport))]
+[JsonSerializable(typeof(DatabaseInitReport))]
+[JsonSerializable(typeof(ServicesStartReport))]
+[JsonSerializable(typeof(DashboardBindReport))]
+public sealed partial class DiagnosticsReportJsonContext : JsonSerializerContext;

@@ -1,6 +1,7 @@
 ﻿using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Google.Protobuf.WellKnownTypes;
 using RepoQL.Commands;
 using RepoQL.Client.Diagnostics;
@@ -16,7 +17,7 @@ namespace RepoQL.Client.CommandImplementations;
 /// aggregation and text rendering for specialized diagnostics commands.
 /// </summary>
 [CommandClass]
-internal sealed class DiagnosticsCommand
+internal sealed partial class DiagnosticsCommand
 {
     private const int SectionRowLimit = 15;
     private const long StuckAgeThresholdSeconds = 60;
@@ -332,7 +333,7 @@ internal sealed class DiagnosticsCommand
         try
         {
             var response = await client.ExecuteRawQueryAsync(SummarySql, cancellationToken: cancel).ConfigureAwait(false);
-            var summary = ParseJsonArray<RegistrySummaryEntry>(response, "summary").FirstOrDefault();
+            var summary = ParseJsonArray(response, "summary", JsonContext.ListRegistrySummaryEntry).FirstOrDefault();
             if (summary is null)
                 return [$"  Error: Summary query returned no data."];
 
@@ -367,7 +368,7 @@ internal sealed class DiagnosticsCommand
         try
         {
             var pendingResponse = await client.ExecuteRawQueryAsync(PendingSql, cancellationToken: cancel).ConfigureAwait(false);
-            discoveredRows = ParseJsonArray<PendingEntry>(pendingResponse, "pending")
+            discoveredRows = ParseJsonArray(pendingResponse, "pending", JsonContext.ListPendingEntry)
                 .Where(entry => entry.Status.Equals("Discovered", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(entry => entry.Uri, StringComparer.OrdinalIgnoreCase)
                 .Select(entry => new StuckRow("n/a", "registry", entry.Status, entry.Uri))
@@ -410,7 +411,7 @@ internal sealed class DiagnosticsCommand
         try
         {
             var response = await client.ExecuteRawQueryAsync(FailedSql, cancellationToken: cancel).ConfigureAwait(false);
-            var failures = ParseJsonArray<IndexerErrorEntry>(response, "failed files")
+            var failures = ParseJsonArray(response, "failed files", JsonContext.ListIndexerErrorEntry)
                 .Where(entry => !string.IsNullOrWhiteSpace(entry.Uri))
                 .OrderBy(entry => entry.Uri, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -442,7 +443,7 @@ internal sealed class DiagnosticsCommand
         try
         {
             var response = await client.ExecuteRawQueryAsync(StatusSql, cancellationToken: cancel).ConfigureAwait(false);
-            var slowRows = ParseJsonArray<IndexerStatusEntry>(response, "status")
+            var slowRows = ParseJsonArray(response, "status", JsonContext.ListIndexerStatusEntry)
                 .Where(entry => entry.ProcessingDurationMs > SlowDurationThresholdMs)
                 .OrderByDescending(entry => entry.ProcessingDurationMs)
                 .ThenBy(entry => entry.Uri, StringComparer.OrdinalIgnoreCase)
@@ -480,7 +481,7 @@ internal sealed class DiagnosticsCommand
         try
         {
             var response = await client.ExecuteRawQueryAsync(StatusSql, cancellationToken: cancel).ConfigureAwait(false);
-            var statuses = ParseJsonArray<IndexerStatusEntry>(response, "status");
+            var statuses = ParseJsonArray(response, "status", JsonContext.ListIndexerStatusEntry);
             var distributions = CalculateDurationDistribution(statuses);
 
             if (distributions.Count == 0)
@@ -549,7 +550,7 @@ internal sealed class DiagnosticsCommand
         return rows;
     }
 
-    private static List<T> ParseJsonArray<T>(RawQueryResponse response, string description)
+    private static List<T> ParseJsonArray<T>(RawQueryResponse response, string description, JsonTypeInfo<List<T>> jsonTypeInfo)
     {
         var json = GetScalarString(response);
         if (string.IsNullOrWhiteSpace(json))
@@ -557,7 +558,7 @@ internal sealed class DiagnosticsCommand
 
         try
         {
-            var data = JsonSerializer.Deserialize<List<T>>(json, JsonOptions);
+            var data = JsonSerializer.Deserialize(json, jsonTypeInfo);
             return data ?? [];
         }
         catch (JsonException ex)
@@ -713,10 +714,10 @@ internal sealed class DiagnosticsCommand
         return false;
     }
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly DiagnosticsCommandJsonContext JsonContext = new(new JsonSerializerOptions
     {
         PropertyNameCaseInsensitive = true
-    };
+    });
 
     internal sealed record DurationDistribution(
         string Extension,
@@ -764,5 +765,11 @@ internal sealed class DiagnosticsCommand
         public ValueTask<IRepoQlClient> GetClientAsync(CancellationToken cancellationToken)
             => clientProvider.GetClientAsync(cancellationToken);
     }
+
+    [JsonSerializable(typeof(List<RegistrySummaryEntry>))]
+    [JsonSerializable(typeof(List<PendingEntry>))]
+    [JsonSerializable(typeof(List<IndexerErrorEntry>))]
+    [JsonSerializable(typeof(List<IndexerStatusEntry>))]
+    private sealed partial class DiagnosticsCommandJsonContext : JsonSerializerContext;
 }
 

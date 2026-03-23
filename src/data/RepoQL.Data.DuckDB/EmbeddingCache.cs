@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using DuckDB.NET.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,7 +14,7 @@ namespace RepoQL.Data.DuckDB;
 /// Complexity: Owns parquet read/write via a dedicated in-memory DuckDB connection, atomic file writes,
 /// layered multi-path resolution with write-through, and concurrency control for safe multi-threaded access.
 /// </summary>
-public sealed class EmbeddingCache : IDisposable
+public sealed partial class EmbeddingCache : IDisposable
 {
     private const string DefaultCachePath = "~/.repoql/embedding-cache/";
     private const int InsertBatchSize = 128;
@@ -580,7 +581,7 @@ public sealed class EmbeddingCache : IDisposable
             {
                 pid = Environment.ProcessId,
                 timestamp = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)
-            });
+            }, LockFileJsonContext.Default.LockFilePayload);
 
             using var stream = new FileStream(lockPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             using var writer = new StreamWriter(stream);
@@ -673,7 +674,7 @@ public sealed class EmbeddingCache : IDisposable
         try
         {
             var text = File.ReadAllText(lockPath);
-            var payload = JsonSerializer.Deserialize<LockFilePayload>(text);
+            var payload = JsonSerializer.Deserialize(text, LockFileJsonContext.Default.LockFilePayload);
             return payload is { pid: > 0 } ? payload.pid : null;
         }
         catch
@@ -926,6 +927,9 @@ public sealed class EmbeddingCache : IDisposable
         public int pid { get; set; }
         public string? timestamp { get; set; }
     }
+
+    [JsonSerializable(typeof(LockFilePayload))]
+    private sealed partial class LockFileJsonContext : JsonSerializerContext;
 }
 
 /// <summary>

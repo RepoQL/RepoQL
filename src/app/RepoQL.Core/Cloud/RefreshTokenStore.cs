@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
 namespace RepoQL.Core.Cloud;
@@ -132,15 +133,15 @@ internal sealed class SecretStoreUnavailableException(string message, Exception?
 /// Purpose: Store refresh tokens in a local encrypted file when an OS credential store is unavailable.
 /// Complexity: Handles machine-bound encryption, JSON payload serialization, and permission tightening.
 /// </summary>
-internal sealed class EncryptedFileSecretStore(
+internal sealed partial class EncryptedFileSecretStore(
     string path,
     IMachineBoundSecretProtector protector,
     ILogger logger) : ISecretStore
 {
-    private static readonly JsonSerializerOptions SecretJsonOptions = new()
+    private static readonly SecretFileJsonContext JsonContext = new(new JsonSerializerOptions
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
+    });
 
     public async Task<string?> GetAsync(CancellationToken cancellationToken)
     {
@@ -150,7 +151,7 @@ internal sealed class EncryptedFileSecretStore(
         try
         {
             var json = await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
-            var payload = JsonSerializer.Deserialize<EncryptedSecretFile>(json, SecretJsonOptions);
+            var payload = JsonSerializer.Deserialize(json, JsonContext.EncryptedSecretFile);
             if (payload is null || string.IsNullOrWhiteSpace(payload.Ciphertext))
                 return null;
 
@@ -174,7 +175,7 @@ internal sealed class EncryptedFileSecretStore(
         var json = JsonSerializer.Serialize(new EncryptedSecretFile
         {
             Ciphertext = Convert.ToBase64String(protectedBytes)
-        }, SecretJsonOptions);
+        }, JsonContext.EncryptedSecretFile);
 
         var tempPath = path + ".tmp";
         await File.WriteAllTextAsync(tempPath, json, cancellationToken).ConfigureAwait(false);
@@ -205,6 +206,9 @@ internal sealed class EncryptedFileSecretStore(
     {
         public required string Ciphertext { get; init; }
     }
+
+    [JsonSerializable(typeof(EncryptedSecretFile))]
+    private sealed partial class SecretFileJsonContext : JsonSerializerContext;
 }
 
 /// <summary>

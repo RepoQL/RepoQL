@@ -45,7 +45,7 @@ internal sealed class DashboardCommand
         try
         {
             var repoRoot = RepoLocator.FindRepoRoot();
-            if (HostDiagnosticsStore.TryReadReport<DashboardBindReport>(repoRoot, "dashboard-bind.json", out var report)
+            if (HostDiagnosticsStore.TryReadReport(repoRoot, "dashboard-bind.json", HostDiagnosticsStore.JsonContext.DashboardBindReport, out var report)
                 && report?.Url is not null)
             {
                 return report.Url;

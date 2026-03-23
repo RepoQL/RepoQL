@@ -51,7 +51,7 @@ internal sealed class ServiceDegradationTracker : IServiceDegradationTracker
 
     public void WriteReport()
     {
-        HostDiagnosticsStore.TryWriteReport(_repoRoot, "services-start.json", BuildReport());
+        HostDiagnosticsStore.TryWriteReport(_repoRoot, "services-start.json", BuildReport(), HostDiagnosticsStore.JsonContext.ServicesStartReport);
     }
 
     private ServicesStartReport BuildReport()

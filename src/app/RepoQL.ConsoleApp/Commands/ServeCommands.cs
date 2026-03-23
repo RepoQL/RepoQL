@@ -341,7 +341,8 @@ internal class HostCommands(IAnsiConsole console)
             {
                 hostState.DashboardUrl = dashboardUrl;
                 HostDiagnosticsStore.TryWriteReport(repo, "dashboard-bind.json",
-                    new DashboardBindReport(dashboardUrl, DateTime.UtcNow.ToString("O")));
+                    new DashboardBindReport(dashboardUrl, DateTime.UtcNow.ToString("O")),
+                    HostDiagnosticsStore.JsonContext.DashboardBindReport);
                 app.Logger.LogInformation("Dashboard available at {DashboardUrl}", dashboardUrl);
             }
 
@@ -389,7 +390,7 @@ internal class HostCommands(IAnsiConsole console)
 
     private static int? ResolvePreferredDashboardPort(string repo, Serilog.ILogger logger)
     {
-        if (!HostDiagnosticsStore.TryReadReport<DashboardBindReport>(repo, "dashboard-bind.json", out var report)
+        if (!HostDiagnosticsStore.TryReadReport(repo, "dashboard-bind.json", HostDiagnosticsStore.JsonContext.DashboardBindReport, out var report)
             || string.IsNullOrWhiteSpace(report?.Url)
             || !Uri.TryCreate(report.Url, UriKind.Absolute, out var uri)
             || !uri.IsLoopback
@@ -549,7 +550,7 @@ internal class HostCommands(IAnsiConsole console)
         }
         finally
         {
-            HostDiagnosticsStore.TryWriteReport(repo, "existing-host.json", report);
+            HostDiagnosticsStore.TryWriteReport(repo, "existing-host.json", report, HostDiagnosticsStore.JsonContext.ExistingHostReport);
         }
     }
 

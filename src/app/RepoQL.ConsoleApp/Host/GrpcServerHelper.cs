@@ -32,11 +32,11 @@ public static class GrpcServerHelper
         {
             report.BindSucceeded = false;
             report.BindError = ex.Message;
-            HostDiagnosticsStore.TryWriteReport(repoPath, "socket-bind.json", report);
+            HostDiagnosticsStore.TryWriteReport(repoPath, "socket-bind.json", report, HostDiagnosticsStore.JsonContext.SocketBindReport);
             throw;
         }
 
-        HostDiagnosticsStore.TryWriteReport(repoPath, "socket-bind.json", report);
+        HostDiagnosticsStore.TryWriteReport(repoPath, "socket-bind.json", report, HostDiagnosticsStore.JsonContext.SocketBindReport);
         return socketPath;
     }
 

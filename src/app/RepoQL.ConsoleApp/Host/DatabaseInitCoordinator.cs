@@ -45,7 +45,7 @@ internal static class DatabaseInitCoordinator
 
         if (!tempOk)
         {
-            HostDiagnosticsStore.TryWriteReport(repoRoot, "database-init.json", report);
+            HostDiagnosticsStore.TryWriteReport(repoRoot, "database-init.json", report, HostDiagnosticsStore.JsonContext.DatabaseInitReport);
             throw new InvalidOperationException($"DuckDB temp directory is not writable: {tempError}");
         }
 
@@ -66,7 +66,7 @@ internal static class DatabaseInitCoordinator
         }
         finally
         {
-            HostDiagnosticsStore.TryWriteReport(repoRoot, "database-init.json", report);
+            HostDiagnosticsStore.TryWriteReport(repoRoot, "database-init.json", report, HostDiagnosticsStore.JsonContext.DatabaseInitReport);
         }
     }
 

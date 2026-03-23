@@ -18,13 +18,13 @@ namespace RepoQL.Client.Auth;
 /// Purpose: Run RepoQL's interactive cloud login/logout/whoami workflows for both CLI and command surfaces.
 /// Complexity: Handles PKCE/device OAuth exchanges, loopback callback listening, local credential persistence, and user-facing auth summaries.
 /// </summary>
-public sealed class CloudAuthService : IDisposable
+public sealed partial class CloudAuthService : IDisposable
 {
     private static readonly TimeSpan BrowserCallbackTimeout = TimeSpan.FromSeconds(120);
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly CloudAuthJsonContext JsonContext = new(new JsonSerializerOptions
     {
         PropertyNameCaseInsensitive = true
-    };
+    });
 
     private readonly ResolvedConfig _config;
     private readonly CloudAuthSessionStore _sessionStore;
@@ -208,7 +208,7 @@ public sealed class CloudAuthService : IDisposable
             if (!response.IsSuccessStatusCode)
                 throw CreateWorkOsException(payload, "Device authorization failed.");
 
-            deviceResponse = JsonSerializer.Deserialize<DeviceAuthorizationResponse>(payload, JsonOptions)
+            deviceResponse = JsonSerializer.Deserialize(payload, JsonContext.DeviceAuthorizationResponse)
                 ?? throw new InvalidOperationException("Device authorization failed. Response was empty.");
         }
         catch (Exception ex) when (IsNetworkError(ex, cancellationToken))
@@ -337,7 +337,7 @@ public sealed class CloudAuthService : IDisposable
             if (!response.IsSuccessStatusCode)
                 throw CreateWorkOsException(payload, "Authentication failed.");
 
-            return JsonSerializer.Deserialize<TokenExchangeResponse>(payload, JsonOptions)
+            return JsonSerializer.Deserialize(payload, JsonContext.TokenExchangeResponse)
                 ?? throw new InvalidOperationException("Authentication failed. Token response was empty.");
         }
         catch (Exception ex) when (IsNetworkError(ex, cancellationToken))
@@ -362,7 +362,7 @@ public sealed class CloudAuthService : IDisposable
             var payload = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
-                return JsonSerializer.Deserialize<TokenExchangeResponse>(payload, JsonOptions)
+                return JsonSerializer.Deserialize(payload, JsonContext.TokenExchangeResponse)
                     ?? throw new InvalidOperationException("Authentication failed. Token response was empty.");
             }
 
@@ -586,7 +586,7 @@ public sealed class CloudAuthService : IDisposable
 
         try
         {
-            return JsonSerializer.Deserialize<WorkOsError>(payload, JsonOptions) ?? new WorkOsError();
+            return JsonSerializer.Deserialize(payload, JsonContext.WorkOsError) ?? new WorkOsError();
         }
         catch (JsonException)
         {
@@ -662,6 +662,11 @@ public sealed class CloudAuthService : IDisposable
     private sealed class DeviceFlowPendingException : Exception;
     private sealed class DeviceFlowSlowDownException : Exception;
     private sealed class DeviceFlowExpiredException : Exception;
+
+    [JsonSerializable(typeof(TokenExchangeResponse))]
+    [JsonSerializable(typeof(DeviceAuthorizationResponse))]
+    [JsonSerializable(typeof(WorkOsError))]
+    private sealed partial class CloudAuthJsonContext : JsonSerializerContext;
 
 }
 

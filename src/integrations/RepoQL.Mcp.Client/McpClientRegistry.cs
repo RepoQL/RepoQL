@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Web;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -292,7 +293,7 @@ public sealed class McpClientRegistry : IAsyncDisposable, IMcpToolCaller
         }
         catch (Exception ex)
         {
-            return JsonSerializer.Serialize(new { error = ex.Message });
+            return new JsonObject { ["error"] = ex.Message }.ToJsonString();
         }
     }
 

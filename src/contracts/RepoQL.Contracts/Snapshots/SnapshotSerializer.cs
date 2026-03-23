@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using RepoQL.Contracts.Models;
 
 namespace RepoQL.Contracts.Snapshots;
@@ -11,12 +12,12 @@ namespace RepoQL.Contracts.Snapshots;
 /// </summary>
 public static class SnapshotSerializer
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
+    private static readonly SnapshotJsonContext JsonContext = new(new JsonSerializerOptions
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
-    };
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    });
 
     /// <summary>
     /// Serialize a manifest to JSON.
@@ -24,7 +25,7 @@ public static class SnapshotSerializer
     public static string Serialize(SnapshotManifest manifest)
     {
         ArgumentNullException.ThrowIfNull(manifest);
-        return JsonSerializer.Serialize(manifest, JsonOptions);
+        return JsonSerializer.Serialize(manifest, JsonContext.SnapshotManifest);
     }
 
     /// <summary>
@@ -34,7 +35,7 @@ public static class SnapshotSerializer
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentNullException.ThrowIfNull(manifest);
-        JsonSerializer.Serialize(stream, manifest, JsonOptions);
+        JsonSerializer.Serialize(stream, manifest, JsonContext.SnapshotManifest);
     }
 
     /// <summary>
@@ -47,7 +48,7 @@ public static class SnapshotSerializer
         if (string.IsNullOrWhiteSpace(json))
             throw new ArgumentException("Snapshot JSON cannot be empty.", nameof(json));
 
-        return JsonSerializer.Deserialize<SnapshotManifest>(json, JsonOptions)
+        return JsonSerializer.Deserialize(json, JsonContext.SnapshotManifest)
                ?? throw new InvalidOperationException("Deserialized snapshot manifest was null.");
     }
 
@@ -57,7 +58,7 @@ public static class SnapshotSerializer
     public static SnapshotManifest Deserialize(Stream stream)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        return JsonSerializer.Deserialize<SnapshotManifest>(stream, JsonOptions)
+        return JsonSerializer.Deserialize(stream, JsonContext.SnapshotManifest)
                ?? throw new InvalidOperationException("Deserialized snapshot manifest was null.");
     }
 
@@ -318,3 +319,6 @@ public static class SnapshotSerializer
         return node?.AsObject() ?? new JsonObject();
     }
 }
+
+[JsonSerializable(typeof(SnapshotManifest))]
+internal sealed partial class SnapshotJsonContext : JsonSerializerContext;

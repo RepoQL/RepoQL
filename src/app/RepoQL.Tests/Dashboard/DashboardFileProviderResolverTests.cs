@@ -44,8 +44,8 @@ internal sealed class DashboardFileProviderResolverTests : IDisposable
     {
         var tempDir = CreateTempDirectory();
 
-        HostDiagnosticsStore.TryWriteReport(tempDir, "dashboard-bind.json", new DashboardBindReport("http://127.0.0.1:53333", "2026-03-10T19:35:03.0000000Z")).Should().BeTrue();
-        HostDiagnosticsStore.TryReadReport<DashboardBindReport>(tempDir, "dashboard-bind.json", out var report).Should().BeTrue();
+        HostDiagnosticsStore.TryWriteReport(tempDir, "dashboard-bind.json", new DashboardBindReport("http://127.0.0.1:53333", "2026-03-10T19:35:03.0000000Z"), HostDiagnosticsStore.JsonContext.DashboardBindReport).Should().BeTrue();
+        HostDiagnosticsStore.TryReadReport(tempDir, "dashboard-bind.json", HostDiagnosticsStore.JsonContext.DashboardBindReport, out var report).Should().BeTrue();
         report.Should().NotBeNull();
         report!.Url.Should().Be("http://127.0.0.1:53333");
         report.StartedAt.Should().Be("2026-03-10T19:35:03.0000000Z");

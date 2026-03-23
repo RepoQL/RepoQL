@@ -570,7 +570,7 @@ public sealed class DiagnosticsCollector
 
     private static SocketBindReport? ReadSocketBindReport(string repoRoot, Dictionary<string, string> artifacts)
     {
-        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "socket-bind.json", out SocketBindReport? report) || report is null)
+        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "socket-bind.json", HostDiagnosticsStore.JsonContext.SocketBindReport, out SocketBindReport? report) || report is null)
             return null;
 
         artifacts["socket-bind.json"] = report.BindSucceeded ? "OK" : "FAILED";
@@ -579,7 +579,7 @@ public sealed class DiagnosticsCollector
 
     private static void ReadExistingHostReport(string repoRoot, Dictionary<string, string> artifacts)
     {
-        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "existing-host.json", out ExistingHostReport? report) || report is null)
+        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "existing-host.json", HostDiagnosticsStore.JsonContext.ExistingHostReport, out ExistingHostReport? report) || report is null)
             return;
 
         var summary = report.ShutdownSucceeded
@@ -592,7 +592,7 @@ public sealed class DiagnosticsCollector
 
     private static void ReadDatabaseInitReport(string repoRoot, Dictionary<string, string> artifacts)
     {
-        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "database-init.json", out DatabaseInitReport? report) || report is null)
+        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "database-init.json", HostDiagnosticsStore.JsonContext.DatabaseInitReport, out DatabaseInitReport? report) || report is null)
             return;
 
         var status = report.OpenSucceeded ? "OK" : "FAILED";
@@ -601,7 +601,7 @@ public sealed class DiagnosticsCollector
 
     private static void ReadServicesStartReport(string repoRoot, Dictionary<string, string> artifacts)
     {
-        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "services-start.json", out ServicesStartReport? report) || report is null)
+        if (!HostDiagnosticsStore.TryReadReport(repoRoot, "services-start.json", HostDiagnosticsStore.JsonContext.ServicesStartReport, out ServicesStartReport? report) || report is null)
             return;
 
         var status = report.Issues.Count == 0 ? "OK" : "DEGRADED";

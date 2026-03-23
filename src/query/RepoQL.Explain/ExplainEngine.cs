@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
@@ -14,14 +15,14 @@ namespace RepoQL.Explain;
 /// Complexity: Orchestrates keyword extraction (LLM), broad explore search, tree context,
 /// and multi-round LLM synthesis with tool use. No transport knowledge — pure business logic.
 /// </summary>
-public sealed class ExplainEngine : IExplainEngine
+public sealed partial class ExplainEngine : IExplainEngine
 {
     private readonly ExploreOrchestrator _explore;
     private readonly ReadOrchestrator _read;
     private readonly IInferenceProvider _inference;
     private readonly ILogger _logger;
 
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly ExplainJsonContext JsonContext = new(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
     public ExplainEngine(
         ExploreOrchestrator explore,
@@ -152,7 +153,7 @@ public sealed class ExplainEngine : IExplainEngine
         ReadToolArguments? args;
         try
         {
-            args = JsonSerializer.Deserialize<ReadToolArguments>(toolCall.ArgumentsJson, JsonOptions);
+            args = JsonSerializer.Deserialize(toolCall.ArgumentsJson, JsonContext.ReadToolArguments);
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException)
         {
@@ -223,6 +224,9 @@ public sealed class ExplainEngine : IExplainEngine
         public string? UriGlob { get; set; }
         public int TokenBudget { get; set; }
     }
+
+    [JsonSerializable(typeof(ReadToolArguments))]
+    private sealed partial class ExplainJsonContext : JsonSerializerContext;
 
     #region System Prompt
 
