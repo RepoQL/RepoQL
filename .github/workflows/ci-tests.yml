@@ -75,13 +75,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: core
+          # Split heavy integration tests across two shards
+          - shard: integration
             tests: >-
               RepoQL.Tests
+              RepoQL.Data.DuckDB.Tests
+
+          - shard: core
+            tests: >-
               RepoQL.Core.Tests
               RepoQL.Cli.Tests
               RepoQL.Data.Tests
-              RepoQL.Data.DuckDB.Tests
               RepoQL.FileSystem.Tests
               RepoQL.Protocol.Tests
               RepoQL.Mcp.Client.Tests
