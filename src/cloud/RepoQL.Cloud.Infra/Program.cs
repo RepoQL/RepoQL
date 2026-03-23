@@ -394,7 +394,9 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         // --- Cloudflare DNS & CDN proxy ---
         // Proxied CNAME records to Cloud Run services. Cloudflare terminates TLS at the edge,
         // provides free DDoS protection and analytics. SSL "Full" mode works because Cloud Run
-        // presents a valid *.run.app cert. gRPC toggle enables HTTP/2 gRPC proxying (unary RPCs).
+        // presents a cert via domain mapping. NOT "Full (Strict)" — domain mapping uses Let's Encrypt
+        // with HTTP-01 validation which Cloudflare proxy blocks, causing cert renewal failures and 525s.
+        // gRPC toggle enables HTTP/2 gRPC proxying (unary RPCs).
         // Auth remains at the application layer (ApiKeyAuthInterceptor).
 
         var domain = config.Get("domain") ?? "repoql.ai";
@@ -415,7 +417,7 @@ internal sealed class CloudCacheInfrastructureStack : Stack
         {
             ZoneId = zoneId,
             SettingId = "ssl",
-            Value = "strict",
+            Value = "full",
         });
 
         _ = new Cloudflare.ZoneSetting("minTlsVersion", new Cloudflare.ZoneSettingArgs
