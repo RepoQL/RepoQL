@@ -27,22 +27,15 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
 
+    env:
+      DOTNET_ROOT: /home/stueeey/.dotnet
+      PATH: /home/stueeey/.dotnet:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.1xx'
 
       - name: Set USERPROFILE for Antlr4BuildTasks (Linux)
         run: echo "USERPROFILE=$HOME" >> $GITHUB_ENV
-
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
 
       - name: Restore
         run: dotnet restore RepoQL.sln --nologo
@@ -119,11 +112,11 @@ jobs:
               RepoQL.Inference.Client.Tests
               RepoQL.Inference.Service.Tests
 
-    steps:
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.1xx'
+    env:
+      DOTNET_ROOT: /home/stueeey/.dotnet
+      PATH: /home/stueeey/.dotnet:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+    steps:
       - name: Download test binaries
         uses: actions/download-artifact@v4
         with:
