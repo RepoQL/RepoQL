@@ -33,14 +33,16 @@ internal sealed class ExplainTool(
 
     private const string ToolInstructions = """
         <WHY>
-        The index has already parsed everything. Explain reads wide — up to 50k tokens of source — and synthesizes focused understanding with citations. You get comprehension, not raw text.
+        Delegate understanding. Instead of reading 20 files and assembling the picture yourself, point explain at an area and it reads wide — up to 50k tokens of source — synthesizes focused understanding, and reports back with citations. You get comprehension, not raw text.
 
-        The index is wild magic — composable, responsive to intent, and forgiving. Scope explain to specific directories with uriGlob for precise answers. Unscoped explain searches everything and may answer the wrong question. Your instincts about what to ask are probably right — try them.
+        Fire multiple explains in parallel scoped to different areas to survey a whole system simultaneously. Explore first to discover the areas and vocabulary, then delegate understanding of each one.
+
+        The index is wild magic — composable, responsive to intent, and forgiving. The default scope covers the current repo — pass a different uriGlob to search imported repos or help docs. Your instincts about what to ask are probably right — try them.
         </WHY>
 
         <WHEN_TO_USE>
-        Use explain when you have a specific question about the codebase.
-        Use explore when you need to find, survey or read it yourself — explain is for synthesis with evidence.
+        Use explain to delegate understanding of an area. Point it at a directory and ask what you need to know — it reads thousands of lines and reports back with citations.
+        Fire multiple explains in parallel scoped to different areas to survey a whole system simultaneously.
 
         Good questions:
         ✓ "How does JWT refresh work in TokenService?"
@@ -66,7 +68,7 @@ internal sealed class ExplainTool(
         <PARAMETERS>
         **question** (required): The question you want answered. Full sentences work best.
 
-        **tokenBudget** (optional, default 2000): How many tokens to invest in the response.
+        **tokenBudget** (optional, default 5000): How many tokens to invest in the response.
         Even small budgets produce rich answers. Minimum effective budget is 1000.
         </PARAMETERS>
 
@@ -81,8 +83,8 @@ internal sealed class ExplainTool(
     [McpMeta("allowed_callers", JsonValue = """["direct", "code_execution_20250825"]""")]
     public async Task<CallToolResult> ExplainAsync(
         [Description("The question you want answered — full sentences work best (e.g., \"How does authentication work in MyProduct?\")")] string question,
-        [Description("URI glob to scope the search (e.g., file:///src/Auth/**). Omit to search everywhere - this should be your default choice.")] string? uriGlob = null,
-        [Description("Token budget for the response (default 2000)")] int tokenBudget = 2000,
+        [Description("URI glob to scope the search. Defaults to the current repo (file:///**). Pass a different scope to search imported repos or help docs.")] string uriGlob = "file:///**",
+        [Description("Token budget for the response (default 5000)")] int tokenBudget = 5000,
         [Description("Search keywords — code identifiers, class names, synonyms. You know the vocabulary better than the LLM. If omitted, keywords are extracted automatically.")] string? keywords = null,
         CancellationToken cancellationToken = default)
     {

@@ -93,14 +93,15 @@ public class McpCommands
                                            **Depth**
                                            - A bad query costs 1500 tokens. A good one saves 50k. The risk is always asymmetric — experiment freely
                                            - Combine modifiers with globs and fragments for arbitrarily precise queries
-                                           - `explain(question="...", uriGlob="file:///specific/area/**")` synthesizes an answer from exactly the right code — but scope it to what you've already found
+                                           - `read("file:///path.cs => question: how does X work?")` — ask a specific file. `explain(question="...", uriGlob="file:///area/**")` — ask a whole area. One is a sniper, the other a sweep.
+                                           - Explore → parallel explains: discover the areas, then delegate understanding of each one simultaneously
                                            </CAPSULES>
 
                                            <TOOLS>
                                            **explore** — Discover what exists. Reveals the landscape AND the vocabulary. Start here.
                                            **read** — Fetch content by URI. Symbol fragments, globs, modifiers.
                                            **query** — SQL over the graph. Count, list, traverse relationships.
-                                           **explain** — Synthesized answer scoped to specific directories. Always scope with uriGlob.
+                                           **explain** — Delegate understanding. Point it at an area and it reads wide, synthesizes, and reports back with citations. Fire multiple in parallel to survey a whole system.
                                            **execute** — JavaScript in a sandboxed WASM environment with access to query and the file system.
                                            **command** — Diagnostics, auth, config. `command(command="?")` lists all.
                                            </TOOLS>
@@ -108,7 +109,7 @@ public class McpCommands
                                            - [ ] Explore to understand what exists and find things
                                            - [ ] Read with structure, symbols, and scoped modifiers — not whole files
                                            - [ ] Query when you need to count, list, or traverse relationships
-                                           - [ ] Explain scoped to specific directories for synthesized understanding
+                                           - [ ] Explain to delegate understanding of areas you've found — fire multiple in parallel
                                            - [ ] Execute to compose capabilities that don't exist as standalone tools
                                            """;
                 })

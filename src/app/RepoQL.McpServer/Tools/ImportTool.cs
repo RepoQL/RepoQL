@@ -54,12 +54,14 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
 
             if (isRemoval)
             {
+                var message = string.IsNullOrWhiteSpace(result.Message)
+                    ? $"Import removed: {effectiveImportUri}"
+                    : result.Message;
+
                 return ToolResult.Success($"""
-                    Import removed: {trimmedImportUri.TrimStart('-')}
+                    {message}
 
-                    The import and all its indexed data have been deleted.
-
-                    To see remaining imports: SELECT * FROM file_system_mount
+                    To see remaining imports: SELECT * FROM Filesystems
                     """);
             }
 
