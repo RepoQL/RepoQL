@@ -24,6 +24,7 @@ using ModelSpan = RepoQL.Contracts.Models.Span;
 
 namespace RepoQL.Indexing.Tests.Indexing;
 
+[Timeout(60_000)]
 public class IndexingEngineTests
 {
     [Test]

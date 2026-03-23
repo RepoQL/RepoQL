@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 
 namespace RepoQL.Indexing.Tests.Indexing;
 
+[Timeout(60_000)]
 internal class WorkQueueTests
 {
     [Test]
