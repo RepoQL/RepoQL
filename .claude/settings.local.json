@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "mcp__codex__codex",
+      "Bash(npx tsc:*)",
+      "Bash(repoql read:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "WebFetch(domain:anthropic.com)"
+    ]
+  }
+}
