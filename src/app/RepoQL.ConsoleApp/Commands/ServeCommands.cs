@@ -344,6 +344,20 @@ internal class HostCommands(IAnsiConsole console)
                     new DashboardBindReport(dashboardUrl, DateTime.UtcNow.ToString("O")),
                     HostDiagnosticsStore.JsonContext.DashboardBindReport);
                 app.Logger.LogInformation("Dashboard available at {DashboardUrl}", dashboardUrl);
+
+                // Auto-open dashboard on first run so users can watch indexing progress
+                if (!dbInit.Report.Existed)
+                {
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo(dashboardUrl) { UseShellExecute = true });
+                        app.Logger.LogInformation("First run — opened dashboard automatically");
+                    }
+                    catch (Exception ex)
+                    {
+                        app.Logger.LogDebug(ex, "Could not auto-open dashboard");
+                    }
+                }
             }
 
             await app.WaitForShutdownAsync().ConfigureAwait(false);

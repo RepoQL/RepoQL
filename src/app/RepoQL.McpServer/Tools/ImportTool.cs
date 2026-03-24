@@ -86,8 +86,9 @@ internal sealed class ImportTool(RepoQlClientProvider clientProvider, SelfTestRu
                     Operation ID: {result.OperationId}
 
                     Check progress with:
-                    - SELECT * FROM _operation('{result.OperationId}')
-                    - SELECT * FROM _operations()
+                    - SELECT * FROM Operations WHERE id = '{result.OperationId}'
+
+                    Offer to open the dashboard (command(command="dashboard")) so the user can watch progress in real time.
                     """);
             }
 
