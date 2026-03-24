@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.4
+
+### CLI
+- Add `repoql update` command — checks for new versions and self-updates the binary
+- Supports `--check` (version check only) and `--force` (reinstall even if current)
+- Platform-aware downloads: win-x64, win-arm64, osx-arm64, osx-x64, linux-x64, linux-arm64
+- Progress bar with transfer speed during download
+- Atomic binary replacement via rename-swap with rollback on failure
+- Actionable error messages for network, permission, and replacement failures
+- Warns when a running RepoQL host needs restart after update
+
 ## 1.5.3
 
 ### Search & Scoring
