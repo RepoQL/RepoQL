@@ -31,6 +31,8 @@ public sealed class CachingContextualEmbeddingProvider : IContextualEmbeddingPro
     public int Dimension => _inner.Dimension;
     public bool Enabled => _inner.Enabled;
 
+    public void SetUseCaseHint(string useCase) => _inner.SetUseCaseHint(useCase);
+
     public Task InitializeAsync(CancellationToken cancellationToken = default)
         => _inner.InitializeAsync(cancellationToken);
 
