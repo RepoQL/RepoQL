@@ -91,7 +91,7 @@ public static class ClientServiceCollectionExtensions
 
     public static IServiceCollection AddCloudAuthServices(this IServiceCollection services)
     {
-        services.AddSingleton<CloudAuthSessionStore>();
+        services.AddCloudCredentialProvider();
         services.AddSingleton<CloudAuthService>();
         return services;
     }

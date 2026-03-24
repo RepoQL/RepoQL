@@ -29,8 +29,9 @@ public static class JwtPayloadReader
                         ?? TryReadString(root, "preferred_username")
                         ?? TryReadString(root, "upn");
             var expiresAt = TryReadExpiry(root);
+            var organizationId = TryReadString(root, "org_id");
 
-            claims = new JwtPayloadClaims(subject, email, expiresAt);
+            claims = new JwtPayloadClaims(subject, email, expiresAt, organizationId);
             return true;
         }
         catch
@@ -74,4 +75,8 @@ public static class JwtPayloadReader
 /// Purpose: Represent the JWT claims RepoQL needs for auth UX and cache expiry decisions.
 /// Complexity: Immutable value object for a small subset of payload fields.
 /// </summary>
-public sealed record JwtPayloadClaims(string? Subject, string? Email, DateTimeOffset? ExpiresAt);
+public sealed record JwtPayloadClaims(
+    string? Subject,
+    string? Email,
+    DateTimeOffset? ExpiresAt,
+    string? OrganizationId = null);

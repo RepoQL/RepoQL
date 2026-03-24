@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
@@ -46,7 +47,13 @@ internal sealed class UriRegistryHydratorTests
         ]);
 
         var registry = new UriRegistry();
-        var hydrator = new UriRegistryHydrator(database, registry, provider, null, NullLogger<UriRegistryHydrator>.Instance);
+        var hydrator = new UriRegistryHydrator(
+            database,
+            registry,
+            provider,
+            null,
+            null,
+            NullLogger<UriRegistryHydrator>.Instance);
 
         hydrator.Hydrate();
         hydrator.HydrateEmbeddings();
@@ -54,6 +61,42 @@ internal sealed class UriRegistryHydratorTests
         registry[compatible.Uri].EmbeddingStatus.Should().Be(EmbeddingStatus.Embedded);
         registry[incompatible.Uri].EmbeddingStatus.Should().Be(EmbeddingStatus.Pending);
         registry[binary.Uri].EmbeddingStatus.Should().Be(EmbeddingStatus.NotApplicable);
+    }
+
+    [Test]
+    [DisplayName("HydrateEmbeddings keeps ONNX-only files pending when paid cloud access prefers contextual embeddings")]
+    public void HydrateEmbeddings_PaidCloudAccessPrefersContextualCompatibility()
+    {
+        var provider = new FixedModelEmbeddingProvider("onnx-model", 4);
+        using var database = new DuckDbDataStore(path: null, embeddingProvider: provider, logger: NullLogger<DuckDbDataStore>.Instance);
+
+        var document = SeedDocument(database, "file:///repo/onnx-only.md", "text/plain", "text");
+        database.WriteEmbeddings([
+            new DocumentEmbedding(
+                document.Id,
+                document.Id,
+                0,
+                DocumentEmbedding.TypeFull,
+                document.Uri.AbsoluteUri,
+                DocumentEmbedding.ScopeDocument,
+                [1f, 2f, 3f, 4f],
+                "onnx-model",
+                4)
+        ]);
+
+        var registry = new UriRegistry();
+        var hydrator = new UriRegistryHydrator(
+            database,
+            registry,
+            provider,
+            new ThrowingContextualEmbeddingProvider(),
+            new FixedCloudAuthStatusProvider(isAuthenticated: true, isPayingCustomer: true),
+            NullLogger<UriRegistryHydrator>.Instance);
+
+        hydrator.Hydrate();
+        hydrator.HydrateEmbeddings();
+
+        registry[document.Uri].EmbeddingStatus.Should().Be(EmbeddingStatus.Pending);
     }
 
     private static Node SeedDocument(DuckDbDataStore database, string uri, string mediaType, string? text)
@@ -112,5 +155,35 @@ internal sealed class UriRegistryHydratorTests
 
         public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
             => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+    }
+
+    private sealed class ThrowingContextualEmbeddingProvider : IContextualEmbeddingProvider
+    {
+        public string Model => "unknown";
+        public int Dimension => 0;
+        public bool Enabled => true;
+
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("cloud service unavailable");
+
+        public void SetUseCaseHint(string useCase)
+        {
+        }
+
+        public Task<ContextualEmbeddingResult> EmbedChunksAsync(IReadOnlyList<DocumentChunkGroup> groups, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default)
+            => Task.FromResult<float[]?>(null);
+    }
+
+    private sealed class FixedCloudAuthStatusProvider(bool isAuthenticated, bool isPayingCustomer) : ICloudAuthStatusProvider
+    {
+        public ValueTask<CloudAuthStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new CloudAuthStatus(
+                IsAuthenticated: isAuthenticated,
+                IsPayingCustomer: isPayingCustomer,
+                AccessMethod: isAuthenticated ? CloudAccessMethod.Session : CloudAccessMethod.None,
+                OrganizationId: isPayingCustomer ? "org_test" : null));
     }
 }

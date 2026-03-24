@@ -7,7 +7,6 @@ using Microsoft.Extensions.DependencyInjection;
 using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Cloud;
-using RepoQL.Contracts.Configuration;
 using RepoQL.Core.Configuration;
 
 namespace RepoQL.Core.Tests.Cloud;
@@ -184,6 +183,23 @@ internal sealed class CloudCredentialProviderTests
         var credentialProvider = provider.GetRequiredService<ICloudCredentialProvider?>();
 
         credentialProvider.Should().BeOfType<CloudCredentialProvider>();
+    }
+
+    [Test]
+    public void AddCloudCredentialProvider_RegistersCloudAuthStatusProvider()
+    {
+        using var tempDir = new TempDir();
+        var resolved = ConfigurationLoader.Load(SettingRegistry.Build(), repoRoot: null, userConfigDir: tempDir.Path, envReader: _ => null);
+
+        var services = new ServiceCollection();
+        services.AddSingleton(resolved);
+        services.AddLogging();
+        services.AddCloudCredentialProvider();
+
+        using var provider = services.BuildServiceProvider();
+        var statusProvider = provider.GetRequiredService<ICloudAuthStatusProvider>();
+
+        statusProvider.Should().BeOfType<CloudAuthStatusProvider>();
     }
 
     [Test]

@@ -7,6 +7,12 @@ RepoQL cloud clients now support two authentication paths:
 
 When OAuth credentials are present, RepoQL prefers them over `cloud.api_key`.
 
+RepoQL also derives a local cloud auth status from those credentials so any part of the application can answer:
+
+- Am I authenticated?
+- Am I a paying cloud customer?
+- Should paid cloud features such as contextual embeddings be active?
+
 ## Commands
 
 - `repoql login`
@@ -17,6 +23,27 @@ When OAuth credentials are present, RepoQL prefers them over `cloud.api_key`.
   Clears locally stored session tokens.
 - `repoql whoami`
   Shows the current session identity or API key hash prefix.
+
+## Customer Status
+
+RepoQL determines paid cloud access from locally available credential state:
+
+- `cloud.api_key` counts as authenticated paid access
+- OAuth sessions count as authenticated paid access when the session claims include an organization id
+- A session without paid-customer claims is still authenticated, but paid cloud features stay disabled
+
+This status is resolved locally from config, the persisted auth session, and JWT claims. RepoQL does not need to make a network round trip just to decide whether paid cloud features should be considered available.
+
+## Embedding Model Selection
+
+Paid cloud access affects embedding compatibility:
+
+- If paid cloud access is available, RepoQL prefers the contextual cloud embedding model
+- Existing local ONNX embeddings are preserved
+- Documents that only have embeddings from an incompatible model are treated as still pending embedding
+- Startup catch-up and later refresh passes will backfill compatible embeddings for the active model
+
+This prevents a repository that was fully embedded with ONNX from being treated as fully embedded for semantic search after cloud access becomes available.
 
 ## Settings
 

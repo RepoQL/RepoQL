@@ -1,5 +1,6 @@
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Search;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Data.DuckDB;
 
 namespace RepoQL.ConsoleApp.Search;
@@ -12,15 +13,18 @@ internal sealed class DocumentSearchService : IDocumentSearchService
     private readonly DuckDbDataStore _db;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly IContextualEmbeddingProvider? _contextualEmbeddingProvider;
+    private readonly ICloudAuthStatusProvider? _cloudAuthStatusProvider;
 
     public DocumentSearchService(
         DuckDbDataStore db,
         IEmbeddingProvider? embeddingProvider = null,
-        IContextualEmbeddingProvider? contextualEmbeddingProvider = null)
+        IContextualEmbeddingProvider? contextualEmbeddingProvider = null,
+        ICloudAuthStatusProvider? cloudAuthStatusProvider = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _embeddingProvider = embeddingProvider;
         _contextualEmbeddingProvider = contextualEmbeddingProvider;
+        _cloudAuthStatusProvider = cloudAuthStatusProvider;
     }
 
     public Task<DocumentSearchResult> SearchAsync(
@@ -252,7 +256,10 @@ internal sealed class DocumentSearchService : IDocumentSearchService
             return new Dictionary<string, IReadOnlyList<ChunkScore>>();
 
         var docIdValues = string.Join(",\n                    ", validDocIds.Select(id => $"('{id:D}'::UUID)"));
-        var activeModel = ActiveEmbeddingModelResolver.Resolve(_embeddingProvider, _contextualEmbeddingProvider);
+        var activeModel = ActiveEmbeddingModelResolver.Resolve(
+            _embeddingProvider,
+            _contextualEmbeddingProvider,
+            _cloudAuthStatusProvider);
         var modelFilter = string.IsNullOrWhiteSpace(activeModel)
             ? string.Empty
             : $" AND de.model = '{EscapeSql(activeModel)}'";

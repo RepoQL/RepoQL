@@ -533,6 +533,7 @@ public static class CloudCredentialServiceCollectionExtensions
     public static IServiceCollection AddCloudCredentialProvider(this IServiceCollection services)
     {
         services.TryAddSingleton<CloudAuthSessionStore>();
+        services.TryAddSingleton<ICloudAuthStatusProvider, CloudAuthStatusProvider>();
         services.TryAddSingleton<ICloudCredentialProvider?>(sp =>
             new CloudCredentialProvider(
                 sp.GetRequiredService<ResolvedConfig>(),

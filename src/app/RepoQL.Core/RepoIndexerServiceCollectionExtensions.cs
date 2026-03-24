@@ -637,7 +637,8 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetService<ILogger<EmbeddingCoordinator>>(),
             sp.GetService<UriRegistry>(),
             sp.GetRequiredService<RepoQlConfig>().Embedding,
-            sp.GetService<IContextualEmbeddingProvider>()));
+            sp.GetService<IContextualEmbeddingProvider>(),
+            sp.GetService<RepoQL.Contracts.Cloud.ICloudAuthStatusProvider>()));
         services.AddSingleton<IIndexingCommitter>(sp => new IndexingCommitter(
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IDocumentCatalog>(),

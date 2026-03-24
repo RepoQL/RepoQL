@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Models;
@@ -161,6 +162,40 @@ internal class EmbeddingCoordinatorTests
             db: database,
             embeddingProvider: provider,
             logger: NullLogger<EmbeddingCoordinator>.Instance);
+
+        await WaitForAsync(() => refresher.Invocations >= 1);
+        refresher.TargetedInvocations.Should().Be(0);
+    }
+
+    [Test]
+    [DisplayName("Startup content embedding catch-up refreshes when paid cloud access prefers contextual embeddings over ONNX")]
+    public async Task Given_PaidCloudAccessAndOnlyOnnxEmbeddings_When_CoordinatorStarts_Then_StartupCatchUpRefreshesContent()
+    {
+        var provider = new FixedModelEmbeddingProvider("onnx-model", 4);
+        using var database = new DuckDbDataStore(path: null, embeddingProvider: provider, logger: NullLogger<DuckDbDataStore>.Instance);
+        var document = SeedIndexedDocument(database, "file:///repo/startup-catchup-paid-cloud.md");
+
+        database.WriteEmbeddings([
+            new DocumentEmbedding(
+                document.Id,
+                document.Id,
+                0,
+                DocumentEmbedding.TypeFull,
+                document.Uri.AbsoluteUri,
+                DocumentEmbedding.ScopeDocument,
+                [1f, 2f, 3f, 4f],
+                "onnx-model",
+                4)
+        ]);
+
+        var refresher = new FakeRefresher();
+        using var coordinator = new EmbeddingCoordinator(
+            refresher,
+            db: database,
+            embeddingProvider: provider,
+            logger: NullLogger<EmbeddingCoordinator>.Instance,
+            contextualProvider: new ThrowingContextualEmbeddingProvider(),
+            cloudAuthStatusProvider: new FixedCloudAuthStatusProvider(isAuthenticated: true, isPayingCustomer: true));
 
         await WaitForAsync(() => refresher.Invocations >= 1);
         refresher.TargetedInvocations.Should().Be(0);
@@ -349,5 +384,35 @@ internal class EmbeddingCoordinatorTests
 
         public Task<float[]?[]> EmbedPassageBatchAsync(IReadOnlyList<string>? texts, BatchEmbeddingProgress progress, CancellationToken cancellationToken = default)
             => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
+    }
+
+    private sealed class ThrowingContextualEmbeddingProvider : IContextualEmbeddingProvider
+    {
+        public string Model => "unknown";
+        public int Dimension => 0;
+        public bool Enabled => true;
+
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("cloud service unavailable");
+
+        public void SetUseCaseHint(string useCase)
+        {
+        }
+
+        public Task<ContextualEmbeddingResult> EmbedChunksAsync(IReadOnlyList<DocumentChunkGroup> groups, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default)
+            => Task.FromResult<float[]?>(null);
+    }
+
+    private sealed class FixedCloudAuthStatusProvider(bool isAuthenticated, bool isPayingCustomer) : ICloudAuthStatusProvider
+    {
+        public ValueTask<CloudAuthStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new CloudAuthStatus(
+                IsAuthenticated: isAuthenticated,
+                IsPayingCustomer: isPayingCustomer,
+                AccessMethod: isAuthenticated ? CloudAccessMethod.Session : CloudAccessMethod.None,
+                OrganizationId: isPayingCustomer ? "org_test" : null));
     }
 }

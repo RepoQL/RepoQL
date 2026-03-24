@@ -3,6 +3,7 @@ using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using RepoQL.ConsoleApp.Search;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
 using RepoQL.Contracts.Inference;
@@ -198,6 +199,43 @@ internal sealed class DocumentSearchServiceTests
         chunkScores[uri][0].EndLine.Should().Be(8);
     }
 
+    [Test]
+    public void GetChunkScores_WithPaidCloudAccess_IgnoresOnnxEmbeddingsUntilContextualModelIsAvailable()
+    {
+        var embeddingProvider = new FixedModelEmbeddingProvider("onnx-model");
+        var cloudStatus = new FixedCloudAuthStatusProvider(isAuthenticated: true, isPayingCustomer: true);
+        using var context = new DocumentSearchTestContext(embeddingProvider, cloudAuthStatusProvider: cloudStatus);
+        var service = new DocumentSearchService(
+            context.Store,
+            embeddingProvider,
+            new ThrowingContextualEmbeddingProvider(),
+            cloudStatus);
+
+        var docId = Guid.NewGuid();
+        var nodeId = Guid.NewGuid();
+        const string uri = "file:///src/RepoQL.ConsoleApp/Search/DocumentSearchService.cs";
+
+        context.SeedDocumentEmbedding(
+            docId: docId,
+            nodeId: nodeId,
+            uri: uri,
+            scope: "document",
+            startByte: 10,
+            endByte: 20,
+            model: "onnx-model",
+            chunkIndex: 0);
+        context.SeedSpan(
+            documentId: docId,
+            startByte: 10,
+            endByte: 20,
+            startLine: 2,
+            endLine: 3);
+
+        var chunkScores = service.GetChunkScores([docId.ToString("D")], CancellationToken.None);
+
+        chunkScores.Should().BeEmpty();
+    }
+
     private sealed class FixedModelEmbeddingProvider(string model) : IEmbeddingProvider
     {
         public bool Enabled => true;
@@ -220,16 +258,50 @@ internal sealed class DocumentSearchServiceTests
             => Task.FromResult(texts?.Select(_ => (float[]?)null).ToArray() ?? []);
     }
 
+    private sealed class ThrowingContextualEmbeddingProvider : IContextualEmbeddingProvider
+    {
+        public string Model => "unknown";
+        public int Dimension => 0;
+        public bool Enabled => true;
+
+        public Task InitializeAsync(CancellationToken cancellationToken = default)
+            => throw new InvalidOperationException("cloud service unavailable");
+
+        public void SetUseCaseHint(string useCase)
+        {
+        }
+
+        public Task<ContextualEmbeddingResult> EmbedChunksAsync(IReadOnlyList<DocumentChunkGroup> groups, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<float[]?> EmbedQueryAsync(string text, CancellationToken cancellationToken = default)
+            => Task.FromResult<float[]?>(null);
+    }
+
+    private sealed class FixedCloudAuthStatusProvider(bool isAuthenticated, bool isPayingCustomer) : ICloudAuthStatusProvider
+    {
+        public ValueTask<CloudAuthStatus> GetStatusAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new CloudAuthStatus(
+                IsAuthenticated: isAuthenticated,
+                IsPayingCustomer: isPayingCustomer,
+                AccessMethod: isAuthenticated ? CloudAccessMethod.Session : CloudAccessMethod.None,
+                OrganizationId: isPayingCustomer ? "org_test" : null));
+    }
+
     private sealed class DocumentSearchTestContext : IDisposable
     {
         private readonly ServiceProvider _serviceProvider;
 
-        public DocumentSearchTestContext(IEmbeddingProvider? embeddingProvider = null)
+        public DocumentSearchTestContext(
+            IEmbeddingProvider? embeddingProvider = null,
+            ICloudAuthStatusProvider? cloudAuthStatusProvider = null)
         {
             var services = new ServiceCollection();
             services.AddSingleton(new RepositoryConfiguration { Path = "/repo" });
             services.AddSingleton<UriRegistry>();
             services.AddSingleton<IEmbeddingProvider>(embeddingProvider ?? new DisabledEmbeddingProvider());
+            if (cloudAuthStatusProvider is not null)
+                services.AddSingleton(cloudAuthStatusProvider);
             services.AddSingleton<IInferenceProvider>(new DisabledInferenceProvider());
             services.AddSingleton<IMcpToolCaller?>(_ => null);
 

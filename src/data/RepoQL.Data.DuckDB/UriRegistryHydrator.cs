@@ -2,6 +2,7 @@ using System.Data;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Embeddings;
 
 namespace RepoQL.Data.DuckDB;
@@ -21,6 +22,7 @@ public class UriRegistryHydrator
     private readonly UriRegistry _registry;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly IContextualEmbeddingProvider? _contextualEmbeddingProvider;
+    private readonly ICloudAuthStatusProvider? _cloudAuthStatusProvider;
     private readonly ILogger<UriRegistryHydrator> _logger;
 
     public UriRegistryHydrator(
@@ -28,12 +30,14 @@ public class UriRegistryHydrator
         UriRegistry registry,
         IEmbeddingProvider? embeddingProvider = null,
         IContextualEmbeddingProvider? contextualEmbeddingProvider = null,
+        ICloudAuthStatusProvider? cloudAuthStatusProvider = null,
         ILogger<UriRegistryHydrator>? logger = null)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _embeddingProvider = embeddingProvider;
         _contextualEmbeddingProvider = contextualEmbeddingProvider;
+        _cloudAuthStatusProvider = cloudAuthStatusProvider;
         _logger = logger ?? NullLogger<UriRegistryHydrator>.Instance;
     }
 
@@ -150,7 +154,10 @@ public class UriRegistryHydrator
 
         try
         {
-            var activeModel = ActiveEmbeddingModelResolver.Resolve(_embeddingProvider, _contextualEmbeddingProvider);
+            var activeModel = ActiveEmbeddingModelResolver.Resolve(
+                _embeddingProvider,
+                _contextualEmbeddingProvider,
+                _cloudAuthStatusProvider);
             if (string.IsNullOrWhiteSpace(activeModel))
             {
                 _logger.LogDebug("Skipping embedding hydration compatibility check because no active model is available");

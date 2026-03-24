@@ -3,6 +3,7 @@ using Humanizer;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Contracts;
+using RepoQL.Contracts.Cloud;
 using RepoQL.Contracts.Configuration;
 using RepoQL.Contracts.Data;
 using RepoQL.Contracts.Embeddings;
@@ -25,6 +26,7 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
     private readonly DuckDbDataStore? _db;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly IContextualEmbeddingProvider? _contextualProvider;
+    private readonly ICloudAuthStatusProvider? _cloudAuthStatusProvider;
     private readonly EmbeddingMode _embeddingMode;
     private readonly ILogger<EmbeddingCoordinator> _logger;
     private readonly UriRegistry? _uriRegistry;
@@ -44,7 +46,8 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
         ILogger<EmbeddingCoordinator>? logger = null,
         UriRegistry? uriRegistry = null,
         RepoQlConfig.EmbeddingSettings? embeddingSettings = null,
-        IContextualEmbeddingProvider? contextualProvider = null)
+        IContextualEmbeddingProvider? contextualProvider = null,
+        ICloudAuthStatusProvider? cloudAuthStatusProvider = null)
         : this(
             new DuckDbEmbeddingRefreshRunner(
                 database,
@@ -59,7 +62,8 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
             logger,
             uriRegistry,
             embeddingSettings,
-            contextualProvider: contextualProvider)
+            contextualProvider: contextualProvider,
+            cloudAuthStatusProvider: cloudAuthStatusProvider)
     {
     }
 
@@ -72,12 +76,14 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
         UriRegistry? uriRegistry = null,
         RepoQlConfig.EmbeddingSettings? embeddingSettings = null,
         IContextualEmbeddingProvider? contextualProvider = null,
+        ICloudAuthStatusProvider? cloudAuthStatusProvider = null,
         bool enableStartupCatchUp = true)
     {
         _refreshRunner = refreshRunner ?? throw new ArgumentNullException(nameof(refreshRunner));
         _db = db;
         _embeddingProvider = embeddingProvider;
         _contextualProvider = contextualProvider is { Enabled: true } ? contextualProvider : null;
+        _cloudAuthStatusProvider = cloudAuthStatusProvider;
         _embeddingMode = embeddingMode;
         _logger = logger ?? NullLogger<EmbeddingCoordinator>.Instance;
         _uriRegistry = uriRegistry;
@@ -178,7 +184,10 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
 
         try
         {
-            var activeModel = ActiveEmbeddingModelResolver.Resolve(_embeddingProvider, _contextualProvider);
+            var activeModel = ActiveEmbeddingModelResolver.Resolve(
+                _embeddingProvider,
+                _contextualProvider,
+                _cloudAuthStatusProvider);
             var escapedModel = activeModel?.Replace("'", "''", StringComparison.Ordinal);
 
             if (documentIds is { Count: > 0 })
@@ -693,7 +702,10 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
 
         try
         {
-            var activeModel = ActiveEmbeddingModelResolver.Resolve(_embeddingProvider, _contextualProvider);
+            var activeModel = ActiveEmbeddingModelResolver.Resolve(
+                _embeddingProvider,
+                _contextualProvider,
+                _cloudAuthStatusProvider);
             var escapedModel = activeModel?.Replace("'", "''", StringComparison.Ordinal);
             var modelFilter = string.IsNullOrWhiteSpace(escapedModel)
                 ? string.Empty

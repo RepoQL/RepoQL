@@ -98,6 +98,7 @@ internal static class DatabaseInitCoordinator
                         registry,
                         services.GetService<RepoQL.Contracts.Embeddings.IEmbeddingProvider>(),
                         services.GetService<RepoQL.Contracts.Embeddings.IContextualEmbeddingProvider>(),
+                        services.GetService<RepoQL.Contracts.Cloud.ICloudAuthStatusProvider>(),
                         hydratorLogger);
                     hydrator.Hydrate();
                     hydrator.HydrateEmbeddings();

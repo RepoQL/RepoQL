@@ -1,3 +1,5 @@
+using RepoQL.Contracts.Cloud;
+
 namespace RepoQL.Contracts.Embeddings;
 
 /// <summary>
@@ -6,10 +8,31 @@ namespace RepoQL.Contracts.Embeddings;
 /// </summary>
 public static class ActiveEmbeddingModelResolver
 {
+    public const string PendingContextualModel = "__repoql_contextual_pending__";
+
     public static string? Resolve(
         IEmbeddingProvider? flatProvider,
-        IContextualEmbeddingProvider? contextualProvider)
+        IContextualEmbeddingProvider? contextualProvider,
+        ICloudAuthStatusProvider? cloudAuthStatusProvider = null)
     {
+        if (ShouldPreferPaidContextual(cloudAuthStatusProvider) &&
+            contextualProvider is { Enabled: true })
+        {
+            try
+            {
+                contextualProvider.InitializeAsync().GetAwaiter().GetResult();
+                var contextualModel = NormalizeModel(contextualProvider.Model);
+                if (contextualModel is not null)
+                    return contextualModel;
+            }
+            catch
+            {
+                return PendingContextualModel;
+            }
+
+            return PendingContextualModel;
+        }
+
         if (contextualProvider is { Enabled: true })
         {
             try
@@ -29,6 +52,25 @@ public static class ActiveEmbeddingModelResolver
             return NormalizeModel(flatProvider.Model);
 
         return null;
+    }
+
+    private static bool ShouldPreferPaidContextual(ICloudAuthStatusProvider? cloudAuthStatusProvider)
+    {
+        if (cloudAuthStatusProvider is null)
+            return false;
+
+        try
+        {
+            var statusTask = cloudAuthStatusProvider.GetStatusAsync();
+            if (statusTask.IsCompletedSuccessfully)
+                return statusTask.Result.CanUsePaidCloudFeatures;
+
+            return statusTask.AsTask().GetAwaiter().GetResult().CanUsePaidCloudFeatures;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string? NormalizeModel(string? model)
