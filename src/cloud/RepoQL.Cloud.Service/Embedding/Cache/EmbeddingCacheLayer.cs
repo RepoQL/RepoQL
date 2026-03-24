@@ -216,14 +216,18 @@ internal sealed class EmbeddingCacheLayer : IDisposable
             return;
         }
 
+        // Use S3-compatible settings for GCS. DuckDB's TYPE GCS secret requires the
+        // GCS secret provider which may not be registered in all DuckDB.NET.Full builds.
+        // The S3-compatible approach via storage.googleapis.com is universally supported.
         var hmacKeyId = GetRequiredEnvironmentValue(DefaultGcsKeyIdEnvVar, "AWS_ACCESS_KEY_ID");
         var hmacSecret = GetRequiredEnvironmentValue(DefaultGcsSecretEnvVar, "AWS_SECRET_ACCESS_KEY");
         ExecuteNonQuery($"""
-            CREATE OR REPLACE SECRET embedding_cache_gcs (
-                TYPE GCS,
-                KEY_ID '{EscapeSqlLiteral(hmacKeyId)}',
-                SECRET '{EscapeSqlLiteral(hmacSecret)}'
-            );
+            SET s3_endpoint = 'storage.googleapis.com';
+            SET s3_access_key_id = '{EscapeSqlLiteral(hmacKeyId)}';
+            SET s3_secret_access_key = '{EscapeSqlLiteral(hmacSecret)}';
+            SET s3_use_ssl = true;
+            SET s3_url_style = 'path';
+            SET s3_region = 'auto';
             """);
     }
 
@@ -343,7 +347,7 @@ internal sealed class EmbeddingCacheLayer : IDisposable
         => value.Replace("'", "''", StringComparison.Ordinal);
 
     private string GetObjectStorageUri(string bucket, string path)
-        => $"{(_storageSettings.IsS3() ? "s3" : "gs")}://{bucket}/{path}";
+        => $"s3://{bucket}/{path}";
 
     private static void TryDeleteTempFile(string tempPath)
     {
