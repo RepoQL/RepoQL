@@ -119,12 +119,8 @@ builder.Services.AddSingleton(typeof(EmbeddingCacheLayer), sp =>
 
     if (!EmbeddingCacheLayer.HasRequiredConfiguration(settings))
     {
-        if (settings.Enabled)
-        {
-            logger.LogWarning(
-                "Embedding cache layer enabled but configuration is incomplete. Falling back to direct Voyage relay.");
-        }
-
+        logger.LogWarning(
+            "Embedding cache layer configuration is incomplete (missing buckets or storage credentials). Falling back to direct Voyage relay.");
         return null!;
     }
 

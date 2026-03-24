@@ -12,7 +12,6 @@ public record CacheEntry(string Sha256, byte[] Vector, DateTimeOffset CreatedAt)
 
 public sealed class CacheLayerSettings
 {
-    public bool Enabled { get; set; } = false;
     public string StorageBackend { get; set; } = "gcs";
     public string S3Endpoint { get; set; } = "";
     public string S3AccessKey { get; set; } = "";

@@ -47,13 +47,8 @@ internal sealed class EmbeddingCacheLayer : IDisposable
         ConfigureDuckDb();
     }
 
-    public bool Enabled => _settings.Enabled;
-
     public static bool HasRequiredConfiguration(CacheLayerSettings settings)
     {
-        if (!settings.Enabled)
-            return false;
-
         if (string.IsNullOrWhiteSpace(settings.EmbeddingsBucket) || string.IsNullOrWhiteSpace(settings.StagingBucket))
             return false;
 
@@ -73,7 +68,7 @@ internal sealed class EmbeddingCacheLayer : IDisposable
         IReadOnlyList<ChunkFingerprint> fingerprints,
         CancellationToken ct = default)
     {
-        if (!Enabled || string.IsNullOrWhiteSpace(source) || fingerprints.Count == 0)
+        if (string.IsNullOrWhiteSpace(source) || fingerprints.Count == 0)
             return new CacheLookupResult(new Dictionary<string, byte[]>(StringComparer.Ordinal), fingerprints);
 
         var uniqueHashes = fingerprints
@@ -138,7 +133,7 @@ internal sealed class EmbeddingCacheLayer : IDisposable
         IReadOnlyList<CacheEntry> entries,
         CancellationToken ct = default)
     {
-        if (!Enabled || string.IsNullOrWhiteSpace(source) || entries.Count == 0)
+        if (string.IsNullOrWhiteSpace(source) || entries.Count == 0)
             return Task.CompletedTask;
 
         return Task.Run(async () =>
