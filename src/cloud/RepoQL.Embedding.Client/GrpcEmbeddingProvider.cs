@@ -43,7 +43,9 @@ public sealed class GrpcEmbeddingProvider : IContextualEmbeddingProvider, IReran
 
         _channel = GrpcChannel.ForAddress(url, new GrpcChannelOptions
         {
-            HttpHandler = handler
+            HttpHandler = handler,
+            MaxReceiveMessageSize = 32 * 1024 * 1024,
+            MaxSendMessageSize = 32 * 1024 * 1024
         });
 
         _client = new EmbeddingService.EmbeddingServiceClient(_channel);

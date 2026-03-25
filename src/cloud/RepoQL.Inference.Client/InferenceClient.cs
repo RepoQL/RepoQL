@@ -42,7 +42,9 @@ public sealed class InferenceClient : IInferenceProvider, IDisposable
 
         var channel = GrpcChannel.ForAddress(_url, new GrpcChannelOptions
         {
-            HttpHandler = handler
+            HttpHandler = handler,
+            MaxReceiveMessageSize = 32 * 1024 * 1024,
+            MaxSendMessageSize = 32 * 1024 * 1024
         });
         _ownedResource = channel;
         _client = new ProtoInference.InferenceService.InferenceServiceClient(channel);

@@ -61,8 +61,8 @@ builder.Services.AddOpenTelemetry()
 
 builder.Services.AddGrpc(options =>
 {
-    options.MaxReceiveMessageSize = 8 * 1024 * 1024; // 8 MB
-    options.MaxSendMessageSize = 8 * 1024 * 1024;
+    options.MaxReceiveMessageSize = 32 * 1024 * 1024; // 32 MB — embedding batches can be large
+    options.MaxSendMessageSize = 32 * 1024 * 1024;
     options.ResponseCompressionLevel = System.IO.Compression.CompressionLevel.Optimal;
     options.ResponseCompressionAlgorithm = "gzip";
     options.Interceptors.Add<AuthInterceptor>();
@@ -151,8 +151,8 @@ builder.Services.AddSingleton<IXaiChatClient>(sp =>
     var channel = Grpc.Net.Client.GrpcChannel.ForAddress(options.Endpoint, new Grpc.Net.Client.GrpcChannelOptions
     {
         HttpHandler = handler,
-        MaxReceiveMessageSize = 8 * 1024 * 1024,
-        MaxSendMessageSize = 8 * 1024 * 1024,
+        MaxReceiveMessageSize = 32 * 1024 * 1024,
+        MaxSendMessageSize = 32 * 1024 * 1024,
     });
     var client = new XaiApi.Chat.ChatClient(channel);
     return new XaiChatClientAdapter(client);
