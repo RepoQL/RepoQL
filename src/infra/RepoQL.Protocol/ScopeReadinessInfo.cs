@@ -8,14 +8,14 @@ namespace RepoQL.Protocol;
 ///
 /// Complexity: Simple immutable record with factory for "ready" state.
 /// </summary>
-/// <param name="IsReady">True if all files in scope are indexed and have structure embeddings.</param>
+/// <param name="IsReady">True if no files in scope are still pending indexing or embedding. Failures count as terminal and are reported separately.</param>
 /// <param name="TotalFiles">Total number of files matching the scope pattern.</param>
 /// <param name="IndexedCount">Number of files that are fully indexed.</param>
 /// <param name="EmbeddedCount">Number of files that have structure embeddings ready.</param>
 /// <param name="PendingIndex">Number of files pending indexing.</param>
 /// <param name="PendingEmbedding">Number of files pending embedding.</param>
 /// <param name="FailedCount">Number of files that failed indexing or embedding.</param>
-/// <param name="ReadyPercent">Percentage of files that are fully ready (0-100).</param>
+/// <param name="ReadyPercent">Percentage of files that have completed processing (0-100). Failures count as complete.</param>
 /// <param name="Summary">Human-readable summary of readiness state.</param>
 public record ScopeReadinessInfo(
     bool IsReady,

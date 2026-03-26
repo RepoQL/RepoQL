@@ -22,6 +22,7 @@ internal sealed class TrustSignalTests
             IndexIndexed: 148,
             EmbeddedFiles: 120,
             EmbeddingApplicableFiles: 150,
+            SemanticFinalFiles: 123,
             ByStatus: byStatus,
             ByEmbeddingStatus: byEmbedding);
 
@@ -32,7 +33,7 @@ internal sealed class TrustSignalTests
         signal.IndexFailed.Should().Be(3);
         signal.IndexStale.Should().Be(2);
         signal.SemanticEnabled.Should().BeTrue();
-        signal.SemanticPercent.Should().Be(80);
+        signal.SemanticPercent.Should().Be(82);
         signal.SemanticReady.Should().BeFalse();
         signal.ExecutionTimeMs.Should().Be(42);
     }

@@ -379,7 +379,7 @@ internal class ToolCommands(
 
         await console.Status()
             .Spinner(Spinner.Known.Dots)
-            .StartAsync($"Waiting for indexing... {status.ReadyPercent}% ready", async ctx =>
+            .StartAsync($"Waiting for indexing... {status.ReadyPercent}% complete", async ctx =>
             {
                 while (!cancel.IsCancellationRequested)
                 {
@@ -387,7 +387,7 @@ internal class ToolCommands(
                     if (status.IsReady)
                         return;
 
-                    ctx.Status($"Waiting for indexing... {status.ReadyPercent}% ready");
+                    ctx.Status($"Waiting for indexing... {status.ReadyPercent}% complete");
                     await Task.Delay(500, cancel).ConfigureAwait(false);
                 }
             });

@@ -108,7 +108,7 @@ public static class RepoQlClientScopeExtensions
         sb.AppendLine("Scope not ready for semantic search");
         sb.AppendLine();
         sb.AppendLine($"Pattern: {scope ?? "(all files)"}");
-        sb.AppendLine($"Progress: {status.EmbeddedCount}/{status.TotalFiles} files ready ({status.ReadyPercent}%)");
+        sb.AppendLine($"Progress: {status.EmbeddedCount + status.FailedCount}/{status.TotalFiles} files complete ({status.ReadyPercent}%)");
 
         if (status.PendingIndex > 0)
             sb.AppendLine($"  - {status.PendingIndex} pending index");

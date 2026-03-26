@@ -24,9 +24,10 @@ public record ScopeReadiness(
     IReadOnlyList<RepoUri> FailedFiles)
 {
     /// <summary>
-    /// Returns true if all files in scope are ready for semantic search.
+    /// Returns true if all files in scope have reached a terminal state.
+    /// Failures count as terminal and are reported separately via <see cref="FailedFiles"/>.
     /// </summary>
-    public bool IsReady => PendingIndex.Count == 0 && PendingEmbedding.Count == 0 && FailedFiles.Count == 0;
+    public bool IsReady => PendingIndex.Count == 0 && PendingEmbedding.Count == 0;
 
     /// <summary>
     /// Returns true if all files in scope are at least indexed (may not have embeddings).
@@ -34,9 +35,10 @@ public record ScopeReadiness(
     public bool IsIndexed => PendingIndex.Count == 0;
 
     /// <summary>
-    /// Percentage of files that are fully ready (0-100).
+    /// Percentage of files that are complete (0-100).
+    /// Failures count as complete so progress does not stall below 100%.
     /// </summary>
-    public int ReadyPercent => TotalFiles == 0 ? 100 : (EmbeddedCount * 100) / TotalFiles;
+    public int ReadyPercent => TotalFiles == 0 ? 100 : ((EmbeddedCount + FailedFiles.Count) * 100) / TotalFiles;
 
     /// <summary>
     /// Percentage of files that are indexed (0-100).
@@ -51,7 +53,11 @@ public record ScopeReadiness(
         get
         {
             if (IsReady)
-                return $"Ready: {TotalFiles} files indexed and embedded";
+            {
+                return FailedFiles.Count == 0
+                    ? $"Ready: {TotalFiles} files indexed and embedded"
+                    : $"Complete with failures: {EmbeddedCount} embedded, {FailedFiles.Count} failed (of {TotalFiles} files)";
+            }
 
             var parts = new List<string>();
             if (PendingIndex.Count > 0)

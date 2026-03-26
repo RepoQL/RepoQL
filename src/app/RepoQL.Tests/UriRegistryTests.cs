@@ -510,6 +510,30 @@ internal class UriRegistryTests
     }
 
     [Test]
+    public void CheckScope_FailuresAreTerminal_ReportsComplete()
+    {
+        var registry = new UriRegistry();
+        var embedded = RepoUri.Parse("file:///src/embedded.cs");
+        var failedIndex = RepoUri.Parse("file:///src/failed-index.cs");
+        var failedEmbedding = RepoUri.Parse("file:///src/failed-embedding.cs");
+
+        registry.SetIndexed(embedded, new Dictionary<RepoUri, string>().AsReadOnly());
+        registry.SetEmbedded(embedded, 1);
+
+        registry.SetFailed(failedIndex, "Parse error");
+
+        registry.SetIndexed(failedEmbedding, new Dictionary<RepoUri, string>().AsReadOnly());
+        registry.SetEmbeddingFailed(failedEmbedding, "Embedding error");
+
+        var readiness = registry.CheckScope("src/**/*.cs");
+
+        readiness.IsReady.Should().BeTrue();
+        readiness.ReadyPercent.Should().Be(100);
+        readiness.FailedFiles.Should().HaveCount(2);
+        readiness.Summary.Should().Contain("Complete with failures");
+    }
+
+    [Test]
     public void CheckScope_EmptyPattern_ReturnsAllFiles()
     {
         var registry = CreateTestRegistry();
@@ -574,7 +598,8 @@ internal class UriRegistryTests
         summary.IndexIndexed.Should().Be(3);
         summary.EmbeddedFiles.Should().Be(1);
         summary.EmbeddingApplicableFiles.Should().Be(6);
-        summary.SemanticPercent.Should().Be(16);
+        summary.SemanticFinalFiles.Should().Be(2);
+        summary.SemanticPercent.Should().Be(33);
         summary.ByStatus[UriStatus.Indexed].Should().Be(3);
         summary.ByEmbeddingStatus[EmbeddingStatus.NotApplicable].Should().Be(1);
     }

@@ -11,7 +11,7 @@ namespace RepoQL.Explore;
 /// <param name="IndexStale">Number of files marked stale since indexing.</param>
 /// <param name="SemanticEnabled">True if semantic embeddings are enabled.</param>
 /// <param name="SemanticReady">True when semantic indexing is complete for all applicable files.</param>
-/// <param name="SemanticPercent">Percent of embedding-applicable files that are embedded.</param>
+/// <param name="SemanticPercent">Percent of embedding-applicable files in a final semantic state. Failures count as final and are reported separately.</param>
 /// <param name="ExecutionTimeMs">Query execution time in milliseconds.</param>
 public record TrustSignal(
     int IndexTotal,

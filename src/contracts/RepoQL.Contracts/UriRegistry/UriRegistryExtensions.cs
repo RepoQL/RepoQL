@@ -628,13 +628,15 @@ public record RegistrySummary(
     int IndexIndexed,
     int EmbeddedFiles,
     int EmbeddingApplicableFiles,
+    int SemanticFinalFiles,
     IReadOnlyDictionary<UriStatus, int> ByStatus,
     IReadOnlyDictionary<EmbeddingStatus, int> ByEmbeddingStatus)
 {
     /// <summary>
-    /// Percentage of embedding-applicable files that are embedded.
+    /// Percentage of embedding-applicable files that reached a terminal semantic state.
+    /// Failed or skipped files count as terminal and are surfaced separately via status counts.
     /// </summary>
     public int SemanticPercent => EmbeddingApplicableFiles <= 0
         ? 100
-        : (EmbeddedFiles * 100) / EmbeddingApplicableFiles;
+        : (SemanticFinalFiles * 100) / EmbeddingApplicableFiles;
 }

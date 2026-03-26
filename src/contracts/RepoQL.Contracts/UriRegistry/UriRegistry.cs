@@ -344,7 +344,22 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
             var indexStale = byStatus[UriStatus.Stale];
             var indexIndexed = byStatus[UriStatus.Indexed];
             var embeddedFiles = byEmbedding[EmbeddingStatus.Embedded];
-            var embeddingApplicableFiles = totalFiles - byEmbedding[EmbeddingStatus.NotApplicable];
+            var embeddingApplicableFiles = 0;
+            var semanticFinalFiles = 0;
+
+            foreach (var (_, entry) in this)
+            {
+                if (entry.EmbeddingStatus == EmbeddingStatus.NotApplicable)
+                    continue;
+
+                embeddingApplicableFiles++;
+
+                if (entry.Status is UriStatus.Failed or UriStatus.Skipped
+                    || entry.EmbeddingStatus is EmbeddingStatus.Embedded or EmbeddingStatus.Failed)
+                {
+                    semanticFinalFiles++;
+                }
+            }
 
             var summary = new RegistrySummary(
                 TotalFiles: totalFiles,
@@ -355,6 +370,7 @@ public class UriRegistry : ConcurrentDictionary<RepoUri, FileEntry>
                 IndexIndexed: indexIndexed,
                 EmbeddedFiles: embeddedFiles,
                 EmbeddingApplicableFiles: embeddingApplicableFiles,
+                SemanticFinalFiles: semanticFinalFiles,
                 ByStatus: byStatus,
                 ByEmbeddingStatus: byEmbedding);
 
