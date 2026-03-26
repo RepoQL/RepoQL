@@ -96,19 +96,13 @@ flowchart TD
 No repository markers (.git or .repoql) were found starting at
 'C:\Users\dev\AppData\Local\Programs\cursor\resources'.
 Current working directory: 'C:\Users\dev\AppData\Local\Programs\cursor\resources'.
-Use the import tool with uri "primary://C:\Users\dev\MyProject" to set the repository root, then retry.
+Use the command tool with "::repo[C:\Users\dev\MyProject]" to set the repository root, then retry.
 ```
 
-### After using `import primary://`
+### After using `::repo[...]`
 
 ```
-Import completed: primary://C:\Users\dev\MyProject
-
-Imported 1,247 files:
-├── src/
-│   ├── components/
-│   └── ...
-└── ...
+Switched to repository: C:\Users\dev\MyProject
 ```
 
 ### Proposed: Enhanced diagnostics
@@ -122,7 +116,7 @@ Imported 1,247 files:
 
    Fix options:
    1. Set REPOQL_CWD in your MCP client's env config
-   2. Run: import primary:///path/to/your/project
+   2. Run: ::repo[/path/to/your/project]
 ```
 
 ## Known Client Issues
@@ -139,8 +133,8 @@ Imported 1,247 files:
 | Condition | Action |
 |-----------|--------|
 | Before launch | Set `REPOQL_CWD` in MCP client env config |
-| After launch, no markers found | Error message tells you to use `import primary:///path` |
-| After launch, wrong repo indexed | Use `import primary:///correct/path` to switch |
+| After launch, no markers found | Error message tells you to use `::repo[/path]` |
+| After launch, wrong repo indexed | Use `::repo[/correct/path]` to switch |
 | Client supports cwd config | Configure client to set cwd on spawn |
 
 ## Current Mitigation
@@ -161,11 +155,11 @@ if (!string.IsNullOrWhiteSpace(explicitWorkingDirectory) &&
 
 Set `REPOQL_CWD=/path/to/repo` in MCP client config to override cwd at startup.
 
-### 2. `primary://` URI Scheme
+### 2. `::repo[...]` Command
 
-**Implemented** (`ImportTool.cs`, `RepoQlClientProvider.cs`):
+**Implemented** (`CommandTool.cs`, `RepoCommand.cs`, `RepoQlClientProvider.cs`):
 
-Call `import primary:///path/to/repo` to explicitly set the repository root. This:
+Call `::repo[/path/to/repo]` to explicitly set the repository root. This:
 - Sets working directory via `RepoQlClientProvider.SetWorkingDirectory()`
 - Forces client recreation with new path
 - Works even after startup with wrong cwd
@@ -178,7 +172,7 @@ When no repo markers found, the error tells you exactly how to fix it:
 ```
 No repository markers (.git or .repoql) were found starting at '{searchedFrom}'.
 Current working directory: '{cwd}'.
-Use the import tool with uri "primary://{cwd}" to set the repository root, then retry.
+Use the command tool with "::repo[{cwd}]" to set the repository root, then retry.
 ```
 
 ### 4. Stderr Logging
@@ -196,7 +190,7 @@ Use the import tool with uri "primary://{cwd}" to set the repository root, then 
 | Mechanism | When to use |
 |-----------|-------------|
 | `REPOQL_CWD` env var | Configure in MCP client settings before launch |
-| `primary://` import | Runtime fix after wrong cwd detected |
+| `::repo[...]` command | Runtime fix after wrong cwd detected |
 | Error message | Guides user to solution when no markers found |
 
 **Remaining gaps**:

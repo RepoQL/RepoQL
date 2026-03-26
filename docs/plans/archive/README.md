@@ -82,7 +82,7 @@ Preflight Validation ───┐           │                         ▼
 | database-locked.md | Diagnostics, Database Init | Lock holder identification, zombie kill |
 | index-incomplete.md | Diagnostics, Health Progress | Progress/stall probes, phase reporting |
 | diagnostics.md | Diagnostics | Full fact collection, problem identification |
-| wrong-working-directory.md | — | ✓ Already mitigated (REPOQL_CWD, primary://) |
+| wrong-working-directory.md | — | ✓ Already mitigated (REPOQL_CWD, ::repo[...]) |
 | wsl-socket-path.md | — | ✓ Already mitigated (REPOQL_SOCKET) |
 
 ## Lifecycle

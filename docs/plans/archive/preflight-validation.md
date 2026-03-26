@@ -21,7 +21,7 @@ Implements: [Reliability Design](../designs/reliability.md) — Host Startup sec
 - Client-side diagnostics (Plan: Diagnostics)
 
 **Already mitigated:**
-- Wrong working directory → REPOQL_CWD env var, primary:// URI scheme
+- Wrong working directory → REPOQL_CWD env var, `::repo[...]` command
 - WSL socket path → REPOQL_SOCKET env var
 
 ## Enables

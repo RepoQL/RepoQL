@@ -7,6 +7,8 @@ namespace RepoQL.Contracts;
 /// </summary>
 public static class RepoLocator
 {
+    internal static string? UserHomeDirectoryOverride { get; set; }
+
     /// <summary>
     ///     Find the repository root starting at <paramref name="startPath" />.
     ///     If <paramref name="startPath" /> is null or empty the current working directory is used.
@@ -142,7 +144,7 @@ public static class RepoLocator
         {
             if (Directory.Exists(Path.Combine(dir.FullName, ".git")) ||
                 File.Exists(Path.Combine(dir.FullName, ".git")) ||
-                Directory.Exists(Path.Combine(dir.FullName, ".repoql")))
+                HasRepoqlMarker(dir.FullName))
             {
                 repoRoot = dir.FullName;
                 fallbackRoot = dir.FullName;
@@ -161,7 +163,32 @@ public static class RepoLocator
     private static bool HasRepoMarker(string directoryPath)
         => Directory.Exists(Path.Combine(directoryPath, ".git")) ||
            File.Exists(Path.Combine(directoryPath, ".git")) ||
-           Directory.Exists(Path.Combine(directoryPath, ".repoql"));
+           HasRepoqlMarker(directoryPath);
+
+    private static bool HasRepoqlMarker(string directoryPath)
+    {
+        if (!Directory.Exists(Path.Combine(directoryPath, ".repoql")))
+        {
+            return false;
+        }
+
+        var homeDirectory = GetUserHomeDirectory();
+        return string.IsNullOrWhiteSpace(homeDirectory) || !PathsEqual(directoryPath, homeDirectory);
+    }
+
+    private static string? GetUserHomeDirectory()
+    {
+        var homeDirectory = UserHomeDirectoryOverride;
+        if (!string.IsNullOrWhiteSpace(homeDirectory))
+        {
+            return Path.GetFullPath(homeDirectory);
+        }
+
+        var resolved = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return string.IsNullOrWhiteSpace(resolved)
+            ? null
+            : Path.GetFullPath(resolved);
+    }
 
     private static bool TryGetPwdCandidate(string currentDirectory, out string pwdCandidate)
     {

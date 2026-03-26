@@ -270,7 +270,7 @@ Never guess causes. Show what we observed.
 | Database locked (zombie) | Lock holder is old repoql | Kill it |
 | Database corrupted | DuckDB reports corruption | Delete and recreate |
 | Schema incompatible | Migration fails or version mismatch | Delete and recreate |
-| Wrong cwd | Suspicious path, no .git | Guide: REPOQL_CWD or primary:// |
+| Wrong cwd | Suspicious path, no .git | Guide: REPOQL_CWD or ::repo[...] |
 | Socket path too long | Preflight length check | Guide: REPOQL_SOCKET |
 | WSL DrvFS | Preflight filesystem check | Auto-redirect to /tmp |
 | Startup hang | Health progress stalled | Show current file in log |

@@ -3,6 +3,7 @@ namespace RepoQL.Protocol.Tests;
 public class RepoLocatorTests
 {
     private static readonly object EnvironmentLock = new();
+    private static readonly object HomeDirectoryOverrideLock = new();
 
     [Test]
     public void TryFindRepoRoot_FindsNearestMarker()
@@ -134,6 +135,73 @@ public class RepoLocatorTests
         });
     }
 
+    [Test]
+    public void TryFindRepoRoot_DoesNotTreatHomeDirectoryRepoqlFolderAsRepoMarker()
+    {
+        using var temp = new TempDir();
+        var homeDirectory = Path.Combine(temp.Path, "home");
+        Directory.CreateDirectory(Path.Combine(homeDirectory, ".repoql"));
+
+        WithHomeDirectoryOverride(homeDirectory, () =>
+        {
+            var found = RepoQL.Contracts.RepoLocator.TryFindRepoRoot(
+                homeDirectory,
+                out var root,
+                out var searchedFrom,
+                allowFallback: false);
+
+            root.Should().NotBe(Path.GetFullPath(homeDirectory));
+            searchedFrom.Should().Be(Path.GetFullPath(homeDirectory));
+        });
+    }
+
+    [Test]
+    public void TryFindRepoRoot_DoesNotResolveNestedPathToHomeDirectoryViaRepoqlFolder()
+    {
+        using var temp = new TempDir();
+        var homeDirectory = Path.Combine(temp.Path, "home");
+        var nestedDirectory = Path.Combine(homeDirectory, "projects", "scratch");
+        Directory.CreateDirectory(Path.Combine(homeDirectory, ".repoql"));
+        Directory.CreateDirectory(nestedDirectory);
+
+        WithHomeDirectoryOverride(homeDirectory, () =>
+        {
+            var found = RepoQL.Contracts.RepoLocator.TryFindRepoRoot(
+                nestedDirectory,
+                out var root,
+                out var searchedFrom,
+                allowFallback: false);
+
+            root.Should().NotBe(Path.GetFullPath(homeDirectory));
+            searchedFrom.Should().Be(Path.GetFullPath(nestedDirectory));
+        });
+    }
+
+    [Test]
+    public void TryFindRepoRoot_StillTreatsRepoqlFolderOutsideHomeDirectoryAsRepoMarker()
+    {
+        using var temp = new TempDir();
+        var homeDirectory = Path.Combine(temp.Path, "home");
+        var repoRoot = Path.Combine(temp.Path, "project");
+        var nestedDirectory = Path.Combine(repoRoot, "nested");
+        Directory.CreateDirectory(homeDirectory);
+        Directory.CreateDirectory(Path.Combine(repoRoot, ".repoql"));
+        Directory.CreateDirectory(nestedDirectory);
+
+        WithHomeDirectoryOverride(homeDirectory, () =>
+        {
+            var found = RepoQL.Contracts.RepoLocator.TryFindRepoRoot(
+                nestedDirectory,
+                out var root,
+                out var searchedFrom,
+                allowFallback: false);
+
+            found.Should().BeTrue();
+            root.Should().Be(Path.GetFullPath(repoRoot));
+            searchedFrom.Should().Be(Path.GetFullPath(nestedDirectory));
+        });
+    }
+
     private static void WithCurrentDirectoryAndPwd(string currentDirectory, string? pwd, Action action)
     {
         lock (EnvironmentLock)
@@ -151,6 +219,23 @@ public class RepoLocatorTests
             {
                 Environment.CurrentDirectory = originalCurrentDirectory;
                 Environment.SetEnvironmentVariable("PWD", originalPwd);
+            }
+        }
+    }
+
+    private static void WithHomeDirectoryOverride(string homeDirectory, Action action)
+    {
+        lock (HomeDirectoryOverrideLock)
+        {
+            var originalHomeDirectory = RepoQL.Contracts.RepoLocator.UserHomeDirectoryOverride;
+            try
+            {
+                RepoQL.Contracts.RepoLocator.UserHomeDirectoryOverride = homeDirectory;
+                action();
+            }
+            finally
+            {
+                RepoQL.Contracts.RepoLocator.UserHomeDirectoryOverride = originalHomeDirectory;
             }
         }
     }
