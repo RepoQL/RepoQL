@@ -44,7 +44,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
     private readonly IHostApplicationLifetime _hostLifetime;
     private readonly IEmbeddingProvider? _embeddingProvider;
     private readonly IInferenceProvider? _inferenceProvider;
-    private readonly EmbeddingMode _embeddingMode;
     private readonly ExploreOrchestrator _exploreOrchestrator;
     private readonly ReadOrchestrator _readOrchestrator;
     private readonly IReadContentProvider _readContentProvider;
@@ -97,7 +96,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         Explain.ExplainEngine explainEngine,
         QueryEngine queryEngine,
         RepoQlConfig config,
-        EmbeddingModeOptions? embeddingModeOptions = null,
         IEmbeddingProvider? embeddingProvider = null,
         IInferenceProvider? inferenceProvider = null,
         IWasmSandbox? wasmSandbox = null,
@@ -119,7 +117,6 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
         _pandocRenderer = pandocRenderer;
         _svgRenderer = svgRenderer;
         _moduleRegistry = moduleRegistry;
-        _embeddingMode = embeddingModeOptions?.Mode ?? EmbeddingMode.Full;
         this.coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
         _importEngine = importEngine ?? throw new ArgumentNullException(nameof(importEngine));
         _embeddingCoordinator = embeddingCoordinator ?? throw new ArgumentNullException(nameof(embeddingCoordinator));
@@ -1188,7 +1185,15 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             ? request.Stages.Select(MapStage).ToArray()
             : Array.Empty<CoordinatorPipelineStage>();
 
-        await coordinator.WaitForPipelineAsync(stages, request.WaitAll, context.CancellationToken).ConfigureAwait(false);
+        try
+        {
+            await coordinator.WaitForPipelineAsync(stages, request.WaitAll, context.CancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException ex)
+        {
+            throw new RpcException(new Status(StatusCode.DeadlineExceeded, ex.Message));
+        }
+
         var snapshot = coordinator.GetPipelineStatus();
         return new WaitForPipelineResponse { Status = ToProtoStatus(snapshot) };
     }
@@ -1244,14 +1249,13 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             {
                 var db = _db;
                 var logger = _logger;
-                var embeddingMode = _embeddingMode;
                 var settings = _embeddingSettings;
                 _ = Task.Run(async () =>
                 {
                     try
                     {
                         await operation.Completion.ConfigureAwait(false);
-                        var refresher = new EmbeddingRefresher(db, embeddingMode, logger, settings);
+                        var refresher = new EmbeddingRefresher(db, EmbeddingMode.Full, logger, settings);
                         await refresher.RefreshAsync(provider, CancellationToken.None).ConfigureAwait(false);
                         logger.LogInformation("[Import] Background batch embedding refresh completed for operation {OpId}", operation.Id);
                     }
@@ -1824,7 +1828,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             try
             {
                 var summary = _uriRegistry.GetSummary();
-                return TrustSignal.FromSummary(summary, executionTimeMs, _embeddingMode != EmbeddingMode.None);
+                return TrustSignal.FromSummary(summary, executionTimeMs, _embeddingProvider is { Enabled: true });
             }
             catch (Exception ex)
             {
@@ -1861,7 +1865,7 @@ public sealed class RepoQlServiceImpl : Contracts.RepoQL.RepoQLBase
             analysisDepth: 0,
             writerPending: 0,
             executionTimeMs,
-            embedEnabled: _embeddingMode != EmbeddingMode.None);
+            embedEnabled: _embeddingProvider is { Enabled: true });
     }
 
     private static Dictionary<string, string> ParseKeyValueText(string text)

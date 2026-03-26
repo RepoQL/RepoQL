@@ -174,7 +174,7 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
     /// Flush all pending items to the database in a single batch.
     /// Thread-safe - serializes flushes to prevent concurrent database writes.
     /// </summary>
-    private void FlushPendingItems()
+    internal void FlushPendingItems()
     {
         // Serialize all flushes - only one can run at a time
         // This prevents write-write conflicts in DuckDB
@@ -192,96 +192,113 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
             }
 
             var sw = Stopwatch.StartNew();
-
-            // Batch commit with per-item error isolation
-            var dbItems = batch.Select(p => (p.Item.Uri, p.Artifact)).ToList();
-            var structureEmbeddings = batch
-                .Select(p => p.Item.StructureEmbedding)
-                .Where(e => e is not null)
-                .Select(e => e!)
-                .ToList();
-
-            var dbSw = Stopwatch.StartNew();
-            var outcomes = _db.IndexArtifactBatchIsolated(dbItems);
-            var dbMs = dbSw.Elapsed.TotalMilliseconds;
-
-            // Separate succeeded and failed items
-            var succeededItems = new List<PendingCommit>();
-            for (var i = 0; i < batch.Count; i++)
+            try
             {
-                var outcome = outcomes[i];
-                var pending = batch[i];
+                // Batch commit with per-item error isolation
+                var dbItems = batch.Select(p => (p.Item.Uri, p.Artifact)).ToList();
 
-                if (outcome.Succeeded)
+                var dbSw = Stopwatch.StartNew();
+                var outcomes = _db.IndexArtifactBatchIsolated(dbItems);
+                var dbMs = dbSw.Elapsed.TotalMilliseconds;
+
+                // Separate succeeded and failed items
+                var succeededItems = new List<PendingCommit>();
+                for (var i = 0; i < batch.Count; i++)
                 {
-                    succeededItems.Add(pending);
+                    var outcome = outcomes[i];
+                    var pending = batch[i];
+
+                    if (outcome.Succeeded)
+                    {
+                        succeededItems.Add(pending);
+                    }
+                    else
+                    {
+                        pending.Completion.TrySetException(outcome.Error!);
+                    }
+                }
+
+                var successfulEmbeddings = CollectStructureEmbeddings(succeededItems.Select(p => p.Item));
+
+                // Process embeddings only for succeeded items
+                var embedMs = 0.0;
+                var embeddingWriteFailed = false;
+                if (successfulEmbeddings.Count > 0)
+                {
+                    dbSw.Restart();
+                    try
+                    {
+                        _db.WriteEmbeddings(successfulEmbeddings);
+                    }
+                    catch (Exception ex)
+                    {
+                        embeddingWriteFailed = true;
+                        MarkEmbeddingWriteFailed(succeededItems.Select(p => p.Item), ex);
+                        _logger.LogWarning(ex,
+                            "Structure embedding write failed for {EmbeddingCount} items in commit batch. Artifact commit and catalog update will continue.",
+                            successfulEmbeddings.Count);
+                    }
+                    embedMs = dbSw.Elapsed.TotalMilliseconds;
+                }
+
+                if (!embeddingWriteFailed)
+                {
+                    UpdateUriRegistryEmbeddingStatus(succeededItems.Select(p => p.Item), successfulEmbeddings);
+                }
+
+                dbSw.Restart();
+                // Update catalog and complete succeeded items
+                var catalogFailureCount = 0;
+                foreach (var pending in succeededItems)
+                {
+                    try
+                    {
+                        var item = pending.Item;
+                        var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
+                        var entry = new DocumentCatalogEntry(
+                            item.Uri,
+                            item.DigestHex!,
+                            mediaType!,
+                            item.RawArtifact.PhysicalPath,
+                            item.LastModified);
+                        _catalog.ApplyUpsert(entry);
+                        pending.Completion.TrySetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        catalogFailureCount++;
+                        MarkCatalogUpdateFailed(pending.Item, pending.Completion, ex);
+                        _logger.LogError(ex,
+                            "Catalog upsert failed for {Uri} in commit batch after artifact write completed.",
+                            pending.Item.Uri);
+                    }
+                }
+                var catalogMs = dbSw.Elapsed.TotalMilliseconds;
+
+                var failedCount = (batch.Count - succeededItems.Count) + catalogFailureCount;
+                var completedCount = batch.Count - failedCount;
+                if (failedCount > 0)
+                {
+                    _logger.LogWarning(
+                        "Committed batch of {Count} items in {ElapsedMs:F1}ms: {Succeeded} succeeded, {Failed} failed " +
+                        "[db={DbMs:F1}ms, embed={EmbedMs:F1}ms, catalog={CatalogMs:F1}ms]",
+                        batch.Count, sw.Elapsed.TotalMilliseconds,
+                        completedCount, failedCount,
+                        dbMs, embedMs, catalogMs);
                 }
                 else
                 {
-                    pending.Completion.TrySetException(outcome.Error!);
+                    _logger.LogDebug(
+                        "Committed batch of {Count} items in {ElapsedMs:F1}ms ({PerItem:F1}ms/item) " +
+                        "[db={DbMs:F1}ms, embed={EmbedMs:F1}ms, catalog={CatalogMs:F1}ms]",
+                        batch.Count, sw.Elapsed.TotalMilliseconds, sw.Elapsed.TotalMilliseconds / batch.Count,
+                        dbMs, embedMs, catalogMs);
                 }
             }
-
-            // Process embeddings only for succeeded items
-            var embedMs = 0.0;
-            var embeddingWriteFailed = false;
-            if (structureEmbeddings.Count > 0 && succeededItems.Count > 0)
+            catch (Exception ex)
             {
-                dbSw.Restart();
-                try
-                {
-                    _db.WriteEmbeddings(structureEmbeddings);
-                }
-                catch (Exception ex)
-                {
-                    embeddingWriteFailed = true;
-                    MarkEmbeddingWriteFailed(succeededItems.Select(p => p.Item), ex);
-                    _logger.LogWarning(ex,
-                        "Structure embedding write failed for {EmbeddingCount} items in commit batch. Artifact commit and catalog update will continue.",
-                        structureEmbeddings.Count);
-                }
-                embedMs = dbSw.Elapsed.TotalMilliseconds;
-            }
-
-            if (!embeddingWriteFailed && succeededItems.Count > 0)
-            {
-                UpdateUriRegistryEmbeddingStatus(succeededItems.Select(p => p.Item), structureEmbeddings);
-            }
-
-            dbSw.Restart();
-            // Update catalog and complete succeeded items
-            foreach (var pending in succeededItems)
-            {
-                var item = pending.Item;
-                var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
-                var entry = new DocumentCatalogEntry(
-                    item.Uri,
-                    item.DigestHex!,
-                    mediaType!,
-                    item.RawArtifact.PhysicalPath,
-                    item.LastModified);
-                _catalog.ApplyUpsert(entry);
-                pending.Completion.TrySetResult();
-            }
-            var catalogMs = dbSw.Elapsed.TotalMilliseconds;
-
-            var failedCount = batch.Count - succeededItems.Count;
-            if (failedCount > 0)
-            {
-                _logger.LogWarning(
-                    "Committed batch of {Count} items in {ElapsedMs:F1}ms: {Succeeded} succeeded, {Failed} failed " +
-                    "[db={DbMs:F1}ms, embed={EmbedMs:F1}ms, catalog={CatalogMs:F1}ms]",
-                    batch.Count, sw.Elapsed.TotalMilliseconds,
-                    succeededItems.Count, failedCount,
-                    dbMs, embedMs, catalogMs);
-            }
-            else
-            {
-                _logger.LogDebug(
-                    "Committed batch of {Count} items in {ElapsedMs:F1}ms ({PerItem:F1}ms/item) " +
-                    "[db={DbMs:F1}ms, embed={EmbedMs:F1}ms, catalog={CatalogMs:F1}ms]",
-                    batch.Count, sw.Elapsed.TotalMilliseconds, sw.Elapsed.TotalMilliseconds / batch.Count,
-                    dbMs, embedMs, catalogMs);
+                FaultBatch(batch, ex);
+                throw;
             }
         }
     }
@@ -346,12 +363,6 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
         {
             // Index as batch with per-item error isolation
             var dbItems = batchItems.Select(b => (b.Uri, b.Artifact)).ToList();
-            var structureEmbeddings = batchItems
-                .Select(b => b.Item.StructureEmbedding)
-                .Where(e => e is not null)
-                .Select(e => e!)
-                .ToList();
-
             var outcomes = _db.IndexArtifactBatchIsolated(dbItems);
 
             // Report per-item failures
@@ -374,12 +385,13 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
                 }
             }
 
+            var successfulEmbeddings = CollectStructureEmbeddings(succeededBatchItems.Select(b => b.Item));
             var embeddingWriteFailed = false;
-            if (structureEmbeddings.Count > 0 && succeededBatchItems.Count > 0)
+            if (successfulEmbeddings.Count > 0)
             {
                 try
                 {
-                    _db.WriteEmbeddings(structureEmbeddings);
+                    _db.WriteEmbeddings(successfulEmbeddings);
                 }
                 catch (Exception ex)
                 {
@@ -387,30 +399,71 @@ public sealed class IndexingCommitter : IIndexingCommitter, IDisposable
                     MarkEmbeddingWriteFailed(succeededBatchItems.Select(b => b.Item), ex);
                     _logger.LogWarning(ex,
                         "Structure embedding write failed for {EmbeddingCount} items in explicit batch commit. Artifact commit and catalog update will continue.",
-                        structureEmbeddings.Count);
+                        successfulEmbeddings.Count);
                 }
             }
 
-            if (!embeddingWriteFailed && succeededBatchItems.Count > 0)
+            if (!embeddingWriteFailed)
             {
-                UpdateUriRegistryEmbeddingStatus(succeededBatchItems.Select(b => b.Item), structureEmbeddings);
+                UpdateUriRegistryEmbeddingStatus(succeededBatchItems.Select(b => b.Item), successfulEmbeddings);
             }
 
             // Update catalog for succeeded items only
+            var catalogFailureCount = 0;
             foreach (var (_, _, item) in succeededBatchItems)
             {
-                var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
-                var entry = new DocumentCatalogEntry(
-                    item.Uri,
-                    item.DigestHex!,
-                    mediaType!,
-                    item.RawArtifact.PhysicalPath,
-                    item.LastModified);
-                _catalog.ApplyUpsert(entry);
+                try
+                {
+                    var mediaType = item.MediaType ?? item.RawArtifact.ProvisionalMediaType.Value;
+                    var entry = new DocumentCatalogEntry(
+                        item.Uri,
+                        item.DigestHex!,
+                        mediaType!,
+                        item.RawArtifact.PhysicalPath,
+                        item.LastModified);
+                    _catalog.ApplyUpsert(entry);
+                }
+                catch (Exception ex)
+                {
+                    catalogFailureCount++;
+                    MarkCatalogUpdateFailed(item, completion: null, ex);
+                    _logger.LogError(ex,
+                        "Catalog upsert failed for {Uri} in explicit commit batch after artifact write completed.",
+                        item.Uri);
+                }
+            }
+
+            if (catalogFailureCount > 0)
+            {
+                _logger.LogWarning(
+                    "Explicit commit batch completed with {CatalogFailureCount} catalog update failures after artifact write succeeded.",
+                    catalogFailureCount);
             }
         }
 
         return Task.CompletedTask;
+    }
+
+    private static List<DocumentEmbedding> CollectStructureEmbeddings(IEnumerable<IndexItem> items)
+        => items
+            .Select(item => item.StructureEmbedding)
+            .Where(e => e is not null)
+            .Select(e => e!)
+            .ToList();
+
+    private void FaultBatch(IEnumerable<PendingCommit> batch, Exception exception)
+    {
+        foreach (var pending in batch)
+        {
+            _uriRegistry?.SetFailed(pending.Item.Uri, $"commit: {exception.Message}");
+            pending.Completion.TrySetException(exception);
+        }
+    }
+
+    private void MarkCatalogUpdateFailed(IndexItem item, TaskCompletionSource? completion, Exception exception)
+    {
+        _uriRegistry?.SetFailed(item.Uri, $"catalog update failed: {exception.Message}");
+        completion?.TrySetException(exception);
     }
 
     private void MarkEmbeddingWriteFailed(IEnumerable<IndexItem> items, Exception exception)

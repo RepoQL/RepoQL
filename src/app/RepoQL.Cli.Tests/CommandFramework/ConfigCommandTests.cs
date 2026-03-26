@@ -95,15 +95,15 @@ internal sealed class ConfigCommandTests : IDisposable
     [Test]
     public async Task Set_And_Read_RoundTrip_Repo_Scope()
     {
-        var set = await _command.Set("embedding.mode", "none", "repo", CancellationToken.None);
+        var set = await _command.Set("embedding.model_path", "models/e5.onnx", "repo", CancellationToken.None);
         set.IsError.Should().BeFalse();
 
-        var read = await _command.Read("embedding.mode", CancellationToken.None);
+        var read = await _command.Read("embedding.model_path", CancellationToken.None);
         read.IsError.Should().BeFalse();
-        read.Text.Should().Contain("Value:          none");
+        read.Text.Should().Contain("Value:          models/e5.onnx");
         read.Text.Should().Contain("Source:         repo");
 
-        ReadString(RepoConfigPath, "embedding", "mode").Should().Be("none");
+        ReadString(RepoConfigPath, "embedding", "model_path").Should().Be("models/e5.onnx");
     }
 
     [Test]

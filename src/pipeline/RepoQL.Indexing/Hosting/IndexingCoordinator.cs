@@ -65,7 +65,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     /// Maximum time to wait for queue to drain when workers are idle with no progress.
     /// Prevents infinite polling if workers never pick up queued items.
     /// </summary>
-    private static readonly TimeSpan MaxQueueDrainWait = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan DefaultMaxQueueDrainWait = TimeSpan.FromMinutes(1);
     private readonly CompositeFileSystem _fileSystem;
     private readonly ICompositeFileSystemManager? _mountManager;
     private readonly IndexingEngine _engine;
@@ -75,6 +75,8 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     private readonly string? _repoRoot;
     private readonly IOperationManager? _operationManager;
     private readonly ILogger<IndexingCoordinator> _logger;
+    private readonly TimeSpan _maxQueueDrainWait;
+    private readonly Func<CoordinatorPipelineStage, CancellationToken, Task>? _stageWaitOverride;
     private int _reindexScopes;
     private int _activeMountIndexing;
 
@@ -88,6 +90,32 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         IOperationManager? operationManager = null,
         UriRegistry? uriRegistry = null,
         RepositoryConfiguration? repoConfig = null)
+        : this(
+            fileSystem,
+            engine,
+            db,
+            logger,
+            mountManager,
+            gitIndexer,
+            operationManager,
+            uriRegistry,
+            repoConfig,
+            DefaultMaxQueueDrainWait)
+    {
+    }
+
+    internal IndexingCoordinator(
+        CompositeFileSystem fileSystem,
+        IndexingEngine engine,
+        DuckDbDataStore db,
+        ILogger<IndexingCoordinator>? logger,
+        ICompositeFileSystemManager? mountManager,
+        GitHistoryIndexer? gitIndexer,
+        IOperationManager? operationManager,
+        UriRegistry? uriRegistry,
+        RepositoryConfiguration? repoConfig,
+        TimeSpan maxQueueDrainWait,
+        Func<CoordinatorPipelineStage, CancellationToken, Task>? stageWaitOverride = null)
     {
         _fileSystem = fileSystem ?? throw new ArgumentNullException(nameof(fileSystem));
         _engine = engine ?? throw new ArgumentNullException(nameof(engine));
@@ -98,6 +126,8 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         _operationManager = operationManager;
         _uriRegistry = uriRegistry;
         _repoRoot = repoConfig?.Path;
+        _maxQueueDrainWait = maxQueueDrainWait;
+        _stageWaitOverride = stageWaitOverride;
 
         // Subscribe to mount changes for automatic indexing of new mounts
         if (_mountManager is not null)
@@ -107,6 +137,9 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     }
 
     public bool IsReindexing => Volatile.Read(ref _reindexScopes) > 0;
+
+    internal void SetActiveMountIndexingForTests(int count)
+        => Volatile.Write(ref _activeMountIndexing, count);
 
     /// <summary>
     /// Triggers incremental git history indexing in the background.
@@ -202,11 +235,15 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         CancellationToken cancellationToken)
     {
         var targets = (stages is null || stages.Count == 0) ? DefaultStages : stages;
+        using var waitCts = waitAll
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var waitToken = waitCts?.Token ?? cancellationToken;
         var waits = new List<Task>(targets.Count);
 
         foreach (var stage in targets)
         {
-            waits.Add(WaitForStageCompleteAsync(stage, cancellationToken));
+            waits.Add(CreateStageWait(stage, waitToken));
         }
 
         if (waits.Count == 0)
@@ -218,9 +255,41 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
         }
         else
         {
-            await Task.WhenAny(waits).ConfigureAwait(false);
+            var completed = await Task.WhenAny(waits).ConfigureAwait(false);
+            await completed.ConfigureAwait(false);
+
+            waitCts!.Cancel();
+            await ObserveCancelledStageWaitsAsync(waits, completed, cancellationToken).ConfigureAwait(false);
         }
     }
+
+    private async Task ObserveCancelledStageWaitsAsync(
+        IEnumerable<Task> waits,
+        Task completed,
+        CancellationToken callerCancellationToken)
+    {
+        foreach (var wait in waits)
+        {
+            if (ReferenceEquals(wait, completed))
+                continue;
+
+            try
+            {
+                await wait.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!callerCancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception ex) when (!callerCancellationToken.IsCancellationRequested)
+            {
+                _logger.LogDebug(ex,
+                    "Ignoring stage wait failure after waitAny completed because another requested stage finished first.");
+            }
+        }
+    }
+
+    private Task CreateStageWait(CoordinatorPipelineStage stage, CancellationToken cancellationToken)
+        => _stageWaitOverride?.Invoke(stage, cancellationToken) ?? WaitForStageCompleteAsync(stage, cancellationToken);
 
     /// <summary>
     /// Waits for a pipeline stage to complete, considering both worker state and queue depth.
@@ -231,7 +300,7 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
     /// 2. The work queue is empty (no pending items)
     ///
     /// This prevents returning prematurely when items are queued but workers haven't started yet.
-    /// Times out after <see cref="MaxQueueDrainWait"/> to prevent infinite polling when workers
+    /// Times out after the configured queue-drain timeout to prevent infinite polling when workers
     /// are idle but queue never drains.
     /// </remarks>
     private async Task WaitForStageCompleteAsync(CoordinatorPipelineStage stage, CancellationToken cancellationToken)
@@ -271,15 +340,16 @@ public sealed class IndexingCoordinator : IIndexingCoordinator
                 // Reset timer - embedding or other idle processing is actively running
                 stuckTimer.Restart();
             }
-            else if (stuckTimer.Elapsed > MaxQueueDrainWait)
+            else if (stuckTimer.Elapsed > _maxQueueDrainWait)
             {
                 // No progress for MaxQueueDrainWait - timeout to prevent infinite wait
+                var message =
+                    $"WaitForPipelineAsync timed out waiting for {stage} queue to drain. " +
+                    $"Workers are idle but queue depth={currentDepth} after {stuckTimer.Elapsed.TotalSeconds:F1}s with no progress.";
                 _logger.LogWarning(
-                    "WaitForPipelineAsync timed out waiting for {Stage} queue to drain. " +
-                    "Workers are idle but queue depth={Depth} after {Elapsed:F1}s with no progress. " +
-                    "This may indicate workers are not processing queued items.",
-                    stage, currentDepth, stuckTimer.Elapsed.TotalSeconds);
-                return;
+                    "{Message} This may indicate workers are not processing queued items.",
+                    message);
+                throw new TimeoutException(message);
             }
 
             // Workers should pick up items and become busy again

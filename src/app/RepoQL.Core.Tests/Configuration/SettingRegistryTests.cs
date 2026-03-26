@@ -13,7 +13,7 @@ internal sealed class SettingRegistryTests
 
         registry.All.Should().NotBeEmpty();
         registry.Settings.Should().ContainKey("duckdb.memory_limit");
-        registry.Settings.Should().ContainKey("embedding.mode");
+        registry.Settings.Should().ContainKey("embedding.model_path");
         registry.Settings.Should().ContainKey("cloud.api_key");
         registry.Settings.Should().ContainKey("cloud.client_id");
         registry.Settings.Should().ContainKey("cloud.auth_token");
@@ -51,9 +51,9 @@ internal sealed class SettingRegistryTests
         duckDb.Should().NotBeNull();
         duckDb!.EnvVar.Should().Be("REPOQL_DUCKDB_MEMORY_LIMIT");
 
-        var embeddingMode = registry.TryGet("embedding.mode");
-        embeddingMode.Should().NotBeNull();
-        embeddingMode!.EnvVar.Should().Be("REPOQL_EMBEDDING_MODE");
+        var embeddingModelPath = registry.TryGet("embedding.model_path");
+        embeddingModelPath.Should().NotBeNull();
+        embeddingModelPath!.EnvVar.Should().Be("REPOQL_EMBEDDING_MODEL_PATH");
     }
 
     [Test]
@@ -79,9 +79,9 @@ internal sealed class SettingRegistryTests
         poolSize.Should().NotBeNull();
         poolSize!.DefaultValue.Should().Be("2");
 
-        var embeddingMode = registry.TryGet("embedding.mode");
-        embeddingMode.Should().NotBeNull();
-        embeddingMode!.DefaultValue.Should().Be("hybrid");
+        var maxTokens = registry.TryGet("embedding.max_tokens");
+        maxTokens.Should().NotBeNull();
+        maxTokens!.DefaultValue.Should().Be("256");
     }
 
     [Test]
@@ -153,7 +153,7 @@ internal sealed class SettingRegistryTests
 
     [Test]
     [Arguments("duckdb.memory_limit", "REPOQL_DUCKDB_MEMORY_LIMIT")]
-    [Arguments("embedding.mode", "REPOQL_EMBEDDING_MODE")]
+    [Arguments("embedding.model_path", "REPOQL_EMBEDDING_MODEL_PATH")]
     [Arguments("ort.provider", "REPOQL_ORT_PROVIDER")]
     [Arguments("cloud.api_key", "REPOQL_CLOUD_API_KEY")]
     [Arguments("inference.service_url", "REPOQL_INFERENCE_SERVICE_URL")]

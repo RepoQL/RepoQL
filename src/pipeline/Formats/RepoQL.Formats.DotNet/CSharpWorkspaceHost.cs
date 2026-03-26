@@ -115,6 +115,13 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         return 0;
     }
 
+    internal int GetCompilationBuildCount(string projectPath)
+    {
+        if (_sessionCache.TryGetValue<ProjectSession>(Path.GetFullPath(projectPath), out var session))
+            return session.CompilationBuildCount;
+        return 0;
+    }
+
     internal async Task<CSharpSemanticAnalysis?> TryAnalyzeAsync(
         string filePath,
         CSharpDocumentSurface surface,
@@ -307,6 +314,8 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         private ImmutableArray<Diagnostic> _analyzerDiagnostics = ImmutableArray<Diagnostic>.Empty;
         private bool _analyzersComputed;
         private int _generatorPublishFlag;
+        private FileStamp? _projectStamp;
+        private DateTime _projectLoadedAtUtc;
 
         public ProjectSession(string projectPath, Func<MSBuildWorkspace> workspaceFactory)
         {
@@ -315,6 +324,7 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
         }
 
         public int LoadCount { get; private set; }
+        public int CompilationBuildCount { get; private set; }
 
         public async Task<CSharpSemanticAnalysis?> AnalyzeAsync(
             string filePath,
@@ -322,6 +332,8 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             TextLineMap lineMap,
             CancellationToken cancellationToken)
         {
+            await InvalidateIfProjectInputsChangedAsync(filePath, cancellationToken).ConfigureAwait(false);
+
             var project = await EnsureProjectAsync(cancellationToken).ConfigureAwait(false);
             if (project is null)
                 return null;
@@ -330,9 +342,7 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             if (compilation is null)
                 return null;
 
-            var analysis = await AnalyzeCoreAsync(project, compilation, filePath, surface, lineMap, cancellationToken).ConfigureAwait(false);
-            await ReleaseCompilationResourcesAsync().ConfigureAwait(false);
-            return analysis;
+            return await AnalyzeCoreAsync(project, compilation, filePath, surface, lineMap, cancellationToken).ConfigureAwait(false);
         }
 
         private async Task<CSharpSemanticAnalysis?> AnalyzeCoreAsync(
@@ -379,28 +389,35 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             return new CSharpSemanticAnalysis(collector.References, diagnostics, generatedDocuments);
         }
 
-        private async Task ReleaseCompilationResourcesAsync()
+        private async Task InvalidateIfProjectInputsChangedAsync(string filePath, CancellationToken cancellationToken)
         {
-            if (_compilationWithGenerators is null &&
-                _generatedDocuments.IsDefaultOrEmpty &&
-                _generatorDiagnostics.IsDefaultOrEmpty &&
-                _analyzerDiagnostics.IsDefaultOrEmpty)
-            {
-                return;
-            }
+            var normalizedFilePath = Path.GetFullPath(filePath);
+            var projectStamp = CaptureFileStamp(_projectPath);
+            var fileStamp = CaptureFileStamp(normalizedFilePath);
 
-            await _compilationGate.WaitAsync().ConfigureAwait(false);
+            await _initialization.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                _compilationWithGenerators = null;
-                _generatedDocuments = ImmutableArray<CSharpGeneratedDocumentState>.Empty;
-                _generatorDiagnostics = ImmutableArray<Diagnostic>.Empty;
-                _analyzerDiagnostics = ImmutableArray<Diagnostic>.Empty;
-                _analyzersComputed = false;
+                var shouldInvalidate =
+                    _project is not null &&
+                    (
+                        (_projectStamp.HasValue && _projectStamp.Value != projectStamp)
+                        || (_projectLoadedAtUtc != default && fileStamp.LastWriteUtc > _projectLoadedAtUtc));
+
+                if (!shouldInvalidate)
+                    return;
+
+                _workspace?.Dispose();
+                _workspace = null;
+                _project = null;
+                _projectStamp = projectStamp;
+                _projectLoadedAtUtc = default;
+
+                await ResetCompilationStateAsync(cancellationToken).ConfigureAwait(false);
             }
             finally
             {
-                _compilationGate.Release();
+                _initialization.Release();
             }
         }
 
@@ -424,6 +441,8 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
                 try
                 {
                     _project = await _workspace.OpenProjectAsync(_projectPath, cancellationToken: linkedCts.Token).ConfigureAwait(false);
+                    _projectStamp = CaptureFileStamp(_projectPath);
+                    _projectLoadedAtUtc = DateTime.UtcNow;
                     LoadCount++;
                     return _project;
                 }
@@ -431,6 +450,8 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
                 {
                     // Timeout occurred
                     Console.Error.WriteLine($"Warning: Project load timeout (30s) for {_projectPath}");
+                    _workspace?.Dispose();
+                    _workspace = null;
                     return null;
                 }
             }
@@ -456,6 +477,8 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
                     return null;
 
                 var generatorOutputs = await RunGeneratorsAsync(project, compilation, cancellationToken).ConfigureAwait(false);
+                CompilationBuildCount++;
+                _generatorPublishFlag = 0;
                 _compilationWithGenerators = generatorOutputs.Compilation;
                 _generatedDocuments = generatorOutputs.GeneratedDocuments;
                 _generatorDiagnostics = generatorOutputs.Diagnostics;
@@ -562,7 +585,45 @@ public sealed class CSharpWorkspaceHost : IDisposable, IHostedService
             _generatedDocuments = ImmutableArray<CSharpGeneratedDocumentState>.Empty;
             _generatorDiagnostics = ImmutableArray<Diagnostic>.Empty;
             _generatorPublishFlag = 0;
+            _projectStamp = null;
+            _projectLoadedAtUtc = default;
         }
+
+        private async Task ResetCompilationStateAsync(CancellationToken cancellationToken)
+        {
+            if (_compilationWithGenerators is null &&
+                _generatedDocuments.IsDefaultOrEmpty &&
+                _generatorDiagnostics.IsDefaultOrEmpty &&
+                _analyzerDiagnostics.IsDefaultOrEmpty)
+            {
+                _generatorPublishFlag = 0;
+                _analyzersComputed = false;
+                return;
+            }
+
+            await _compilationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                _compilationWithGenerators = null;
+                _generatedDocuments = ImmutableArray<CSharpGeneratedDocumentState>.Empty;
+                _generatorDiagnostics = ImmutableArray<Diagnostic>.Empty;
+                _analyzerDiagnostics = ImmutableArray<Diagnostic>.Empty;
+                _analyzersComputed = false;
+                _generatorPublishFlag = 0;
+            }
+            finally
+            {
+                _compilationGate.Release();
+            }
+        }
+
+        private static FileStamp CaptureFileStamp(string path)
+        {
+            var info = new FileInfo(path);
+            return new FileStamp(info.LastWriteTimeUtc, info.Exists ? info.Length : 0);
+        }
+
+        private readonly record struct FileStamp(DateTime LastWriteUtc, long Length);
 
         private static void AnnotateSymbolKeys(
             CSharpDocumentSurface surface,

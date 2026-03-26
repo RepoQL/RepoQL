@@ -66,6 +66,16 @@ public sealed class DelimiterDetectorTests
     }
 
     [Test]
+    [DisplayName("Detect handles quoted multiline fields as one logical row")]
+    public void Detect_HandlesQuotedMultilineFields()
+    {
+        var result = DelimiterDetector.Detect("name,notes\nalpha,\"line one\nline two\"\nbeta,\"line three\"");
+
+        result.Delimiter.Should().Be(',');
+        result.FieldCount.Should().Be(2);
+    }
+
+    [Test]
     [DisplayName("Returns fallback for single-column file")]
     public void Detect_FallsBackForSingleColumnInput()
     {
@@ -103,5 +113,39 @@ public sealed class DelimiterDetectorTests
         var fields = DelimiterDetector.ParseFields("\"hello, world\",b", ',');
 
         fields.Should().Equal(["hello, world", "b"]);
+    }
+
+    [Test]
+    [DisplayName("ReadRows preserves embedded newlines inside quoted fields")]
+    public void ReadRows_PreservesQuotedMultilineField()
+    {
+        var rows = DelimiterDetector.ReadRows("name,notes\nalpha,\"line one\nline two\"\n", ',', maxRows: 10, out var totalRowCount);
+
+        totalRowCount.Should().Be(2);
+        rows.Should().HaveCount(2);
+        rows[1].Should().Equal(["alpha", "line one\nline two"]);
+    }
+
+    [Test]
+    [DisplayName("ReadRows recovers physical rows after unterminated quoted field")]
+    public void ReadRows_RecoversAfterUnterminatedQuotedField()
+    {
+        var rows = DelimiterDetector.ReadRows("id,notes\n1,\"line one\n2,still open\n3,tail", ',', maxRows: 10, out var totalRowCount);
+
+        totalRowCount.Should().Be(4);
+        rows.Should().HaveCount(4);
+        rows[1].Should().Equal(["1", "line one"]);
+        rows[2].Should().Equal(["2", "still open"]);
+        rows[3].Should().Equal(["3", "tail"]);
+    }
+
+    [Test]
+    [DisplayName("Detect recovers delimiter sampling after unterminated quoted field")]
+    public void Detect_RecoversAfterUnterminatedQuotedField()
+    {
+        var result = DelimiterDetector.Detect("id,notes\n1,\"line one\n2,still open\n3,tail");
+
+        result.Delimiter.Should().Be(',');
+        result.FieldCount.Should().Be(2);
     }
 }

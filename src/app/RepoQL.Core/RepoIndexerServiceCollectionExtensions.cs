@@ -147,20 +147,6 @@ public static class RepoIndexerServiceCollectionExtensions
             });
         });
 
-        services.AddSingleton(sp =>
-        {
-            var config = sp.GetRequiredService<RepoQlConfig>();
-            // Embedding mode: controls resource usage for constrained hardware.
-            // Non-none modes are currently forced to Full for best quality.
-            var embeddingMode = EmbeddingModeExtensions.ParseEmbeddingMode(config.Embedding.Mode);
-            if (embeddingMode != EmbeddingMode.None)
-            {
-                embeddingMode = EmbeddingMode.Full;
-            }
-
-            return new EmbeddingModeOptions(embeddingMode);
-        });
-
         services.AddCloudCredentialProvider();
 
         services.AddSingleton<IInferenceProvider>(sp =>
@@ -229,9 +215,6 @@ public static class RepoIndexerServiceCollectionExtensions
             var config = sp.GetRequiredService<RepoQlConfig>();
             var lf = sp.GetService<ILoggerFactory>();
             var log = lf?.CreateLogger("RepoQL.Embeddings");
-            var mode = sp.GetRequiredService<EmbeddingModeOptions>().Mode;
-            var degradation = sp.GetService<IServiceDegradationTracker>();
-            string? failureMessage = null;
             var onnxLogger = sp.GetService<ILogger<OnnxEmbeddingProvider>>();
             var cache = sp.GetService<IMemoryCache>();
             var embeddingCache = sp.GetRequiredService<EmbeddingCache>();
@@ -239,31 +222,27 @@ public static class RepoIndexerServiceCollectionExtensions
             IEmbeddingProvider WrapWithCache(IEmbeddingProvider inner) =>
                 new CachingEmbeddingProvider(inner, embeddingCache, cacheLogger);
 
-            if (mode == EmbeddingMode.None)
-            {
-                log?.LogInformation("Embedding provider: disabled (mode=None)");
-                return WrapWithCache(new DisabledEmbeddingProvider());
-            }
-
             // Local ONNX embeddings
             var onnxPath = GetEmbeddingModelPath(config.Embedding);
             var maxTokens = GetEmbeddingMaxTokens(config.Embedding);
-            if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
+            if (!string.IsNullOrWhiteSpace(onnxPath))
             {
+                if (!File.Exists(onnxPath))
+                {
+                    throw new InvalidOperationException(
+                        $"Embedding model path '{onnxPath}' does not exist. RepoQL requires a working ONNX embedding model.");
+                }
+
                 var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, cache, config.Ort, out var error);
                 if (onnx is not null)
+                {
+                    log?.LogInformation("Embedding provider: using model at {Path}", onnxPath);
                     return WrapWithCache(onnx);
+                }
 
-                if (error is null)
-                {
-                    failureMessage = $"ONNX failed to initialize from explicit path {onnxPath}";
-                    log?.LogWarning("Embedding provider: ONNX failed to initialize from explicit path {Path}; falling back", onnxPath);
-                }
-                else
-                {
-                    failureMessage = $"ONNX failed to initialize from explicit path {onnxPath}: {error.Message}";
-                    log?.LogWarning(error, "Embedding provider: ONNX failed to initialize from explicit path {Path}; falling back", onnxPath);
-                }
+                throw new InvalidOperationException(
+                    $"Embedding model at '{onnxPath}' failed to initialize. RepoQL requires a working ONNX embedding model.",
+                    error);
             }
 
             // Load the shipped model: Embeddings/Model/embedding_model.onnx (quantized int8)
@@ -291,134 +270,23 @@ public static class RepoIndexerServiceCollectionExtensions
                     if (onnx is not null)
                         return WrapWithCache(onnx);
 
-                    if (error is null)
-                    {
-                        failureMessage = "Shipped ONNX model failed to initialize";
-                        log?.LogWarning("Embedding provider: shipped model failed to initialize; falling back");
-                    }
-                    else
-                    {
-                        failureMessage = $"Shipped ONNX model failed to initialize: {error.Message}";
-                        log?.LogWarning(error, "Embedding provider: shipped model failed to initialize; falling back");
-                    }
+                    throw new InvalidOperationException(
+                        $"Shipped embedding model at '{shipped}' failed to initialize. RepoQL requires a working ONNX embedding model.",
+                        error);
                 }
-                else
-                {
-                    failureMessage ??= "No shipped ONNX model found";
-                }
+
+                throw new InvalidOperationException(
+                    "RepoQL could not find an embedded ONNX model. Reinstall RepoQL or configure embedding.model_path.");
             }
             catch (Exception ex)
             {
-                failureMessage = $"Embedding provider failed to initialize: {ex.Message}";
-                log?.LogWarning(ex, "Embedding provider: embedding failed to initialize");
-                // swallow and fall back to hashed provider
+                log?.LogError(ex, "Embedding provider: startup failed because no working ONNX model was available");
+                throw;
             }
-
-            // Fallback: hashed provider (deterministic, lightweight)
-            var dim = config.Embedding.Dim is > 0 ? config.Embedding.Dim.Value : 384;
-            log?.LogInformation("Embedding provider: using hashed fallback with dim={Dim}", dim);
-            if (!string.IsNullOrWhiteSpace(failureMessage))
-            {
-                degradation?.MarkDegraded(ServiceDegradationKind.Embeddings,
-                    $"Embeddings degraded; using hashed fallback. {failureMessage}");
-            }
-            return WrapWithCache(new HashedEmbeddingProvider(dim));
         });
 
-        // Local ONNX embedding provider for fast interactive search (JIT embeddings)
-        services.AddKeyedSingleton<IEmbeddingProvider>("local", (sp, _) =>
-        {
-            var config = sp.GetRequiredService<RepoQlConfig>();
-            var lf = sp.GetService<ILoggerFactory>();
-            var log = lf?.CreateLogger("RepoQL.Embeddings.Local");
-            var mode = sp.GetRequiredService<EmbeddingModeOptions>().Mode;
-            var degradation = sp.GetService<IServiceDegradationTracker>();
-            string? failureMessage = null;
-            var onnxLogger = sp.GetService<ILogger<OnnxEmbeddingProvider>>();
-            var cache = sp.GetService<IMemoryCache>();
-            var embeddingCache = sp.GetRequiredService<EmbeddingCache>();
-            var cacheLogger = sp.GetService<ILogger<CachingEmbeddingProvider>>();
-            IEmbeddingProvider WrapWithCache(IEmbeddingProvider inner) =>
-                new CachingEmbeddingProvider(inner, embeddingCache, cacheLogger);
-
-            if (mode == EmbeddingMode.None)
-            {
-                log?.LogDebug("Local embedding provider: disabled (mode=None)");
-                return WrapWithCache(new DisabledEmbeddingProvider());
-            }
-
-            // Always use local ONNX for speed
-            var onnxPath = GetEmbeddingModelPath(config.Embedding);
-            var maxTokens = GetEmbeddingMaxTokens(config.Embedding);
-
-            if (!string.IsNullOrWhiteSpace(onnxPath) && File.Exists(onnxPath))
-            {
-                var onnx = TryCreateOnnxProvider(onnxPath, onnxLogger, maxTokens, cache, config.Ort, out var error);
-                if (onnx is not null)
-                {
-                    log?.LogInformation("Local embedding provider: using ONNX from explicit path");
-                    return WrapWithCache(onnx);
-                }
-
-                if (error is null)
-                {
-                    failureMessage = $"Local ONNX failed to initialize from explicit path {onnxPath}";
-                    log?.LogError("Local embedding provider: ONNX from explicit path failed to initialize");
-                }
-                else
-                {
-                    failureMessage = $"Local ONNX failed to initialize from explicit path {onnxPath}: {error.Message}";
-                    log?.LogError(error, "Local embedding provider: ONNX from explicit path failed to initialize");
-                }
-            }
-
-            // Load shipped model
-            var (baseDir, modelDir, shipped) = GetEmbeddingModelPaths();
-            log?.LogInformation("Local embedding provider: looking for ONNX at {Path} (baseDir={BaseDir})", shipped, baseDir);
-
-            // Extract from embedded resources if not already present
-            if (!File.Exists(shipped))
-            {
-                try
-                {
-                    ExtractEmbeddedModelIfAvailable(modelDir, log);
-                }
-                catch (Exception ex)
-                {
-                    log?.LogWarning(ex, "Local embedding provider: failed to extract embedded model resources");
-                }
-            }
-
-            if (File.Exists(shipped))
-            {
-                var onnx = TryCreateOnnxProvider(shipped, onnxLogger, maxTokens, cache, config.Ort, out var error);
-                if (onnx is not null)
-                {
-                    log?.LogInformation("Local embedding provider: using shipped ONNX model from {Path}", shipped);
-                    return WrapWithCache(onnx);
-                }
-
-                if (error is null)
-                {
-                    failureMessage = $"Local ONNX model at {shipped} failed to initialize";
-                    log?.LogWarning("Local embedding provider: ONNX model at {Path} failed to initialize, returning disabled", shipped);
-                }
-                else
-                {
-                    failureMessage = $"Local ONNX model at {shipped} failed to initialize: {error.Message}";
-                    log?.LogWarning(error, "Local embedding provider: ONNX model at {Path} failed to initialize", shipped);
-                }
-            }
-
-            log?.LogWarning("Local embedding provider: no ONNX model found at {Path}, returning disabled", shipped);
-            failureMessage ??= "No local ONNX model found";
-            if (!string.IsNullOrWhiteSpace(failureMessage))
-            {
-                degradation?.MarkDegraded(ServiceDegradationKind.Embeddings,
-                    $"Local embeddings disabled. {failureMessage}");
-            }
-            return WrapWithCache(new DisabledEmbeddingProvider());
-        });
+        // Local interactive search should use the same mandatory ONNX-backed provider instance.
+        services.AddKeyedSingleton<IEmbeddingProvider>("local", (sp, _) => sp.GetRequiredService<IEmbeddingProvider>());
 
         services.AddSingleton<IAnalysisResultWriter, AnnotationResultWriter>();
         services.AddSingleton<IAnalyzerSettingsProvider>(_ => new EditorConfigSettingsProvider(resolvedRoot));
@@ -633,7 +501,7 @@ public static class RepoIndexerServiceCollectionExtensions
         services.AddSingleton<IEmbeddingCoordinator>(sp => new EmbeddingCoordinator(
             sp.GetRequiredService<DuckDbDataStore>(),
             sp.GetRequiredService<IEmbeddingProvider>(),
-            sp.GetRequiredService<EmbeddingModeOptions>().Mode,
+            EmbeddingMode.Full,
             sp.GetService<ILogger<EmbeddingCoordinator>>(),
             sp.GetService<UriRegistry>(),
             sp.GetRequiredService<RepoQlConfig>().Embedding,
@@ -645,7 +513,7 @@ public static class RepoIndexerServiceCollectionExtensions
             sp.GetService<ILogger<IndexingCommitter>>(),
             sp.GetService<UriRegistry>(),
             sp.GetRequiredService<IEmbeddingProvider>(),
-            sp.GetRequiredService<EmbeddingModeOptions>().Mode));
+            EmbeddingMode.Full));
 
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CSharpParser>();
         services.AddSingleton<IAsyncPipeline<IClassifiedArtifact, Records?>, CsProjParser>();
@@ -689,7 +557,7 @@ public static class RepoIndexerServiceCollectionExtensions
                 sp.GetRequiredService<IndexingMetrics>(),
                 sp.GetService<UriRegistry>(),
                 sp.GetRequiredKeyedService<IEmbeddingProvider>("local"),
-                sp.GetRequiredService<EmbeddingModeOptions>().Mode);
+                EmbeddingMode.Full);
 
             // Set static provider for UDFs (they can't use DI)
             var diagnosticsProvider = new RepoQL.Indexing.Indexing.IndexingEngineDiagnosticsProvider(engine);

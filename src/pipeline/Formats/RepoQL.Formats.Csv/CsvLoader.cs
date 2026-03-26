@@ -335,20 +335,7 @@ public sealed class CsvLoader : IFormatLoader, IFormatMaterializer, IFormatSchem
 
     private static SampledRows SampleRowsAndCount(string text, char delimiter)
     {
-        var sampleRows = new List<IReadOnlyList<string>>(MaxSampleRows);
-        var totalRowCount = 0;
-        using var reader = new StringReader(text);
-
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
-        {
-            totalRowCount++;
-            if (sampleRows.Count < MaxSampleRows)
-            {
-                sampleRows.Add(DelimiterDetector.ParseFields(line, delimiter));
-            }
-        }
-
+        var sampleRows = DelimiterDetector.ReadRows(text, delimiter, MaxSampleRows, out var totalRowCount);
         return new SampledRows(sampleRows, totalRowCount);
     }
 

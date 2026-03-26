@@ -119,6 +119,12 @@ public sealed class EmbeddingCoordinator : IEmbeddingCoordinator, IDisposable
 
             var forceFullRefresh = _needsRefresh;
             var targetDocumentIds = forceFullRefresh ? [] : CollectDirtyDocumentIds(items);
+            if (!forceFullRefresh && targetDocumentIds.Count == 0)
+            {
+                _logger.LogDebug("Embedding refresh skipped for epoch {Epoch}: no dirty document ids were produced", epoch);
+                Interlocked.Exchange(ref _lastRefreshedEpoch, epoch);
+                return;
+            }
 
             var embeddingsChanged = await RefreshEmbeddingsAsync(targetDocumentIds, forceFullRefresh, cancellationToken).ConfigureAwait(false);
             Interlocked.Exchange(ref _lastRefreshedEpoch, epoch);

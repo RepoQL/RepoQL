@@ -46,7 +46,7 @@ internal sealed class ConfigurationLoaderTests
         var resolved = Load();
 
         resolved.Settings.DuckDb.MemoryLimit.Should().BeNull();
-        resolved.Settings.Embedding.Mode.Should().BeNull();
+        resolved.Settings.Embedding.ModelPath.Should().BeNull();
         resolved.Settings.Cloud.ApiKey.Should().BeNull();
     }
 
@@ -73,12 +73,12 @@ internal sealed class ConfigurationLoaderTests
     [Test]
     public void Load_Reads_Repo_Config_File()
     {
-        WriteRepoConfig("""{"embedding": {"mode": "none"}}""");
+        WriteRepoConfig("""{"embedding": {"model_path": "/models/e5.onnx"}}""");
 
         var resolved = Load();
 
-        resolved.Settings.Embedding.Mode.Should().Be("none");
-        resolved.GetProvenance("embedding.mode")!.Source.Should().Be(ConfigScope.Repo);
+        resolved.Settings.Embedding.ModelPath.Should().Be("/models/e5.onnx");
+        resolved.GetProvenance("embedding.model_path")!.Source.Should().Be(ConfigScope.Repo);
     }
 
     [Test]

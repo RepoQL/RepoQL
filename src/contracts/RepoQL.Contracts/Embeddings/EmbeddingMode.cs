@@ -1,18 +1,6 @@
 namespace RepoQL.Contracts.Embeddings;
 
 /// <summary>
-/// Wrapper to allow DI registration of <see cref="EmbeddingMode"/>.
-/// </summary>
-public sealed class EmbeddingModeOptions
-{
-    public EmbeddingMode Mode { get; }
-
-    public EmbeddingModeOptions(EmbeddingMode mode) => Mode = mode;
-
-    public static implicit operator EmbeddingMode(EmbeddingModeOptions options) => options.Mode;
-}
-
-/// <summary>
 /// Controls the level of embedding generation for resource-constrained environments.
 /// </summary>
 public enum EmbeddingMode
@@ -66,36 +54,4 @@ public static class EmbeddingModeExtensions
     /// </summary>
     public static bool IsHybrid(this EmbeddingMode mode) => mode == EmbeddingMode.Hybrid;
 
-    /// <summary>
-    /// Parses an embedding mode from string (case-insensitive).
-    /// Returns Hybrid if parsing fails (smart default).
-    /// </summary>
-    public static EmbeddingMode ParseEmbeddingMode(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-            return EmbeddingMode.Hybrid;
-
-        // Support numeric values
-        if (int.TryParse(value, out var numeric))
-        {
-            return numeric switch
-            {
-                0 => EmbeddingMode.None,
-                1 => EmbeddingMode.StructureOnly,
-                2 => EmbeddingMode.Full,
-                3 => EmbeddingMode.Hybrid,
-                _ => EmbeddingMode.Hybrid
-            };
-        }
-
-        // Support named values
-        return value.Trim().ToLowerInvariant() switch
-        {
-            "none" or "disabled" or "off" => EmbeddingMode.None,
-            "structure" or "structureonly" or "structure_only" => EmbeddingMode.StructureOnly,
-            "full" or "all" => EmbeddingMode.Full,
-            "hybrid" or "auto" or "smart" or "enabled" or "on" => EmbeddingMode.Hybrid,
-            _ => EmbeddingMode.Hybrid
-        };
-    }
 }

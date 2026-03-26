@@ -243,6 +243,42 @@ public sealed class CsvLoaderTests
     }
 
     [Test]
+    [DisplayName("LoadAsync counts quoted multiline CSV rows correctly")]
+    public async Task LoadAsync_CountsQuotedMultilineRowsCorrectly()
+    {
+        const string content = "id,notes\n1,\"line one\nline two\"\n2,\"line three\"";
+        using var testFile = new TestFileScope(content, "multiline.csv");
+        using var artifact = CreateArtifactFromFile(testFile.FilePath);
+        var loader = new CsvLoader();
+
+        await loader.CanLoadAsync(artifact.Artifact);
+        var document = await loader.LoadAsync(artifact.Artifact);
+        var records = loader.Materialize(document);
+
+        var docNode = records.Nodes.Single(n => n.Kind == "document");
+        docNode.Props["row_count"]!.GetValue<int>().Should().Be(2);
+        docNode.Props["column_count"]!.GetValue<int>().Should().Be(2);
+    }
+
+    [Test]
+    [DisplayName("LoadAsync recovers row counting after unterminated quoted field")]
+    public async Task LoadAsync_RecoversAfterUnterminatedQuotedField()
+    {
+        const string content = "id,notes\n1,\"line one\n2,still open\n3,tail";
+        using var testFile = new TestFileScope(content, "malformed_multiline.csv");
+        using var artifact = CreateArtifactFromFile(testFile.FilePath);
+        var loader = new CsvLoader();
+
+        await loader.CanLoadAsync(artifact.Artifact);
+        var document = await loader.LoadAsync(artifact.Artifact);
+        var records = loader.Materialize(document);
+
+        var docNode = records.Nodes.Single(n => n.Kind == "document");
+        docNode.Props["row_count"]!.GetValue<int>().Should().Be(3);
+        docNode.Props["column_count"]!.GetValue<int>().Should().Be(2);
+    }
+
+    [Test]
     [DisplayName("Column nodes include expected properties and inferred types")]
     public async Task LoadAsync_ColumnNodesHaveExpectedProperties()
     {

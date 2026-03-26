@@ -47,12 +47,6 @@ public sealed class RepoQlConfig
 
     public sealed class EmbeddingSettings
     {
-        [Setting("Embedding generation mode",
-            RequiresRestart = true, ValidValues = "none|structure|full|hybrid",
-            DefaultValue = "hybrid",
-            LegacyEnvVar = "REPOQL_EMBED_MODE")]
-        public string? Mode { get; set; }
-
         [Setting("Path to ONNX model override",
             RequiresRestart = true,
             LegacyEnvVar = "REPOQL_EMBED_MODEL_PATH")]
@@ -62,11 +56,6 @@ public sealed class RepoQlConfig
             RequiresRestart = true, DefaultValue = "256",
             LegacyEnvVar = "REPOQL_EMBED_MAX_TOKENS")]
         public int? MaxTokens { get; set; }
-
-        [Setting("Embedding dimension for hashed provider",
-            RequiresRestart = true, DefaultValue = "384",
-            LegacyEnvVar = "REPOQL_EMBED_DIM")]
-        public int? Dim { get; set; }
 
         [Setting("Batch size for embedding generation",
             LegacyEnvVar = "REPOQL_EMBED_BATCH_SIZE")]

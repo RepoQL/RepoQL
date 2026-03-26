@@ -58,6 +58,22 @@ internal class EmbeddingCoordinatorTests
     }
 
     [Test]
+    [DisplayName("Embedding refresh skips batches that produced no dirty document ids")]
+    public async Task Given_ItemsWithoutDocumentNodes_When_ApplyAsync_Then_DoesNotRunFullRefresh()
+    {
+        var refresher = new FakeRefresher();
+        var coordinator = new EmbeddingCoordinator(refresher, logger: NullLogger<EmbeddingCoordinator>.Instance);
+        var item = BuildItem("file:///repo/no-doc-node.md", includeDocNode: false, includeArtifact: true);
+        item.SetEpoch(7);
+
+        await coordinator.ApplyAsync([item], CancellationToken.None);
+
+        refresher.Invocations.Should().Be(0);
+        refresher.TargetedInvocations.Should().Be(0);
+        coordinator.GetLastRefreshedEpoch().Should().Be(7);
+    }
+
+    [Test]
     [DisplayName("Structure embeddings only run for items with document nodes and artifacts")]
     public async Task Given_ItemsWithoutStructure_When_GenerateStructureEmbeddingsAsync_Then_WritesExpectedEmbeddings()
     {

@@ -68,11 +68,11 @@ Inspect and manage RepoQL settings. Shows resolved values with provenance and su
 ::config.set[duckdb.read_pool_size, 3]
 → Set duckdb.read_pool_size = 3 (local)
 
-::config.set[embedding.mode, none, repo]
-→ Set embedding.mode = none (repo)
+::config.set[embedding.model_path, /models/e5.onnx, repo]
+→ Set embedding.model_path = /models/e5.onnx (repo)
 
-::config.reset[embedding.mode, repo]
-→ Reset embedding.mode (repo)
+::config.reset[embedding.model_path, repo]
+→ Reset embedding.model_path (repo)
 ```
 
 **Depth**
