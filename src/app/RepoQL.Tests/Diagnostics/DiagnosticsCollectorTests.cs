@@ -115,6 +115,41 @@ internal sealed class DiagnosticsCollectorTests : IDisposable
         report.HostVersionFile.Should().Be("9.9.9");
     }
 
+    [Test]
+    public async Task CollectAsync_ActiveRepoRootOverridesCurrentDirectory()
+    {
+        var repoRoot = CreateTempDirectory();
+        Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+        Directory.CreateDirectory(Path.Combine(repoRoot, ".repoql"));
+
+        var cwdRepoRoot = CreateTempDirectory();
+        Directory.CreateDirectory(Path.Combine(cwdRepoRoot, ".git"));
+        Directory.CreateDirectory(Path.Combine(cwdRepoRoot, ".repoql"));
+
+        var previousDirectory = Directory.GetCurrentDirectory();
+        var previousPwd = Environment.GetEnvironmentVariable("PWD");
+        Directory.SetCurrentDirectory(cwdRepoRoot);
+        Environment.SetEnvironmentVariable("PWD", cwdRepoRoot);
+
+        try
+        {
+            var collector = new DiagnosticsCollector(
+                hostDiagnosticsProvider: () => new HostDiagnostics(Array.Empty<string>(), null, null, null, null, null, null),
+                repoRootProvider: () => repoRoot);
+
+            var report = await collector.CollectAsync(DiagnosticCollectionMode.Fast);
+
+            report.CurrentDirectory.Should().Be(Path.GetFullPath(cwdRepoRoot));
+            report.RepoRoot.Should().Be(Path.GetFullPath(repoRoot));
+            report.RepoQlDirectoryExists.Should().BeTrue();
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(previousDirectory);
+            Environment.SetEnvironmentVariable("PWD", previousPwd);
+        }
+    }
+
     public void Dispose()
     {
         foreach (var dir in _tempDirs)

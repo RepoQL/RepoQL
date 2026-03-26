@@ -9,6 +9,7 @@ using System.Reflection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoQL.Client.Host;
+using RepoQL.Client.Helpers;
 using RepoQL.Contracts;
 using RepoQL.Protocol;
 
@@ -31,10 +32,21 @@ public enum DiagnosticCollectionMode
 public sealed class DiagnosticsCollector
 {
     private readonly Func<HostDiagnostics> _hostDiagnosticsProvider;
+    private readonly Func<string?> _repoRootProvider;
 
-    public DiagnosticsCollector(Func<HostDiagnostics>? hostDiagnosticsProvider = null)
+    public DiagnosticsCollector(RepoQlClientProvider clientProvider)
+        : this(
+            hostDiagnosticsProvider: null,
+            repoRootProvider: () => ResolveRepoRootFromClientProvider(clientProvider))
+    {
+    }
+
+    internal DiagnosticsCollector(
+        Func<HostDiagnostics>? hostDiagnosticsProvider = null,
+        Func<string?>? repoRootProvider = null)
     {
         _hostDiagnosticsProvider = hostDiagnosticsProvider ?? RepoQlClient.GetHostDiagnostics;
+        _repoRootProvider = repoRootProvider ?? ResolveRepoRootFromCurrentContext;
     }
 
     private static readonly string[] HealthServiceNames =
@@ -64,9 +76,17 @@ public sealed class DiagnosticsCollector
         var cwd = Directory.GetCurrentDirectory();
         var platform = RuntimeInformation.OSDescription.Trim();
         var runtime = RuntimeInformation.FrameworkDescription.Trim();
-        var repoRoot = RepoLocator.TryFindRepoRoot(cwd, out var resolvedRepo, out _)
-            ? resolvedRepo
-            : null;
+        string? repoRoot = null;
+        try
+        {
+            var resolvedRepo = _repoRootProvider();
+            if (!string.IsNullOrWhiteSpace(resolvedRepo))
+                repoRoot = Path.GetFullPath(resolvedRepo);
+        }
+        catch (Exception ex)
+        {
+            probeFailures.Add($"repo_root: {ex.GetType().Name} - {ex.Message}");
+        }
 
         var repoqlEnv = GetRepoqlEnvironmentVariables();
 
@@ -297,6 +317,25 @@ public sealed class DiagnosticsCollector
             Artifacts = artifacts,
             ProbeFailures = probeFailures
         };
+    }
+
+    private static string? ResolveRepoRootFromCurrentContext()
+    {
+        var cwd = Directory.GetCurrentDirectory();
+        return RepoLocator.TryFindRepoRoot(cwd, out var resolvedRepo, out _)
+            ? resolvedRepo
+            : null;
+    }
+
+    private static string ResolveRepoRootFromClientProvider(RepoQlClientProvider clientProvider)
+    {
+        ArgumentNullException.ThrowIfNull(clientProvider);
+
+        var configured = clientProvider.GetConfiguredRepositoryPath();
+        if (!string.IsNullOrWhiteSpace(configured))
+            return Path.GetFullPath(configured);
+
+        return RepoLocator.FindRepoRoot();
     }
 
     private static IReadOnlyList<string> GetRepoqlEnvironmentVariables()
