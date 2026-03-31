@@ -73,6 +73,7 @@ export interface McpToolResult {
 export interface McpInitializeParams {
   protocolVersion: string;
   capabilities: {
+    roots?: Record<string, unknown>;
     tools?: Record<string, unknown>;
     resources?: Record<string, unknown>;
     prompts?: Record<string, unknown>;

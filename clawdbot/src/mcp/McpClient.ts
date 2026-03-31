@@ -9,6 +9,8 @@
 
 import { spawn, type ChildProcess } from "child_process";
 import { EventEmitter } from "events";
+import { resolve } from "path";
+import { pathToFileURL } from "url";
 import type {
   JsonRpcRequest,
   JsonRpcResponse,
@@ -44,6 +46,7 @@ export class McpClient extends EventEmitter<McpClientEvents> {
   private buffer = "";
   private _isConnected = false;
   private initializeTimeoutMs: number;
+  private workdir: string | null = null;
 
   constructor(options: McpClientOptions = {}) {
     super();
@@ -68,6 +71,8 @@ export class McpClient extends EventEmitter<McpClientEvents> {
     if (this.process) {
       throw new McpConnectionError("Client already spawned");
     }
+
+    this.workdir = workdir;
 
     return new Promise((resolve, reject) => {
       try {
@@ -191,6 +196,7 @@ export class McpClient extends EventEmitter<McpClientEvents> {
     const params: McpInitializeParams = {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {
+        roots: { listChanged: true },
         tools: {},
       },
       clientInfo: {
@@ -287,29 +293,46 @@ export class McpClient extends EventEmitter<McpClientEvents> {
 
   /**
    * Handles a single JSON-RPC message.
+   *
+   * Messages fall into three categories:
+   * - Server responses (have result/error, match a pending request)
+   * - Server-to-client requests (have method + id, require a response)
+   * - Server notifications (have method, no id, no response needed)
    */
   private handleMessage(json: string): void {
-    let response: JsonRpcResponse;
+    let message: Record<string, unknown>;
     try {
-      response = JSON.parse(json) as JsonRpcResponse;
+      message = JSON.parse(json) as Record<string, unknown>;
     } catch {
       // Not valid JSON, ignore (could be startup logging)
       return;
     }
 
-    // Only handle responses (with id)
-    if (typeof response.id !== "number") {
+    // Server-to-client request: has method and id — must respond to avoid blocking the server
+    if (typeof message.method === "string" && message.id !== undefined) {
+      this.handleServerRequest(message.id, message.method);
       return;
     }
 
-    const pending = this.pendingRequests.get(response.id);
+    // Server notification: has method but no id — no response needed
+    if (typeof message.method === "string") {
+      return;
+    }
+
+    // Server response: must have a numeric id matching a pending request
+    if (typeof message.id !== "number") {
+      return;
+    }
+
+    const pending = this.pendingRequests.get(message.id);
     if (!pending) {
       return;
     }
 
-    this.pendingRequests.delete(response.id);
+    this.pendingRequests.delete(message.id);
     clearTimeout(pending.timeoutId);
 
+    const response = message as unknown as JsonRpcResponse;
     if ("error" in response) {
       pending.reject(
         new McpRpcError(
@@ -321,6 +344,50 @@ export class McpClient extends EventEmitter<McpClientEvents> {
     } else {
       pending.resolve(response.result);
     }
+  }
+
+  /**
+   * Responds to a server-to-client JSON-RPC request.
+   *
+   * The server may send requests (e.g., ping, roots/list) that expect a response.
+   * Failing to respond blocks the server's processing pipeline — which can cause
+   * operations like embedding to stall after file changes.
+   */
+  private handleServerRequest(id: unknown, method: string): void {
+    if (!this.process?.stdin?.writable) {
+      return;
+    }
+
+    let response: object;
+
+    switch (method) {
+      case "ping":
+        response = { jsonrpc: "2.0", id, result: {} };
+        break;
+      case "roots/list":
+        // Provide workspace root so the server knows what to watch and re-embed
+        response = {
+          jsonrpc: "2.0",
+          id,
+          result: {
+            roots: this.workdir
+              ? [{ uri: pathToFileURL(resolve(this.workdir)).href, name: "workspace" }]
+              : [],
+          },
+        };
+        break;
+      default:
+        // Unknown method — respond with JSON-RPC method-not-found error
+        // so the server doesn't hang waiting
+        response = {
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32601, message: `Method not supported: ${method}` },
+        };
+        break;
+    }
+
+    this.process.stdin.write(JSON.stringify(response) + "\n");
   }
 
   /**
