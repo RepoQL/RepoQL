@@ -26,149 +26,173 @@ A dead host looks like a connection error. A locked database looks like indexing
 Start with the cheapest diagnostic. Escalate only when the cheap one doesn't explain the symptom.
 
 **Example**
-Tool call fails with connection error. Run `command(command="diagnostics.fast")` (seconds, small output). If it shows the host is healthy, the problem is elsewhere. If the host is down, you now know — without spending 10 seconds on a full probe suite.
-//BOUNDARY: Never run `diagnostics` (full) as your first step. Never `host.restart` without diagnostics first.
+Tool call fails with connection error. Run `command(command="host status")` (milliseconds, small output). If it shows the host is healthy, the problem is elsewhere. If the host is down, `command(command="host start")` fixes it — no need for SQL probes yet.
+//BOUNDARY: Never open `.repoql/host.log` as your first step. Never `host restart` without knowing what's wrong.
 
 ---
 
 ## Escalation Path
 
-This order is load-bearing. Each step either explains the symptom or tells you to go deeper. The path is mostly linear, but the Quick Reference table below can point you to the right step directly if you already know the symptom.
+This order is load-bearing. Each step either explains the symptom or tells you to go deeper. The Quick Reference table below can jump you to the right step directly.
 
 ### 1. Is the host reachable?
 
 ```
-command(command="diagnostics.fast")
+command(command="host status")
 ```
 
-If **this command itself fails** with a connection error: the host is down and auto-relaunch didn't trigger. Try any other RepoQL tool call (e.g., `query(sql="SELECT 1")`) to trigger auto-relaunch, then retry `diagnostics.fast`. If it still fails, read `.repoql/host.log` directly with your file reading tools for crash output.
+Output looks like `Host: ready (Idle)` followed by `Files: X complete, Y indexed, Z embedded, 0 failed of N total`. The phase word in parentheses (`Idle`, `Sweep`, etc.) tells you what the host is currently doing; the first word (`ready`, `searchable`) tells you whether it can answer queries.
 
-Look for: socket connectable, health status SERVING, host PID present and running.
+If **the command itself fails** with a connection error: the MCP bridge can't reach the host. Try any other RepoQL tool call (e.g., `query(sql="SELECT 1")`) — the host auto-launches on demand. If it still fails, jump to step 5 (on-disk artifacts).
 
-If **socket not connectable** or **host not running**: the host crashed or wasn't started. It should auto-relaunch on the next tool call. If it doesn't, check `.repoql/host.log` for crash output.
+If **status reports the host is not running**: `command(command="host start")`, then re-check status.
 
-If **health NOT_SERVING**: check the `repoql-reason` in output. `initial_indexing` means it's still starting up — wait. `unhealthy` means a service failed — go to step 4.
+If **phase is not `Idle`** and file counts show work in flight: the connection layer is fine, indexing is catching up. Results may be incomplete until the phase settles back to `Idle`. Either wait, or scope queries to files you know are `complete`.
 
-If **healthy**: the connection layer is fine. Your problem is higher up.
+If **`failed` count > 0**: something in the pipeline is rejecting files. Go to step 3.
 
-### 2. Is indexing working?
-
-```
-command(command="diagnostics.index")
-```
-
-Returns: file counts (total/indexed/pending/failed), stuck files, failed files, slow files, duration distribution by extension.
-
-If **files stuck** (age > 60s): something is hung in the pipeline.
-```
-command(command="queue.cancel", args="file:///path/to/stuck-file.ext")
-```
-
-If **files failed**: read the error message. Common causes: binary file misclassified, parser crash, timeout.
-```
-command(command="queue.retry", args="file:///path/to/failed-file.ext")
-```
-
-If a file always fails, skip it permanently:
-```
-command(command="queue.skip", args="file:///path/to/bad-file.ext")
-```
-
-If **pending count is high but not moving**: the pipeline may be stalled. Check step 4 for degraded services.
-
-### 3. Are cloud services working?
-
-```
-command(command="diagnostics.cloud")
-```
-
-Shows: auth status, inference endpoint, embedding provider/model/progress/reachability.
-
-If **not authenticated**: `command(command="auth.login")` to authenticate.
-
-If **embedding not reachable**: cloud embedding service is down or network issue. Local ONNX embeddings still work — semantic search degrades in quality but doesn't break entirely.
-
-If **embedding progress shows 0/N embedded**: embeddings haven't been computed yet. This happens during initial indexing or if the embedding service was never configured. Semantic search relies on BM25 and fuzzy matching until embeddings are ready.
-
-If **inference unavailable**: explain tool and question modifier won't work. Everything else is unaffected.
-
-### 4. Full picture
-
-```
-command(command="diagnostics")
-```
-
-The expensive option. Runs all probes: socket, host process, health for 12 named services, database lock detection, disk space, node count, indexing diagnostics, host logs, startup artifacts.
-
-Look for:
-- **`repoql-degraded: embeddings,mcp`** — lists which services are degraded. Degradation is sticky — the service failed at startup and stays marked until restart. If the underlying cause was transient (network blip, auth token expired), `host.restart` clears it. This is the correct fix for transient degradation, not a nuclear option.
-- **`repoql-rpc-hanging: 2`** — hanging gRPC calls. The oldest request method tells you what's stuck.
-- **DB locked** with lock holder PID/name — another process holds the database.
-- **Startup artifacts** (`socket-bind.json`, `database-init.json`, `services-start.json`) — what happened at host startup.
-- **Host stderr tail** — last 50 lines, often contains the root cause.
-
-### 5. SQL inspection
-
-For surgical investigation when you know what layer is broken:
+### 2. Is the query layer sane?
 
 ```sql
--- Single-row health summary: status, queue depth, workers, failures, memory, disk
-query(sql="SELECT * FROM system_health()")
-
--- What's in-flight right now
-query(sql="SELECT * FROM processing_queue() WHERE age_seconds > 30 ORDER BY age_seconds DESC")
-
--- What failed and why
-query(sql="SELECT * FROM failed_files()")
-
--- Full registry state
-query(sql="SELECT * FROM indexing_diagnostics()")
+query(sql="SELECT 1 AS ok")
 ```
 
-### 6. Restart
+If this round-trips, DuckDB is alive. If it doesn't, the host is not fully up — go back to step 1.
 
-`host.restart` is appropriate in two situations:
-- **Sticky degradation**: a service failed at startup but the cause is now resolved (auth refreshed, network restored). Restart clears the sticky state.
-- **Undiagnosable bad state**: diagnostics show something wrong but the cause isn't actionable.
+### 3. What does the registry say?
 
+The `indexing_registry` view is the live source of truth for every file the engine knows about.
+
+```sql
+-- Failed files with the reason
+SELECT uri, stage, reason, error, failures
+FROM indexing_registry
+WHERE failures > 0
+ORDER BY failures DESC, transitioned_at DESC;
+
+-- Files still in flight (dirty, active, or pending commit)
+SELECT uri, stage, active, dirty, indexing_dirty, embedding_dirty, index_commit_pending, reason
+FROM indexing_registry
+WHERE active OR dirty OR index_commit_pending
+ORDER BY transitioned_at DESC
+LIMIT 50;
+
+-- Aggregate health across the whole registry
+SELECT stage, COUNT(*) AS files,
+       SUM(CASE WHEN failures > 0 THEN 1 ELSE 0 END) AS failed,
+       SUM(CASE WHEN active THEN 1 ELSE 0 END) AS active,
+       SUM(CASE WHEN dirty THEN 1 ELSE 0 END) AS dirty
+FROM indexing_registry
+GROUP BY stage
+ORDER BY files DESC;
 ```
-command(command="host.restart")
+
+Interpretation:
+- `active = true` with a growing `in_progress_ms` in `indexing_queue` means a worker still owns the file. Either genuinely slow or hung.
+- `dirty = true` with no queue entry means the next dirty sweep should pick it up.
+- `index_commit_pending = true` means parsing finished and it's waiting on the commit writer.
+- `failures > 0` with a populated `error` — read the error. Common causes: binary file misclassified, parser crash, timeout.
+
+### 4. What's stuck in the queue?
+
+```sql
+-- Top stuck work items (in-progress time first, then waiting time)
+query(sql="SELECT * FROM indexing_stuck_candidates(20)")
+
+-- Queue shape by status and work kind
+query(sql="SELECT queue, status, work_kind, COUNT(*) AS items,
+                  MAX(waiting_ms) AS oldest_waiting_ms,
+                  MAX(in_progress_ms) AS oldest_running_ms
+           FROM indexing_queue
+           GROUP BY queue, status, work_kind
+           ORDER BY oldest_running_ms DESC NULLS LAST, oldest_waiting_ms DESC NULLS LAST")
 ```
 
-Verify with `command(command="diagnostics.fast")` after restart.
+If the same URI has been in-flight for minutes with no movement and no log lines mention it, it is hung. Capture `indexing_file_audit('uri', 30)` for the transition history before restarting.
+
+### 5. On-disk artifacts (when the host can't talk)
+
+When the host won't respond to the `command` tool or to `query`, the artifacts on disk still tell the story. The repo-local path is `.repoql/` in whatever directory has a bound host.
+
+- `.repoql/host.log` — rolling log, newest at the end. `tail -100` usually contains the cause.
+- `.repoql/host.stderr.log` — stderr capture. Crashes and native-library failures land here.
+- `.repoql/diagnostics/socket-bind.json` — socket path, bind success, platform limits.
+- `.repoql/diagnostics/existing-host.json` — did startup find a prior host? did it shut it down?
+- `.repoql/diagnostics/database-init.json` — DuckDB open result, lock holder (if any), temp-dir writability, disk free.
+- `.repoql/diagnostics/services-start.json` — `Issues: []` is healthy; anything else names what failed at startup.
+- `.repoql/diagnostics/dashboard-bind.json` — dashboard HTTP bind result (port and success).
+- `.repoql/host.lock` — contains the host PID; useful for a `ps` check when the socket looks dead.
+- `.repoql/host.version` — version marker; interesting only when stale after a crash.
+
+Read these directly with your file tools. They are JSON and small.
+
+### 6. Operations and deferrals
+
+Most users will never need this — it's for investigating why an import or reindex completed but a scope still isn't queryable.
+
+```sql
+-- Active and recent operations
+query(sql="SELECT operation_id, name, status, total, discovered, indexed, complete, failed, deferred_count
+           FROM indexing_operations
+           ORDER BY created_at DESC
+           LIMIT 10")
+
+-- Deferred work for a specific operation
+query(sql="SELECT * FROM operation_deferrals('PUT-OPERATION-ID-HERE') ORDER BY deferred_at")
+
+-- Per-file history (duplicate work, cancellations, races)
+query(sql="SELECT ordinal, version, transitioned_at, reason, stage, diff, error
+           FROM indexing_file_audit('file:///path/to/file.cs', 50)
+           ORDER BY ordinal")
+```
+
+Deferral is not failure. A deferred file is dirty and will be re-attempted by the next sweep. A failed file has `failures > 0` and an `error`.
+
+### 7. Restart
+
+`command(command="host restart")` is appropriate in two situations:
+
+- **Sticky degradation**: a service failed at startup (see `services-start.json`) but the cause is now resolved (auth refreshed, network restored). Restart clears the sticky state.
+- **Undiagnosable bad state**: the registry shows something wrong, the host won't move it forward, and nothing in the logs points at a cause.
+
+Verify with `command(command="host status")` after restart. If the problem returns immediately, restart is not the fix — go back to step 3.
 
 ### When to stop
 
-If you've run through these steps and can't determine the cause, tell the user what you found and what you tried. Include the output of `command(command="diagnostics")` so they have the full picture. Don't loop.
+If you've run through these steps and can't determine the cause, tell the user what you found and what you tried. Include:
 
----
+- The output of `command(command="host status")`.
+- The `indexing_registry` aggregate from step 3.
+- The `indexing_stuck_candidates(20)` from step 4.
+- The tail of `.repoql/host.log` and `.repoql/host.stderr.log`.
 
-## Capsule: ErrorClassification
-
-**Invariant**
-RepoQL classifies errors automatically. Infrastructure errors trigger auto-diagnostics. User errors get enriched with recovery hints.
-
-**Example**
-SQL `Binder Error: column "foo" not found` → user error. Gets enriched with `Tip: Use DESCRIBE table_name` and a `help://` doc link. No diagnostics triggered.
-
-`SocketException` / gRPC `Unavailable` / `TimeoutException` → infrastructure error. Auto-diagnostics run and results appear alongside the error.
-//BOUNDARY: If you see auto-diagnostics in an error response, the system already ran them. Read that output before running diagnostics manually.
-
-**Depth**
-- Infrastructure: `SocketException`, `TimeoutException`, gRPC `Unavailable`/`Internal`, `ObjectDisposedException`, HTTP/2 failures, host launch failures
-- User: SQL errors (`Parser Error`, `Binder Error`, `Catalog Error`, `Conversion Error`), gRPC `InvalidArgument`/`FailedPrecondition`
-- SQL errors are enriched: table names extracted from "Candidate bindings", `DESCRIBE` hints added, `help://` links included
+Don't loop.
 
 ---
 
 ## Capsule: NoMatchIsNotFailure
 
 **Invariant**
-When a read or explore returns nothing, the error message tells you why and what to try next.
+When `read` or `explore` returns nothing, the response itself tells you why and what to try next. Read it before assuming the tool is broken.
 
 **Example**
-`read("file:///src/Auth.cs#symbol=ValidateToken", 2000)` returns "File exists but no symbols matched 'ValidateToken'." with suggestions: try `#symbol=*` to see all symbols, or `=> structure` for signatures.
-//BOUNDARY: "No results" with pending files means the target may not be indexed yet — wait and retry.
+`read("file:///src/Auth.cs#symbol=ValidateToken", 2000)` returning "File exists but no symbols matched 'ValidateToken'" is not a bug. The suggestion — try `#symbol=*` or `=> structure` — is actionable.
+//BOUNDARY: If `host status` shows files still in flight, a not-found result for a recently added file may mean it's not indexed yet. Wait, or scope to files already `complete`.
+
+---
+
+## Capsule: AuthBeforeCloud
+
+**Invariant**
+Cloud-backed features (inference for `explain`, remote embeddings for semantic search) require an active session. If they silently fall back or return shallow results, check auth before blaming the feature.
+
+**Example**
+```
+command(command="account whoami")
+```
+
+If it reports no session or an expired one, `command(command="account login")` — browser flow by default, `--device-code` for SSH / containers. Local ONNX embeddings still work without cloud; `explain` does not.
+//BOUNDARY: Auth state is read from the local session store directly — `account whoami` works even if the host is down.
 
 ---
 
@@ -176,23 +200,29 @@ When a read or explore returns nothing, the error message tells you why and what
 
 | Symptom | First action |
 |---------|-------------|
-| Tool call connection error | `command(command="diagnostics.fast")` |
-| Results seem incomplete | `command(command="diagnostics.index")` — check pending/failed counts |
-| Semantic search returns nothing | `command(command="diagnostics.cloud")` — check embedding status |
-| Everything is slow | `query(sql="SELECT * FROM system_health()")` — check queue_depth, host_memory_mb |
-| Specific file won't index | `query(sql="SELECT * FROM failed_files()")` then `queue.retry` or `queue.skip` |
-| Host seems stuck | `command(command="diagnostics")` — check rpc-hanging count |
-| Need to start fresh | `command(command="host.restart")` then `command(command="diagnostics.fast")` |
+| Tool call connection error | `command(command="host status")` |
+| `Host: not running` | `command(command="host start")` |
+| Results seem incomplete | `command(command="host status")` — check in-flight counts |
+| Specific file won't index | Query `indexing_registry WHERE uri = '...'` then `indexing_file_audit` |
+| Semantic search returns nothing | `command(command="account whoami")`; then check `structure_embedded` / `full_text_embedded` in registry |
+| `explain` fails or is shallow | `command(command="account whoami")` — inference requires auth |
+| Host seems stuck | `query(sql="SELECT * FROM indexing_stuck_candidates(20)")` |
+| Host won't respond at all | Read `.repoql/host.stderr.log` and `.repoql/host.log` directly |
+| Need to start fresh | `command(command="host restart")` then `command(command="host status")` |
 
-## Other Diagnostic Commands
+## Other Commands
 
 | Command | Purpose |
 |---------|---------|
-| `command(command="memory")` | Host memory usage |
-| `command(command="heap-memory")` | Detailed heap breakdown |
-| `command(command="dashboard")` | Open real-time monitoring UI (browser) |
-| `command(command="reindex")` | Re-index all files from scratch |
-| `command(command="?")` | List all available commands |
+| `command(command="host stop")` | Graceful shutdown without relaunch |
+| `command(command="dashboard")` | Open real-time monitoring UI in browser |
+| `command(command="account login --device-code")` | Login flow for SSH / containers where a browser isn't available |
+| `command(command="help")` | List every command the MCP tool exposes |
+| `command(command="<cmd> --help")` | Per-command help — e.g. `account login --help` |
+
+For anything not listed here (queue intervention, reindex, memory breakdown): those are not currently exposed through the MCP `command` tool. The data they would have surfaced is available in the SQL views above.
+
+Schemas for the views are introspectable: `query(sql="DESCRIBE indexing_registry")` (and likewise for `indexing_queue`, `indexing_operations`) lists every column if the examples above don't cover what you need.
 
 ---
 

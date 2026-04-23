@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "repoql": {
-      "command": "repoql",
+      "command": "rql",
       "args": ["mcp"]
     }
   }
