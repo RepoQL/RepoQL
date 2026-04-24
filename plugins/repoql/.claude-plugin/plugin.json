@@ -1,10 +1,20 @@
 {
   "name": "repoql",
   "version": "1.0.0",
-  "description": "Queryable code intelligence - explore codebase structure without reading files",
+  "description": "Queryable code intelligence — explore codebase structure without reading files.",
   "author": {
     "name": "Stuart Wilson",
     "email": "stueeey@users.noreply.github.com"
   },
-  "repository": "https://github.com/stueeey/RepoQL.Public"
+  "homepage": "https://github.com/RepoQL/RepoQL",
+  "repository": "https://github.com/RepoQL/RepoQL",
+  "license": "MIT",
+  "keywords": [
+    "code-intelligence",
+    "code-search",
+    "repository",
+    "duckdb",
+    "mcp",
+    "semantic-search"
+  ]
 }

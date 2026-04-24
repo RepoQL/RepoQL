@@ -1,0 +1,42 @@
+{
+  "name": "repoql-codex",
+  "version": "1.0.0",
+  "description": "Queryable code intelligence — explore codebase structure without reading files.",
+  "author": {
+    "name": "Stuart Wilson",
+    "url": "https://github.com/stueeey"
+  },
+  "homepage": "https://github.com/RepoQL/RepoQL",
+  "repository": "https://github.com/RepoQL/RepoQL",
+  "license": "MIT",
+  "keywords": [
+    "code-intelligence",
+    "code-search",
+    "repository",
+    "duckdb",
+    "mcp",
+    "semantic-search"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "RepoQL",
+    "shortDescription": "Pre-built structural index of the codebase",
+    "longDescription": "RepoQL gives agents a pre-built structural index of the entire codebase — every file, symbol, and relationship parsed, connected, and summarized. Explore 1000 files in 1500 tokens, query relationships with SQL, and read exactly the slice you need via URI addressing. Requires the `rql` CLI (https://downloads.repoql.ai).",
+    "developerName": "Stuart Wilson",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read"
+    ],
+    "websiteURL": "https://github.com/RepoQL/RepoQL",
+    "defaultPrompt": [
+      "Give me a one-screen orientation to this codebase",
+      "Find everything that handles authentication",
+      "Show me the call graph around <function>"
+    ],
+    "brandColor": "#2dd4bf",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/logo.png"
+  }
+}
