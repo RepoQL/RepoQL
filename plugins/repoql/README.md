@@ -1,156 +1,94 @@
 # RepoQL Plugin for Claude Code
 
-Queryable code intelligence - explore codebase structure without reading files.
+Queryable code intelligence — explore a codebase's structure without reading every file.
 
-RepoQL indexes your repository into a graph database so Claude can query structure without reading every file. This saves tokens, finds things faster, and provides semantic search across your codebase.
+RepoQL indexes your repository into a graph database so Claude can feel the shape of a thousand files without opening one: headlines say what each file does, structure shows every signature, semantic search ranks by meaning, and the graph answers what-calls-what. Fewer tokens spent, faster answers, nothing missed.
 
 ## Prerequisites
 
-1. **RepoQL installed** - The `repoql` command must be available in PATH
-2. **Repository indexed** - Run `repoql index` in your project root
-3. **Claude Code** - Version 2.0+ with plugin support
-4. **Bash** - Required for hooks (Git Bash on Windows)
+1. **`rql` on your `PATH`** — the RepoQL binary:
+   ```bash
+   curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash      # macOS / Linux
+   ```
+   ```powershell
+   irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex             # Windows
+   ```
+2. **Claude Code 2.0+** — 2.1.105+ for the background monitor.
+3. **Bash** for the shell hooks (Git Bash on Windows).
+
+There is no separate index step — the host indexes a repository automatically the first time it runs there, and watches for changes after. Indexing progress shows up live through the monitor (below).
 
 ## Installation
 
-### From Marketplace (Recommended)
-
 ```
-/plugin marketplace add stueeey/RepoQL.Public
-/plugin install repoql
+/plugin marketplace add RepoQL/RepoQL
+/plugin install repoql@repoql-plugins
 ```
 
-### From GitHub
+## What you get
+
+### Tools (MCP)
+
+| Tool | What it does |
+|------|--------------|
+| `explore` | The landscape, ranked by meaning — give it `uriGlob`, `keywords`, and a `question`. Start here. |
+| `read` | Exactly the slice you need — `=> structure` for signatures, `=> tree: headlines` for an overview, `#symbol=` / `#line=` for precision. |
+| `query` | SQL over the graph, git, and parsed data. |
+| `explain` | A synthesized, cited answer drawn from source. |
+| `import` / `unimport` | Pull external repos into the graph (`github://owner/repo`). |
+| `execute` | JavaScript in a sandboxed WASM environment. |
+| `command` | Diagnostics, auth, config. |
+| `capture_concept` | Write an invariant into the repository's permanent memory. |
+
+### Skills
+
+Auto-activating: **effective-repoql**, **effective-markdown**, **mermaid-diagrams**, **skill-builder**, **writing-status-lines**, and **troubleshooting-repoql**.
+
+### Agent
+
+**dora-the-codebase-explorer** — a deep codebase-investigation agent that drives RepoQL in its own context.
+
+### Hooks
+
+- **SessionStart** — injects repository orientation (folder tree + documentation index).
+
+### Monitor (Claude Code 2.1.105+)
+
+- **repoql-host-signals** — streams `rql monitor`; each status line arrives as a notification: indexing progress, "semantic search live", per-import readiness, "engine idle — all work settled", plus a connect-time roster of the filesystems you have mounted (workspace + imports). It waits for the host and reconnects on its own, so it survives a host that starts on demand or restarts.
+
+## How to use it
+
+### Explore before read
 
 ```
-/plugin install stueeey/RepoQL.Public
-```
-
-### Local Development
-
-```bash
-claude --plugin-dir ./claude-code
-```
-
-## Quick Start
-
-After installation, RepoQL provides:
-
-### Slash Commands
-
-| Command | Purpose |
-|---------|---------|
-| `/repoql:explore` | Full discovery workflow |
-| `/repoql:find` | Quick semantic search |
-| `/repoql:structure` | Directory overview |
-| `/repoql:query` | SQL interface |
-| `/repoql:imports` | External repo management |
-| `/repoql:diagnose` | Troubleshooting |
-| `/repoql:help` | Query embedded docs |
-
-### Auto-Triggered Skills
-
-The plugin includes skills that auto-activate:
-
-- **code-intelligence** - Triggers on "where is", "what files", "show me the structure"
-- **sql-expert** - Triggers on "how many", "count the", "what calls"
-
-### Deep Dive Agent
-
-For thorough investigation, the deep-dive agent runs in isolated context:
-
-```
-Use the deep-dive agent to investigate how authentication is implemented
-```
-
-## Key Concepts
-
-### Explore Before Read
-
-```
-# Wrong: guess and read
+# Wrong: guess a path and read blindly
 read("file:///src/**/*Auth*.cs", 5000)
 
-# Right: explore finds, read fetches
-explore(intent=Locate, keywords="authentication", tokenBudget=1500)
-read("file:///src/Auth.cs#symbol=ValidateToken", 2000)
+# Right: explore finds, read fetches just the slice
+explore(uriGlob="file:///src/**", keywords="authentication", question="where is the JWT signature verified?")
+read("file:///src/Auth.cs#symbol=ValidateToken => content", 800)
 ```
 
-### Intent-Based Exploration
-
-| Intent | Use When |
-|--------|----------|
-| Inventory | "What's here?" - Survey a directory |
-| Locate | Know concept, not location |
-| Inspect | Know target, need depth |
-| Explain | Need synthesized understanding |
-
-### SQL for Computation
+### SQL for computation
 
 ```sql
--- Language distribution
-SELECT lang, COUNT(*) FROM Files GROUP BY lang;
+-- File-type distribution
+SELECT mime, COUNT(*) AS files FROM Files GROUP BY mime ORDER BY files DESC;
 
--- Find error-prone files
-SELECT uri, error_count FROM Files WHERE error_count > 0;
-
--- Semantic search
-SELECT uri, score FROM search('authentication', k := 10);
+-- Largest files by token count
+SELECT name, token_count FROM Files ORDER BY token_count DESC LIMIT 10;
 ```
 
-## Hooks
-
-The plugin includes automatic hooks:
-
-- **SessionStart** - Injects repository orientation (folder tree and documentation index)
-
-## Monitors
-
-The plugin includes a background monitor that surfaces host signals proactively (Claude Code 2.1.105+):
-
-- **repoql-host-signals** - Streams `rql monitor`; each status line arrives in context as a notification — indexing progress, "semantic search live", per-import readiness, and "engine idle — all work settled". The monitor waits for the host and reconnects on its own, so it survives a host that starts on demand or restarts.
+Views: `Files`, `Functions`, `Types`, `Filesystems`, `Annotations`. Underlying tables: `node`, `artifact`, `edge`, `embeddings`.
 
 ## Troubleshooting
 
-### Index Not Found
-
-```bash
-# Build initial index
-repoql index
-```
-
-### Stale Index
-
-```bash
-# Incremental update
-repoql index --incremental
-```
-
-### Connection Issues
-
-```
-/repoql:diagnose connection refused
-```
-
-### Check Status
-
-```sql
-query(":diagnostics:")
-```
-
-## Documentation
-
-All RepoQL documentation is embedded and queryable:
-
-```
-explore(intent=Locate, uriGlob="help://**", keywords="your topic", tokenBudget=1500)
-```
-
-Or browse:
-
-```sql
-SELECT uri, headline FROM Files WHERE uri LIKE 'help://%';
-```
+- **Check status** — `rql diagnostics`
+- **Embedded docs are queryable** — RepoQL ships its own documentation under `help://`:
+  ```
+  explore(uriGlob="help://**", keywords="your topic", question="how do I ...?")
+  ```
+- **Deeper help** — the `troubleshooting-repoql` skill walks through host and index problems.
 
 ## License
 
