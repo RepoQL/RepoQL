@@ -2,6 +2,6 @@
   {
     "name": "repoql-host-signals",
     "command": "cd \"${CLAUDE_PROJECT_DIR}\" && rql monitor --since 2m",
-    "description": "RepoQL indexing & search readiness"
+    "description": "RepoQL status notification"
   }
 ]
