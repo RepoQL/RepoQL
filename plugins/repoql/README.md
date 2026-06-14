@@ -104,6 +104,12 @@ The plugin includes automatic hooks:
 
 - **SessionStart** - Injects repository orientation (folder tree and documentation index)
 
+## Monitors
+
+The plugin includes a background monitor that surfaces host signals proactively (Claude Code 2.1.105+):
+
+- **repoql-host-signals** - Streams `rql monitor`; each status line arrives in context as a notification — indexing progress, "semantic search live", per-import readiness, and "engine idle — all work settled". The monitor waits for the host and reconnects on its own, so it survives a host that starts on demand or restarts.
+
 ## Troubleshooting
 
 ### Index Not Found
