@@ -15,10 +15,12 @@ command -v jq  >/dev/null 2>&1 || exit 0
 
 ctx="# RepoQL: Repository Orientation"$'\n'
 
-tree=$(rql read "file:///** => tree: folders" --token-budget 6000 2>/dev/null) || tree="(no index — run rql serve)"
-ctx+=$'\n'"## Repository Structure"$'\n'"$tree"$'\n'
-
-imports=$(rql query "SELECT source_uri || ' — ' || CAST(file_count AS VARCHAR) || ' files' AS repo FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri" 2>/dev/null | grep '://' || true)
+# Orientation carries only what the agent cannot cheaply pull itself: which repos
+# are mounted. Repository structure and docs are large and re-derivable on demand
+# (read / explore), so they are never dumped here. Readiness is omitted on purpose:
+# a transient "not ready" at startup would wrongly teach the agent that RepoQL is
+# unusable for the whole session, when it just needed a moment to warm up.
+imports=$(rql query "SELECT source_uri FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri" 2>/dev/null | grep '://' || true)
 ctx+=$'\n'"## Imported Repositories"$'\n'
 if [ -n "$imports" ]; then
     ctx+="Use these github:// URIs directly with read / explore / query:"$'\n'"$imports"$'\n'
@@ -26,8 +28,7 @@ else
     ctx+="(none — import one with: rql import github://owner/repo)"$'\n'
 fi
 
-docs=$(rql read "help://** => tree: headlines" --token-budget 5000 2>/dev/null) || docs="(no docs indexed)"
-ctx+=$'\n'"## Documentation"$'\n'"$docs"
+ctx+=$'\n'"## Concepts"$'\n'"Repository invariants, if any, are addressable at concept:// — browse them with read(\"concept:///**\")."$'\n'
 
 jq -n --arg ctx "$ctx" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
 exit 0
