@@ -1,7 +1,7 @@
 [
   {
     "name": "repoql-host-signals",
-    "command": "cd \"${CLAUDE_PROJECT_DIR}\" && rql monitor --since 2m | grep --line-buffered -iE 'searchable|importing'",
+    "command": "cd \"${CLAUDE_PROJECT_DIR}\" && rql monitor --since 2m | grep --line-buffered -iE 'searchable'",
     "description": "RepoQL status notification"
   }
 ]
