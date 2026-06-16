@@ -13,7 +13,7 @@ RepoQL indexes your repository into a graph database so Claude can feel the shap
    ```powershell
    irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex             # Windows
    ```
-2. **Claude Code 2.0+** — 2.1.105+ for the background monitor.
+2. **Claude Code 2.0+**
 3. **Bash** for the shell hooks (Git Bash on Windows).
 
 There is no separate index step — the host indexes a repository automatically the first time it runs there, and watches for changes after.
@@ -51,10 +51,6 @@ Auto-activating: **effective-repoql**, **effective-markdown**, **mermaid-diagram
 ### Hooks
 
 - **SessionStart** — injects a deliberately small orientation: the mounted `github://` repos (directly usable) and a pointer to the `concept://` invariants. Repo structure and docs are large and re-derivable, so the agent pulls them on demand (`read` / `explore`) rather than paying for them every session.
-
-### Monitor (Claude Code 2.1.105+)
-
-- **repoql-host-signals** — runs `rql monitor --alerts`, which stays silent except for the two things worth interrupting you over: an **imported repo becoming searchable** (it's now ready to query) and a **failure** (the host died unexpectedly, or files failed to index). Routine indexing progress is not pushed — pull it on demand with `rql monitor`. It waits for the host and reconnects on its own, so it survives a host that starts on demand or restarts.
 
 ## How to use it
 
