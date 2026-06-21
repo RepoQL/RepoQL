@@ -1,6 +1,6 @@
 {
   "name": "@repoql/repoql",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "OpenClaw plugin for RepoQL - queryable repository intelligence powered by rql",
   "main": "./dist/index.js",
   "type": "module",
@@ -39,15 +39,15 @@
       "./dist/index.js"
     ],
     "compat": {
-      "pluginApi": ">=2026.6.8",
-      "minGatewayVersion": "2026.6.8"
+      "pluginApi": ">=2026.6.9",
+      "minGatewayVersion": "2026.6.9"
     },
     "build": {
       "openclawVersion": "2026.6.9",
       "pluginSdkVersion": "2026.6.9"
     },
     "install": {
-      "minHostVersion": ">=2026.6.8"
+      "minHostVersion": ">=2026.6.9"
     }
   },
   "dependencies": {
