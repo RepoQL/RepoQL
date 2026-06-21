@@ -1,4 +1,4 @@
-# @openclaw/repoql
+# @repoql/repoql
 
 An [OpenClaw](https://github.com/openclaw/openclaw) plugin that gives agents
 **queryable repository intelligence** through a local [RepoQL](https://repoql.ai)
@@ -15,7 +15,7 @@ owns indexing, embeddings, and query execution; the plugin owns lifecycle and
 shaping results for the agent.
 
 ```
-agent ── OpenClaw ── @openclaw/repoql ──gRPC/unix socket──► rql serve (host)
+agent ── OpenClaw ── @repoql/repoql ──gRPC/unix socket──► rql serve (host)
 ```
 
 A background service manages one host per workspace and shuts them down when the
@@ -29,7 +29,7 @@ gateway stops.
 ## Install
 
 ```bash
-openclaw plugins install npm:@openclaw/repoql
+openclaw plugins install clawhub:@repoql/repoql
 openclaw gateway restart
 ```
 
@@ -89,8 +89,8 @@ npm run typecheck
 ```
 
 The gRPC contract (`src/proto/hosting.proto`) and the tool descriptions
-(`src/descriptions/*.md`) are vendored verbatim from RepoQL.Core; keep them in
-sync with the host.
+(`src/descriptions/*.md`) are vendored verbatim from the upstream RepoQL host;
+keep them in sync with the host.
 
 ## License
 

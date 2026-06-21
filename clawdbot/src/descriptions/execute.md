@@ -29,7 +29,7 @@ You can also define and store reusable JavaScript or WASM modules so the next co
 mcp.servers()
 mcp.tools("github")
 mcp.describe("github", "search_issues")
-mcp.github.search_issues({ q: "repo:RepoQL/RepoQL.Core is:issue", limit: 10 })
+mcp.github.search_issues({ q: "repo:owner/repo is:issue", limit: 10 })
 ```
 
 Examples:
@@ -39,7 +39,7 @@ files.filter(f => /auth|login/i.test(f.headline));
 ```
 
 ```js
-const issues = mcp.github.search_issues({ q: "repo:RepoQL/RepoQL.Core is:open", limit: 20 });
+const issues = mcp.github.search_issues({ q: "repo:owner/repo is:open", limit: 20 });
 issues.map(i => ({ title: i.title, url: i.html_url || i.url }));
 ```
 
