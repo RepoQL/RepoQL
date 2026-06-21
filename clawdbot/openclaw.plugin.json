@@ -1,0 +1,102 @@
+{
+  "id": "repoql",
+  "name": "RepoQL",
+  "description": "Queryable repository intelligence powered by the local rql host.",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "rqlPath": {
+        "type": "string",
+        "description": "Path to the rql executable. Defaults to rql on PATH."
+      },
+      "repoRoot": {
+        "type": "string",
+        "description": "Repository root to index/query. Defaults to the OpenClaw agent workspace, or its nearest git root."
+      },
+      "autoStart": {
+        "type": "boolean",
+        "description": "Start rql serve --implicit-start when the host socket is unavailable.",
+        "default": true
+      },
+      "prewarm": {
+        "type": "boolean",
+        "description": "Connect to the rql host when the plugin service starts.",
+        "default": false
+      },
+      "startupTimeoutMs": {
+        "type": "number",
+        "description": "Maximum time to wait for rql serve to become reachable.",
+        "default": 120000
+      },
+      "requestTimeoutMs": {
+        "type": "number",
+        "description": "Default timeout for gRPC tool requests.",
+        "default": 120000
+      },
+      "defaultTokenBudget": {
+        "type": "number",
+        "description": "Default token budget for tools that support token-budgeted rendering.",
+        "default": 1500
+      },
+      "queryMaxRows": {
+        "type": "number",
+        "description": "Maximum rows returned by repoql_query. 0 means no explicit cap.",
+        "default": 0
+      }
+    }
+  },
+  "uiHints": {
+    "rqlPath": {
+      "label": "rql executable",
+      "placeholder": "rql"
+    },
+    "repoRoot": {
+      "label": "Repository root",
+      "placeholder": "Leave blank to use the OpenClaw workspace"
+    },
+    "autoStart": {
+      "label": "Auto-start rql host"
+    },
+    "prewarm": {
+      "label": "Prewarm on gateway startup",
+      "advanced": true
+    },
+    "startupTimeoutMs": {
+      "label": "Startup timeout (ms)",
+      "advanced": true
+    },
+    "requestTimeoutMs": {
+      "label": "Request timeout (ms)",
+      "advanced": true
+    },
+    "defaultTokenBudget": {
+      "label": "Default token budget"
+    },
+    "queryMaxRows": {
+      "label": "Query max rows",
+      "advanced": true
+    }
+  },
+  "contracts": {
+    "tools": [
+      "repoql_status",
+      "repoql_query",
+      "repoql_explore",
+      "repoql_read",
+      "repoql_explain",
+      "repoql_keywords",
+      "repoql_execute",
+      "repoql_capture_concept",
+      "repoql_import",
+      "repoql_command",
+      "repoql_watch"
+    ]
+  },
+  "skills": [
+    "skills/repoql",
+    "skills/repoql-sql",
+    "skills/repoql-search"
+  ]
+}

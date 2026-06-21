@@ -1,0 +1,1012 @@
+syntax = "proto3";
+
+package repoql.hosting.v1;
+
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/wrappers.proto";
+
+option csharp_namespace = "RepoQL.Hosting.Contracts";
+
+// ---------------------------------------------------------------------------
+// Host lifecycle
+// ---------------------------------------------------------------------------
+
+service HostLifecycle {
+  rpc HoldClientLease(stream ClientLeaseBeat) returns (ClientLeaseSummary);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+service StatusService {
+  rpc GetStatus(StatusRequest) returns (StatusUpdate);
+  rpc Stream(StatusStreamRequest) returns (stream StatusUpdate);
+}
+
+service SignalService {
+  rpc Stream(SignalStreamRequest) returns (stream SignalFrame);
+}
+
+service McpBridgeService {
+  rpc GetSnapshot(McpBridgeSnapshotRequest) returns (McpBridgeSnapshotResponse);
+  rpc Reload(McpBridgeReloadRequest) returns (McpBridgeReloadResponse);
+  rpc Retry(McpBridgeRetryRequest) returns (McpBridgeRetryResponse);
+  rpc Authenticate(McpBridgeAuthenticateRequest) returns (McpBridgeAuthenticateResponse);
+  rpc Revoke(McpBridgeRevokeRequest) returns (McpBridgeRevokeResponse);
+}
+
+message ShutdownRequest {}
+
+message ShutdownResponse {
+  int32 process_id = 1;
+}
+
+message StatusRequest {
+  string scope = 1;
+}
+
+message StatusStreamRequest {}
+
+message SignalStreamRequest {
+  uint64 since_sequence            = 1;  // exact resume; 0 = unset; wins over since_unix_ms
+  int64  since_unix_ms             = 2;  // human window (rql monitor --since); 0 = unset
+  int64  if_run_started_at_unix_ms = 3;  // resume guard: since_sequence honored only when this
+  int32  if_run_pid                = 4;  // run stamp matches the server's; a resume without a
+                                         // stamp degrades to live-only (no unguarded resume exists)
+}
+
+message SignalFrame {           // first frame is always hello
+  reserved 4;
+  oneof kind {
+    SignalHello         hello = 1;
+    ReindexBegan        reindex_began = 2;
+    IndexReady          index_ready = 3;
+    ConceptCaptured     concept_captured = 5;
+    HostStopping        stopping = 6;
+    OperationStarted    operation_started = 7;
+    FilesystemMilestone filesystem_milestone = 8;
+    EngineIdle          engine_idle = 9;
+  }
+}
+
+enum FilesystemMilestoneKind {
+  FILESYSTEM_MILESTONE_KIND_UNSPECIFIED = 0;
+  FILESYSTEM_MILESTONE_KIND_QUERYABLE = 1;
+  FILESYSTEM_MILESTONE_KIND_SEARCHABLE = 2;
+  FILESYSTEM_MILESTONE_KIND_COMPLETE = 3;
+}
+
+message RunStamp {
+  int64 started_at_unix_ms = 1;
+  int32 pid = 2;
+}
+
+message OpenEpisode {
+  uint64 began_sequence = 1;
+  int64 started_at_unix_ms = 2;
+  int32 files = 3;
+  string operation = 4;
+  bool import = 5;
+  string active_filesystem = 6;
+  FilesystemMilestoneKind highest_milestone = 7;
+}
+
+message SignalHello {
+  string version = 1;
+  string commit = 2;
+  RunStamp run = 3;
+  uint64 oldest_sequence = 4;
+  uint64 latest_sequence = 5;
+  OpenEpisode open = 6;
+  repeated MountedFilesystem filesystems = 7;
+}
+
+message MountedFilesystem {
+  string filesystem = 1;
+  bool import = 2;
+  int32 file_count = 3;
+}
+
+// Timestamps are int64 unix-ms so signal consumers can compute replay windows and gaps.
+message ReindexBegan {
+  uint64 sequence = 1;
+  int64 at_unix_ms = 2;
+  int32 files = 3;
+  string operation = 4;
+  bool import = 5;
+}
+
+message IndexReady {
+  uint64 sequence = 1;
+  int64 at_unix_ms = 2;
+  int32 files = 3;
+  int32 failed = 4;
+  string failed_scope = 5;
+}
+
+message OperationStarted {
+  uint64 sequence = 1;
+  int64 at_unix_ms = 2;
+  string filesystem = 3;
+  bool import = 4;
+  int32 files = 5;
+}
+
+message FilesystemMilestone {
+  uint64 sequence = 1;
+  int64 at_unix_ms = 2;
+  string filesystem = 3;
+  FilesystemMilestoneKind kind = 4;
+  int32 files = 5;
+  int32 failed = 6;
+  string failed_scope = 7;
+}
+
+message EngineIdle {
+  uint64 sequence = 1;
+  int64 at_unix_ms = 2;
+}
+
+message ConceptCaptured {
+  uint64 sequence = 1;
+  int64 at_unix_ms = 2;
+  string uri = 3;
+}
+
+message HostStopping {
+  uint64 sequence = 1;
+  int64 at_unix_ms = 2;
+  string reason = 3;
+}
+
+message StatusUpdate {
+  string phase = 2;
+  int32 queued_operations = 3;
+  int32 total_files = 4;
+  int32 discovered_files = 5;
+  int32 dirty_files = 6;
+  int32 active_files = 7;
+  int32 indexed_files = 8;
+  int32 structure_embedded_files = 9;
+  int32 complete_files = 10;
+  int32 failed_files = 11;
+  int32 skipped_files = 12;
+  int32 progress_total_files = 13;
+  int32 progress_complete_files = 14;
+  int32 progress_indexing_files = 15;
+  int32 progress_embedding_files = 16;
+  int32 progress_full_text_files = 17;
+  bool initialized = 18;
+  bool queryable = 19;
+  bool searchable = 20;
+  bool ready = 21;
+  int32 pending_files = 22;
+  int32 stale_files = 23;
+  bool semantic_ready = 24;
+  int32 semantic_percent = 25;
+  bool semantic_enabled = 26;
+  bool scoped = 27;
+  string fidelity = 28;
+}
+
+message McpBridgeSnapshotRequest {}
+
+message McpBridgeReloadRequest {}
+
+message McpBridgeRetryRequest {
+  string server = 1;
+}
+
+message McpBridgeSnapshotResponse {
+  int64 generation = 1;
+  repeated McpBridgeServer servers = 2;
+  repeated McpBridgeServerSource sources = 3;
+  repeated McpBridgeError errors = 4;
+}
+
+message McpBridgeReloadResponse {
+  int64 accepted_generation = 1;
+  google.protobuf.Int64Value rejected_generation = 2;
+  McpBridgeSnapshotResponse snapshot = 3;
+  repeated McpBridgeError errors = 4;
+}
+
+message McpBridgeRetryResponse {
+  bool success = 1;
+  string message = 2;
+  string next_action = 3;
+  McpBridgeServer server = 4;
+  int64 generation = 5;
+}
+
+message McpBridgeAuthenticateRequest {
+  string server = 1;
+}
+
+message McpBridgeAuthenticateResponse {
+  bool success = 1;
+  string server = 2;
+  string next_action = 3;
+  string redacted_message = 4;
+}
+
+message McpBridgeRevokeRequest {
+  string server = 1;
+}
+
+message McpBridgeRevokeResponse {
+  string server = 1;
+  int32 revoked_count = 2;
+}
+
+message McpBridgeServer {
+  string name = 1;
+  string source = 2;
+  string source_owner = 3;
+  string harness_id = 4;
+  string scope = 5;
+  string config_path = 6;
+  string transport = 7;
+  string authority = 8;
+  string candidate_state = 9;
+  string ownership_mode = 10;
+  string state = 11;
+  string auth_status = 12;
+  string auth_action = 13;
+  string credential_provenance = 14;
+  int32 tool_count = 15;
+  string last_error = 16;
+  int64 generation = 17;
+}
+
+message McpBridgeServerSource {
+  string name = 1;
+  string source_owner = 2;
+  string harness_id = 3;
+  string scope = 4;
+  string config_path = 5;
+  string transport = 6;
+  string authority = 7;
+  string candidate_state = 8;
+  string ownership_mode = 9;
+  string winning_server = 10;
+  string last_error = 11;
+  int64 generation = 12;
+}
+
+message McpBridgeError {
+  string error_category = 1;
+  string scope = 2;
+  string server = 3;
+  string tool = 4;
+  bool retryable = 5;
+  string next_action = 6;
+  string redacted_message = 7;
+  string correlation_id = 8;
+  int64 accepted_generation = 9;
+  google.protobuf.Int64Value rejected_generation = 10;
+}
+
+message ClientLeaseBeat {
+  string client_id = 1;
+  int32 pid = 2;
+  string tool = 3;
+  string version = 4;
+  string repo_path = 5;
+  string started_at = 6;
+  string beat_at = 7;
+}
+
+message ClientLeaseSummary {
+  string server_started_at = 1;
+  bool implicit_start = 2;
+  int32 active_clients = 3;
+  int32 shutdown_after_idle_seconds = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Account
+// ---------------------------------------------------------------------------
+
+service AccountService {
+  rpc Login(LoginRequest) returns (stream LoginProgress);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+  rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
+}
+
+message LoginRequest {
+  bool device_code = 1;
+}
+
+message LoginProgress {
+  enum Kind {
+    INFO = 0;
+    WARNING = 1;
+    COMPLETE = 2;
+    ERROR = 3;
+  }
+  Kind kind = 1;
+  string message = 2;
+  string display_name = 3;
+}
+
+message LogoutRequest {}
+message LogoutResponse { string message = 1; }
+message WhoAmIRequest {}
+message WhoAmIResponse { string message = 1; }
+
+// ---------------------------------------------------------------------------
+// Import
+// ---------------------------------------------------------------------------
+
+service ImportService {
+  rpc Import(ImportRequest) returns (ImportResponse);
+  rpc RemoveImport(ImportRequest) returns (ImportResponse);
+  rpc ListImports(ListImportsRequest) returns (ListImportsResponse);
+}
+
+service ManagementCommandService {
+  rpc Execute(CommandExecuteRequest) returns (CommandExecuteResponse);
+  rpc List(CommandListRequest) returns (CommandListResponse);
+}
+
+message ImportRequest {
+  string uri = 1;  // e.g. github://owner/repo@branch
+}
+
+message ImportResponse {
+  string message = 1;
+  string operation_id = 2;
+  int32 file_count = 3;
+}
+
+message ListImportsRequest {
+}
+
+message ListImportsResponse {
+  repeated ImportMount imports = 1;
+}
+
+message ImportMount {
+  string source_uri = 1;
+  string local_path = 2;
+  string scheme = 3;
+  string authority = 4;
+  string path_prefix = 5;
+}
+
+enum CommandSurface {
+  COMMAND_SURFACE_UNSPECIFIED = 0;
+  COMMAND_SURFACE_CLI = 1;
+  COMMAND_SURFACE_MCP = 2;
+}
+
+message CommandExecuteRequest {
+  string command = 1;
+  CommandSurface surface = 2;
+}
+
+message CommandExecuteResponse {
+  bool success = 1;
+  string rendered = 2;
+  string error = 3;
+}
+
+message CommandListRequest {
+  CommandSurface surface = 1;
+  bool include_hidden = 2;
+  string prefix = 3;
+}
+
+message CommandListResponse {
+  repeated CommandDescriptor commands = 1;
+}
+
+message CommandDescriptor {
+  string name = 1;
+  string description = 2;
+  string usage = 3;
+  repeated CommandSurface surfaces = 4;
+  bool hidden = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Tools — the agent-facing API
+//
+// Every method returns both structured data and a pre-rendered text
+// representation. Clients use FieldMask to select which fields the
+// server populates — omit the mask to get everything.
+//
+// token_budget is a cap, not a target. The server auto-sizes the
+// rendered output based on result quality and quantity. 0 = server
+// default. The footer reports tokens_used so clients can track spend.
+// ---------------------------------------------------------------------------
+
+// We need comments on everything here, and we need to seperate the protos for management, tooling (things like streaming telemetry for the dashboard) and the surface you would use to integrate with repoql
+
+service ToolService {
+  rpc Query(QueryRequest) returns (QueryResponse);
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc Explore(ExploreRequest) returns (ExploreResponse);
+  rpc Keywords(KeywordsRequest) returns (KeywordsResponse);
+  rpc CaptureConcept(CaptureConceptRequest) returns (CaptureConceptResponse);
+  rpc SurfaceConcepts(SurfaceConceptsRequest) returns (SurfaceConceptsResponse);
+  rpc Explain(ExplainRequest) returns (ExplainResponse);
+  rpc Read(ReadRequest) returns (ReadResponse);
+  rpc Tree(TreeRequest) returns (TreeResponse);
+  rpc Lint(LintRequest) returns (LintResponse);
+  rpc Coverage(CoverageRequest) returns (CoverageResponse);
+  rpc Grep(GrepRequest) returns (GrepResponse);
+  rpc Find(FindRequest) returns (FindResponse);
+  rpc Similar(SimilarRequest) returns (SimilarResponse);
+  rpc Changes(ChangesRequest) returns (ChangesResponse);
+  rpc History(HistoryRequest) returns (HistoryResponse);
+  rpc Blame(BlameRequest) returns (BlameResponse);
+  rpc Concepts(ConceptsRequest) returns (ConceptsResponse);
+}
+
+// ---------------------------------------------------------------------------
+// Shared
+// ---------------------------------------------------------------------------
+
+// Appended to every tool response. Trust signal + timing + token accounting.
+message ResponseFooter {
+  int32 total_files = 1;
+  int32 pending_files = 2;
+  int32 failed_files = 3;
+  bool semantic_ready = 4;
+  int32 semantic_percent = 5;
+  int64 elapsed_ms = 6;
+  int32 tokens_used = 7;
+  // The rendered status line, composed once at L2. Transports place it; none re-derive it.
+  string status_line = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Query
+// ---------------------------------------------------------------------------
+
+message QueryRequest {
+  string sql = 1;
+  int32 max_rows = 2;         // 0 = no limit
+  int32 token_budget = 3;     // 0 = server default
+  google.protobuf.FieldMask response_mask = 4;
+  int32 cache_seconds = 5;    // 0 = no caching; >0 serves/stores identical results within this window
+}
+
+message QueryResponse {
+  // Structured
+  repeated QueryColumn columns = 1;
+  repeated QueryRow rows = 2;
+  bool truncated = 3;
+  int32 total_rows = 4;
+
+  // Rendered
+  string rendered = 5;
+  bool summarized = 6;
+
+  ResponseFooter footer = 7;
+}
+
+message QueryColumn {
+  string name = 1;
+  string type = 2;
+}
+
+message QueryRow {
+  repeated QueryValue values = 1;
+}
+
+message QueryValue {
+  // Null when absent; present when the value is non-null.
+  // Use google.protobuf.StringValue so null vs empty string is unambiguous.
+  google.protobuf.StringValue text = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Execute — JavaScript composition runtime over RepoQL and approved MCP tools
+// ---------------------------------------------------------------------------
+
+message ExecuteRequest {
+  string code = 1;
+  string intent = 2;
+  int32 token_budget = 3;
+  int32 timeout_ms = 4;
+  string input_json = 5;
+  google.protobuf.FieldMask response_mask = 6;
+}
+
+message ExecuteDiagnostic {
+  string level = 1;
+  string message = 2;
+}
+
+message ExecuteArtifact {
+  string uri = 1;
+  string media_type = 2;
+  int64 byte_size = 3;
+  string label = 4;
+}
+
+message ExecuteResponse {
+  bool success = 1;
+  string json_output = 2;
+  string rendered = 3;
+  string error_kind = 4;
+  string error_message = 5;
+  string error_suggestion = 6;
+  string error_stack = 7;
+  repeated ExecuteDiagnostic diagnostics = 8;
+  repeated ExecuteArtifact artifacts = 9;
+  ResponseFooter footer = 10;
+}
+
+// ---------------------------------------------------------------------------
+// Explore
+// ---------------------------------------------------------------------------
+
+message ExploreRequest {
+  string keywords = 1;
+  string uri_glob = 2;        // URI glob — e.g. "file:///src/**/*.cs"
+  int32 breadth = 3;          // Max results. 0 = auto (server decides)
+  int32 token_budget = 4;     // 0 = server default
+  google.protobuf.FieldMask response_mask = 5;
+  string question = 6;        // Optional — full-sentence intent; drives rerank query when present
+}
+
+message ExploreResponse {
+  // Structured
+  repeated ExploreMatch matches = 1;
+
+  // Rendered
+  string rendered = 2;
+
+  ResponseFooter footer = 3;
+}
+
+message ExploreMatch {
+  string uri = 1;
+  string headline = 2;
+  double score = 3;
+  string representation = 4;  // headline | structure | content
+  string content = 5;         // The rendered slice at the chosen representation
+}
+
+// ---------------------------------------------------------------------------
+// Keywords
+// ---------------------------------------------------------------------------
+
+message KeywordsRequest {
+  string keywords = 1;        // Required. Rough handles or terms the caller already has; the tool reshapes them into repository vocabulary.
+  string question = 2;        // Optional full-sentence intent — used to rerank candidates.
+  string uri_glob = 3;        // URI glob — e.g. "file:///src/**/*.cs"
+  int32 token_budget = 4;     // 0 = server default. The token budget is the representation dial.
+  google.protobuf.FieldMask response_mask = 5;
+}
+
+message KeywordsResponse {
+  repeated KeywordsRow rows = 1;
+  string rendered = 3;
+  ResponseFooter footer = 4;
+}
+
+message KeywordsRow {
+  string row_kind = 1;
+  int32 rank = 2;
+  string bundle_id = 3;
+  string bundle_name = 4;
+  string intent = 5;
+  string query = 6;
+  string term = 7;
+  string canonical = 8;
+  string term_kind = 9;
+  string channel = 10;
+  double score = 11;
+  double confidence = 12;
+  double utility = 13;
+  string reason = 14;
+  string evidence_json = 15;
+  string diagnostic_code = 16;
+  string snippet = 17;
+}
+
+// ---------------------------------------------------------------------------
+// Capture concept
+// ---------------------------------------------------------------------------
+
+enum ConceptCategory {
+  CONCEPT_CATEGORY_UNSPECIFIED = 0;
+  CONCEPT_CATEGORY_WISDOM = 1;
+  CONCEPT_CATEGORY_RULE = 2;
+  CONCEPT_CATEGORY_KNOWLEDGE = 3;
+}
+
+message CaptureConceptRequest {
+  string name = 1;                       // CamelCase capsule name
+  ConceptCategory category = 2;          // wisdom, rule, or knowledge
+  optional string subcategory = 3;       // optional shelf under category
+  string invariant = 4;                  // one timeless idea, one line
+  repeated string tags = 5;
+  string relevance = 6;                  // semicolon-delimited URI globs
+  string verification = 7;               // semicolon-delimited URI globs or web addresses
+  int32 ttl_days = 8;
+  string example = 9;
+  repeated string depth = 10;
+  google.protobuf.FieldMask response_mask = 11;
+  optional bool is_universal = 12;        // load into the always-on CLAUDE.md index; absent == universal (the default)
+  optional string why = 13;               // mechanism/stakes/context behind the invariant; keeps the invariant itself one short line
+}
+
+message CaptureConceptValidationError {
+  string field = 1;
+  string message = 2;
+}
+
+message CaptureConceptVerification {
+  bool attempted = 1;
+  bool passed = 2;
+  string summary = 3;
+}
+
+message CaptureConceptResponse {
+  bool success = 1;
+  string uri = 2;
+  string path = 3;
+  string message = 4;
+  repeated CaptureConceptValidationError errors = 5;
+  CaptureConceptVerification verification = 6;
+  string rendered = 7;
+  ResponseFooter footer = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Surface concepts
+// ---------------------------------------------------------------------------
+
+message SurfaceConceptsRequest {
+  string target = 1;        // file URI glob or repository path glob being written
+  string session = 2;       // stable agent session id for exposure suppression
+  int32 limit = 3;          // bounded result count; 0 = server default
+  google.protobuf.FieldMask response_mask = 4;
+}
+
+message SurfaceConceptMatch {
+  string uri = 1;
+  string invariant = 2;
+  string why = 3;          // capsule Why block; empty when the concept carries none
+}
+
+message SurfaceConceptsResponse {
+  string target_uri = 1;
+  repeated SurfaceConceptMatch concepts = 2;
+  string rendered = 3;
+  ResponseFooter footer = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Read
+// ---------------------------------------------------------------------------
+
+message ExplainRequest {
+  string question = 1;
+  string uri_glob = 2;        // scope — e.g. "file:///src/**/*.cs"
+  int32 token_budget = 3;     // 0 = server default
+  string keywords = 4;        // optional — skips keyword extraction when provided
+  google.protobuf.FieldMask response_mask = 5;
+}
+
+message ExplainCitation {
+  string uri = 1;
+  int32 tokens_used = 2;
+  bool is_error = 3;
+}
+
+message ExplainResponse {
+  // Structured
+  string answer = 1;
+  repeated ExplainCitation citations = 2;
+  int32 input_tokens = 3;
+  int32 output_tokens = 4;
+  int32 match_count = 5;
+
+  // Rendered
+  string rendered = 6;
+
+  ResponseFooter footer = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Read
+// ---------------------------------------------------------------------------
+
+enum ReadRepresentation {
+  READ_REPRESENTATION_AUTO = 0;       // Default — budget-driven (current behavior)
+  READ_REPRESENTATION_CONTENT = 1;    // Force full content
+  READ_REPRESENTATION_STRUCTURE = 2;  // Force signatures only
+  READ_REPRESENTATION_HEADLINE = 3;   // Force one-line per file
+}
+
+message ReadRequest {
+  // URI with optional fragment. Supported fragments include #symbol=NAME
+  // (symbol slice) and #line=M,N (line slice). Modifier syntax (=> ...) is
+  // client-side affordance only and is never sent over this protocol.
+  string uri = 1;
+  int32 token_budget = 2;     // 0 = server default
+  google.protobuf.FieldMask response_mask = 3;
+  ReadRepresentation representation = 4;
+}
+
+message ReadResponse {
+  // Structured
+  repeated ReadDocument documents = 1;
+
+  // Rendered
+  string rendered = 2;
+
+  ResponseFooter footer = 3;
+}
+
+message ReadDocument {
+  string uri = 1;
+  string content = 2;
+  string representation = 3;  // content | structure | headline
+  int32 lines = 4;
+  string language = 5;
+}
+
+enum TreeDetailLevel {
+  TREE_DETAIL_UNSPECIFIED = 0;  // Server picks — falls back to budget
+  TREE_DETAIL_FOLDERS = 1;
+  TREE_DETAIL_HEADLINES = 2;
+  TREE_DETAIL_FILES = 3;
+}
+
+message TreeRequest {
+  string uri = 1;                                // scope, may be empty for whole repo
+  int32 token_budget = 2;
+  google.protobuf.FieldMask response_mask = 3;
+  TreeDetailLevel detail_level = 4;
+}
+
+message TreeResponse {
+  string rendered = 1;
+  int32 file_count = 2;
+  TreeDetailLevel detail_level = 3;
+  ResponseFooter footer = 4;
+}
+
+enum LintSeverity {
+  LINT_SEVERITY_UNSPECIFIED = 0;
+  LINT_SEVERITY_HINT = 1;
+  LINT_SEVERITY_INFO = 2;
+  LINT_SEVERITY_WARNING = 3;
+  LINT_SEVERITY_ERROR = 4;
+}
+
+message LintDiagnostic {
+  string uri = 1;            // resolved URI (may include fragment)
+  int32 line = 2;            // 0 when absent
+  LintSeverity severity = 3;
+  string rule_id = 4;
+  string message = 5;
+  string snippet = 6;        // may be empty
+}
+
+message LintRequest {
+  string uri = 1;
+  int32 token_budget = 2;
+  google.protobuf.FieldMask response_mask = 3;
+  LintSeverity min_severity = 4;  // UNSPECIFIED = server default
+}
+
+message LintResponse {
+  repeated LintDiagnostic diagnostics = 1;
+  int32 error_count = 2;
+  int32 warning_count = 3;
+  bool truncated = 4;
+  string rendered = 5;
+  ResponseFooter footer = 6;
+}
+
+enum CoverageView {
+  COVERAGE_VIEW_SUMMARY = 0;
+  COVERAGE_VIEW_UNCOVERED = 1;
+  COVERAGE_VIEW_CONTENT = 2;
+}
+
+message CoverageRequest {
+  string uri = 1;
+  int32 token_budget = 2;
+  CoverageView view = 3;
+  google.protobuf.FieldMask response_mask = 4;
+}
+
+message CoverageResponse {
+  string rendered = 1;
+  int32 covered = 2;
+  int32 uncovered = 3;
+  int32 unmeasured = 4;
+  ResponseFooter footer = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Grep — line-level literal text search across a URI scope
+// ---------------------------------------------------------------------------
+
+message GrepMatch {
+  string uri = 1;          // file URI (container — no line fragment)
+  int32 line_number = 2;   // 1-based
+  string line = 3;         // the matched line (not trimmed)
+}
+
+message GrepRequest {
+  string uri = 1;           // scope glob — restricts grep to matching files
+  string pattern = 2;       // literal text or regex pattern to search
+  int32 token_budget = 3;   // 0 = server default
+  int32 max_results = 4;    // hard cap on matches returned; 0 = server default
+  google.protobuf.FieldMask response_mask = 5;
+  bool is_regex = 6;         // true = regex_matches, false = grep_matches
+}
+
+message GrepResponse {
+  repeated GrepMatch matches = 1;
+  int32 total_matches = 2;
+  bool truncated = 3;       // true when max_results was reached
+  string rendered = 4;
+  ResponseFooter footer = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Find — semantic search across a URI scope (hybrid lexical+semantic)
+// ---------------------------------------------------------------------------
+
+message FindMatch {
+  string uri = 1;             // file URI with #line fragment when available
+  string snippet = 2;         // rendered snippet at the matched range
+  int32 confidence = 3;       // 0-100, from the search pipeline
+}
+
+message FindRequest {
+  string uri = 1;             // scope glob — restricts the search
+  string keywords = 2;        // free-text query
+  int32 token_budget = 3;     // 0 = server default
+  int32 k = 4;                // max matches returned; 0 = server default
+  google.protobuf.FieldMask response_mask = 5;
+}
+
+message FindResponse {
+  repeated FindMatch matches = 1;
+  int32 total_matches = 2;
+  string rendered = 3;
+  ResponseFooter footer = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Similar — stored-vector similarity from a seed URI into a URI scope
+// ---------------------------------------------------------------------------
+
+message SimilarMatch {
+  string uri = 1;             // file URI, with #line fragment when available
+  string headline = 2;        // one-line summary
+  string snippet = 3;         // compact supporting summary or structure
+  double similarity = 4;      // cosine similarity from stored embeddings
+}
+
+message SimilarRequest {
+  string uri = 1;             // scope glob — restricts candidates
+  string seed_uri = 2;        // seed URI to compare from; fragments resolve to the containing file
+  int32 token_budget = 3;     // 0 = server default
+  int32 k = 4;                // max matches returned; 0 = server default
+  google.protobuf.FieldMask response_mask = 5;
+}
+
+message SimilarResponse {
+  repeated SimilarMatch matches = 1;
+  int32 total_matches = 2;
+  bool truncated = 3;
+  string rendered = 4;
+  ResponseFooter footer = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Changes — staged and unstaged working-copy patches for a URI scope
+// ---------------------------------------------------------------------------
+
+message ChangeEntry {
+  string uri = 1;
+  string group = 2;          // staged | unstaged | untracked
+  string label = 3;          // modified | new file | conflicted
+  string patch = 4;          // unified diff when available
+  int32 insertions = 5;
+  int32 deletions = 6;
+  bool is_binary = 7;
+  bool is_conflicted = 8;
+}
+
+message ChangesRequest {
+  string uri = 1;            // scope glob — restricts changes to matching files
+  int32 token_budget = 2;    // 0 = server default
+  google.protobuf.FieldMask response_mask = 3;
+}
+
+message ChangesResponse {
+  repeated ChangeEntry entries = 1;
+  int32 total_entries = 2;
+  bool truncated = 3;
+  string rendered = 4;
+  ResponseFooter footer = 5;
+}
+
+// ---------------------------------------------------------------------------
+// History — git commit log for matched files, with optional keyword ranking
+// ---------------------------------------------------------------------------
+
+message HistoryCommit {
+  string hash = 1;             // full commit hash
+  string message = 2;          // first line of the commit message
+  string author = 3;           // author display name
+  string date = 4;             // ISO-8601 author date
+  int32 files_changed = 5;     // number of file changes in this commit
+}
+
+message HistoryRequest {
+  string uri = 1;              // file URI (may include #line=M,N for blame-scoped history)
+  int32 token_budget = 2;      // 0 = server default
+  string keywords = 3;         // optional — re-ranks commits by relevance
+  int32 max_commits = 4;       // hard cap on commits returned; 0 = server default
+  google.protobuf.FieldMask response_mask = 5;
+}
+
+message HistoryResponse {
+  repeated HistoryCommit commits = 1;
+  int32 total_commits = 2;
+  bool truncated = 3;
+  string rendered = 4;
+  ResponseFooter footer = 5;
+}
+
+// ---------------------------------------------------------------------------
+// Blame — line attribution for matched files and fragments
+// ---------------------------------------------------------------------------
+
+message BlameLine {
+  string uri = 1;
+  int32 line_number = 2;
+  string content = 3;
+  string commit_hash = 4;
+  string author = 5;
+  string author_email = 6;
+  string date = 7;
+  string message = 8;
+}
+
+message BlameRequest {
+  string uri = 1;
+  int32 token_budget = 2;      // 0 = server default
+  google.protobuf.FieldMask response_mask = 3;
+}
+
+message BlameResponse {
+  repeated BlameLine lines = 1;
+  int32 total_lines = 2;
+  int32 total_commits = 3;
+  bool truncated = 4;
+  string rendered = 5;
+  ResponseFooter footer = 6;
+}
+
+// ---------------------------------------------------------------------------
+// Concepts — governing concepts relevant to a URI scope
+// ---------------------------------------------------------------------------
+
+message ConceptsRequest {
+  string uri = 1;
+  int32 token_budget = 2;
+  google.protobuf.FieldMask response_mask = 3;
+}
+
+message ConceptsResponse {
+  string rendered = 1;
+  ResponseFooter footer = 2;
+  int32 total_concepts = 3;
+  int32 narrow_shown = 4;
+  int32 universal_applicable = 5;
+}

@@ -1,6 +1,6 @@
 ---
 name: repoql-search
-description: Search patterns for RepoQL - semantic search, scoping, boost/penalize.
+description: Search patterns for RepoQL - semantic search, scoping, and question reranking.
 ---
 
 # RepoQL Search Patterns
@@ -9,11 +9,10 @@ RepoQL provides multiple search approaches. Choose based on what you're looking 
 
 ## Search Methods
 
-### 1. Explore with Locate (Recommended Start)
-Intent-based search with ranked results.
+### 1. Explore (Recommended Start)
+Hybrid lexical + semantic search with ranked results.
 ```
 repoql_explore(
-  intent="Locate",
   keywords="authentication flow",
   tokenBudget=1500
 )
@@ -55,29 +54,36 @@ SELECT * FROM search('validation', k := 10)
 WHERE lang = 'typescript'
 ```
 
-## Boost and Penalize
+## Questions and Reranking
 
-Adjust result ranking with regex patterns.
-
-### Boost (Prioritize Matches)
-```
-boost="(?i)auth|token"     -- Case-insensitive, boost auth/token
-boost="Service$"           -- Boost files ending in Service
-```
-
-### Penalize (Demote Matches)
-```
-penalize="(?i)test|mock"   -- Demote test files
-penalize="\.spec\."        -- Demote spec files
-```
-
-### Combined Example
+Use `keywords` to retrieve candidates and `question` to rerank them toward the specific answer you need.
 ```
 repoql_explore(
-  intent="Locate",
+  keywords="cache invalidation",
+  question="When does the read cache get evicted after writes?",
+  tokenBudget=3000
+)
+```
+
+For a broad survey, omit `question`. For a precise investigation, include it.
+
+## Breadth
+
+Use `breadth` when you want more or fewer results. `0` or omitted lets RepoQL choose.
+```
+repoql_explore(
+  keywords="handler dispatcher",
+  breadth=8,
+  tokenBudget=3000
+)
+```
+
+## Combined Example
+```
+repoql_explore(
   keywords="error handling",
-  boost="(?i)exception|error",
-  penalize="(?i)test|mock|spec",
+  question="Where are user-facing errors normalized before returning responses?",
+  uriGlob="file:///src/**",
   tokenBudget=2000
 )
 ```
@@ -103,11 +109,15 @@ repoql_explore(
 Combine search with read for targeted content:
 ```
 # Find relevant files
-repoql_explore(intent="Locate", keywords="error handling", tokenBudget=1000)
+repoql_explore(keywords="error handling", tokenBudget=1000)
 
 # Read specific file with budget
 repoql_read(uri="file:///src/ErrorHandler.cs", tokenBudget=3000)
 
 # Or add question for synthesis
-repoql_read(uri="file:///src/ErrorHandler.cs // What error types are handled?", tokenBudget=2000)
+repoql_explain(
+  question="What error types are handled?",
+  uriGlob="file:///src/ErrorHandler.cs",
+  tokenBudget=2000
+)
 ```
