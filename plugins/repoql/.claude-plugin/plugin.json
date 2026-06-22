@@ -1,6 +1,6 @@
 {
   "name": "repoql",
-  "version": "1.6.11",
+  "version": "1.6.13",
   "description": "Queryable code intelligence — explore codebase structure without reading files.",
   "author": {
     "name": "Stuart Wilson",
