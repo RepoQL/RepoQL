@@ -65,7 +65,8 @@ Then enable and configure it under `plugins.entries.repoql`:
 | `repoql_status` | Check plugin, repository root, socket, and host reachability. |
 
 Each tool's description carries the full guidance from the RepoQL MCP server.
-Three focused skills (`repoql`, `repoql-sql`, `repoql-search`) ship alongside.
+Five skills ship alongside: `repoql`, `repoql-search`, `repoql-sql`, plus
+`effective-markdown` and `mermaid-diagrams` for authoring docs and diagrams.
 
 ## Configuration
 

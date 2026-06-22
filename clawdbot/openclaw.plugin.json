@@ -2,7 +2,7 @@
   "id": "repoql",
   "name": "RepoQL",
   "description": "Queryable repository intelligence powered by the local rql host.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

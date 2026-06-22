@@ -1,6 +1,6 @@
 {
   "name": "@repoql/repoql",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "OpenClaw plugin for RepoQL - queryable repository intelligence powered by rql",
   "main": "./dist/index.js",
   "type": "module",
