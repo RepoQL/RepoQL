@@ -2,7 +2,10 @@
   "mcpServers": {
     "repoql": {
       "command": "rql",
-      "args": ["mcp"]
+      "args": ["mcp"],
+      "env": {
+        "REPOQL_RECOVERY_HINT": "Read the troubleshooting-repoql skill."
+      }
     }
   }
 }
