@@ -1,0 +1,90 @@
+# End-to-end proof of the plugin's binary bootstrap: on a bare runner (no rql),
+# running bootstrap-rql.sh alone must yield a working binary in the canonical
+# per-platform location — ~/.local/bin on macOS/Linux, %LOCALAPPDATA%\rql plus
+# a user PATH registry entry on Windows (where the hook runs under Git Bash and
+# delegates to the hosted PowerShell installer).
+name: bootstrap-e2e
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "plugins/repoql/scripts/bootstrap-rql.sh"
+      - ".github/workflows/bootstrap-e2e.yml"
+  pull_request:
+    paths:
+      - "plugins/repoql/scripts/bootstrap-rql.sh"
+      - ".github/workflows/bootstrap-e2e.yml"
+
+jobs:
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run bootstrap on a bare machine
+        run: plugins/repoql/scripts/bootstrap-rql.sh
+
+      - name: Verify rql in the canonical location
+        run: |
+          test -x "$HOME/.local/bin/rql"
+          "$HOME/.local/bin/rql" --version
+
+      - name: Re-run takes the already-installed fast path
+        run: |
+          plugins/repoql/scripts/bootstrap-rql.sh
+          grep -c "installing from downloads.repoql.ai" "$HOME/.local/state/repoql/bootstrap.log" | grep -qx 1
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run bootstrap under Git Bash
+        shell: bash
+        run: plugins/repoql/scripts/bootstrap-rql.sh
+
+      - name: Verify rql.exe in the canonical location
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA "rql\rql.exe"
+          if (-not (Test-Path $exe)) { throw "rql.exe not found at $exe" }
+          & $exe --version
+
+      - name: Verify user PATH registry entry
+        shell: pwsh
+        run: |
+          $dir = (Join-Path $env:LOCALAPPDATA "rql").TrimEnd('\')
+          $entries = [Environment]::GetEnvironmentVariable("Path", "User") -split ';' |
+            ForEach-Object { $_.TrimEnd('\') }
+          if (-not ($entries | Where-Object { $_ -ieq $dir })) {
+            throw "user PATH is missing $dir"
+          }
+
+      # Steps get the runner's original environment, so this step's PATH still
+      # lacks the registry entry — exactly the state of a hook whose parent
+      # process predates the install. The fast path must detect the binary via
+      # %LOCALAPPDATA% directly, not via PATH.
+      - name: Re-run takes the already-installed fast path
+        shell: bash
+        run: |
+          plugins/repoql/scripts/bootstrap-rql.sh
+          count=$(grep -c "installing from downloads.repoql.ai" "$HOME/.local/state/repoql/bootstrap.log")
+          [ "$count" = "1" ]
+
+      # session-start depends on Git Bash resolving `rql` to rql.exe once
+      # %LOCALAPPDATA%\rql is on PATH — only provable on real Windows. This
+      # also exercises the freshly downloaded binary end to end (rql query
+      # spins the host up against the checkout).
+      - name: session-start emits an orientation envelope
+        shell: bash
+        run: |
+          plugins/repoql/scripts/session-start.sh > ss.json
+          jq -e '.hookSpecificOutput.additionalContext | contains("RepoQL")' ss.json

@@ -4,6 +4,15 @@ Queryable code intelligence for AI coding agents.
 
 ## Install
 
+**Claude Code** — one-step plugin install (downloads the `rql` binary automatically on first session):
+
+```
+/plugin marketplace add RepoQL/RepoQL
+/plugin install repoql@repoql-plugins
+```
+
+**Any other agent, or standalone:**
+
 **macOS / Linux**
 
 ```sh
