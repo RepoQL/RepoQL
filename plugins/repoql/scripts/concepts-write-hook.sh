@@ -24,7 +24,6 @@ hints=$(rql concepts "$file" --session "$session" --limit 5 2>/dev/null)
 jq -n --arg ctx "$hints" '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
-    permissionDecision: "defer",
     additionalContext: $ctx
   }
 }'
