@@ -1,6 +1,6 @@
 ---
 name: effective-markdown
-description: How to write clear, verifiable, discoverable documents for LLMs and humans. Always use when writing north-star, gestalt, reference, research, design, plan, flow, findings, concepts, or process documents.
+description: How to write clear, verifiable, discoverable documents for humans and agents. Use when writing markdown files or documenting systems — north-star, gestalt, reference, research, design, plan, flow, findings, concepts (capsules), or process documents.
 ---
 
 # Effective Markdown
