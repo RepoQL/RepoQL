@@ -58,7 +58,17 @@ else
     # (read / explore), so they are never dumped here. Readiness is omitted on purpose:
     # a transient "not ready" at startup would wrongly teach the agent that RepoQL is
     # unusable for the whole session, when it just needed a moment to warm up.
-    imports=$(rql query "SELECT source_uri FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri" 2>/dev/null | grep '://' || true)
+    # `rql query` starts the host when it's cold, and the spawned host can
+    # inherit this pipeline's stdout — a $(...) capture would then block until
+    # the HOST exits, not the CLI (observed hanging ~15 min on Windows CI).
+    # Writing to a file sidesteps that (bash waits only on the CLI process),
+    # and coreutils timeout bounds a genuinely stuck CLI where available.
+    query_out=$(mktemp "${TMPDIR:-/tmp}/repoql-imports.XXXXXX" 2>/dev/null) || query_out="${TMPDIR:-/tmp}/repoql-imports.$$"
+    guard=""
+    command -v timeout >/dev/null 2>&1 && guard="timeout 30"
+    $guard rql query "SELECT source_uri FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri" </dev/null >"$query_out" 2>/dev/null || true
+    imports=$(grep '://' "$query_out" 2>/dev/null || true)
+    rm -f "$query_out"
     ctx+=$'\n'"## Imported Repositories"$'\n'
     if [ -n "$imports" ]; then
         ctx+="Use these github:// URIs directly with read / explore / query:"$'\n'"$imports"$'\n'

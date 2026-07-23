@@ -11,10 +11,12 @@ on:
     branches: [main]
     paths:
       - "plugins/repoql/scripts/bootstrap-rql.sh"
+      - "plugins/repoql/scripts/session-start.sh"
       - ".github/workflows/bootstrap-e2e.yml"
   pull_request:
     paths:
       - "plugins/repoql/scripts/bootstrap-rql.sh"
+      - "plugins/repoql/scripts/session-start.sh"
       - ".github/workflows/bootstrap-e2e.yml"
 
 jobs:
@@ -85,6 +87,7 @@ jobs:
       # spins the host up against the checkout).
       - name: session-start emits an orientation envelope
         shell: bash
+        timeout-minutes: 5
         run: |
           plugins/repoql/scripts/session-start.sh > ss.json
           jq -e '.hookSpecificOutput.additionalContext | contains("RepoQL")' ss.json
