@@ -1,11 +1,11 @@
 ---
 name: plan
-description: Write a plan document — a buildable increment with EARS-testable done criteria, deleted when implemented. Use when turning a design into work items or writing a plan for an agent to implement. For the document — not plan mode, not general planning. Routes to the effective-markdown skill's plan guidance.
+description: Write a plan document — one ticket-sized buildable increment with EARS done criteria and live gates, deleted in the commit that lands it; three or more plans earn a series README. Use when turning a design into work items or briefing an agent to implement one. For the document — not plan mode, not general planning.
 ---
 
 # Plan
 
-Reviewed by humans, implemented by agents. Scoped, testable, deleted when done — in the very commit that lands its increment.
+The in-repo work ticket: reviewed by humans, implemented by agents, deleted in the very commit that lands its increment.
 
 ## Load
 

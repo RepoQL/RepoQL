@@ -1,11 +1,11 @@
 ---
 name: findings
-description: Write a findings document — answer first, then evidence. Use when writing up an investigation, reporting what was discovered, answering "what did you find?", or producing the discovery document that informs a north star. Routes to the effective-markdown skill's findings guidance.
+description: Write a findings document — answer first, then evidence. Use when writing up an investigation, reporting what was discovered, answering "what did you find?", or pulling a discovery's research corpus together into the real problems. Routes to the effective-markdown skill's findings guidance.
 ---
 
 # Findings
 
-Someone asked a question. Answer it, then prove it.
+Someone asked a question. Answer it, then prove it. In a discovery, several research documents present; one findings document answers.
 
 ## Load
 
