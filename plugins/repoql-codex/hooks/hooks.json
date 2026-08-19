@@ -1,0 +1,34 @@
+{
+  "description": "Load relevant concepts before writes and inject the repository concepts index when a session starts.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${PLUGIN_ROOT}/scripts/concepts-write-hook.sh",
+            "timeout": 5,
+            "additionalContextLimit": 5000,
+            "statusMessage": "Loading relevant RepoQL concepts"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${PLUGIN_ROOT}/scripts/session-start.sh",
+            "command_windows": "pwsh -NoProfile -File \"${PLUGIN_ROOT}/scripts/session-start.ps1\"",
+            "timeout": 240,
+            "additionalContextLimit": 12000,
+            "statusMessage": "Loading the RepoQL concepts index"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,32 +1,28 @@
 #!/bin/bash
-# Surface on-disk concepts relevant to files in a Claude Write/Edit/MultiEdit call.
+# Surface on-disk concepts relevant to every file in a Codex apply_patch call.
 # Fail open: malformed concepts or unavailable tooling must never block an edit.
 trap 'exit 0' ERR
 
 command -v jq >/dev/null 2>&1 || exit 0
 
 input=$(cat)
-session=$(jq -r '.session_id // empty' <<<"$input")
+patch=$(jq -r '.tool_input.command // .tool_input.patch // empty' <<<"$input")
+session=$(jq -r '.session_id // .turn_id // empty' <<<"$input")
 workspace=$(jq -r '.cwd // empty' <<<"$input")
-[ -d "$workspace" ] || workspace="$PWD"
-cd "$workspace"
+[ -n "$patch" ] || exit 0
+[ -d "$workspace" ] && cd "$workspace"
 
-files=$(jq -r '
-  [
-    .tool_input.file_path?,
-    .tool_input.path?,
-    (.tool_input.edits[]?.file_path?),
-    (.tool_input.edits[]?.path?)
-  ]
-  | map(select(type == "string" and length > 0))
-  | unique[]
-' <<<"$input" | head -8)
+files=$(printf '%s\n' "$patch" \
+    | sed -nE 's/^\*\*\* (Update|Add|Delete) File: //p' \
+    | awk '!seen[$0]++' \
+    | head -8)
 [ -n "$files" ] || exit 0
 
 concept_root="$workspace/.repoql/concepts"
 [ -d "$concept_root" ] || exit 0
 
-# Normalize changed paths to the file:/// URI shape used by relevance globs.
+# Normalize every changed path to the file:/// URI shape used by relevance
+# globs in concept frontmatter.
 target_uris=""
 while IFS= read -r file; do
     [ -n "$file" ] || continue
@@ -66,7 +62,7 @@ matches_relevance() {
     [ "$matched" -eq 1 ]
 }
 
-plugin_data="${CLAUDE_PLUGIN_DATA:-${PLUGIN_DATA:-${TMPDIR:-/tmp}/repoql-claude}}"
+plugin_data="${PLUGIN_DATA:-${CLAUDE_PLUGIN_DATA:-${TMPDIR:-/tmp}/repoql-codex}}"
 session_key=$(printf '%s' "${session:-ambient}" | tr -c 'A-Za-z0-9._-' '_')
 seen_dir="$plugin_data/concept-hints"
 mkdir -p "$seen_dir" 2>/dev/null || exit 0
@@ -125,7 +121,6 @@ while IFS= read -r concept_file; do
 done < <(find "$concept_root" -type f -name '*.md' ! -iname 'readme.md' -print 2>/dev/null | sort)
 
 [ -n "$context" ] || exit 0
-
 jq -n --arg ctx "$context" '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",

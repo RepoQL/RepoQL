@@ -3,8 +3,7 @@
   "name": "repoql-plugins",
   "description": "RepoQL plugins for AI coding agents",
   "owner": {
-    "name": "Stuart Wilson",
-    "email": "stueeey@users.noreply.github.com"
+    "name": "Clanker Tools"
   },
   "plugins": [
     {

@@ -1,7 +1,6 @@
 ---
 name: research
 description: Evidence-first research mode with mandatory citations. Invoke at the START of research, not when writing up results.
-tags: ["skill", "research", "evidence", "citations", "synthesis"]
 ---
 
 # Research
@@ -16,4 +15,4 @@ Skill files are irreducible — they cannot be summarized and still communicate 
 read("help:///skills/research/SKILL.md => content", 5000)
 ```
 
-Research subagents get `help:///skills/research/subagent.md` — or spawn the `researcher` agent, which carries the brief and a suitable model built in.
+When the user requests parallel research, spawn one read-heavy subagent per independent direction using `gpt-5.6-terra` with high reasoning (or a stronger model for an unusually ambiguous direction). Tell every subagent to read `help:///skills/research/subagent.md` in full before gathering evidence. The bundled `researcher` brief carries the same contract for Codex clients that load plugin agents.

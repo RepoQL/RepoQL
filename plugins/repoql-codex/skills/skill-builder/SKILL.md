@@ -1,6 +1,6 @@
 ---
 name: skill-builder
-description: This skill guides intentional skill design. Use when creating, improving, or reviewing Claude Code skills. Requires a zone assessment to clarify what kind of skill is being built before writing content.
+description: This skill guides intentional skill design. Use when creating, improving, or reviewing skills for ChatGPT and Codex. Requires a zone assessment to clarify what kind of skill is being built before writing content.
 ---
 
 # Skill Builder

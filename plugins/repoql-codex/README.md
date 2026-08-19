@@ -1,46 +1,86 @@
+---
+description: RepoQL's Codex plugin, including installation, bundled capabilities, and platform-specific behavior.
+tags: [repoql, codex, plugin, mcp, code-intelligence]
+---
+
 # RepoQL for Codex
 
-Queryable code intelligence for OpenAI's Codex CLI.
-
-## Prerequisite
-
-The plugin drives the `rql` CLI — install it first:
-
-```sh
-curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash
-```
-
-(PowerShell: `irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex`)
-
-Verify with `rql --version`, then register the MCP server:
-
-```sh
-rql install --agent codex
-```
-
-This writes `[mcp_servers.repoql]` into `~/.codex/config.toml`. The plugin below adds skills and an exploration agent on top of that.
+RepoQL gives ChatGPT and Codex a pre-built structural index of a codebase. The plugin bundles the MCP server, task-specific skills, research agents, automatic setup, and repository context hooks in one install.
 
 ## Install
 
 ```sh
 codex plugin marketplace add RepoQL/RepoQL
-codex plugin install repoql-codex
+codex plugin add repoql-codex@repoql
 ```
 
-## What's inside
+Review and trust the plugin hooks when Codex asks. The startup hook installs `rql` from `downloads.repoql.ai` when it is missing, then the bundled MCP configuration starts `rql mcp`. Set `REPOQL_NO_BOOTSTRAP=1` to disable automatic installation.
 
-- **Skills** — `effective-repoql`, `troubleshooting-repoql`, `skill-builder`, `effective-markdown`, `mermaid-diagrams`. Auto-loaded by Codex when the `description` matches the current task.
-- **Agent** — `dora-the-codebase-explorer` for deep, multi-step codebase investigation.
-- **MCP server** — `rql mcp` registered as `repoql`, exposing `read`, `explore`, `query`, `explain`, `command`, `import`.
+To install `rql` manually:
 
-## Orientation
+```sh
+# macOS or Linux
+curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash
 
-There's no session-start hook in Codex. To get repo orientation into context at the top of a session, add this to your project's `AGENTS.md`:
-
-```
-This project uses RepoQL. At the start of any non-trivial task, call
-`mcp__repoql__read` with `file:///** => tree: folders` to orient yourself
-on repo layout, and `help://** => tree: headlines` for available docs.
+# Windows PowerShell
+irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex
 ```
 
-The `effective-repoql` skill covers everything else.
+Start a new Codex task after installation or an update so the refreshed plugin and PATH are loaded.
+
+## What is included
+
+### Code intelligence
+
+The `repoql` MCP server exposes 12 tools:
+
+| Purpose | Tools |
+|---|---|
+| Find and understand | `explore`, `read`, `query`, `explain`, `keywords` |
+| Manage and compose | `import`, `command`, `execute` |
+| Observe | `watch` |
+| Preserve repository knowledge | `capture_concept`, `capture_term`, `list_vocabulary` |
+
+RepoQL addresses the workspace with `file:///`, imported repositories with `github://`, its own documentation with `help:///`, and durable repository knowledge with `concept:///` and `vocabulary:///`.
+
+### Skills
+
+- RepoQL operation: `effective-repoql`, `monitoring-repoql`, `troubleshooting-repoql`
+- Evidence and design: `research`, `findings`, `north-star`, `flow`, `system-design`, `plan`, `odad`
+- Authoring: `effective-markdown`, `mermaid-diagrams`, `skill-builder`
+
+Codex loads a skill when its description matches the task. You can also name one directly.
+
+### Agents
+
+- `dora-the-codebase-explorer` maps unfamiliar codebases with RepoQL.
+- `researcher` gathers evidence for one research direction and returns sourced findings without advocating a conclusion.
+
+The `research` skill can ask Codex to delegate independent directions to researcher subagents when the user requests parallel research.
+
+### Hooks
+
+- `SessionStart` bootstraps `rql`, reports imported repositories, and injects `.repoql/concepts/readme.md` (or `README.md`) when present, including after context compaction.
+- `PreToolUse` loads concepts relevant to files touched by `apply_patch` immediately before a change.
+
+Both hooks fail open: RepoQL being unavailable never blocks a Codex task or edit.
+
+## Use it
+
+Ask Codex naturally:
+
+- “Give me a one-screen orientation to this codebase.”
+- “Find everything that handles authentication.”
+- “Show me the call graph around this function.”
+- “Import the upstream SDK and compare its implementation.”
+- “Wait until semantic search is ready.”
+
+The `effective-repoql` skill teaches Codex to explore broadly, resolve the repository's real vocabulary, and read only the slices needed for the answer.
+
+## Platform-specific difference
+
+The Claude Code package includes a status-line builder. Codex does not expose a custom status-line API, so that skill is intentionally not shipped here. All portable RepoQL capabilities are included, and the lifecycle hooks use Codex's native hook events and structured context format.
+
+## License
+
+MIT

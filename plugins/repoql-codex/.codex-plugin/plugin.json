@@ -1,12 +1,12 @@
 {
   "name": "repoql-codex",
-  "version": "1.0.1",
-  "description": "Queryable code intelligence — explore codebase structure without reading files.",
+  "version": "1.1.0+codex.20260819100647",
+  "description": "Queryable code intelligence \u2014 explore codebase structure without reading files.",
   "author": {
-    "name": "Stuart Wilson",
-    "url": "https://github.com/stueeey"
+    "name": "Clanker Tools",
+    "url": "https://repoql.com"
   },
-  "homepage": "https://github.com/RepoQL/RepoQL",
+  "homepage": "https://repoql.com",
   "repository": "https://github.com/RepoQL/RepoQL",
   "license": "MIT",
   "keywords": [
@@ -22,14 +22,14 @@
   "interface": {
     "displayName": "RepoQL",
     "shortDescription": "Pre-built structural index of the codebase",
-    "longDescription": "RepoQL gives agents a pre-built structural index of the entire codebase — every file, symbol, and relationship parsed, connected, and summarized. Explore 1000 files in 1500 tokens, query relationships with SQL, and read exactly the slice you need via URI addressing. Requires the `rql` CLI (https://downloads.repoql.ai).",
-    "developerName": "Stuart Wilson",
+    "longDescription": "RepoQL gives agents a pre-built structural index of the entire codebase \u2014 every file, symbol, and relationship parsed, connected, and summarized. Explore 1000 files in 1500 tokens, query relationships with SQL, and read exactly the slice you need via URI addressing. Requires the `rql` CLI (https://downloads.repoql.ai).",
+    "developerName": "Clanker Tools",
     "category": "Coding",
     "capabilities": [
       "Interactive",
       "Read"
     ],
-    "websiteURL": "https://github.com/RepoQL/RepoQL",
+    "websiteURL": "https://repoql.com",
     "defaultPrompt": [
       "Give me a one-screen orientation to this codebase",
       "Find everything that handles authentication",
