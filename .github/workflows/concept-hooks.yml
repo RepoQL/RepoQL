@@ -1,0 +1,28 @@
+name: concept-hooks
+
+on:
+  pull_request:
+    paths:
+      - "plugins/repoql/scripts/concepts-write-hook.sh"
+      - "plugins/repoql-codex/scripts/concepts-write-hook.sh"
+      - "tests/test_concept_write_hooks.py"
+      - ".github/workflows/concept-hooks.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/repoql/scripts/concepts-write-hook.sh"
+      - "plugins/repoql-codex/scripts/concepts-write-hook.sh"
+      - "tests/test_concept_write_hooks.py"
+      - ".github/workflows/concept-hooks.yml"
+
+jobs:
+  hooks:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: command -v jq
+      - run: python3 -m unittest discover -s tests -p 'test_concept_write_hooks.py'
