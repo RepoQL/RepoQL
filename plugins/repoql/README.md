@@ -56,6 +56,9 @@ Auto-activating: **effective-repoql**, **effective-markdown**, **mermaid-diagram
 
 - **SessionStart** — bootstraps the `rql` binary if it's missing (see Installation), then injects a deliberately small orientation: the mounted `github://` repos (directly usable) and a pointer to the `concept://` invariants. Repo structure and docs are large and re-derivable, so the agent pulls them on demand (`read` / `explore`) rather than paying for them every session.
 - **PreToolUse (Write/Edit)** — surfaces the `concept://` invariants relevant to the file being edited, once per session, as extra context just before the write.
+- **PostToolUse (reads)** — defines known terms and aliases from returned text after native `Read`/`read_file` and RepoQL MCP `read` calls. Each definition appears once per session in the serving host; a host restart resets that memory. Scope comes from the read target.
+
+Vocabulary hints require a host and CLI with `rql vocabulary hints` support. Each read can add up to five complete definitions within 2,000 characters. The hook considers the first 65,536 Unicode characters of text, skips errors and image-only results, and does not parse shell reads such as `cat` or `sed`. An older CLI reports a diagnostic and the read continues.
 
 ## How to use it
 

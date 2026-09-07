@@ -1,18 +1,22 @@
-name: concept-hooks
+name: context-hooks
 
 on:
   pull_request:
     paths:
       - "plugins/repoql/scripts/concepts-write-hook.sh"
       - "plugins/repoql-codex/scripts/concepts-write-hook.sh"
-      - "tests/test_concept_write_hooks.py"
+      - "tests/test_*_hooks.py"
+      - "plugins/*/scripts/vocabulary-read-hook.sh"
+      - "plugins/*/hooks/hooks.json"
       - ".github/workflows/concept-hooks.yml"
   push:
     branches: [main]
     paths:
       - "plugins/repoql/scripts/concepts-write-hook.sh"
       - "plugins/repoql-codex/scripts/concepts-write-hook.sh"
-      - "tests/test_concept_write_hooks.py"
+      - "tests/test_*_hooks.py"
+      - "plugins/*/scripts/vocabulary-read-hook.sh"
+      - "plugins/*/hooks/hooks.json"
       - ".github/workflows/concept-hooks.yml"
 
 jobs:
@@ -25,4 +29,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: command -v jq
-      - run: python3 -m unittest discover -s tests -p 'test_concept_write_hooks.py'
+      - run: python3 -m unittest discover -s tests -p 'test_*_hooks.py'

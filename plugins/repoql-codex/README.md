@@ -62,8 +62,11 @@ The `research` skill can ask Codex to delegate independent directions to researc
 
 - `SessionStart` bootstraps `rql`, reports imported repositories, and injects `.repoql/concepts/readme.md` (or `README.md`) when present, including after context compaction.
 - `PreToolUse` loads concepts relevant to files touched by `apply_patch` immediately before a change.
+- **PostToolUse (reads)** — defines known terms and aliases from returned text after native `Read`/`read_file` and RepoQL MCP `read` calls. Each definition appears once per session in the serving host; a host restart resets that memory. Scope comes from the read target.
 
-Both hooks fail open: RepoQL being unavailable never blocks a Codex task or edit.
+All hooks fail open: RepoQL being unavailable never blocks a task, read, or edit.
+
+Vocabulary hints require a host and CLI with `rql vocabulary hints` support. Each read can add up to five complete definitions within 2,000 characters. The hook considers the first 65,536 Unicode characters of text, skips errors and image-only results, and does not parse shell reads such as `cat` or `sed`. An older CLI reports a diagnostic and the read continues.
 
 ## Use it
 

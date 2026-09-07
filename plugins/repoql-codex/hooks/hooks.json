@@ -1,5 +1,5 @@
 {
-  "description": "Load relevant concepts before writes and inject the repository concepts index when a session starts.",
+  "description": "Load concepts before writes, define known vocabulary after reads, and inject the concepts index at session start.",
   "hooks": {
     "PreToolUse": [
       {
@@ -26,6 +26,20 @@
             "timeout": 240,
             "additionalContextLimit": 12000,
             "statusMessage": "Loading the RepoQL concepts index"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Read|read_file|mcp__.*[Rr][Ee][Pp][Oo][Qq][Ll].*__read)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${PLUGIN_ROOT}/scripts/vocabulary-read-hook.sh",
+            "timeout": 5,
+            "additionalContextLimit": 2500,
+            "statusMessage": "Loading repository vocabulary"
           }
         ]
       }

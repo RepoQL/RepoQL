@@ -23,6 +23,18 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Read|read_file|mcp__.*[Rr][Ee][Pp][Oo][Qq][Ll].*__read)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/vocabulary-read-hook.sh",
+            "timeout": 5
+          }
+        ]
+      }
     ]
   }
 }
