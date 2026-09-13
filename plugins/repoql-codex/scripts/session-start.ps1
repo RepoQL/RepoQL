@@ -66,6 +66,13 @@ The RepoQL plugin is installed, but automatic rql installation failed (log: $(Jo
             $ctx += "(not checked — the RepoQL host was not running)`n"
         }
     }
+    $uplinkContext = & $rql.Source uplinks 2>$null
+    $ctx += "`n## Accessible Uplinks`n"
+    if ($LASTEXITCODE -eq 0) {
+        $ctx += "$($uplinkContext -join "`n")`n"
+    } else {
+        $ctx += "(not checked — run rql uplinks to discover account access)`n"
+    }
     $ctx += "`n## Concepts`nRepository invariants are addressable at concept:// — browse them with read(`"concept:///**`").`n"
 }
 

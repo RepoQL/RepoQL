@@ -71,6 +71,12 @@ else
             ctx+="(not checked — the RepoQL host was not running)"$'\n'
         fi
     fi
+    uplink_context=""
+    if uplink_context=$(rql uplinks </dev/null 2>/dev/null); then
+        ctx+=$'\n'"## Accessible Uplinks"$'\n'"$uplink_context"$'\n'
+    else
+        ctx+=$'\n'"## Accessible Uplinks"$'\n'"(not checked — run rql uplinks to discover account access)"$'\n'
+    fi
     ctx+=$'\n'"## Concepts"$'\n'"Repository invariants are addressable at concept:// — browse them with read(\"concept:///**\")."$'\n'
 fi
 
