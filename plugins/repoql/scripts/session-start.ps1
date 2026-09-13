@@ -18,6 +18,12 @@ if ($LASTEXITCODE -eq 0 -and $repoOutput) { Write-Output $repoOutput }
 else { Write-Output "(no index — run rql serve)" }
 Write-Output ""
 
+Write-Output "## Accessible Uplinks"
+$uplinkContext = & rql uplinks 2>$null
+if ($LASTEXITCODE -eq 0) { Write-Output $uplinkContext }
+else { Write-Output "(not checked — run rql uplinks to discover account access)" }
+Write-Output ""
+
 Write-Output "## Documentation"
 $docsOutput = & rql read "help://** => tree: headlines" --token-budget 5000 2>$null
 if ($LASTEXITCODE -eq 0 -and $docsOutput) { Write-Output $docsOutput }
