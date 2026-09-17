@@ -75,7 +75,7 @@ read("file:///src/Auth.cs#symbol=ValidateToken => content", 800)
 
 ### Query a shared uplink
 
-Ask “Use our team uplink to find the service that owns authentication” or “Help set up an uplink on AWS.” The `using-uplinks` skill discovers accessible names, keeps remote reads scoped to the chosen host, and retrieves the shipped deployment guidance. It explains what shared indexes enable and how snapshot preparation keeps the active index on fast storage.
+Ask “Use our team uplink to find the service that owns authentication” or “Help set up an uplink on AWS.” The `using-uplinks` skill loads its full guidance from the installed `rql` version. That guidance covers discovering shared indexes, keeping remote reads on the chosen host, and setting up an uplink.
 
 ### SQL for computation
 

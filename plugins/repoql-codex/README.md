@@ -86,7 +86,7 @@ Ask Codex naturally:
 
 The `effective-repoql` skill teaches Codex to explore broadly, resolve the repository's real vocabulary, and read only the slices needed for the answer.
 
-The `using-uplinks` skill teaches Codex to discover shared indexes, keep remote queries on the intended host, and retrieve the embedded deployment and snapshot guidance before preparing infrastructure.
+The `using-uplinks` skill loads its full guidance from the installed `rql` version. That guidance covers discovering shared indexes, keeping remote queries on the intended host, and preparing uplink infrastructure.
 
 ## Platform-specific difference
 
