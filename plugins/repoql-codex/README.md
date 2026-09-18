@@ -49,7 +49,7 @@ RepoQL addresses the workspace with `file:///`, imported repositories with `gith
 
 ### Skills
 
-- RepoQL operation: `effective-repoql`, `monitoring-repoql`, `troubleshooting-repoql`
+- RepoQL operation: `effective-repoql`, `monitoring-repoql`, `troubleshooting-repoql`, `using-uplinks`
 - Evidence and design: `research`, `findings`, `north-star`, `flow`, `system-design`, `plan`, `odad`
 - Authoring: `effective-markdown`, `mermaid-diagrams`, `skill-builder`
 
@@ -64,7 +64,7 @@ The `research` skill can ask Codex to delegate independent directions to researc
 
 ### Hooks
 
-- `SessionStart` bootstraps `rql`, reports imported repositories, and injects `.repoql/concepts/readme.md` (or `README.md`) when present, including after context compaction.
+- `SessionStart` bootstraps `rql`, reports imported repositories and accessible uplinks, and injects `.repoql/concepts/readme.md` (or `README.md`) when present, including after context compaction.
 - `PreToolUse` loads concepts relevant to files touched by `apply_patch` immediately before a change.
 - **PostToolUse (reads)** — defines known terms and aliases from returned text after native `Read`/`read_file` and RepoQL MCP `read` calls. Each definition appears once per session in the serving host; a host restart resets that memory. Scope comes from the read target.
 
@@ -81,8 +81,12 @@ Ask Codex naturally:
 - “Show me the call graph around this function.”
 - “Import the upstream SDK and compare its implementation.”
 - “Wait until semantic search is ready.”
+- “Use our team uplink to find the service that owns authentication.”
+- “Help set up an uplink on AWS with a local working index.”
 
 The `effective-repoql` skill teaches Codex to explore broadly, resolve the repository's real vocabulary, and read only the slices needed for the answer.
+
+The `using-uplinks` skill loads its full guidance from the installed `rql` version. That guidance covers discovering shared indexes, keeping remote queries on the intended host, and preparing uplink infrastructure.
 
 ## Platform-specific difference
 

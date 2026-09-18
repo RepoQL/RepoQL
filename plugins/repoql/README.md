@@ -46,7 +46,7 @@ There is no separate index step — the host indexes a repository automatically 
 
 ### Skills
 
-Auto-activating: **effective-repoql**, **effective-markdown**, **mermaid-diagrams**, **skill-builder**, **statusline-builder**, **monitoring-repoql**, and **troubleshooting-repoql**.
+Auto-activating: **effective-repoql**, **effective-markdown**, **mermaid-diagrams**, **skill-builder**, **statusline-builder**, **monitoring-repoql**, **using-uplinks**, and **troubleshooting-repoql**.
 
 ### Agent
 
@@ -54,7 +54,7 @@ Auto-activating: **effective-repoql**, **effective-markdown**, **mermaid-diagram
 
 ### Hooks
 
-- **SessionStart** — bootstraps the `rql` binary if it's missing (see Installation), then injects a deliberately small orientation: the mounted `github://` repos (directly usable) and a pointer to the `concept://` invariants. Repo structure and docs are large and re-derivable, so the agent pulls them on demand (`read` / `explore`) rather than paying for them every session.
+- **SessionStart** — bootstraps the `rql` binary if it's missing (see Installation), then injects a deliberately small orientation: the mounted `github://` repos (directly usable), accessible uplink names, and a pointer to the `concept://` invariants. Repo structure and docs are large and re-derivable, so the agent pulls them on demand (`read` / `explore`) rather than paying for them every session.
 - **PreToolUse (Write/Edit)** — surfaces the `concept://` invariants relevant to the file being edited, once per session, as extra context just before the write.
 - **PostToolUse (reads)** — defines known terms and aliases from returned text after native `Read`/`read_file` and RepoQL MCP `read` calls. Each definition appears once per session in the serving host; a host restart resets that memory. Scope comes from the read target.
 
@@ -72,6 +72,10 @@ read("file:///src/**/*Auth*.cs", 5000)
 explore(uriGlob="file:///src/**", keywords="authentication", question="where is the JWT signature verified?")
 read("file:///src/Auth.cs#symbol=ValidateToken => content", 800)
 ```
+
+### Query a shared uplink
+
+Ask “Use our team uplink to find the service that owns authentication” or “Help set up an uplink on AWS.” The `using-uplinks` skill loads its full guidance from the installed `rql` version. That guidance covers discovering shared indexes, keeping remote reads on the chosen host, and setting up an uplink.
 
 ### SQL for computation
 
