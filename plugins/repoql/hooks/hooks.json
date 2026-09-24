@@ -34,6 +34,26 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "^(Write|Edit|MultiEdit|NotebookEdit)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/worktree-track-hook.sh",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__(.*[Rr][Ee][Pp][Oo][Qq][Ll].*|rql)__.*$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/worktree-check-hook.sh",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
