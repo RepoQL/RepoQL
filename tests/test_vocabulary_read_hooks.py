@@ -82,6 +82,15 @@ if os.environ['HOOK_MODE'] != 'empty':
             self.assertEqual(self.calls()[-1]['content'], 'file watcher')
             self.assertEqual(self.calls()[-1]['args'][2], str(self.workspace / 'src/A.cs'))
 
+    def test_native_paths_are_escaped_but_mcp_globs_are_not(self):
+        for harness in HARNESSES:
+            with self.subTest(harness=harness):
+                self.run_hook(harness, tool_name='read_file', tool_input={'path': 'app/[slug]/page;1.tsx'}, tool_response='x')
+                self.assertEqual(self.calls()[-1]['args'][2], str(self.workspace / 'app/%5Bslug]/page%3B1.tsx'))
+                self.run_hook(harness, tool_name='mcp__repoql__read', tool_input={'uriGlob': 'file:///src/{a,b}/[A-Z]*.cs'},
+                              tool_response={'content': [{'type': 'text', 'text': 'x'}]})
+                self.assertEqual(self.calls()[-1]['args'][2], 'file:///src/{a,b}/[A-Z]*.cs')
+
     def test_empty_errors_images_metadata_and_unrelated_tools_do_not_call_cli(self):
         for harness in HARNESSES:
             for overrides in [
