@@ -83,7 +83,7 @@ The RepoQL plugin is installed, but automatic rql installation failed (log: $(Jo
     } else {
         $ctx += "(not checked — run rql uplinks to discover account access)`n"
     }
-    $ctx += "`n## Concepts`nRepository invariants are addressable at concept://, including the concepts imported sources carry — browse them with read(`"concept:///**`").`n"
+    $ctx += "`n## Concepts`nconcept:///** holds the concepts of this repository and its imports.`n"
 }
 
 $conceptsRelative = $null

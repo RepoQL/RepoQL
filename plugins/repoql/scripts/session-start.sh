@@ -94,7 +94,7 @@ else
     else
         ctx+=$'\n'"## Accessible Uplinks"$'\n'"(not checked — run rql uplinks to discover account access)"$'\n'
     fi
-    ctx+=$'\n'"## Concepts"$'\n'"Repository invariants, if any, are addressable at concept://, including the concepts imported sources carry — browse them with read(\"concept:///**\")."$'\n'
+    ctx+=$'\n'"## Concepts"$'\n'"concept:///** holds the concepts of this repository and its imports."$'\n'
 fi
 
 concepts_readme=""

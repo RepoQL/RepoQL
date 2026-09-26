@@ -50,7 +50,7 @@ else { Write-Output "(not checked — run rql uplinks to discover account access
 Write-Output ""
 
 Write-Output "## Concepts"
-Write-Output "Repository invariants, if any, are addressable at concept://, including the concepts imported sources carry — browse them with read(`"concept:///**`")."
+Write-Output "concept:///** holds the concepts of this repository and its imports."
 Write-Output ""
 
 Write-Output "## Documentation"

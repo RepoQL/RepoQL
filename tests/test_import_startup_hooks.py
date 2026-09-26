@@ -10,7 +10,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 INVITATION = 'Use the import tool whenever you like to add more.'
 LOCAL_IMPORT = 'local:///srv/vendor/lib (325 concepts, 15 vocab words)'
-CONCEPTS = 'addressable at concept://, including the concepts imported sources carry'
+CONCEPTS = 'concept:///** holds the concepts of this repository and its imports.'
 # The fake answers the listing query, which must count memory, by mode; a legacy host rejects it and answers
 # only the GitHub fallback.
 FAKE_RQL = f'''#!/bin/sh
