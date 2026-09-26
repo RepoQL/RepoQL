@@ -1,6 +1,6 @@
-import { existsSync } from "fs";
 import { homedir } from "os";
 import { resolve } from "path";
+import { findGitRoot, findMarkerRoot } from "./runtime/paths.js";
 
 export interface RepoQlPluginConfig {
   rqlPath: string;
@@ -9,8 +9,6 @@ export interface RepoQlPluginConfig {
   prewarm: boolean;
   startupTimeoutMs: number;
   requestTimeoutMs: number;
-  defaultTokenBudget: number;
-  queryMaxRows: number;
 }
 
 export function resolvePluginConfig(raw: Record<string, unknown>): RepoQlPluginConfig {
@@ -21,34 +19,21 @@ export function resolvePluginConfig(raw: Record<string, unknown>): RepoQlPluginC
     prewarm: readBoolean(raw.prewarm, false),
     startupTimeoutMs: readNumber(raw.startupTimeoutMs, 120_000),
     requestTimeoutMs: readNumber(raw.requestTimeoutMs, 120_000),
-    defaultTokenBudget: readNumber(raw.defaultTokenBudget, 1_500),
-    queryMaxRows: readNumber(raw.queryMaxRows, 0),
   };
 }
 
+/**
+ * The workspace a tool call targets. Mirrors rql's WorkspaceResolver: the
+ * nearest enclosing git repository wins, then the nearest .repoql marker; a
+ * directory with neither is used as-is and the host decides whether to index it.
+ */
 export function resolveRepoRoot(configuredRoot: string | undefined, workspaceDir: string): string {
   if (configuredRoot) {
     return resolve(expandHome(configuredRoot));
   }
 
   const workspace = resolve(expandHome(workspaceDir));
-  return findRepoMarker(workspace) ?? workspace;
-}
-
-function findRepoMarker(start: string): string | undefined {
-  let current = resolve(start);
-
-  while (true) {
-    if (existsSync(resolve(current, ".git")) || existsSync(resolve(current, ".repoql"))) {
-      return current;
-    }
-
-    const parent = resolve(current, "..");
-    if (parent === current) {
-      return undefined;
-    }
-    current = parent;
-  }
+  return findGitRoot(workspace) ?? findMarkerRoot(workspace) ?? workspace;
 }
 
 function readString(value: unknown, fallback: string): string {

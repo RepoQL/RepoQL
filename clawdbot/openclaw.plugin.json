@@ -2,7 +2,7 @@
   "id": "repoql",
   "name": "RepoQL",
   "description": "Queryable repository intelligence powered by the local rql host.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -17,7 +17,7 @@
       },
       "autoStart": {
         "type": "boolean",
-        "description": "Start rql serve --implicit-start when the host socket is unavailable.",
+        "description": "Launch `rql serve --implicit-start` for the workspace when no host is running.",
         "default": true
       },
       "prewarm": {
@@ -37,12 +37,12 @@
       },
       "defaultTokenBudget": {
         "type": "number",
-        "description": "Default token budget for tools that support token-budgeted rendering.",
+        "description": "Deprecated and ignored: each RepoQL tool now uses the host's own defaults. Kept so existing configs still validate.",
         "default": 1500
       },
       "queryMaxRows": {
         "type": "number",
-        "description": "Maximum rows returned by repoql_query. 0 means no explicit cap.",
+        "description": "Deprecated and ignored: each RepoQL tool now uses the host's own defaults. Kept so existing configs still validate.",
         "default": 0
       }
     }
@@ -70,33 +70,25 @@
     "requestTimeoutMs": {
       "label": "Request timeout (ms)",
       "advanced": true
-    },
-    "defaultTokenBudget": {
-      "label": "Default token budget"
-    },
-    "queryMaxRows": {
-      "label": "Query max rows",
-      "advanced": true
     }
   },
   "contracts": {
     "tools": [
       "repoql_status",
       "repoql_query",
-      "repoql_explore",
       "repoql_read",
       "repoql_explain",
-      "repoql_keywords",
       "repoql_execute",
+      "repoql_explore",
+      "repoql_discover_vocabulary",
       "repoql_capture_concept",
-      "repoql_import",
+      "repoql_capture_vocabulary",
       "repoql_command",
+      "repoql_import",
       "repoql_watch"
     ]
   },
   "skills": [
-    "skills/repoql",
-    "skills/repoql-sql",
-    "skills/repoql-search"
+    "skills"
   ]
 }

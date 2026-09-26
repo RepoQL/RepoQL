@@ -1,21 +1,22 @@
 {
   "name": "@repoql/repoql",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "OpenClaw plugin for RepoQL - queryable repository intelligence powered by rql",
   "main": "./dist/index.js",
   "type": "module",
   "files": [
     "dist",
-    "src/proto",
-    "src/descriptions",
     "skills",
     "openclaw.plugin.json",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && mkdir -p dist/src/proto dist/src/descriptions && cp src/proto/*.proto dist/src/proto/ && cp src/descriptions/*.md dist/src/descriptions/",
+    "build": "rm -rf dist && tsc -p tsconfig.json && cp -R src/proto dist/src/proto && cp src/catalog.json dist/src/catalog.json",
     "prepack": "npm run build",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "sync": "node scripts/sync.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "sync:skills": "node scripts/sync-skills.mjs"
   },
   "keywords": [
     "openclaw",
@@ -28,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/stueeey/RepoQL.Public.git",
+    "url": "https://github.com/RepoQL/RepoQL.git",
     "directory": "clawdbot"
   },
   "openclaw": {
@@ -57,7 +58,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "openclaw": "^2026.6.8",
+    "openclaw": "^2026.9.6",
     "typescript": "^5.0.0"
   },
   "engines": {

@@ -1,0 +1,1456 @@
+// ---------------------------------------------------------------------------
+// repoql.tools.v1 — the tool ring.
+//
+// AUDIENCE
+//   Everyone who asks RepoQL questions about a repository: agent harnesses,
+//   programs in any gRPC language, IDE extensions, the rql CLI, the MCP
+//   bridge. This is the surface an SDK wraps. If you are building a client,
+//   start here; connection and lifecycle live in repoql.host.v1.
+//
+// STABILITY
+//   Long-term supported. Evolution is strictly additive: new fields and new
+//   RPCs only. Removed fields are `reserved`, never reused. A change that
+//   alters the meaning of an existing field requires a new package version.
+//
+// THE URI GRAMMAR IS THE REAL API
+//   Almost every request here addresses the graph with a URI:
+//     schemes    file:/// (the workspace) · github://owner/repo (imports)
+//                help:/// (embedded docs) · concept:/// (repo memory)
+//     globs      *  **  ?  {a,b}  [a-z] · combine with ;  · exclude with !
+//     fragments  #symbol=Name · #symbol=Type.* · #line=42,60
+//   The grammar is documented at help:///tools/uri-patterns.md inside every
+//   running host — readable through this very API (Read). Client-side
+//   modifier syntax ("=> structure", "=> grep: x") never crosses the wire;
+//   each modifier is a typed RPC below, so programs get typed responses
+//   instead of a string DSL.
+//
+// FOUR CONTRACTS EVERY RESPONSE HONOURS
+//   1. DUAL REPRESENTATION. Every response carries structured fields (for
+//      programs) and a pre-rendered text form `rendered` (for terminals and
+//      LLM contexts). Ask for what you need with `response_mask`; the
+//      server skips the work of producing what you exclude.
+//   2. BUDGET. Where a request carries `token_budget`, it is a cap, not a
+//      target. 0 means server default. The server sizes `rendered` to result
+//      quality under the cap — strong results get rich representations,
+//      weak results get headlines — and reports actual rendering spend in
+//      ResponseFooter.tokens_used. Structured fields are typed data, not
+//      token-fitted text. Fixed-size responses omit token_budget.
+//   3. TRUST. Every response ends with a ResponseFooter stating how
+//      complete the index was when it answered. Surface it: an agent that
+//      sees pending_files > 0 knows to re-ask later; semantic_ready=false
+//      explains a weak semantic result.
+//   4. FIELD MASK. `response_mask` paths are the top-level snake_case
+//      response field names ("rows", "rendered", "footer"). An empty or
+//      absent mask means everything. Unknown paths are INVALID_ARGUMENT —
+//      a silently ignored typo would masquerade as an empty result.
+//
+// NUMBERING CONVENTION
+//   In budget-shaped requests: token_budget = 14. Fixed-size requests
+//   reserve 14 so it cannot acquire a different meaning. In every request:
+//   response_mask = 15.
+//   In every response: rendered = 14, footer = 15.
+//   Structured fields use 1-13. The convention keeps hot fields in the
+//   single-byte tag range and lets a reader orient in any message.
+//
+// CALL METADATA
+//   Attribution rides gRPC metadata on every call, all optional:
+//   `rql-agent` (the calling agent as a product token, e.g.
+//   "claude-code/2.1") and `rql-session` (opaque, stable id of the logical
+//   agent session — it joins host-side accounting into "who did what" and
+//   keys SurfaceConcepts exposure suppression). Shared fronts add
+//   `rql-member`, `rql-org`, `rql-door`. The registry with full semantics
+//   lives in repoql.host.v1 and the design document beside this contract.
+//
+// ERRORS
+//   The RPC fails (a gRPC status) only when RepoQL could not do the work:
+//     INVALID_ARGUMENT    request shape is wrong (empty sql, bad glob,
+//                         unknown mask path); details carry
+//                         google.rpc.BadRequest field violations
+//     FAILED_PRECONDITION index not yet queryable for this call
+//     PERMISSION_DENIED   the door this call arrived through does not allow
+//                         it (see repoql-as-a-service; read-only doors
+//                         refuse writes such as CaptureConcept and Import)
+//     NOT_FOUND           a non-glob URI addressed something that does not
+//                         exist (a glob matching nothing is a successful
+//                         empty result, not an error)
+//     INTERNAL            execution failed; for Query the detail carries
+//                         DuckDB's full diagnostic including position
+//                         markers and suggestions — pass it through
+//                         verbatim, it is written for the caller
+//     UNAVAILABLE / CANCELLED  transport-level, as standard
+//   Error details use google.rpc.Status payloads (ErrorInfo with domain
+//   "repoql.ai", Help links pointing at help:/// URIs). Every error must be
+//   a signpost back to the path — if a client cannot act on it, that is a
+//   server bug.
+//   When the WORK ITSELF produces a failure-shaped result — a sandbox
+//   script that threw, a bridged tool that reported isError — that report
+//   IS the result and arrives in-band (ExecuteResult.error_*,
+//   ToolResult.is_error). The RPC succeeded: it ran your code and is
+//   handing you what happened.
+//
+// LONG-RUNNING CALLS STREAM
+//   Explain, Execute, Import and CallTool return event streams: zero or
+//   more Progress events, then exactly one result event, then the stream
+//   closes. Progress exists because slow silence is indistinguishable from
+//   a hang. Everything else is unary — index reads are fast.
+// ---------------------------------------------------------------------------
+
+syntax = "proto3";
+
+package repoql.tools.v1;
+
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+option csharp_namespace = "RepoQL.Tools.V1";
+
+// ---------------------------------------------------------------------------
+// Services
+// ---------------------------------------------------------------------------
+
+// The typed tool surface. One flat service, mirroring the flat tool list an
+// agent sees — search, retrieve, analyze, remember, synthesize, compute,
+// and shape the workspace.
+service ToolService {
+  // --- Search: what exists, ranked by meaning -----------------------------
+
+  // Hybrid lexical+semantic search over everything indexed. The first
+  // explore teaches the caller the repository's vocabulary; results are
+  // reranked against `question` when present.
+  rpc Explore(ExploreRequest) returns (ExploreResponse);
+
+  // Translate the caller's rough vocabulary into the repository's real
+  // names, with evidence. The recovery move when explore or grep comes
+  // back weak — weak matches usually mean wrong words, not missing code.
+  rpc DiscoverVocabulary(DiscoverVocabularyRequest) returns (DiscoverVocabularyResponse);
+
+  // Semantic search scoped to a URI glob. The typed form of "=> find:".
+  rpc Find(FindRequest) returns (FindResponse);
+
+  // Rank a scope by similarity to a seed URI using stored embeddings. The
+  // typed form of "=> similar:".
+  rpc Similar(SimilarRequest) returns (SimilarResponse);
+
+  // --- Retrieve: exactly the slice you need -------------------------------
+
+  // Retrieve content by URI — files, globs, symbol and line fragments — at
+  // the richest representation the budget allows, or a forced one.
+  rpc Read(ReadRequest) returns (ReadResponse);
+
+  // Render a directory tree over a scope. Rendered-only by design: the
+  // tree is a view for reading, and programs that want structured listings
+  // should Query the Files view, which answers any shape a SELECT can.
+  rpc Tree(TreeRequest) returns (TreeResponse);
+
+  // Literal or regex line search across a scope. The typed form of
+  // "=> grep:" / "=> regex:".
+  rpc Grep(GrepRequest) returns (GrepResponse);
+
+  // Reference edges from a source scope, optionally filtered by destination.
+  // The typed form of "=> references[: <destination-glob>]".
+  rpc References(ReferencesRequest) returns (ReferencesResponse);
+
+  // --- History: every span carries its git past ---------------------------
+
+  // Working-copy changes (staged, unstaged, untracked) for a scope, with
+  // unified diffs.
+  rpc Changes(ChangesRequest) returns (ChangesResponse);
+
+  // Commit log for the files a URI matches — down to one symbol's span —
+  // optionally reranked by keywords.
+  rpc History(HistoryRequest) returns (HistoryResponse);
+
+  // Line-by-line attribution for a URI, fragments included.
+  rpc Blame(BlameRequest) returns (BlameResponse);
+
+  // --- Analyze: what the graph knows about quality ------------------------
+
+  // Lint and analyzer diagnostics recorded against a scope (SARIF imports,
+  // built-in analyzers).
+  rpc Lint(LintRequest) returns (LintResponse);
+
+  // Test-coverage annotations for a scope.
+  rpc Coverage(CoverageRequest) returns (CoverageResponse);
+
+  // --- Memory: the repository remembers ------------------------------------
+
+  // The governing concepts (invariants, rules, knowledge) relevant to a
+  // scope. The typed form of "=> concepts".
+  rpc Concepts(ConceptsRequest) returns (ConceptsResponse);
+
+  // Concepts relevant to a write about to happen — the pre-edit guardrail
+  // surface. Concepts already surfaced to the calling session (identified
+  // by the `rql-session` metadata key) are suppressed so the guardrail
+  // never becomes noise; without the key, every call sees the full set.
+  rpc SurfaceConcepts(SurfaceConceptsRequest) returns (SurfaceConceptsResponse);
+
+  // Write a concept capsule into the repository's permanent memory.
+  // Validation failures are INVALID_ARGUMENT with BadRequest details; a
+  // fact-check verification outcome is part of the successful result.
+  // Refused with PERMISSION_DENIED through read-only doors.
+  rpc CaptureConcept(CaptureConceptRequest) returns (CaptureConceptResponse);
+
+  // Remember one repository term with borrowed aliases. Redundant aliases are
+  // reported but never refused. Refused with PERMISSION_DENIED through
+  // read-only doors.
+  rpc CaptureVocabulary(CaptureVocabularyRequest) returns (CaptureVocabularyResponse);
+
+  // List the repository's remembered vocabulary senses.
+  rpc ListVocabulary(ListVocabularyRequest) returns (ListVocabularyResponse);
+
+  // Definitions present in delivered read content, suppressed by rql-session.
+  rpc SurfaceVocabulary(SurfaceVocabularyRequest) returns (SurfaceVocabularyResponse);
+
+  // --- Synthesize & compute ------------------------------------------------
+
+  // Delegate understanding: the host reads up to a large budget of source
+  // on the caller's behalf and returns a synthesized answer with
+  // citations. Zero or more Progress events, then one result. Synthesis
+  // takes seconds to minutes.
+  rpc Explain(ExplainRequest) returns (stream ExplainEvent);
+
+  // DuckDB SQL over the whole graph, read-only. Views, functions and
+  // modules are documented at help:///schema/** in the running host.
+  rpc Query(QueryRequest) returns (QueryResponse);
+
+  // Run JavaScript in the sandboxed composition runtime (query + file
+  // system + approved MCP tools). Zero or more Progress events, then one
+  // result. The script's own failure is a result, not an RPC error.
+  rpc Execute(ExecuteRequest) returns (stream ExecuteEvent);
+
+  // --- Workspace shape ------------------------------------------------------
+
+  // Import an external source (github://, git-over-https, s3://, a local
+  // directory, a SARIF report) into the graph. Zero or more Progress
+  // events, then one result. Large imports continue indexing after the
+  // result event — watch readiness or the footer. Refused with
+  // PERMISSION_DENIED through read-only doors.
+  rpc Import(ImportRequest) returns (stream ImportEvent);
+
+  // Remove an import and its indexed data. Local files are never touched.
+  rpc RemoveImport(RemoveImportRequest) returns (RemoveImportResponse);
+
+  // List the sources mounted into the graph.
+  rpc ListImports(ListImportsRequest) returns (ListImportsResponse);
+}
+
+// The dynamic tool surface, for harness builders: enumerate the tools a
+// host offers and invoke them by name with JSON arguments, MCP-shaped.
+// Results are rendered-only by design — this door exists to put RepoQL in
+// front of a text-consuming agent; programs that want structure call the
+// typed RPCs above. The catalog may include tools beyond this contract
+// (management commands, bridged MCP servers), which is exactly why its
+// results cannot be statically typed.
+service ToolCatalog {
+  // Enumerate available tools with their JSON Schemas and annotations.
+  // The definitions are MCP-compatible: a bridge can map them 1:1.
+  rpc DescribeTools(DescribeToolsRequest) returns (DescribeToolsResponse);
+
+  // Invoke a tool by name. Zero or more Progress events, then one
+  // ToolResult. Unknown tool names are INVALID_ARGUMENT; door refusals are
+  // PERMISSION_DENIED; a bridged tool's own error report arrives in-band
+  // as ToolResult.is_error.
+  rpc CallTool(CallToolRequest) returns (stream CallToolEvent);
+}
+
+// ---------------------------------------------------------------------------
+// Shared messages
+// ---------------------------------------------------------------------------
+
+// The trust signal. Appended to every tool response so no result can be
+// mistaken for more complete than the index that produced it.
+message ResponseFooter {
+  // Total files the index knows about.
+  int32 total_files = 1;
+
+  // Files discovered but not fully processed when this answer was
+  // produced. Non-zero means the answer may be incomplete.
+  int32 pending_files = 2;
+
+  // Files recorded as failed. Failures are isolated per file and never
+  // stop the pipeline; they are disclosed here instead.
+  int32 failed_files = 3;
+
+  // Whether semantic ranking was available for this answer.
+  bool semantic_ready = 4;
+
+  // Percentage (0-100) of embeddable content embedded.
+  int32 semantic_percent = 5;
+
+  // Server-side elapsed time for this call.
+  int64 elapsed_ms = 6;
+
+  // Tokens actually spent rendering. For budget-shaped calls, the gap
+  // between this and token_budget is the server's result-quality judgment.
+  int32 tokens_used = 7;
+
+  // The fully rendered status line, composed once by the host. Transports
+  // and clients place it; none re-derive it.
+  string status_line = 8;
+}
+
+// Progress on a long-running call. MCP-aligned so bridges forward it
+// without translation.
+message Progress {
+  // Monotonically non-decreasing progress value.
+  double progress = 1;
+
+  // Total expected, when known. 0 means indeterminate.
+  double total = 2;
+
+  // Human-readable stage description, e.g. "reading 14 files",
+  // "cloning github://dotnet/runtime".
+  string message = 3;
+}
+
+// Content representation levels. AUTO lets the budget decide — the richest
+// level that fits.
+enum Representation {
+  REPRESENTATION_AUTO = 0;
+  REPRESENTATION_HEADLINE = 1;   // one line per file
+  REPRESENTATION_STRUCTURE = 2;  // signatures without bodies
+  REPRESENTATION_CONTENT = 3;    // full text
+}
+
+// One concept capsule reference, shared by the memory surfaces.
+message ConceptMatch {
+  // concept:/// URI of the capsule.
+  string uri = 1;
+
+  // The one-line invariant.
+  string invariant = 2;
+
+  // The capsule's Why block — mechanism and stakes. Empty when the capsule
+  // carries none.
+  string why = 3;
+}
+
+// ---------------------------------------------------------------------------
+// Explore
+// ---------------------------------------------------------------------------
+
+message ExploreRequest {
+  // Vocabulary probe: class names, concepts, short phrases.
+  string keywords = 1;
+
+  // Full-sentence intent. Drives reranking so results are ordered by how
+  // well they answer, not merely match. Omit only when surveying.
+  string question = 2;
+
+  // URI-glob scope. Empty searches everything mounted, which is usually
+  // noisier than intended — "file:///**" scopes to the workspace.
+  string uri_glob = 3;
+
+  // Maximum results. 0 = auto: the server picks by result quality and
+  // budget.
+  int32 breadth = 4;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message ExploreMatch {
+  string uri = 1;
+
+  // One-line summary of the matched artifact.
+  string headline = 2;
+
+  // Relevance in [0,1], comparable only within one response.
+  double score = 3;
+
+  // The representation level the server chose for this match under the
+  // budget.
+  Representation representation = 4;
+
+  // The rendered slice at that representation.
+  string content = 5;
+}
+
+message ExploreResponse {
+  repeated ExploreMatch matches = 1;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Discover vocabulary
+// ---------------------------------------------------------------------------
+
+message DiscoverVocabularyRequest {
+  // The rough handles the caller already has. Required.
+  string keywords = 1;
+
+  // Optional full-sentence intent, used to rerank candidates.
+  string question = 2;
+
+  // URI-glob evidence scope. Empty = current workspace + concept glossary.
+  string uri_glob = 3;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+enum DiscoverVocabularyRowKind {
+  DISCOVER_VOCABULARY_ROW_KIND_UNSPECIFIED = 0;
+
+  // A caller-supplied word that literally names something in the
+  // repository; carries evidence.
+  DISCOVER_VOCABULARY_ROW_KIND_CONFIRMED = 1;
+
+  // A discovered local term the caller did not have; carries confidence
+  // and evidence.
+  DISCOVER_VOCABULARY_ROW_KIND_TERM = 2;
+
+  // A structured note about the run itself (e.g. a channel that returned
+  // nothing), actionable by the caller.
+  DISCOVER_VOCABULARY_ROW_KIND_DIAGNOSTIC = 3;
+}
+
+// One row of the vocabulary discovery result. Which fields are populated depends on
+// row_kind; unset fields are empty/zero.
+//
+// The row model is flat because the tool's output is flat: the service
+// classifies each candidate independently into one of a few fixed bundles
+// and groups them only when rendering. A bundles-contain-terms message
+// would have no producer behind it, so this shape is the frozen one.
+message DiscoverVocabularyRow {
+  DiscoverVocabularyRowKind row_kind = 1;
+
+  // Rank within the response, 1-based, dense.
+  int32 rank = 2;
+
+  // Grouping of terms generated from one interpretation of the input.
+  string bundle_id = 3;
+  string bundle_name = 4;
+
+  // The interpreted intent behind the bundle.
+  string intent = 5;
+
+  // 6 was `query`, the search query behind a bundle: drafted from the row
+  // model, but never populated by any code path. A field no producer fills
+  // promises a caller something it will never receive, so it is not frozen
+  // into a long-term-supported contract. If bundles gain real queries, a
+  // new field is a purely additive change.
+  reserved 6;
+
+  // The term itself and its canonical form.
+  string term = 7;
+  string canonical = 8;
+
+  // What kind of thing the term names (symbol, path, domain noun, ...).
+  string term_kind = 9;
+
+  // Which discovery channel produced it.
+  string channel = 10;
+
+  // Scoring: raw score, confidence (0-1), and utility relative to what the
+  // caller already knew — terms merely echoing the input are discounted.
+  double score = 11;
+  double confidence = 12;
+  double utility = 13;
+
+  // Why this term surfaced, machine-readable diagnostic code when
+  // row_kind = DIAGNOSTIC, evidence URIs as JSON, and a supporting snippet.
+  string reason = 16;
+  string diagnostic_code = 17;
+  string evidence_json = 18;
+  string snippet = 19;
+}
+
+message DiscoverVocabularyResponse {
+  repeated DiscoverVocabularyRow rows = 1;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Find / Similar
+// ---------------------------------------------------------------------------
+
+message FindRequest {
+  // URI-glob scope the search is restricted to.
+  string uri = 1;
+
+  // Free-text query.
+  string keywords = 2;
+
+  // Maximum matches. 0 = server default.
+  int32 k = 3;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message FindMatch {
+  // File URI, with a #line fragment when the match localizes.
+  string uri = 1;
+
+  // Rendered snippet at the matched range.
+  string snippet = 2;
+
+  // Confidence 0-100 from the search pipeline.
+  int32 confidence = 3;
+}
+
+message FindResponse {
+  repeated FindMatch matches = 1;
+
+  // Matches found before k and token-budget fitting, within the server's
+  // search candidate window.
+  int32 total_matches = 2;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message SimilarRequest {
+  // URI-glob scope for candidates.
+  string uri = 1;
+
+  // Seed to compare from. A fragment resolves to its containing file.
+  string seed_uri = 2;
+
+  // Maximum matches. 0 = server default.
+  int32 k = 3;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message SimilarMatch {
+  string uri = 1;
+  string headline = 2;
+
+  // Compact supporting summary or structure slice.
+  string snippet = 3;
+
+  // Cosine similarity from stored embeddings.
+  double similarity = 4;
+}
+
+message SimilarResponse {
+  repeated SimilarMatch matches = 1;
+
+  // Matches above the adaptive similarity threshold before k and
+  // token-budget fitting, within the server's candidate window.
+  int32 total_matches = 2;
+  bool truncated = 3;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Read / Tree / Grep
+// ---------------------------------------------------------------------------
+
+message ReadRequest {
+  // URI with optional fragment: #symbol=NAME (symbol slice, wildcards
+  // allowed) or #line=M,N (1-based inclusive line slice). Globs allowed.
+  // Multiple URIs combine with ';'.
+  string uri = 1;
+
+  // Force a representation, or AUTO to let the budget decide per document.
+  Representation representation = 2;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message ReadDocument {
+  string uri = 1;
+
+  // The content at the chosen representation.
+  string content = 2;
+
+  // The representation actually delivered for this document.
+  Representation representation = 3;
+
+  // Line count of the delivered content.
+  int32 lines = 4;
+
+  // Language identifier for syntax-aware consumers, e.g. "csharp".
+  string language = 5;
+}
+
+message ReadResponse {
+  repeated ReadDocument documents = 1;
+
+  // True when the address resolved to nothing — an unknown file, a glob that
+  // matched no indexed file, a span outside the file. The rendered text is the
+  // no-match diagnostic rather than content, and callers that gate on success
+  // (a shell, a CI step) must be able to tell the two apart without parsing it.
+  bool zero_result = 2;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+enum TreeDetail {
+  // Server picks by budget.
+  TREE_DETAIL_AUTO = 0;
+  TREE_DETAIL_FOLDERS = 1;
+  TREE_DETAIL_FILES = 2;
+  TREE_DETAIL_HEADLINES = 3;
+}
+
+message TreeRequest {
+  // URI-glob scope. Empty renders the whole workspace.
+  string uri = 1;
+
+  TreeDetail detail = 2;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message TreeResponse {
+  // Files covered by the rendered tree.
+  int32 file_count = 1;
+
+  // The detail level actually rendered.
+  TreeDetail detail = 2;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message GrepRequest {
+  // URI-glob scope.
+  string uri = 1;
+
+  // Literal text, or a regex when is_regex is set.
+  string pattern = 2;
+
+  bool is_regex = 3;
+
+  // Hard cap on matches returned. 0 = server default.
+  int32 max_results = 4;
+
+  // Override case handling. Absent preserves the native defaults: literal
+  // grep uses smart-case, while regex is case-sensitive. Present forces
+  // case-sensitive or case-insensitive matching for either mode.
+  optional bool case_sensitive = 5;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message GrepMatch {
+  // Containing file URI (no line fragment — the line is beside it).
+  string uri = 1;
+
+  // 1-based.
+  int32 line_number = 2;
+
+  // The matched line, untrimmed.
+  string line = 3;
+}
+
+message GrepResponse {
+  repeated GrepMatch matches = 1;
+
+  // Matches collected before token-budget fitting, capped by max_results.
+  // When truncated is true, additional matches exist.
+  int32 total_matches = 2;
+  bool truncated = 3;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message ReferencesRequest {
+  // URI-glob source scope.
+  string uri = 1;
+
+  // Optional destination URI glob. Empty selects every outgoing reference.
+  string destination = 2;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message ReferencesResponse {
+  // References are rendered in trust bands; unresolved name-level matches
+  // must remain visibly distinct from resolved addresses.
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Changes / History / Blame
+// ---------------------------------------------------------------------------
+
+enum ChangeGroup {
+  CHANGE_GROUP_UNSPECIFIED = 0;
+  CHANGE_GROUP_STAGED = 1;
+  CHANGE_GROUP_UNSTAGED = 2;
+  CHANGE_GROUP_UNTRACKED = 3;
+}
+
+message ChangeEntry {
+  string uri = 1;
+  ChangeGroup group = 2;
+
+  // Short human label, e.g. "modified", "new file", "conflicted". Open
+  // set — render, don't switch on it; group and the flags below are the
+  // machine-readable signal.
+  string label = 3;
+
+  // Unified diff when available; empty for binary or untracked-without-
+  // content cases.
+  string patch = 4;
+
+  int32 insertions = 5;
+  int32 deletions = 6;
+  bool is_binary = 7;
+  bool is_conflicted = 8;
+}
+
+message ChangesRequest {
+  // URI-glob scope; empty covers the workspace.
+  string uri = 1;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message ChangesResponse {
+  repeated ChangeEntry entries = 1;
+  int32 total_entries = 2;
+  bool truncated = 3;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message HistoryRequest {
+  // File URI; may carry #line=M,N or #symbol=NAME to scope history to a
+  // span (blame-walked, so it follows the span through renames and moves).
+  string uri = 1;
+
+  // Optional — reranks commits by semantic relevance to these terms.
+  string keywords = 2;
+
+  // Hard cap on commits returned. 0 = server default.
+  int32 max_commits = 3;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message HistoryCommit {
+  // Full commit hash.
+  string hash = 1;
+
+  // First line of the commit message.
+  string message = 2;
+
+  // Author display name.
+  string author = 3;
+
+  google.protobuf.Timestamp authored_at = 4;
+
+  // Number of file changes in the commit.
+  int32 files_changed = 5;
+}
+
+message HistoryResponse {
+  repeated HistoryCommit commits = 1;
+  int32 total_commits = 2;
+  bool truncated = 3;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message BlameRequest {
+  // File URI; fragments scope the attribution.
+  string uri = 1;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message BlameLine {
+  string uri = 1;
+
+  // 1-based.
+  int32 line_number = 2;
+
+  // The line's content.
+  string content = 3;
+
+  string commit_hash = 4;
+  string author = 5;
+  string author_email = 6;
+  google.protobuf.Timestamp authored_at = 7;
+
+  // First line of the commit message.
+  string message = 8;
+}
+
+message BlameResponse {
+  repeated BlameLine lines = 1;
+  int32 total_lines = 2;
+  int32 total_commits = 3;
+  bool truncated = 4;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Lint / Coverage
+// ---------------------------------------------------------------------------
+
+enum LintSeverity {
+  LINT_SEVERITY_UNSPECIFIED = 0;
+  LINT_SEVERITY_HINT = 1;
+  LINT_SEVERITY_INFO = 2;
+  LINT_SEVERITY_WARNING = 3;
+  LINT_SEVERITY_ERROR = 4;
+}
+
+message LintRequest {
+  // URI-glob scope.
+  string uri = 1;
+
+  // Filter floor. UNSPECIFIED = server default.
+  LintSeverity min_severity = 2;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message LintDiagnostic {
+  // Resolved URI, possibly with a fragment locating the finding.
+  string uri = 1;
+
+  // 0 when the finding has no line.
+  int32 line = 2;
+
+  LintSeverity severity = 3;
+  string rule_id = 4;
+  string message = 5;
+
+  // Supporting source snippet; may be empty.
+  string snippet = 6;
+}
+
+message LintResponse {
+  repeated LintDiagnostic diagnostics = 1;
+  int32 error_count = 2;
+  int32 warning_count = 3;
+  bool truncated = 4;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+enum CoverageView {
+  COVERAGE_VIEW_SUMMARY = 0;
+  COVERAGE_VIEW_UNCOVERED = 1;
+  COVERAGE_VIEW_CONTENT = 2;
+}
+
+message CoverageRequest {
+  // URI-glob scope.
+  string uri = 1;
+
+  CoverageView view = 2;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message CoverageResponse {
+  // Line counts across the scope.
+  int32 covered = 1;
+  int32 uncovered = 2;
+  int32 unmeasured = 3;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Concepts (memory)
+// ---------------------------------------------------------------------------
+
+message ConceptsRequest {
+  // URI-glob scope the concepts should govern.
+  string uri = 1;
+
+  // Optional keywords or question used to rank the applicable concepts.
+  string intent = 2;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message ConceptsResponse {
+  // Every capsule governing the scope, ranked by intent when supplied; otherwise
+  // narrow capsules first and universal capsules last. This list is not the budget-fitted
+  // rendered subset.
+  repeated ConceptMatch concepts = 1;
+
+  // Total capsules in concepts.
+  int32 total_concepts = 2;
+
+  // Narrow capsules that fit in rendered.
+  int32 narrow_shown = 3;
+
+  // Universal capsules applicable to the scope, including those omitted
+  // from rendered because they are already in the agent's context.
+  int32 universal_applicable = 4;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message SurfaceConceptsRequest {
+  // URI glob of what is about to be written or changed.
+  string target = 1;
+
+  // Bounded result count from 1 through 20. 0 = server default. Session
+  // identity for exposure suppression is the `rql-session` metadata key,
+  // not a field — attribution context never rides in messages.
+  int32 limit = 2;
+
+  // 14 was `token_budget`. SurfaceConcepts is bounded by limit and has no
+  // budget-shaped representation, so accepting a token cap was misleading.
+  reserved 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message SurfaceConceptsResponse {
+  // The resolved target the concepts were matched against.
+  string target_uri = 1;
+
+  repeated ConceptMatch concepts = 2;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+enum ConceptCategory {
+  CONCEPT_CATEGORY_UNSPECIFIED = 0;
+
+  // Timeless ideas; verification optional.
+  CONCEPT_CATEGORY_WISDOM = 1;
+
+  // Invariants and guardrails; verification encouraged.
+  CONCEPT_CATEGORY_RULE = 2;
+
+  // Context that improves decisions; verification required so it stays
+  // true.
+  CONCEPT_CATEGORY_KNOWLEDGE = 3;
+}
+
+message CaptureConceptRequest {
+  // Short CamelCase capsule name; acts as the identifier.
+  string name = 1;
+
+  ConceptCategory category = 2;
+
+  // Optional lowercase shelf under the category.
+  optional string subcategory = 3;
+
+  // One timeless idea in one short sentence.
+  string invariant = 4;
+
+  // Mechanism, stakes, context behind the invariant.
+  optional string why = 5;
+
+  // Comma-separated search tags.
+  repeated string tags = 6;
+
+  // Semicolon-delimited URI globs where the concept applies; drives
+  // contextual surfacing.
+  string relevance = 7;
+
+  // Semicolon-delimited URI globs or web URLs that fact-check the claim.
+  // Anchor to the proof (#symbol=, #line=). Required for KNOWLEDGE.
+  string verification = 8;
+
+  // Days the verification stays trusted. 0 for timeless/unverified.
+  int32 ttl_days = 9;
+
+  // Concrete example that makes the invariant click.
+  string example = 10;
+
+  // Depth bullets: distinctions, trade-offs, NotThis, SeeAlso.
+  repeated string depth = 11;
+
+  // Load into the always-on index every agent sees. Absent = true.
+  optional bool is_universal = 12;
+
+  // 14 was `token_budget`. CaptureConcept returns a fixed-size write
+  // acknowledgement, so there is no budget-shaped output to cap.
+  reserved 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message CaptureVerification {
+  // Whether a fact-check ran at capture time.
+  bool attempted = 1;
+
+  // Whether it passed. A failed check still captures the concept when the
+  // caller insisted — the summary says what disagreed.
+  bool passed = 2;
+
+  string summary = 3;
+}
+
+message CaptureConceptResponse {
+  // concept:/// URI of the written capsule.
+  string uri = 1;
+
+  // Repository-relative path of the capsule file.
+  string path = 2;
+
+  CaptureVerification verification = 3;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message CaptureVocabularyRequest {
+  // The repository's real name.
+  string term = 1;
+
+  // One judgeable sentence explaining the name.
+  string meaning = 2;
+
+  // Outside-world words that should recall the real name.
+  repeated string aliases = 3;
+
+  // Optional semicolon-delimited URI glob spec.
+  string scope = 4;
+
+  // Optional sense discriminator.
+  optional string domain = 5;
+
+  // 14 is reserved because capture is a fixed-size acknowledgement.
+  reserved 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message VocabularyAliasRedundancy {
+  string alias = 1;
+
+  // True when grep_matches found the alias verbatim in the file corpus.
+  bool is_redundant = 2;
+}
+
+message CaptureVocabularyResponse {
+  // Effective vocabulary:/// URI of the written sense.
+  string uri = 1;
+
+  repeated VocabularyAliasRedundancy aliases = 2;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message ListVocabularyRequest {
+  // 14 is reserved because listing is bounded by the small curated store.
+  reserved 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message VocabularyEntry {
+  string uri = 1;
+  string term = 2;
+  string meaning = 3;
+  repeated string aliases = 4;
+  repeated string scope = 5;
+  optional string domain = 6;
+}
+
+message ListVocabularyResponse {
+  repeated VocabularyEntry entries = 1;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Explain
+// ---------------------------------------------------------------------------
+
+message ExplainRequest {
+  // The question, as a full sentence.
+  string question = 1;
+
+  // URI-glob scope. Always scope explain — unscoped synthesis may answer
+  // the wrong question with great confidence.
+  string uri_glob = 2;
+
+  // Optional — skips keyword extraction when the caller already knows the
+  // vocabulary.
+  string keywords = 3;
+
+  // Optional URI-glob scope that confines every source synthesis may read.
+  // Absence preserves the unconfined behavior of existing callers.
+  string allowed_evidence_scope = 4;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message ExplainCitation {
+  string uri = 1;
+
+  // Tokens of this source given to the synthesizer.
+  int32 tokens_used = 2;
+
+  // True when the source failed to load; the answer proceeded without it.
+  bool is_error = 3;
+}
+
+message ExplainResult {
+  // The synthesized answer, markdown.
+  string answer = 1;
+
+  // What was actually read. Verify important claims against these when
+  // stakes are high.
+  repeated ExplainCitation citations = 2;
+
+  // Synthesis cost accounting.
+  int32 input_tokens = 3;
+  int32 output_tokens = 4;
+
+  // How many artifacts matched the scope before budget selection.
+  int32 match_count = 5;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message ExplainEvent {
+  oneof kind {
+    Progress progress = 1;
+    ExplainResult result = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Query
+// ---------------------------------------------------------------------------
+
+message QueryRequest {
+  // DuckDB SQL. Runs in a read-only transaction; no parameterization.
+  string sql = 1;
+
+  // Hard row cap. 0 applies the server default. total_rows always reports
+  // the true count so the caller knows what it isn't seeing.
+  int32 max_rows = 2;
+
+  // >0 serves and stores identical results within this window — for
+  // dashboards and pollers re-issuing the same statement.
+  int32 cache_seconds = 3;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message QueryColumn {
+  string name = 1;
+
+  // DuckDB logical type name ("INTEGER", "VARCHAR", "TIMESTAMP", ...).
+  // This is the deserialization contract for QueryValue: parse the text by
+  // this type.
+  string type = 2;
+}
+
+// One cell. Text is the value's canonical DuckDB text rendering, with two
+// pinned exceptions:
+//   nested types (LIST, STRUCT, MAP) render as compact JSON, not DuckDB's
+//     own bracket syntax — so `[1, 2, 3]` crosses as `[1,2,3]` and a STRUCT
+//     as a JSON object;
+//   BLOB renders as base64, not DuckDB's mixed ASCII-and-\x-escape form,
+//     which no client should have to write a parser for. A BLOB nested
+//     inside a LIST, STRUCT, or MAP is a base64 JSON string by the same
+//     rule.
+// The wrapper makes SQL NULL unambiguous: absent wrapper = NULL,
+// present-and-empty = empty string.
+message QueryValue {
+  google.protobuf.StringValue text = 1;
+}
+
+message QueryRow {
+  repeated QueryValue values = 1;
+}
+
+message QueryResponse {
+  repeated QueryColumn columns = 1;
+  repeated QueryRow rows = 2;
+
+  // True when max_rows cut the result.
+  bool truncated = 3;
+
+  // The true row count, including rows not returned.
+  int32 total_rows = 4;
+
+  // True when the rendered form is an LLM summary of a result too large to
+  // render under budget, rather than the rows themselves.
+  bool summarized = 5;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Execute
+// ---------------------------------------------------------------------------
+
+message ExecuteRequest {
+  // JavaScript source. Runs as a module in the sandboxed WASM runtime.
+  string code = 1;
+
+  // What the script is trying to accomplish — short, standalone. Improves
+  // diagnostics and audit.
+  string intent = 2;
+
+  // Wall-clock cap for the run. 0 = server default.
+  int32 timeout_ms = 3;
+
+  // JSON value exposed to the script as its input.
+  string input_json = 4;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message ExecuteDiagnostic {
+  // "log", "warn", "error" — console channel the script wrote to.
+  string level = 1;
+
+  string message = 2;
+}
+
+// A file the script wrote into the sandbox output area, addressable by URI
+// through Read.
+message ExecuteArtifact {
+  string uri = 1;
+  string media_type = 2;
+  int64 byte_size = 3;
+
+  // Script-supplied label, when given.
+  string label = 4;
+}
+
+// The outcome of running the script. The RPC only fails when the sandbox
+// itself could not run (bad request, host fault); the script's own failure
+// is reported here, with everything it produced before dying.
+message ExecuteResult {
+  bool success = 1;
+
+  // JSON encoding of the script's return value.
+  string json_output = 2;
+
+  // Failure report when success is false. error_suggestion is the signpost
+  // back to the path.
+  //
+  // error_kind is a stable machine-readable class. Today the sandbox emits
+  // exactly five values:
+  //   "syntax"    the script did not parse
+  //   "runtime"   the script threw, or a host capability failed
+  //   "timeout"   the run exceeded its wall-clock cap
+  //   "memory"    the run exceeded its memory cap
+  //   "cancelled" the caller cancelled before the run finished
+  // It stays a string rather than an enum because the set is assembled from
+  // literals spanning the WASM evaluator (C) and its host (C#), where no
+  // compiler can keep a proto enum honest — a kind added on one side would
+  // silently arrive as UNSPECIFIED. Render an unrecognised kind; do not
+  // switch on it exhaustively. Note that the engine's own error name
+  // (TypeError, RangeError, ...) is never passed through here — it appears
+  // in error_message.
+  string error_kind = 3;
+  string error_message = 4;
+  string error_suggestion = 5;
+  string error_stack = 6;
+
+  repeated ExecuteDiagnostic diagnostics = 7;
+  repeated ExecuteArtifact artifacts = 8;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message ExecuteEvent {
+  oneof kind {
+    Progress progress = 1;
+    ExecuteResult result = 2;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Import
+// ---------------------------------------------------------------------------
+
+message ImportRequest {
+  // Source to import: github://owner/repo[@ref], a git URL, s3://bucket/
+  // prefix/, a local directory, or a sarif:/// report path.
+  string uri = 1;
+
+  // Optional analysis tier for this mount. Omitted preserves the tier of an
+  // existing import and defaults a new import to links.
+  optional string analysis = 2;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message ImportResult {
+  // Human-readable outcome.
+  string message = 1;
+
+  // Identifier of the indexing operation the import started, when it
+  // continues beyond this call. Progress is observable on the management
+  // ring's status and signal streams.
+  string operation_id = 2;
+
+  // Files discovered at mount time; indexing may still be running.
+  int32 file_count = 3;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message ImportEvent {
+  oneof kind {
+    Progress progress = 1;
+    ImportResult result = 2;
+  }
+}
+
+message RemoveImportRequest {
+  // The import to remove, as given to Import (or as listed by
+  // ListImports.source_uri).
+  string uri = 1;
+
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message RemoveImportResponse {
+  string message = 1;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+message ListImportsRequest {
+  int32 token_budget = 14;
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+// One mounted source.
+message ImportMount {
+  // The mount's identity key. Scheme-less and NOT resolvable as a URI —
+  // compose the mount's URI space from scheme/authority/path_prefix below,
+  // never by parsing this field.
+  string source_uri = 1;
+
+  // Local materialization path, when the source is cloned to disk.
+  string local_path = 2;
+
+  // The URI-space root this mount owns, decomposed.
+  string scheme = 3;
+  string authority = 4;
+  string path_prefix = 5;
+
+  // Analysis tier: off, links, or full.
+  string analysis = 6;
+}
+
+message ListImportsResponse {
+  repeated ImportMount imports = 1;
+
+  string rendered = 14;
+  ResponseFooter footer = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Tool catalog
+// ---------------------------------------------------------------------------
+
+message DescribeToolsRequest {}
+
+// One tool definition, MCP-compatible.
+message ToolDefinition {
+  // Invocation name, as accepted by CallTool.
+  string name = 1;
+
+  // Display title.
+  string title = 2;
+
+  // Agent-facing description. Verified against live behavior before merge
+  // — treat as authoritative.
+  string description = 3;
+
+  // JSON Schema for the arguments object.
+  string input_schema_json = 4;
+
+  // True when the tool cannot mutate the workspace or graph. Read-only
+  // doors admit exactly the read_only=true subset.
+  bool read_only = 5;
+
+  // MCP tool annotations, JSON.
+  string annotations_json = 6;
+
+  // MCP _meta, JSON.
+  string meta_json = 7;
+}
+
+message DescribeToolsResponse {
+  repeated ToolDefinition tools = 1;
+}
+
+message CallToolRequest {
+  // Tool name from DescribeTools.
+  string tool = 1;
+
+  // JSON object matching the tool's input schema.
+  string arguments_json = 2;
+}
+
+// The rendered outcome of a dynamic tool call. Rendered-only by design —
+// see the ToolCatalog service comment.
+message ToolResult {
+  string rendered = 1;
+
+  // True when the tool itself reported failure (MCP isError semantics).
+  // Transport and policy failures are gRPC statuses, not this flag.
+  bool is_error = 2;
+
+  ResponseFooter footer = 15;
+}
+
+message CallToolEvent {
+  oneof kind {
+    Progress progress = 1;
+    ToolResult result = 2;
+  }
+}
+
+// Text already delivered by a read; this operation never reads the target's content.
+message SurfaceVocabularyRequest {
+  string target = 1;
+  string content = 2;
+  int32 limit = 3; // zero selects five; maximum 20
+  int32 max_chars = 4; // zero selects 2000; maximum 4000
+  google.protobuf.FieldMask response_mask = 15;
+}
+
+message SurfaceVocabularyResponse {
+  repeated VocabularyEntry entries = 1;
+  string rendered = 20;
+  ResponseFooter footer = 30;
+}

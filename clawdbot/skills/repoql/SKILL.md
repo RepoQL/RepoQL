@@ -1,67 +1,47 @@
 ---
 name: repoql
-description: Core guidance for RepoQL - when to use it vs raw file reads, and the explore workflow.
+description: "Orientation for the RepoQL tools (repoql_*): when to reach for them instead of raw file reads, the URI grammar every tool shares, and the explore → read workflow. Use when starting work in a repository, before grepping or opening files to understand code, or when unsure which repoql_ tool fits."
 ---
 
-# RepoQL: When and How
+# RepoQL in OpenClaw
 
-RepoQL is a local knowledge graph for repositories. It indexes code structure, enabling exploration without reading every file.
+RepoQL is a pre-built structural index of the workspace: every file, symbol, and relationship parsed and summarized. You can survey a thousand files in about 1,500 tokens, where grep and file reads cost dozens of calls and tens of thousands of tokens. A bad call costs little and a good one saves a lot, so experiment freely.
 
-## When to Use RepoQL
+Each `repoql_<tool>` is the RepoQL host's own tool, and its description is the full reference. This page is the orientation that ties them together.
 
-**Use RepoQL when:**
-- Exploring unfamiliar codebases (Inventory -> Locate -> Inspect)
-- Finding where something is implemented (location-oriented questions)
-- Understanding code structure without reading every file
-- Searching semantically ("how does auth work?")
-- Aggregating info (count functions, find patterns)
-- Fetching content with token budget awareness (read tool)
+## Reach for RepoQL first when
 
-**Use regular file reads when:**
-- You know exactly what file you need
-- Making edits (RepoQL is read-only)
-- Working with files RepoQL doesn't index
+- you need to know what exists, or where something lives, before opening files;
+- you would otherwise grep for a name you are guessing;
+- the question is about relationships (what calls this, what depends on that) or history (who changed this span, and why);
+- you want only a slice — one method body, a line range, signatures across a whole directory.
 
-## The Explore Workflow
+Use your ordinary file tools to edit. RepoQL reads and answers; it never writes source.
 
-Use `keywords` as the vocabulary probe, and add `question` when you have a specific intent. `question` reranks results toward the answer; it does not replace keywords.
+## Everything is addressable
 
-**Typical progression:**
-1. **Survey** a scope with broad `keywords`
-2. **Locate** specific concepts with refined `keywords`
-3. **Inspect** relevant files with `repoql_read`
-4. **Explain** complex logic with `repoql_explain`
+- **Schemes:** `file:///` (this workspace) · `github://owner/repo` (imports) · `help:///` (RepoQL's own docs) · `concept:///` and `vocabulary:///` (repository memory)
+- **Globs:** `*` `**` `?` `{a,b}` `[a-z]` · combine with `;` · exclude with `!**/tests/**`
+- **Fragments:** `#symbol=Name` · `#symbol=Class.*` (members) · `#symbol=*Service` · `#line=42,60`
+- **Modifiers:** append ` => structure`, ` => tree: headlines`, ` => find: keywords`, ` => history`, ` => blame`, and more to any `repoql_read`
 
-## Tools Summary
+They compose in one call: `file:///src/**/*.ts#symbol=*Client => structure`.
 
-| Tool | Use Case |
-|------|----------|
-| `repoql_explore` | Discovery and understanding (start here) |
-| `repoql_keywords` | Reshape rough terms into the repository's real vocabulary |
-| `repoql_query` | SQL aggregation and filtering over the graph |
-| `repoql_read` | Fetch content with token budget (URIs, fragments, modifiers) |
-| `repoql_explain` | Synthesized answers with citations |
-| `repoql_execute` | Sandboxed JavaScript over the graph — diagrams, conversions, artifacts |
-| `repoql_import` | Add or remove external repositories |
-| `repoql_capture_concept` | Write a durable invariant into the repo's concept memory |
-| `repoql_command` | Management commands — config, diagnostics, account, host, imports |
-| `repoql_watch` | Run a process under the host OTEL collector and query its telemetry |
-| `repoql_status` | Check host/socket/plugin health |
+## The workflow
 
-The plugin exposes the same surface as the RepoQL MCP server; each tool's
-description carries the full MCP guidance. `repoql_explore` and
-`repoql_keywords` are the discovery entry points; `repoql_query` and
-`repoql_execute` are the power tools; `repoql_command` is the management remote.
+1. **Name the thing.** On unfamiliar ground, `repoql_discover_vocabulary` turns your words into the repository's words. Plausible search results can hide the local names you lack.
+2. **Survey.** `repoql_explore` with `uriGlob`, `keywords`, and a `question`. It ranks by how well each match answers the question and teaches you the real names for everything after.
+3. **Read precisely.** `repoql_read` on the symbol or span you need. Try ` => structure` before bodies.
+4. **Count, join, traverse.** `repoql_query` runs SQL over the whole graph. `DESCRIBE SELECT * FROM <view> LIMIT 0` shows any view's columns, and the host's error messages suggest the right name when you guess wrong.
+5. **Delegate understanding.** `repoql_explain` reads widely and returns a cited answer. Scope it with `uriGlob`.
 
-## Token Budgets
+The token budget is a ceiling, not a target. Start small and widen when a result is too thin.
 
-Budget = tokens you want to spend on the response.
+## When a capability seems missing
 
-| Task | Typical Budget |
-|--------|----------------|
-| Inventory | 800-2000 |
-| Locate | 1000-2000 |
-| Inspect | 2000-5000 |
-| Explain | 1000-3000 |
+Search `help:///` before concluding it does not exist: `repoql_explore` with `uriGlob: "help:///**"`. For more:
 
-Higher budget = richer detail. Start small, increase if needed.
+- **effective-repoql** — the techniques and composition patterns, loaded from the installed rql.
+- **troubleshooting-repoql** — when a tool errors, results look wrong, or the host will not respond. Start with `repoql_status`.
+- **monitoring-repoql** — waiting for indexing or an import without polling.
+- **using-uplinks** — shared, remotely hosted indexes.

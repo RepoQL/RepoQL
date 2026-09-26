@@ -12,11 +12,11 @@ Wrong information is worse than missing information.
 Skill files are irreducible — they cannot be summarized and still communicate what they need to. Browse what's available, then read each file you need with `=> content` to get full text — never structure.
 
 ```
-read("help:///skills/effective-markdown/** => tree: headlines", 5000)
+repoql_read(uriGlob="help:///skills/effective-markdown/** => tree: headlines", tokenBudget=5000)
 ```
 
 Then read each file you need:
 
 ```
-read("help:///skills/effective-markdown/SKILL.md => content", 10000)
+repoql_read(uriGlob="help:///skills/effective-markdown/SKILL.md => content", tokenBudget=10000)
 ```
