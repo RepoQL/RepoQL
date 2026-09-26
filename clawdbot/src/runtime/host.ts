@@ -22,8 +22,13 @@ export interface RqlHostManagerOptions {
   workspaceDir: string;
 }
 
-/** Outcome of probing a socket without starting anything. */
-type Probe = { kind: "absent" } | { kind: "serving" } | { kind: "incompatible"; detail: string };
+/**
+ * Outcome of probing a socket without starting anything. "busy" is a host that owns the socket
+ * — it accepted the connection — but did not answer in time: indexing hard, or stuck. It is
+ * never a reason to launch another host, which could only fail to bind and wait out its timeout.
+ */
+export type HostPresence = "absent" | "serving" | "busy";
+type Probe = { kind: HostPresence } | { kind: "incompatible"; detail: string };
 
 /**
  * Owns the connection to the rql host for one workspace, following the
@@ -128,9 +133,10 @@ export class RqlHostManager {
     return new RqlGrpcClient(this.socketPath, this.config.requestTimeoutMs);
   }
 
-  /** Probe whether a compatible host is already serving, without starting one. */
-  async isReachable(): Promise<boolean> {
-    return (await probe(this.socketPath)).kind === "serving";
+  /** Whether a host owns this workspace's socket, and whether it answered, without starting one. */
+  async presence(): Promise<HostPresence> {
+    const found = await probe(this.socketPath);
+    return found.kind === "incompatible" ? "serving" : found.kind;
   }
 
   /** Forget the current connection so the next call re-discovers the host. */
@@ -152,6 +158,12 @@ export class RqlHostManager {
     }
     if (this.client) {
       return this.client; // Another path connected while this one probed.
+    }
+    if (found.kind === "busy") {
+      this.logger.info(
+        `RepoQL host at ${this.socketPath} accepted a connection but did not answer its probe; ` +
+          "connecting to it rather than launching another"
+      );
     }
     if (found.kind === "absent") {
       if (!options.launch) {
@@ -242,7 +254,7 @@ export class RqlHostManager {
     try {
       while (Date.now() - started < this.config.startupTimeoutMs) {
         const found = await probe(this.socketPath);
-        if (found.kind === "serving") {
+        if (found.kind === "serving" || found.kind === "busy") {
           this.logger.info(`RepoQL host serving at ${this.socketPath}`);
           return;
         }
@@ -251,7 +263,7 @@ export class RqlHostManager {
         }
         if (exited !== null) {
           // Another client may have won the launch race; its host still counts.
-          if ((await probe(this.socketPath)).kind === "serving") {
+          if ((await probe(this.socketPath)).kind !== "absent") {
             return;
           }
           const tail = stderrTail.trim();
@@ -274,8 +286,10 @@ export class RqlHostManager {
  * The host.v1 PROBE step. GetHostInfo is cheap, side-effect free, and safe
  * before readiness. An UNIMPLEMENTED answer means a host is serving an older
  * wire contract — say so rather than launch a competing host on its socket.
+ * Any other failure on a socket that accepted the connection means its host
+ * is busy, not gone: a stale socket file refuses connections.
  */
-async function probe(socketPath: string): Promise<Probe> {
+export async function probe(socketPath: string): Promise<Probe> {
   if (!(await isSocketListening(socketPath))) {
     return { kind: "absent" };
   }
@@ -293,7 +307,7 @@ async function probe(socketPath: string): Promise<Probe> {
           "Run `rql update`, then `rql host restart` in the workspace.",
       };
     }
-    return { kind: "absent" };
+    return { kind: "busy" };
   } finally {
     client.close();
   }

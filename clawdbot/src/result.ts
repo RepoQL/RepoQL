@@ -42,7 +42,10 @@ export function describeGrpcError(error: unknown, timeoutMs?: number): string {
     }
     if (error.code === GrpcStatus.DEADLINE_EXCEEDED) {
       const limit = timeoutMs ? ` after ${Math.round(timeoutMs / 1000)}s` : "";
-      return `RepoQL request timed out${limit}. Retry with a narrower scope, or raise the plugin's requestTimeoutMs.`;
+      return (
+        `RepoQL request timed out${limit}. Retry with a narrower scope. If every call times out, the host is ` +
+        "busy or stuck: `rql host status` in the workspace shows which, and `rql host restart` restarts it."
+      );
     }
     if (error.code === GrpcStatus.CANCELLED) {
       return "RepoQL request was cancelled.";

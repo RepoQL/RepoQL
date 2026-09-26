@@ -86,9 +86,21 @@ async function dispatchHost(sub: string, opts: RunCommandOptions): Promise<ToolR
   }
 }
 
+/** What to say when a host owns the socket but does not answer: the rql CLI can still act on it. */
+function busyHost(host: RqlHostManager): string {
+  return (
+    `The RepoQL host for ${host.repoRoot} is running but not answering — it is busy indexing, or stuck. ` +
+    "In that directory, `rql host status` shows what it is doing and `rql host restart` restarts it."
+  );
+}
+
 async function hostStatus(host: RqlHostManager): Promise<ToolResult> {
-  if (!(await host.isReachable())) {
+  const presence = await host.presence();
+  if (presence === "absent") {
     return text(`Host: not running for ${host.repoRoot}.`);
+  }
+  if (presence === "busy") {
+    return text(busyHost(host));
   }
   const client = host.connect();
   try {
@@ -113,7 +125,7 @@ async function hostStatus(host: RqlHostManager): Promise<ToolResult> {
 }
 
 async function hostStart(host: RqlHostManager, report?: Report): Promise<ToolResult> {
-  if (!(await host.isReachable())) {
+  if ((await host.presence()) === "absent") {
     report?.("Launching host process...");
   }
   try {
@@ -125,8 +137,12 @@ async function hostStart(host: RqlHostManager, report?: Report): Promise<ToolRes
 }
 
 async function hostStop(host: RqlHostManager, report?: Report): Promise<ToolResult> {
-  if (!(await host.isReachable())) {
+  const presence = await host.presence();
+  if (presence === "absent") {
     return text("Host is not running.");
+  }
+  if (presence === "busy") {
+    return toolError(busyHost(host));
   }
   report?.("Shutting down host...");
   const pid = await requestShutdown(host, "openclaw host stop");
@@ -136,8 +152,13 @@ async function hostStop(host: RqlHostManager, report?: Report): Promise<ToolResu
 }
 
 async function hostRestart(host: RqlHostManager, report?: Report): Promise<ToolResult> {
+  const presence = await host.presence();
+  if (presence === "busy") {
+    // Its pid is unknowable without an answer, and launching beside it would race it for the database.
+    return toolError(busyHost(host));
+  }
   report?.("Shutting down host...");
-  const pid = (await host.isReachable()) ? await requestShutdown(host, "openclaw host restart") : 0;
+  const pid = presence === "serving" ? await requestShutdown(host, "openclaw host restart") : 0;
   if (pid > 0) {
     report?.("Waiting for old host to exit...");
     if ((await confirmExit(pid, report)) === "failedToExit") {
