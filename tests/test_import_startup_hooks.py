@@ -1,4 +1,4 @@
-"""Verify the startup scripts list every workspace repository and import, invite the import tool, and name concept://."""
+"""Verify the startup scripts list every workspace repository and import, count the concepts and vocab words each carries, invite the import tool, and name concept://."""
 import json
 import os
 from pathlib import Path
@@ -9,13 +9,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 INVITATION = 'Use the import tool whenever you like to add more.'
-LOCAL_IMPORT = 'local:///srv/vendor/lib'
+LOCAL_IMPORT = 'local:///srv/vendor/lib (325 concepts, 15 vocab words)'
 CONCEPTS = 'addressable at concept://, including the concepts imported sources carry'
-# The fake answers the listing query by mode; a legacy host rejects it and answers only the GitHub fallback.
+# The fake answers the listing query, which must count memory, by mode; a legacy host rejects it and answers
+# only the GitHub fallback.
 FAKE_RQL = f'''#!/bin/sh
 if [ "$1" = query ]; then
     case "$IMPORT_TEST_MODE:$2" in
-        listed:*"kind IN"*)
+        listed:*"kind IN"*"vocab word"*)
             printf 'kind\\tline\\n'
             printf 'import\\tgithub://acme/widgets\\n'
             printf 'import\\t{LOCAL_IMPORT}\\n'
