@@ -86,6 +86,14 @@ print(json.dumps({'targetUri': args[2], 'concepts': terms}))
                 self.assertEqual({c['args'][2] for c in calls}, {'new.cs', 'existing.cs'})
                 self.assertEqual(len(calls), 2)
 
+    def test_glob_metacharacters_in_paths_are_escaped(self):
+        for harness in ['repoql', 'repoql-codex']:
+            with self.subTest(harness=harness):
+                before = len(self.calls())
+                self.run_hook(harness, ['app/[slug]/page.tsx', 'a*b?c{d;e 50%.cs'])
+                self.assertEqual({c['args'][2] for c in self.calls()[before:]},
+                                 {'app/%5Bslug]/page.tsx', 'a%2Ab%3Fc%7Bd%3Be 50%.cs'})
+
     def test_total_context_cap(self):
         self.env['HOOK_MODE'] = 'many'
         for harness in ['repoql', 'repoql-codex']:

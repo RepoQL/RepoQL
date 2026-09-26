@@ -10,6 +10,18 @@ command -v rql >/dev/null 2>&1 || {
     exit 0
 }
 
+# The host reads targets as URI globs: escape the metacharacters a real path can
+# hold, so app/[slug]/page.tsx names that file instead of a character class.
+literal_target() {
+    local path=$1
+    path=${path//\*/%2A}
+    path=${path//\?/%3F}
+    path=${path//\[/%5B}
+    path=${path//\{/%7B}
+    path=${path//;/%3B}
+    printf '%s' "$path"
+}
+
 input=$(cat)
 session=$(jq -r '.session_id // empty' <<<"$input")
 workspace=$(jq -r '.cwd // empty' <<<"$input")
@@ -33,7 +45,7 @@ while IFS= read -r file; do
     [ "$file_count" -lt 8 ] || break
     file_count=$((file_count + 1))
     # Query paths separately so newly created files need not exist in the index.
-    if ! hints=$(rql concept hints "$file" --session "$session" --limit "$remaining" --json); then
+    if ! hints=$(rql concept hints "$(literal_target "$file")" --session "$session" --limit "$remaining" --json); then
         printf '%s\n' 'RepoQL concept hints: CLI failed; continuing the edit.' >&2
         continue
     fi

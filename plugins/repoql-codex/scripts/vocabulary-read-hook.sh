@@ -4,6 +4,18 @@ set -o pipefail
 trap 'printf "%s\n" "RepoQL vocabulary hints: hook failed; continuing the read." >&2; exit 0' ERR
 
 command -v jq >/dev/null 2>&1 || exit 0
+# The host reads targets as URI globs: escape the metacharacters a real path can
+# hold, so app/[slug]/page.tsx names that file instead of a character class.
+literal_target() {
+    local path=$1
+    path=${path//\*/%2A}
+    path=${path//\?/%3F}
+    path=${path//\[/%5B}
+    path=${path//\{/%7B}
+    path=${path//;/%3B}
+    printf '%s' "$path"
+}
+
 input=$(cat)
 session=$(jq -r '.session_id // empty' <<<"$input")
 workspace=$(jq -r '.cwd // empty' <<<"$input")
@@ -19,13 +31,15 @@ fi
 target=$(jq -r '(.tool_input.file_path // .tool_input.path // .tool_input.uriGlob // .tool_input.uri // "")
     | if type == "string" then split(" =>")[0] | split("#")[0] else "" end' <<<"$input")
 [ -n "$target" ] || exit 0
-# Native relative paths resolve from the harness cwd; MCP globs are repository-relative.
+# Native relative paths resolve from the harness cwd and are literal files;
+# MCP globs are repository-relative and already globs.
 case $(jq -r '.tool_name' <<<"$input") in
     Read|read_file)
         case "$target" in
             /*|[A-Za-z]:*|*://*) ;;
             *) target="$workspace/$target" ;;
         esac
+        target=$(literal_target "$target")
         ;;
 esac
 # 65536 Unicode scalars fit within the CLI's 131072 UTF-16 character limit.
