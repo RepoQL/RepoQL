@@ -41,6 +41,7 @@ export class RqlHostManager {
   private lease: LeaseHandle | null = null;
   private catalog: ToolDefinition[] | null = null;
   private ensurePromise: Promise<RqlGrpcClient> | null = null;
+  private adoptPromise: Promise<RqlGrpcClient> | null = null;
   private lastWarmAt = 0;
 
   constructor(options: RqlHostManagerOptions) {
@@ -67,7 +68,7 @@ export class RqlHostManager {
     if (this.client) {
       return Promise.resolve(this.client);
     }
-    this.ensurePromise ??= this.connectCore().finally(() => {
+    this.ensurePromise ??= this.connectCore({ launch: true }).finally(() => {
       this.ensurePromise = null;
     });
     return this.ensurePromise;
@@ -105,14 +106,14 @@ export class RqlHostManager {
       timer = setTimeout(() => resolveWait(null), maxWaitMs);
       timer.unref();
     });
-    const adopt = (async () => {
-      if (!this.ensurePromise && (await probe(this.socketPath)).kind !== "serving") {
-        return null;
-      }
-      return this.getClient();
-    })();
+    // A launch a tool call already started is worth joining; otherwise connect
+    // with launching disabled, so a host that stops between probe and connect
+    // (restart, update, idle-out) yields null rather than a new host.
+    const adopt = this.ensurePromise ?? (this.adoptPromise ??= this.connectCore({ launch: false }).finally(() => {
+      this.adoptPromise = null;
+    }));
     try {
-      return await Promise.race([adopt, giveUp]);
+      return await Promise.race([adopt.catch(() => null), giveUp]);
     } finally {
       clearTimeout(timer);
     }
@@ -144,12 +145,18 @@ export class RqlHostManager {
     this.reset();
   }
 
-  private async connectCore(): Promise<RqlGrpcClient> {
+  private async connectCore(options: { launch: boolean }): Promise<RqlGrpcClient> {
     const found = await probe(this.socketPath);
     if (found.kind === "incompatible") {
       throw new Error(found.detail);
     }
+    if (this.client) {
+      return this.client; // Another path connected while this one probed.
+    }
     if (found.kind === "absent") {
+      if (!options.launch) {
+        throw new Error(`RepoQL host is not running for ${this.repoRoot}.`);
+      }
       if (!this.config.autoStart) {
         throw new Error(
           `RepoQL host is not running for ${this.repoRoot}. Start it with \`rql serve\` in that directory, ` +

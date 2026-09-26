@@ -33,6 +33,15 @@ const ToolService = proto.repoql.tools.v1.ToolService;
 /** Ask a hint surface for its rendered text only. */
 const RENDERED_ONLY = { paths: ["rendered"] };
 
+/** Rendered concepts plus the matches, whose count the caller budgets by. */
+const RENDERED_AND_CONCEPTS = { paths: ["rendered", "concepts"] };
+
+/** Concepts surfaced for one write target. */
+export interface SurfacedConcepts {
+  rendered: string;
+  count: number;
+}
+
 /** One MCP-compatible tool definition, as DescribeTools returns it. */
 export interface ToolDefinition {
   name: string;
@@ -257,15 +266,18 @@ export class RqlGrpcClient {
   // calls stay quiet; the identity must carry the session for that to hold.
 
   /** Concept invariants governing a write target, rendered for an agent. Empty when none apply. */
-  async surfaceConcepts(target: string, limit: number, identity: CallIdentity, timeoutMs: number): Promise<string> {
+  async surfaceConcepts(target: string, limit: number, identity: CallIdentity, timeoutMs: number): Promise<SurfacedConcepts> {
     const response = await this.unary(
       this.tools,
       "SurfaceConcepts",
-      { target, limit, responseMask: RENDERED_ONLY },
+      { target, limit, responseMask: RENDERED_AND_CONCEPTS },
       timeoutMs,
       metadataFor(identity)
     );
-    return String(response?.rendered ?? "");
+    return {
+      rendered: String(response?.rendered ?? ""),
+      count: Array.isArray(response?.concepts) ? response.concepts.length : 0,
+    };
   }
 
   /** Repository vocabulary defined in delivered read content, rendered for an agent. Empty when none. */

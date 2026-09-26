@@ -55,9 +55,15 @@ export function registerRepoQlOrientation(
         return text;
       })
       .catch((err) => {
-        logger.debug?.(`RepoQL orientation skipped: ${err instanceof Error ? err.message : String(err)}`);
-        cache.delete(host.repoRoot);
-        return entry?.text ?? "";
+        // Keep what was good: a busy host should not cost the next turn its orientation.
+        logger.debug?.(`RepoQL orientation refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+        const previous = entry?.text ?? "";
+        if (previous) {
+          cache.set(host.repoRoot, { text: previous, builtAt: Date.now() });
+        } else {
+          cache.delete(host.repoRoot);
+        }
+        return previous;
       });
     cache.set(host.repoRoot, { text: entry?.text ?? "", builtAt: entry?.builtAt ?? 0, refresh });
     return refresh;
@@ -90,7 +96,7 @@ async function buildOrientation(host: RqlHostManager, config: RepoQlPluginConfig
   sections.push(
     "## Imported Repositories\n" +
       (imports === null
-        ? "(not checked — the RepoQL host was not running; repoql_status shows it)"
+        ? "(not checked — the RepoQL host was not running or did not answer in time; repoql_status shows it)"
         : imports.length
           ? `Use these github:// URIs directly with repoql_read / repoql_explore / repoql_query:\n${imports.join("\n")}`
           : "(none — import one with repoql_import)")
@@ -107,18 +113,23 @@ async function buildOrientation(host: RqlHostManager, config: RepoQlPluginConfig
   return sections.join("\n\n") + "\n";
 }
 
-/** github:// imports, or null when no host is connected — orientation never launches one. */
+/**
+ * github:// imports, or null when they could not be listed — no host serving
+ * (orientation never launches one), or a host too busy to answer in time.
+ */
 async function listImports(host: RqlHostManager): Promise<string[] | null> {
   const client = await host.runningClient(PROBE_TIMEOUT_MS);
   if (!client) {
     return null;
   }
-  const result = await client.callTool(
-    "query",
-    { sql: "SELECT source_uri FROM Filesystems WHERE starts_with(source_uri, 'github://') ORDER BY source_uri" },
-    { identity: { agent: `openclaw-repoql/${PLUGIN_VERSION}` }, timeoutMs: PROBE_TIMEOUT_MS }
-  );
-  if (result.isError) {
+  const result = await client
+    .callTool(
+      "query",
+      { sql: "SELECT source_uri FROM Filesystems WHERE starts_with(source_uri, 'github://') ORDER BY source_uri" },
+      { identity: { agent: `openclaw-repoql/${PLUGIN_VERSION}` }, timeoutMs: PROBE_TIMEOUT_MS }
+    )
+    .catch(() => null);
+  if (!result || result.isError) {
     return null;
   }
   return result.rendered

@@ -123,10 +123,18 @@ one of them runs. The plugin therefore handles them differently:
   avoids spending the session's once-only showing on text the model never sees.
 
 The orientation and the finish-time check need
-`plugins.entries.repoql.hooks.allowConversationAccess: true`; `rql install` sets
-it. The file hints need only the plugin to be enabled. On an OpenClaw without
-these surfaces the plugin logs which feature is unavailable, and the tools keep
-working.
+`plugins.entries.repoql.hooks.allowConversationAccess: true`. `rql install` sets
+it in releases that include RepoQL.Core#491; until then, set it yourself:
+
+```bash
+openclaw config set plugins.entries.repoql.hooks.allowConversationAccess true
+```
+
+Without it, file hints still work on OpenClaw's embedded runtime. On Codex the
+plugin does not ask for concepts at all, because nothing could deliver them.
+
+On an OpenClaw without these surfaces the plugin logs which feature is
+unavailable, and the tools keep working.
 
 ## Configuration
 
