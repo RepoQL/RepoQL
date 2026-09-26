@@ -56,20 +56,30 @@ else
         guard=""
         command -v timeout >/dev/null 2>&1 && guard="timeout 30"
         query_ok=""
-        if $guard rql query "SELECT source_uri FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri" \
-            --timeout-ms 5000 --no-launch </dev/null >"$query_out" 2>/dev/null; then
+        # Each workspace repository and import, with the concepts and vocab words it carries. Hosts that
+        # predate Filesystems.kind fail the first query and fall back to the GitHub-only listing.
+        listing_sql="WITH repos AS (SELECT kind, source_uri, concat_ws('/', scheme, nullif(authority, ''), nullif(trim(path_prefix, '/'), '')) AS memory FROM Filesystems WHERE kind IN ('workspace', 'import')), memory AS (SELECT uri FROM Files WHERE (uri LIKE 'concept:///%' AND extension = '.md' AND lower(name) <> 'readme.md') OR uri LIKE 'vocabulary:///%'), counts AS (SELECT r.kind, r.source_uri, count(m.uri) FILTER (WHERE starts_with(m.uri, 'concept:///' || r.memory || '/')) AS concepts, count(m.uri) FILTER (WHERE starts_with(m.uri, 'vocabulary:///' || r.memory || '/')) AS words FROM repos r LEFT JOIN memory m ON starts_with(m.uri, 'concept:///' || r.memory || '/') OR starts_with(m.uri, 'vocabulary:///' || r.memory || '/') GROUP BY r.kind, r.source_uri) SELECT kind, source_uri || coalesce(' (' || nullif(concat_ws(', ', CASE WHEN concepts > 0 THEN concepts || ' concept' || CASE WHEN concepts = 1 THEN '' ELSE 's' END END, CASE WHEN words > 0 THEN words || ' vocab word' || CASE WHEN words = 1 THEN '' ELSE 's' END END), '') || ')', '') AS line FROM counts ORDER BY kind, source_uri"
+        legacy_sql="SELECT 'import' AS kind, source_uri AS line FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri"
+        if $guard rql query "$listing_sql" --timeout-ms 5000 --no-launch </dev/null >"$query_out" 2>/dev/null \
+            || $guard rql query "$legacy_sql" --timeout-ms 5000 --no-launch </dev/null >"$query_out" 2>/dev/null; then
             query_ok=1
         fi
-        imports=$(grep '://' "$query_out" 2>/dev/null || true)
+        workspace_repos=$(awk -F'\t' '$1 == "workspace" && $2 ~ /:\/\// { print $2 }' "$query_out" 2>/dev/null || true)
+        imports=$(awk -F'\t' '$1 == "import" && $2 ~ /:\/\// { print $2 }' "$query_out" 2>/dev/null || true)
         rm -f "$query_out"
+        if [ -n "$workspace_repos" ]; then
+            ctx+=$'\n'"## Workspace Repositories"$'\n'
+            ctx+="This workspace is a directory of repositories. Each answers to its own URI below; file:/// is only the loose files at the top level."$'\n'"$workspace_repos"$'\n'
+        fi
         ctx+=$'\n'"## Imported Repositories"$'\n'
         if [ -n "$imports" ]; then
-            ctx+="Use these github:// URIs directly with read, explore, and query:"$'\n'"$imports"$'\n'
+            ctx+="Use these URIs directly with read, explore, and query:"$'\n'"$imports"$'\n'
         elif [ -n "$query_ok" ]; then
-            ctx+="(none — import one with: rql import github://owner/repo)"$'\n'
+            ctx+="(none)"$'\n'
         else
             ctx+="(not checked — the RepoQL host was not running)"$'\n'
         fi
+        ctx+="Use the import tool whenever you like to add more."$'\n'
     fi
     uplink_context=""
     if uplink_context=$(rql uplinks </dev/null 2>/dev/null); then
@@ -77,7 +87,7 @@ else
     else
         ctx+=$'\n'"## Accessible Uplinks"$'\n'"(not checked — run rql uplinks to discover account access)"$'\n'
     fi
-    ctx+=$'\n'"## Concepts"$'\n'"Repository invariants are addressable at concept:// — browse them with read(\"concept:///**\")."$'\n'
+    ctx+=$'\n'"## Concepts"$'\n'"concept:///** holds the concepts of this repository and its imports."$'\n'
 fi
 
 concepts_readme=""
