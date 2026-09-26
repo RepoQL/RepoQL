@@ -54,12 +54,21 @@ The RepoQL plugin is installed, but automatic rql installation failed (log: $(Jo
     if ($freshInstall) {
         $ctx += "`nrql was just installed. RepoQL is indexing this repository in the background, so its tools may need a moment before returning results. If the mcp__repoql__* tools are unavailable, start a new Codex task so the MCP server picks up the new PATH.`n"
     } else {
-        $sql = "SELECT source_uri FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri"
-        $imports = & $rql.Source query $sql --timeout-ms 5000 --no-launch 2>$null | Where-Object { $_ -match "github://" }
+        # Each workspace repository and import, with its captured memory when it has any. Hosts that
+        # predate Filesystems.kind fail the first query and fall back to the GitHub-only listing.
+        $listingSql = "WITH repos AS (SELECT kind, source_uri, concat_ws('/', scheme, nullif(authority, ''), nullif(trim(path_prefix, '/'), '')) AS memory FROM Filesystems WHERE kind IN ('workspace', 'import')) SELECT r.kind, r.source_uri || coalesce(' (memory: ' || nullif(concat_ws(', ', CASE WHEN EXISTS (SELECT 1 FROM Files f WHERE starts_with(f.uri, 'concept:///' || r.memory || '/')) THEN 'concept:///' || r.memory || '/**' END, CASE WHEN EXISTS (SELECT 1 FROM Files f WHERE starts_with(f.uri, 'vocabulary:///' || r.memory || '/')) THEN 'vocabulary:///' || r.memory || '/**' END), '') || ')', '') AS line FROM repos r ORDER BY r.kind, r.source_uri"
+        $legacySql = "SELECT 'import' AS kind, source_uri AS line FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri"
+        $listing = & $rql.Source query $listingSql --timeout-ms 5000 --no-launch 2>$null
+        if ($LASTEXITCODE -ne 0) { $listing = & $rql.Source query $legacySql --timeout-ms 5000 --no-launch 2>$null }
         $queryOk = $LASTEXITCODE -eq 0
+        $workspaceRepos = @($listing | Where-Object { $_ -like "workspace`t*://*" } | ForEach-Object { ($_ -split "`t", 2)[1] })
+        $imports = @($listing | Where-Object { $_ -like "import`t*://*" } | ForEach-Object { ($_ -split "`t", 2)[1] })
+        if ($workspaceRepos.Count -gt 0) {
+            $ctx += "`n## Workspace Repositories`nThis workspace is a directory of repositories. Each answers to its own URI below; file:/// is only the loose files at the top level.`n$($workspaceRepos -join "`n")`n"
+        }
         $ctx += "`n## Imported Repositories`n"
-        if ($imports) {
-            $ctx += "Use these github:// URIs directly with read, explore, and query:`n$($imports -join "`n")`n"
+        if ($imports.Count -gt 0) {
+            $ctx += "Use these URIs directly with read, explore, and query:`n$($imports -join "`n")`n"
         } elseif ($queryOk) {
             $ctx += "(none)`n"
         } else {
