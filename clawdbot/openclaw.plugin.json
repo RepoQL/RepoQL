@@ -2,7 +2,7 @@
   "id": "repoql",
   "name": "RepoQL",
   "description": "Queryable repository intelligence powered by the local rql host.",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -86,6 +86,10 @@
       "repoql_command",
       "repoql_import",
       "repoql_watch"
+    ],
+    "agentToolResultMiddleware": [
+      "openclaw",
+      "codex"
     ]
   },
   "skills": [

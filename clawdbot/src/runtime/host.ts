@@ -90,6 +90,35 @@ export class RqlHostManager {
   }
 
   /**
+   * A leased client for a host that is already serving, adopting it when this
+   * gateway has not connected yet; null when none is. For work that rides
+   * along with the agent's own tools (hints, orientation): it never launches a
+   * host, and gives up after maxWaitMs — a launch another call started, or a
+   * slow first connection, is not worth holding the agent's tool result for.
+   */
+  async runningClient(maxWaitMs: number): Promise<RqlGrpcClient | null> {
+    if (this.client) {
+      return this.client;
+    }
+    let timer: NodeJS.Timeout | undefined;
+    const giveUp = new Promise<null>((resolveWait) => {
+      timer = setTimeout(() => resolveWait(null), maxWaitMs);
+      timer.unref();
+    });
+    const adopt = (async () => {
+      if (!this.ensurePromise && (await probe(this.socketPath)).kind !== "serving") {
+        return null;
+      }
+      return this.getClient();
+    })();
+    try {
+      return await Promise.race([adopt, giveUp]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
    * A short-lived client that never launches a host. The caller owns it and
    * must close it. Used by `host status` and `host stop`, which observe the
    * host rather than start one.

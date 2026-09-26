@@ -6,8 +6,10 @@ import * as protoLoader from "@grpc/proto-loader";
 // The plugin speaks two rings of the rql wire contract, vendored verbatim from
 // RepoQL.Core (src/L3/RepoQL.Hosting.Contracts/Protos) by `npm run sync`:
 //   repoql.host.v1  — find the host, identify it, hold it open, shut it down.
-//   repoql.tools.v1 — only the ToolCatalog service: DescribeTools + CallTool,
-//                     the dynamic, MCP-shaped door built for harness bridges.
+//   repoql.tools.v1 — the ToolCatalog service (DescribeTools + CallTool), the
+//                     dynamic, MCP-shaped door built for harness bridges, plus
+//                     ToolService's two session-scoped hint surfaces, which the
+//                     plugin calls itself rather than exposing as tools.
 // Everything an agent can do goes through CallTool, so a new host tool needs no
 // plugin code — only a manifest entry (see scripts/sync.mjs).
 const PROTO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "proto");
@@ -26,6 +28,10 @@ const packageDefinition = protoLoader.loadSync(
 const proto = grpc.loadPackageDefinition(packageDefinition) as any;
 const HostService = proto.repoql.host.v1.HostService;
 const ToolCatalog = proto.repoql.tools.v1.ToolCatalog;
+const ToolService = proto.repoql.tools.v1.ToolService;
+
+/** Ask a hint surface for its rendered text only. */
+const RENDERED_ONLY = { paths: ["rendered"] };
 
 /** One MCP-compatible tool definition, as DescribeTools returns it. */
 export interface ToolDefinition {
@@ -120,6 +126,7 @@ export class RqlGrpcClient {
   readonly socketPath: string;
   private readonly host: any;
   private readonly catalog: any;
+  private readonly tools: any;
   private readonly defaultTimeoutMs: number;
 
   constructor(socketPath: string, defaultTimeoutMs: number) {
@@ -130,6 +137,7 @@ export class RqlGrpcClient {
     this.host = new HostService(target, credentials);
     // Share the HostService channel so the lease and tool calls ride one connection.
     this.catalog = new ToolCatalog(target, credentials, { channelOverride: this.host.getChannel() });
+    this.tools = new ToolService(target, credentials, { channelOverride: this.host.getChannel() });
   }
 
   close(): void {
@@ -244,10 +252,51 @@ export class RqlGrpcClient {
     });
   }
 
-  private unary(service: any, method: string, request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
+  // --- repoql.tools.v1.ToolService hint surfaces -------------------------------
+  // Both suppress what the rql-session has already been shown, so repeated
+  // calls stay quiet; the identity must carry the session for that to hold.
+
+  /** Concept invariants governing a write target, rendered for an agent. Empty when none apply. */
+  async surfaceConcepts(target: string, limit: number, identity: CallIdentity, timeoutMs: number): Promise<string> {
+    const response = await this.unary(
+      this.tools,
+      "SurfaceConcepts",
+      { target, limit, responseMask: RENDERED_ONLY },
+      timeoutMs,
+      metadataFor(identity)
+    );
+    return String(response?.rendered ?? "");
+  }
+
+  /** Repository vocabulary defined in delivered read content, rendered for an agent. Empty when none. */
+  async surfaceVocabulary(
+    target: string,
+    content: string,
+    limit: number,
+    maxChars: number,
+    identity: CallIdentity,
+    timeoutMs: number
+  ): Promise<string> {
+    const response = await this.unary(
+      this.tools,
+      "SurfaceVocabulary",
+      { target, content, limit, maxChars, responseMask: RENDERED_ONLY },
+      timeoutMs,
+      metadataFor(identity)
+    );
+    return String(response?.rendered ?? "");
+  }
+
+  private unary(
+    service: any,
+    method: string,
+    request: Record<string, unknown>,
+    timeoutMs?: number,
+    metadata: grpc.Metadata = new grpc.Metadata()
+  ): Promise<any> {
     const deadline = new Date(Date.now() + (timeoutMs ?? this.defaultTimeoutMs));
     return new Promise((resolveCall, rejectCall) => {
-      service[method](request, new grpc.Metadata(), { deadline }, (err: grpc.ServiceError | null, response: unknown) =>
+      service[method](request, metadata, { deadline }, (err: grpc.ServiceError | null, response: unknown) =>
         err ? rejectCall(err) : resolveCall(response)
       );
     });

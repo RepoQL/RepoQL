@@ -8,9 +8,11 @@ import {
   resolveDefinition,
 } from "./catalog.js";
 import { runCommand } from "./command.js";
+import { withVocabularyHint } from "./hints.js";
 import type { RepoQlPluginConfig } from "./config.js";
 import { describeGrpcError, textResult, toolError } from "./result.js";
 import type { RqlHostManager } from "./runtime/host.js";
+import type { Logger } from "./runtime/types.js";
 import type { ToolDefinition } from "./runtime/rqlGrpcClient.js";
 import { PLUGIN_VERSION } from "./version.js";
 
@@ -34,7 +36,7 @@ export function registerRepoQlTools(api: OpenClawPluginApi, getHost: GetHost, co
         const host = getHost(ctx.workspaceDir);
         host.warm();
         const definition = resolveDefinition(host, name);
-        return definition ? catalogTool(definition, host, config, ctx) : null;
+        return definition ? catalogTool(definition, host, config, ctx, api.logger) : null;
       },
       { name: TOOL_PREFIX + name }
     );
@@ -45,7 +47,8 @@ function catalogTool(
   definition: ToolDefinition,
   host: RqlHostManager,
   config: RepoQlPluginConfig,
-  ctx: ToolContext
+  ctx: ToolContext,
+  logger: Logger
 ): AnyAgentTool {
   const toolName = TOOL_PREFIX + definition.name;
   return {
@@ -75,7 +78,7 @@ function catalogTool(
         });
       }
 
-      return callCatalogTool({
+      const result = await callCatalogTool({
         host,
         config,
         tool: definition.name,
@@ -84,6 +87,9 @@ function catalogTool(
         signal,
         report,
       });
+      // Reads carry the repository vocabulary defined in what they returned,
+      // as OpenClaw's own read tools do through the hint middleware.
+      return definition.name === "read" ? withVocabularyHint(result, host, args, ctx.sessionId, logger) : result;
     },
   };
 }

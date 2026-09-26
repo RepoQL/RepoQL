@@ -5,6 +5,8 @@ import {
 } from "openclaw/plugin-sdk/plugin-entry";
 import { resolvePluginConfig } from "./src/config.js";
 import { RqlHostManager } from "./src/runtime/host.js";
+import { registerRepoQlHints } from "./src/hints.js";
+import { registerRepoQlOrientation } from "./src/orientation.js";
 import { registerRepoQlTools } from "./src/tools.js";
 import type { Logger } from "./src/runtime/types.js";
 
@@ -58,6 +60,19 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     });
 
     registerRepoQlTools(api, getHost, config);
+
+    // Repository memory rides on newer OpenClaw surfaces (tool-result
+    // middleware, prompt and finalize hooks) and on permissions the operator
+    // grants. Where one is missing, say so once and keep the tools working.
+    const optional = (feature: string, register: () => void): void => {
+      try {
+        register();
+      } catch (err) {
+        logger.warn(`RepoQL ${feature} unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    optional("concept and vocabulary hints", () => registerRepoQlHints(api, getHost, logger));
+    optional("session orientation", () => registerRepoQlOrientation(api, getHost, config, logger));
   },
 });
 
