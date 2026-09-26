@@ -66,10 +66,11 @@ else
         if [ -n "$imports" ]; then
             ctx+="Use these github:// URIs directly with read, explore, and query:"$'\n'"$imports"$'\n'
         elif [ -n "$query_ok" ]; then
-            ctx+="(none — import one with: rql import github://owner/repo)"$'\n'
+            ctx+="(none)"$'\n'
         else
             ctx+="(not checked — the RepoQL host was not running)"$'\n'
         fi
+        ctx+="Use the import tool whenever you like to add more."$'\n'
     fi
     uplink_context=""
     if uplink_context=$(rql uplinks </dev/null 2>/dev/null); then

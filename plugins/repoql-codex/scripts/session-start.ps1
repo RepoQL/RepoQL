@@ -61,10 +61,11 @@ The RepoQL plugin is installed, but automatic rql installation failed (log: $(Jo
         if ($imports) {
             $ctx += "Use these github:// URIs directly with read, explore, and query:`n$($imports -join "`n")`n"
         } elseif ($queryOk) {
-            $ctx += "(none — import one with: rql import github://owner/repo)`n"
+            $ctx += "(none)`n"
         } else {
             $ctx += "(not checked — the RepoQL host was not running)`n"
         }
+        $ctx += "Use the import tool whenever you like to add more.`n"
     }
     $uplinkContext = & $rql.Source uplinks 2>$null
     $ctx += "`n## Accessible Uplinks`n"
