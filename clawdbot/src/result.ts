@@ -32,15 +32,20 @@ export function toolError(message: string): never {
 
 /**
  * Map a failed gRPC call to an actionable message. UNAVAILABLE means the host
- * socket is gone; everything else carries the server's own detail.
+ * socket is gone; everything else carries the server's own detail, which the
+ * host writes as a recovery hint (e.g. "Unknown command 'x'. Did you mean 'y'?").
  */
-export function describeGrpcError(error: unknown): string {
+export function describeGrpcError(error: unknown, timeoutMs?: number): string {
   if (isServiceError(error)) {
     if (error.code === GrpcStatus.UNAVAILABLE) {
-      return "RepoQL host is unavailable. Start it with: rql serve";
+      return "RepoQL host is unavailable. Run `rql serve` in the workspace, or retry — the plugin relaunches it when autoStart is on.";
     }
-    if (error.code === GrpcStatus.CANCELLED || error.code === GrpcStatus.DEADLINE_EXCEEDED) {
-      return "RepoQL request timed out. Retry, or raise the request timeout in plugin config.";
+    if (error.code === GrpcStatus.DEADLINE_EXCEEDED) {
+      const limit = timeoutMs ? ` after ${Math.round(timeoutMs / 1000)}s` : "";
+      return `RepoQL request timed out${limit}. Retry with a narrower scope, or raise the plugin's requestTimeoutMs.`;
+    }
+    if (error.code === GrpcStatus.CANCELLED) {
+      return "RepoQL request was cancelled.";
     }
     const detail = error.details?.trim();
     if (detail) {

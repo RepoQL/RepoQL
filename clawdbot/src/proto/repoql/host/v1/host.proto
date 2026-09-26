@@ -1,0 +1,328 @@
+// ---------------------------------------------------------------------------
+// repoql.host.v1 — the session ring.
+//
+// AUDIENCE
+//   The connection layer of every RepoQL client: SDK plumbing, CLI commands,
+//   harness bridges. Nothing here answers questions about a repository — this
+//   ring exists so a client can find a host, trust it, hold it open, and let
+//   it go. It is the smallest ring and must change the least.
+//
+// STABILITY
+//   Long-term supported. Evolution is strictly additive: new fields and new
+//   RPCs only. Removed fields are `reserved`, never reused. A change that
+//   alters the meaning of an existing field requires a new package version.
+//
+// THE SESSION PROTOCOL
+//   A conforming client walks four steps. These rules are normative — they
+//   are the part of the API that no .proto can generate for you.
+//
+//   1. DISCOVER. The socket for a workspace is
+//          {workspace}/.repoql/cache/repoql.sock
+//      unless {workspace}/.repoql/cache/socket.path exists, in which case
+//      that file's trimmed contents are the socket path (the host writes it
+//      when the default path is unusable: paths at or beyond the platform
+//      socket limit — 104 bytes on macOS, 108 on Linux — and WSL paths on
+//      Windows mounts redirect to a hashed directory under the system temp
+//      root). Resolving a socket path must never create .repoql — only a
+//      host that has decided to index a workspace may designate it.
+//
+//   2. PROBE. Liveness is the standard gRPC health protocol
+//      (grpc.health.v1.Health) on the same channel. The empty-string
+//      service reports NOT_SERVING while the host is warming and SERVING
+//      once RPCs are accepted. SERVING does not mean the index is complete —
+//      that is Readiness, below. A client that must not spawn a competing
+//      host (pollers, status lines) probes and walks away on failure;
+//      spawning a second host against one workspace corrupts the shared
+//      database.
+//
+//   3. HOLD. A client with an ongoing session opens HoldLease and keeps it
+//      open. Leases are how an implicitly-started host knows anyone still
+//      needs it; a host with no leases may exit after its advertised idle
+//      window. One-shot callers (a single CLI command) may skip the lease —
+//      they risk only that the host idles out between invocations, which
+//      costs a relaunch.
+//
+//   4. WAIT. Readiness is graduated (see ReadinessLevel). Query-shaped work
+//      is correct from QUERYABLE; semantic work wants SEARCHABLE. Blocking
+//      a session on COMPLETE is almost always wrong — results carry their
+//      own trust signal (repoql.tools.v1 ResponseFooter) precisely so work
+//      can start early.
+//
+// CALL METADATA
+//   Cross-cutting call context rides gRPC metadata, never message fields.
+//   Every key is optional — hosts record what arrives for attribution and
+//   never refuse a call for lacking it:
+//     rql-agent    the calling agent or harness as a product token, e.g.
+//                  "claude-code/2.1" — same vocabulary as
+//                  LeaseBeat.client_name
+//     rql-session  opaque, stable id of the logical agent session (a
+//                  conversation, a CI run); joins per-call accounting into
+//                  "who did what" and keys per-session behavior such as
+//                  concept exposure suppression
+//     rql-member / rql-org
+//                  human identity on shared, multi-tenant fronts; absent
+//                  on a private local socket
+//     rql-door     which door the call arrived through; read-only doors
+//                  refuse writes with PERMISSION_DENIED
+//   The registry with full semantics lives in the design document
+//   accompanying this contract.
+//
+// CONVENTIONS
+//   Timestamps are google.protobuf.Timestamp; durations are
+//   google.protobuf.Duration. Message presence (absence of an optional
+//   message field) is meaningful and documented per field.
+// ---------------------------------------------------------------------------
+
+syntax = "proto3";
+
+package repoql.host.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option csharp_namespace = "RepoQL.Host.V1";
+
+// The session surface of a running host: identify it, watch it become
+// ready, hold it open, shut it down.
+service HostService {
+  // Identify the host incarnation serving this socket. Cheap, side-effect
+  // free, safe to call before readiness. The returned HostRun is the
+  // incarnation key other surfaces reference (e.g. signal-stream resume in
+  // repoql.management.v1).
+  rpc GetHostInfo(GetHostInfoRequest) returns (HostInfo);
+
+  // Snapshot the graduated readiness of the index.
+  rpc GetReadiness(GetReadinessRequest) returns (Readiness);
+
+  // Stream readiness: the current state immediately, then a message on
+  // every change. When `until` is set, the stream completes as soon as
+  // that level is reached (including immediately, if already there) — so
+  // `WatchReadiness(until: QUERYABLE)` awaited to completion is the
+  // canonical "wait until I can work" call.
+  rpc WatchReadiness(WatchReadinessRequest) returns (stream Readiness);
+
+  // Hold a client lease for the lifetime of a session. The lease is held
+  // while the stream is open and beats arrive within the advertised
+  // lease_timeout. The server speaks first with LeaseAccepted (policy and
+  // host identity), and speaks again only to say goodbye (HostStopping).
+  // Closing the stream releases the lease.
+  rpc HoldLease(stream LeaseBeat) returns (stream LeaseEvent);
+
+  // Request graceful shutdown. The response is sent before the host stops,
+  // and carries the pid so callers can wait for process exit — the socket
+  // disappearing is not a reliable exit signal. Shutting down a host other
+  // clients are leasing is legal (replace-on-start does it deliberately);
+  // leased clients hear HostStopping first.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+message GetHostInfoRequest {}
+
+// One host incarnation.
+message HostInfo {
+  // Semantic version of the rql binary, e.g. "0.41.2".
+  string version = 1;
+
+  // Source commit the binary was built from. Empty in local dev builds.
+  string commit = 2;
+
+  // The incarnation identity: start time + pid. Two HostInfo values with
+  // equal `run` fields are the same process; persisted cursors (signal
+  // sequences, lease expectations) are only valid against the run that
+  // issued them.
+  HostRun run = 3;
+
+  // Absolute path of the workspace root this host indexes. A host serves
+  // exactly one workspace.
+  string workspace_root = 4;
+
+  // True when the host was auto-launched on behalf of a client rather than
+  // started by an explicit `rql serve`. Implicitly-started hosts may idle
+  // out (see LeaseAccepted.idle_shutdown).
+  bool implicit_start = 5;
+
+  // Optional behavior contracts this host positively implements. Clients
+  // must treat an absent capability as unsupported rather than infer support
+  // from a version number.
+  repeated string capabilities = 6;
+
+  // Absolute path of the executable image serving this host. The companion
+  // reported bit distinguishes a host that reported no path from an older
+  // host that predates these fields.
+  string executable_path = 7;
+  bool executable_path_reported = 8;
+
+  // Cloud identity held by this host. This message is deliberately absent on
+  // non-socket transports and on hosts that predate the field. It never
+  // carries credential material.
+  HostAccount account = 9;
+}
+
+// Non-secret cloud identity resolved locally by the serving host.
+message HostAccount {
+  bool authenticated = 1;
+  HostAccountAccessMethod access_method = 2;
+  string organization_id = 3;
+  string email = 4;
+  google.protobuf.Timestamp expires_at = 5;
+
+  // False means identity resolution failed; unavailable_reason is suitable
+  // for diagnostics and contains no credential material.
+  bool available = 6;
+  string unavailable_reason = 7;
+}
+
+enum HostAccountAccessMethod {
+  HOST_ACCOUNT_ACCESS_METHOD_UNSPECIFIED = 0;
+  HOST_ACCOUNT_ACCESS_METHOD_SESSION = 1;
+  HOST_ACCOUNT_ACCESS_METHOD_CI_OIDC = 2;
+  HOST_ACCOUNT_ACCESS_METHOD_API_KEY = 3;
+  HOST_ACCOUNT_ACCESS_METHOD_INSTANCE_CREDENTIAL = 4;
+}
+
+// Identity of one host process incarnation. Referenced wherever a client
+// must detect "same socket, different process" — resumable streams, cached
+// cursors, lease reconnects.
+message HostRun {
+  google.protobuf.Timestamp started_at = 1;
+  int32 pid = 2;
+}
+
+message GetReadinessRequest {}
+
+// Graduated readiness. Levels are monotonic within a run: a host moves
+// forward through them and never back, except that a reindex triggered by
+// filesystem or import changes may lower the level — which clients observe
+// as a fresh progression on the readiness stream.
+enum ReadinessLevel {
+  READINESS_LEVEL_UNSPECIFIED = 0;
+
+  // The host answers RPCs but the graph is not yet consistent enough to
+  // query. Tool calls may be refused with FAILED_PRECONDITION.
+  READINESS_LEVEL_STARTING = 1;
+
+  // Structural queries (read, grep, tree, SQL over the graph) return
+  // trustworthy results, possibly over a still-growing file set.
+  READINESS_LEVEL_QUERYABLE = 2;
+
+  // Lexical + semantic search surfaces (explore, find, similar) are
+  // serving. Semantic depth may still be filling in — see
+  // Readiness.semantic_percent.
+  READINESS_LEVEL_SEARCHABLE = 3;
+
+  // All discovered work is resolved: every file indexed, embedded, or
+  // explicitly recorded as failed/skipped.
+  READINESS_LEVEL_COMPLETE = 4;
+}
+
+// A point-in-time readiness report. The counts here are the same trust
+// vocabulary every tool response carries in its footer; this message is the
+// session-scoped view for clients that haven't called a tool yet.
+message Readiness {
+  ReadinessLevel level = 1;
+
+  // Whether semantic embedding is configured at all. When false,
+  // semantic_ready stays false forever and that is not a degradation.
+  bool semantic_enabled = 2;
+
+  // True once enough of the corpus is embedded for semantic ranking to be
+  // trustworthy.
+  bool semantic_ready = 3;
+
+  // Percentage (0-100) of embeddable content embedded.
+  int32 semantic_percent = 4;
+
+  // Total files the index knows about.
+  int32 total_files = 5;
+
+  // Files discovered but not yet fully processed. Non-zero means results
+  // may be incomplete.
+  int32 pending_files = 6;
+
+  // Files that failed processing and are recorded as such. Failures are
+  // isolated per file; they never stop the pipeline.
+  int32 failed_files = 7;
+}
+
+message WatchReadinessRequest {
+  // When set, the stream completes once this level is reached. UNSPECIFIED
+  // streams forever (until the client cancels or the host stops).
+  ReadinessLevel until = 1;
+}
+
+// One heartbeat on a held lease. The first beat introduces the client; every
+// subsequent beat is a liveness signal and may repeat the same identity.
+// Beat receipt times are stamped by the server — client clocks are never
+// trusted, which is why this message carries no timestamps.
+message LeaseBeat {
+  // Stable identifier for this connected client process (a UUID minted at
+  // client start). Reconnecting with the same client_id resumes the same
+  // logical client in the host's accounting. Distinct from the per-call
+  // `rql-session` metadata key: one client process holding one lease may
+  // serve many agent sessions.
+  string client_id = 1;
+
+  // Human-meaningful client name, e.g. "rql-cli", "claude-code-mcp",
+  // "vscode-repoql". Shown in diagnostics and the dashboard.
+  string client_name = 2;
+
+  // Client version string.
+  string client_version = 3;
+
+  // Client process id, for local diagnostics. 0 when unknown or remote.
+  int32 pid = 4;
+}
+
+// Server-to-client events on a held lease.
+message LeaseEvent {
+  oneof kind {
+    // Always the first event. Carries the beat policy and host identity.
+    LeaseAccepted accepted = 1;
+
+    // Best-effort notice that the host is going away. After sending, the
+    // host still drains in-flight RPCs within its shutdown window; clients
+    // should stop issuing new calls and prepare to re-discover.
+    HostStopping stopping = 2;
+  }
+}
+
+message LeaseAccepted {
+  // The incarnation that granted the lease. If a reconnect lands on a
+  // different run, all cursors from the previous run are invalid.
+  HostRun run = 1;
+
+  // Number of active leases including this one.
+  int32 active_clients = 2;
+
+  // How often the client should beat. Missing a beat is forgiven until
+  // lease_timeout.
+  google.protobuf.Duration beat_interval = 3;
+
+  // How long the server holds the lease after the last beat before
+  // declaring it dead (covers half-open connections that HTTP/2 keepalive
+  // has not yet noticed).
+  google.protobuf.Duration lease_timeout = 4;
+
+  // How long the host lingers with zero leases before exiting. Absent
+  // means this host never idle-exits (explicitly started via `rql serve`).
+  google.protobuf.Duration idle_shutdown = 5;
+}
+
+message HostStopping {
+  // Why the host is stopping, e.g. "shutdown request", "replaced by newer
+  // host", "idle".
+  string reason = 1;
+}
+
+message ShutdownRequest {
+  // Free-text reason recorded in the host log, e.g. "rql stop",
+  // "replace-on-start". Optional but kind to whoever reads the log.
+  string reason = 1;
+}
+
+message ShutdownResponse {
+  // Pid of the stopping host — wait on this, not on the socket file.
+  int32 process_id = 1;
+  // Machine identity of the stopping host — process_id is only meaningful to a caller whose machine identity matches.
+  string machine_id = 2;
+}

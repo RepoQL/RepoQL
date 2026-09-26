@@ -35,22 +35,39 @@ export function markerPath(repoRoot: string): string {
 }
 
 /**
- * Resolve the Unix socket path for the host. Honours the socket.path mapping
- * file the host writes when the default path exceeds the platform limit,
- * falling back to .repoql/cache/repoql.sock.
+ * Resolve the Unix socket path for the host (host.v1 DISCOVER). The host writes
+ * .repoql/cache/socket.path — a JSON record { machineId, path } — when the
+ * default path is unusable (too long for the platform, or a WSL Windows mount).
+ * The record is machine-local state, so it is honoured only when the socket it
+ * names exists; otherwise the default .repoql/cache/repoql.sock applies.
  */
 export function resolveSocketPath(repoRoot: string): string {
   const cache = cacheDir(repoRoot);
-  const socketMap = resolve(cache, SOCKET_MAP_FILE_NAME);
-
-  if (existsSync(socketMap)) {
-    const mapped = readFileSync(socketMap, "utf8").trim();
-    if (mapped) {
-      return resolve(repoRoot, mapped);
+  const mapped = readSocketMap(resolve(cache, SOCKET_MAP_FILE_NAME));
+  if (mapped) {
+    const absolute = resolve(repoRoot, mapped);
+    if (existsSync(absolute)) {
+      return absolute;
     }
   }
-
   return resolve(cache, SOCKET_FILE_NAME);
+}
+
+function readSocketMap(mapPath: string): string | null {
+  if (!existsSync(mapPath)) {
+    return null;
+  }
+  try {
+    const text = readFileSync(mapPath, "utf8").trim();
+    if (!text.startsWith("{")) {
+      return text || null; // hosts before the JSON record wrote the bare path
+    }
+    const record = JSON.parse(text) as { path?: unknown; Path?: unknown };
+    const path = record.path ?? record.Path;
+    return typeof path === "string" && path.trim() ? path.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Read the dashboard URL the host's HTTP listener recorded, or null. */

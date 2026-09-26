@@ -3,64 +3,123 @@ import { dirname, resolve } from "path";
 import * as grpc from "@grpc/grpc-js";
 import * as protoLoader from "@grpc/proto-loader";
 
-const PROTO_PATH = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "proto",
-  "hosting.proto"
+// The plugin speaks two rings of the rql wire contract, vendored verbatim from
+// RepoQL.Core (src/L3/RepoQL.Hosting.Contracts/Protos) by `npm run sync`:
+//   repoql.host.v1  — find the host, identify it, hold it open, shut it down.
+//   repoql.tools.v1 — only the ToolCatalog service: DescribeTools + CallTool,
+//                     the dynamic, MCP-shaped door built for harness bridges.
+// Everything an agent can do goes through CallTool, so a new host tool needs no
+// plugin code — only a manifest entry (see scripts/sync.mjs).
+const PROTO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "proto");
+
+const packageDefinition = protoLoader.loadSync(
+  ["repoql/host/v1/host.proto", "repoql/tools/v1/tools.proto"],
+  {
+    includeDirs: [PROTO_ROOT],
+    defaults: true,
+    enums: String,
+    longs: Number,
+    oneofs: true,
+  }
 );
 
-const packageDefinition = protoLoader.loadSync(PROTO_PATH, {
-  defaults: true,
-  enums: Number,
-  longs: Number,
-  oneofs: true,
-});
-
 const proto = grpc.loadPackageDefinition(packageDefinition) as any;
-const services = proto.repoql.hosting.v1;
-const ToolService = services.ToolService;
-const ImportService = services.ImportService;
-const ManagementCommandService = services.ManagementCommandService;
-const AccountService = services.AccountService;
-const HostLifecycle = services.HostLifecycle;
-const StatusService = services.StatusService;
+const HostService = proto.repoql.host.v1.HostService;
+const ToolCatalog = proto.repoql.tools.v1.ToolCatalog;
 
-/** Proto CommandSurface enum values (enums loaded as numbers). */
-export const CommandSurface = {
-  Unspecified: 0,
-  Cli: 1,
-  Mcp: 2,
-} as const;
-
-/** Proto ConceptCategory enum values. */
-export const ConceptCategory = {
-  Unspecified: 0,
-  Wisdom: 1,
-  Rule: 2,
-  Knowledge: 3,
-} as const;
-
-/** One streamed AccountService.Login progress frame. */
-export interface LoginProgress {
-  kind: number; // 0=INFO, 1=WARNING, 2=COMPLETE, 3=ERROR
-  message: string;
-  displayName: string;
+/** One MCP-compatible tool definition, as DescribeTools returns it. */
+export interface ToolDefinition {
+  name: string;
+  title: string;
+  description: string;
+  inputSchemaJson: string;
+  readOnly: boolean;
+  annotationsJson: string;
+  metaJson: string;
 }
 
-/**
- * Typed gRPC client for the rql host. Mirrors the surface the MCP server uses:
- * the agent-facing ToolService plus the ImportService, ManagementCommandService,
- * AccountService, HostLifecycle, and StatusService that back the command tool.
- */
+/** The trust footer every tool result carries. */
+export interface ResponseFooter {
+  totalFiles?: number;
+  pendingFiles?: number;
+  failedFiles?: number;
+  semanticReady?: boolean;
+  semanticPercent?: number;
+  elapsedMs?: number;
+  tokensUsed?: number;
+  statusLine?: string;
+}
+
+/** The rendered outcome of CallTool. */
+export interface CatalogToolResult {
+  rendered: string;
+  isError: boolean;
+  footer?: ResponseFooter | null;
+}
+
+export interface CallProgress {
+  progress: number;
+  total: number;
+  message: string;
+}
+
+export interface HostInfo {
+  version: string;
+  commit: string;
+  run?: { pid: number; startedAt?: unknown } | null;
+  workspaceRoot: string;
+  implicitStart: boolean;
+  capabilities: string[];
+}
+
+export interface Readiness {
+  level: string; // READINESS_LEVEL_STARTING | _QUERYABLE | _SEARCHABLE | _COMPLETE
+  semanticEnabled: boolean;
+  semanticReady: boolean;
+  semanticPercent: number;
+  totalFiles: number;
+  pendingFiles: number;
+  failedFiles: number;
+}
+
+/** Identity every call carries as gRPC metadata (host.v1 CALL METADATA). */
+export interface CallIdentity {
+  /** rql-agent: the calling harness as a product token. */
+  agent: string;
+  /** rql-session: stable id of the logical agent session, when known. */
+  sessionId?: string;
+}
+
+export interface CallToolOptions {
+  identity: CallIdentity;
+  timeoutMs: number;
+  signal?: AbortSignal;
+  onProgress?: (progress: CallProgress) => void;
+}
+
+export interface LeaseBeat {
+  clientId: string;
+  clientName: string;
+  clientVersion: string;
+  pid: number;
+}
+
+export interface LeaseHandlers {
+  onAccepted(beatIntervalMs: number): void;
+  onStopping(reason: string): void;
+  onClosed(error?: grpc.ServiceError): void;
+}
+
+/** A held lease; close() releases it. */
+export interface LeaseHandle {
+  close(): void;
+}
+
+/** gRPC client for one rql host socket: the session ring plus the tool catalog. */
 export class RqlGrpcClient {
   readonly socketPath: string;
-  private readonly tools: any;
-  private readonly imports: any;
-  private readonly management: any;
-  private readonly account: any;
-  private readonly lifecycle: any;
-  private readonly status: any;
+  private readonly host: any;
+  private readonly catalog: any;
   private readonly defaultTimeoutMs: number;
 
   constructor(socketPath: string, defaultTimeoutMs: number) {
@@ -68,138 +127,145 @@ export class RqlGrpcClient {
     this.defaultTimeoutMs = defaultTimeoutMs;
     const target = `unix:${socketPath}`;
     const credentials = grpc.credentials.createInsecure();
-    this.tools = new ToolService(target, credentials);
-    this.imports = new ImportService(target, credentials);
-    this.management = new ManagementCommandService(target, credentials);
-    this.account = new AccountService(target, credentials);
-    this.lifecycle = new HostLifecycle(target, credentials);
-    this.status = new StatusService(target, credentials);
+    this.host = new HostService(target, credentials);
+    // Share the HostService channel so the lease and tool calls ride one connection.
+    this.catalog = new ToolCatalog(target, credentials, { channelOverride: this.host.getChannel() });
   }
 
   close(): void {
-    this.tools.close?.();
-    this.imports.close?.();
-    this.management.close?.();
-    this.account.close?.();
-    this.lifecycle.close?.();
-    this.status.close?.();
+    this.host.close?.();
   }
 
-  // --- ToolService — the agent-facing API ---------------------------------
+  // --- repoql.host.v1 -------------------------------------------------------
 
-  query(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    return this.call(this.tools, "Query", request, timeoutMs);
+  getHostInfo(timeoutMs?: number): Promise<HostInfo> {
+    return this.unary(this.host, "GetHostInfo", {}, timeoutMs);
   }
 
-  explore(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    return this.call(this.tools, "Explore", request, timeoutMs);
+  getReadiness(timeoutMs?: number): Promise<Readiness> {
+    return this.unary(this.host, "GetReadiness", {}, timeoutMs);
   }
 
-  explain(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    return this.call(this.tools, "Explain", request, timeoutMs);
-  }
-
-  read(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    return this.call(this.tools, "Read", request, timeoutMs);
-  }
-
-  keywords(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    return this.call(this.tools, "Keywords", request, timeoutMs);
-  }
-
-  execute(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    return this.call(this.tools, "Execute", request, timeoutMs);
-  }
-
-  captureConcept(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    return this.call(this.tools, "CaptureConcept", request, timeoutMs);
-  }
-
-  // --- ImportService -------------------------------------------------------
-
-  importRepository(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    const method = String(request.uri ?? "").trim().startsWith("-") ? "RemoveImport" : "Import";
-    return this.call(this.imports, method, request, timeoutMs);
-  }
-
-  listImports(timeoutMs?: number): Promise<any> {
-    return this.call(this.imports, "ListImports", {}, timeoutMs);
-  }
-
-  // --- ManagementCommandService — the `command` tool's fallthrough --------
-
-  command(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    return this.call(this.management, "Execute", request, timeoutMs);
-  }
-
-  commandList(request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
-    return this.call(this.management, "List", request, timeoutMs);
-  }
-
-  // --- AccountService — cloud identity ------------------------------------
-
-  whoAmI(timeoutMs?: number): Promise<any> {
-    return this.call(this.account, "WhoAmI", {}, timeoutMs);
-  }
-
-  logout(timeoutMs?: number): Promise<any> {
-    return this.call(this.account, "Logout", {}, timeoutMs);
+  shutdown(reason: string, timeoutMs?: number): Promise<{ processId: number; machineId: string }> {
+    return this.unary(this.host, "Shutdown", { reason }, timeoutMs);
   }
 
   /**
-   * Server-streaming login. Invokes onProgress for each frame and resolves once
-   * the stream ends. The browser/device-code flow is driven entirely host-side;
-   * the frames carry the user-facing instructions.
+   * Open HoldLease and beat at the interval the host advertises. The host keeps
+   * an implicitly-started instance alive while any lease is held.
    */
-  login(
-    request: Record<string, unknown>,
-    onProgress: (frame: LoginProgress) => void,
-    timeoutMs?: number
-  ): Promise<void> {
-    const deadline = new Date(Date.now() + (timeoutMs ?? this.defaultTimeoutMs));
-    return new Promise((resolveLogin, rejectLogin) => {
-      const stream: grpc.ClientReadableStream<LoginProgress> = this.account.Login(
-        request,
-        new grpc.Metadata(),
+  holdLease(beat: LeaseBeat, handlers: LeaseHandlers): LeaseHandle {
+    const call: grpc.ClientDuplexStream<LeaseBeat, any> = this.host.HoldLease(new grpc.Metadata());
+    let timer: NodeJS.Timeout | undefined;
+    let closed = false;
+
+    const finish = (error?: grpc.ServiceError): void => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      if (timer) {
+        clearInterval(timer);
+      }
+      handlers.onClosed(error);
+    };
+
+    call.on("data", (event: any) => {
+      if (event?.accepted) {
+        const intervalMs = durationMs(event.accepted.beatInterval) || 10_000;
+        timer = setInterval(() => {
+          if (!closed) {
+            call.write(beat);
+          }
+        }, intervalMs);
+        timer.unref();
+        handlers.onAccepted(intervalMs);
+      } else if (event?.stopping) {
+        handlers.onStopping(String(event.stopping.reason ?? ""));
+      }
+    });
+    call.on("error", (err: grpc.ServiceError) => finish(err));
+    call.on("end", () => finish());
+
+    call.write(beat);
+    return {
+      close: () => {
+        if (closed) {
+          return;
+        }
+        call.end();
+        call.cancel();
+        finish();
+      },
+    };
+  }
+
+  // --- repoql.tools.v1.ToolCatalog -------------------------------------------
+
+  async describeTools(timeoutMs?: number): Promise<ToolDefinition[]> {
+    const response = await this.unary(this.catalog, "DescribeTools", {}, timeoutMs);
+    return Array.isArray(response?.tools) ? response.tools : [];
+  }
+
+  /** Invoke a tool by name; streams Progress events, resolves with the ToolResult. */
+  callTool(tool: string, args: Record<string, unknown>, options: CallToolOptions): Promise<CatalogToolResult> {
+    const deadline = new Date(Date.now() + options.timeoutMs);
+    return new Promise((resolveCall, rejectCall) => {
+      const call: grpc.ClientReadableStream<any> = this.catalog.CallTool(
+        { tool, argumentsJson: JSON.stringify(args) },
+        metadataFor(options.identity),
         { deadline }
       );
-      stream.on("data", (frame: LoginProgress) => onProgress(frame));
-      stream.on("error", (err: grpc.ServiceError) => rejectLogin(err));
-      stream.on("end", () => resolveLogin());
+      let result: CatalogToolResult | undefined;
+
+      const onAbort = (): void => call.cancel();
+      options.signal?.addEventListener("abort", onAbort, { once: true });
+      const detach = (): void => options.signal?.removeEventListener("abort", onAbort);
+
+      call.on("data", (event: any) => {
+        if (event?.result) {
+          result = event.result as CatalogToolResult;
+        } else if (event?.progress) {
+          options.onProgress?.(event.progress as CallProgress);
+        }
+      });
+      call.on("error", (err) => {
+        detach();
+        rejectCall(err);
+      });
+      call.on("end", () => {
+        detach();
+        if (result) {
+          resolveCall(result);
+        } else {
+          rejectCall(new Error(`RepoQL host ended the '${tool}' call without a result.`));
+        }
+      });
     });
   }
 
-  // --- HostLifecycle / StatusService — host control -----------------------
-
-  shutdown(timeoutMs?: number): Promise<any> {
-    return this.call(this.lifecycle, "Shutdown", {}, timeoutMs);
-  }
-
-  getStatus(timeoutMs?: number): Promise<any> {
-    return this.call(this.status, "GetStatus", {}, timeoutMs);
-  }
-
-  private call(
-    service: any,
-    method: string,
-    request: Record<string, unknown>,
-    timeoutMs?: number
-  ): Promise<any> {
+  private unary(service: any, method: string, request: Record<string, unknown>, timeoutMs?: number): Promise<any> {
     const deadline = new Date(Date.now() + (timeoutMs ?? this.defaultTimeoutMs));
-
     return new Promise((resolveCall, rejectCall) => {
-      service[method](
-        request,
-        new grpc.Metadata(),
-        { deadline },
-        (err: grpc.ServiceError | null, response: unknown) => {
-          if (err) {
-            rejectCall(err);
-            return;
-          }
-          resolveCall(response);
-        }
+      service[method](request, new grpc.Metadata(), { deadline }, (err: grpc.ServiceError | null, response: unknown) =>
+        err ? rejectCall(err) : resolveCall(response)
       );
     });
   }
+}
+
+function metadataFor(identity: CallIdentity): grpc.Metadata {
+  const metadata = new grpc.Metadata();
+  metadata.set("rql-agent", identity.agent);
+  if (identity.sessionId) {
+    metadata.set("rql-session", identity.sessionId);
+  }
+  return metadata;
+}
+
+function durationMs(duration: { seconds?: number; nanos?: number } | null | undefined): number {
+  if (!duration) {
+    return 0;
+  }
+  return Number(duration.seconds ?? 0) * 1000 + Math.floor(Number(duration.nanos ?? 0) / 1e6);
 }
