@@ -21,6 +21,8 @@ plugin.register({
   pluginConfig: {},
   registerTool: (factory, opts) => factories.set(opts.name, factory),
   registerService: (service) => services.push(service),
+  registerAgentToolResultMiddleware: () => {},
+  on: () => {},
 });
 
 const ctx = { workspaceDir: workspace, sessionId: "repoql-smoke" };

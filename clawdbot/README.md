@@ -44,7 +44,10 @@ Then enable and configure it under `plugins.entries.repoql`:
     entries: {
       repoql: {
         enabled: true,
-        config: { autoStart: true }
+        config: { autoStart: true },
+        // Lets the plugin add session orientation and the pre-finish concept
+        // check (see Repository memory). The tools work without it.
+        hooks: { allowConversationAccess: true }
       }
     }
   }
@@ -93,6 +96,46 @@ the Claude plugin's skills and applies the OpenClaw adaptations (tool names,
 shell hints, frontmatter); it fails loudly if an adaptation rule stops matching.
 `statusline-builder` is Claude Code–only and is not shipped.
 
+## Repository memory
+
+What the repository has learned (its concepts in `.repoql/concepts/` and its
+vocabulary in `.repoql/vocabulary.csv`) reaches the agent where it is already
+looking, as RepoQL's Claude Code hooks deliver it there:
+
+| When | What the agent sees | OpenClaw seam |
+|------|---------------------|---------------|
+| Every turn | RepoQL orientation: imported repositories, reachable uplinks, and the repository's concept index | `before_prompt_build` → `appendSystemContext` (cacheable) |
+| After reading a file | The repository's names for terms in what it just read | tool-result middleware on `read` and `exec` file reads; `repoql_read` adds its own |
+| After changing a file | The concepts that govern that file | tool-result middleware on `write`, `edit`, `apply_patch` |
+
+The host does the matching and ranking, and shows each concept or term once
+per session. Hints only use a host that is already running: they never start
+one, and they never hold up a tool result for more than a few seconds.
+
+**On the Codex runtime** (OpenAI models through a ChatGPT login), Codex owns its
+native file tools, and OpenClaw cannot change what Codex shows its model after
+one of them runs. The plugin therefore handles them differently:
+
+- Concepts for files the agent changed are held until the agent tries to
+  finish. Then `before_agent_finalize` asks for one more pass, so the agent
+  checks its changes against them.
+- Vocabulary comes through `repoql_read`, and native reads get none. This
+  avoids spending the session's once-only showing on text the model never sees.
+
+The orientation and the finish-time check need
+`plugins.entries.repoql.hooks.allowConversationAccess: true`. `rql install` sets
+it in releases that include RepoQL.Core#491; until then, set it yourself:
+
+```bash
+openclaw config set plugins.entries.repoql.hooks.allowConversationAccess true
+```
+
+Without it, file hints still work on OpenClaw's embedded runtime. On Codex the
+plugin does not ask for concepts at all, because nothing could deliver them.
+
+On an OpenClaw without these surfaces the plugin logs which feature is
+unavailable, and the tools keep working.
+
 ## Configuration
 
 | Key | Default | Description |
@@ -113,6 +156,8 @@ each tool now uses the host's defaults.
 npm install
 npm run build      # tsc + copy the protos and catalog snapshot into dist/
 npm run typecheck
+npm test           # unit tests for the hint plumbing
+npm run smoke -- --workspace <git repository>   # every tool against a live host
 ```
 
 ### Keeping up with rql
