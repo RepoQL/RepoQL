@@ -12,7 +12,7 @@ Declare what great looks like — evaluable declarations, capabilities never imp
 Read the effective-markdown hard rules and the north-star guidance together, in full:
 
 ```
-read("help:///skills/effective-markdown/SKILL.md;help:///skills/effective-markdown/north-star/*.md => content", 10000)
+repoql_read(uriGlob="help:///skills/effective-markdown/SKILL.md;help:///skills/effective-markdown/north-star/*.md => content", tokenBudget=10000)
 ```
 
 Then route your audience via the spine's "Who will read it?" section.

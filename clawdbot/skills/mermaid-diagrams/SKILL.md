@@ -12,11 +12,11 @@ Diagrams reveal relationships that prose cannot express efficiently. Never diagr
 Skill files are irreducible — they cannot be summarized and still communicate what they need to. Browse what's available, then read each file you need with `=> content` to get full text — never structure.
 
 ```
-read("help:///skills/mermaid-diagrams/** => tree: headlines", 5000)
+repoql_read(uriGlob="help:///skills/mermaid-diagrams/** => tree: headlines", tokenBudget=5000)
 ```
 
 Then read each file you need:
 
 ```
-read("help:///skills/mermaid-diagrams/SKILL.md => content", 10000)
+repoql_read(uriGlob="help:///skills/mermaid-diagrams/SKILL.md => content", tokenBudget=10000)
 ```

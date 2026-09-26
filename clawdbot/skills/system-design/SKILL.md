@@ -12,7 +12,7 @@ Enable "yep, that will work" before any code. Contain complexity — eliminate i
 Read the effective-markdown hard rules and the design guidance together, in full:
 
 ```
-read("help:///skills/effective-markdown/SKILL.md;help:///skills/effective-markdown/design/*.md => content", 12000)
+repoql_read(uriGlob="help:///skills/effective-markdown/SKILL.md;help:///skills/effective-markdown/design/*.md => content", tokenBudget=12000)
 ```
 
 Then route your audience via the spine's "Who will read it?" section.

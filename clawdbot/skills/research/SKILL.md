@@ -13,7 +13,7 @@ Research is stewardship. You hold space for someone else's decision.
 Skill files are irreducible — they cannot be summarized and still communicate what they need to. Read the skill in full:
 
 ```
-read("help:///skills/research/SKILL.md => content", 5000)
+repoql_read(uriGlob="help:///skills/research/SKILL.md => content", tokenBudget=5000)
 ```
 
-Research subagents get `help:///skills/research/subagent.md` — or spawn the `researcher` agent, which carries the brief and a suitable model built in.
+When the user asks for parallel research, spawn one subagent per independent direction and tell each to read `help:///skills/research/subagent.md` in full (with `repoql_read`) before gathering evidence.

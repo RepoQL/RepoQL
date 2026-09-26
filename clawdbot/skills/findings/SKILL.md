@@ -12,7 +12,7 @@ Someone asked a question. Answer it, then prove it. In a discovery, several rese
 Read the effective-markdown hard rules and the findings guidance together, in full:
 
 ```
-read("help:///skills/effective-markdown/SKILL.md;help:///skills/effective-markdown/findings/*.md => content", 10000)
+repoql_read(uriGlob="help:///skills/effective-markdown/SKILL.md;help:///skills/effective-markdown/findings/*.md => content", tokenBudget=10000)
 ```
 
 Then route your audience via the spine's "Who will read it?" section.

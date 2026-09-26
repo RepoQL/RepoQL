@@ -12,7 +12,7 @@ Match the weight of preparation to the weight of the decision.
 Read the orchestration guidance in full:
 
 ```
-read("help:///skills/odad/SKILL.md => content", 6000)
+repoql_read(uriGlob="help:///skills/odad/SKILL.md => content", tokenBudget=6000)
 ```
 
 Then enter the toolbox at the layer the judgment selects — each layer's guidance loads from the table inside.

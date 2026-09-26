@@ -89,8 +89,6 @@
     ]
   },
   "skills": [
-    "skills/repoql",
-    "skills/repoql-sql",
-    "skills/repoql-search"
+    "skills"
   ]
 }

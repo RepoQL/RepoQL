@@ -12,7 +12,7 @@ Make the process discussable — concrete enough to critique, abstract enough to
 Read the effective-markdown hard rules and the flow guidance together, in full:
 
 ```
-read("help:///skills/effective-markdown/SKILL.md;help:///skills/effective-markdown/flow/*.md => content", 12000)
+repoql_read(uriGlob="help:///skills/effective-markdown/SKILL.md;help:///skills/effective-markdown/flow/*.md => content", tokenBudget=12000)
 ```
 
 Then route your audience via the spine's "Who will read it?" section.

@@ -15,7 +15,8 @@
     "prepack": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "sync": "node scripts/sync.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "sync:skills": "node scripts/sync-skills.mjs"
   },
   "keywords": [
     "openclaw",
