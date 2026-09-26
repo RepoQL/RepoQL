@@ -54,9 +54,8 @@ The RepoQL plugin is installed, but automatic rql installation failed (log: $(Jo
     if ($freshInstall) {
         $ctx += "`nrql was just installed. RepoQL is indexing this repository in the background, so its tools may need a moment before returning results. If the mcp__repoql__* tools are unavailable, start a new Codex task so the MCP server picks up the new PATH.`n"
     } else {
-        # Each workspace repository and import, with its captured memory when it has any. Hosts that
-        # predate Filesystems.kind fail the first query and fall back to the GitHub-only listing.
-        $listingSql = "WITH repos AS (SELECT kind, source_uri, concat_ws('/', scheme, nullif(authority, ''), nullif(trim(path_prefix, '/'), '')) AS memory FROM Filesystems WHERE kind IN ('workspace', 'import')) SELECT r.kind, r.source_uri || coalesce(' (memory: ' || nullif(concat_ws(', ', CASE WHEN EXISTS (SELECT 1 FROM Files f WHERE starts_with(f.uri, 'concept:///' || r.memory || '/')) THEN 'concept:///' || r.memory || '/**' END, CASE WHEN EXISTS (SELECT 1 FROM Files f WHERE starts_with(f.uri, 'vocabulary:///' || r.memory || '/')) THEN 'vocabulary:///' || r.memory || '/**' END), '') || ')', '') AS line FROM repos r ORDER BY r.kind, r.source_uri"
+        # Hosts that predate Filesystems.kind fail the first query and fall back to the GitHub-only listing.
+        $listingSql = "SELECT kind, source_uri AS line FROM Filesystems WHERE kind IN ('workspace', 'import') ORDER BY kind, source_uri"
         $legacySql = "SELECT 'import' AS kind, source_uri AS line FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri"
         $listing = & $rql.Source query $listingSql --timeout-ms 5000 --no-launch 2>$null
         if ($LASTEXITCODE -ne 0) { $listing = & $rql.Source query $legacySql --timeout-ms 5000 --no-launch 2>$null }
@@ -83,7 +82,7 @@ The RepoQL plugin is installed, but automatic rql installation failed (log: $(Jo
     } else {
         $ctx += "(not checked — run rql uplinks to discover account access)`n"
     }
-    $ctx += "`n## Concepts`nRepository invariants are addressable at concept:// — browse them with read(`"concept:///**`").`n"
+    $ctx += "`n## Concepts`nRepository invariants are addressable at concept://, including the concepts imported sources carry — browse them with read(`"concept:///**`").`n"
 }
 
 $conceptsRelative = $null

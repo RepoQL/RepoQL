@@ -1,4 +1,4 @@
-"""Verify the startup scripts list every workspace repository and import, then invite the import tool."""
+"""Verify the startup scripts list every workspace repository and import, invite the import tool, and name concept://."""
 import json
 import os
 from pathlib import Path
@@ -9,8 +9,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 INVITATION = 'Use the import tool whenever you like to add more.'
-LOCAL_WITH_MEMORY = ('local:///srv/vendor/lib (memory: concept:///local/srv/vendor/lib/**, '
-                     'vocabulary:///local/srv/vendor/lib/**)')
+LOCAL_IMPORT = 'local:///srv/vendor/lib'
+CONCEPTS = 'addressable at concept://, including the concepts imported sources carry'
 # The fake answers the listing query by mode; a legacy host rejects it and answers only the GitHub fallback.
 FAKE_RQL = f'''#!/bin/sh
 if [ "$1" = query ]; then
@@ -18,7 +18,7 @@ if [ "$1" = query ]; then
         listed:*"kind IN"*)
             printf 'kind\\tline\\n'
             printf 'import\\tgithub://acme/widgets\\n'
-            printf 'import\\t{LOCAL_WITH_MEMORY}\\n'
+            printf 'import\\t{LOCAL_IMPORT}\\n'
             printf 'workspace\\tgithub://acme/billing\\n'
             printf '[42 tok | 3 ms]\\n'
             exit 0 ;;
@@ -32,7 +32,7 @@ fi
 exit 0
 '''
 IMPORTS = {
-    'listed': ['github://acme/widgets', LOCAL_WITH_MEMORY],
+    'listed': ['github://acme/widgets', LOCAL_IMPORT],
     'legacy': ['github://acme/widgets'],
     'none': ['(none)'],
     'unreachable': ['(not checked'],
@@ -58,6 +58,8 @@ class ImportStartupHooksTests(unittest.TestCase):
         self.assertEqual(imports.count(INVITATION), 1)
         self.assertNotIn('rql import', imports)
         self.assertNotIn('github://acme/billing', imports)
+        self.assertNotIn('(memory:', context)
+        self.assertEqual(context.count(CONCEPTS), 1)
         if mode == 'listed':
             self.assertIn('Use these URIs directly', imports)
             workspace = before_imports.split('## Workspace Repositories', 1)[1]

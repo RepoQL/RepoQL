@@ -63,9 +63,8 @@ else
         guard=""
         command -v timeout >/dev/null 2>&1 && guard="timeout 30"
         query_ok=""
-        # Each workspace repository and import, with its captured memory when it has any. Hosts that
-        # predate Filesystems.kind fail the first query and fall back to the GitHub-only listing.
-        listing_sql="WITH repos AS (SELECT kind, source_uri, concat_ws('/', scheme, nullif(authority, ''), nullif(trim(path_prefix, '/'), '')) AS memory FROM Filesystems WHERE kind IN ('workspace', 'import')) SELECT r.kind, r.source_uri || coalesce(' (memory: ' || nullif(concat_ws(', ', CASE WHEN EXISTS (SELECT 1 FROM Files f WHERE starts_with(f.uri, 'concept:///' || r.memory || '/')) THEN 'concept:///' || r.memory || '/**' END, CASE WHEN EXISTS (SELECT 1 FROM Files f WHERE starts_with(f.uri, 'vocabulary:///' || r.memory || '/')) THEN 'vocabulary:///' || r.memory || '/**' END), '') || ')', '') AS line FROM repos r ORDER BY r.kind, r.source_uri"
+        # Hosts that predate Filesystems.kind fail the first query and fall back to the GitHub-only listing.
+        listing_sql="SELECT kind, source_uri AS line FROM Filesystems WHERE kind IN ('workspace', 'import') ORDER BY kind, source_uri"
         legacy_sql="SELECT 'import' AS kind, source_uri AS line FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri"
         if $guard rql query "$listing_sql" --timeout-ms 5000 --no-launch </dev/null >"$query_out" 2>/dev/null \
             || $guard rql query "$legacy_sql" --timeout-ms 5000 --no-launch </dev/null >"$query_out" 2>/dev/null; then
@@ -94,7 +93,7 @@ else
     else
         ctx+=$'\n'"## Accessible Uplinks"$'\n'"(not checked — run rql uplinks to discover account access)"$'\n'
     fi
-    ctx+=$'\n'"## Concepts"$'\n'"Repository invariants, if any, are addressable at concept:// — browse them with read(\"concept:///**\")."$'\n'
+    ctx+=$'\n'"## Concepts"$'\n'"Repository invariants, if any, are addressable at concept://, including the concepts imported sources carry — browse them with read(\"concept:///**\")."$'\n'
 fi
 
 concepts_readme=""
