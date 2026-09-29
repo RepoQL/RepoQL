@@ -8,6 +8,8 @@ on:
       - "tests/test_*_hooks.py"
       - "plugins/*/scripts/vocabulary-read-hook.sh"
       - "plugins/*/hooks/hooks.json"
+      - "plugins/repoql-cursor/**"
+      - ".cursor-plugin/**"
       - ".github/workflows/concept-hooks.yml"
   push:
     branches: [main]
@@ -17,6 +19,8 @@ on:
       - "tests/test_*_hooks.py"
       - "plugins/*/scripts/vocabulary-read-hook.sh"
       - "plugins/*/hooks/hooks.json"
+      - "plugins/repoql-cursor/**"
+      - ".cursor-plugin/**"
       - ".github/workflows/concept-hooks.yml"
 
 jobs:

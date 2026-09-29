@@ -1,0 +1,17 @@
+---
+description: How to understand this codebase with RepoQL's MCP tools before grepping or opening files.
+alwaysApply: true
+---
+
+# RepoQL
+
+The `repoql` MCP server is a pre-built structural index of this repository — every file, symbol, and relationship parsed and summarized. Survey a thousand files for about 1,500 tokens instead of grepping and opening dozens.
+
+- **Start with `explore`** — give it `uriGlob` (e.g. `file:///src/**`), `keywords`, and a `question`. It ranks what exists by meaning and teaches you the repository's real names. Prefer it to grep when you don't yet know the exact token.
+- **Then `read` exactly what matters** — `file:///src/Auth.cs#symbol=Login`, `#line=40,80`, or a glob with a modifier: `=> structure` (signatures), `=> tree: headlines` (overview), `=> find: keywords`, `=> history`, `=> blame`.
+- **`query`** runs DuckDB SQL over files, symbols, git, and parsed data — for counting, listing, and joining.
+- **`explain`** delegates a scoped question and returns a cited answer. **`discover_vocabulary`** maps your words to this repository's names when results come back weak.
+- `github://owner/repo` URIs reach imported repositories with the same tools; `import` adds more. `help:///` holds RepoQL's own docs.
+- `concept:///**` holds this repository's invariants. Record a hard-won one with `capture_concept`.
+
+A poor call costs ~1,500 tokens; a good one saves tens of thousands — experiment freely. If a RepoQL tool fails, follow its error message, then the `troubleshooting-repoql` skill.

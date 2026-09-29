@@ -1,0 +1,22 @@
+{
+  "name": "repoql-cursor",
+  "displayName": "RepoQL",
+  "version": "1.0.0",
+  "description": "Queryable code intelligence — explore codebase structure without reading files.",
+  "author": {
+    "name": "Clanker Tools"
+  },
+  "homepage": "https://repoql.com",
+  "repository": "https://github.com/RepoQL/RepoQL",
+  "license": "MIT",
+  "logo": "assets/logo.svg",
+  "keywords": [
+    "code-intelligence",
+    "code-search",
+    "repository",
+    "duckdb",
+    "mcp",
+    "semantic-search"
+  ],
+  "category": "development"
+}
