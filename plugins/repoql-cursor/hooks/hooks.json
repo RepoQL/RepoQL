@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "${CURSOR_PLUGIN_ROOT}/scripts/session-start.sh",
+        "timeout": 240
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "${CURSOR_PLUGIN_ROOT}/scripts/concepts-write-hook.sh",
+        "matcher": "^Write$",
+        "timeout": 5
+      }
+    ]
+  }
+}
