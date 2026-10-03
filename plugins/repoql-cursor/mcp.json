@@ -4,6 +4,7 @@
       "command": "rql",
       "args": ["mcp"],
       "env": {
+        "REPOQL_CWD": "${workspaceFolder}",
         "REPOQL_RECOVERY_HINT": "Read the troubleshooting-repoql skill."
       }
     }

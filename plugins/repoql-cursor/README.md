@@ -38,6 +38,8 @@ There is no separate index step — the host indexes a repository the first time
 
 ### Tools (MCP)
 
+Each Cursor window gets its own RepoQL server, bound to that window's folder. The plugin sets `REPOQL_CWD` to `${workspaceFolder}`, which Cursor expands per window. Cursor's MCP roots can't do this job: they list every open window's folder to every server.
+
 | Tool | What it does |
 |------|--------------|
 | `explore` | The landscape, ranked by meaning — give it `uriGlob`, `keywords`, and a `question`. Start here. |
