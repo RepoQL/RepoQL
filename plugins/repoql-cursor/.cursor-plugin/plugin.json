@@ -1,7 +1,7 @@
 {
   "name": "repoql-cursor",
   "displayName": "RepoQL",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Queryable code intelligence — explore codebase structure without reading files.",
   "author": {
     "name": "Clanker Tools"
