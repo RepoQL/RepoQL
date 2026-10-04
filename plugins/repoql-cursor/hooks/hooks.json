@@ -3,13 +3,13 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": "${CURSOR_PLUGIN_ROOT}/scripts/session-start.sh",
+        "command": "\"${CURSOR_PLUGIN_ROOT}/scripts/run-hook.cmd\" session-start",
         "timeout": 240
       }
     ],
     "preToolUse": [
       {
-        "command": "${CURSOR_PLUGIN_ROOT}/scripts/concepts-write-hook.sh",
+        "command": "\"${CURSOR_PLUGIN_ROOT}/scripts/run-hook.cmd\" concepts-write-hook",
         "matcher": "^Write$",
         "timeout": 5
       }

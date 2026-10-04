@@ -34,3 +34,12 @@ jobs:
       - uses: actions/checkout@v4
       - run: command -v jq
       - run: python3 -m unittest discover -s tests -p 'test_*_hooks.py'
+
+  # The Cursor plugin's hooks run as PowerShell on Windows, started through
+  # run-hook.cmd the way Cursor composes the command there.
+  cursor-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m unittest -v tests.test_cursor_hooks

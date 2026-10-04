@@ -31,8 +31,7 @@ There is no separate index step — the host indexes a repository the first time
 
 ## Prerequisites
 
-1. **Cursor** with plugin support, on a plan that includes MCP, skills, and hooks.
-2. **Bash** and **jq** for the hooks (Git Bash on Windows).
+**Cursor** with plugin support, on a plan that includes MCP, skills, and hooks. The hooks use only what the system ships: bash on macOS and Linux, Windows PowerShell on Windows.
 
 ## What you get
 
@@ -65,8 +64,10 @@ Each Cursor window gets its own RepoQL server, bound to that window's folder. Th
 
 ### Hooks
 
-- **sessionStart** — bootstraps `rql` if it's missing, exports a `PATH` that finds it to later hooks, and injects a small orientation: imported `github://` repos, accessible uplinks, and a pointer to `concept://`. It adds the repository's concepts index too, unless the host's generated `.cursor/rules/repoql-concepts.g.mdc` rule already carries it.
+- **sessionStart** — bootstraps `rql` if it's missing and injects a small orientation: imported `github://` repos, accessible uplinks, and a pointer to `concept://`. It adds the repository's concepts index too, unless the host's generated `.cursor/rules/repoql-concepts.g.mdc` rule already carries it.
 - **preToolUse (Write)** — surfaces the `concept://` invariants relevant to the file about to be written, once per session. It never blocks or alters the write.
+
+Each hook is a bash script and a PowerShell script with the same behaviour. `scripts/run-hook.cmd` is the one command Cursor runs for both: `cmd.exe` reads it as a batch file and starts the PowerShell script, and a POSIX shell reads it as a shell script and starts the bash one. Windows therefore needs neither Git Bash nor a program associated with `.sh` files.
 
 ## Differences from the Claude Code plugin
 
