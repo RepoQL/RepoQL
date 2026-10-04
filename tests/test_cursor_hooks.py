@@ -176,12 +176,14 @@ class HookCases:
 
     def test_a_large_file_body_is_read_inside_the_hook_timeout(self):
         # hooks.json gives the write hook five seconds; the payload carries the whole file.
+        # The budget binds the implementation that ships on this platform.
+        timeout = 5 if self.ships_here else 15
         body = 'line "quoted" \\ back\\\\slash\n\t"file_path": "decoy.cs",\n' * 40000
         for tool_input in ({'content': body, 'file_path': 'a.cs'}, json.dumps({'content': body, 'file_path': 'a.cs'})):
             with self.subTest(string_encoded=isinstance(tool_input, str)):
                 self.log.unlink(missing_ok=True)
                 output = self.run_hook(self.argv('concepts-write-hook'),
-                                       json.dumps(self.write_payload(tool_input)), timeout=5)
+                                       json.dumps(self.write_payload(tool_input)), timeout=timeout)
                 self.assertIn('additional_context', output)
                 self.assertEqual([c['args'][2] for c in self.calls(['concept', 'hints'])], ['a.cs'])
 
@@ -229,6 +231,7 @@ class HookCases:
 
 @unittest.skipUnless(BASH, 'the bash hooks serve macOS and Linux')
 class BashHookTests(HookCases, HookFixture):
+    ships_here = not WINDOWS
     hints_flags = []
     session_keys = {'env'}
 
@@ -245,6 +248,7 @@ class BashHookTests(HookCases, HookFixture):
 
 @unittest.skipUnless(POWERSHELL, 'the PowerShell hooks need PowerShell')
 class PowerShellHookTests(HookCases, HookFixture):
+    ships_here = WINDOWS
     hints_flags = ['--json']
     session_keys = set()
 
