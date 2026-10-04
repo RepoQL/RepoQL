@@ -23,7 +23,7 @@ try {
             if (-not (Test-Directory $workspace)) { continue }
             $file = "$workspace/$file"
         }
-        $null | rql worktree track $file --session $session 2>$null | Out-Null
+        rql worktree track $file --session $session 2>$null | Out-Null
     }
 } catch { }
 exit 0

@@ -43,12 +43,11 @@ try {
     }
     Set-Location -LiteralPath $workspace
     $env:REPOQL_CWD = $workspace
-    $hints = $text | rql vocabulary hints $target --session $session --limit 5 --max-chars 2000 2>$null
-    if ($LASTEXITCODE -ne 0) {
+    $hints = Invoke-Rql $text @('vocabulary', 'hints', $target, '--session', $session, '--limit', '5', '--max-chars', '2000')
+    if ($RqlExitCode -ne 0) {
         Write-HookWarning 'RepoQL vocabulary hints: CLI failed; continuing the read.'
         exit 0
     }
-    $hints = (@($hints) -join "`n").Trim()
     if ($hints) { Write-HookContext 'PostToolUse' $hints }
 } catch {
     Write-HookWarning 'RepoQL vocabulary hints: hook failed; continuing the read.'

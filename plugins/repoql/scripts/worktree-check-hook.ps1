@@ -28,9 +28,8 @@ try {
     $arguments = @('worktree', 'check', '--session', $session)
     if (Test-Directory $workspace) { $arguments += @('--cwd', $workspace) }
     if ($pattern) { $arguments += @('--pattern', $pattern) }
-    $notice = $text | rql @arguments 2>$null
-    if ($LASTEXITCODE -ne 0) { exit 0 }
-    $notice = (@($notice) -join "`n").Trim()
+    $notice = Invoke-Rql $text $arguments
+    if ($RqlExitCode -ne 0) { exit 0 }
     if ($notice) { Write-HookContext 'PostToolUse' $notice }
 } catch { }
 exit 0

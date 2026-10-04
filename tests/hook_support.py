@@ -38,9 +38,8 @@ def install_fake(bin_dir, name, source):
         return
     program = bin_dir / f'{name}.py'
     program.write_text(source, encoding='utf-8')
-    # PowerShell finds name.ps1 on PATH; Git Bash finds the extensionless shell script.
-    (bin_dir / f'{name}.ps1').write_text(
-        f'$input | & "{sys.executable}" "{program}" @args\nexit $LASTEXITCODE\n', encoding='utf-8')
+    # PowerShell and a directly started process run the batch file; Git Bash finds the extensionless shell script.
+    (bin_dir / f'{name}.cmd').write_text(f'@"{sys.executable}" "{program}" %*\r\n', encoding='utf-8', newline='')
     (bin_dir / name).write_text(
         f'#!/bin/sh\nexec "{Path(sys.executable).as_posix()}" "{program.as_posix()}" "$@"\n', encoding='utf-8', newline='\n')
 
@@ -58,6 +57,15 @@ def run(command, payload, env, cwd, timeout=15):
 
 def same_path(left, right):
     return os.path.normcase(os.path.realpath(left)) == os.path.normcase(os.path.realpath(right))
+
+
+class Cases:
+    """Mixin: run a block once per implementation and harness, each as its own subtest."""
+
+    def case(self, **parameters):
+        if getattr(self, 'log', None) is not None:
+            self.log.unlink(missing_ok=True)
+        return self.subTest(**parameters)
 
 
 def context_of(result, event):

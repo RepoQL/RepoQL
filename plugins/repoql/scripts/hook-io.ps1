@@ -77,6 +77,41 @@ function Limit-HookText([string]$text) {
     return $text.Substring(0, $length)
 }
 
+# One argument of a Windows command line: quoted when it holds a space or a
+# quote, with the backslashes that would otherwise escape a quote doubled.
+function ConvertTo-Argument([string]$value) {
+    if ($value -ne '' -and $value -notmatch '[\s"]') { return $value }
+    return '"' + (($value -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+}
+
+# Run rql with $text on its stdin and return what it printed; $RqlExitCode holds
+# its exit code. The process is started directly because Windows PowerShell can
+# put a byte-order mark ahead of text it pipes to a program, and always ends it
+# with a line break: rql must read the text exactly.
+function Invoke-Rql([string]$text, [string[]]$arguments) {
+    $script:RqlExitCode = -1
+    $start = New-Object System.Diagnostics.ProcessStartInfo
+    $start.FileName = (Get-Command rql -CommandType Application | Select-Object -First 1).Source
+    $start.Arguments = ($arguments | ForEach-Object { ConvertTo-Argument $_ }) -join ' '
+    $start.WorkingDirectory = (Get-Location).Path
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = $utf8
+    $process = [System.Diagnostics.Process]::Start($start)
+    $errors = $process.StandardError.ReadToEndAsync()
+    $bytes = $utf8.GetBytes($text)
+    $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+    $process.StandardInput.Close()
+    $output = $process.StandardOutput.ReadToEnd()
+    $process.WaitForExit()
+    [void]$errors.Result
+    $script:RqlExitCode = $process.ExitCode
+    return $output.Trim()
+}
+
 # The host reads targets as URI globs: escape the metacharacters a real path can
 # hold, so app/[slug]/page.tsx names that file instead of a character class.
 function ConvertTo-LiteralTarget([string]$path) {

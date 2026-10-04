@@ -5,7 +5,7 @@ import tempfile
 import time
 import unittest
 
-from hook_support import IMPLEMENTATIONS, argv, context_of, hook_env, install_fake, run, same_path
+from hook_support import Cases, IMPLEMENTATIONS, argv, context_of, hook_env, install_fake, run, same_path
 
 FAKE_RQL = '''
 import json, os, sys
@@ -20,7 +20,7 @@ if os.environ['HOOK_MODE'] == 'notice' and sys.argv[1:3] == ['worktree', 'check'
 '''
 
 
-class WorktreeHooksTests(unittest.TestCase):
+class WorktreeHooksTests(Cases, unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -36,10 +36,7 @@ class WorktreeHooksTests(unittest.TestCase):
                             CLAUDE_PROJECT_DIR=str(self.project), REPOQL_CWD='/wrong-workspace')
 
     def each(self):
-        for implementation in IMPLEMENTATIONS:
-            with self.subTest(implementation=implementation):
-                self.log.unlink(missing_ok=True)
-                yield implementation
+        return IMPLEMENTATIONS
 
     def run_hook(self, implementation, hook, payload):
         result = run(argv(implementation, 'repoql', hook), payload, self.env, self.root)
@@ -76,81 +73,92 @@ class WorktreeHooksTests(unittest.TestCase):
     def test_edit_tracks_absolute_path_from_the_project_directory(self):
         target = str(self.worktree / 'src/A.cs')
         for implementation in self.each():
-            result = self.run_hook(implementation, 'worktree-track-hook', self.edit_payload(file_path=target))
-            self.assertEqual(result.stdout, '')
-            call, = self.calls(expected=1)
-            self.assertEqual((call['args'], call['stdin']), (['worktree', 'track', target, '--session', 'wt-session'], ''))
-            self.assert_reads_from_the_project(call)
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-track-hook', self.edit_payload(file_path=target))
+                self.assertEqual(result.stdout, '')
+                call, = self.calls(expected=1)
+                self.assertEqual((call['args'], call['stdin']), (['worktree', 'track', target, '--session', 'wt-session'], ''))
+                self.assert_reads_from_the_project(call)
 
     def test_edit_resolves_relative_path_against_hook_cwd(self):
         payload = self.edit_payload(file_path='src/A.cs')
         payload['cwd'] = str(self.worktree)
         for implementation in self.each():
-            self.run_hook(implementation, 'worktree-track-hook', payload)
-            self.assertEqual(Path(self.calls(expected=1)[0]['args'][2]), self.worktree / 'src/A.cs')
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-track-hook', payload)
+                self.assertEqual(Path(self.calls(expected=1)[0]['args'][2]), self.worktree / 'src/A.cs')
 
     def test_notebook_edit_tracks_notebook_path(self):
         target = str(self.worktree / 'nb.ipynb')
         for implementation in self.each():
-            self.run_hook(implementation, 'worktree-track-hook', self.edit_payload(notebook_path=target))
-            self.assertEqual(self.calls(expected=1)[0]['args'][2], target)
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-track-hook', self.edit_payload(notebook_path=target))
+                self.assertEqual(self.calls(expected=1)[0]['args'][2], target)
 
     def test_track_without_project_dir_calls_nothing(self):
         del self.env['CLAUDE_PROJECT_DIR']
         for implementation in self.each():
-            self.run_hook(implementation, 'worktree-track-hook', self.edit_payload(file_path=str(self.worktree / 'src/A.cs')))
-            time.sleep(0.3)
-            self.assertEqual(self.calls(), [])
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-track-hook', self.edit_payload(file_path=str(self.worktree / 'src/A.cs')))
+                time.sleep(0.3)
+                self.assertEqual(self.calls(), [])
 
     def test_rql_tool_call_forwards_scope_cwd_and_text_then_returns_notice(self):
         payload = self.mcp_payload({'uriGlob': 'file:///src/** => structure'}, 'file:///src/A.cs')
         payload['cwd'] = str(self.worktree)
         for implementation in self.each():
-            result = self.run_hook(implementation, 'worktree-check-hook', payload)
-            self.assertEqual(context_of(result, 'PostToolUse'), 'RepoQL worktree notice: this result covers src/A.cs.')
-            call, = self.calls()
-            self.assertEqual(call['args'], ['worktree', 'check', '--session', 'wt-session', '--cwd', str(self.worktree),
-                                            '--pattern', 'file:///src/** => structure'])
-            self.assertEqual(call['stdin'], 'file:///src/A.cs')
-            self.assert_reads_from_the_project(call)
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-check-hook', payload)
+                self.assertEqual(context_of(result, 'PostToolUse'), 'RepoQL worktree notice: this result covers src/A.cs.')
+                call, = self.calls()
+                self.assertEqual(call['args'], ['worktree', 'check', '--session', 'wt-session', '--cwd', str(self.worktree),
+                                                '--pattern', 'file:///src/** => structure'])
+                self.assertEqual(call['stdin'], 'file:///src/A.cs')
+                self.assert_reads_from_the_project(call)
 
     def test_top_level_text_blocks_are_forwarded(self):
         payload = self.mcp_payload({}, 'unused')
         payload['tool_response'] = [{'type': 'text', 'text': 'first'}, {'type': 'text', 'text': 'second'}]
         for implementation in self.each():
-            self.run_hook(implementation, 'worktree-check-hook', payload)
-            self.assertEqual(self.calls()[0]['stdin'].replace('\r\n', '\n'), 'first\nsecond')
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-check-hook', payload)
+                self.assertEqual(self.calls()[0]['stdin'].replace('\r\n', '\n'), 'first\nsecond')
 
     def test_rql_tool_call_without_glob_omits_pattern(self):
         for implementation in self.each():
-            self.run_hook(implementation, 'worktree-check-hook', self.mcp_payload({'keywords': 'auth'}, 'ranked'))
-            self.assertNotIn('--pattern', self.calls()[0]['args'])
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-check-hook', self.mcp_payload({'keywords': 'auth'}, 'ranked'))
+                self.assertNotIn('--pattern', self.calls()[0]['args'])
 
     def test_silent_check_emits_nothing(self):
         self.env['HOOK_MODE'] = 'silent'
         for implementation in self.each():
-            result = self.run_hook(implementation, 'worktree-check-hook', self.mcp_payload({}, 'text'))
-            self.assertEqual(result.stdout, '')
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-check-hook', self.mcp_payload({}, 'text'))
+                self.assertEqual(result.stdout, '')
 
     def test_failed_check_never_blocks(self):
         self.env['HOOK_MODE'] = 'failure'
         for implementation in self.each():
-            result = self.run_hook(implementation, 'worktree-check-hook', self.mcp_payload({}, 'text'))
-            self.assertEqual(result.stdout, '')
+            with self.case(implementation=implementation):
+                result = self.run_hook(implementation, 'worktree-check-hook', self.mcp_payload({}, 'text'))
+                self.assertEqual(result.stdout, '')
 
     def test_server_named_rql_is_checked(self):
         payload = self.mcp_payload({}, 'text')
         payload['tool_name'] = 'mcp__rql__explore'
         for implementation in self.each():
-            self.run_hook(implementation, 'worktree-check-hook', payload)
-            self.assertEqual(self.calls()[0]['args'][:2], ['worktree', 'check'])
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-check-hook', payload)
+                self.assertEqual(self.calls()[0]['args'][:2], ['worktree', 'check'])
 
     def test_other_tools_are_ignored(self):
         payload = self.mcp_payload({}, 'text')
         payload['tool_name'] = 'mcp__github__search'
         for implementation in self.each():
-            self.run_hook(implementation, 'worktree-check-hook', payload)
-            self.assertEqual(self.calls(), [])
+            with self.case(implementation=implementation):
+                self.run_hook(implementation, 'worktree-check-hook', payload)
+                self.assertEqual(self.calls(), [])
 
 
 if __name__ == '__main__':
