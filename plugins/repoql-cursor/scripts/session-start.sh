@@ -1,6 +1,7 @@
 #!/bin/bash
 # RepoQL sessionStart hook for Cursor — bootstrap the host if needed, export a
 # PATH that finds rql to later hooks, and inject repository orientation.
+# session-start.ps1 is the same hook for Windows; run-hook.cmd picks between them.
 #
 # Cursor reads snake_case JSON from stdout: additional_context joins the
 # conversation's initial context and env reaches every later hook in the
@@ -11,29 +12,16 @@
 trap 'printf "{}\n"; exit 0' ERR
 exec 2>/dev/null
 
-hook_input=$(cat)
-
-# Hooks may run with a minimal PATH; rql installs to ~/.local/bin on
-# macOS/Linux and %LOCALAPPDATA%\rql on Windows (Git Bash).
+# Hooks may run with a minimal PATH; rql installs to ~/.local/bin.
 export PATH="$HOME/.local/bin:$PATH"
-case "$(uname -s)" in
-    CYGWIN*|MSYS*|MINGW*)
-        if [ -n "$LOCALAPPDATA" ] && command -v cygpath >/dev/null 2>&1; then
-            export PATH="$(cygpath -u "$LOCALAPPDATA")/rql:$PATH"
-        fi
-        ;;
-esac
 
-command -v jq >/dev/null 2>&1 || { printf '{}\n'; exit 0; }
+case "$0" in */*) script_dir=${0%/*} ;; *) script_dir=. ;; esac
+script_dir=$(cd "$script_dir" && pwd)
+. "$script_dir/json.sh"
 
 workspace="${CURSOR_PROJECT_DIR:-}"
-if [ ! -d "$workspace" ]; then
-    workspace=$(jq -r '.workspace_roots[0] // empty' <<<"$hook_input")
-fi
 [ -d "$workspace" ] || workspace="$PWD"
 cd "$workspace" || { printf '{}\n'; exit 0; }
-
-script_dir=$(cd "$(dirname "$0")" && pwd)
 
 fresh_install=""
 if ! command -v rql >/dev/null 2>&1; then
@@ -47,8 +35,7 @@ if ! command -v rql >/dev/null 2>&1; then
     if [ "${REPOQL_NO_BOOTSTRAP:-0}" != "1" ]; then
         ctx="# RepoQL: host not installed"$'\n'
         ctx+="The RepoQL plugin is installed but the rql binary is missing and automatic install failed (log: $HOME/.local/state/repoql/bootstrap.log). Tell the user to install it manually, then reload the Cursor window:"$'\n'
-        ctx+='  macOS/Linux:        curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
-        ctx+='  Windows PowerShell: irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'$'\n'
+        ctx+='  curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
     fi
 else
     ctx="# RepoQL: Repository Orientation"$'\n'
@@ -108,5 +95,9 @@ if [ ! -f "$workspace/.cursor/rules/repoql-concepts.g.mdc" ]; then
     done
 fi
 
-jq -cn --arg ctx "$ctx" --arg path "$PATH" '{env: {PATH: $path}} + (if $ctx == "" then {} else {additional_context: $ctx} end)'
+output="{\"env\":{\"PATH\":$(json_string "$PATH")}" || { printf '{}\n'; exit 0; }
+if [ -n "$ctx" ]; then
+    output+=",\"additional_context\":$(json_string "$ctx")" || { printf '{}\n'; exit 0; }
+fi
+printf '%s}\n' "$output"
 exit 0

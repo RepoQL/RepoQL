@@ -12,11 +12,13 @@ on:
     paths:
       - "plugins/repoql/scripts/bootstrap-rql.sh"
       - "plugins/repoql/scripts/session-start.sh"
+      - "plugins/repoql-cursor/scripts/**"
       - ".github/workflows/bootstrap-e2e.yml"
   pull_request:
     paths:
       - "plugins/repoql/scripts/bootstrap-rql.sh"
       - "plugins/repoql/scripts/session-start.sh"
+      - "plugins/repoql-cursor/scripts/**"
       - ".github/workflows/bootstrap-e2e.yml"
 
 jobs:
@@ -91,3 +93,46 @@ jobs:
         run: |
           plugins/repoql/scripts/session-start.sh > ss.json
           jq -e '.hookSpecificOutput.additionalContext | contains("RepoQL")' ss.json
+
+  # The Cursor plugin on a bare Windows machine: no rql, no Git Bash in the
+  # path of the hook. Cursor pipes the payload to the hook command from Windows
+  # PowerShell, so these steps do the same.
+  cursor-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: First session installs rql through the hook
+        shell: powershell
+        run: |
+          $env:CURSOR_PROJECT_DIR = $PWD
+          $hook = Join-Path $PWD 'plugins\repoql-cursor\scripts\run-hook.cmd'
+          $answer = '{"hook_event_name":"sessionStart"}' | & $hook session-start
+          $answer
+          if (($answer | ConvertFrom-Json).additional_context -notlike '*rql was just installed*') {
+            Get-Content (Join-Path $HOME '.local\state\repoql\bootstrap.log')
+            throw 'the first session did not report an install'
+          }
+
+      - name: Verify rql.exe in the canonical location
+        shell: powershell
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA 'rql\rql.exe'
+          if (-not (Test-Path $exe)) { throw "rql.exe not found at $exe" }
+          & $exe --version
+
+      # Steps get the runner's original environment, so PATH still lacks the
+      # registry entry - the state of a hook whose parent predates the install.
+      - name: Second session orients without installing again
+        shell: powershell
+        run: |
+          $env:CURSOR_PROJECT_DIR = $PWD
+          $hook = Join-Path $PWD 'plugins\repoql-cursor\scripts\run-hook.cmd'
+          $answer = '{"hook_event_name":"sessionStart"}' | & $hook session-start
+          $answer
+          if (($answer | ConvertFrom-Json).additional_context -notlike '# RepoQL: Repository Orientation*Imported Repositories*') {
+            throw 'the second session did not orient'
+          }
+          $installs = @(Select-String -Path (Join-Path $HOME '.local\state\repoql\bootstrap.log') -Pattern 'installing from downloads.repoql.ai').Count
+          if ($installs -ne 1) { throw "expected one install, found $installs" }
