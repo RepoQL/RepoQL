@@ -114,7 +114,8 @@ class ClaudeCodeLauncherTests(LauncherFixture):
 
     def test_every_hook_answers_under_every_shell_claude_code_uses(self):
         shells = self.shells()
-        self.assertTrue(shells)
+        # A missing shell must fail here, not pass by being skipped: CI has all of them.
+        self.assertGreaterEqual(len(shells), 3 if WINDOWS or os.environ.get('CI') else 1, shells)
         for shell in shells:
             for command in self.hooks('command'):
                 with self.subTest(shell=shell[0]):
