@@ -4,21 +4,13 @@
 # Fail open so an unavailable host never blocks a Codex session.
 trap 'exit 0' ERR
 
-hook_input=$(cat)
-workspace="$PWD"
-if command -v jq >/dev/null 2>&1; then
-    input_cwd=$(jq -r '.cwd // empty' <<<"$hook_input" 2>/dev/null)
-    [ -d "$input_cwd" ] && workspace="$input_cwd"
-fi
+case "$0" in */*) script_dir=${0%/*} ;; *) script_dir=. ;; esac
+script_dir=$(cd "$script_dir" && pwd)
+. "$script_dir/json.sh"
 
-emit_context() {
-    [ -n "$1" ] || exit 0
-    if command -v jq >/dev/null 2>&1; then
-        jq -n --arg ctx "$1" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
-    else
-        printf '%s\n' "$1"
-    fi
-}
+workspace="$PWD"
+input_cwd=$(json_leaves '^cwd$' 2>/dev/null | cut -f2)
+[ -d "$input_cwd" ] && workspace="$input_cwd"
 
 export PATH="$HOME/.local/bin:$PATH"
 case "$(uname -s)" in
@@ -29,7 +21,6 @@ case "$(uname -s)" in
         ;;
 esac
 
-script_dir=$(cd "$(dirname "$0")" && pwd)
 state_dir="${PLUGIN_DATA:-${CLAUDE_PLUGIN_DATA:-$HOME/.local/state/repoql}}"
 
 fresh_install=""
@@ -105,5 +96,6 @@ if [ -n "$concepts_relative" ]; then
     ctx+="## Repository Concepts Index ($concepts_relative)"$'\n\n'"$concepts_readme"$'\n'
 fi
 
-emit_context "$ctx"
+[ -n "$ctx" ] || exit 0
+json_context_reply SessionStart "$ctx"
 exit 0

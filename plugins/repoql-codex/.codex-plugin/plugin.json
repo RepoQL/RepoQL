@@ -1,6 +1,6 @@
 {
   "name": "repoql-codex",
-  "version": "1.1.2+codex.20260926092608",
+  "version": "1.1.3+codex.20261004081549",
   "description": "Queryable code intelligence \u2014 explore codebase structure without reading files.",
   "author": {
     "name": "Clanker Tools",

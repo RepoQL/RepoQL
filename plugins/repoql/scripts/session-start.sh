@@ -5,18 +5,19 @@
 # SessionStart injects only the JSON hookSpecificOutput.additionalContext;
 # plain stdout is NOT added to the agent's context, so the orientation is built
 # into one string and emitted as that envelope. Always exits 0 so a missing
-# rql/jq, a host that is down, or an unindexed repo never blocks the session.
+# rql, a host that is down, or an unindexed repo never blocks the session.
 #
 # SessionStart hooks complete before MCP servers spawn, so when rql is missing
 # the bootstrap below can still make this session's bundled MCP server work.
 trap 'exit 0' ERR
 
-hook_input=$(cat)
+case "$0" in */*) script_dir=${0%/*} ;; *) script_dir=. ;; esac
+script_dir=$(cd "$script_dir" && pwd)
+. "$script_dir/json.sh"
+
 workspace="$PWD"
-if command -v jq >/dev/null 2>&1; then
-    input_cwd=$(jq -r '.cwd // empty' <<<"$hook_input" 2>/dev/null)
-    [ -d "$input_cwd" ] && workspace="$input_cwd"
-fi
+input_cwd=$(json_leaves '^cwd$' 2>/dev/null | cut -f2)
+[ -d "$input_cwd" ] && workspace="$input_cwd"
 
 # Hooks may run with a minimal PATH; rql installs to ~/.local/bin on
 # macOS/Linux and %LOCALAPPDATA%\rql on Windows (hooks run under Git Bash
@@ -30,16 +31,12 @@ case "$(uname -s)" in
         ;;
 esac
 
-script_dir=$(cd "$(dirname "$0")" && pwd)
-
 fresh_install=""
 if ! command -v rql >/dev/null 2>&1; then
     if "$script_dir/bootstrap-rql.sh"; then
         fresh_install=1
     fi
 fi
-
-command -v jq >/dev/null 2>&1 || exit 0
 
 ctx=""
 if ! command -v rql >/dev/null 2>&1; then
@@ -113,5 +110,5 @@ if [ -n "$concepts_relative" ]; then
 fi
 
 [ -n "$ctx" ] || exit 0
-jq -n --arg ctx "$ctx" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $ctx}}'
+json_context_reply SessionStart "$ctx"
 exit 0

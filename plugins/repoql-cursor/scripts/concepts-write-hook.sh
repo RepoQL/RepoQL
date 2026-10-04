@@ -58,7 +58,7 @@ workspace=${cwd:-$root}
 cd "$workspace" || pass
 
 # tool_input may arrive as a JSON string instead of an object.
-[ -n "$files" ] || files=$(printf '%s' "$input" | json_string_at tool_input | json_leaves "^$path_fields\$" | cut -f2)
+[ -n "$files" ] || files=$(printf '%s' "$input" | json_text '^tool_input$' | json_leaves "^$path_fields\$" | cut -f2)
 files=$(printf '%s\n' "$files" | sort -u)
 [ -n "$files" ] || pass
 

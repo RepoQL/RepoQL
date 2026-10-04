@@ -3,23 +3,17 @@ name: context-hooks
 on:
   pull_request:
     paths:
-      - "plugins/repoql/scripts/concepts-write-hook.sh"
-      - "plugins/repoql-codex/scripts/concepts-write-hook.sh"
-      - "tests/test_*_hooks.py"
-      - "plugins/*/scripts/vocabulary-read-hook.sh"
+      - "plugins/*/scripts/**"
       - "plugins/*/hooks/hooks.json"
-      - "plugins/repoql-cursor/**"
+      - "tests/**"
       - ".cursor-plugin/**"
       - ".github/workflows/concept-hooks.yml"
   push:
     branches: [main]
     paths:
-      - "plugins/repoql/scripts/concepts-write-hook.sh"
-      - "plugins/repoql-codex/scripts/concepts-write-hook.sh"
-      - "tests/test_*_hooks.py"
-      - "plugins/*/scripts/vocabulary-read-hook.sh"
+      - "plugins/*/scripts/**"
       - "plugins/*/hooks/hooks.json"
-      - "plugins/repoql-cursor/**"
+      - "tests/**"
       - ".cursor-plugin/**"
       - ".github/workflows/concept-hooks.yml"
 
@@ -29,17 +23,16 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - run: command -v jq
       - run: python3 -m unittest discover -s tests -p 'test_*_hooks.py'
 
-  # The Cursor plugin's hooks run as PowerShell on Windows, started through
-  # run-hook.cmd the way Cursor composes the command there.
-  cursor-windows:
+  # On Windows every hook runs as PowerShell, and the launcher cases start each
+  # hook command under Windows PowerShell, PowerShell 7, Git Bash and cmd.exe.
+  windows:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - run: python -m unittest -v tests.test_cursor_hooks
+      - run: python -m unittest discover -v -s tests -p "test_*_hooks.py"
