@@ -30,7 +30,7 @@ try {
         # payloads and the Claude-compatible shape are known to use. tool_input may
         # arrive as a JSON string.
         $toolInput = $payload.tool_input
-        if ($toolInput -is [string]) { $toolInput = try { $toolInput | ConvertFrom-Json } catch { $null } }
+        if ($toolInput -is [string]) { $toolInput = ConvertFrom-HookJson $toolInput }
         $candidates = @($toolInput.file_path, $toolInput.path, $toolInput.target_file, $toolInput.filePath)
         foreach ($edit in @($toolInput.edits)) { $candidates += @($edit.file_path, $edit.path) }
         $files = @($candidates | Where-Object { $_ -is [string] -and $_ } | Sort-Object -Unique | Select-Object -First 8)
@@ -40,7 +40,7 @@ try {
             # Query paths separately so newly created files need not exist in the index.
             $hints = $null | rql concept hints (ConvertTo-LiteralTarget $file) --session $session --limit $remaining --json 2>$null
             if ($LASTEXITCODE -ne 0) { continue }
-            $concepts = try { @((@($hints) -join "`n" | ConvertFrom-Json).concepts | Where-Object { $_.uri }) } catch { @() }
+            $concepts = @((ConvertFrom-HookJson (@($hints) -join "`n")).concepts | Where-Object { $_.uri })
             if ($concepts.Count -eq 0) { continue }
             foreach ($concept in $concepts) {
                 $entry = $concept.uri + "`t" + $concept.invariant

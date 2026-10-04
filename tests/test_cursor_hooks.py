@@ -165,7 +165,9 @@ class HookCases:
                 self.assertEqual([c['args'][2] for c in self.calls(['concept', 'hints'])], ['a.cs'])
 
     def test_paths_survive_json_escaping(self):
-        for path in ('C:\\Users\\Jo "Q" Smith\\répo\\page 😀.tsx', 'src/tab\\tname.cs'):
+        # Windows forbids a quote in a file name, and Windows PowerShell cannot pass one to a program.
+        quoted = 'Jo Smith' if WINDOWS else 'Jo "Q" Smith'
+        for path in (f'C:\\Users\\{quoted}\\répo\\page 😀.tsx', 'src/tab\\tname.cs'):
             for encode in (lambda value: value, json.dumps):
                 with self.subTest(path=path, string_encoded=encode is json.dumps):
                     self.log.unlink(missing_ok=True)
@@ -174,7 +176,7 @@ class HookCases:
 
     def test_a_large_file_body_is_read_inside_the_hook_timeout(self):
         # hooks.json gives the write hook five seconds; the payload carries the whole file.
-        body = 'line "quoted" \\ back\\\\slash\n\t"file_path": "decoy.cs",\n' * 20000
+        body = 'line "quoted" \\ back\\\\slash\n\t"file_path": "decoy.cs",\n' * 40000
         for tool_input in ({'content': body, 'file_path': 'a.cs'}, json.dumps({'content': body, 'file_path': 'a.cs'})):
             with self.subTest(string_encoded=isinstance(tool_input, str)):
                 self.log.unlink(missing_ok=True)

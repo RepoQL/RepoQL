@@ -18,13 +18,28 @@ if ($env:LOCALAPPDATA) {
     $env:PATH = (Join-Path $env:LOCALAPPDATA 'rql') + [IO.Path]::PathSeparator + $env:PATH
 }
 
+# Parse JSON text, or return nothing when it is not JSON. Windows PowerShell's
+# ConvertFrom-Json refuses text over two million characters, and a write
+# payload carries a whole file, so there the serializer is used directly.
+function ConvertFrom-HookJson([string]$text) {
+    try {
+        if ($PSVersionTable.PSVersion.Major -gt 5) { return $text | ConvertFrom-Json }
+        Add-Type -AssemblyName System.Web.Extensions
+        $serializer = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+        $serializer.MaxJsonLength = [int]::MaxValue
+        return $serializer.DeserializeObject($text)
+    } catch {
+        return $null
+    }
+}
+
 # Parse the hook payload on stdin. PowerShell may put a byte-order mark ahead of
 # the text it pipes to this process.
 function Read-HookInput {
     try {
         $buffer = New-Object System.IO.MemoryStream
         [Console]::OpenStandardInput().CopyTo($buffer)
-        return $utf8.GetString($buffer.ToArray()).TrimStart([char]0xFEFF) | ConvertFrom-Json
+        return ConvertFrom-HookJson $utf8.GetString($buffer.ToArray()).TrimStart([char]0xFEFF)
     } catch {
         return $null
     }
