@@ -85,31 +85,24 @@ function ConvertTo-Argument([string]$value) {
 }
 
 # Run rql with $text on its stdin and return what it printed; $RqlExitCode holds
-# its exit code. The process is started directly because Windows PowerShell can
-# put a byte-order mark ahead of text it pipes to a program, and always ends it
-# with a line break: rql must read the text exactly.
+# its exit code. The text goes through a file because rql must read it exactly:
+# when the console's input code page is UTF-8, Windows PowerShell and .NET put a
+# byte-order mark ahead of anything they pipe or write to a program's stdin, and
+# a pipe also ends the text with a line break.
 function Invoke-Rql([string]$text, [string[]]$arguments) {
     $script:RqlExitCode = -1
-    $start = New-Object System.Diagnostics.ProcessStartInfo
-    $start.FileName = (Get-Command rql -CommandType Application | Select-Object -First 1).Source
-    $start.Arguments = ($arguments | ForEach-Object { ConvertTo-Argument $_ }) -join ' '
-    $start.WorkingDirectory = (Get-Location).Path
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
-    $start.RedirectStandardInput = $true
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    $start.StandardOutputEncoding = $utf8
-    $process = [System.Diagnostics.Process]::Start($start)
-    $errors = $process.StandardError.ReadToEndAsync()
-    $bytes = $utf8.GetBytes($text)
-    $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
-    $process.StandardInput.Close()
-    $output = $process.StandardOutput.ReadToEnd()
-    $process.WaitForExit()
-    [void]$errors.Result
-    $script:RqlExitCode = $process.ExitCode
-    return $output.Trim()
+    $scratch = Join-Path ([IO.Path]::GetTempPath()) ('repoql-hook-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        [IO.File]::WriteAllBytes("$scratch.in", $utf8.GetBytes($text))
+        $process = Start-Process -FilePath (Get-Command rql -CommandType Application | Select-Object -First 1).Source `
+            -ArgumentList (($arguments | ForEach-Object { ConvertTo-Argument $_ }) -join ' ') `
+            -WorkingDirectory (Get-Location).Path -NoNewWindow -Wait -PassThru `
+            -RedirectStandardInput "$scratch.in" -RedirectStandardOutput "$scratch.out" -RedirectStandardError "$scratch.err"
+        $script:RqlExitCode = $process.ExitCode
+        return [IO.File]::ReadAllText("$scratch.out", $utf8).Trim()
+    } finally {
+        Remove-Item -LiteralPath "$scratch.in", "$scratch.out", "$scratch.err"
+    }
 }
 
 # The host reads targets as URI globs: escape the metacharacters a real path can
