@@ -8,10 +8,10 @@ EXEMPLAR = ROOT / 'plugins' / 'repoql'
 UPLINK = ROOT / 'plugins' / 'repoql-uplink'
 
 # Skills written for the remote connection; the exemplar's version assumes a local host.
-OWNED_SKILLS = {'using-uplinks'}
+OWNED_SKILLS = {'troubleshooting-repoql', 'using-uplinks'}
 
 # Exemplar skills that drive the local rql binary, which this plugin never installs.
-LOCAL_ONLY_SKILLS = {'monitoring-repoql', 'statusline-builder', 'troubleshooting-repoql'}
+LOCAL_ONLY_SKILLS = {'monitoring-repoql', 'statusline-builder'}
 
 
 def files_under(directory):
@@ -40,6 +40,12 @@ class UplinkPluginTests(unittest.TestCase):
                          {'type': 'http', 'url': '${REPOQL_UPLINK_URL:-https://mcp.repoql.com/uplink}'})
         self.assertFalse((UPLINK / 'hooks').exists())
         self.assertFalse((UPLINK / 'scripts').exists())
+
+    def test_owned_skills_never_load_through_the_connection_they_serve(self):
+        text = (UPLINK / 'skills' / 'troubleshooting-repoql' / 'SKILL.md').read_text(encoding='utf-8')
+        self.assertNotIn('## Load', text)
+        self.assertNotIn('help:///skills/', text)
+        self.assertFalse((UPLINK / 'skills' / 'troubleshooting-repoql' / 'references').exists())
 
     def test_marketplace_lists_the_plugin_under_its_manifest_name(self):
         manifest = json.loads((UPLINK / '.claude-plugin' / 'plugin.json').read_text(encoding='utf-8'))

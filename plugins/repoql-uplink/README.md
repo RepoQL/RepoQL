@@ -53,7 +53,7 @@ The connection is read-only. Importing repositories, capturing concepts, and hos
 
 ### Skills
 
-**using-uplinks** is written for this connection: choosing a destination, routing each call, and recovering when access or sign-in fails.
+Two are written for this connection. **using-uplinks** covers choosing a destination and routing each call. **troubleshooting-repoql** finds which layer a failure is in — sign-in, access, the uplink, its host, or its index — and who owns the fix.
 
 The rest are the same skills the `repoql` plugin ships, loaded from the uplink at the version its host runs: **effective-repoql**, **research**, **effective-markdown**, **findings**, **north-star**, **flow**, **system-design**, **plan**, **odad**, **mermaid-diagrams**, and **skill-builder**.
 
@@ -85,7 +85,7 @@ The index reflects pushed code. Your uncommitted edits are not in it.
 | An uplink is offline | Ask its operator to restore it. |
 | No default was selected | Name the uplink in your request, or sign in again to choose one. |
 
-The `using-uplinks` skill carries the full table for the assistant.
+The `troubleshooting-repoql` skill carries the full table for the assistant.
 
 ## License
 
