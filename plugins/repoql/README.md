@@ -27,7 +27,7 @@ There is no separate index step — the host indexes a repository automatically 
 ## Prerequisites
 
 1. **Claude Code 2.0+**
-2. **Bash** for the shell hooks and the bootstrap (Git Bash on Windows).
+2. Nothing else for the hooks: they run under bash on macOS and Linux, and on Windows under Git Bash when it is installed or Windows PowerShell when it is not.
 
 ## What you get
 

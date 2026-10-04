@@ -7,7 +7,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${PLUGIN_ROOT}/scripts/concepts-write-hook.sh",
+            "command": "\"${PLUGIN_ROOT}/scripts/concepts-write-hook.sh\"",
+            "command_windows": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}\\scripts\\concepts-write-hook.ps1\"",
             "timeout": 5,
             "additionalContextLimit": 5000,
             "statusMessage": "Loading relevant RepoQL concepts"
@@ -21,8 +22,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${PLUGIN_ROOT}/scripts/session-start.sh",
-            "command_windows": "pwsh -NoProfile -File \"${PLUGIN_ROOT}/scripts/session-start.ps1\"",
+            "command": "\"${PLUGIN_ROOT}/scripts/session-start.sh\"",
+            "command_windows": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}\\scripts\\session-start.ps1\"",
             "timeout": 240,
             "additionalContextLimit": 12000,
             "statusMessage": "Loading the RepoQL concepts index"
@@ -36,7 +37,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${PLUGIN_ROOT}/scripts/vocabulary-read-hook.sh",
+            "command": "\"${PLUGIN_ROOT}/scripts/vocabulary-read-hook.sh\"",
+            "command_windows": "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"${PLUGIN_ROOT}\\scripts\\vocabulary-read-hook.ps1\"",
             "timeout": 5,
             "additionalContextLimit": 2500,
             "statusMessage": "Loading repository vocabulary"

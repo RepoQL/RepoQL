@@ -10,15 +10,11 @@ on:
   push:
     branches: [main]
     paths:
-      - "plugins/repoql/scripts/bootstrap-rql.sh"
-      - "plugins/repoql/scripts/session-start.sh"
-      - "plugins/repoql-cursor/scripts/**"
+      - "plugins/*/scripts/**"
       - ".github/workflows/bootstrap-e2e.yml"
   pull_request:
     paths:
-      - "plugins/repoql/scripts/bootstrap-rql.sh"
-      - "plugins/repoql/scripts/session-start.sh"
-      - "plugins/repoql-cursor/scripts/**"
+      - "plugins/*/scripts/**"
       - ".github/workflows/bootstrap-e2e.yml"
 
 jobs:

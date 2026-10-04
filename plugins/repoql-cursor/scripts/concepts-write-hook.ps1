@@ -8,12 +8,6 @@
 # {} lets the write through untouched.
 . (Join-Path $PSScriptRoot 'hook-io.ps1')
 
-# The host reads targets as URI globs: escape the metacharacters a real path can
-# hold, so app/[slug]/page.tsx names that file instead of a character class.
-function ConvertTo-LiteralTarget([string]$path) {
-    return $path.Replace('*', '%2A').Replace('?', '%3F').Replace('[', '%5B').Replace('{', '%7B').Replace(';', '%3B')
-}
-
 $entries = @()
 try {
     $payload = Read-HookInput
