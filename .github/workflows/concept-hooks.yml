@@ -5,6 +5,10 @@ on:
     paths:
       - "plugins/*/scripts/**"
       - "plugins/*/hooks/hooks.json"
+      - "plugins/repoql/skills/**"
+      - "plugins/repoql/agents/**"
+      - "plugins/repoql-uplink/**"
+      - ".claude-plugin/**"
       - "tests/**"
       - ".cursor-plugin/**"
       - ".github/workflows/concept-hooks.yml"
@@ -13,6 +17,10 @@ on:
     paths:
       - "plugins/*/scripts/**"
       - "plugins/*/hooks/hooks.json"
+      - "plugins/repoql/skills/**"
+      - "plugins/repoql/agents/**"
+      - "plugins/repoql-uplink/**"
+      - ".claude-plugin/**"
       - "tests/**"
       - ".cursor-plugin/**"
       - ".github/workflows/concept-hooks.yml"
@@ -27,6 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m unittest discover -s tests -p 'test_*_hooks.py'
+      - run: python3 -m unittest discover -s tests -p 'test_uplink_plugin.py'
 
   # On Windows every hook runs as PowerShell, and the launcher cases start each
   # hook command under Windows PowerShell, PowerShell 7, Git Bash and cmd.exe.
