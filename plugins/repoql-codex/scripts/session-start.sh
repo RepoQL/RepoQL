@@ -21,22 +21,30 @@ case "$(uname -s)" in
         ;;
 esac
 
-state_dir="${PLUGIN_DATA:-${CLAUDE_PLUGIN_DATA:-$HOME/.local/state/repoql}}"
-
 fresh_install=""
+bootstrap_status=0
+bootstrap_reason=""
 if ! command -v rql >/dev/null 2>&1; then
-    if "$script_dir/bootstrap-rql.sh"; then
+    # A failed bootstrap prints why; exit 2 means another session is installing.
+    if bootstrap_reason=$("$script_dir/bootstrap-rql.sh"); then
         fresh_install=1
+    else
+        bootstrap_status=$?
     fi
 fi
 
 ctx=""
 if ! command -v rql >/dev/null 2>&1; then
     if [ "${REPOQL_NO_BOOTSTRAP:-0}" != "1" ]; then
-        ctx="# RepoQL: host not installed"$'\n'
-        ctx+="The RepoQL plugin is installed, but automatic rql installation failed (log: $state_dir/bootstrap.log). Tell the user to install it manually and start a new Codex task:"$'\n'
-        ctx+='  macOS/Linux:        curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
-        ctx+='  Windows PowerShell: irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'$'\n'
+        if [ "$bootstrap_status" = "2" ]; then
+            ctx="# RepoQL: host install in progress"$'\n'
+            ctx+="The RepoQL plugin is installed and another session is installing the rql binary right now, so RepoQL tools are not available in this session yet. Tell the user to start a new Codex task in a minute; nothing needs installing by hand."$'\n'
+        else
+            ctx="# RepoQL: host not installed"$'\n'
+            ctx+="The RepoQL plugin is installed but the rql binary is missing and ${bootstrap_reason:-automatic install failed}. Tell the user to install it manually and start a new Codex task:"$'\n'
+            ctx+='  macOS/Linux:        curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
+            ctx+='  Windows PowerShell: irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'$'\n'
+        fi
     fi
 else
     ctx="# RepoQL: Repository Orientation"$'\n'
