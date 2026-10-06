@@ -24,18 +24,28 @@ workspace="${CURSOR_PROJECT_DIR:-}"
 cd "$workspace" || { printf '{}\n'; exit 0; }
 
 fresh_install=""
+bootstrap_status=0
+bootstrap_reason=""
 if ! command -v rql >/dev/null 2>&1; then
-    if "$script_dir/bootstrap-rql.sh" >/dev/null; then
+    # A failed bootstrap prints why; exit 2 means another session is installing.
+    if bootstrap_reason=$("$script_dir/bootstrap-rql.sh"); then
         fresh_install=1
+    else
+        bootstrap_status=$?
     fi
 fi
 
 ctx=""
 if ! command -v rql >/dev/null 2>&1; then
     if [ "${REPOQL_NO_BOOTSTRAP:-0}" != "1" ]; then
-        ctx="# RepoQL: host not installed"$'\n'
-        ctx+="The RepoQL plugin is installed but the rql binary is missing and automatic install failed (log: $HOME/.local/state/repoql/bootstrap.log). Tell the user to install it manually, then reload the Cursor window:"$'\n'
-        ctx+='  curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
+        if [ "$bootstrap_status" = "2" ]; then
+            ctx="# RepoQL: host install in progress"$'\n'
+            ctx+="The RepoQL plugin is installed and another session is installing the rql binary right now, so RepoQL tools are not available in this session yet. Tell the user to reload the Cursor window in a minute; nothing needs installing by hand."$'\n'
+        else
+            ctx="# RepoQL: host not installed"$'\n'
+            ctx+="The RepoQL plugin is installed but the rql binary is missing and ${bootstrap_reason:-automatic install failed}. Tell the user to install it manually, then reload the Cursor window:"$'\n'
+            ctx+='  curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
+        fi
     fi
 else
     ctx="# RepoQL: Repository Orientation"$'\n'
