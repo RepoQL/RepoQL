@@ -7,8 +7,11 @@
 # into one string and emitted as that envelope. Always exits 0 so a missing
 # rql, a host that is down, or an unindexed repo never blocks the session.
 #
-# SessionStart hooks complete before MCP servers spawn, so when rql is missing
-# the bootstrap below can still make this session's bundled MCP server work.
+# Claude Code does not order this hook against MCP server startup, and does not
+# run it at all in the session where `/plugin install` happens, so the bundled
+# server never depends on it: the rql-mcp launcher finds or installs rql itself.
+# The bootstrap below shares that launcher's download and is what installs rql
+# in a session where the server is not spawned.
 trap 'exit 0' ERR
 
 case "$0" in */*) script_dir=${0%/*} ;; *) script_dir=. ;; esac
@@ -22,6 +25,7 @@ input_cwd=$(json_leaves '^cwd$' 2>/dev/null | cut -f2)
 # Hooks may run with a minimal PATH; rql installs to ~/.local/bin on
 # macOS/Linux and %LOCALAPPDATA%\rql on Windows (hooks run under Git Bash
 # there, whose inherited PATH may predate the installer's registry entry).
+launch_path="$PATH"
 export PATH="$HOME/.local/bin:$PATH"
 case "$(uname -s)" in
     CYGWIN*|MSYS*|MINGW*)
@@ -32,18 +36,24 @@ case "$(uname -s)" in
 esac
 
 fresh_install=""
+still_installing=""
 if ! command -v rql >/dev/null 2>&1; then
-    if "$script_dir/bootstrap-rql.sh"; then
-        fresh_install=1
-    fi
+    REPOQL_LAUNCH_PATH="$launch_path" "$script_dir/bootstrap-rql.sh" && fresh_install=1 || { [ $? -eq 2 ] && still_installing=1; }
+    # The launcher sees the new binary within a second, then starts rql and has
+    # the client reload its tools. Holding the first prompt briefly lets that
+    # finish so the first turn has the tools; nothing here can observe it.
+    [ -n "$fresh_install" ] && sleep 3
 fi
 
 ctx=""
 if ! command -v rql >/dev/null 2>&1; then
     # Keep concept-index injection independent of host availability.
-    if [ "${REPOQL_NO_BOOTSTRAP:-0}" != "1" ]; then
+    if [ -n "$still_installing" ]; then
+        ctx="# RepoQL: host still installing"$'\n'
+        ctx+="The repoql plugin is downloading the rql binary in the background and it has not finished yet (log: $HOME/.local/state/repoql/bootstrap.log). RepoQL tools are unavailable until it does. If the user asks for them, tell them to reconnect the repoql server from /mcp once the download completes, or to start a new session."$'\n'
+    elif [ "${REPOQL_NO_BOOTSTRAP:-0}" != "1" ]; then
         ctx="# RepoQL: host not installed"$'\n'
-        ctx+="The repoql plugin is installed but the rql binary is missing and automatic install failed (log: ${CLAUDE_PLUGIN_DATA:-$HOME/.local/state/repoql}/bootstrap.log). Tell the user to install it manually and start a new session:"$'\n'
+        ctx+="The repoql plugin is installed but the rql binary is missing and automatic install failed (log: $HOME/.local/state/repoql/bootstrap.log). Tell the user to install it manually and start a new session:"$'\n'
         ctx+='  macOS/Linux:        curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
         ctx+='  Windows PowerShell: irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'$'\n'
     fi
@@ -52,7 +62,7 @@ else
     if [ -n "$fresh_install" ]; then
         # Freshly downloaded host: the first index build is still warming up, so
         # skip the imports query and set expectations instead.
-        ctx+=$'\n'"rql was just installed (first session with this plugin). The host indexes this repository in the background, so RepoQL tools may need a moment before returning results. If mcp__repoql__* tools are unavailable, tell the user a new Claude Code session started from a fresh terminal (so it picks up the updated PATH) will have them."$'\n'
+        ctx+=$'\n'"rql was just installed (first session with this plugin). The host indexes this repository in the background, so RepoQL tools may need a moment before returning results. If the RepoQL MCP tools are unavailable, the download outlasted the server's connection timeout: tell the user to reconnect the repoql server from /mcp, or to start a new session."$'\n'
     else
         # Use a file instead of command substitution so a host inheriting stdout
         # cannot keep the hook open. Also avoid launching a host just for orientation.

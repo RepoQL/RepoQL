@@ -12,7 +12,7 @@ By downloading and using RepoQL, you agree to the [Customer Terms and Software L
 
 **Cursor** — [install the RepoQL Cursor plugin](plugins/repoql-cursor/README.md).
 
-**Claude Code** — one-step plugin install (downloads the `rql` binary automatically on first session):
+**Claude Code** — one-step plugin install (downloads the `rql` binary automatically on first use):
 
 ```
 /plugin marketplace add RepoQL/RepoQL

@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "repoql": {
-      "command": "rql",
-      "args": ["mcp"],
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/rql-mcp",
       "env": {
         "REPOQL_RECOVERY_HINT": "Read the troubleshooting-repoql skill."
       }

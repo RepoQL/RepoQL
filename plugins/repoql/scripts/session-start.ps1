@@ -2,10 +2,11 @@
 # if needed, inject repository orientation, and load .repoql/concepts/readme.md
 # when the workspace provides it. session-start.sh is the same hook for bash.
 #
-# SessionStart hooks complete before MCP servers spawn, so when rql is missing
-# the bootstrap can still make this session's bundled MCP server work. Always
-# exits 0 so a missing rql, a host that is down, or an unindexed repo never
-# blocks the session.
+# Claude Code does not order this hook against MCP server startup, so the
+# bundled server never depends on it: the rql-mcp launcher finds or installs
+# rql itself, and the bootstrap here shares that download. Always exits 0 so a
+# missing rql, a host that is down, or an unindexed repo never blocks the
+# session.
 . (Join-Path $PSScriptRoot 'hook-io.ps1')
 
 $dash = [char]0x2014
@@ -35,7 +36,7 @@ try {
     } else {
         $context = "# RepoQL: Repository Orientation`n"
         if ($freshInstall) {
-            $context += "`nrql was just installed (first session with this plugin). The host indexes this repository in the background, so RepoQL tools may need a moment before returning results. If mcp__repoql__* tools are unavailable, tell the user a new Claude Code session started from a fresh terminal (so it picks up the updated PATH) will have them.`n"
+            $context += "`nrql was just installed (first session with this plugin). The host indexes this repository in the background, so RepoQL tools may need a moment before returning results. If the RepoQL MCP tools are unavailable, the download outlasted the server's connection timeout: tell the user to reconnect the repoql server from /mcp, or to start a new session.`n"
         } else {
             # Each workspace repository and import, with the concepts and vocab words it carries. Hosts that
             # predate Filesystems.kind fail the first query and fall back to the GitHub-only listing.

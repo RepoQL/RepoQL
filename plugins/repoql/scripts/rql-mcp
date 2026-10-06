@@ -1,0 +1,135 @@
+#!/bin/bash
+# RepoQL MCP launcher for macOS and Linux — what .mcp.json starts. rql-mcp.cmd
+# is the launcher for Windows, where Claude Code resolves this command name to
+# the .cmd beside it.
+#
+# Claude Code spawns MCP servers with the PATH it was launched with, as soon as
+# the plugin loads: on `/plugin install`, where no SessionStart hook runs at
+# all, and at session start, in parallel with the hooks rather than after them.
+# A server that fails to connect within MCP_TIMEOUT (30s by default) — a bare
+# `rql` that is not on PATH, or a launcher still downloading it — is marked
+# failed, never retried in that session, and skipped by every new session for
+# the next 15 minutes.
+#
+# So this launcher finds the canonical binary itself. When there is none it
+# installs it, and if that outlasts a short grace period it answers the MCP
+# handshake on rql's behalf, then hands the open connection to the real server
+# and tells the client its tool list changed. An interactive session reloads
+# the tools at that point; a headless `claude -p` run does not, and gets them
+# from its next run.
+#
+# stdout is the JSON-RPC stream: only protocol messages may be written to it.
+REPOQL_LAUNCH_PATH="${REPOQL_LAUNCH_PATH:-$PATH}"
+PATH="$HOME/.local/bin:$PATH"
+export PATH
+
+command -v rql >/dev/null 2>&1 && exec rql mcp "$@"
+
+case "$0" in */*) script_dir=${0%/*} ;; *) script_dir=. ;; esac
+echo "[repoql] rql is not installed — downloading it (log: $HOME/.local/state/repoql/bootstrap.log)" >&2
+
+# The download itself runs detached inside bootstrap-rql.sh, so it survives
+# this launcher being stopped; this is only the wait for it.
+REPOQL_LAUNCH_PATH="$REPOQL_LAUNCH_PATH" REPOQL_BOOTSTRAP_WAIT=900 bash "$script_dir/bootstrap-rql.sh" </dev/null >/dev/null 2>&1 &
+bootstrap=$!
+trap 'kill "$bootstrap" $(jobs -p) 2>/dev/null; exit 1' INT TERM HUP
+
+unavailable() {
+    echo "[repoql] rql is unavailable. Install it with: curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash" >&2
+    exit 1
+}
+
+# A download that finishes well inside the connection timeout needs no
+# stand-in: the client's handshake is still waiting in the pipe for rql.
+# REPOQL_MCP_GRACE (seconds) must stay well under the client's MCP_TIMEOUT.
+grace="${REPOQL_MCP_GRACE:-15}"
+while [ "$grace" -gt 0 ]; do
+    command -v rql >/dev/null 2>&1 && exec rql mcp "$@"
+    kill -0 "$bootstrap" 2>/dev/null || break
+    sleep 1
+    grace=$((grace - 1))
+done
+
+reply() { printf '{"jsonrpc":"2.0","id":%s,%s}\n' "$1" "$2"; }
+
+# Answer one client message while rql is absent. The requests a client sends
+# before it has seen any tools are few and flat, so the id and method are read
+# from the line directly rather than through a JSON parser.
+initialize=""
+answer() {
+    local line=$1 id="" method="" version="2025-03-26"
+    [[ $line =~ \"method\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]] && method=${BASH_REMATCH[1]}
+    [[ $line =~ \"id\"[[:space:]]*:[[:space:]]*(-?[0-9]+|\"[^\"]*\") ]] && id=${BASH_REMATCH[1]}
+    [ -n "$id" ] || return 0
+    case "$method" in
+        initialize)
+            initialize=$line
+            [[ $line =~ \"protocolVersion\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]] && version=${BASH_REMATCH[1]}
+            reply "$id" "\"result\":{\"protocolVersion\":\"$version\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"RepoQL\",\"version\":\"installing\"},\"instructions\":\"RepoQL is installing its host binary (first run). Its tools — explore, read, query, explain and others — appear in this session when the download finishes; start with explore.\"}"
+            ;;
+        ping) reply "$id" '"result":{}' ;;
+        tools/list) reply "$id" '"result":{"tools":[]}' ;;
+        *) reply "$id" '"error":{"code":-32601,"message":"RepoQL is still installing"}' ;;
+    esac
+}
+
+# A one-second read doubles as the poll for the binary. A read that times out
+# mid-line keeps what it got, so the line is completed on the next pass. macOS
+# ships bash 3.2, whose timed-out read assigns nothing and reports plain
+# failure like end of input does; there the second that passed is what tells
+# them apart.
+pending=""
+until command -v rql >/dev/null 2>&1; do
+    if ! kill -0 "$bootstrap" 2>/dev/null; then
+        command -v rql >/dev/null 2>&1 && break
+        unavailable
+    fi
+    started=$SECONDS
+    chunk=""
+    if IFS= read -r -t 1 chunk; then
+        answer "$pending$chunk"
+        pending=""
+    elif [ $? -gt 128 ] || [ "$SECONDS" -ne "$started" ]; then
+        pending+=$chunk
+    else
+        kill "$bootstrap" 2>/dev/null
+        exit 0
+    fi
+done
+trap - INT TERM HUP
+
+# No handshake yet: rql can simply take the connection.
+[ -n "$initialize" ] || exec rql mcp "$@"
+
+# Hand over: replay the client's initialize to the real server, drop its answer
+# (the client already has one), and from then on only relay.
+pipes=$(mktemp -d "${TMPDIR:-/tmp}/repoql-mcp.XXXXXX") || exit 1
+mkfifo "$pipes/in" "$pipes/out" || exit 1
+rql mcp "$@" <"$pipes/in" >"$pipes/out" &
+server=$!
+exec 3>"$pipes/in"
+exec 4<"$pipes/out"
+rm -rf "$pipes"
+trap 'kill "$server" $(jobs -p) 2>/dev/null; exit 1' INT TERM HUP
+
+printf '%s\n' "$initialize" >&3
+while :; do
+    IFS= read -r answered <&4 || { echo "[repoql] rql mcp exited during startup" >&2; exit 1; }
+    [[ $answered == *'"result"'* ]] && break
+done
+printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' >&3
+printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}'
+
+# Each relay holds only its own end, so rql sees end of input when the client
+# closes, and the client sees end of output when rql exits.
+printf '%s' "$pending" >&3
+cat <&4 3>&- &
+to_client=$!
+cat <&0 >&3 4<&- &
+to_server=$!
+exec 3>&- 4<&-
+wait "$server"
+status=$?
+wait "$to_client"
+kill "$to_server" 2>/dev/null
+exit $status
