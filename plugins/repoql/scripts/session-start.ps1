@@ -17,21 +17,27 @@ try {
     if (-not (Test-Directory $workspace)) { $workspace = (Get-Location).Path }
     Set-Location -LiteralPath $workspace
 
-    $stateDir = $env:PLUGIN_DATA
-    if (-not $stateDir) { $stateDir = $env:CLAUDE_PLUGIN_DATA }
-    if (-not $stateDir) { $stateDir = Join-Path $HOME '.local\state\repoql' }
-
     $freshInstall = $false
+    $bootstrapStatus = 0
+    $bootstrapReason = ''
     if (-not (Get-Command rql)) {
-        & (Join-Path $PSScriptRoot 'bootstrap-rql.ps1') | Out-Null
-        $freshInstall = $LASTEXITCODE -eq 0
+        # A failed bootstrap prints why; exit 2 means an install is still running.
+        $bootstrapReason = (@(& (Join-Path $PSScriptRoot 'bootstrap-rql.ps1')) -join ' ').Trim()
+        $bootstrapStatus = $LASTEXITCODE
+        $freshInstall = $bootstrapStatus -eq 0
     }
 
     if (-not (Get-Command rql)) {
         if ($env:REPOQL_NO_BOOTSTRAP -ne '1') {
-            $context = "# RepoQL: host not installed`n"
-            $context += "The RepoQL plugin is installed but the rql binary is missing and automatic install failed (log: $(Join-Path $stateDir 'bootstrap.log')). Tell the user to install it manually from PowerShell and start a new session:`n"
-            $context += "  irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex`n"
+            if ($bootstrapStatus -eq 2) {
+                $context = "# RepoQL: host install in progress`n"
+                $context += "The RepoQL plugin is installed and the rql binary is still downloading in the background, so RepoQL tools are not available yet. They appear in this session when the download finishes if the repoql MCP server is connected; otherwise tell the user to reconnect it from /mcp, or to start a new session in a minute. Nothing needs installing by hand.`n"
+            } else {
+                if (-not $bootstrapReason) { $bootstrapReason = 'automatic install failed' }
+                $context = "# RepoQL: host not installed`n"
+                $context += "The RepoQL plugin is installed but the rql binary is missing and $bootstrapReason. Tell the user to install it manually from PowerShell and start a new session:`n"
+                $context += "  irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex`n"
+            }
         }
     } else {
         $context = "# RepoQL: Repository Orientation`n"

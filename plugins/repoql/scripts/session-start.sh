@@ -36,9 +36,15 @@ case "$(uname -s)" in
 esac
 
 fresh_install=""
-still_installing=""
+bootstrap_status=0
+bootstrap_reason=""
 if ! command -v rql >/dev/null 2>&1; then
-    REPOQL_LAUNCH_PATH="$launch_path" "$script_dir/bootstrap-rql.sh" && fresh_install=1 || { [ $? -eq 2 ] && still_installing=1; }
+    # A failed bootstrap prints why; exit 2 means the install is still running.
+    if bootstrap_reason=$(REPOQL_LAUNCH_PATH="$launch_path" "$script_dir/bootstrap-rql.sh"); then
+        fresh_install=1
+    else
+        bootstrap_status=$?
+    fi
     # The launcher sees the new binary within a second, then starts rql and has
     # the client reload its tools. Holding the first prompt briefly lets that
     # finish so the first turn has the tools; nothing here can observe it.
@@ -48,14 +54,17 @@ fi
 ctx=""
 if ! command -v rql >/dev/null 2>&1; then
     # Keep concept-index injection independent of host availability.
-    if [ -n "$still_installing" ]; then
-        ctx="# RepoQL: host still installing"$'\n'
-        ctx+="The repoql plugin is downloading the rql binary in the background and it has not finished yet (log: $HOME/.local/state/repoql/bootstrap.log). RepoQL tools are unavailable until it does. If the user asks for them, tell them to reconnect the repoql server from /mcp once the download completes, or to start a new session."$'\n'
-    elif [ "${REPOQL_NO_BOOTSTRAP:-0}" != "1" ]; then
-        ctx="# RepoQL: host not installed"$'\n'
-        ctx+="The repoql plugin is installed but the rql binary is missing and automatic install failed (log: $HOME/.local/state/repoql/bootstrap.log). Tell the user to install it manually and start a new session:"$'\n'
-        ctx+='  macOS/Linux:        curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
-        ctx+='  Windows PowerShell: irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'$'\n'
+    if [ "${REPOQL_NO_BOOTSTRAP:-0}" != "1" ]; then
+        if [ "$bootstrap_status" = "2" ]; then
+            # Started by this session's MCP launcher, this hook, or another session.
+            ctx="# RepoQL: host install in progress"$'\n'
+            ctx+="The RepoQL plugin is installed and the rql binary is still downloading in the background, so RepoQL tools are not available yet. They appear in this session when the download finishes if the repoql MCP server is connected; otherwise tell the user to reconnect it from /mcp, or to start a new session in a minute. Nothing needs installing by hand."$'\n'
+        else
+            ctx="# RepoQL: host not installed"$'\n'
+            ctx+="The repoql plugin is installed but the rql binary is missing and ${bootstrap_reason:-automatic install failed}. Tell the user to install it manually and start a new session:"$'\n'
+            ctx+='  macOS/Linux:        curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
+            ctx+='  Windows PowerShell: irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'$'\n'
+        fi
     fi
 else
     ctx="# RepoQL: Repository Orientation"$'\n'

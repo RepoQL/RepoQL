@@ -18,11 +18,11 @@
 # a TTY; the plugin already provides the MCP, hook, and skill wiring.
 #
 # REPOQL_NO_BOOTSTRAP=1 disables downloading entirely.
-# REPOQL_BOOTSTRAP_WAIT bounds how long this call waits for the worker
-# (seconds, default 200 — inside the SessionStart hook's 240s timeout).
-# Exit 0 = rql available; exit 1 = unavailable (disabled, or the install
-# failed — see bootstrap.log in the state dir); exit 2 = still downloading
-# when the wait ran out.
+# REPOQL_BOOTSTRAP_WAIT is how many seconds this call waits for the install,
+# whoever started it (default 200 — inside the SessionStart hook's 240s
+# timeout).
+# Exit 0 = rql available; exit 1 = unavailable, with the reason on stdout
+# (nothing when disabled); exit 2 = an install is still running.
 
 # The installer adds ~/.local/bin to the shell rc only when it is missing from
 # PATH, so it must see the PATH this session was launched with — which callers
@@ -51,9 +51,9 @@ rql_available() {
     [ -n "$win_rql_dir" ] && [ -x "$win_rql_dir/rql.exe" ]
 }
 
-# One binary per machine, so one lock per machine: every caller, from any
-# harness, coordinates here rather than in a per-plugin data dir.
-state_dir="$HOME/.local/state/repoql"
+# The hook and the MCP launcher must agree on this directory to share one
+# download; .mcp.json hands the launcher the same CLAUDE_PLUGIN_DATA.
+state_dir="${CLAUDE_PLUGIN_DATA:-$HOME/.local/state/repoql}"
 log="$state_dir/bootstrap.log"
 lock="$state_dir/bootstrap.lock"
 owner="$state_dir/bootstrap.pid"
@@ -131,29 +131,41 @@ fi
 rql_available && exit 0
 
 [ "${REPOQL_NO_BOOTSTRAP:-0}" = "1" ] && exit 1
+
+# The caller repeats the reason to the user, so it names the actual cause: the
+# log does not exist until an install is attempted.
+unavailable() {
+    echo "automatic install $1"
+    exit 1
+}
+
 if [ -n "$win_posix" ]; then
-    command -v powershell.exe >/dev/null 2>&1 || exit 1
+    command -v powershell.exe >/dev/null 2>&1 || unavailable "could not run: powershell.exe not found on PATH"
 else
-    command -v curl >/dev/null 2>&1 || exit 1
+    command -v curl >/dev/null 2>&1 || unavailable "could not run: curl not found on PATH"
 fi
-mkdir -p "$state_dir" 2>/dev/null || exit 1
+mkdir -p "$state_dir" 2>/dev/null || unavailable "could not run: cannot create the state directory $state_dir"
+[ -w "$state_dir" ] || unavailable "could not run: cannot write to the state directory $state_dir"
 
 # The worker inherits nothing of the caller's stdio: a hook's stdout pipe or an
 # MCP server's JSON-RPC stream must not be held open or written to by it.
 detach=""
 command -v setsid >/dev/null 2>&1 && detach="setsid"
-nohup $detach bash "$0" --worker </dev/null >/dev/null 2>&1 &
+$detach bash "$0" --worker </dev/null >/dev/null 2>&1 &
 worker=$!
 
 waited=0
-budget="${REPOQL_BOOTSTRAP_WAIT:-200}"
+wait_limit="${REPOQL_BOOTSTRAP_WAIT:-200}"
+case "$wait_limit" in ''|*[!0-9]*) wait_limit=200 ;; esac
 while :; do
     rql_available && exit 0
     if ! kill -0 "$worker" 2>/dev/null && ! lock_live; then
         rql_available && exit 0
-        exit 1
+        # Nobody is installing any more and there is still no binary.
+        if [ -f "$log" ]; then unavailable "failed (log: $log)"; fi
+        unavailable "failed"
     fi
-    [ "$waited" -ge "$budget" ] && exit 2
+    [ "$waited" -ge "$wait_limit" ] && exit 2
     sleep 1
     waited=$((waited + 1))
 done

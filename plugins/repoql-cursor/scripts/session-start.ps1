@@ -18,16 +18,26 @@ try {
     Set-Location -LiteralPath $workspace
 
     $freshInstall = $false
+    $bootstrapStatus = 0
+    $bootstrapReason = ''
     if (-not (Get-Command rql)) {
-        & (Join-Path $PSScriptRoot 'bootstrap-rql.ps1') | Out-Null
-        $freshInstall = $LASTEXITCODE -eq 0
+        # A failed bootstrap prints why; exit 2 means another session is installing.
+        $bootstrapReason = (@(& (Join-Path $PSScriptRoot 'bootstrap-rql.ps1')) -join ' ').Trim()
+        $bootstrapStatus = $LASTEXITCODE
+        $freshInstall = $bootstrapStatus -eq 0
     }
 
     if (-not (Get-Command rql)) {
         if ($env:REPOQL_NO_BOOTSTRAP -ne '1') {
-            $context = "# RepoQL: host not installed`n"
-            $context += "The RepoQL plugin is installed but the rql binary is missing and automatic install failed (log: $(Join-Path $HOME '.local\state\repoql\bootstrap.log')). Tell the user to install it manually from PowerShell, then reload the Cursor window:`n"
-            $context += "  irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex`n"
+            if ($bootstrapStatus -eq 2) {
+                $context = "# RepoQL: host install in progress`n"
+                $context += "The RepoQL plugin is installed and another session is installing the rql binary right now, so RepoQL tools are not available in this session yet. Tell the user to reload the Cursor window in a minute; nothing needs installing by hand.`n"
+            } else {
+                if (-not $bootstrapReason) { $bootstrapReason = 'automatic install failed' }
+                $context = "# RepoQL: host not installed`n"
+                $context += "The RepoQL plugin is installed but the rql binary is missing and $bootstrapReason. Tell the user to install it manually from PowerShell, then reload the Cursor window:`n"
+                $context += "  irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex`n"
+            }
         }
     } else {
         $context = "# RepoQL: Repository Orientation`n"
