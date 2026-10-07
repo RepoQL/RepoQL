@@ -98,7 +98,7 @@ async function buildOrientation(host: RqlHostManager, config: RepoQlPluginConfig
       (imports === null
         ? "(not checked — the RepoQL host was not running or did not answer in time; repoql_status shows it)"
         : imports.length
-          ? `Use these github:// URIs directly with repoql_read / repoql_explore / repoql_query:\n${imports.join("\n")}`
+          ? `Use these URIs directly with repoql_read / repoql_explore / repoql_query:\n${imports.join("\n")}`
           : "(none — import one with repoql_import)")
   );
   if (uplinks) {
@@ -113,8 +113,19 @@ async function buildOrientation(host: RqlHostManager, config: RepoQlPluginConfig
   return sections.join("\n\n") + "\n";
 }
 
+// Every mounted source except the ones named in the WHERE clause, which the agent already knows or did not ask
+// for: the primary file:///, help, memory, and worktrees. A new kind of mount is listed by default, with its kind
+// in brackets. A host that predates Filesystems.kind rejects this and answers the GitHub-only listing instead.
+const MOUNTS_SQL =
+  "SELECT source_uri || CASE WHEN kind NOT IN ('workspace', 'import') THEN ' (' || kind || ')' ELSE '' END AS line " +
+  "FROM Filesystems WHERE scheme NOT IN ('file', 'help', 'concept', 'vocabulary', 'worktree') " +
+  "AND coalesce(kind, '') NOT IN ('primary', 'worktree') ORDER BY source_uri";
+const LEGACY_MOUNTS_SQL =
+  "SELECT source_uri AS line FROM Filesystems WHERE starts_with(source_uri, 'github://') ORDER BY source_uri";
+const SOURCE_LINE = /^[a-z][a-z0-9+.-]*:\/\//i;
+
 /**
- * github:// imports, or null when they could not be listed — no host serving
+ * The mounted sources, or null when they could not be listed — no host serving
  * (orientation never launches one), or a host too busy to answer in time.
  */
 async function listImports(host: RqlHostManager): Promise<string[] | null> {
@@ -122,20 +133,21 @@ async function listImports(host: RqlHostManager): Promise<string[] | null> {
   if (!client) {
     return null;
   }
-  const result = await client
-    .callTool(
-      "query",
-      { sql: "SELECT source_uri FROM Filesystems WHERE starts_with(source_uri, 'github://') ORDER BY source_uri" },
-      { identity: { agent: `openclaw-repoql/${PLUGIN_VERSION}` }, timeoutMs: PROBE_TIMEOUT_MS }
-    )
-    .catch(() => null);
+  const ask = (sql: string) =>
+    client
+      .callTool("query", { sql }, { identity: { agent: `openclaw-repoql/${PLUGIN_VERSION}` }, timeoutMs: PROBE_TIMEOUT_MS })
+      .catch(() => null);
+  let result = await ask(MOUNTS_SQL);
+  if (result?.isError) {
+    result = await ask(LEGACY_MOUNTS_SQL);
+  }
   if (!result || result.isError) {
     return null;
   }
   return result.rendered
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.startsWith("github://"));
+    .filter((line) => SOURCE_LINE.test(line));
 }
 
 /** `rql uplinks` output, or empty when the CLI is missing, slow, or signed out. */
