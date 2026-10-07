@@ -15,11 +15,13 @@ That's the whole install. The plugin starts its MCP server through a small launc
 
 If the `rql` host binary isn't on your machine yet, the launcher installs it by running the standard hosted installer for your platform. The result is identical to a manual install: one canonical binary that `rql update` and every other agent harness share; the plugin never keeps a private copy. The binary is about 180 MB, and the download runs detached, so closing the session does not abort it.
 
+The session start hook tells you what happened in one line — `RepoQL installed rql to ~/.local/bin.`, that the download is still running, or why the install could not run and the command to do it by hand — and says nothing when `rql` was already there. The install log is `~/.local/state/repoql/bootstrap.log`.
+
 What the first run looks like (measured with Claude Code 2.1.284):
 
 - **macOS/Linux, interactive session** — the `repoql` server connects at once, including in the session where you ran `/plugin install`, and its tools appear in that same session when the download finishes. In a new session a prompt you send meanwhile waits behind `running SessionStart hook` until then, for up to 200 seconds.
 - **macOS/Linux, headless `claude -p`** — if the download takes longer than about 15 seconds, that run has no RepoQL tools; the next run does.
-- **Windows** — the launcher waits for the download before starting the server, so the tools arrive in that session only when it finishes inside Claude Code's MCP startup timeout (`MCP_TIMEOUT`, 30 seconds by default). Otherwise wait for the download and reconnect `repoql` from `/mcp`. Claude Code does not retry a server that failed to connect, and new sessions skip it for the next 15 minutes; reconnecting from `/mcp` works at once.
+- **Windows** — the launcher finds `rql.exe` without it being on PATH, and with no `rql.exe` it waits for the download before starting the server. So the tools arrive in that first session only when the download finishes inside Claude Code's MCP startup timeout (`MCP_TIMEOUT`, 30 seconds by default); otherwise the first session needs `/mcp` → Reconnect on `repoql` once the download is done. Claude Code does not retry a server that failed to connect, and new sessions skip it for the next 15 minutes; reconnecting from `/mcp` works at once.
 
 Set `REPOQL_NO_BOOTSTRAP=1` to disable the auto-download and install manually instead:
 

@@ -26,7 +26,7 @@ export PATH
 command -v rql >/dev/null 2>&1 && exec rql mcp "$@"
 
 case "$0" in */*) script_dir=${0%/*} ;; *) script_dir=. ;; esac
-echo "[repoql] rql is not installed — downloading it (log: ${CLAUDE_PLUGIN_DATA:-$HOME/.local/state/repoql}/bootstrap.log)" >&2
+echo "[repoql] rql is not installed — downloading it (log: ${REPOQL_STATE_DIR:-$HOME/.local/state/repoql}/bootstrap.log)" >&2
 
 # The download itself runs detached inside bootstrap-rql.sh, so it survives
 # this launcher being stopped; this is only the wait for it.

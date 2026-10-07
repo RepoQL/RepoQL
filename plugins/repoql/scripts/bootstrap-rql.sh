@@ -51,9 +51,10 @@ rql_available() {
     [ -n "$win_rql_dir" ] && [ -x "$win_rql_dir/rql.exe" ]
 }
 
-# The hook and the MCP launcher must agree on this directory to share one
-# download; .mcp.json hands the launcher the same CLAUDE_PLUGIN_DATA.
-state_dir="${CLAUDE_PLUGIN_DATA:-$HOME/.local/state/repoql}"
+# One binary per machine, so one lock per machine: every caller, from any
+# harness and from a hook or an MCP launcher alike, coordinates here rather
+# than in a per-plugin data directory only some of them are told about.
+state_dir="${REPOQL_STATE_DIR:-$HOME/.local/state/repoql}"
 log="$state_dir/bootstrap.log"
 lock="$state_dir/bootstrap.lock"
 owner="$state_dir/bootstrap.pid"

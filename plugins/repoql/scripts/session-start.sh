@@ -4,7 +4,8 @@
 #
 # SessionStart injects only the JSON hookSpecificOutput.additionalContext;
 # plain stdout is NOT added to the agent's context, so the orientation is built
-# into one string and emitted as that envelope. Always exits 0 so a missing
+# into one string and emitted as that envelope. An install is otherwise silent,
+# so its outcome also goes to the user, as the reply's systemMessage. Always exits 0 so a missing
 # rql, a host that is down, or an unindexed repo never blocks the session.
 #
 # Claude Code does not order this hook against MCP server startup, and does not
@@ -52,6 +53,7 @@ if ! command -v rql >/dev/null 2>&1; then
 fi
 
 ctx=""
+notice=""
 if ! command -v rql >/dev/null 2>&1; then
     # Keep concept-index injection independent of host availability.
     if [ "${REPOQL_NO_BOOTSTRAP:-0}" != "1" ]; then
@@ -59,16 +61,22 @@ if ! command -v rql >/dev/null 2>&1; then
             # Started by this session's MCP launcher, this hook, or another session.
             ctx="# RepoQL: host install in progress"$'\n'
             ctx+="The RepoQL plugin is installed and the rql binary is still downloading in the background, so RepoQL tools are not available yet. They appear in this session when the download finishes if the repoql MCP server is connected; otherwise tell the user to reconnect it from /mcp, or to start a new session in a minute. Nothing needs installing by hand."$'\n'
+            notice="RepoQL is still downloading rql (about 180 MB). Its tools appear when the download finishes; if they do not, reconnect repoql from /mcp."
         else
             ctx="# RepoQL: host not installed"$'\n'
             ctx+="The repoql plugin is installed but the rql binary is missing and ${bootstrap_reason:-automatic install failed}. Tell the user to install it manually and start a new session:"$'\n'
             ctx+='  macOS/Linux:        curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash'$'\n'
             ctx+='  Windows PowerShell: irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex'$'\n'
+            notice="RepoQL could not install rql: ${bootstrap_reason:-automatic install failed}. Install it manually, then start a new session: curl -fsSL https://downloads.repoql.ai/latest/install-rql.sh | bash"
         fi
     fi
 else
     ctx="# RepoQL: Repository Orientation"$'\n'
     if [ -n "$fresh_install" ]; then
+        installed_in=$(command -v rql)
+        installed_in=${installed_in%/*}
+        case "$installed_in" in "$HOME"/*) installed_in="~${installed_in#"$HOME"}" ;; esac
+        notice="RepoQL installed rql to $installed_in."
         # Freshly downloaded host: the first index build is still warming up, so
         # skip the imports query and set expectations instead.
         ctx+=$'\n'"rql was just installed (first session with this plugin). The host indexes this repository in the background, so RepoQL tools may need a moment before returning results. If the RepoQL MCP tools are unavailable, the download outlasted the server's connection timeout: tell the user to reconnect the repoql server from /mcp, or to start a new session."$'\n'
@@ -129,5 +137,10 @@ if [ -n "$concepts_relative" ]; then
 fi
 
 [ -n "$ctx" ] || exit 0
-json_context_reply SessionStart "$ctx"
+if [ -n "$notice" ]; then
+    printf '{"systemMessage":%s,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' \
+        "$(json_string "$notice")" "$(json_string "$ctx")"
+else
+    json_context_reply SessionStart "$ctx"
+fi
 exit 0

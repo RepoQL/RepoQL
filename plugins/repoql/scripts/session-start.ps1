@@ -12,6 +12,9 @@
 $dash = [char]0x2014
 $ellipsis = [char]0x2026
 $context = ''
+# An install is otherwise silent, so its outcome also goes to the user, as the
+# reply's systemMessage.
+$notice = ''
 try {
     $workspace = (Read-HookInput).cwd
     if (-not (Test-Directory $workspace)) { $workspace = (Get-Location).Path }
@@ -32,16 +35,19 @@ try {
             if ($bootstrapStatus -eq 2) {
                 $context = "# RepoQL: host install in progress`n"
                 $context += "The RepoQL plugin is installed and the rql binary is still downloading in the background, so RepoQL tools are not available yet. They appear in this session when the download finishes if the repoql MCP server is connected; otherwise tell the user to reconnect it from /mcp, or to start a new session in a minute. Nothing needs installing by hand.`n"
+                $notice = 'RepoQL is still downloading rql (about 180 MB). Its tools appear when the download finishes; if they do not, reconnect repoql from /mcp.'
             } else {
                 if (-not $bootstrapReason) { $bootstrapReason = 'automatic install failed' }
                 $context = "# RepoQL: host not installed`n"
                 $context += "The RepoQL plugin is installed but the rql binary is missing and $bootstrapReason. Tell the user to install it manually from PowerShell and start a new session:`n"
                 $context += "  irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex`n"
+                $notice = "RepoQL could not install rql: $bootstrapReason. Install it manually from PowerShell, then start a new session: irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex"
             }
         }
     } else {
         $context = "# RepoQL: Repository Orientation`n"
         if ($freshInstall) {
+            $notice = "RepoQL installed rql to $(Split-Path -Parent (Get-Command rql).Source)."
             $context += "`nrql was just installed (first session with this plugin). The host indexes this repository in the background, so RepoQL tools may need a moment before returning results. If the RepoQL MCP tools are unavailable, the download outlasted the server's connection timeout: tell the user to reconnect the repoql server from /mcp, or to start a new session.`n"
         } else {
             # Each workspace repository and import, with the concepts and vocab words it carries. Hosts that
@@ -87,5 +93,9 @@ try {
     }
 } catch { }
 
-if ($context) { Write-HookContext 'SessionStart' $context }
+if ($context -and $notice) {
+    Write-HookOutput @{ systemMessage = $notice; hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $context } }
+} elseif ($context) {
+    Write-HookContext 'SessionStart' $context
+}
 exit 0

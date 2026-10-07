@@ -3,7 +3,6 @@
     "repoql": {
       "command": "${CLAUDE_PLUGIN_ROOT}/scripts/rql-mcp",
       "env": {
-        "CLAUDE_PLUGIN_DATA": "${CLAUDE_PLUGIN_DATA}",
         "REPOQL_RECOVERY_HINT": "Read the troubleshooting-repoql skill."
       }
     }
