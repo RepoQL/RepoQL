@@ -42,7 +42,8 @@ class ConceptsIndexStartupHooksTests(unittest.TestCase):
         root = Path(scratch.name)
         concepts = root / '.repoql' / 'concepts'
         concepts.mkdir(parents=True)
-        (concepts / 'README.md').write_text('# Concepts\n- Rule \u2014 invariant\n', encoding='utf-8')
+        # Bytes, so Windows does not turn the line breaks into CRLF.
+        (concepts / 'README.md').write_bytes('# Concepts\n- Rule \u2014 invariant\n'.encode('utf-8'))
         if claude_md is not None:
             # Bytes, so a CRLF text reaches the hook as written.
             (root / 'CLAUDE.md').write_bytes(claude_md.encode('utf-8'))
