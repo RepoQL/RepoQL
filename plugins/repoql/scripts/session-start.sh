@@ -1,6 +1,6 @@
 #!/bin/bash
 # RepoQL SessionStart hook — bootstrap the host if needed, inject repository
-# orientation, and load .repoql/concepts/readme.md when the workspace provides it.
+# orientation, and load .repoql/concepts/readme.md when CLAUDE.md does not import it.
 #
 # SessionStart injects only the JSON hookSpecificOutput.additionalContext;
 # plain stdout is NOT added to the agent's context, so the orientation is built
@@ -106,15 +106,20 @@ else
     ctx+=$'\n'"## Concepts"$'\n'"concept:///** holds the concepts of this repository and its imports."$'\n'
 fi
 
+# The host adds the line @.repoql/concepts/README.md to CLAUDE.md, and Claude Code
+# loads the index through that import; inject the readme only when the import is
+# absent. The line counts when it stands alone, as the host's own check reads it.
 concepts_readme=""
 concepts_relative=""
-for candidate in ".repoql/concepts/readme.md" ".repoql/concepts/README.md"; do
-    if [ -f "$workspace/$candidate" ]; then
-        concepts_readme=$(cat "$workspace/$candidate" 2>/dev/null)
-        concepts_relative="$candidate"
-        break
-    fi
-done
+if ! grep -Eq '^[[:space:]]*@\.repoql/concepts/(README|readme)\.md[[:space:]]*$' "$workspace/CLAUDE.md" 2>/dev/null; then
+    for candidate in ".repoql/concepts/readme.md" ".repoql/concepts/README.md"; do
+        if [ -f "$workspace/$candidate" ]; then
+            concepts_readme=$(cat "$workspace/$candidate" 2>/dev/null)
+            concepts_relative="$candidate"
+            break
+        fi
+    done
+fi
 
 if [ -n "$concepts_relative" ]; then
     [ -n "$ctx" ] && ctx+=$'\n'

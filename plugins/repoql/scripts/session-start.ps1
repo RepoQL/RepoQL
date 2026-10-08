@@ -1,6 +1,6 @@
 # RepoQL SessionStart hook for Claude Code under PowerShell - bootstrap the host
 # if needed, inject repository orientation, and load .repoql/concepts/readme.md
-# when the workspace provides it. session-start.sh is the same hook for bash.
+# when CLAUDE.md does not import it. session-start.sh is the same hook for bash.
 #
 # SessionStart hooks complete before MCP servers spawn, so when rql is missing
 # the bootstrap can still make this session's bundled MCP server work. Always
@@ -79,9 +79,18 @@ try {
         $context += "`n## Concepts`nconcept:///** holds the concepts of this repository and its imports.`n"
     }
 
+    # The host adds the line @.repoql/concepts/README.md to CLAUDE.md, and Claude Code
+    # loads the index through that import; inject the readme only when the import is
+    # absent. The line counts when it stands alone, as the host's own check reads it.
+    $claudeMd = Join-Path $workspace 'CLAUDE.md'
+    $imported = $false
+    if (Test-Path -LiteralPath $claudeMd -PathType Leaf) {
+        $imported = @([IO.File]::ReadAllLines($claudeMd) |
+            Where-Object { $_.Trim() -cmatch '^@\.repoql/concepts/(README|readme)\.md$' }).Count -gt 0
+    }
     $readme = Get-ChildItem -LiteralPath (Join-Path $workspace '.repoql/concepts') -File |
         Where-Object { $_.Name -ieq 'readme.md' } | Select-Object -First 1
-    if ($readme) {
+    if ($readme -and -not $imported) {
         if ($context) { $context += "`n" }
         $context += "## Repository Concepts Index (.repoql/concepts/$($readme.Name))`n`n"
         $context += [IO.File]::ReadAllText($readme.FullName).TrimEnd("`r", "`n") + "`n"
