@@ -1,0 +1,21 @@
+{
+  "name": "repoql-uplink",
+  "version": "1.0.0",
+  "description": "Your organization's RepoQL uplinks from one remote connection — query shared code indexes with no local install.",
+  "author": {
+    "name": "Clanker Tools",
+    "url": "https://repoql.com"
+  },
+  "homepage": "https://repoql.com",
+  "repository": "https://github.com/RepoQL/RepoQL",
+  "license": "MIT",
+  "keywords": [
+    "code-intelligence",
+    "code-search",
+    "repository",
+    "uplink",
+    "remote",
+    "mcp",
+    "semantic-search"
+  ]
+}

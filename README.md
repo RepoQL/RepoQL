@@ -2,7 +2,7 @@
 
 Queryable code intelligence for AI coding agents.
 
-[Official website](https://repoql.com) · [Codex plugin](plugins/repoql-codex/README.md) · [Cursor plugin](plugins/repoql-cursor/README.md)
+[Official website](https://repoql.com) · [Codex plugin](plugins/repoql-codex/README.md) · [Cursor plugin](plugins/repoql-cursor/README.md) · [Uplink plugin](plugins/repoql-uplink/README.md)
 
 ## Install
 
@@ -17,6 +17,13 @@ By downloading and using RepoQL, you agree to the [Customer Terms and Software L
 ```
 /plugin marketplace add RepoQL/RepoQL
 /plugin install repoql@repoql-plugins
+```
+
+Only need your organization's shared indexes, with nothing installed locally? Install the [uplink plugin](plugins/repoql-uplink/README.md) instead:
+
+```
+/plugin marketplace add RepoQL/RepoQL
+/plugin install repoql-uplink@repoql-plugins
 ```
 
 **Any other agent, or standalone:**
