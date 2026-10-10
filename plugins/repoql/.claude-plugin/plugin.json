@@ -1,7 +1,7 @@
 {
   "name": "repoql",
   "version": "1.7.6",
-  "description": "Queryable code intelligence — explore codebase structure without reading files.",
+  "description": "Queryable code intelligence \u2014 explore codebase structure without reading files.",
   "author": {
     "name": "Clanker Tools",
     "url": "https://repoql.com"
@@ -16,5 +16,14 @@
     "duckdb",
     "mcp",
     "semantic-search"
-  ]
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "display": {
+      "type": "boolean",
+      "title": "Show RepoQL host state",
+      "description": "Draw the rql footer label, the line for a long operation and the reason a RepoQL call is slow.",
+      "default": true
+    }
+  }
 }
