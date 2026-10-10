@@ -27,8 +27,10 @@ function Write-Log($message) {
 if (Test-Rql) { exit 0 }
 if ($env:REPOQL_NO_BOOTSTRAP -eq '1') { exit 1 }
 
-$stateDir = $env:PLUGIN_DATA
-if (-not $stateDir) { $stateDir = $env:CLAUDE_PLUGIN_DATA }
+# One binary per machine, so one lock per machine: every caller, from any
+# harness and from a hook or an MCP launcher alike, coordinates here rather
+# than in a per-plugin data directory only some of them are told about.
+$stateDir = $env:REPOQL_STATE_DIR
 if (-not $stateDir) { $stateDir = Join-Path $HOME '.local\state\repoql' }
 New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
 # The caller repeats the reason to the user, so it names the actual cause: the

@@ -15,8 +15,10 @@ from hook_support import BASH, IMPLEMENTATIONS, WINDOWS, argv, context_of, insta
 HARNESSES = ('repoql', 'repoql-codex', 'repoql-cursor')
 # What the bash hooks call; curl is left out so each case decides whether it exists.
 TOOLS = ('awk', 'basename', 'bash', 'cat', 'cut', 'date', 'dirname', 'env', 'find', 'grep', 'head', 'mkdir', 'mktemp',
-         'python3', 'rm', 'rmdir', 'sed', 'sh', 'sleep', 'sort', 'tail', 'tr', 'uname', 'wc')
+         'pkill', 'python3', 'rm', 'rmdir', 'sed', 'sh', 'sleep', 'sort', 'tail', 'tr', 'uname', 'wc')
 IN_PROGRESS = 'another session is installing the rql binary right now'
+# The Claude Code plugin's MCP launcher installs too, so an install still running there may be this session's own.
+IN_PROGRESS_BY = {'repoql': 'the rql binary is still downloading in the background'}
 FAILED = 'automatic install'
 FAKE_RQL = 'import sys\nsys.exit(1)\n'
 
@@ -43,8 +45,8 @@ class BootstrapOutcomeTests(unittest.TestCase):
             system = [system32, system32 / 'WindowsPowerShell' / 'v1.0']
         env = {**os.environ, 'PATH': os.pathsep.join(map(str, [self.bin_dir, *system])), 'PYTHONUTF8': '1',
                'HOME': str(self.home), 'LOCALAPPDATA': str(self.home / 'localappdata'),
-               'CLAUDE_PLUGIN_DATA': str(self.state), 'CURSOR_PROJECT_DIR': str(self.home), **extra}
-        for inherited in ('PLUGIN_DATA', 'REPOQL_NO_BOOTSTRAP'):
+               'REPOQL_STATE_DIR': str(self.state), 'CURSOR_PROJECT_DIR': str(self.home), **extra}
+        for inherited in ('PLUGIN_DATA', 'CLAUDE_PLUGIN_DATA', 'REPOQL_NO_BOOTSTRAP'):
             env.pop(inherited, None)
         return env
 
@@ -59,7 +61,13 @@ class BootstrapOutcomeTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         if harness == 'repoql-cursor':
             return json.loads(result.stdout)['additional_context']
+        # What the Claude Code plugin tells the user, beside what it tells the model.
+        self.notice = json.loads(result.stdout).get('systemMessage')
         return context_of(result, 'SessionStart')
+
+    def installed_in(self, implementation):
+        # bash shortens the home directory the way the installer prints it; PowerShell names the directory in full.
+        return '~/.local/bin' if implementation == 'sh' else str(self.bin_dir)
 
     def each(self):
         for implementation in IMPLEMENTATIONS:
@@ -74,7 +82,9 @@ class BootstrapOutcomeTests(unittest.TestCase):
             (self.state / 'bootstrap.lock').mkdir(parents=True)
             context = self.start(implementation, harness, REPOQL_BOOTSTRAP_WAIT='0')
             self.assertIn('# RepoQL: host install in progress', context)
-            self.assertIn(IN_PROGRESS, context)
+            if harness == 'repoql':
+                self.assertIn('RepoQL is still downloading rql', self.notice)
+            self.assertIn(IN_PROGRESS_BY.get(harness, IN_PROGRESS), context)
             self.assertNotIn(FAILED, context)
             self.assertNotIn('manually', context)
             self.assertNotIn('downloads.repoql.ai', context)
@@ -101,6 +111,8 @@ class BootstrapOutcomeTests(unittest.TestCase):
                 self.bin_dir.mkdir()
             self.assertIn('# RepoQL: Repository Orientation', context)
             self.assertIn('rql was just installed', context)
+            if harness == 'repoql':
+                self.assertEqual(self.notice, f'RepoQL installed rql to {self.installed_in(implementation)}.')
             self.assertFalse(lock.exists())
 
     def test_a_state_directory_that_cannot_be_created_is_named_instead_of_a_log(self):
@@ -108,9 +120,11 @@ class BootstrapOutcomeTests(unittest.TestCase):
         (self.home / 'blocker').write_text('a file where the state directory would go')
         state = self.home / 'blocker' / 'state'
         for implementation, harness in self.each():
-            context = self.start(implementation, harness, CLAUDE_PLUGIN_DATA=str(state))
+            context = self.start(implementation, harness, REPOQL_STATE_DIR=str(state))
             self.assertIn('# RepoQL: host not installed', context)
             self.assertIn(f'automatic install could not run: cannot create the state directory {state}', context)
+            if harness == 'repoql':
+                self.assertIn(f'RepoQL could not install rql: automatic install could not run: cannot create the state directory {state}. Install it manually', self.notice)
             self.assertNotIn('bootstrap.log', context)
             self.assertNotIn(IN_PROGRESS, context)
 

@@ -11,10 +11,12 @@ on:
     branches: [main]
     paths:
       - "plugins/*/scripts/**"
+      - "plugins/repoql/.mcp.json"
       - ".github/workflows/bootstrap-e2e.yml"
   pull_request:
     paths:
       - "plugins/*/scripts/**"
+      - "plugins/repoql/.mcp.json"
       - ".github/workflows/bootstrap-e2e.yml"
 
 jobs:
@@ -40,6 +42,99 @@ jobs:
         run: |
           plugins/repoql/scripts/bootstrap-rql.sh
           grep -c "installing from downloads.repoql.ai" "$HOME/.local/state/repoql/bootstrap.log" | grep -qx 1
+
+  # The claim the README makes: on a machine with no rql, and a launch PATH
+  # without ~/.local/bin, installing the plugin is enough for Claude Code
+  # itself to connect the bundled MCP server. No hook runs here, so only the
+  # launcher in .mcp.json can be what makes it work.
+  claude-code-unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      ANTHROPIC_API_KEY: not-a-key-mcp-list-makes-no-api-call
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Claude Code and the plugin from this checkout
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+          claude plugin marketplace add "$PWD"
+          claude plugin install repoql@repoql-plugins
+
+      - name: Launch PATH has no rql and no ~/.local/bin
+        run: |
+          launch_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "$HOME/.local/bin" | paste -sd: -)
+          echo "LAUNCH_PATH=$launch_path" >> "$GITHUB_ENV"
+          ! PATH="$launch_path" command -v rql
+          test ! -e "$HOME/.local/bin/rql"
+
+      # The launcher answers the handshake while the download runs, so the
+      # server connects inside the default 30s timeout with no binary yet.
+      - name: Server connects on a machine with no rql
+        run: |
+          PATH="$LAUNCH_PATH" claude mcp list | tee first.txt
+          grep -E 'plugin:repoql:repoql.*Connected' first.txt
+
+      - name: The download outlives that connection and installs the canonical binary
+        run: |
+          for _ in $(seq 1 180); do test -x "$HOME/.local/bin/rql" && break; sleep 5; done
+          cat "$HOME/.local/state/repoql/bootstrap.log" | tr '\r' '\n' | grep -v '%$' || true
+          "$HOME/.local/bin/rql" --version
+          grep -c "installing from downloads.repoql.ai" "$HOME/.local/state/repoql/bootstrap.log" | grep -qx 1
+
+      - name: Server connects through rql when the launch PATH still lacks it
+        run: |
+          PATH="$LAUNCH_PATH" claude mcp list | tee second.txt
+          grep -E 'plugin:repoql:repoql.*Connected' second.txt
+
+  # On Windows the launcher is rql-mcp.cmd, which waits for the download, so
+  # the client's connection timeout is raised to cover it.
+  claude-code-windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      ANTHROPIC_API_KEY: not-a-key-mcp-list-makes-no-api-call
+      MCP_TIMEOUT: "600000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Claude Code and the plugin from this checkout
+        shell: pwsh
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+          claude plugin marketplace add "$PWD"
+          claude plugin install repoql@repoql-plugins
+
+      - name: Server connects on a machine with no rql
+        shell: pwsh
+        run: |
+          if (Get-Command rql -ErrorAction SilentlyContinue) { throw 'rql is already on PATH' }
+          claude mcp list | Tee-Object first.txt
+          if (-not (Select-String -Path first.txt -Pattern 'plugin:repoql:repoql.*Connected')) { throw 'the server did not connect' }
+          & (Join-Path $env:LOCALAPPDATA 'rql\rql.exe') --version
+
+      # Steps get the runner's original environment, so PATH still lacks the
+      # installer's registry entry - the launcher must find rql.exe itself.
+      - name: Server connects again without rql on PATH
+        shell: pwsh
+        env:
+          MCP_TIMEOUT: "30000"
+        run: |
+          if (Get-Command rql -ErrorAction SilentlyContinue) { throw 'rql is on PATH; this step proves nothing' }
+          claude mcp list | Tee-Object second.txt
+          if (-not (Select-String -Path second.txt -Pattern 'plugin:repoql:repoql.*Connected')) { throw 'the server did not connect' }
 
   windows:
     runs-on: windows-latest

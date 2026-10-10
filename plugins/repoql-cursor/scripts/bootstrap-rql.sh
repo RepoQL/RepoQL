@@ -61,7 +61,10 @@ else
     command -v curl >/dev/null 2>&1 || unavailable "could not run: curl not found on PATH"
 fi
 
-state_dir="${CLAUDE_PLUGIN_DATA:-$HOME/.local/state/repoql}"
+# One binary per machine, so one lock per machine: every caller, from any
+# harness and from a hook or an MCP launcher alike, coordinates here rather
+# than in a per-plugin data directory only some of them are told about.
+state_dir="${REPOQL_STATE_DIR:-$HOME/.local/state/repoql}"
 mkdir -p "$state_dir" 2>/dev/null || unavailable "could not run: cannot create the state directory $state_dir"
 log="$state_dir/bootstrap.log"
 lock="$state_dir/bootstrap.lock"

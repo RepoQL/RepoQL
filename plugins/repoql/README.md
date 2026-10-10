@@ -11,7 +11,17 @@ RepoQL indexes your repository into a graph database so Claude can feel the shap
 /plugin install repoql@repoql-plugins
 ```
 
-That's the whole install. If the `rql` host binary isn't already on your machine, the plugin downloads it on your next session start by running the standard hosted installer for your platform — into `~/.local/bin` on macOS/Linux, or `%LOCALAPPDATA%\rql` on Windows. The result is identical to a manual install: one canonical binary that `rql update` and every other agent harness share; the plugin never keeps a private copy. On macOS/Linux the tools work in that same session; on Windows the installer's PATH change reaches newly started terminals, so the tools appear from your next session.
+That's the whole install. The plugin starts its MCP server through a small launcher (`scripts/rql-mcp`) that looks for `rql` in its canonical install directory — `~/.local/bin` on macOS/Linux, `%LOCALAPPDATA%\rql` on Windows — so the server does not depend on the PATH Claude Code was launched with.
+
+If the `rql` host binary isn't on your machine yet, the launcher installs it by running the standard hosted installer for your platform. The result is identical to a manual install: one canonical binary that `rql update` and every other agent harness share; the plugin never keeps a private copy. The binary is about 180 MB, and the download runs detached, so closing the session does not abort it.
+
+The session start hook tells you what happened in one line — `RepoQL installed rql to ~/.local/bin.`, that the download is still running, or why the install could not run and the command to do it by hand — and says nothing when `rql` was already there. The install log is `~/.local/state/repoql/bootstrap.log`.
+
+What the first run looks like (measured with Claude Code 2.1.284):
+
+- **macOS/Linux, interactive session** — the `repoql` server connects at once, including in the session where you ran `/plugin install`, and its tools appear in that same session when the download finishes. In a new session a prompt you send meanwhile waits behind `running SessionStart hook` until then, for up to 200 seconds.
+- **macOS/Linux, headless `claude -p`** — if the download takes longer than about 15 seconds, that run has no RepoQL tools; the next run does.
+- **Windows** — the launcher finds `rql.exe` without it being on PATH, and with no `rql.exe` it waits for the download before starting the server. So the tools arrive in that first session only when the download finishes inside Claude Code's MCP startup timeout (`MCP_TIMEOUT`, 30 seconds by default); otherwise the first session needs `/mcp` → Reconnect on `repoql` once the download is done. Claude Code does not retry a server that failed to connect, and new sessions skip it for the next 15 minutes; reconnecting from `/mcp` works at once.
 
 Set `REPOQL_NO_BOOTSTRAP=1` to disable the auto-download and install manually instead:
 
@@ -54,7 +64,7 @@ Auto-activating: **effective-repoql**, **effective-markdown**, **mermaid-diagram
 
 ### Hooks
 
-- **SessionStart** — bootstraps the `rql` binary if it's missing (see Installation), then injects a deliberately small orientation: the mounted `github://` repos (directly usable), accessible uplink names, and a pointer to the `concept://` invariants. Repo structure and docs are large and re-derivable, so the agent pulls them on demand (`read` / `explore`) rather than paying for them every session.
+- **SessionStart** — waits for the `rql` install if one is under way (see Installation; it starts one in a session where the MCP server was not spawned), then injects a deliberately small orientation: the mounted `github://` repos (directly usable), accessible uplink names, and a pointer to the `concept://` invariants. Repo structure and docs are large and re-derivable, so the agent pulls them on demand (`read` / `explore`) rather than paying for them every session.
 - **PreToolUse (Write/Edit)** — surfaces the `concept://` invariants relevant to the file being edited, once per session, as extra context just before the write.
 - **PostToolUse (reads)** — defines known terms and aliases from returned text after native `Read`/`read_file` and RepoQL MCP `read` calls. Each definition appears once per session in the serving host; a host restart resets that memory. Scope comes from the read target.
 - **Host display (Claude Code terminal and desktop Code tab)** — shows the person what the RepoQL host is doing, without a tool call. A dim `rql` label sits in the prompt footer: `rql` when the index is settled, `rql 84%` while it is being built, `rql no host` when no host is running. A long operation such as an import gets one line above the prompt. A RepoQL call that has run for ten seconds names itself beside the spinner. It reads `rql monitor --jsonl --progress`, never starts a host, and changes nothing the agent reads. With an `rql` older than the release that carries the monitor's signal fields, only the plain `rql` label is drawn. Turn it off with the plugin's **Show RepoQL host state** option.

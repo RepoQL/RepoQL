@@ -2,11 +2,12 @@
 # RepoQL bootstrap — ensure the rql host binary is installed, downloading it on
 # first run.
 #
-# Runs from the SessionStart hook so `/plugin install` alone yields a working
-# system: SessionStart hooks complete before MCP servers spawn, so a download
-# here makes the bundled `rql mcp` server usable in the same session (macOS /
-# Linux; on Windows the PATH change reaches the next terminal, so the server
-# appears from the next session instead).
+# Two callers, neither ordered against the other by Claude Code: the MCP
+# launcher (rql-mcp), which is what makes the bundled server work, and the
+# SessionStart hook, which covers sessions where the server is not spawned.
+# Both call this script and wait; the download itself runs once, in a detached
+# worker, so a caller that is killed (the MCP connection timeout, the hook
+# timeout, a closed session) never aborts it.
 #
 # Delegates to the hosted installers so the result is byte-identical to a
 # manual install — one canonical binary per machine, lifecycle owned by
@@ -17,11 +18,17 @@
 # a TTY; the plugin already provides the MCP, hook, and skill wiring.
 #
 # REPOQL_NO_BOOTSTRAP=1 disables downloading entirely.
-# REPOQL_BOOTSTRAP_WAIT is how many seconds to wait for another session's
-# install before giving up on it (default 60).
+# REPOQL_BOOTSTRAP_WAIT is how many seconds this call waits for the install,
+# whoever started it (default 200 — inside the SessionStart hook's 240s
+# timeout).
 # Exit 0 = rql available; exit 1 = unavailable, with the reason on stdout
-# (nothing when disabled); exit 2 = another session is still installing.
+# (nothing when disabled); exit 2 = an install is still running.
 
+# The installer adds ~/.local/bin to the shell rc only when it is missing from
+# PATH, so it must see the PATH this session was launched with — which callers
+# that have already put ~/.local/bin first pass in REPOQL_LAUNCH_PATH.
+launch_path="${REPOQL_LAUNCH_PATH:-$PATH}"
+export REPOQL_LAUNCH_PATH="$launch_path"
 export PATH="$HOME/.local/bin:$PATH"
 
 # Hooks are bash even on Windows (Git Bash). The Windows install location is
@@ -44,6 +51,84 @@ rql_available() {
     [ -n "$win_rql_dir" ] && [ -x "$win_rql_dir/rql.exe" ]
 }
 
+# One binary per machine, so one lock per machine: every caller, from any
+# harness and from a hook or an MCP launcher alike, coordinates here rather
+# than in a per-plugin data directory only some of them are told about.
+state_dir="${REPOQL_STATE_DIR:-$HOME/.local/state/repoql}"
+log="$state_dir/bootstrap.log"
+lock="$state_dir/bootstrap.lock"
+owner="$state_dir/bootstrap.pid"
+
+say() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >>"$log"; }
+
+# A lock is live while its recorded worker runs. A lock with no recorded
+# worker belongs to bootstrap-rql.ps1, which records none; trust it until it
+# is older than any install is allowed to run.
+lock_live() {
+    [ -d "$lock" ] || return 1
+    local pid
+    pid=$(cat "$owner" 2>/dev/null)
+    if [ -n "$pid" ]; then
+        kill -0 "$pid" 2>/dev/null
+    else
+        [ -z "$(find "$lock" -maxdepth 0 -mmin +20 2>/dev/null)" ]
+    fi
+}
+
+# The hosted installer's own downloads are unbounded; a stalled one would hold
+# the lock forever, so the whole install gets a deadline.
+install_deadline=900
+
+install() {
+    if [ -n "$win_posix" ]; then
+        # </dev/null keeps stdin redirected so the installer's non-interactive
+        # detection holds and nothing can block on a prompt.
+        powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
+            "irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex" </dev/null >>"$log" 2>&1
+        return
+    fi
+    local script="$state_dir/install-rql.$$.sh"
+    if ! curl -fsSL --max-time 30 https://downloads.repoql.ai/latest/install-rql.sh -o "$script" 2>>"$log"; then
+        rm -f "$script"
+        return 1
+    fi
+    PATH="$launch_path" bash "$script" </dev/null >>"$log" 2>&1 &
+    local job=$!
+    (
+        sleep "$install_deadline"
+        say "install exceeded ${install_deadline}s — stopping it"
+        pkill -TERM -P "$job" 2>/dev/null
+        kill -TERM "$job" 2>/dev/null
+    ) </dev/null >/dev/null 2>&1 &
+    local watchdog=$!
+    wait "$job"
+    local status=$?
+    pkill -P "$watchdog" 2>/dev/null
+    kill "$watchdog" 2>/dev/null
+    rm -f "$script"
+    return $status
+}
+
+if [ "$1" = "--worker" ]; then
+    # Detached from whoever started it: only an explicit TERM stops it early.
+    trap '' HUP INT
+    if ! mkdir "$lock" 2>/dev/null; then
+        lock_live && exit 0
+        rm -f "$owner"
+        rmdir "$lock" 2>/dev/null
+        mkdir "$lock" 2>/dev/null || exit 0
+    fi
+    echo $$ >"$owner"
+    trap 'rm -f "$owner"; rmdir "$lock" 2>/dev/null' EXIT
+    trap 'exit 1' TERM
+    rql_available && exit 0
+    say "rql missing — installing from downloads.repoql.ai"
+    install
+    rql_available && exit 0
+    say "bootstrap failed"
+    exit 1
+fi
+
 rql_available && exit 0
 
 [ "${REPOQL_NO_BOOTSTRAP:-0}" = "1" ] && exit 1
@@ -60,47 +145,28 @@ if [ -n "$win_posix" ]; then
 else
     command -v curl >/dev/null 2>&1 || unavailable "could not run: curl not found on PATH"
 fi
-
-state_dir="${CLAUDE_PLUGIN_DATA:-$HOME/.local/state/repoql}"
 mkdir -p "$state_dir" 2>/dev/null || unavailable "could not run: cannot create the state directory $state_dir"
-log="$state_dir/bootstrap.log"
-lock="$state_dir/bootstrap.lock"
+[ -w "$state_dir" ] || unavailable "could not run: cannot write to the state directory $state_dir"
 
-# One download across concurrent sessions. A stale lock (>15 min — e.g. a hook
-# killed mid-download) is reclaimed; the installers' temp-then-rename download
-# means a reclaimed lock never exposes a half-written binary.
-# While another session holds the lock, wait for its install rather than
-# report a failure that has not happened.
-wait_limit="${REPOQL_BOOTSTRAP_WAIT:-60}"
-case "$wait_limit" in ''|*[!0-9]*) wait_limit=60 ;; esac
+# The worker inherits nothing of the caller's stdio: a hook's stdout pipe or an
+# MCP server's JSON-RPC stream must not be held open or written to by it.
+detach=""
+command -v setsid >/dev/null 2>&1 && detach="setsid"
+$detach bash "$0" --worker </dev/null >/dev/null 2>&1 &
+worker=$!
+
 waited=0
-until mkdir "$lock" 2>/dev/null; do
-    if [ ! -d "$lock" ]; then
-        # Released between the two checks, or the state dir is not writable.
-        mkdir "$lock" 2>/dev/null && break
-        unavailable "could not run: cannot write to the state directory $state_dir"
-    fi
-    find "$lock" -maxdepth 0 -mmin +15 -exec rmdir {} \; 2>/dev/null
-    [ -d "$lock" ] || continue
+wait_limit="${REPOQL_BOOTSTRAP_WAIT:-200}"
+case "$wait_limit" in ''|*[!0-9]*) wait_limit=200 ;; esac
+while :; do
     rql_available && exit 0
+    if ! kill -0 "$worker" 2>/dev/null && ! lock_live; then
+        rql_available && exit 0
+        # Nobody is installing any more and there is still no binary.
+        if [ -f "$log" ]; then unavailable "failed (log: $log)"; fi
+        unavailable "failed"
+    fi
     [ "$waited" -ge "$wait_limit" ] && exit 2
     sleep 1
     waited=$((waited + 1))
 done
-trap 'rmdir "$lock" 2>/dev/null' EXIT
-# The session that held the lock may have finished the install.
-rql_available && exit 0
-
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] rql missing — installing from downloads.repoql.ai" >>"$log"
-if [ -n "$win_posix" ]; then
-    # </dev/null keeps stdin redirected so the installer's non-interactive
-    # detection holds and nothing can block on a prompt.
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
-        "irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex" </dev/null >>"$log" 2>&1
-else
-    curl -fsSL --max-time 30 https://downloads.repoql.ai/latest/install-rql.sh | bash >>"$log" 2>&1
-fi
-
-rql_available && exit 0
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] bootstrap failed" >>"$log"
-unavailable "failed (log: $log)"

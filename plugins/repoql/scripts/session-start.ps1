@@ -2,15 +2,19 @@
 # if needed, inject repository orientation, and load .repoql/concepts/readme.md
 # when CLAUDE.md does not import it. session-start.sh is the same hook for bash.
 #
-# SessionStart hooks complete before MCP servers spawn, so when rql is missing
-# the bootstrap can still make this session's bundled MCP server work. Always
-# exits 0 so a missing rql, a host that is down, or an unindexed repo never
-# blocks the session.
+# Claude Code does not order this hook against MCP server startup, so the
+# bundled server never depends on it: the rql-mcp launcher finds or installs
+# rql itself, and the bootstrap here shares that download. Always exits 0 so a
+# missing rql, a host that is down, or an unindexed repo never blocks the
+# session.
 . (Join-Path $PSScriptRoot 'hook-io.ps1')
 
 $dash = [char]0x2014
 $ellipsis = [char]0x2026
 $context = ''
+# An install is otherwise silent, so its outcome also goes to the user, as the
+# reply's systemMessage.
+$notice = ''
 try {
     $workspace = (Read-HookInput).cwd
     if (-not (Test-Directory $workspace)) { $workspace = (Get-Location).Path }
@@ -20,7 +24,7 @@ try {
     $bootstrapStatus = 0
     $bootstrapReason = ''
     if (-not (Get-Command rql)) {
-        # A failed bootstrap prints why; exit 2 means another session is installing.
+        # A failed bootstrap prints why; exit 2 means an install is still running.
         $bootstrapReason = (@(& (Join-Path $PSScriptRoot 'bootstrap-rql.ps1')) -join ' ').Trim()
         $bootstrapStatus = $LASTEXITCODE
         $freshInstall = $bootstrapStatus -eq 0
@@ -30,18 +34,21 @@ try {
         if ($env:REPOQL_NO_BOOTSTRAP -ne '1') {
             if ($bootstrapStatus -eq 2) {
                 $context = "# RepoQL: host install in progress`n"
-                $context += "The RepoQL plugin is installed and another session is installing the rql binary right now, so RepoQL tools are not available in this session yet. Tell the user to start a new session in a minute; nothing needs installing by hand.`n"
+                $context += "The RepoQL plugin is installed and the rql binary is still downloading in the background, so RepoQL tools are not available yet. They appear in this session when the download finishes if the repoql MCP server is connected; otherwise tell the user to reconnect it from /mcp, or to start a new session in a minute. Nothing needs installing by hand.`n"
+                $notice = 'RepoQL is still downloading rql (about 180 MB). Its tools appear when the download finishes; if they do not, reconnect repoql from /mcp.'
             } else {
                 if (-not $bootstrapReason) { $bootstrapReason = 'automatic install failed' }
                 $context = "# RepoQL: host not installed`n"
                 $context += "The RepoQL plugin is installed but the rql binary is missing and $bootstrapReason. Tell the user to install it manually from PowerShell and start a new session:`n"
                 $context += "  irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex`n"
+                $notice = "RepoQL could not install rql: $bootstrapReason. Install it manually from PowerShell, then start a new session: irm https://downloads.repoql.ai/latest/install-rql.ps1 | iex"
             }
         }
     } else {
         $context = "# RepoQL: Repository Orientation`n"
         if ($freshInstall) {
-            $context += "`nrql was just installed (first session with this plugin). The host indexes this repository in the background, so RepoQL tools may need a moment before returning results. If mcp__repoql__* tools are unavailable, tell the user a new Claude Code session started from a fresh terminal (so it picks up the updated PATH) will have them.`n"
+            $notice = "RepoQL installed rql to $(Split-Path -Parent (Get-Command rql).Source)."
+            $context += "`nrql was just installed (first session with this plugin). The host indexes this repository in the background, so RepoQL tools may need a moment before returning results. If the RepoQL MCP tools are unavailable, the download outlasted the server's connection timeout: tell the user to reconnect the repoql server from /mcp, or to start a new session.`n"
         } else {
             # Every mounted source except the ones named in the WHERE clause, which the agent already knows or did not
             # ask for: the primary file:///, help, memory, and worktrees. A new kind of mount is listed by default, with
@@ -97,5 +104,9 @@ try {
     }
 } catch { }
 
-if ($context) { Write-HookContext 'SessionStart' $context }
+if ($context -and $notice) {
+    Write-HookOutput @{ systemMessage = $notice; hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $context } }
+} elseif ($context) {
+    Write-HookContext 'SessionStart' $context
+}
 exit 0
