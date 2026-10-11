@@ -188,11 +188,16 @@ export const register: Register = (on, options) => {
     // The terminal has no pane to open, so its label carries the one thing
     // the pane is for: the way to the dashboard. A mode is a string, so the
     // line is drawn here, as the engine draws it, with the link at its end.
+    // The link is underlined and at full brightness: in a dim line that is
+    // the only thing that says it can be clicked.
     const { Link, Text } = $.ui.resolve(e)
 
     return (
-      <Text dimColor>
-        {modes.join(' & ')} · <Link href={now.dashboard} label="dashboard" />
+      <Text>
+        <Text dimColor>{modes.join(' & ')} · </Text>
+        <Text underline>
+          <Link href={now.dashboard} label="dashboard" />
+        </Text>
       </Text>
     )
   })

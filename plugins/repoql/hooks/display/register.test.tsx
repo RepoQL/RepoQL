@@ -67,8 +67,14 @@ test('the label is drawn from the monitor child on each surface that has a foote
 
   // the terminal has no pane, so its label ends in a link to the dashboard, asked of the host once
   const linked = await $.ui.mount({ plugin: 'repoql', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
-  expect((await linked.find({ type: 'Link' }))?.props).toEqual({ href: 'http://localhost:5173/#k=abc', label: 'dashboard' })
-  expect((await linked.find({ type: 'Text' }))?.text).toBe('focus & rql · working 82% · dashboard')
+  const anchor = await linked.find({ type: 'Link' })
+  expect(anchor?.props).toEqual({ href: 'http://localhost:5173/#k=abc', label: 'dashboard' })
+  expect(anchor?.text).toBe('dashboard')
+  expect((await linked.findAll({ type: 'Text' })).map(t => [t.text, t.props])).toEqual([
+    ['focus & rql · working 82% · dashboard', {}],
+    ['focus & rql · working 82% · ', { dimColor: true }],
+    ['dashboard', { underline: true }],
+  ])
   await linked.unmount()
   expect(ran).toEqual([['rql', 'dashboard', '--url']])
   expect(argvs).toEqual([['rql', 'monitor', '--jsonl', '--progress', '--progress-interval', '5s']])
