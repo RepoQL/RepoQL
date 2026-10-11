@@ -103,7 +103,6 @@ export function step(was: View, record: Record<string, unknown>, nowMs: number):
     // The work leaving the screen is the news; no notice says it again.
     return { view: { ...view, operation: null, busySinceMs: null }, notice }
   }
-  }
 
   const what = describe(record.operation, record.operation_filesystem)
 
