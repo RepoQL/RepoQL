@@ -1,13 +1,16 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { View } from '../../types'
-import { INITIAL, label, line, parse, reason, step } from './stream'
+import { INITIAL, describe, label, line, parse, reason, step } from './stream'
 
-const HOST = { host_pid: 41247, host_started_at_unix_ms: 1791280375986 }
-const IMPORT =
-  '{"type":"host.signal","signal":"progress","text":"progress — import","host_pid":41247,"host_started_at_unix_ms":1791280375986,"operation":"import:github.com/enricomi/publish-unit-test-result-action","operation_total":147458,"operation_done":122330,"registry_total":216906,"registry_complete":182598}'
-const SETTLED =
-  '{"type":"host.signal","signal":"progress","text":"progress — settled","host_pid":41247,"host_started_at_unix_ms":1791280375986,"settled":true,"registry_total":216906,"registry_complete":216906}'
+const HOST = '"host_pid":41247,"host_started_at_unix_ms":1791280375986'
+const progress = (fields: string) => `{"type":"host.signal","signal":"progress",${HOST},${fields}}`
+const IMPORT = progress(
+  '"operation":"import:github.com/sharkdp/bat","operation_total":905,"operation_done":199,"registry_total":235523,"registry_complete":225610,"settled":false',
+)
+const SWEEP = progress('"operation":"sweep","operation_total":12,"operation_done":3,"registry_total":200,"registry_complete":100,"settled":false')
+const ANALYZE = progress('"operation":"analyze","operation_total":0,"operation_done":0,"registry_total":200,"registry_complete":200,"settled":false')
+const SETTLED = progress('"operation":"","operation_total":0,"operation_done":0,"registry_total":235523,"registry_complete":235523,"settled":true')
 
 /** Plays literal monitor lines, one per second from `startMs`. */
 function play(lines: string[], from: View = INITIAL, startMs = 0, everyMs = 1000) {
@@ -30,53 +33,79 @@ function play(lines: string[], from: View = INITIAL, startMs = 0, everyMs = 1000
   return { view, notices }
 }
 
+test('the display words imports and first indexing, and stays quiet about housekeeping and worktrees', () => {
+  expect(describe('import:github.com/sharkdp/bat')).toBe('importing github://sharkdp/bat')
+  expect(describe('import:github-pulls://RepoQL/RepoQL.Core')).toBe('importing github-pulls://RepoQL/RepoQL.Core')
+  expect(describe('import:gitlab.com/group/project')).toBe('importing gitlab.com/group/project')
+  expect(describe('import:')).toBe(null)
+  expect(describe('import:github.com/sharkdp/bat', 'github://sharkdp/bat/')).toBe('importing github://sharkdp/bat')
+  expect(describe('import:gitlab.com/group/project', 'git://gitlab.com/group/project')).toBe('importing git://gitlab.com/group/project')
+  expect(describe('import:worktree://wt-keepwarm/')).toBe(null)
+  expect(describe('import:wt-keepwarm', 'worktree://wt-keepwarm/')).toBe(null)
+  expect(describe('startup')).toBe('indexing this repository')
+  expect(describe('sweep')).toBe(null)
+  expect(describe('analyze')).toBe(null)
+  expect(describe('')).toBe(null)
+  expect(describe(undefined)).toBe(null)
+})
+
 test('a settled host reads rql, and a history burst changes nothing after the first record', () => {
-  const first = play(['{"type":"session.snapshot","host_pid":41247,"host_started_at_unix_ms":1791280375986}'])
-  const again = step(first.view, { type: 'session.snapshot', ...HOST }, 5)
+  const first = play([`{"type":"session.snapshot",${HOST}}`])
+  const again = step(first.view, { type: 'session.snapshot', host_pid: 41247, host_started_at_unix_ms: 1791280375986 }, 5)
 
   expect(label(first.view)).toBe('rql')
   expect(again.view).toBe(first.view)
   expect(again.notice).toBe(null)
 })
 
-test('an unsettled host reads a percentage and settles on the settled record alone', () => {
+test('an import shows its own percentage and clears on the settled record alone', () => {
   const busy = play([IMPORT])
+  const still = play(
+    [`{"type":"host.signal","signal":"index_ready",${HOST}}`, `{"type":"host.signal","signal":"engine_idle",${HOST}}`],
+    busy.view,
+  )
   const done = play([SETTLED], busy.view, 5000)
 
-  expect(label(busy.view)).toBe('rql 84%')
+  expect(label(busy.view)).toBe('rql 21%')
+  expect(label(still.view)).toBe('rql 21%')
   expect(label(done.view)).toBe('rql')
   expect(done.notices).toEqual([])
 })
 
-test('index_ready and engine_idle do not settle the display', () => {
-  const still = play(
-    [
-      `{"type":"host.signal","signal":"index_ready","host_pid":41247,"host_started_at_unix_ms":1791280375986}`,
-      `{"type":"host.signal","signal":"engine_idle","host_pid":41247,"host_started_at_unix_ms":1791280375986}`,
-    ],
-    play([IMPORT]).view,
-  )
+test('a sweep or an analyze draws nothing at all', () => {
+  for (const housekeeping of [SWEEP, ANALYZE]) {
+    const quiet = play([housekeeping, housekeeping])
 
-  expect(label(still.view)).toBe('rql 84%')
+    expect(label(quiet.view)).toBe('rql')
+    expect(line(quiet.view, 600_000)).toBe(null)
+    expect(reason({ ...quiet.view, slowTool: 'explore' })).toBe('rql explore')
+    expect(play([SETTLED], quiet.view, 600_000).notices).toEqual([])
+  }
 })
 
-test('work shorter than thirty seconds ends without a notice; longer work ends with one', () => {
-  const busy = play([IMPORT]).view
-
-  expect(play([SETTLED], busy, 29_000).notices).toEqual([])
-  expect(play([SETTLED], busy, 30_000).notices).toEqual(['RepoQL index settled'])
-})
-
-test('the line names a long operation after ten seconds and never a routine reindex', () => {
+test('the line names the import after ten seconds and hides while housekeeping follows it', () => {
   const importing = play([IMPORT]).view
-  const reindex = play([
-    '{"type":"host.signal","signal":"progress","host_pid":41247,"host_started_at_unix_ms":1791280375986,"registry_total":200,"registry_complete":100}',
-  ]).view
+  const sweeping = play([SWEEP], importing, 20_000).view
 
   expect(line(importing, 9_000)).toBe(null)
-  expect(line(importing, 10_000)).toBe('import publish-unit-test-result-action 82%')
-  expect(line(reindex, 60_000)).toBe(null)
-  expect(label(reindex)).toBe('rql 50%')
+  expect(line(importing, 10_000)).toBe('importing github://sharkdp/bat 21%')
+  expect(line(sweeping, 30_000)).toBe(null)
+  expect(label(sweeping)).toBe('rql')
+})
+
+test('one notice ends a stretch of named work that lasted thirty seconds, housekeeping included', () => {
+  const importing = play([IMPORT]).view
+
+  expect(play([SETTLED], importing, 29_000).notices).toEqual([])
+  expect(play([SETTLED], importing, 30_000).notices).toEqual(['RepoQL index settled'])
+  expect(play([SWEEP, ANALYZE, SETTLED], importing, 40_000).notices).toEqual(['RepoQL index settled'])
+})
+
+test('first indexing reads in plain words', () => {
+  const starting = play([progress('"operation":"startup","operation_total":1000,"operation_done":400,"registry_total":1000,"registry_complete":400,"settled":false')]).view
+
+  expect(line(starting, 10_000)).toBe('indexing this repository 40%')
+  expect(label(starting)).toBe('rql 40%')
 })
 
 test('waiting and lost read no host, clear the work, and keep the host for comparison', () => {
@@ -85,14 +114,14 @@ test('waiting and lost read no host, clear the work, and keep the host for compa
   const waiting = play(['{"type":"monitor.connection","state":"waiting","text":"no host"}'])
 
   expect(label(lost.view)).toBe('rql no host')
-  expect(lost.view.percent).toBe(null)
+  expect(lost.view.operation).toBe(null)
   expect(lost.view.host).toEqual({ pid: 41247, startedAtUnixMs: 1791280375986 })
   expect(lost.notices).toEqual([])
   expect(label(waiting.view)).toBe('rql no host')
 })
 
 test('the first host of a session raises no notice, with or without waiting before it', () => {
-  const connected = '{"type":"monitor.connection","state":"connected","host_pid":41247,"host_started_at_unix_ms":1791280375986}'
+  const connected = `{"type":"monitor.connection","state":"connected",${HOST}}`
 
   expect(play([connected]).notices).toEqual([])
   expect(play(['{"type":"monitor.connection","state":"waiting"}', connected]).notices).toEqual([])
@@ -100,7 +129,7 @@ test('the first host of a session raises no notice, with or without waiting befo
 
 test('a reconnect to the same host is silent; a different host is a restart', () => {
   const lost = '{"type":"monitor.connection","state":"lost"}'
-  const same = '{"type":"monitor.connection","state":"connected","host_pid":41247,"host_started_at_unix_ms":1791280375986}'
+  const same = `{"type":"monitor.connection","state":"connected",${HOST}}`
   const other = '{"type":"monitor.connection","state":"connected","host_pid":50001,"host_started_at_unix_ms":1791280999000}'
   const samePidLater = '{"type":"monitor.connection","state":"connected","host_pid":41247,"host_started_at_unix_ms":1791280999000}'
   const busy = play([IMPORT]).view
@@ -112,18 +141,14 @@ test('a reconnect to the same host is silent; a different host is a restart', ()
 })
 
 test('an rql that sends no signal key or numbers leaves the label at rql', () => {
-  const old = play([
-    '{"type":"host.signal","text":"progress — files 100/200","host_pid":41247,"host_started_at_unix_ms":1791280375986}',
-    'not json',
-    '[1,2]',
-  ])
+  const old = play([`{"type":"host.signal","text":"progress — files 100/200",${HOST}}`, 'not json', '[1,2]'])
 
   expect(label(old.view)).toBe('rql')
   expect(line(old.view, 60_000)).toBe(null)
 })
 
-test('a slow call names its tool, and the index percentage only while the host is unsettled', () => {
+test('a slow call names its tool, and the named work while there is some', () => {
   expect(reason(INITIAL)).toBe(null)
   expect(reason({ ...INITIAL, slowTool: 'explore' })).toBe('rql explore')
-  expect(reason({ ...play([IMPORT]).view, slowTool: 'explore' })).toBe('rql explore · index 84%')
+  expect(reason({ ...play([IMPORT]).view, slowTool: 'explore' })).toBe('rql explore · importing github://sharkdp/bat 21%')
 })

@@ -7,15 +7,12 @@ export const BAND_AFTER_MS = 10_000
 export const INITIAL: View = {
   connection: 'unknown',
   host: null,
-  percent: null,
   operation: null,
   busySinceMs: null,
   slowTool: null,
 }
 
 export type Step = { view: View; notice: string | null }
-
-const QUIET = { percent: null, operation: null, busySinceMs: null }
 
 const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : null)
 
@@ -24,6 +21,35 @@ const percentOf = (done: unknown, total: unknown) => {
   const complete = number(done)
 
   return all === null || complete === null || all <= 0 ? null : Math.min(100, Math.floor((complete * 100) / all))
+}
+
+/**
+ * The host's operation in a new user's words, or null for work the display
+ * stays quiet about: the host's own housekeeping (`sweep`, `analyze`), another
+ * session's worktree being mounted, and any operation this build does not know.
+ * `filesystem` is the address the host sends for an import; an older host sends
+ * none, and the address is then read from the operation's name.
+ */
+export function describe(operation: unknown, filesystem?: unknown) {
+  if (typeof operation !== 'string') {
+    return null
+  }
+
+  if (operation === 'startup') {
+    return 'indexing this repository'
+  }
+
+  if (!operation.startsWith('import:')) {
+    return null
+  }
+
+  // The name carries a full URI for a connector or a local mount,
+  // `github.com/owner/name` for GitHub, and host/path for other git.
+  const source = operation.slice('import:'.length).replace(/^\/+|\/+$/g, '')
+  const named = source.startsWith('github.com/') ? `github://${source.slice('github.com/'.length)}` : source
+  const address = typeof filesystem === 'string' && filesystem !== '' ? filesystem.replace(/\/+$/, '') : named
+
+  return address === '' || address.startsWith('worktree://') ? null : `importing ${address}`
 }
 
 /** One line of `rql monitor --jsonl`, or null when it is not a record. */
@@ -45,7 +71,7 @@ export function parse(line: string): Record<string, unknown> | null {
  */
 export function step(was: View, record: Record<string, unknown>, nowMs: number): Step {
   if (record.type === 'monitor.connection' && (record.state === 'waiting' || record.state === 'lost')) {
-    return { view: { ...was, ...QUIET, connection: record.state }, notice: null }
+    return { view: { ...was, operation: null, busySinceMs: null, connection: record.state }, notice: null }
   }
 
   const pid = number(record.host_pid)
@@ -58,7 +84,7 @@ export function step(was: View, record: Record<string, unknown>, nowMs: number):
 
     if (!isSameHost) {
       notice = was.host === null ? null : 'RepoQL host restarted'
-      view = { ...view, ...QUIET, host: { pid, startedAtUnixMs } }
+      view = { ...view, operation: null, busySinceMs: null, host: { pid, startedAtUnixMs } }
     }
 
     if (view.connection !== 'connected') {
@@ -71,49 +97,49 @@ export function step(was: View, record: Record<string, unknown>, nowMs: number):
   }
 
   if (record.settled === true) {
+    if (view.busySinceMs === null && view.operation === null) {
+      return { view, notice }
+    }
+
     const waitedMs = view.busySinceMs === null ? 0 : nowMs - view.busySinceMs
 
-    return view.busySinceMs === null
-      ? { view, notice }
-      : { view: { ...view, ...QUIET }, notice: waitedMs >= LONG_WAIT_MS ? 'RepoQL index settled' : notice }
+    return {
+      view: { ...view, operation: null, busySinceMs: null },
+      notice: waitedMs >= LONG_WAIT_MS ? 'RepoQL index settled' : notice,
+    }
   }
 
-  const percent = percentOf(record.registry_complete, record.registry_total)
+  const what = describe(record.operation, record.operation_filesystem)
 
-  if (percent === null) {
-    return { view, notice }
+  if (what === null) {
+    // Housekeeping between or after named work: hide the line, keep the stretch's start for the settled notice.
+    return view.operation === null ? { view, notice } : { view: { ...view, operation: null }, notice }
   }
 
-  const name = typeof record.operation === 'string' ? record.operation : ''
-  const operation = name === '' ? null : { name, percent: percentOf(record.operation_done, record.operation_total) }
-  const isSame =
-    view.percent === percent && view.operation?.name === operation?.name && view.operation?.percent === operation?.percent
+  const percent = percentOf(record.operation_done, record.operation_total)
 
-  return isSame
+  return view.operation?.name === what && view.operation.percent === percent
     ? { view, notice }
-    : { view: { ...view, percent, operation, busySinceMs: view.busySinceMs ?? nowMs }, notice }
+    : { view: { ...view, operation: { name: what, percent }, busySinceMs: view.busySinceMs ?? nowMs }, notice }
 }
+
+const progress = (view: View) =>
+  view.operation === null
+    ? null
+    : view.operation.percent === null
+      ? view.operation.name
+      : `${view.operation.name} ${view.operation.percent}%`
 
 export function label(view: View) {
   if (view.connection === 'waiting' || view.connection === 'lost') {
     return 'rql no host'
   }
 
-  return view.percent === null ? 'rql' : `rql ${view.percent}%`
+  return view.operation?.percent == null ? 'rql' : `rql ${view.operation.percent}%`
 }
 
-/** `import:github.com/owner/name` reads as `import name`. */
 export function line(view: View, nowMs: number) {
-  if (view.operation === null || view.busySinceMs === null || nowMs - view.busySinceMs < BAND_AFTER_MS) {
-    return null
-  }
-
-  const [kind, ...rest] = view.operation.name.split(':')
-  const target = rest.join(':').split('/').pop() ?? ''
-  const what = target === '' ? kind : `${kind} ${target}`
-  const percent = view.operation.percent ?? view.percent
-
-  return percent === null ? what : `${what} ${percent}%`
+  return view.busySinceMs === null || nowMs - view.busySinceMs < BAND_AFTER_MS ? null : progress(view)
 }
 
 export function reason(view: View) {
@@ -121,5 +147,7 @@ export function reason(view: View) {
     return null
   }
 
-  return view.percent === null ? `rql ${view.slowTool}` : `rql ${view.slowTool} · index ${view.percent}%`
+  const doing = progress(view)
+
+  return doing === null ? `rql ${view.slowTool}` : `rql ${view.slowTool} · ${doing}`
 }

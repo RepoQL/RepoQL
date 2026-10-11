@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { View } from '../../types'
+import { H, RING_W, badge, ring } from './marks'
 import { INITIAL, label, line, parse, reason, step } from './stream'
 
 // A display for the host's own stream: one `rql monitor` child per session.
@@ -65,7 +66,17 @@ async function monitor($: EngineInterface) {
 
   retryAtMs = (await $.clock.now()) + RETRY_MS
   isMonitoring = false
-  await update($, view, (was): View => ({ ...was, connection: 'lost', percent: null, operation: null, busySinceMs: null }))
+  await update($, view, (was): View => ({ ...was, connection: 'lost', operation: null, busySinceMs: null }))
+}
+
+/** Opens the host's live dashboard in the browser; `rql dashboard` knows the port and the secret. */
+async function openDashboard($: EngineInterface) {
+  try {
+    await $.process.run(['rql', 'dashboard'], { timeoutMs: 15_000 })
+  } catch (error) {
+    $.ui.toast('Could not open the RepoQL dashboard')
+    $.ui.log(`rql dashboard did not run: ${String(error)}`, { to: 'debug' })
+  }
 }
 
 async function showSlow($: EngineInterface) {
@@ -82,7 +93,8 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
 
-    if (e.surface !== null) {
+    // A reload starts the module again with no surface named, though one is still attached.
+    if (e.surface !== null || (await $.session.surfaces()).length > 0) {
       canDraw = true
       void monitor($)
     }
@@ -132,18 +144,40 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const text = line(await read($, view), await $.clock.now())
-
-    if (text === null) {
+    if (e.props.hasSurvey) {
       return next(e)
     }
 
-    const { Text } = $.ui.resolve(e)
+    const now = await read($, view)
+    const text = line(now, await $.clock.now())
+    const { Box, Button, Text, ...rest } = $.ui.resolve(e)
+    const Svg = (rest as { Svg?: any }).Svg
+
+    // The terminal has the footer label for presence, so its band speaks only while there is work.
+    if (e.surface === 'terminal' || !Svg) {
+      return text === null ? next(e) : <Text dimColor wrap="truncate-end">rql · {text}</Text>
+    }
+
+    // A surface that draws SVG paints no footer label, so here the band is the
+    // presence: the eye at rest, a ring while named work runs. The ring is a
+    // plain image, since an interactive frame reloads, and flashes, on every
+    // change. The eye never changes, so it can be a frame, and can look around.
+    const hasHost = now.connection !== 'waiting' && now.connection !== 'lost'
+    const resting = badge(hasHost)
 
     return (
-      <Text dimColor wrap="truncate-end">
-        rql · {text}
-      </Text>
+      <Box>
+        {text !== null && now.operation !== null ? (
+          <Box>
+            <Svg source={ring(now.operation.percent ?? 0)} alt={`rql ${now.operation.percent ?? 0}%`} width={RING_W} height={H} />
+            <Text dimColor wrap="truncate-end"> {now.operation.name}</Text>
+          </Box>
+        ) : (
+          <Svg source={resting.source} alt={hasHost ? 'rql' : 'rql no host'} width={resting.width} height={H} isInteractive={hasHost} />
+        )}
+        <Text> </Text>
+        {hasHost && <Button key="dashboard" label="Dashboard" onPress={() => openDashboard($)} />}
+      </Box>
     )
   })
 }
