@@ -11,7 +11,7 @@ UPLINK = ROOT / 'plugins' / 'repoql-uplink'
 OWNED_SKILLS = {'troubleshooting-repoql', 'using-uplinks'}
 
 # Exemplar skills that drive the local rql binary, which this plugin never installs.
-LOCAL_ONLY_SKILLS = {'monitoring-repoql', 'statusline-builder'}
+LOCAL_ONLY_SKILLS = {'monitoring-repoql', 'statusline-builder', 'writing-connectors'}
 
 
 def files_under(directory):

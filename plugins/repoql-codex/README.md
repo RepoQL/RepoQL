@@ -49,7 +49,7 @@ RepoQL addresses the workspace with `file:///`, imported repositories with `gith
 
 ### Skills
 
-- RepoQL operation: `effective-repoql`, `monitoring-repoql`, `troubleshooting-repoql`, `using-uplinks`
+- RepoQL operation: `effective-repoql`, `monitoring-repoql`, `troubleshooting-repoql`, `using-uplinks`, `writing-connectors`
 - Evidence and design: `research`, `findings`, `north-star`, `flow`, `system-design`, `plan`, `odad`
 - Authoring: `effective-markdown`, `mermaid-diagrams`, `skill-builder`
 

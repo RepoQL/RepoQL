@@ -56,7 +56,7 @@ There is no separate index step — the host indexes a repository automatically 
 
 ### Skills
 
-Auto-activating: **effective-repoql**, **effective-markdown**, **mermaid-diagrams**, **skill-builder**, **statusline-builder**, **monitoring-repoql**, **using-uplinks**, and **troubleshooting-repoql**.
+Auto-activating: **effective-repoql**, **effective-markdown**, **mermaid-diagrams**, **skill-builder**, **statusline-builder**, **monitoring-repoql**, **using-uplinks**, **writing-connectors**, and **troubleshooting-repoql**.
 
 ### Agent
 

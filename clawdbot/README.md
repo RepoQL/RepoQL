@@ -85,7 +85,7 @@ The plugin ships the same skills as RepoQL's Claude Code plugin
 skill that stands in for the MCP server instructions other harnesses receive.
 
 - **Using RepoQL:** `repoql`, `effective-repoql`, `troubleshooting-repoql`,
-  `monitoring-repoql`, `using-uplinks`
+  `monitoring-repoql`, `using-uplinks`, `writing-connectors`
 - **Writing documents:** `effective-markdown`, `research`, `findings`,
   `north-star`, `flow`, `system-design`, `plan`, `odad`, `mermaid-diagrams`
 - **Writing skills:** `skill-builder`
