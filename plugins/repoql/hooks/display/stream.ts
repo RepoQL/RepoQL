@@ -102,14 +102,14 @@ export function label(view: View) {
   return view.percent === null ? 'rql' : `rql ${view.percent}%`
 }
 
-/** `import:github.com/owner/name` reads as `import name`. */
+/** `import:github.com/owner/name` reads as `import owner/name`. */
 export function line(view: View, nowMs: number) {
   if (view.operation === null || view.busySinceMs === null || nowMs - view.busySinceMs < BAND_AFTER_MS) {
     return null
   }
 
   const [kind, ...rest] = view.operation.name.split(':')
-  const target = rest.join(':').split('/').pop() ?? ''
+  const target = rest.join(':').split('/').slice(-2).join('/')
   const what = target === '' ? kind : `${kind} ${target}`
   const percent = view.operation.percent ?? view.percent
 

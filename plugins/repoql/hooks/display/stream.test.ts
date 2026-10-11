@@ -74,7 +74,7 @@ test('the line names a long operation after ten seconds and never a routine rein
   ]).view
 
   expect(line(importing, 9_000)).toBe(null)
-  expect(line(importing, 10_000)).toBe('import publish-unit-test-result-action 82%')
+  expect(line(importing, 10_000)).toBe('import enricomi/publish-unit-test-result-action 82%')
   expect(line(reindex, 60_000)).toBe(null)
   expect(label(reindex)).toBe('rql 50%')
 })
