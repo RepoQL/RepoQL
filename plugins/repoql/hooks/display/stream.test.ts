@@ -93,12 +93,12 @@ test('the line names the import after ten seconds and hides while housekeeping f
   expect(label(sweeping)).toBe('rql')
 })
 
-test('one notice ends a stretch of named work that lasted thirty seconds, housekeeping included', () => {
+test('work ending raises no notice, however long it ran', () => {
   const importing = play([IMPORT]).view
 
   expect(play([SETTLED], importing, 29_000).notices).toEqual([])
-  expect(play([SETTLED], importing, 30_000).notices).toEqual(['RepoQL index settled'])
-  expect(play([SWEEP, ANALYZE, SETTLED], importing, 40_000).notices).toEqual(['RepoQL index settled'])
+  expect(play([SETTLED], importing, 3_600_000).notices).toEqual([])
+  expect(play([SWEEP, ANALYZE, SETTLED], importing, 40_000).notices).toEqual([])
 })
 
 test('first indexing reads in plain words', () => {

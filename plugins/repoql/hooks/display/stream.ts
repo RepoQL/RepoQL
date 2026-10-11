@@ -1,7 +1,6 @@
 import type { View } from '../../types'
 
-/** A progress line and a settled notice are for work the person had time to notice. */
-export const LONG_WAIT_MS = 30_000
+/** A progress line is for work the person had time to notice. */
 export const BAND_AFTER_MS = 10_000
 
 export const INITIAL: View = {
@@ -101,18 +100,14 @@ export function step(was: View, record: Record<string, unknown>, nowMs: number):
       return { view, notice }
     }
 
-    const waitedMs = view.busySinceMs === null ? 0 : nowMs - view.busySinceMs
-
-    return {
-      view: { ...view, operation: null, busySinceMs: null },
-      notice: waitedMs >= LONG_WAIT_MS ? 'RepoQL index settled' : notice,
-    }
+    // The work leaving the screen is the news; no notice says it again.
+    return { view: { ...view, operation: null, busySinceMs: null }, notice }
   }
 
   const what = describe(record.operation, record.operation_filesystem)
 
   if (what === null) {
-    // Housekeeping between or after named work: hide the line, keep the stretch's start for the settled notice.
+    // Housekeeping between or after named work: hide the line.
     return view.operation === null ? { view, notice } : { view: { ...view, operation: null }, notice }
   }
 
