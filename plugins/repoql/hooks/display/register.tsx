@@ -19,7 +19,25 @@ const view = atom({ plugin: 'repoql', key: 'view' } as const, INITIAL)
 let isMonitoring = false
 let retryAtMs = 0
 let canDraw = false
+let linkedHost: string | null = null
 const slow: string[] = []
+
+const hostKey = (now: View) => (now.host === null ? null : `${now.host.pid}:${now.host.startedAtUnixMs}`)
+
+/** Asks the host for its dashboard link, once per host. The link carries the port and the secret, so only the host can say it. */
+async function link($: EngineInterface, key: string) {
+  try {
+    const { exitCode, stdout } = await $.process.run(['rql', 'dashboard', '--url'], { timeoutMs: 15_000 })
+    // A link is drawn only to `localhost` by name; the host answers to that name and to the address alike.
+    const href = stdout.trim().replace(/^http:\/\/127\.0\.0\.1(?=[:/])/, 'http://localhost')
+
+    if (exitCode === 0 && /^http:\/\/localhost[:/]\S*$/.test(href)) {
+      await update($, view, was => (hostKey(was) === key && was.connection === 'connected' ? { ...was, dashboard: href } : was))
+    }
+  } catch (error) {
+    $.ui.log(`rql dashboard --url did not run: ${String(error)}`, { to: 'debug' })
+  }
+}
 
 async function take($: EngineInterface, text: string) {
   const record = parse(text)
@@ -32,7 +50,21 @@ async function take($: EngineInterface, text: string) {
   const { view: now, notice } = step(was, record, await $.clock.now())
 
   if (now !== was) {
-    await update($, view, current => ({ ...now, slowTool: current.slowTool }))
+    const key = hostKey(now)
+
+    // The link is not the stream's to set: it stays while the host it came from stays.
+    await update($, view, current => ({
+      ...now,
+      slowTool: current.slowTool,
+      dashboard: now.connection === 'connected' && hostKey(current) === key ? current.dashboard : null,
+    }))
+
+    if (now.connection !== 'connected') {
+      linkedHost = null
+    } else if (key !== null && key !== linkedHost) {
+      linkedHost = key
+      void link($, key)
+    }
   }
 
   if (notice !== null) {
@@ -68,7 +100,8 @@ async function monitor($: EngineInterface) {
 
   retryAtMs = (await $.clock.now()) + RETRY_MS
   isMonitoring = false
-  await update($, view, (was): View => ({ ...was, connection: 'lost', operation: null, busySinceMs: null }))
+  linkedHost = null
+  await update($, view, (was): View => ({ ...was, connection: 'lost', operation: null, busySinceMs: null, dashboard: null }))
 }
 
 /** Opens the host's live dashboard in the browser; `rql dashboard` knows the port and the secret. */
@@ -144,9 +177,25 @@ export const register: Register = (on, options) => {
     }
   }).catch(($, e, next) => next(e))
 
-  on('ui.render', { component: 'SessionMode' }, async ($, e, next) =>
-    next({ ...e, props: { ...e.props, modes: [...e.props.modes, label(await read($, view))] } }),
-  )
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    const now = await read($, view)
+    const modes = [...e.props.modes, label(now)]
+
+    if (e.surface !== 'terminal' || now.dashboard === null) {
+      return next({ ...e, props: { ...e.props, modes } })
+    }
+
+    // The terminal has no pane to open, so its label carries the one thing
+    // the pane is for: the way to the dashboard. A mode is a string, so the
+    // line is drawn here, as the engine draws it, with the link at its end.
+    const { Link, Text } = $.ui.resolve(e)
+
+    return (
+      <Text dimColor>
+        {modes.join(' & ')} · <Link href={now.dashboard} label="dashboard" />
+      </Text>
+    )
+  })
 
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     const why = reason(await read($, view))
@@ -205,16 +254,9 @@ export const register: Register = (on, options) => {
     const { Box, Button, Text, ...rest } = $.ui.resolve(e)
     const Svg = (rest as { Svg?: any }).Svg
 
-    // Without drawing, the same things in words.
-    if (e.surface === 'terminal' || !Svg) {
-      return (
-        <Box flexDirection="column" gap={1}>
-          <Text bold>RepoQL · {state}</Text>
-          {said !== '' && <Text dimColor>{said}</Text>}
-          {doing !== null && <Text>{doing}</Text>}
-          {isAwake && <Button key="dashboard" label="Open dashboard" onPress={() => openDashboard($)} />}
-        </Box>
-      )
+    // Nothing opens the pane where nothing draws it: the terminal's footer has the link instead.
+    if (!Svg) {
+      return <Text>RepoQL · {state}</Text>
     }
 
     // One column, centred in the pane. The head changes only with the host's

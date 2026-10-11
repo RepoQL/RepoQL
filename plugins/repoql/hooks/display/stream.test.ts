@@ -53,7 +53,7 @@ test('a settled host reads rql, and a history burst changes nothing after the fi
   const first = play([`{"type":"session.snapshot",${HOST}}`])
   const again = step(first.view, { type: 'session.snapshot', host_pid: 41247, host_started_at_unix_ms: 1791280375986 }, 5)
 
-  expect(label(first.view)).toBe('rql')
+  expect(label(first.view)).toBe('rql · ready')
   expect(again.view).toBe(first.view)
   expect(again.notice).toBe(null)
 })
@@ -66,9 +66,9 @@ test('an import shows its own percentage and clears on the settled record alone'
   )
   const done = play([SETTLED], busy.view, 5000)
 
-  expect(label(busy.view)).toBe('rql 21%')
-  expect(label(still.view)).toBe('rql 21%')
-  expect(label(done.view)).toBe('rql')
+  expect(label(busy.view)).toBe('rql · working 21%')
+  expect(label(still.view)).toBe('rql · working 21%')
+  expect(label(done.view)).toBe('rql · ready')
   expect(done.notices).toEqual([])
 })
 
@@ -76,7 +76,7 @@ test('a sweep or an analyze draws nothing at all', () => {
   for (const housekeeping of [SWEEP, ANALYZE]) {
     const quiet = play([housekeeping, housekeeping])
 
-    expect(label(quiet.view)).toBe('rql')
+    expect(label(quiet.view)).toBe('rql · ready')
     expect(line(quiet.view, 600_000)).toBe(null)
     expect(reason({ ...quiet.view, slowTool: 'explore' })).toBe('rql explore')
     expect(play([SETTLED], quiet.view, 600_000).notices).toEqual([])
@@ -90,7 +90,7 @@ test('the line names the import after ten seconds and hides while housekeeping f
   expect(line(importing, 9_000)).toBe(null)
   expect(line(importing, 10_000)).toBe('importing github://sharkdp/bat 21%')
   expect(line(sweeping, 30_000)).toBe(null)
-  expect(label(sweeping)).toBe('rql')
+  expect(label(sweeping)).toBe('rql · ready')
 })
 
 test('work ending raises no notice, however long it ran', () => {
@@ -105,7 +105,7 @@ test('first indexing reads in plain words', () => {
   const starting = play([progress('"operation":"startup","operation_total":1000,"operation_done":400,"registry_total":1000,"registry_complete":400,"settled":false')]).view
 
   expect(line(starting, 10_000)).toBe('indexing this repository 40%')
-  expect(label(starting)).toBe('rql 40%')
+  expect(label(starting)).toBe('rql · working 40%')
 })
 
 test('waiting and lost read no host, clear the work, and keep the host for comparison', () => {
@@ -113,11 +113,11 @@ test('waiting and lost read no host, clear the work, and keep the host for compa
   const lost = play(['{"type":"monitor.connection","state":"lost","text":"host connection lost"}'], busy)
   const waiting = play(['{"type":"monitor.connection","state":"waiting","text":"no host"}'])
 
-  expect(label(lost.view)).toBe('rql no host')
+  expect(label(lost.view)).toBe('rql · not running')
   expect(lost.view.operation).toBe(null)
   expect(lost.view.host).toEqual({ pid: 41247, startedAtUnixMs: 1791280375986 })
   expect(lost.notices).toEqual([])
-  expect(label(waiting.view)).toBe('rql no host')
+  expect(label(waiting.view)).toBe('rql · not running')
 })
 
 test('the first host of a session raises no notice, with or without waiting before it', () => {
@@ -135,7 +135,7 @@ test('a reconnect to the same host is silent; a different host is a restart', ()
   const busy = play([IMPORT]).view
 
   expect(play([lost, same], busy).notices).toEqual([])
-  expect(label(play([lost, same], busy).view)).toBe('rql')
+  expect(label(play([lost, same], busy).view)).toBe('rql · ready')
   expect(play([lost, other], busy).notices).toEqual(['RepoQL host restarted'])
   expect(play([lost, samePidLater], busy).notices).toEqual(['RepoQL host restarted'])
 })
@@ -143,7 +143,7 @@ test('a reconnect to the same host is silent; a different host is a restart', ()
 test('an rql that sends no signal key or numbers leaves the label at rql', () => {
   const old = play([`{"type":"host.signal","text":"progress — files 100/200",${HOST}}`, 'not json', '[1,2]'])
 
-  expect(label(old.view)).toBe('rql')
+  expect(label(old.view)).toBe('rql · ready')
   expect(line(old.view, 60_000)).toBe(null)
 })
 

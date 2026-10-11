@@ -10,6 +10,7 @@ test('the label is drawn from the monitor child on each surface that has a foote
     exit = resolve
   })
   const argvs: string[][] = []
+  const ran: string[][] = []
 
   on('process.spawn', async function* (_$, e) {
     argvs.push([...e.argv])
@@ -20,6 +21,12 @@ test('the label is drawn from the monitor child on each surface that has a foote
     await exited
 
     return { value: { code: 0, signal: null } }
+  })
+
+  on('process.run', (_$, e) => {
+    ran.push([...e.argv])
+
+    return { value: { exitCode: 0, stdout: 'http://127.0.0.1:5173/#k=abc\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
 
   const drawn: string[][] = []
@@ -55,15 +62,23 @@ test('the label is drawn from the monitor child on each surface that has a foote
   // the first draw started the child; every draw after its record shows the host's percentage
   const ui = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'SessionMode', props: { modes: ['focus'] } })
   expect(logged).toEqual([])
-  expect((await ui.find({ type: 'Text' }))?.text).toBe('focus & rql 82%')
+  expect((await ui.find({ type: 'Text' }))?.text).toBe('focus & rql · working 82%')
   await ui.unmount()
+
+  // the terminal has no pane, so its label ends in a link to the dashboard, asked of the host once
+  const linked = await $.ui.mount({ plugin: 'repoql', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
+  expect((await linked.find({ type: 'Link' }))?.props).toEqual({ href: 'http://localhost:5173/#k=abc', label: 'dashboard' })
+  expect((await linked.find({ type: 'Text' }))?.text).toBe('focus & rql · working 82% · dashboard')
+  await linked.unmount()
+  expect(ran).toEqual([['rql', 'dashboard', '--url']])
   expect(argvs).toEqual([['rql', 'monitor', '--jsonl', '--progress', '--progress-interval', '5s']])
 
   // the child exits: the label says so, and one retry is made a minute later, not before
   exit()
   await attached
   const after = await $.ui.mount({ plugin: 'repoql', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
-  expect((await after.find({ type: 'Text' }))?.text).toBe('rql no host')
+  expect(await after.find({ type: 'Link' })).toBeUndefined()
+  expect((await after.find({ type: 'Text' }))?.text).toBe('rql · not running')
   await after.unmount()
 })
 
@@ -153,17 +168,8 @@ test('the status pane says the state, the work under way and how far it is, and 
     'importing github://enricomi/publish-unit-test-result-action 82%',
   ])
   await desktop.press({ key: 'dashboard' })
-  expect(ran).toEqual([['rql', 'dashboard']])
+  expect(ran).toEqual([['rql', 'dashboard', '--url'], ['rql', 'dashboard']])
   await desktop.unmount()
-
-  // the terminal says the same in words
-  const terminal = await $.ui.mount({ plugin: 'repoql', surface: 'terminal', component: 'Pane', requestId: 'repoql-status', props: pane })
-  expect((await terminal.findAll({ type: 'Text' })).map(each => each.text)).toEqual([
-    'RepoQL · Working',
-    '182,598 files ready to search · rql 1.7.13',
-    'importing github://enricomi/publish-unit-test-result-action 82%',
-  ])
-  await terminal.unmount()
 
   // the host goes: the pane says how it comes back, and has no dashboard to open
   exit()

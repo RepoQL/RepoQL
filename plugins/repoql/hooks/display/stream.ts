@@ -10,6 +10,7 @@ export const INITIAL: View = {
   busySinceMs: null,
   version: null,
   files: null,
+  dashboard: null,
   slowTool: null,
 }
 
@@ -137,12 +138,11 @@ const progress = (view: View) =>
       ? view.operation.name
       : `${view.operation.name} ${view.operation.percent}%`
 
+/** The footer's label: the name and the state, so the name alone never has to be read as a state. */
 export function label(view: View) {
-  if (view.connection === 'waiting' || view.connection === 'lost') {
-    return 'rql no host'
-  }
+  const state = status(view).state.toLowerCase()
 
-  return view.operation?.percent == null ? 'rql' : `rql ${view.operation.percent}%`
+  return view.operation?.percent == null ? `rql · ${state}` : `rql · ${state} ${view.operation.percent}%`
 }
 
 export function line(view: View, nowMs: number) {
