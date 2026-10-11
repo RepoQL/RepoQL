@@ -34,7 +34,10 @@ function play(lines: string[], from: View = INITIAL, startMs = 0, everyMs = 1000
 }
 
 test('the host names work; the display words imports and first indexing, and nothing else', () => {
-  expect(describe('import:github.com/sharkdp/bat')).toBe('importing sharkdp/bat')
+  expect(describe('import:github.com/sharkdp/bat')).toBe('importing github://sharkdp/bat')
+  expect(describe('import:github-pulls://RepoQL/RepoQL.Core')).toBe('importing github-pulls://RepoQL/RepoQL.Core')
+  expect(describe('import:gitlab.com/group/project')).toBe('importing gitlab.com/group/project')
+  expect(describe('import:')).toBe(null)
   expect(describe('startup')).toBe('indexing this repository')
   expect(describe('sweep')).toBe(null)
   expect(describe('analyze')).toBe(null)
@@ -81,7 +84,7 @@ test('the line names the import after ten seconds and hides while housekeeping f
   const sweeping = play([SWEEP], importing, 20_000).view
 
   expect(line(importing, 9_000)).toBe(null)
-  expect(line(importing, 10_000)).toBe('importing sharkdp/bat 21%')
+  expect(line(importing, 10_000)).toBe('importing github://sharkdp/bat 21%')
   expect(line(sweeping, 30_000)).toBe(null)
   expect(label(sweeping)).toBe('rql')
 })
@@ -143,5 +146,5 @@ test('an rql that sends no signal key or numbers leaves the label at rql', () =>
 test('a slow call names its tool, and the named work while there is some', () => {
   expect(reason(INITIAL)).toBe(null)
   expect(reason({ ...INITIAL, slowTool: 'explore' })).toBe('rql explore')
-  expect(reason({ ...play([IMPORT]).view, slowTool: 'explore' })).toBe('rql explore · importing sharkdp/bat 21%')
+  expect(reason({ ...play([IMPORT]).view, slowTool: 'explore' })).toBe('rql explore · importing github://sharkdp/bat 21%')
 })

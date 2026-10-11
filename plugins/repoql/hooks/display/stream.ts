@@ -41,10 +41,12 @@ export function describe(operation: unknown) {
     return null
   }
 
-  // `import:github.com/owner/name` reads as `importing owner/name`
-  const target = operation.slice('import:'.length).split('/').slice(-2).join('/')
+  // The name carries the import's address: a full URI for a connector or a
+  // local mount, `github.com/owner/name` for GitHub, host/path for other git.
+  const source = operation.slice('import:'.length).replace(/^\/+|\/+$/g, '')
+  const address = source.startsWith('github.com/') ? `github://${source.slice('github.com/'.length)}` : source
 
-  return target === '' ? null : `importing ${target}`
+  return address === '' ? null : `importing ${address}`
 }
 
 /** One line of `rql monitor --jsonl`, or null when it is not a record. */
