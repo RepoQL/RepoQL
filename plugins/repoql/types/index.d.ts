@@ -11,6 +11,12 @@ export type View = {
   operation: Operation | null
   /** When named work was first seen in the current unsettled stretch. */
   busySinceMs: number | null
+  /** The host's release, from its greeting. */
+  version: string | null
+  /** How many files the host last said are indexed. It says so only while it works, so a host that was settled on arrival has not said. */
+  files: number | null
+  /** The link that opens this host's dashboard, asked of `rql dashboard --url` once per host; null until it answers. */
+  dashboard: string | null
   /** The RepoQL tool whose call has been in flight long enough to explain. */
   slowTool: string | null
 }
