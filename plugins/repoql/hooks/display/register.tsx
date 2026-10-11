@@ -165,8 +165,10 @@ export const register: Register = (on, options) => {
     const hasHost = now.connection !== 'waiting' && now.connection !== 'lost'
     const resting = badge(hasHost)
 
+    // The row spans the band: the badge at its leading edge, the button at its
+    // trailing edge, both centred on the row's height.
     return (
-      <Box>
+      <Box alignItems="center" justifyContent="space-between" width="100%">
         {text !== null && now.operation !== null ? (
           <Box>
             <Svg source={ring(now.operation.percent ?? 0)} alt={`rql ${now.operation.percent ?? 0}%`} width={RING_W} height={H} />
@@ -175,7 +177,6 @@ export const register: Register = (on, options) => {
         ) : (
           <Svg source={resting.source} alt={hasHost ? 'rql' : 'rql no host'} width={resting.width} height={H} isInteractive={hasHost} />
         )}
-        <Text> </Text>
         {hasHost && <Button key="dashboard" label="Dashboard" onPress={() => openDashboard($)} />}
       </Box>
     )
