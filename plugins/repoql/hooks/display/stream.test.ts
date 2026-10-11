@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { View } from '../../types'
-import { INITIAL, describe, label, line, parse, reason, step } from './stream'
+import { INITIAL, describe, label, line, parse, reason, status, step } from './stream'
 
 const HOST = '"host_pid":41247,"host_started_at_unix_ms":1791280375986'
 const progress = (fields: string) => `{"type":"host.signal","signal":"progress",${HOST},${fields}}`
@@ -151,4 +151,24 @@ test('a slow call names its tool, and the named work while there is some', () =>
   expect(reason(INITIAL)).toBe(null)
   expect(reason({ ...INITIAL, slowTool: 'explore' })).toBe('rql explore')
   expect(reason({ ...play([IMPORT]).view, slowTool: 'explore' })).toBe('rql explore · importing github://sharkdp/bat 21%')
+})
+
+test('the pane\'s head says the state in a word and only what the host has said', () => {
+  const hello = `{"type":"host.signal","signal":"hello","version":"1.7.13",${HOST}}`
+  const counted = `{"type":"host.signal","signal":"progress","registry_complete":182598,"settled":true,${HOST}}`
+
+  expect(status(INITIAL)).toEqual({ state: 'Connecting', fact: 'Looking for the RepoQL host.', release: '', isAwake: false })
+  expect(status(play(['{"type":"monitor.connection","state":"waiting"}']).view)).toEqual({
+    state: 'Not running',
+    fact: 'It starts with your next RepoQL call.',
+    release: '',
+    isAwake: false,
+  })
+  // a host that was settled on arrival has sent no count
+  expect(status(play([hello]).view)).toEqual({ state: 'Ready', fact: '', release: 'rql 1.7.13', isAwake: true })
+  expect(status(play([hello, counted]).view)).toEqual({ state: 'Ready', fact: '182,598 files ready to search', release: 'rql 1.7.13', isAwake: true })
+  expect(status(play([hello, IMPORT]).view).state).toBe('Working')
+  // another host's release and count are not this host's
+  const other = '{"type":"monitor.connection","state":"connected","host_pid":50001,"host_started_at_unix_ms":1791280999000}'
+  expect(status(play([hello, counted, other]).view)).toEqual({ state: 'Ready', fact: '', release: '', isAwake: true })
 })

@@ -3,7 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { View } from '../../types'
 import { H, RING_W, badge, ring } from './marks'
-import { INITIAL, label, line, parse, reason, step } from './stream'
+import { CARD_W, HERO_H, NOW_H, hero, nowCard } from './pane'
+import { INITIAL, label, line, parse, reason, status, step } from './stream'
 
 // A display for the host's own stream: one `rql monitor` child per session.
 // It runs no query, calls no tool and never changes what the model reads.
@@ -11,6 +12,7 @@ const REPOQL_TOOL = /^mcp__(.*repoql.*|rql)__/i
 const MONITOR = ['rql', 'monitor', '--jsonl', '--progress', '--progress-interval', '5s']
 const SLOW_CALL_MS = 10_000
 const RETRY_MS = 60_000
+const PANE = 'repoql-status'
 
 const view = atom({ plugin: 'repoql', key: 'view' } as const, INITIAL)
 
@@ -76,6 +78,15 @@ async function openDashboard($: EngineInterface) {
   } catch (error) {
     $.ui.toast('Could not open the RepoQL dashboard')
     $.ui.log(`rql dashboard did not run: ${String(error)}`, { to: 'debug' })
+  }
+}
+
+/** Opens the status pane, or shows it when it is already open. */
+async function openDetails($: EngineInterface) {
+  try {
+    await $.ui.open({ id: PANE, title: 'RepoQL' })
+  } catch (error) {
+    $.ui.log(`the RepoQL status pane did not open: ${String(error)}`, { to: 'debug' })
   }
 }
 
@@ -166,7 +177,8 @@ export const register: Register = (on, options) => {
     const resting = badge(hasHost)
 
     // The row spans the band: the badge at its leading edge, the button at its
-    // trailing edge, both centred on the row's height.
+    // trailing edge, both centred on the row's height. The button opens the
+    // status pane, which also says why there is no host when there is none.
     return (
       <Box alignItems="center" justifyContent="space-between" width="100%">
         {text !== null && now.operation !== null ? (
@@ -177,7 +189,48 @@ export const register: Register = (on, options) => {
         ) : (
           <Svg source={resting.source} alt={hasHost ? 'rql' : 'rql no host'} width={resting.width} height={H} isInteractive={hasHost} />
         )}
-        {hasHost && <Button key="dashboard" label="Dashboard" onPress={() => openDashboard($)} />}
+        <Button key="details" label="Details" onPress={() => openDetails($)} />
+      </Box>
+    )
+  })
+
+  // The pane answers three things and no more: is RepoQL working, what is it
+  // doing, and where is the rest. It is drawn from the view the band reads.
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const now = await read($, view)
+    const { state, fact, release, isAwake } = status(now)
+    const said = [fact, release].filter(each => each !== '').join(' · ')
+    const work = now.operation
+    const doing = work === null ? null : work.percent === null ? work.name : `${work.name} ${work.percent}%`
+    const { Box, Button, Text, ...rest } = $.ui.resolve(e)
+    const Svg = (rest as { Svg?: any }).Svg
+
+    // Without drawing, the same things in words.
+    if (e.surface === 'terminal' || !Svg) {
+      return (
+        <Box flexDirection="column" gap={1}>
+          <Text bold>RepoQL · {state}</Text>
+          {said !== '' && <Text dimColor>{said}</Text>}
+          {doing !== null && <Text>{doing}</Text>}
+          {isAwake && <Button key="dashboard" label="Open dashboard" onPress={() => openDashboard($)} />}
+        </Box>
+      )
+    }
+
+    // One column, centred in the pane. The head changes only with the host's
+    // state, so it is a frame and its eye and network move; the work card
+    // changes with every percentage, so it is a plain image and does not flash.
+    return (
+      <Box flexDirection="column" alignItems="center" width="100%">
+        <Box flexDirection="column" gap={1}>
+          <Svg source={hero(state, fact, release, isAwake)} alt={said === '' ? `RepoQL: ${state}` : `RepoQL: ${state}. ${said}`} width={CARD_W} height={HERO_H} isInteractive={isAwake} />
+          {work !== null && <Svg source={nowCard(work.name, work.percent)} alt={doing} width={CARD_W} height={NOW_H} />}
+          {isAwake && (
+            <Box justifyContent="center" marginTop={1}>
+              <Button key="dashboard" label="Open dashboard" onPress={() => openDashboard($)} />
+            </Box>
+          )}
+        </Box>
       </Box>
     )
   })
