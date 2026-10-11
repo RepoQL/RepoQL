@@ -33,11 +33,15 @@ function play(lines: string[], from: View = INITIAL, startMs = 0, everyMs = 1000
   return { view, notices }
 }
 
-test('the host names work; the display words imports and first indexing, and nothing else', () => {
+test('the display words imports and first indexing, and stays quiet about housekeeping and worktrees', () => {
   expect(describe('import:github.com/sharkdp/bat')).toBe('importing github://sharkdp/bat')
   expect(describe('import:github-pulls://RepoQL/RepoQL.Core')).toBe('importing github-pulls://RepoQL/RepoQL.Core')
   expect(describe('import:gitlab.com/group/project')).toBe('importing gitlab.com/group/project')
   expect(describe('import:')).toBe(null)
+  expect(describe('import:github.com/sharkdp/bat', 'github://sharkdp/bat/')).toBe('importing github://sharkdp/bat')
+  expect(describe('import:gitlab.com/group/project', 'git://gitlab.com/group/project')).toBe('importing git://gitlab.com/group/project')
+  expect(describe('import:worktree://wt-keepwarm/')).toBe(null)
+  expect(describe('import:wt-keepwarm', 'worktree://wt-keepwarm/')).toBe(null)
   expect(describe('startup')).toBe('indexing this repository')
   expect(describe('sweep')).toBe(null)
   expect(describe('analyze')).toBe(null)

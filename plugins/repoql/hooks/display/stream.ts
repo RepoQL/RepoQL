@@ -24,11 +24,13 @@ const percentOf = (done: unknown, total: unknown) => {
 }
 
 /**
- * The host's operation name in a new user's words, or null for work the
- * display stays quiet about: the host's own housekeeping (`sweep`, `analyze`)
- * and any operation this build does not know.
+ * The host's operation in a new user's words, or null for work the display
+ * stays quiet about: the host's own housekeeping (`sweep`, `analyze`), another
+ * session's worktree being mounted, and any operation this build does not know.
+ * `filesystem` is the address the host sends for an import; an older host sends
+ * none, and the address is then read from the operation's name.
  */
-export function describe(operation: unknown) {
+export function describe(operation: unknown, filesystem?: unknown) {
   if (typeof operation !== 'string') {
     return null
   }
@@ -41,12 +43,13 @@ export function describe(operation: unknown) {
     return null
   }
 
-  // The name carries the import's address: a full URI for a connector or a
-  // local mount, `github.com/owner/name` for GitHub, host/path for other git.
+  // The name carries a full URI for a connector or a local mount,
+  // `github.com/owner/name` for GitHub, and host/path for other git.
   const source = operation.slice('import:'.length).replace(/^\/+|\/+$/g, '')
-  const address = source.startsWith('github.com/') ? `github://${source.slice('github.com/'.length)}` : source
+  const named = source.startsWith('github.com/') ? `github://${source.slice('github.com/'.length)}` : source
+  const address = typeof filesystem === 'string' && filesystem !== '' ? filesystem.replace(/\/+$/, '') : named
 
-  return address === '' ? null : `importing ${address}`
+  return address === '' || address.startsWith('worktree://') ? null : `importing ${address}`
 }
 
 /** One line of `rql monitor --jsonl`, or null when it is not a record. */
@@ -106,7 +109,7 @@ export function step(was: View, record: Record<string, unknown>, nowMs: number):
     }
   }
 
-  const what = describe(record.operation)
+  const what = describe(record.operation, record.operation_filesystem)
 
   if (what === null) {
     // Housekeeping between or after named work: hide the line, keep the stretch's start for the settled notice.
