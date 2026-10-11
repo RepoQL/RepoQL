@@ -65,7 +65,7 @@ async function monitor($: EngineInterface) {
 
   retryAtMs = (await $.clock.now()) + RETRY_MS
   isMonitoring = false
-  await update($, view, (was): View => ({ ...was, connection: 'lost', percent: null, operation: null, busySinceMs: null }))
+  await update($, view, (was): View => ({ ...was, connection: 'lost', operation: null, busySinceMs: null }))
 }
 
 async function showSlow($: EngineInterface) {

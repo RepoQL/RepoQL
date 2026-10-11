@@ -7,10 +7,9 @@ export type View = {
   connection: 'unknown' | 'waiting' | 'connected' | 'lost'
   /** The last host seen, kept across a lost connection so a restart can be told from a reconnect. */
   host: Host | null
-  /** Whole-index percentage while the host is unsettled, else null. */
-  percent: number | null
+  /** The named work the display shows, in a new user's words; null while settled or while the host does its own housekeeping. */
   operation: Operation | null
-  /** When the current unsettled stretch was first seen. */
+  /** When named work was first seen in the current unsettled stretch. */
   busySinceMs: number | null
   /** The RepoQL tool whose call has been in flight long enough to explain. */
   slowTool: string | null

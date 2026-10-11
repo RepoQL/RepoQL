@@ -55,7 +55,7 @@ test('the label is drawn from the monitor child on each surface that has a foote
   // the first draw started the child; every draw after its record shows the host's percentage
   const ui = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'SessionMode', props: { modes: ['focus'] } })
   expect(logged).toEqual([])
-  expect((await ui.find({ type: 'Text' }))?.text).toBe('focus & rql 84%')
+  expect((await ui.find({ type: 'Text' }))?.text).toBe('focus & rql 82%')
   await ui.unmount()
   expect(argvs).toEqual([['rql', 'monitor', '--jsonl', '--progress', '--progress-interval', '5s']])
 
