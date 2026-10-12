@@ -56,7 +56,7 @@ Each Cursor window gets its own RepoQL server, bound to that window's folder. Th
 
 ### Skills
 
-**effective-repoql**, **effective-markdown**, **mermaid-diagrams**, **skill-builder**, **monitoring-repoql**, **using-uplinks**, **troubleshooting-repoql**, and the document skills (**research**, **findings**, **north-star**, **flow**, **system-design**, **plan**, **odad**).
+**effective-repoql**, **effective-markdown**, **mermaid-diagrams**, **skill-builder**, **monitoring-repoql**, **using-uplinks**, **writing-connectors**, **installing-connectors**, **troubleshooting-repoql**, and the document skills (**research**, **findings**, **north-star**, **flow**, **system-design**, **plan**, **odad**).
 
 ### Subagents
 
