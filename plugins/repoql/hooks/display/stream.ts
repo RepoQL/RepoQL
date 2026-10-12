@@ -8,6 +8,9 @@ export const INITIAL: View = {
   host: null,
   operation: null,
   busySinceMs: null,
+  version: null,
+  files: null,
+  dashboard: null,
   slowTool: null,
 }
 
@@ -83,7 +86,7 @@ export function step(was: View, record: Record<string, unknown>, nowMs: number):
 
     if (!isSameHost) {
       notice = was.host === null ? null : 'RepoQL host restarted'
-      view = { ...view, operation: null, busySinceMs: null, host: { pid, startedAtUnixMs } }
+      view = { ...view, operation: null, busySinceMs: null, version: null, files: null, host: { pid, startedAtUnixMs } }
     }
 
     if (view.connection !== 'connected') {
@@ -91,8 +94,18 @@ export function step(was: View, record: Record<string, unknown>, nowMs: number):
     }
   }
 
+  if (typeof record.version === 'string' && record.version !== '' && record.version !== view.version) {
+    view = { ...view, version: record.version }
+  }
+
   if (record.signal !== 'progress') {
     return { view, notice }
+  }
+
+  const files = number(record.registry_complete)
+
+  if (files !== null && files !== view.files) {
+    view = { ...view, files }
   }
 
   if (record.settled === true) {
@@ -125,12 +138,11 @@ const progress = (view: View) =>
       ? view.operation.name
       : `${view.operation.name} ${view.operation.percent}%`
 
+/** The footer's label: the name and the state, so the name alone never has to be read as a state. */
 export function label(view: View) {
-  if (view.connection === 'waiting' || view.connection === 'lost') {
-    return 'rql no host'
-  }
+  const state = status(view).state.toLowerCase()
 
-  return view.operation?.percent == null ? 'rql' : `rql ${view.operation.percent}%`
+  return view.operation?.percent == null ? `rql · ${state}` : `rql · ${state} ${view.operation.percent}%`
 }
 
 export function line(view: View, nowMs: number) {
@@ -145,4 +157,26 @@ export function reason(view: View) {
   const doing = progress(view)
 
   return doing === null ? `rql ${view.slowTool}` : `rql ${view.slowTool} · ${doing}`
+}
+
+export type Status = { state: string; fact: string; release: string; isAwake: boolean }
+
+const grouped = (count: number) => String(count).replace(/\B(?=(\d{3})+$)/g, ',')
+
+/** The pane's head: one word for the host's state, one line of what the host itself has said, and its release. */
+export function status(view: View): Status {
+  if (view.connection === 'waiting' || view.connection === 'lost') {
+    return { state: 'Not running', fact: 'It starts with your next RepoQL call.', release: '', isAwake: false }
+  }
+
+  if (view.connection === 'unknown') {
+    return { state: 'Connecting', fact: 'Looking for the RepoQL host.', release: '', isAwake: false }
+  }
+
+  return {
+    state: view.operation === null ? 'Ready' : 'Working',
+    fact: view.files === null ? '' : `${grouped(view.files)} files ready to search`,
+    release: view.version === null ? '' : `rql ${view.version}`,
+    isAwake: true,
+  }
 }

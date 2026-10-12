@@ -27,7 +27,7 @@ const GLANCES = [
 // The first glance comes two seconds in, so an eye that is redrawn still shows it is alive.
 const GLANCE_SECONDS = 36
 
-function eye(x: number, y: number, size: number, isAwake: boolean) {
+export function eye(x: number, y: number, size: number, isAwake: boolean) {
   // A settled index is three full rings, as the dashboard draws it.
   const rings = ([['read', 65], ['search', 85], ['deep', 105]] as const)
     .map(

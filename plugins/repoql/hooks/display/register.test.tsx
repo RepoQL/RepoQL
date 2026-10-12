@@ -10,6 +10,7 @@ test('the label is drawn from the monitor child on each surface that has a foote
     exit = resolve
   })
   const argvs: string[][] = []
+  const ran: string[][] = []
 
   on('process.spawn', async function* (_$, e) {
     argvs.push([...e.argv])
@@ -20,6 +21,12 @@ test('the label is drawn from the monitor child on each surface that has a foote
     await exited
 
     return { value: { code: 0, signal: null } }
+  })
+
+  on('process.run', (_$, e) => {
+    ran.push([...e.argv])
+
+    return { value: { exitCode: 0, stdout: 'http://127.0.0.1:5173/#k=abc\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })
 
   const drawn: string[][] = []
@@ -55,15 +62,23 @@ test('the label is drawn from the monitor child on each surface that has a foote
   // the first draw started the child; every draw after its record shows the host's percentage
   const ui = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'SessionMode', props: { modes: ['focus'] } })
   expect(logged).toEqual([])
-  expect((await ui.find({ type: 'Text' }))?.text).toBe('focus & rql 82%')
+  expect((await ui.find({ type: 'Text' }))?.text).toBe('focus & rql · working 82%')
   await ui.unmount()
+
+  // the terminal has no pane, so its label ends in a link to the dashboard, asked of the host once
+  const linked = await $.ui.mount({ plugin: 'repoql', surface: 'terminal', component: 'SessionMode', props: { modes: ['focus'] } })
+  expect((await linked.find({ type: 'Link' }))?.props).toEqual({ href: 'http://localhost:5173/#k=abc', label: 'dashboard' })
+  expect((await linked.find({ type: 'Text' }))?.text).toBe('focus & rql · working 82% · dashboard')
+  await linked.unmount()
+  expect(ran).toEqual([['rql', 'dashboard', '--url']])
   expect(argvs).toEqual([['rql', 'monitor', '--jsonl', '--progress', '--progress-interval', '5s']])
 
   // the child exits: the label says so, and one retry is made a minute later, not before
   exit()
   await attached
   const after = await $.ui.mount({ plugin: 'repoql', surface: 'terminal', component: 'SessionMode', props: { modes: [] } })
-  expect((await after.find({ type: 'Text' }))?.text).toBe('rql no host')
+  expect(await after.find({ type: 'Link' })).toBeUndefined()
+  expect((await after.find({ type: 'Text' }))?.text).toBe('rql · not running')
   await after.unmount()
 })
 
@@ -71,7 +86,7 @@ test('the label is drawn from the monitor child on each surface that has a foote
 const band = (hasSurvey: boolean) =>
   ({ hasSurvey, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { top: 0, rows: 0 }, view: { top: 0, rows: 0 } }) as never
 
-test('where SVG is drawn the band is the presence: the eye at rest, and a button that opens the dashboard', { timeoutMs: 20_000 }, async ($, on) => {
+test('where SVG is drawn the band is the presence: the eye at rest, and a button that opens the status pane', { timeoutMs: 20_000 }, async ($, on) => {
   mock.clock(on)
   const ran: string[][] = []
 
@@ -86,10 +101,19 @@ test('where SVG is drawn the band is the presence: the eye at rest, and a button
     return <Text>nothing from the mod</Text>
   })
 
+  const opened: string[] = []
+
+  on('ui.open', (_$, e) => {
+    opened.push(`${e.id}: ${e.title}`)
+
+    return { value: { isPlaced: true } }
+  })
+
   const desktop = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
   expect((await desktop.find({ type: 'Svg' }))?.props.alt).toBe('rql')
-  await desktop.press({ key: 'dashboard' })
-  expect(ran).toEqual([['rql', 'dashboard']])
+  await desktop.press({ key: 'details' })
+  expect(opened).toEqual(['repoql-status: RepoQL'])
+  expect(ran).toEqual([])
   await desktop.unmount()
 
   // the terminal has its footer label, so a settled host draws nothing in its band
@@ -101,4 +125,57 @@ test('where SVG is drawn the band is the presence: the eye at rest, and a button
   const survey = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(true) })
   expect(await survey.find({ type: 'Svg' })).toBeUndefined()
   await survey.unmount()
+})
+
+const HELLO = '{"type":"host.signal","signal":"hello","host_pid":41247,"host_started_at_unix_ms":1791280375986,"version":"1.7.13"}\n'
+const pane = { title: 'RepoQL' } as never
+
+test('the status pane says the state, the work under way and how far it is, and opens the dashboard', { timeoutMs: 20_000 }, async ($, on) => {
+  mock.clock(on)
+  let exit = () => {}
+  const exited = new Promise<void>(resolve => {
+    exit = resolve
+  })
+  const ran: string[][] = []
+
+  on('process.spawn', async function* () {
+    yield { stream: 'stdout', text: HELLO + IMPORT }
+    await exited
+
+    return { value: { code: 0, signal: null } }
+  })
+  on('process.run', (_$, e) => {
+    ran.push([...e.argv])
+
+    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('session.attach', (_$, e) => ({ clientId: e.clientId }))
+
+  // before any surface attaches the mod has heard nothing, and offers no dashboard
+  const early = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'Pane', requestId: 'repoql-status', props: pane })
+  expect((await early.find({ type: 'Svg' }))?.props.alt).toBe('RepoQL: Connecting. Looking for the RepoQL host.')
+  expect(await early.find({ key: 'dashboard' })).toBeUndefined()
+  await early.unmount()
+
+  const attached = $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  const warm = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
+  await warm.unmount()
+
+  const desktop = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'Pane', requestId: 'repoql-status', props: pane })
+  const alts = (await desktop.findAll({ type: 'Svg' })).map(each => each.props.alt)
+  expect(alts).toEqual([
+    'RepoQL: Working. 182,598 files ready to search · rql 1.7.13',
+    'importing github://enricomi/publish-unit-test-result-action 82%',
+  ])
+  await desktop.press({ key: 'dashboard' })
+  expect(ran).toEqual([['rql', 'dashboard', '--url'], ['rql', 'dashboard']])
+  await desktop.unmount()
+
+  // the host goes: the pane says how it comes back, and has no dashboard to open
+  exit()
+  await attached
+  const gone = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'Pane', requestId: 'repoql-status', props: pane })
+  expect((await gone.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual(['RepoQL: Not running. It starts with your next RepoQL call.'])
+  expect(await gone.find({ key: 'dashboard' })).toBeUndefined()
+  await gone.unmount()
 })
