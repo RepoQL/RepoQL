@@ -12,7 +12,9 @@ CONCEPTS = 'concept:///** holds the concepts of this repository and its imports.
 HARNESSES = ('repoql', 'repoql-codex', 'repoql-cursor')
 # The fake runs the hook's own SQL over a mount table, so the cases below hold the query's filter and not only
 # the rendering. SQLite stands in for DuckDB; the two functions it lacks are registered with DuckDB's meaning.
-# A legacy host has no Filesystems.kind, so it rejects the listing query and answers only the GitHub fallback.
+# A legacy host has no Filesystems.kind, so it rejects the listing query and answers only the roster. A busy host,
+# still starting or sweeping, lets the listing pass its deadline and answers the roster; a silent one answers neither.
+# An unreachable host is one rql's probe found no host listening for, and rql says so in those words.
 FAKE_RQL = r'''
 import os, sqlite3, sys
 args = sys.argv[1:]
@@ -20,6 +22,10 @@ mode = os.environ['IMPORT_TEST_MODE']
 if args[:1] != ['query']:
     sys.exit(1 if args[:1] == ['uplinks'] else 0)
 if mode == 'unreachable':
+    print('No host is running for this repository, and --no-launch suppressed starting one.', file=sys.stderr)
+    sys.exit(1)
+if mode == 'silent' or (mode == 'busy' and args[1].startswith('WITH repos')):
+    print('Query exceeded the 5000ms deadline. Narrow the scope, or raise --timeout-ms.', file=sys.stderr)
     sys.exit(1)
 MOUNTS = [
     ('primary', 'file', None, '', 'file:///'),
@@ -53,7 +59,7 @@ if mode == 'legacy':
     db.executemany('INSERT INTO Filesystems VALUES (?, ?, ?, ?)', [mount[1:] for mount in MOUNTS])
 else:
     db.execute('CREATE TABLE Filesystems (kind, scheme, authority, path_prefix, source_uri)')
-    db.executemany('INSERT INTO Filesystems VALUES (?, ?, ?, ?, ?)', MOUNTS if mode == 'listed' else MOUNTS[:6])
+    db.executemany('INSERT INTO Filesystems VALUES (?, ?, ?, ?, ?)', MOUNTS if mode in ('listed', 'busy') else MOUNTS[:6])
 try:
     rows = db.execute(args[1]).fetchall()
 except sqlite3.Error as error:
@@ -73,11 +79,26 @@ LISTED = [
     'future://deck (hologram)',
     'nfs://share',
 ]
+# Without the counted listing every source is still named, the workspace's repositories among them, bare.
+ROSTERED = [
+    'github://acme/billing',
+    'github://acme/widgets',
+    'local:///srv/vendor/lib',
+    's3://acme-logs/app/',
+    'workos://prod',
+    'future://deck',
+    'nfs://share',
+]
+BUSY = 'the RepoQL host is still starting or indexing and did not answer the full listing in time'
+REFUSED = 'the RepoQL host did not answer the full listing'
+UNCOUNTED = '(Kinds and concept and vocab word counts are missing: '
 IMPORTS = {
     'listed': LISTED,
-    'legacy': ['github://acme/billing\ngithub://acme/widgets\n' + INVITATION],
+    'legacy': [UNCOUNTED + REFUSED + '.)'],
+    'busy': [UNCOUNTED + BUSY + '.)'],
     'none': ['(none)'],
     'unreachable': ['(not checked'],
+    'silent': ['(not listed', BUSY, 'query Filesystems for them'],
 }
 # What the agent already knows, or mounted for another checkout: never worth a line at startup.
 UNANNOUNCED = ('file:///', 'help:///', 'concept:///', 'vocabulary:///', 'worktree://')
@@ -101,6 +122,12 @@ class ImportStartupHooksTests(unittest.TestCase):
         self.assertNotIn('rql import', imports)
         self.assertNotIn('(memory:', context)
         self.assertEqual(context.count(CONCEPTS), 1)
+        if mode in ('legacy', 'busy'):
+            self.assertEqual([line for line in imports.splitlines() if '://' in line], sorted(ROSTERED))
+        else:
+            self.assertNotIn(UNCOUNTED, imports)
+        if mode != 'unreachable':
+            self.assertNotIn('not running', imports)
         if mode == 'listed':
             self.assertIn('Use these URIs directly', imports)
             self.assertEqual([line for line in imports.splitlines() if '://' in line], sorted(LISTED))
