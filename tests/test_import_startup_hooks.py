@@ -5,7 +5,7 @@ import re
 import tempfile
 import unittest
 
-from hook_support import IMPLEMENTATIONS, ROOT, argv, context_of, hook_env, install_fake, run
+from hook_support import IMPLEMENTATIONS, POWERSHELL_FILE, ROOT, argv, context_of, hook_env, install_fake, run
 
 INVITATION = 'Use the import tool whenever you like to add more.'
 CONCEPTS = 'concept:///** holds the concepts of this repository and its imports.'
@@ -156,6 +156,31 @@ class ImportStartupHooksTests(unittest.TestCase):
                              (ROOT / 'plugins' / harness / 'scripts' / f'session-start.{extension}').read_text(encoding='utf-8')).group(0)
                    for harness in HARNESSES for extension in ('sh', 'ps1')}
         self.assertEqual(len(queries), 1)
+
+    @unittest.skipUnless('ps1' in IMPLEMENTATIONS, 'PowerShell is not installed')
+    def test_powershell_error_records_keep_the_failure_reason(self):
+        # Windows PowerShell 5.1 turns redirected native stderr into error records. Emit those
+        # records directly so newer PowerShell also catches diagnostics lost to SilentlyContinue.
+        errors = {
+            'unreachable': 'No host is running for this repository, and --no-launch suppressed starting one.',
+            'silent': 'Query exceeded the 5000ms deadline. Narrow the scope, or raise --timeout-ms.',
+        }
+        for harness in HARNESSES:
+            for mode, message in errors.items():
+                with self.subTest(harness=harness, mode=mode), tempfile.TemporaryDirectory() as scratch:
+                    wrapper = Path(scratch) / 'error-records.ps1'
+                    wrapper.write_text('''param([string]$Hook)
+function rql {
+    $global:LASTEXITCODE = 1
+    Write-Error $env:IMPORT_TEST_ERROR
+}
+& $Hook
+''', encoding='ascii')
+                    result = run([*POWERSHELL_FILE, str(wrapper), argv('ps1', harness, 'session-start')[-1]],
+                                 {'cwd': scratch}, hook_env(Path(scratch), IMPORT_TEST_ERROR=message), scratch)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stderr, '')
+                    self.assert_listing(context_from(result, harness), mode)
 
 
 if __name__ == '__main__':

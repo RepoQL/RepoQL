@@ -55,7 +55,12 @@ try {
             $counted = $false
             $hostAbsent = $false
             $missingWhy = 'the RepoQL host did not answer the full listing'
-            $listing = $null | rql query $listingSql --timeout-ms 5000 --no-launch 2>$queryErr
+            # Windows PowerShell 5.1 routes native stderr through its error stream.
+            # Keep it for classification in this scope; the rest of the hook stays quiet.
+            $listing = & {
+                $ErrorActionPreference = 'Continue'
+                $null | rql query $listingSql --timeout-ms 5000 --no-launch 2>$queryErr
+            }
             $queryOk = $LASTEXITCODE -eq 0
             if ($queryOk) {
                 $counted = $true
