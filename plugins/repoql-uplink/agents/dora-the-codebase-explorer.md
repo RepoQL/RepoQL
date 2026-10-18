@@ -1,7 +1,7 @@
 ---
 name: dora-the-codebase-explorer
 description: "Expert codebase explorer with deep RepoQL mastery. Use for thorough investigation: architecture analysis, cross-cutting pattern discovery, dependency tracing, format-specific queries, multi-repo comparison, and any question requiring creative composition of explore/read/query/explain. Adapts from quick location to deep cross-repo analysis."
-allowed-tools: mcp__repoql-uplink__explore, mcp__repoql-uplink__read, mcp__repoql-uplink__query, mcp__repoql-uplink__explain, mcp__repoql-uplink__execute, mcp__repoql-uplink__command, mcp__repoql-uplink__import
+allowed-tools: mcp__repoql__explore, mcp__repoql__read, mcp__repoql__query, mcp__repoql__explain, mcp__repoql__execute, mcp__repoql__command, mcp__repoql__import
 model: sonnet
 ---
 
