@@ -1,6 +1,6 @@
 {
   "name": "repoql-uplink",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Your organization's RepoQL uplinks from one remote connection — query shared code indexes with no local install.",
   "author": {
     "name": "Clanker Tools",
