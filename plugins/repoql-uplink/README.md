@@ -20,7 +20,7 @@ Install one. The `repoql` plugin already reaches the same uplinks through its lo
 /plugin install repoql-uplink@repoql-plugins
 ```
 
-Then run `/mcp`, select the RepoQL server, and sign in through the browser with the RepoQL account that has access to your team's uplinks. At sign-in you choose an organization and either a default uplink or to let the assistant choose per task.
+Then run `/mcp`, select the `repoql-uplink` server, and sign in through the browser with the RepoQL account that has access to your team's uplinks. At sign-in you choose an organization and either a default uplink or to let the assistant choose per task.
 
 You need a RepoQL account with access to at least one uplink. An organization admin hosts one with `rql uplink`.
 
@@ -79,7 +79,7 @@ The index reflects pushed code. Your uncommitted edits are not in it.
 
 | What you see | What to do |
 |---|---|
-| The server needs authentication | `/mcp` → the RepoQL server → sign in. |
+| The server needs authentication | `/mcp` → the `repoql-uplink` server → sign in. |
 | The server fails to connect | Check the endpoint. Set `REPOQL_UPLINK_URL` if your service uses another shared URL. |
 | No uplinks, or one is missing | Check the signed-in account and organization, then ask your RepoQL admin about access. |
 | An uplink is offline | Ask its operator to restore it. |

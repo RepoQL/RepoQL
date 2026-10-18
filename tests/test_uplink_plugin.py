@@ -35,8 +35,8 @@ class UplinkPluginTests(unittest.TestCase):
 
     def test_connects_to_one_remote_endpoint_and_starts_nothing(self):
         servers = json.loads((UPLINK / '.mcp.json').read_text(encoding='utf-8'))['mcpServers']
-        self.assertEqual(list(servers), ['repoql'])
-        self.assertEqual(servers['repoql'],
+        self.assertEqual(list(servers), ['repoql-uplink'])
+        self.assertEqual(servers['repoql-uplink'],
                          {'type': 'http', 'url': '${REPOQL_UPLINK_URL:-https://mcp.repoql.com/uplink}'})
         self.assertFalse((UPLINK / 'hooks').exists())
         self.assertFalse((UPLINK / 'scripts').exists())
