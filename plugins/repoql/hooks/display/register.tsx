@@ -1,10 +1,10 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { View } from '../../types'
-import { H, RING_W, badge, ring } from './marks'
-import { CARD_W, HERO_H, NOW_H, hero, nowCard, uplinksCard } from './pane'
-import { INITIAL, label, line, parse, reason, status, step, uplinkNames } from './stream'
+import type { Uplink, View } from '../../types'
+import { H, RING_W, UPLINK_W, badge, ring, uplinkMark } from './marks'
+import { CARD_W, HERO_H, NOW_H, hero, nowCard, uplinkCard } from './pane'
+import { INITIAL, SOURCES_SQL, label, line, offline, parse, reason, status, step, sourcesOf, uplinkNames } from './stream'
 
 // A display for the host's own stream: one `rql monitor` child per session.
 // It runs no query, calls no tool and never changes what the model reads.
@@ -13,6 +13,8 @@ const MONITOR = ['rql', 'monitor', '--jsonl', '--progress', '--progress-interval
 const SLOW_CALL_MS = 10_000
 const RETRY_MS = 60_000
 const PANE = 'repoql-status'
+/** The most uplinks the band marks; the pane lists them all. */
+const UPLINKS_SHOWN = 5
 
 const view = atom({ plugin: 'repoql', key: 'view' } as const, INITIAL)
 
@@ -20,6 +22,7 @@ let isMonitoring = false
 let retryAtMs = 0
 let canDraw = false
 let linkedHost: string | null = null
+let isDiscovering = false
 const slow: string[] = []
 
 const hostKey = (now: View) => (now.host === null ? null : `${now.host.pid}:${now.host.startedAtUnixMs}`)
@@ -39,17 +42,55 @@ async function link($: EngineInterface, key: string) {
   }
 }
 
-/** Asks which uplinks the account can reach. They belong to the account, not the host, so a later answer replaces an earlier one and a failure keeps it. */
+/** Asks one uplink what it holds; an uplink that does not answer says why, in a few words. */
+async function probe($: EngineInterface, name: string): Promise<Uplink> {
+  try {
+    const { exitCode, stdout, stderr } = await $.process.run(['rql', 'query', '--uplink', name, SOURCES_SQL], { timeoutMs: 20_000 })
+    const sources = exitCode === 0 ? sourcesOf(stdout) : null
+
+    return sources === null ? { name, state: 'offline', reason: offline(`${stdout}\n${stderr}`) } : { name, state: 'online', sources }
+  } catch (error) {
+    $.ui.log(`rql query --uplink ${name} did not run: ${String(error)}`, { to: 'debug' })
+
+    return { name, state: 'offline', reason: offline('') }
+  }
+}
+
+/**
+ * Asks which uplinks the account can reach, then what each holds. Uplinks
+ * belong to the account, not the host: an uplink keeps what it last said
+ * until it answers again, and a failed `rql uplinks` keeps the list it had.
+ */
 async function discover($: EngineInterface) {
+  if (isDiscovering) {
+    return
+  }
+
+  isDiscovering = true
+
   try {
     const { exitCode, stdout } = await $.process.run(['rql', 'uplinks'], { timeoutMs: 15_000 })
     const names = exitCode === 0 ? uplinkNames(stdout) : null
 
-    if (names !== null) {
-      await update($, view, was => ({ ...was, uplinks: names }))
+    if (names === null) {
+      return
     }
+
+    await update($, view, (was): View => ({
+      ...was,
+      uplinks: names.map(name => was.uplinks?.find(each => each.name === name) ?? { name, state: 'checking' }),
+    }))
+    await Promise.all(
+      names.map(async name => {
+        const said = await probe($, name)
+
+        await update($, view, (was): View => ({ ...was, uplinks: was.uplinks?.map(each => (each.name === name ? said : each)) ?? null }))
+      }),
+    )
   } catch (error) {
     $.ui.log(`rql uplinks did not run: ${String(error)}`, { to: 'debug' })
+  } finally {
+    isDiscovering = false
   }
 }
 
@@ -130,8 +171,10 @@ async function openDashboard($: EngineInterface) {
   }
 }
 
-/** Opens the status pane, or shows it when it is already open. */
+/** Opens the status pane, or shows it when it is already open, and asks the uplinks again so the pane is current. */
 async function openDetails($: EngineInterface) {
+  void discover($)
+
   try {
     await $.ui.open({ id: PANE, title: 'RepoQL' })
   } catch (error) {
@@ -247,8 +290,9 @@ export const register: Register = (on, options) => {
     const resting = badge(hasHost)
 
     // The row spans the band: the badge at its leading edge, the button at its
-    // trailing edge, both centred on the row's height. The button opens the
-    // status pane, which also says why there is no host when there is none.
+    // trailing edge, both centred on the row's height. Beside the button, a
+    // still eye for each uplink, lit while it answers. The button opens the
+    // status pane, which says why there is no host, and what each uplink holds.
     return (
       <Box alignItems="center" justifyContent="space-between" width="100%">
         {text !== null && now.operation !== null ? (
@@ -259,7 +303,18 @@ export const register: Register = (on, options) => {
         ) : (
           <Svg source={resting.source} alt={hasHost ? 'rql' : 'rql no host'} width={resting.width} height={H} isInteractive={hasHost} />
         )}
-        <Button key="details" label="Details" onPress={() => openDetails($)} />
+        <Box alignItems="center" gap={1}>
+          {(now.uplinks ?? []).slice(0, UPLINKS_SHOWN).map(each => (
+            <Svg
+              key={`uplink:${each.name}`}
+              source={uplinkMark(each.state === 'online')}
+              alt={each.state === 'online' ? `uplink ${each.name}` : `uplink ${each.name}, ${each.state === 'checking' ? 'checking' : each.reason.toLowerCase()}`}
+              width={UPLINK_W}
+              height={H}
+            />
+          ))}
+          <Button key="details" label="Details" onPress={() => openDetails($)} />
+        </Box>
       </Box>
     )
   })
@@ -273,7 +328,6 @@ export const register: Register = (on, options) => {
     const work = now.operation
     const doing = work === null ? null : work.percent === null ? work.name : `${work.name} ${work.percent}%`
     const uplinks = isAwake ? (now.uplinks ?? []) : []
-    const reach = uplinks.length > 0 ? uplinksCard(uplinks) : null
     const { Box, Button, Text, ...rest } = $.ui.resolve(e)
     const Svg = (rest as { Svg?: any }).Svg
 
@@ -290,7 +344,15 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column" gap={1}>
           <Svg source={hero(state, fact, release, isAwake)} alt={said === '' ? `RepoQL: ${state}` : `RepoQL: ${state}. ${said}`} width={CARD_W} height={HERO_H} isInteractive={isAwake} />
           {work !== null && <Svg source={nowCard(work.name, work.percent)} alt={doing} width={CARD_W} height={NOW_H} />}
-          {reach !== null && <Svg source={reach.source} alt={`Uplinks: ${uplinks.join(', ')}`} width={CARD_W} height={reach.height} />}
+          {uplinks.map(each => {
+            const drawn = uplinkCard(each)
+            const said =
+              each.state === 'online'
+                ? [`${each.name}: online`, ...each.sources.map(source => `${source.uri} ${source.files} files`)].join('. ')
+                : `${each.name}: ${each.state === 'checking' ? 'checking' : each.reason.toLowerCase()}`
+
+            return <Svg key={`uplink:${each.name}`} source={drawn.source} alt={said} width={CARD_W} height={drawn.height} />
+          })}
           {isAwake && (
             <Box justifyContent="center" marginTop={1}>
               <Button key="dashboard" label="Open dashboard" onPress={() => openDashboard($)} />

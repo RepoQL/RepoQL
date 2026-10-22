@@ -87,18 +87,38 @@ test('the label is drawn from the monitor child on each surface that has a foote
   await after.unmount()
 })
 
+const UPLINKS = 'Accessible uplinks: fotg-gcp, stu-pc\nPass uplink="name" to a read-only RepoQL tool, or --uplink name to the CLI. Omit it for the local repository.\n'
+// What `rql query` prints over an uplink, byte for byte: a summary line, a tab-separated header, a row per source.
+const SOURCES = '2 rows · [18 tok | 38 ms | ready]\nsource_uri\tfile_count\nfile://\t9830\ngithub://sharkdp/bat\t236\n\n'
+const NEVER = 'this instance has never connected; no `rql uplink` has dialled in with its credential yet\n'
+
+/** Answers each command the mod runs as a host with two uplinks would: one holds two sources, one has never connected. */
+function answer(argv: readonly string[]) {
+  const said = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+
+  if (argv[1] === 'uplinks') {
+    return said(0, UPLINKS)
+  }
+
+  if (argv[1] === 'query') {
+    return argv[3] === 'fotg-gcp' ? said(0, SOURCES) : said(1, '', NEVER)
+  }
+
+  return said(0, '')
+}
+
 // The band's own props, as an idle prompt hands them; only `hasSurvey` matters to the mod.
 const band = (hasSurvey: boolean) =>
   ({ hasSurvey, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { top: 0, rows: 0 }, view: { top: 0, rows: 0 } }) as never
 
-test('where SVG is drawn the band is the presence: the eye at rest, and a button that opens the status pane', { timeoutMs: 20_000 }, async ($, on) => {
+test('where SVG is drawn the band is the presence: the eye at rest, an eye for each uplink, and a button that opens the status pane', { timeoutMs: 20_000 }, async ($, on) => {
   mock.clock(on)
   const ran: string[][] = []
 
   on('process.run', (_$, e) => {
     ran.push([...e.argv])
 
-    return { value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return answer(e.argv)
   })
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -118,8 +138,17 @@ test('where SVG is drawn the band is the presence: the eye at rest, and a button
   expect((await desktop.find({ type: 'Svg' }))?.props.alt).toBe('rql')
   await desktop.press({ key: 'details' })
   expect(opened).toEqual(['repoql-status: RepoQL'])
-  expect(ran).toEqual([])
   await desktop.unmount()
+
+  // opening the pane asks the uplinks; the band then marks each, lit while it answers
+  expect(ran).toEqual([
+    ['rql', 'uplinks'],
+    ['rql', 'query', '--uplink', 'fotg-gcp', "SELECT source_uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"],
+    ['rql', 'query', '--uplink', 'stu-pc', "SELECT source_uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"],
+  ])
+  const marked = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
+  expect((await marked.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual(['rql', 'uplink fotg-gcp', 'uplink stu-pc, never connected'])
+  await marked.unmount()
 
   // the terminal has its footer label, so a settled host draws nothing in its band
   const terminal = await $.ui.mount({ plugin: 'repoql', surface: 'terminal', component: 'AbovePrompt', props: band(false) })
@@ -134,9 +163,8 @@ test('where SVG is drawn the band is the presence: the eye at rest, and a button
 
 const HELLO = '{"type":"host.signal","signal":"hello","host_pid":41247,"host_started_at_unix_ms":1791280375986,"version":"1.7.13"}\n'
 const pane = { title: 'RepoQL' } as never
-const UPLINKS = 'Accessible uplinks: fotg-gcp, stu-pc\nPass uplink="name" to a read-only RepoQL tool, or --uplink name to the CLI. Omit it for the local repository.\n'
 
-test('the status pane says the state, the work under way, the uplinks within reach, and opens the dashboard', { timeoutMs: 20_000 }, async ($, on) => {
+test('the status pane says the state, the work under way, what each uplink holds, and opens the dashboard', { timeoutMs: 20_000 }, async ($, on) => {
   mock.clock(on)
   let exit = () => {}
   const exited = new Promise<void>(resolve => {
@@ -152,9 +180,8 @@ test('the status pane says the state, the work under way, the uplinks within rea
   })
   on('process.run', (_$, e) => {
     ran.push([...e.argv])
-    const stdout = e.argv[1] === 'uplinks' ? UPLINKS : ''
 
-    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    return answer(e.argv)
   })
   on('session.attach', (_$, e) => ({ clientId: e.clientId }))
 
@@ -173,10 +200,17 @@ test('the status pane says the state, the work under way, the uplinks within rea
   expect(alts).toEqual([
     'RepoQL: Working. 182,598 files ready to search · rql 1.7.13',
     'importing github://enricomi/publish-unit-test-result-action 82%',
-    'Uplinks: fotg-gcp, stu-pc',
+    'fotg-gcp: online. workspace 9830 files. github://sharkdp/bat 236 files',
+    'stu-pc: never connected',
   ])
   await desktop.press({ key: 'dashboard' })
-  expect(ran).toEqual([['rql', 'dashboard', '--url'], ['rql', 'uplinks'], ['rql', 'dashboard']])
+  expect(ran.map(each => each.slice(0, 4))).toEqual([
+    ['rql', 'dashboard', '--url'],
+    ['rql', 'uplinks'],
+    ['rql', 'query', '--uplink', 'fotg-gcp'],
+    ['rql', 'query', '--uplink', 'stu-pc'],
+    ['rql', 'dashboard'],
+  ])
   await desktop.unmount()
 
   // the host goes: the pane says how it comes back, and has no dashboard to open

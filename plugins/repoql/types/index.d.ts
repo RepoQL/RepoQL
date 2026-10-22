@@ -1,5 +1,12 @@
 export type Host = { pid: number; startedAtUnixMs: number }
 export type Operation = { name: string; percent: number | null }
+/** One source an uplink holds: its root URI as the uplink names it, and how many files it has. */
+export type Source = { uri: string; files: number }
+/** An uplink the account can reach, and what it said when last asked: `checking` until it answers. */
+export type Uplink =
+  | { name: string; state: 'checking' }
+  | { name: string; state: 'online'; sources: readonly Source[] }
+  | { name: string; state: 'offline'; reason: string }
 
 /** What the display draws from. Every field but `slowTool` is a fact the host's stream sent. */
 export type View = {
@@ -17,8 +24,8 @@ export type View = {
   files: number | null
   /** The link that opens this host's dashboard, asked of `rql dashboard --url` once per host; null until it answers. */
   dashboard: string | null
-  /** The uplinks the signed-in account can reach, asked of `rql uplinks` once per host; null until it answers. */
-  uplinks: readonly string[] | null
+  /** The uplinks the signed-in account can reach, asked of `rql uplinks` once per host and again when the pane is opened; null until it answers. */
+  uplinks: readonly Uplink[] | null
   /** The RepoQL tool whose call has been in flight long enough to explain. */
   slowTool: string | null
 }

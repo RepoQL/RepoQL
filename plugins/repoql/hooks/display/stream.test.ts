@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { View } from '../../types'
-import { INITIAL, describe, label, line, parse, reason, status, step, uplinkNames } from './stream'
+import { INITIAL, describe, label, line, offline, parse, reason, sourcesOf, status, step, uplinkNames } from './stream'
 
 const HOST = '"host_pid":41247,"host_started_at_unix_ms":1791280375986'
 const progress = (fields: string) => `{"type":"host.signal","signal":"progress",${HOST},${fields}}`
@@ -178,4 +178,20 @@ test('the uplinks are the names rql uplinks prints, none when it says so, and un
   expect(uplinkNames('No accessible uplinks.\n')).toEqual([])
   expect(uplinkNames('')).toBeNull()
   expect(uplinkNames('Sign in with rql account login\n')).toBeNull()
+})
+
+test('the sources of an uplink are the rows under the header rql query prints; its workspace is named so, and no header is no answer', () => {
+  const printed = '2 rows · [18 tok | 38 ms | ready]\nsource_uri\tfile_count\nfile://\t9830\ngithub://sharkdp/bat\t236\n\n'
+
+  expect(sourcesOf(printed)).toEqual([
+    { uri: 'workspace', files: 9830 },
+    { uri: 'github://sharkdp/bat', files: 236 },
+  ])
+  expect(sourcesOf('0 rows · [4 tok | 6 ms | ready]\nsource_uri\tfile_count\n\n')).toEqual([])
+  expect(sourcesOf('Error: Unknown uplink')).toBeNull()
+})
+
+test('an uplink that does not answer says why in words a person can act on', () => {
+  expect(offline('this instance has never connected; no `rql uplink` has dialled in with its credential yet')).toBe('Never connected')
+  expect(offline('')).toBe('Not answering')
 })
