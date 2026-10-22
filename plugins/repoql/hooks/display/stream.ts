@@ -11,7 +11,27 @@ export const INITIAL: View = {
   version: null,
   files: null,
   dashboard: null,
+  uplinks: null,
   slowTool: null,
+}
+
+/** The names in what `rql uplinks` prints: `Accessible uplinks: a, b`, or `No accessible uplinks.`; null when it says neither. */
+export function uplinkNames(stdout: string): string[] | null {
+  const said = stdout.split('\n').map(each => each.trim())
+
+  if (said.includes('No accessible uplinks.')) {
+    return []
+  }
+
+  const names = said.find(each => each.startsWith('Accessible uplinks: '))
+
+  return names === undefined
+    ? null
+    : names
+        .slice('Accessible uplinks: '.length)
+        .split(',')
+        .map(each => each.trim())
+        .filter(each => each !== '')
 }
 
 export type Step = { view: View; notice: string | null }

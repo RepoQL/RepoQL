@@ -104,6 +104,35 @@ ${lines.map((each, index) => `<text x="165" y="${top + 26 + index * 20}" ${SANS}
   )
 }
 
+/** The uplinks the account can reach, by the names a request uses for them, wrapped to the card's width. */
+export function uplinksCard(names: readonly string[]) {
+  const rows: string[] = []
+
+  for (const name of names) {
+    const shown = name.length > NOW_CHARS ? `${name.slice(0, NOW_CHARS - 1)}…` : name
+    const last = rows.at(-1)
+
+    if (last !== undefined && last.length + 3 + shown.length <= NOW_CHARS) {
+      rows[rows.length - 1] = `${last} · ${shown}`
+    } else {
+      rows.push(shown)
+    }
+  }
+
+  const height = 70 + rows.length * 20
+
+  return {
+    height,
+    source: card(
+      height,
+      `<rect x=".5" y=".5" width="${CARD_W - 1}" height="${height - 1}" rx="14" fill="${RAISED}" stroke="${NET}" stroke-opacity=".14"/>
+<text x="28" y="30" ${SANS} font-size="12" fill="${DIM}">Uplinks</text>
+${rows.map((row, index) => `<text x="28" y="${53 + index * 20}" ${SANS} font-size="13.5" fill="${TEXT}">${esc(row)}</text>`).join('')}
+<text x="28" y="${height - 17}" ${SANS} font-size="11.5" fill="${DIM}" fill-opacity=".75">Name one in a request to search it</text>`,
+    ),
+  }
+}
+
 /** The work under way, in the words the band uses for it, with how far it has come when the host has said. */
 export function nowCard(work: string, pct: number | null) {
   const radius = 17

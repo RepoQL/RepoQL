@@ -3,8 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { View } from '../../types'
 import { H, RING_W, badge, ring } from './marks'
-import { CARD_W, HERO_H, NOW_H, hero, nowCard } from './pane'
-import { INITIAL, label, line, parse, reason, status, step } from './stream'
+import { CARD_W, HERO_H, NOW_H, hero, nowCard, uplinksCard } from './pane'
+import { INITIAL, label, line, parse, reason, status, step, uplinkNames } from './stream'
 
 // A display for the host's own stream: one `rql monitor` child per session.
 // It runs no query, calls no tool and never changes what the model reads.
@@ -39,6 +39,20 @@ async function link($: EngineInterface, key: string) {
   }
 }
 
+/** Asks which uplinks the account can reach. They belong to the account, not the host, so a later answer replaces an earlier one and a failure keeps it. */
+async function discover($: EngineInterface) {
+  try {
+    const { exitCode, stdout } = await $.process.run(['rql', 'uplinks'], { timeoutMs: 15_000 })
+    const names = exitCode === 0 ? uplinkNames(stdout) : null
+
+    if (names !== null) {
+      await update($, view, was => ({ ...was, uplinks: names }))
+    }
+  } catch (error) {
+    $.ui.log(`rql uplinks did not run: ${String(error)}`, { to: 'debug' })
+  }
+}
+
 async function take($: EngineInterface, text: string) {
   const record = parse(text)
 
@@ -56,6 +70,7 @@ async function take($: EngineInterface, text: string) {
     await update($, view, current => ({
       ...now,
       slowTool: current.slowTool,
+      uplinks: current.uplinks,
       dashboard: now.connection === 'connected' && hostKey(current) === key ? current.dashboard : null,
     }))
 
@@ -64,6 +79,7 @@ async function take($: EngineInterface, text: string) {
     } else if (key !== null && key !== linkedHost) {
       linkedHost = key
       void link($, key)
+      void discover($)
     }
   }
 
@@ -188,11 +204,16 @@ export const register: Register = (on, options) => {
     // The terminal has no pane to open, so its label carries the one thing
     // the pane is for: the way to the dashboard. A mode is a string, so the
     // line is drawn here, as the engine draws it, with the link at its end.
+    // The link is underlined and at full brightness: in a dim line that is
+    // the only thing that says it can be clicked.
     const { Link, Text } = $.ui.resolve(e)
 
     return (
-      <Text dimColor>
-        {modes.join(' & ')} · <Link href={now.dashboard} label="dashboard" />
+      <Text>
+        <Text dimColor>{modes.join(' & ')} · </Text>
+        <Text underline>
+          <Link href={now.dashboard} label="dashboard" />
+        </Text>
       </Text>
     )
   })
@@ -243,14 +264,16 @@ export const register: Register = (on, options) => {
     )
   })
 
-  // The pane answers three things and no more: is RepoQL working, what is it
-  // doing, and where is the rest. It is drawn from the view the band reads.
+  // The pane answers four things and no more: is RepoQL working, what is it
+  // doing, which shared indexes can it reach, and where is the rest. It is drawn from the view the band reads.
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const now = await read($, view)
     const { state, fact, release, isAwake } = status(now)
     const said = [fact, release].filter(each => each !== '').join(' · ')
     const work = now.operation
     const doing = work === null ? null : work.percent === null ? work.name : `${work.name} ${work.percent}%`
+    const uplinks = isAwake ? (now.uplinks ?? []) : []
+    const reach = uplinks.length > 0 ? uplinksCard(uplinks) : null
     const { Box, Button, Text, ...rest } = $.ui.resolve(e)
     const Svg = (rest as { Svg?: any }).Svg
 
@@ -267,6 +290,7 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column" gap={1}>
           <Svg source={hero(state, fact, release, isAwake)} alt={said === '' ? `RepoQL: ${state}` : `RepoQL: ${state}. ${said}`} width={CARD_W} height={HERO_H} isInteractive={isAwake} />
           {work !== null && <Svg source={nowCard(work.name, work.percent)} alt={doing} width={CARD_W} height={NOW_H} />}
+          {reach !== null && <Svg source={reach.source} alt={`Uplinks: ${uplinks.join(', ')}`} width={CARD_W} height={reach.height} />}
           {isAwake && (
             <Box justifyContent="center" marginTop={1}>
               <Button key="dashboard" label="Open dashboard" onPress={() => openDashboard($)} />

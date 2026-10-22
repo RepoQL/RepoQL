@@ -17,6 +17,8 @@ export type View = {
   files: number | null
   /** The link that opens this host's dashboard, asked of `rql dashboard --url` once per host; null until it answers. */
   dashboard: string | null
+  /** The uplinks the signed-in account can reach, asked of `rql uplinks` once per host; null until it answers. */
+  uplinks: readonly string[] | null
   /** The RepoQL tool whose call has been in flight long enough to explain. */
   slowTool: string | null
 }

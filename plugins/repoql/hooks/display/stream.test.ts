@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { View } from '../../types'
-import { INITIAL, describe, label, line, parse, reason, status, step } from './stream'
+import { INITIAL, describe, label, line, parse, reason, status, step, uplinkNames } from './stream'
 
 const HOST = '"host_pid":41247,"host_started_at_unix_ms":1791280375986'
 const progress = (fields: string) => `{"type":"host.signal","signal":"progress",${HOST},${fields}}`
@@ -171,4 +171,11 @@ test('the pane\'s head says the state in a word and only what the host has said'
   // another host's release and count are not this host's
   const other = '{"type":"monitor.connection","state":"connected","host_pid":50001,"host_started_at_unix_ms":1791280999000}'
   expect(status(play([hello, counted, other]).view)).toEqual({ state: 'Ready', fact: '', release: '', isAwake: true })
+})
+
+test('the uplinks are the names rql uplinks prints, none when it says so, and unknown when it says neither', () => {
+  expect(uplinkNames('Accessible uplinks: fotg-gcp, stu-pc\nPass uplink="name" to a read-only RepoQL tool.\n')).toEqual(['fotg-gcp', 'stu-pc'])
+  expect(uplinkNames('No accessible uplinks.\n')).toEqual([])
+  expect(uplinkNames('')).toBeNull()
+  expect(uplinkNames('Sign in with rql account login\n')).toBeNull()
 })
