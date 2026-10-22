@@ -1,4 +1,4 @@
-import type { View } from '../../types'
+import type { Source, View } from '../../types'
 
 /** A progress line is for work the person had time to notice. */
 export const BAND_AFTER_MS = 10_000
@@ -11,7 +11,60 @@ export const INITIAL: View = {
   version: null,
   files: null,
   dashboard: null,
+  uplinks: null,
   slowTool: null,
+}
+
+/** The query each uplink is asked: its sources, without the help every host carries. */
+export const SOURCES_SQL = "SELECT source_uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"
+
+/** The rows of what `rql query` prints for SOURCES_SQL: a summary line, a tab-separated header, then a row per source; null when the header is not there. */
+export function sourcesOf(stdout: string): Source[] | null {
+  const lines = stdout.split('\n')
+  const header = lines.findIndex(each => each.trim() === 'source_uri\tfile_count')
+
+  if (header < 0) {
+    return null
+  }
+
+  const sources: Source[] = []
+
+  for (const each of lines.slice(header + 1)) {
+    const [uri, files] = each.split('\t')
+    const count = Number(files)
+
+    if (each.trim() === '' || uri === undefined || !Number.isFinite(count)) {
+      break
+    }
+
+    sources.push({ uri: uri === 'file://' ? 'workspace' : uri, files: count })
+  }
+
+  return sources
+}
+
+/** Why an uplink did not answer, in a few words a person can act on. */
+export function offline(said: string) {
+  return /never connected/i.test(said) ? 'Never connected' : 'Not answering'
+}
+
+/** The names in what `rql uplinks` prints: `Accessible uplinks: a, b`, or `No accessible uplinks.`; null when it says neither. */
+export function uplinkNames(stdout: string): string[] | null {
+  const said = stdout.split('\n').map(each => each.trim())
+
+  if (said.includes('No accessible uplinks.')) {
+    return []
+  }
+
+  const names = said.find(each => each.startsWith('Accessible uplinks: '))
+
+  return names === undefined
+    ? null
+    : names
+        .slice('Accessible uplinks: '.length)
+        .split(',')
+        .map(each => each.trim())
+        .filter(each => each !== '')
 }
 
 export type Step = { view: View; notice: string | null }
