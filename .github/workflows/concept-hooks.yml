@@ -12,6 +12,8 @@ on:
       - "tests/**"
       - ".cursor-plugin/**"
       - ".github/workflows/concept-hooks.yml"
+      - "plugins/repoql-opencode/**"
+      - "package.json"
   push:
     branches: [main]
     paths:
@@ -24,6 +26,8 @@ on:
       - "tests/**"
       - ".cursor-plugin/**"
       - ".github/workflows/concept-hooks.yml"
+      - "plugins/repoql-opencode/**"
+      - "package.json"
 
 jobs:
   hooks:
@@ -36,6 +40,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 -m unittest discover -s tests -p 'test_*_hooks.py'
       - run: python3 -m unittest discover -s tests -p 'test_uplink_plugin.py'
+      - run: python3 -m unittest discover -s tests -p 'test_opencode_plugin.py'
 
   # On Windows every hook runs as PowerShell, and the launcher cases start each
   # hook command under Windows PowerShell, PowerShell 7, Git Bash and cmd.exe.

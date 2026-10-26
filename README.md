@@ -2,7 +2,7 @@
 
 Queryable code intelligence for AI coding agents.
 
-[Official website](https://repoql.com) · [Codex plugin](plugins/repoql-codex/README.md) · [Cursor plugin](plugins/repoql-cursor/README.md) · [Uplink plugin](plugins/repoql-uplink/README.md)
+[Official website](https://repoql.com) · [Codex plugin](plugins/repoql-codex/README.md) · [Cursor plugin](plugins/repoql-cursor/README.md) · [Uplink plugin](plugins/repoql-uplink/README.md) · [OpenCode plugin](plugins/repoql-opencode/README.md)
 
 ## Install
 
@@ -11,6 +11,8 @@ By downloading and using RepoQL, you agree to the [Customer Terms and Software L
 **Codex** — [install the RepoQL Codex plugin](plugins/repoql-codex/README.md).
 
 **Cursor** — [install the RepoQL Cursor plugin](plugins/repoql-cursor/README.md).
+
+**OpenCode 2** — `opencode plugin add github:RepoQL/RepoQL`, or see the [OpenCode plugin](plugins/repoql-opencode/README.md).
 
 **Claude Code** — one-step plugin install (downloads the `rql` binary automatically on first use):
 
