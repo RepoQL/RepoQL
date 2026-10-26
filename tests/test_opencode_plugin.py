@@ -16,7 +16,7 @@ CURSOR = ROOT / 'plugins' / 'repoql-cursor'
 # The fake mirrors OpenCode 2's Promise plugin API: transform(callback) hands the callback an editor.
 HARNESS = r"""
 const plugin = (await import(process.argv[1])).default
-const servers = {}
+const servers = JSON.parse(process.env.EXISTING_SERVERS ?? "{}")
 const skills = new Map(JSON.parse(process.env.EXISTING_SKILLS ?? "[]").map((skill) => [skill.id, skill]))
 const ctx = {
   mcp: { transform: async (callback) => { callback({ set: (name, config) => { servers[name] = config }, get: (name) => servers[name] }); return { dispose: async () => {} } } },
@@ -46,12 +46,13 @@ class OpencodePluginTests(unittest.TestCase):
         self.home = self.temp / 'home'
         self.home.mkdir()
 
-    def run_plugin(self, path_dirs=(), existing_skills=()):
+    def run_plugin(self, path_dirs=(), existing_skills=(), existing_servers=None):
         env = {
             'PATH': os.pathsep.join(str(d) for d in path_dirs),
             'HOME': str(self.home),
             'USERPROFILE': str(self.home),
             'EXISTING_SKILLS': json.dumps(list(existing_skills)),
+            'EXISTING_SERVERS': json.dumps(existing_servers or {}),
         }
         node = shutil.which('node')
         result = subprocess.run([node, '--input-type=module', '-e', HARNESS, (PLUGIN / 'server.js').as_uri()],
@@ -85,6 +86,29 @@ class OpencodePluginTests(unittest.TestCase):
         result = self.run_plugin()
 
         self.assertEqual(result['servers']['repoql']['command'], [str(rql), 'mcp'])
+
+    @unittest.skipIf(os.name == 'nt', 'Windows has no execute bit')
+    def test_skips_a_non_executable_rql_earlier_on_path(self):
+        unusable = self.temp / 'first' / 'rql'
+        unusable.parent.mkdir()
+        unusable.write_text('not executable', encoding='utf-8')
+        unusable.chmod(0o644)
+        rql = self.fake_rql(self.temp / 'second')
+
+        result = self.run_plugin(path_dirs=[unusable.parent, rql.parent])
+
+        self.assertEqual(result['servers']['repoql']['command'], [str(rql), 'mcp'])
+
+    def test_keeps_a_repoql_server_the_user_already_configured(self):
+        rql = self.fake_rql(self.temp / 'bin')
+        for disabled in [True, False]:
+            with self.subTest(disabled=disabled):
+                mine = {'type': 'local', 'command': [str(rql), 'CUSTOM'], 'disabled': disabled,
+                        'environment': {'CUSTOM_RQL_VALUE': 'preserve-me'}}
+
+                result = self.run_plugin(path_dirs=[rql.parent], existing_servers={'repoql': mine})
+
+                self.assertEqual(result['servers']['repoql'], mine)
 
     def test_registers_no_server_without_rql_and_says_where_to_get_it(self):
         result = self.run_plugin()

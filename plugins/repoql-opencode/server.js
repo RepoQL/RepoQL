@@ -4,7 +4,7 @@
 // ({ id, setup }). It imports nothing outside Node's standard library, so it
 // needs no build step and no installed dependencies.
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { accessSync, constants, existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url"
 const SERVER_NAME = "repoql"
 const SKILLS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "skills")
 
-// The first rql on PATH, then where the hosted installers put it. OpenCode can be
+// The first runnable rql on PATH, then where the hosted installers put it. OpenCode can be
 // started by a desktop app with a minimal PATH, so the well-known directories matter.
 export function findRql(env = process.env, platform = process.platform, home = homedir()) {
   const windows = platform === "win32"
@@ -25,7 +25,7 @@ export function findRql(env = process.env, platform = process.platform, home = h
   for (const directory of directories) {
     for (const name of names) {
       const candidate = path.join(directory, name)
-      if (isFile(candidate)) return candidate
+      if (isRunnable(candidate, windows)) return candidate
     }
   }
   return undefined
@@ -75,6 +75,19 @@ export function loadSkills(directory = SKILLS_DIR) {
   return skills
 }
 
+// On POSIX a file without execute permission cannot start, and the shell's own lookup skips it,
+// so a non-executable rql earlier on PATH must not hide a working one later.
+function isRunnable(candidate, windows) {
+  if (!isFile(candidate)) return false
+  if (windows) return true
+  try {
+    accessSync(candidate, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function isFile(candidate) {
   try {
     return statSync(candidate).isFile()
@@ -89,6 +102,9 @@ export default {
     const rql = findRql()
     if (rql) {
       await ctx.mcp.transform((editor) => {
+        // A repoql server the user configured is theirs to keep: OpenCode loads opencode.json
+        // before package plugins, so its entry is here, with any disabled flag, command or environment.
+        if (editor.get(SERVER_NAME)) return
         editor.set(SERVER_NAME, {
           type: "local",
           command: [rql, "mcp"],

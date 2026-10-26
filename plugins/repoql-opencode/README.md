@@ -16,7 +16,7 @@ Or add it yourself:
 opencode plugin add github:RepoQL/RepoQL
 ```
 
-The plugin starts `rql mcp`. It looks for `rql` on `PATH`, then in `~/.local/bin`, then in `%LOCALAPPDATA%\rql`, where the [installers](../../README.md#install) put it. If it finds none, it registers no server and logs where to get `rql`.
+The plugin starts `rql mcp`. It looks for `rql` on `PATH`, then in `~/.local/bin`, then in `%LOCALAPPDATA%\rql`, where the [installers](../../README.md#install) put it. If it finds none, it registers no server and logs where to get `rql`. A `repoql` server you configured in `opencode.json` stays as you wrote it, including a `disabled` flag, a custom command or environment variables. The plugin then registers no server of its own.
 
 OpenChamber runs OpenCode, so the plugin works there too.
 
