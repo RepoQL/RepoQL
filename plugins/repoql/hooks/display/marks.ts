@@ -27,7 +27,7 @@ const GLANCES = [
 // The first glance comes two seconds in, so an eye that is redrawn still shows it is alive.
 const GLANCE_SECONDS = 36
 
-export function eye(x: number, y: number, size: number, isAwake: boolean) {
+export function eye(x: number, y: number, size: number, isAwake: boolean, isStill = false) {
   // A settled index is three full rings, as the dashboard draws it.
   const rings = ([['read', 65], ['search', 85], ['deep', 105]] as const)
     .map(
@@ -37,7 +37,9 @@ export function eye(x: number, y: number, size: number, isAwake: boolean) {
     .join('')
   const darts = GLANCES.map(([, dx, dy]) => `${dx} ${dy}`).join(';')
   const times = GLANCES.map(([at]) => at).join(';')
-  const pupil = isAwake
+  const pupil = isStill
+    ? `<circle cx="180" cy="180" r="27" fill="${isAwake ? 'url(#p)' : EYE.off}"/>`
+    : isAwake
     ? `<g><animateTransform attributeName="transform" type="translate" values="${darts}" keyTimes="${times}" dur="${GLANCE_SECONDS}s" repeatCount="indefinite"/>
 <circle cx="180" cy="180" r="27" fill="url(#p)"><animate attributeName="r" values="26.5;28;26.5" dur="7s" repeatCount="indefinite"/></circle></g>`
     : `<circle cx="180" cy="180" r="26" fill="${EYE.off}"/>`
@@ -82,4 +84,10 @@ ${done ? `<path d="M11.8 13.2l2.2 2.2 4-4.4" fill="none" stroke="${NET}" stroke-
 <text x="28" y="17.5" ${FONT} font-size="12" font-weight="700" fill="${TEXT}">rql</text>
 <text x="${RING_W - 9}" y="17.5" text-anchor="end" ${MONO} font-size="10.5" fill="${done ? NET : DIM}">${done ? '' : `${pct}%`}</text>`,
   )
+}
+
+/** An uplink at the band's trailing edge: a still eye, lit while it answers. Its name is in the alt and in the pane. */
+export const UPLINK_W = 22
+export function uplinkMark(isOnline: boolean) {
+  return svg(UPLINK_W, H, eye(1, 3, 20, isOnline, true))
 }
