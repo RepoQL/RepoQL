@@ -107,6 +107,19 @@ function answer(argv: readonly string[]) {
   return said(0, '')
 }
 
+type Node = { props?: Record<string, unknown>; hover?: Record<string, unknown>; children?: unknown[] }
+
+/** The element of a drawn tree whose key is `key`, hover and all, as the surface was handed it. */
+function keyed(node: unknown, key: string): Node | undefined {
+  if (typeof node !== 'object' || node === null) {
+    return undefined
+  }
+
+  const each = node as Node
+
+  return each.props?.key === key ? each : (each.children ?? []).map(child => keyed(child, key)).find(found => found !== undefined)
+}
+
 // The band's own props, as an idle prompt hands them; only `hasSurvey` matters to the mod.
 const band = (hasSurvey: boolean) =>
   ({ hasSurvey, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { top: 0, rows: 0 }, view: { top: 0, rows: 0 } }) as never
@@ -147,7 +160,20 @@ test('where SVG is drawn the band is the presence: the eye at rest, an eye for e
     ['rql', 'query', '--uplink', 'stu-pc', "SELECT source_uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"],
   ])
   const marked = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
-  expect((await marked.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual(['rql', 'uplink fotg-gcp', 'uplink stu-pc, never connected'])
+  expect((await marked.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual([
+    'rql',
+    'uplink fotg-gcp · online · 2 sources',
+    'uplink stu-pc · never connected',
+  ])
+  // the pointer on an eye reveals its name and state: each label is drawn hidden, and shown by its eye's hover group
+  const drawn = await marked.drawn()
+  const eye = keyed(drawn, 'uplink:fotg-gcp')
+  const shown = keyed(drawn, 'label:fotg-gcp')
+  expect(eye?.hover).toEqual({ scope: 'repoql-uplink:fotg-gcp' })
+  expect(shown?.props?.display).toBe('none')
+  expect(shown?.hover).toEqual({ scope: 'repoql-uplink:fotg-gcp', display: 'flex' })
+  expect((await marked.find({ key: 'label:fotg-gcp' }))?.text).toBe('fotg-gcp · online · 2 sources')
+  expect((await marked.find({ key: 'label:stu-pc' }))?.text).toBe('stu-pc · never connected')
   await marked.unmount()
 
   // the terminal has its footer label, so a settled host draws nothing in its band
@@ -200,7 +226,7 @@ test('the status pane says the state, the work under way, what each uplink holds
   expect(alts).toEqual([
     'RepoQL: Working. 182,598 files ready to search · rql 1.7.13',
     'importing github://enricomi/publish-unit-test-result-action 82%',
-    'fotg-gcp: online. workspace 9830 files. github://sharkdp/bat 236 files',
+    'fotg-gcp: online · 2 sources. workspace 9830 files. github://sharkdp/bat 236 files',
     'stu-pc: never connected',
   ])
   await desktop.press({ key: 'dashboard' })

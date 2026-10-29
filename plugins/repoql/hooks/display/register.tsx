@@ -3,8 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Uplink, View } from '../../types'
 import { H, RING_W, UPLINK_W, badge, ring, uplinkMark } from './marks'
-import { CARD_W, HERO_H, NOW_H, hero, nowCard, uplinkCard } from './pane'
-import { INITIAL, SOURCES_SQL, label, line, offline, parse, reason, status, step, sourcesOf, uplinkNames } from './stream'
+import { CARD_W, HERO_H, NOW_H, SOURCES_SHOWN, hero, nowCard, uplinkCard } from './pane'
+import { INITIAL, SOURCES_SQL, label, line, offline, parse, reason, sourceRows, status, step, sourcesOf, uplinkNames, uplinkState } from './stream'
 
 // A display for the host's own stream: one `rql monitor` child per session.
 // It runs no query, calls no tool and never changes what the model reads.
@@ -15,6 +15,8 @@ const RETRY_MS = 60_000
 const PANE = 'repoql-status'
 /** The most uplinks the band marks; the pane lists them all. */
 const UPLINKS_SHOWN = 5
+/** The hover group joining an uplink's eye in the band to its label there. */
+const hoverScope = (name: string) => `repoql-uplink:${name}`.slice(0, 64)
 
 const view = atom({ plugin: 'repoql', key: 'view' } as const, INITIAL)
 
@@ -288,11 +290,14 @@ export const register: Register = (on, options) => {
     // change. The eye never changes, so it can be a frame, and can look around.
     const hasHost = now.connection !== 'waiting' && now.connection !== 'lost'
     const resting = badge(hasHost)
+    const marked = (now.uplinks ?? []).slice(0, UPLINKS_SHOWN)
 
     // The row spans the band: the badge at its leading edge, the button at its
     // trailing edge, both centred on the row's height. Beside the button, a
-    // still eye for each uplink, lit while it answers. The button opens the
-    // status pane, which says why there is no host, and what each uplink holds.
+    // still eye for each uplink, lit while it answers; the pointer on one shows
+    // its name and state in the row's middle, which nothing else uses. The
+    // button opens the status pane, which says why there is no host, and what
+    // each uplink holds.
     return (
       <Box alignItems="center" justifyContent="space-between" width="100%">
         {text !== null && now.operation !== null ? (
@@ -303,15 +308,20 @@ export const register: Register = (on, options) => {
         ) : (
           <Svg source={resting.source} alt={hasHost ? 'rql' : 'rql no host'} width={resting.width} height={H} isInteractive={hasHost} />
         )}
+        <Box>
+          {marked.map(each => (
+            <Box key={`label:${each.name}`} display="none" hover={{ scope: hoverScope(each.name), display: 'flex' }}>
+              <Text dimColor wrap="truncate-end">
+                {each.name} · {uplinkState(each)}
+              </Text>
+            </Box>
+          ))}
+        </Box>
         <Box alignItems="center" gap={1}>
-          {(now.uplinks ?? []).slice(0, UPLINKS_SHOWN).map(each => (
-            <Svg
-              key={`uplink:${each.name}`}
-              source={uplinkMark(each.state === 'online')}
-              alt={each.state === 'online' ? `uplink ${each.name}` : `uplink ${each.name}, ${each.state === 'checking' ? 'checking' : each.reason.toLowerCase()}`}
-              width={UPLINK_W}
-              height={H}
-            />
+          {marked.map(each => (
+            <Box key={`uplink:${each.name}`} hover={{ scope: hoverScope(each.name) }}>
+              <Svg source={uplinkMark(each.state === 'online')} alt={`uplink ${each.name} · ${uplinkState(each)}`} width={UPLINK_W} height={H} />
+            </Box>
           ))}
           <Button key="details" label="Details" onPress={() => openDetails($)} />
         </Box>
@@ -346,10 +356,8 @@ export const register: Register = (on, options) => {
           {work !== null && <Svg source={nowCard(work.name, work.percent)} alt={doing} width={CARD_W} height={NOW_H} />}
           {uplinks.map(each => {
             const drawn = uplinkCard(each)
-            const said =
-              each.state === 'online'
-                ? [`${each.name}: online`, ...each.sources.map(source => `${source.uri} ${source.files} files`)].join('. ')
-                : `${each.name}: ${each.state === 'checking' ? 'checking' : each.reason.toLowerCase()}`
+            const rows = each.state === 'online' ? sourceRows(each.sources, SOURCES_SHOWN) : []
+            const said = [`${each.name}: ${uplinkState(each)}`, ...rows.map(row => `${row.label} ${row.files} files`)].join('. ')
 
             return <Svg key={`uplink:${each.name}`} source={drawn.source} alt={said} width={CARD_W} height={drawn.height} />
           })}

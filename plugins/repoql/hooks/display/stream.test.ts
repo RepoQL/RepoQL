@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { View } from '../../types'
-import { INITIAL, describe, label, line, offline, parse, reason, sourcesOf, status, step, uplinkNames } from './stream'
+import { INITIAL, describe, label, line, offline, parse, reason, sourceRows, sourcesOf, status, step, uplinkNames, uplinkState } from './stream'
 
 const HOST = '"host_pid":41247,"host_started_at_unix_ms":1791280375986'
 const progress = (fields: string) => `{"type":"host.signal","signal":"progress",${HOST},${fields}}`
@@ -194,4 +194,36 @@ test('the sources of an uplink are the rows under the header rql query prints; i
 test('an uplink that does not answer says why in words a person can act on', () => {
   expect(offline('this instance has never connected; no `rql uplink` has dialled in with its credential yet')).toBe('Never connected')
   expect(offline('')).toBe('Not answering')
+})
+
+test('an uplink says its state in a few words', () => {
+  expect(uplinkState({ name: 'a', state: 'checking' })).toBe('checking')
+  expect(uplinkState({ name: 'a', state: 'offline', reason: 'Never connected' })).toBe('never connected')
+  expect(uplinkState({ name: 'a', state: 'online', sources: [] })).toBe('online · no sources')
+  expect(uplinkState({ name: 'a', state: 'online', sources: [{ uri: 'workspace', files: 3 }] })).toBe('online · 1 source')
+})
+
+test('a few sources are listed one to a line; many are counted by scheme, the workspace first and the largest next', () => {
+  const few = [
+    { uri: 'workspace', files: 10 },
+    { uri: 'github://a/b', files: 5 },
+  ]
+  expect(sourceRows(few, 8)).toEqual([
+    { label: 'workspace', files: 10 },
+    { label: 'github://a/b', files: 5 },
+  ])
+
+  const many = [
+    { uri: 's3://bucket/x', files: 4 },
+    ...Array.from({ length: 35 }, (_, at) => ({ uri: `github://org/repo-${at}`, files: 2 })),
+    { uri: 'workspace', files: 100 },
+    { uri: 'local:///docs', files: 7 },
+    { uri: 'local:///notes', files: 1 },
+  ]
+  expect(sourceRows(many, 8)).toEqual([
+    { label: 'workspace', files: 100 },
+    { label: 'github:// × 35', files: 70 },
+    { label: 'local:// × 2', files: 8 },
+    { label: 's3://bucket/x', files: 4 },
+  ])
 })
