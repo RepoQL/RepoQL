@@ -41,14 +41,42 @@ try {
         } else {
             # Every mounted source except the ones named in the WHERE clause, which the agent already knows or did not
             # ask for: the primary file:///, help, memory, and worktrees. A new kind of mount is listed by default, with
-            # its kind in brackets. Each line also counts the concepts and vocab words the source carries. Hosts that
-            # predate Filesystems.kind fail the first query and fall back to the GitHub-only listing.
+            # its kind in brackets. Each line also counts the concepts and vocab words the source carries. When that listing
+            # does not answer, the roster below lists every source without kinds or counts and the orientation says what is
+            # missing; it never narrows the list.
             # --no-launch avoids starting a host just for orientation.
             $listingSql = "WITH repos AS (SELECT CASE WHEN kind = 'workspace' THEN 'workspace' ELSE 'import' END AS section, CASE WHEN kind NOT IN ('workspace', 'import') THEN kind END AS label, source_uri, concat_ws('/', scheme, nullif(authority, ''), nullif(trim(path_prefix, '/'), '')) AS memory FROM Filesystems WHERE scheme NOT IN ('file', 'help', 'concept', 'vocabulary', 'worktree') AND coalesce(kind, '') NOT IN ('primary', 'worktree')), memory AS (SELECT uri FROM Files WHERE (uri LIKE 'concept:///%' AND extension = '.md' AND lower(name) <> 'readme.md') OR uri LIKE 'vocabulary:///%'), counts AS (SELECT r.section, r.label, r.source_uri, count(m.uri) FILTER (WHERE starts_with(m.uri, 'concept:///' || r.memory || '/')) AS concepts, count(m.uri) FILTER (WHERE starts_with(m.uri, 'vocabulary:///' || r.memory || '/')) AS words FROM repos r LEFT JOIN memory m ON starts_with(m.uri, 'concept:///' || r.memory || '/') OR starts_with(m.uri, 'vocabulary:///' || r.memory || '/') GROUP BY r.section, r.label, r.source_uri) SELECT section AS kind, source_uri || coalesce(' (' || nullif(concat_ws(', ', label, CASE WHEN concepts > 0 THEN concepts || ' concept' || CASE WHEN concepts = 1 THEN '' ELSE 's' END END, CASE WHEN words > 0 THEN words || ' vocab word' || CASE WHEN words = 1 THEN '' ELSE 's' END END), '') || ')', '') AS line FROM counts ORDER BY section, source_uri"
-            $legacySql = "SELECT 'import' AS kind, source_uri AS line FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri"
-            $listing = $null | rql query $listingSql --timeout-ms 5000 --no-launch 2>$null
-            if ($LASTEXITCODE -ne 0) { $listing = $null | rql query $legacySql --timeout-ms 5000 --no-launch 2>$null }
+            # A host still starting or sweeping can take longer than the budget over the counted listing, and a host
+            # that predates Filesystems.kind rejects it. Either way the roster still lists every mounted source. rql
+            # says that no host is running only when its probe finds none listening, so a busy host is never
+            # reported as down.
+            $rosterSql = "SELECT 'import' AS kind, source_uri AS line FROM Filesystems WHERE scheme NOT IN ('file', 'help', 'concept', 'vocabulary', 'worktree') ORDER BY source_uri"
+            $queryErr = [System.IO.Path]::GetTempFileName()
+            $counted = $false
+            $hostAbsent = $false
+            $missingWhy = 'the RepoQL host did not answer the full listing'
+            # Windows PowerShell 5.1 routes native stderr through its error stream.
+            # Keep it for classification in this scope; the rest of the hook stays quiet.
+            $listing = & {
+                $ErrorActionPreference = 'Continue'
+                $null | rql query $listingSql --timeout-ms 5000 --no-launch 2>$queryErr
+            }
             $queryOk = $LASTEXITCODE -eq 0
+            if ($queryOk) {
+                $counted = $true
+            } else {
+                $listingError = "$(Get-Content -Raw -LiteralPath $queryErr -ErrorAction SilentlyContinue)"
+                if ($listingError -match 'deadline') {
+                    $missingWhy = 'the RepoQL host is still starting or indexing and did not answer the full listing in time'
+                }
+                if ($listingError -match 'No host is running') {
+                    $hostAbsent = $true
+                } else {
+                    $listing = $null | rql query $rosterSql --timeout-ms 5000 --no-launch 2>$null
+                    $queryOk = $LASTEXITCODE -eq 0
+                }
+            }
+            Remove-Item -LiteralPath $queryErr -Force -ErrorAction SilentlyContinue
             $workspaceRepos = @($listing | Where-Object { $_ -like "workspace`t*://*" } | ForEach-Object { ($_ -split "`t", 2)[1] })
             $imports = @($listing | Where-Object { $_ -like "import`t*://*" } | ForEach-Object { ($_ -split "`t", 2)[1] })
             if ($workspaceRepos.Count -gt 0) {
@@ -59,10 +87,15 @@ try {
             $context += "`n## Imported Repositories`n"
             if ($imports.Count -gt 0) {
                 $context += "Use these URIs directly with read, explore, and query:`n" + ($imports -join "`n") + "`n"
+                if (-not $counted) {
+                    $context += "(Kinds and concept and vocab word counts are missing: $missingWhy.)`n"
+                }
             } elseif ($queryOk) {
                 $context += "(none)`n"
-            } else {
+            } elseif ($hostAbsent) {
                 $context += "(not checked $dash the RepoQL host was not running)`n"
+            } else {
+                $context += "(not listed $dash $missingWhy. This orientation names no imports, though there may be some: query Filesystems for them.)`n"
             }
             $context += "Use the import tool whenever you like to add more.`n"
         }

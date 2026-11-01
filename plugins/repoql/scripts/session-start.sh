@@ -89,14 +89,33 @@ else
         query_ok=""
         # Every mounted source except the ones named in the WHERE clause, which the agent already knows or did not
         # ask for: the primary file:///, help, memory, and worktrees. A new kind of mount is listed by default, with
-        # its kind in brackets. Each line also counts the concepts and vocab words the source carries. Hosts that
-        # predate Filesystems.kind fail the first query and fall back to the GitHub-only listing.
+        # its kind in brackets. Each line also counts the concepts and vocab words the source carries. When that listing
+        # does not answer, the roster below lists every source without kinds or counts and the orientation says what is
+        # missing; it never narrows the list.
         listing_sql="WITH repos AS (SELECT CASE WHEN kind = 'workspace' THEN 'workspace' ELSE 'import' END AS section, CASE WHEN kind NOT IN ('workspace', 'import') THEN kind END AS label, source_uri, concat_ws('/', scheme, nullif(authority, ''), nullif(trim(path_prefix, '/'), '')) AS memory FROM Filesystems WHERE scheme NOT IN ('file', 'help', 'concept', 'vocabulary', 'worktree') AND coalesce(kind, '') NOT IN ('primary', 'worktree')), memory AS (SELECT uri FROM Files WHERE (uri LIKE 'concept:///%' AND extension = '.md' AND lower(name) <> 'readme.md') OR uri LIKE 'vocabulary:///%'), counts AS (SELECT r.section, r.label, r.source_uri, count(m.uri) FILTER (WHERE starts_with(m.uri, 'concept:///' || r.memory || '/')) AS concepts, count(m.uri) FILTER (WHERE starts_with(m.uri, 'vocabulary:///' || r.memory || '/')) AS words FROM repos r LEFT JOIN memory m ON starts_with(m.uri, 'concept:///' || r.memory || '/') OR starts_with(m.uri, 'vocabulary:///' || r.memory || '/') GROUP BY r.section, r.label, r.source_uri) SELECT section AS kind, source_uri || coalesce(' (' || nullif(concat_ws(', ', label, CASE WHEN concepts > 0 THEN concepts || ' concept' || CASE WHEN concepts = 1 THEN '' ELSE 's' END END, CASE WHEN words > 0 THEN words || ' vocab word' || CASE WHEN words = 1 THEN '' ELSE 's' END END), '') || ')', '') AS line FROM counts ORDER BY section, source_uri"
-        legacy_sql="SELECT 'import' AS kind, source_uri AS line FROM Filesystems WHERE source_uri LIKE 'github://%' ORDER BY source_uri"
-        if $guard rql query "$listing_sql" --timeout-ms 5000 --no-launch </dev/null >"$query_out" 2>/dev/null \
-            || $guard rql query "$legacy_sql" --timeout-ms 5000 --no-launch </dev/null >"$query_out" 2>/dev/null; then
+        # A host still starting or sweeping can take longer than the budget over the counted listing, and a host that
+        # predates Filesystems.kind rejects it. Either way the roster still lists every mounted source. rql says that
+        # no host is running only when its probe finds none listening, so a busy host is never reported as down.
+        roster_sql="SELECT 'import' AS kind, source_uri AS line FROM Filesystems WHERE scheme NOT IN ('file', 'help', 'concept', 'vocabulary', 'worktree') ORDER BY source_uri"
+        query_err=$(mktemp "${TMPDIR:-/tmp}/repoql-imports-err.XXXXXX" 2>/dev/null) || query_err="${TMPDIR:-/tmp}/repoql-imports-err.$$"
+        counted=""
+        host_absent=""
+        missing_why="the RepoQL host did not answer the full listing"
+        if $guard rql query "$listing_sql" --timeout-ms 5000 --no-launch </dev/null >"$query_out" 2>"$query_err"; then
             query_ok=1
+            counted=1
+        else
+            listing_status=$?
+            if [ "$listing_status" = "124" ] || grep -q 'deadline' "$query_err" 2>/dev/null; then
+                missing_why="the RepoQL host is still starting or indexing and did not answer the full listing in time"
+            fi
+            if grep -q 'No host is running' "$query_err" 2>/dev/null; then
+                host_absent=1
+            elif $guard rql query "$roster_sql" --timeout-ms 5000 --no-launch </dev/null >"$query_out" 2>/dev/null; then
+                query_ok=1
+            fi
         fi
+        rm -f "$query_err"
         workspace_repos=$(awk -F'\t' '$1 == "workspace" && $2 ~ /:\/\// { print $2 }' "$query_out" 2>/dev/null || true)
         imports=$(awk -F'\t' '$1 == "import" && $2 ~ /:\/\// { print $2 }' "$query_out" 2>/dev/null || true)
         rm -f "$query_out"
@@ -107,10 +126,15 @@ else
         ctx+=$'\n'"## Imported Repositories"$'\n'
         if [ -n "$imports" ]; then
             ctx+="Use these URIs directly with read / explore / query:"$'\n'"$imports"$'\n'
+            if [ -z "$counted" ]; then
+                ctx+="(Kinds and concept and vocab word counts are missing: $missing_why.)"$'\n'
+            fi
         elif [ -n "$query_ok" ]; then
             ctx+="(none)"$'\n'
-        else
+        elif [ -n "$host_absent" ]; then
             ctx+="(not checked — the RepoQL host was not running)"$'\n'
+        else
+            ctx+="(not listed — $missing_why. This orientation names no imports, though there may be some: query Filesystems for them.)"$'\n'
         fi
         ctx+="Use the import tool whenever you like to add more."$'\n'
     fi
