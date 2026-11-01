@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { View } from '../../types'
-import { INITIAL, describe, label, line, offline, parse, reason, sourceRows, sourcesOf, status, step, uplinkNames, uplinkState } from './stream'
+import { INITIAL, describe, label, line, offline, parse, reason, sourceRows, sourcesOf, status, step, uplinkNames, uplinksSummary, uplinkState } from './stream'
 
 const HOST = '"host_pid":41247,"host_started_at_unix_ms":1791280375986'
 const progress = (fields: string) => `{"type":"host.signal","signal":"progress",${HOST},${fields}}`
@@ -226,4 +226,15 @@ test('a few sources are listed one to a line; many are counted by scheme, the wo
     { label: 'local:// × 2', files: 8 },
     { label: 's3://bucket/x', files: 4 },
   ])
+})
+
+test('many uplinks are summed up, each count only when it has any', () => {
+  expect(
+    uplinksSummary([
+      { name: 'a', state: 'online', sources: [] },
+      { name: 'b', state: 'online', sources: [] },
+      { name: 'c', state: 'offline', reason: 'Never connected' },
+    ]),
+  ).toBe('2 online · 1 not answering')
+  expect(uplinksSummary([{ name: 'a', state: 'checking' }])).toBe('1 checking')
 })

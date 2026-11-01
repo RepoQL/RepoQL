@@ -245,6 +245,21 @@ export function uplinkState(uplink: Uplink) {
   return count === 0 ? 'online · no sources' : `online · ${count} ${count === 1 ? 'source' : 'sources'}`
 }
 
+/** Many uplinks in a few words, each count only when it has any: `6 online · 2 not answering`. */
+export function uplinksSummary(uplinks: readonly Uplink[]) {
+  const count = (state: Uplink['state']) => uplinks.filter(each => each.state === state).length
+  const parts: [number, string][] = [
+    [count('online'), 'online'],
+    [count('offline'), 'not answering'],
+    [count('checking'), 'checking'],
+  ]
+
+  return parts
+    .filter(([each]) => each > 0)
+    .map(([each, word]) => `${each} ${word}`)
+    .join(' · ')
+}
+
 /** A line of an uplink's card: a source, or a scheme and how many of its sources there are; with their files. */
 export type SourceRow = { label: string; files: number }
 

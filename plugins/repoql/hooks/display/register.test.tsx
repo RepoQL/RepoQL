@@ -247,3 +247,56 @@ test('the status pane says the state, the work under way, what each uplink holds
   expect(await gone.find({ key: 'dashboard' })).toBeUndefined()
   await gone.unmount()
 })
+
+test('past five uplinks the band counts them, and the pane lists those online first and shortens the rest', { timeoutMs: 20_000 }, async ($, on) => {
+  mock.clock(on)
+  let exit = () => {}
+  const exited = new Promise<void>(resolve => {
+    exit = resolve
+  })
+  const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+
+  on('process.spawn', async function* () {
+    yield { stream: 'stdout', text: HELLO }
+    await exited
+
+    return { value: { code: 0, signal: null } }
+  })
+  on('process.run', (_$, e) => {
+    const said = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+
+    if (e.argv[1] === 'uplinks') {
+      return said(0, `Accessible uplinks: ${names.join(', ')}\n`)
+    }
+
+    // the first and the sixth have never connected, so the pane has to reorder
+    return e.argv[1] !== 'query' ? said(0, '') : e.argv[3] === 'a' || e.argv[3] === 'f' ? said(1, '', NEVER) : said(0, SOURCES)
+  })
+  on('session.attach', (_$, e) => ({ clientId: e.clientId }))
+
+  const attached = $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  const warm = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
+  await warm.unmount()
+
+  const row = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
+  expect((await row.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual(['rql', '8 uplinks · 6 online · 2 not answering'])
+  expect((await row.find({ key: 'uplinks' }))?.text).toBe(' 8 uplinks')
+  expect((await row.find({ key: 'label:uplinks' }))?.text).toBe('6 online · 2 not answering')
+  const drawn = await row.drawn()
+  expect(keyed(drawn, 'uplinks')?.hover).toEqual({ scope: 'repoql-uplinks' })
+  expect(keyed(drawn, 'label:uplinks')?.props?.display).toBe('none')
+  expect(keyed(drawn, 'label:uplinks')?.hover).toEqual({ scope: 'repoql-uplinks', display: 'flex' })
+  await row.unmount()
+
+  const open = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'Pane', requestId: 'repoql-status', props: pane })
+  const alts = (await open.findAll({ type: 'Svg' })).map(each => String(each.props.alt))
+  expect(alts.slice(1).map(each => each.split(' · ')[0])).toEqual(['b: online', 'c: online', 'd: online', 'e: online', 'g: online', 'h: online', 'Not online: a, never connected; f, never connected'])
+  await open.unmount()
+
+  // the host goes: the pane says how it comes back, and lists no uplinks
+  exit()
+  await attached
+  const gone = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'Pane', requestId: 'repoql-status', props: pane })
+  expect((await gone.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual(['RepoQL: Not running. It starts with your next RepoQL call.'])
+  await gone.unmount()
+})

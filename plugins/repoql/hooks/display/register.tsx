@@ -3,8 +3,8 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type { Uplink, View } from '../../types'
 import { H, RING_W, UPLINK_W, badge, ring, uplinkMark } from './marks'
-import { CARD_W, HERO_H, NOW_H, SOURCES_SHOWN, hero, nowCard, uplinkCard } from './pane'
-import { INITIAL, SOURCES_SQL, label, line, offline, parse, reason, sourceRows, status, step, sourcesOf, uplinkNames, uplinkState } from './stream'
+import { CARD_W, HERO_H, NOW_H, SOURCES_SHOWN, hero, nowCard, quietCard, uplinkCard } from './pane'
+import { INITIAL, SOURCES_SQL, label, line, offline, parse, reason, sourceRows, status, step, sourcesOf, uplinkNames, uplinksSummary, uplinkState } from './stream'
 
 // A display for the host's own stream: one `rql monitor` child per session.
 // It runs no query, calls no tool and never changes what the model reads.
@@ -13,9 +13,10 @@ const MONITOR = ['rql', 'monitor', '--jsonl', '--progress', '--progress-interval
 const SLOW_CALL_MS = 10_000
 const RETRY_MS = 60_000
 const PANE = 'repoql-status'
-/** The most uplinks the band marks; the pane lists them all. */
+/** The most uplinks that get an eye and a card each; past this the band counts them and the pane shortens those not online. */
 const UPLINKS_SHOWN = 5
 /** The hover group joining an uplink's eye in the band to its label there. */
+const ALL_UPLINKS = 'repoql-uplinks'
 const hoverScope = (name: string) => `repoql-uplink:${name}`.slice(0, 64)
 
 const view = atom({ plugin: 'repoql', key: 'view' } as const, INITIAL)
@@ -290,7 +291,9 @@ export const register: Register = (on, options) => {
     // change. The eye never changes, so it can be a frame, and can look around.
     const hasHost = now.connection !== 'waiting' && now.connection !== 'lost'
     const resting = badge(hasHost)
-    const marked = (now.uplinks ?? []).slice(0, UPLINKS_SHOWN)
+    const known = now.uplinks ?? []
+    const isCrowded = known.length > UPLINKS_SHOWN
+    const marked = isCrowded ? [] : known
 
     // The row spans the band: the badge at its leading edge, the button at its
     // trailing edge, both centred on the row's height. Beside the button, a
@@ -316,8 +319,19 @@ export const register: Register = (on, options) => {
               </Text>
             </Box>
           ))}
+          {isCrowded && (
+            <Box key="label:uplinks" display="none" hover={{ scope: ALL_UPLINKS, display: 'flex' }}>
+              <Text dimColor wrap="truncate-end">{uplinksSummary(known)}</Text>
+            </Box>
+          )}
         </Box>
         <Box alignItems="center" gap={1}>
+          {isCrowded && (
+            <Box key="uplinks" alignItems="center" hover={{ scope: ALL_UPLINKS }}>
+              <Svg source={uplinkMark(known.some(each => each.state === 'online'))} alt={`${known.length} uplinks · ${uplinksSummary(known)}`} width={UPLINK_W} height={H} />
+              <Text dimColor> {known.length} uplinks</Text>
+            </Box>
+          )}
           {marked.map(each => (
             <Box key={`uplink:${each.name}`} hover={{ scope: hoverScope(each.name) }}>
               <Svg source={uplinkMark(each.state === 'online')} alt={`uplink ${each.name} · ${uplinkState(each)}`} width={UPLINK_W} height={H} />
@@ -338,6 +352,10 @@ export const register: Register = (on, options) => {
     const work = now.operation
     const doing = work === null ? null : work.percent === null ? work.name : `${work.name} ${work.percent}%`
     const uplinks = isAwake ? (now.uplinks ?? []) : []
+    const isCrowded = uplinks.length > UPLINKS_SHOWN
+    const quiet = isCrowded ? uplinks.filter(each => each.state !== 'online') : []
+    const carded = isCrowded ? uplinks.filter(each => each.state === 'online') : uplinks
+    const shortened = quiet.length > 0 ? quietCard(quiet) : null
     const { Box, Button, Text, ...rest } = $.ui.resolve(e)
     const Svg = (rest as { Svg?: any }).Svg
 
@@ -354,13 +372,22 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column" gap={1}>
           <Svg source={hero(state, fact, release, isAwake)} alt={said === '' ? `RepoQL: ${state}` : `RepoQL: ${state}. ${said}`} width={CARD_W} height={HERO_H} isInteractive={isAwake} />
           {work !== null && <Svg source={nowCard(work.name, work.percent)} alt={doing} width={CARD_W} height={NOW_H} />}
-          {uplinks.map(each => {
+          {carded.map(each => {
             const drawn = uplinkCard(each)
             const rows = each.state === 'online' ? sourceRows(each.sources, SOURCES_SHOWN) : []
             const said = [`${each.name}: ${uplinkState(each)}`, ...rows.map(row => `${row.label} ${row.files} files`)].join('. ')
 
             return <Svg key={`uplink:${each.name}`} source={drawn.source} alt={said} width={CARD_W} height={drawn.height} />
           })}
+          {shortened !== null && (
+            <Svg
+              key="uplinks:quiet"
+              source={shortened.source}
+              alt={`Not online: ${quiet.map(each => `${each.name}, ${uplinkState(each)}`).join('; ')}`}
+              width={CARD_W}
+              height={shortened.height}
+            />
+          )}
           {isAwake && (
             <Box justifyContent="center" marginTop={1}>
               <Button key="dashboard" label="Open dashboard" onPress={() => openDashboard($)} />

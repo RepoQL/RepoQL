@@ -141,6 +141,30 @@ ${more > 0 ? `<text x="82" y="${83 + shown.length * 19}" ${SANS} font-size="11.5
   }
 }
 
+/** The uplinks that are not online, one line each, for when there are too many for a card apiece. */
+export function quietCard(uplinks: readonly Uplink[]) {
+  const height = 49 + uplinks.length * 19
+  const rows = uplinks.map((each, index) => {
+    const state = uplinkState(each)
+    const y = 52 + index * 19
+
+    return (
+      `<text x="28" y="${y}" ${SANS} font-size="12.5" fill="${TEXT}">${esc(each.name.slice(0, NOW_CHARS - 24))}</text>` +
+      `<text x="${CARD_W - 28}" y="${y}" text-anchor="end" ${SANS} font-size="11.5" fill="${DIM}">${esc(state.charAt(0).toUpperCase() + state.slice(1))}</text>`
+    )
+  })
+
+  return {
+    height,
+    source: card(
+      height,
+      `<rect x=".5" y=".5" width="${CARD_W - 1}" height="${height - 1}" rx="14" fill="${RAISED}" stroke="${NET}" stroke-opacity=".14"/>
+<text x="28" y="28" ${SANS} font-size="12" fill="${DIM}">Not online</text>
+${rows.join('')}`,
+    ),
+  }
+}
+
 /** The work under way, in the words the band uses for it, with how far it has come when the host has said. */
 export function nowCard(work: string, pct: number | null) {
   const radius = 17
