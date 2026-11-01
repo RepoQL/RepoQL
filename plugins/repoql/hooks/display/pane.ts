@@ -1,5 +1,6 @@
 import type { Uplink } from '../../types'
 import { eye } from './marks'
+import { sourceRows, uplinkState } from './stream'
 
 // The status pane, drawn as cards in RepoQL's own look: deep navy, teal
 // network, teal-tinted white. Each card is one SVG at a fixed width.
@@ -105,23 +106,17 @@ ${lines.map((each, index) => `<text x="165" y="${top + 26 + index * 20}" ${SANS}
   )
 }
 
-/** The most sources a card lists; the rest are counted. */
-const SOURCES_SHOWN = 8
+/** The most lines a card lists: sources one to a line, or counted by scheme when there are more. */
+export const SOURCES_SHOWN = 8
 
-/** One uplink: a still eye, its name, whether it answers, and the sources it holds. */
+/** One uplink: a still eye, its name, whether it answers, and the sources it holds, by scheme when there are many. */
 export function uplinkCard(uplink: Uplink) {
   const isOnline = uplink.state === 'online'
-  const sources = isOnline ? uplink.sources : []
-  const shown = sources.slice(0, SOURCES_SHOWN)
-  const more = sources.length - shown.length
-  const said =
-    uplink.state === 'checking'
-      ? 'Checking…'
-      : uplink.state === 'offline'
-        ? uplink.reason
-        : sources.length === 0
-          ? 'Online · no sources'
-          : `Online · ${sources.length} ${sources.length === 1 ? 'source' : 'sources'}`
+  const all = sourceRows(isOnline ? uplink.sources : [], SOURCES_SHOWN)
+  const shown = all.slice(0, SOURCES_SHOWN)
+  const more = all.length - shown.length
+  const state = uplinkState(uplink)
+  const said = `${state.charAt(0).toUpperCase()}${state.slice(1)}${uplink.state === 'checking' ? '…' : ''}`
   const rows = shown.length + (more > 0 ? 1 : 0)
   const height = 64 + (rows === 0 ? 0 : 10 + rows * 19)
   const cut = (text: string) => (text.length > NOW_CHARS - 12 ? `${text.slice(0, NOW_CHARS - 13)}…` : text)
@@ -137,11 +132,35 @@ ${eye(30, 16, 32, isOnline, true)}
 ${shown
   .map(
     (each, index) =>
-      `<text x="82" y="${83 + index * 19}" ${SANS} font-size="12.5" fill="${TEXT}">${esc(cut(each.uri))}</text>` +
+      `<text x="82" y="${83 + index * 19}" ${SANS} font-size="12.5" fill="${TEXT}">${esc(cut(each.label))}</text>` +
       `<text x="${CARD_W - 28}" y="${83 + index * 19}" text-anchor="end" ${SANS} font-size="11.5" fill="${DIM}">${each.files.toLocaleString('en-US')} files</text>`,
   )
   .join('')}
 ${more > 0 ? `<text x="82" y="${83 + shown.length * 19}" ${SANS} font-size="11.5" fill="${DIM}">and ${more} more</text>` : ''}`,
+    ),
+  }
+}
+
+/** The uplinks that are not online, one line each, for when there are too many for a card apiece. */
+export function quietCard(uplinks: readonly Uplink[]) {
+  const height = 49 + uplinks.length * 19
+  const rows = uplinks.map((each, index) => {
+    const state = uplinkState(each)
+    const y = 52 + index * 19
+
+    return (
+      `<text x="28" y="${y}" ${SANS} font-size="12.5" fill="${TEXT}">${esc(each.name.slice(0, NOW_CHARS - 24))}</text>` +
+      `<text x="${CARD_W - 28}" y="${y}" text-anchor="end" ${SANS} font-size="11.5" fill="${DIM}">${esc(state.charAt(0).toUpperCase() + state.slice(1))}</text>`
+    )
+  })
+
+  return {
+    height,
+    source: card(
+      height,
+      `<rect x=".5" y=".5" width="${CARD_W - 1}" height="${height - 1}" rx="14" fill="${RAISED}" stroke="${NET}" stroke-opacity=".14"/>
+<text x="28" y="28" ${SANS} font-size="12" fill="${DIM}">Not online</text>
+${rows.join('')}`,
     ),
   }
 }

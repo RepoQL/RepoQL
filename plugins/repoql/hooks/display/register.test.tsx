@@ -107,6 +107,19 @@ function answer(argv: readonly string[]) {
   return said(0, '')
 }
 
+type Node = { props?: Record<string, unknown>; hover?: Record<string, unknown>; children?: unknown[] }
+
+/** The element of a drawn tree whose key is `key`, hover and all, as the surface was handed it. */
+function keyed(node: unknown, key: string): Node | undefined {
+  if (typeof node !== 'object' || node === null) {
+    return undefined
+  }
+
+  const each = node as Node
+
+  return each.props?.key === key ? each : (each.children ?? []).map(child => keyed(child, key)).find(found => found !== undefined)
+}
+
 // The band's own props, as an idle prompt hands them; only `hasSurvey` matters to the mod.
 const band = (hasSurvey: boolean) =>
   ({ hasSurvey, isWorking: false, maxRows: 6, bodyColumns: 80, scroll: { top: 0, rows: 0 }, view: { top: 0, rows: 0 } }) as never
@@ -147,7 +160,20 @@ test('where SVG is drawn the band is the presence: the eye at rest, an eye for e
     ['rql', 'query', '--uplink', 'stu-pc', "SELECT source_uri, file_count FROM Filesystems WHERE scheme <> 'help' AND file_count > 0"],
   ])
   const marked = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
-  expect((await marked.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual(['rql', 'uplink fotg-gcp', 'uplink stu-pc, never connected'])
+  expect((await marked.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual([
+    'rql',
+    'uplink fotg-gcp · online · 2 sources',
+    'uplink stu-pc · never connected',
+  ])
+  // the pointer on an eye reveals its name and state: each label is drawn hidden, and shown by its eye's hover group
+  const drawn = await marked.drawn()
+  const eye = keyed(drawn, 'uplink:fotg-gcp')
+  const shown = keyed(drawn, 'label:fotg-gcp')
+  expect(eye?.hover).toEqual({ scope: 'repoql-uplink:fotg-gcp' })
+  expect(shown?.props?.display).toBe('none')
+  expect(shown?.hover).toEqual({ scope: 'repoql-uplink:fotg-gcp', display: 'flex' })
+  expect((await marked.find({ key: 'label:fotg-gcp' }))?.text).toBe('fotg-gcp · online · 2 sources')
+  expect((await marked.find({ key: 'label:stu-pc' }))?.text).toBe('stu-pc · never connected')
   await marked.unmount()
 
   // the terminal has its footer label, so a settled host draws nothing in its band
@@ -200,7 +226,7 @@ test('the status pane says the state, the work under way, what each uplink holds
   expect(alts).toEqual([
     'RepoQL: Working. 182,598 files ready to search · rql 1.7.13',
     'importing github://enricomi/publish-unit-test-result-action 82%',
-    'fotg-gcp: online. workspace 9830 files. github://sharkdp/bat 236 files',
+    'fotg-gcp: online · 2 sources. workspace 9830 files. github://sharkdp/bat 236 files',
     'stu-pc: never connected',
   ])
   await desktop.press({ key: 'dashboard' })
@@ -219,5 +245,58 @@ test('the status pane says the state, the work under way, what each uplink holds
   const gone = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'Pane', requestId: 'repoql-status', props: pane })
   expect((await gone.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual(['RepoQL: Not running. It starts with your next RepoQL call.'])
   expect(await gone.find({ key: 'dashboard' })).toBeUndefined()
+  await gone.unmount()
+})
+
+test('past five uplinks the band counts them, and the pane lists those online first and shortens the rest', { timeoutMs: 20_000 }, async ($, on) => {
+  mock.clock(on)
+  let exit = () => {}
+  const exited = new Promise<void>(resolve => {
+    exit = resolve
+  })
+  const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+
+  on('process.spawn', async function* () {
+    yield { stream: 'stdout', text: HELLO }
+    await exited
+
+    return { value: { code: 0, signal: null } }
+  })
+  on('process.run', (_$, e) => {
+    const said = (exitCode: number, stdout: string, stderr = '') => ({ value: { exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false } })
+
+    if (e.argv[1] === 'uplinks') {
+      return said(0, `Accessible uplinks: ${names.join(', ')}\n`)
+    }
+
+    // the first and the sixth have never connected, so the pane has to reorder
+    return e.argv[1] !== 'query' ? said(0, '') : e.argv[3] === 'a' || e.argv[3] === 'f' ? said(1, '', NEVER) : said(0, SOURCES)
+  })
+  on('session.attach', (_$, e) => ({ clientId: e.clientId }))
+
+  const attached = $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  const warm = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
+  await warm.unmount()
+
+  const row = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'AbovePrompt', props: band(false) })
+  expect((await row.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual(['rql', '8 uplinks · 6 online · 2 not answering'])
+  expect((await row.find({ key: 'uplinks' }))?.text).toBe(' 8 uplinks')
+  expect((await row.find({ key: 'label:uplinks' }))?.text).toBe('6 online · 2 not answering')
+  const drawn = await row.drawn()
+  expect(keyed(drawn, 'uplinks')?.hover).toEqual({ scope: 'repoql-uplinks' })
+  expect(keyed(drawn, 'label:uplinks')?.props?.display).toBe('none')
+  expect(keyed(drawn, 'label:uplinks')?.hover).toEqual({ scope: 'repoql-uplinks', display: 'flex' })
+  await row.unmount()
+
+  const open = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'Pane', requestId: 'repoql-status', props: pane })
+  const alts = (await open.findAll({ type: 'Svg' })).map(each => String(each.props.alt))
+  expect(alts.slice(1).map(each => each.split(' · ')[0])).toEqual(['b: online', 'c: online', 'd: online', 'e: online', 'g: online', 'h: online', 'Not online: a, never connected; f, never connected'])
+  await open.unmount()
+
+  // the host goes: the pane says how it comes back, and lists no uplinks
+  exit()
+  await attached
+  const gone = await $.ui.mount({ plugin: 'repoql', surface: 'desktop', component: 'Pane', requestId: 'repoql-status', props: pane })
+  expect((await gone.findAll({ type: 'Svg' })).map(each => each.props.alt)).toEqual(['RepoQL: Not running. It starts with your next RepoQL call.'])
   await gone.unmount()
 })

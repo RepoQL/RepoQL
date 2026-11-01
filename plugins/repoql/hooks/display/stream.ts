@@ -1,4 +1,4 @@
-import type { Source, View } from '../../types'
+import type { Source, Uplink, View } from '../../types'
 
 /** A progress line is for work the person had time to notice. */
 export const BAND_AFTER_MS = 10_000
@@ -232,4 +232,60 @@ export function status(view: View): Status {
     release: view.version === null ? '' : `rql ${view.version}`,
     isAwake: true,
   }
+}
+
+/** An uplink's state in a few lowercase words: `online · 3 sources`, `never connected`, `checking`. */
+export function uplinkState(uplink: Uplink) {
+  if (uplink.state !== 'online') {
+    return uplink.state === 'checking' ? 'checking' : uplink.reason.toLowerCase()
+  }
+
+  const count = uplink.sources.length
+
+  return count === 0 ? 'online · no sources' : `online · ${count} ${count === 1 ? 'source' : 'sources'}`
+}
+
+/** Many uplinks in a few words, each count only when it has any: `6 online · 2 not answering`. */
+export function uplinksSummary(uplinks: readonly Uplink[]) {
+  const count = (state: Uplink['state']) => uplinks.filter(each => each.state === state).length
+  const parts: [number, string][] = [
+    [count('online'), 'online'],
+    [count('offline'), 'not answering'],
+    [count('checking'), 'checking'],
+  ]
+
+  return parts
+    .filter(([each]) => each > 0)
+    .map(([each, word]) => `${each} ${word}`)
+    .join(' · ')
+}
+
+/** A line of an uplink's card: a source, or a scheme and how many of its sources there are; with their files. */
+export type SourceRow = { label: string; files: number }
+
+/**
+ * The lines an uplink's card lists. Up to `room` sources are each a line; more
+ * are counted by scheme (`github:// × 35`), the workspace first and the largest
+ * scheme next, a scheme of one still named by its source.
+ */
+export function sourceRows(sources: readonly Source[], room: number): SourceRow[] {
+  if (sources.length <= room) {
+    return sources.map(each => ({ label: each.uri, files: each.files }))
+  }
+
+  const schemes = new Map<string, Source[]>()
+
+  for (const each of sources) {
+    const at = each.uri.indexOf('://')
+    const scheme = at < 0 ? each.uri : each.uri.slice(0, at + 3)
+
+    schemes.set(scheme, [...(schemes.get(scheme) ?? []), each])
+  }
+
+  return [...schemes.entries()]
+    .sort(([a, these], [b, those]) => Number(b === 'workspace') - Number(a === 'workspace') || those.length - these.length || a.localeCompare(b))
+    .map(([scheme, members]) => ({
+      label: members.length === 1 ? members[0]!.uri : `${scheme} × ${members.length}`,
+      files: members.reduce((sum, each) => sum + each.files, 0),
+    }))
 }
