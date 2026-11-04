@@ -18,7 +18,10 @@ try {
     $reading = $env:CLAUDE_PROJECT_DIR
     if (-not $session -or -not (Test-Directory $reading) -or -not (Get-Command rql)) { exit 0 }
 
-    # Grep and Glob search their path, or the session's directory without one.
+    # A Grep call is the ripgrep search it runs, with the fields that decide which
+    # lines match; output_mode, -n, -A, -B, -C and head_limit change only what is
+    # printed. A Glob call is a find over whole paths, which rql leaves untranslated.
+    # Both search their path, or the session's directory without one.
     $toolInput = $payload.tool_input
     $tool = [string]$payload.tool_name
     $command = $null
@@ -30,11 +33,19 @@ try {
         if ($path -isnot [string] -or -not $path) { $path = $workspace }
         if ($pattern -isnot [string] -or -not $pattern -or $path -isnot [string] -or -not $path) { exit 0 }
         if ($tool -ceq 'Grep') {
-            $command = 'grep -rn'
+            $command = 'rg -n'
             if ($toolInput.'-i' -eq $true) { $command += ' -i' }
-            $command += ' -e ' + (ConvertTo-ShellWord $pattern) + ' ' + (ConvertTo-ShellWord $path)
+            $glob = $toolInput.glob
+            if ($glob -is [string] -and $glob) { $command += ' -g ' + (ConvertTo-ShellWord $glob) }
+            $type = $toolInput.type
+            if ($type -is [string] -and $type) { $command += ' -t ' + (ConvertTo-ShellWord $type) }
+            if ($toolInput.multiline -eq $true) { $command += ' -U --multiline-dotall' }
+            $command += ' -e ' + (ConvertTo-ShellWord $pattern) + ' -- ' + (ConvertTo-ShellWord $path)
         } else {
-            $command = 'find ' + (ConvertTo-ShellWord $path) + ' -name ' + (ConvertTo-ShellWord $pattern)
+            if ($pattern.StartsWith('/')) { $whole = $pattern }
+            elseif ($path.EndsWith('/')) { $whole = $path + $pattern }
+            else { $whole = $path + '/' + $pattern }
+            $command = 'find ' + (ConvertTo-ShellWord $path) + ' -path ' + (ConvertTo-ShellWord $whole)
         }
     }
     if ($command -isnot [string] -or -not $command) { exit 0 }

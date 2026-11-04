@@ -13,7 +13,9 @@ script_dir=$(cd "$script_dir" && pwd)
 
 input=$(cat)
 # Without this test every Bash call would start rql before it runs.
-command=$(printf '%s' "$input" | json_text '^tool_input[.]command$')
+# The x keeps a final newline the substitution would strip.
+command=$(printf '%s' "$input" | json_text '^tool_input[.]command$'; printf x)
+command=${command%x}
 [[ $command == *"worktree add"* ]] || exit 0
 
 session=""

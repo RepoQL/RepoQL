@@ -14,49 +14,74 @@ script_dir=$(cd "$script_dir" && pwd)
 # One shell word: bare when it holds only characters no shell treats specially,
 # otherwise single-quoted, with each single quote written as '\''. sed does the
 # rewrite because bash versions disagree on backslashes in a ${//} replacement.
+# The x carried through sed keeps a final newline the substitution would strip.
 plain_word='^[A-Za-z0-9_./:=@%+,-]+$'
 shell_word() {
+    local quoted
     if [[ $1 =~ $plain_word ]]; then
         printf '%s' "$1"
     else
-        printf "'%s'" "$(printf '%s' "$1" | LC_ALL=C sed "s/'/'\\\\''/g")"
+        quoted=$(printf '%sx' "$1" | LC_ALL=C sed "s/'/'\\\\''/g")
+        printf "'%s'" "${quoted%x}"
     fi
 }
 
+# Set variable $1 to the decoded text of the string at JSON path $2, kept whole:
+# tabs, newlines and a final newline survive, which a "path<TAB>value" line
+# cannot carry. A command substitution would strip the final newline, so the x
+# rides through it and printf -v assigns without a second one.
 input=$(cat)
+read_text() {
+    local text
+    text=$(printf '%s' "$input" | json_text "^$2\$"; printf x)
+    printf -v "$1" '%s' "${text%x}"
+}
+
 session=""
 agent=""
-workspace=""
 tool=""
-path=""
 ignore_case=""
+multiline=""
 while IFS=$'\t' read -r name value; do
     case "$name" in
         session_id) session=$value ;;
         agent_id) agent=$value ;;
-        cwd) workspace=$value ;;
         tool_name) tool=$value ;;
-        tool_input.path) path=$value ;;
         tool_input.-i) ignore_case=$value ;;
+        tool_input.multiline) multiline=$value ;;
     esac
-done < <(printf '%s' "$input" | json_leaves '^(session_id|agent_id|cwd|tool_name|tool_input[.](path|-i))$')
+done < <(printf '%s' "$input" | json_leaves '^(session_id|agent_id|tool_name|tool_input[.](-i|multiline))$')
 reading="${CLAUDE_PROJECT_DIR:-}"
 [ -n "$session" ] && [ -d "$reading" ] || exit 0
+read_text workspace cwd
 
-# Grep and Glob search their path, or the session's directory without one.
+# A Grep call is the ripgrep search it runs, with the fields that decide which
+# lines match; output_mode, -n, -A, -B, -C and head_limit change only what is
+# printed. A Glob call is a find over whole paths, which rql leaves untranslated.
+# Both search their path, or the session's directory without one.
 case "$tool" in
     Bash)
-        command=$(printf '%s' "$input" | json_text '^tool_input[.]command$') ;;
+        read_text command 'tool_input[.]command' ;;
     Grep|Glob)
-        pattern=$(printf '%s' "$input" | json_text '^tool_input[.]pattern$')
+        read_text pattern 'tool_input[.]pattern'
+        read_text path 'tool_input[.]path'
         path=${path:-$workspace}
         [ -n "$pattern" ] && [ -n "$path" ] || exit 0
         if [ "$tool" = Grep ]; then
-            command="grep -rn"
+            read_text glob 'tool_input[.]glob'
+            read_text type 'tool_input[.]type'
+            command="rg -n"
             [ "$ignore_case" = true ] && command+=" -i"
-            command+=" -e $(shell_word "$pattern") $(shell_word "$path")"
+            [ -n "$glob" ] && command+=" -g $(shell_word "$glob")"
+            [ -n "$type" ] && command+=" -t $(shell_word "$type")"
+            [ "$multiline" = true ] && command+=" -U --multiline-dotall"
+            command+=" -e $(shell_word "$pattern") -- $(shell_word "$path")"
         else
-            command="find $(shell_word "$path") -name $(shell_word "$pattern")"
+            case "$pattern" in
+                /*) whole=$pattern ;;
+                *) case "$path" in */) whole=$path$pattern ;; *) whole=$path/$pattern ;; esac ;;
+            esac
+            command="find $(shell_word "$path") -path $(shell_word "$whole")"
         fi ;;
     *) exit 0 ;;
 esac
